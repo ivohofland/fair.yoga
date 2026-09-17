@@ -1124,9 +1124,9 @@ itself:
 | `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | first lock of its transaction, right after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap answers an erased one with `AlreadyErasedError`, and an absent one fails before the transaction opens, at `findUniqueOrThrow` (`P2025`) |
 | `addToWaitlist` (`waitlist.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: `StudentErasedError`, surfaced as `WaitlistJoinError` `student_erased` (409 from `POST /api/waitlist`) |
 | `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first statement of its transaction, on the student's booking and the teacher's roster add alike | `FOR SHARE` | refuses: 409, `This account has been deleted` to the student, `This student's account no longer exists` to the teacher; an absent one is answered 404 `Student not found` before the transaction opens |
-| `acceptInvitation` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its roster-link insert | `FOR SHARE` | refuses: 409, `This account has been deleted` (`POST /api/invitations/[id]/respond`) |
-| `unlinkTeacher` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its `Class` locks and its `StudentPrivacy` upsert | `FOR SHARE` | refuses: 409, `This account has been deleted` (`DELETE /api/teacher-links/[teacherId]`) |
-| `updateStudentPrivacy` (`src/services/student-privacy.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: 409, `This account has been deleted` (`PUT /api/students/[id]/privacy`) |
+| `acceptInvitation` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its roster-link insert | `FOR SHARE` | refuses the raced case: 409, `This account has been deleted` (`POST /api/invitations/[id]/respond`); a fully committed erasure is answered 404 `Invitation not found` instead, by the pre-transaction read — keyed by email, and `deleteStudentAccount` anonymizes `Invitation.email` unconditionally (#520) — before the gate is ever reached |
+| `unlinkTeacher` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its `Class` locks and its `StudentPrivacy` upsert | `FOR SHARE` | refuses the raced case: 409, `This account has been deleted` (`DELETE /api/teacher-links/[teacherId]`); a fully committed erasure is answered 404 `Teacher link not found` instead, by the pre-transaction `TeacherStudent` read, which the erasure has already deleted, before the gate is ever reached |
+| `updateStudentPrivacy` (`src/services/student-privacy.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses the raced case: 409, `This account has been deleted` (`PUT /api/students/[id]/privacy`) — reached only when a stray `TeacherStudent` row survives the erasure; a fully committed erasure with no such survivor never reaches this gate at all, refused earlier by the route's own `hasTeacherLink` check or by session validation |
 
 **`Student → Class` at every site.** Each takes the `Student` row before its first
 `Class` row, so an erasure and a gated writer can meet only at the `Student`
@@ -1322,8 +1322,8 @@ the student was still being written outside its lock set").
 An ungated writer can. Any ungated writer that inserts a `Student` child row,
 taking `FOR KEY SHARE`, and then waits on a row the erasure has already
 written closes a cycle with that closing `UPDATE` — three writers were
-reasoned into this shape, none reproduced before its gate landed, and all
-three are now gated:
+reasoned into this shape and all three are now gated, one reproduced before
+its gate landed and two not:
 
 - The booking route (`POST /api/registrations`), closed by #625. Its cycle
   WAS reproduced against the ungated route on 2026-09-16, by the test
@@ -1354,7 +1354,7 @@ most of them (`linkTeacherStudent`, `activateRegistration`):
     git grep -n -E '(linkTeacherStudent|activateRegistration)\(' -- src ':!*.test.ts' \
       | grep -vE ':[0-9]+: *(\*|//)'
 
-On 2026-09-16 the first returned five statement sites — `student-privacy.ts`,
+On 2026-09-17 the first returned five statement sites — `student-privacy.ts`,
 `unlinkTeacher`'s privacy upsert, `linkTeacherStudent`, `activateRegistration`
 and `addToWaitlist`'s own `create` — and the second the two helpers'
 definitions plus their callers: the registrations route, `acceptInvitation`,

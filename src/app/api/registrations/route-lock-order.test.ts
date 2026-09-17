@@ -557,8 +557,10 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
     const fx = await makeFixture();
     try {
       await deleteStudentAccount(prisma, fx.studentId);
-      // A link that outlived the erasure, as an ungated link writer can leave
-      // (`docs/lock-order.md`, "Who is not gated yet").
+      // A link that outlived the erasure, as a race that predates these
+      // gates could leave (`docs/lock-order.md`, "Who is not gated yet" —
+      // the two writers still listed there cannot leave one; this fixture
+      // manufactures the row directly instead).
       await prisma.teacherStudent.create({ data: { teacherId: fx.teacherId, studentId: fx.studentId } });
 
       const res = await settle(
