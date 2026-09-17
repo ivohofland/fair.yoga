@@ -52,6 +52,16 @@ describe('readError', () => {
     expect(await readError(jsonResponse(null), 'fallback')).toEqual({ message: 'fallback' });
   });
 
+  it('treats an empty server message as absent', async () => {
+    expect(await readError(jsonResponse({ error: { message: '' } }), 'fallback')).toEqual({
+      code: undefined,
+      message: 'fallback',
+    });
+    expect(
+      await readError(jsonResponse({ error: { code: 'NOT_FOUND', message: '' } }, 404), 'fallback'),
+    ).toEqual({ code: 'NOT_FOUND', message: 'fallback' });
+  });
+
   it('logs an unreadable body with its status and URL, then falls back', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = withUrl(new Response('<html>502 Bad Gateway</html>', { status: 502 }), 'https://fair.yoga/api/rooms/r1');
@@ -83,6 +93,12 @@ describe('readErrorMessage', () => {
 
   it('falls back on a body with no message', async () => {
     expect(await readErrorMessage(jsonResponse({}), 'fallback')).toBe('fallback');
+  });
+
+  it('falls back on an empty server message', async () => {
+    expect(await readErrorMessage(jsonResponse({ error: { message: '' } }), 'fallback')).toBe(
+      'fallback',
+    );
   });
 
   it('logs an unreadable body and falls back', async () => {

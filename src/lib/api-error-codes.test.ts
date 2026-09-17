@@ -38,5 +38,7 @@ describe('API_ERROR_STATUS', () => {
 // Structural pins: true for any membership, so adding a code never breaks them.
 type _conflictCodesAre409 = Assert<Equals<StatusOf<CodeWithStatus<409>>, 409>>;
 type _notFoundIs404 = Assert<Equals<StatusOf<'NOT_FOUND'>, 404>>;
-type _codesAreStrings = Assert<Equals<ApiErrorCode extends string ? true : false, true>>;
-void 0 as unknown as [_conflictCodesAre409, _notFoundIs404, _codesAreStrings];
+// Not `ApiErrorCode extends string`, which stays true once the registry's keys
+// widen to `string` and so cannot fail: this asserts the keys are still literal.
+type _codesAreNotBareString = Assert<Equals<Equals<ApiErrorCode, string>, false>>;
+void 0 as unknown as [_conflictCodesAre409, _notFoundIs404, _codesAreNotBareString];
