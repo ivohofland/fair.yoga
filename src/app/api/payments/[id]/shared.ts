@@ -43,9 +43,7 @@ type OwnedPaymentRow = Prisma.PaymentGetPayload<{ include: typeof OWNED_PAYMENT_
  * The ownership preamble the four POST doors under this resource share: read
  * the payment through its registration → class → calendarEntry chain, answer
  * the service's own not-found refusal (`PAYMENT_GONE`) if the row is gone, and
- * 403 if it belongs to another teacher. Extracted here because this task
- * rewrites all four route files anyway, and the fifteen lines were otherwise
- * identical in each.
+ * 403 if it belongs to another teacher.
  *
  * A discriminated result, not a bare `Payment | NextResponse`: a caller that
  * skips the `ok` check gets a compile error at the first field access rather
