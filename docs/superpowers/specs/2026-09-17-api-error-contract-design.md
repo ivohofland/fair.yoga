@@ -184,7 +184,7 @@ Two overloads over one unexported implementation:
 ```ts
 export function respondError<C extends ApiErrorCode>(
   message: string,
-  status: NoInfer<StatusOf<C>>,
+  status: StatusOf<C>,
   code: C,
 ): NextResponse;
 export function respondError(
@@ -202,9 +202,12 @@ route's `httpStatus` (an un-`const` `404` widens the union to `number`), and
 `STUDIO_CLASS_REFUSALS` (code typed `string`).
 
 - A 409 with no code matches neither overload.
-- A code with the wrong status fails the first overload. `NoInfer` is what makes
-  that true: `C` is inferred from `code` alone, then `status` is checked against
-  it. Without `NoInfer`, TypeScript is free to infer `C` from both arguments.
+- A code with the wrong status fails the first overload: `C` is inferred from
+  `code` alone — TypeScript does not infer backwards through the indexed
+  access `(typeof API_ERROR_STATUS)[C]` — and `status` is then checked against
+  it. Measured with and without `NoInfer` on `status`: both reject a 404 code
+  at 409 and a 409 code at 404 with the same error, so `NoInfer` would be
+  decoration and is not used.
 - A site passing `number` fails both, and gets typed.
 - `withErrorHandler` calls the unexported implementation directly, because its
   argument is a union no single overload accepts.
@@ -649,7 +652,7 @@ compiles lazily — and integration runs target this worktree's own app
 |---|---|
 | Remove the code from a 409 `respondError` | `tsc` overload error |
 | Send a 409-registered code with status 404 | `tsc` error |
-| Remove `NoInfer` from `respondError` | the wrong-status `@ts-expect-error` becomes unused — the pin proves the annotation is load-bearing |
+| Widen the coded overload's `status` to `number` | the wrong-status `@ts-expect-error` pins become unused directives |
 | Move the active-registration check back below capacity | the last-seat test |
 | Move a group-(i) check above its ownership gate | the ordering test |
 | Drop teacher-rooms' value comparison | the different-rate test |
