@@ -786,7 +786,7 @@ describe('acquireLock / releaseLock staleness recovery', () => {
 
     try {
       expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
-        /reclaim itself being broken/,
+        /the rename kept failing/,
       );
       // Pins the bound at exactly ACQUIRE_LOCK_MAX_RECLAIM_FAILURES: every
       // stale-and-not-yet-reclaimed pass makes exactly one renameSync
@@ -796,6 +796,159 @@ describe('acquireLock / releaseLock staleness recovery', () => {
       expect(fs.existsSync(lockDir)).toBe(true);
     } finally {
       readSpy.mockRestore();
+      renameSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('resets failedReclaimAttempts when an intervening pass observes the lock as not stale (#636 review)', () => {
+    // Two temporally-separated, causally-unrelated failure episodes against
+    // the SAME lockDir, with a genuinely non-stale (live-holder) pass in
+    // between. Without the reset, the second episode's failures would be
+    // added to the first's, tripping the bound after just 1 more failure
+    // instead of a fresh 3 — proving two unrelated one-off contention
+    // losses don't get wrongly treated as one broken reclaim.
+    //
+    // Phase 'stale1': owner.json unreadable (EACCES) + backdated mtime, so
+    // isLockStale's age fallback reports stale. renameSync always throws,
+    // so reclaimStaleLock always fails. After exactly 2 such failures,
+    // reclaimStaleLock's mock flips phase to 'live'.
+    //
+    // Phase 'live': owner.json reads succeed, reporting this SAME process
+    // as a live holder (isPidAlive(process.pid) is genuinely true, so
+    // isLockStale reports not-stale for real, not via a forced mock). This
+    // makes acquireLock reset failedReclaimAttempts, then fall through to
+    // the "did the holder change" check instead of the stale-reclaim
+    // branch. Three reads happen in this one pass — the inner retry loop's
+    // conditional read, isLockStale's own read, and the holder-changed
+    // check's read — each returns a DIFFERENT token, so the holder-changed
+    // check sees "the token changed" (not "unchanged, give up") and keeps
+    // waiting rather than throwing the unrelated generic timeout. After the
+    // 3rd live-phase read, the mock flips phase to 'stale2'.
+    //
+    // Phase 'stale2': same shape as 'stale1'. If the reset worked,
+    // failedReclaimAttempts starts this phase at 0 and needs 3 more
+    // failures (5 renameSync calls total) to throw. If it didn't reset,
+    // the carried-over count of 2 needs only 1 more (3 renameSync calls
+    // total) to throw — a directly observable difference.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    const oldTime = new Date(Date.now() - 100_000);
+    fs.utimesSync(lockDir, oldTime, oldTime);
+
+    let phase: 'stale1' | 'live' | 'stale2' = 'stale1';
+    let liveReadCount = 0;
+
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return fs.readFileSync(...(args as Parameters<typeof fs.readFileSync>));
+      }
+      if (phase === 'live') {
+        liveReadCount += 1;
+        const info = JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: `live-${liveReadCount}` });
+        if (liveReadCount === 3) {
+          phase = 'stale2';
+        }
+        return info;
+      }
+      const err = new Error('EACCES') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as typeof fs.readFileSync);
+
+    let renameCalls = 0;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      renameCalls += 1;
+      if (phase === 'stale1' && renameCalls === 2) {
+        phase = 'live';
+      }
+      const err = new Error('EPERM') as NodeJS.ErrnoException;
+      err.code = 'EPERM';
+      throw err;
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
+        /the rename kept failing/,
+      );
+      // 2 (stale1) + 3 (stale2, only reachable if the reset actually
+      // happened) = 5. A broken/missing reset would throw after 3 total
+      // calls instead (2 carried over + 1 more).
+      expect(renameSpy).toHaveBeenCalledTimes(5);
+    } finally {
+      readSpy.mockRestore();
+      renameSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('resets failedReclaimAttempts when an intervening pass observes the lock as vanished (#636 review)', () => {
+    // Same shape as the not-stale reset test above, but the intervening
+    // forward-progress signal is the OTHER one acquireLock treats as
+    // unambiguous episode-ending progress: `!fs.existsSync(lockDir)`, a few
+    // lines above the stale-reclaim branch. The lock directory itself is
+    // never actually removed here — fs.existsSync is mocked to report
+    // "gone" for exactly one check, faking a sibling deleting it out from
+    // under us between our last EEXIST and this check — so every other
+    // aspect of the scenario (persistent EACCES reads, persistent EPERM
+    // renames, backdated mtime) stays identical on both sides of the fake
+    // vanish, isolating the vanished-branch's own reset as the only thing
+    // that can explain a fresh 3-failure budget afterward.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    const oldTime = new Date(Date.now() - 100_000);
+    fs.utimesSync(lockDir, oldTime, oldTime);
+
+    const realReadFileSync = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      const err = new Error('EACCES') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as typeof fs.readFileSync);
+
+    let vanishOnNextCheck = false;
+    const realExistsSync = fs.existsSync;
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockImplementation(((...args: Parameters<typeof fs.existsSync>) => {
+      if (args[0] !== lockDir) {
+        return realExistsSync(...args);
+      }
+      if (vanishOnNextCheck) {
+        vanishOnNextCheck = false;
+        return false;
+      }
+      return realExistsSync(...args);
+    }) as typeof fs.existsSync);
+
+    let renameCalls = 0;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      renameCalls += 1;
+      if (renameCalls === 2) {
+        vanishOnNextCheck = true;
+      }
+      const err = new Error('EPERM') as NodeJS.ErrnoException;
+      err.code = 'EPERM';
+      throw err;
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
+        /the rename kept failing/,
+      );
+      // 2 (before the faked vanish) + 3 (after, only reachable if the
+      // vanished-branch reset actually happened) = 5. A broken/missing
+      // reset would throw after 3 total calls instead (2 carried over + 1
+      // more).
+      expect(renameSpy).toHaveBeenCalledTimes(5);
+    } finally {
+      readSpy.mockRestore();
+      existsSpy.mockRestore();
       renameSpy.mockRestore();
       warnSpy.mockRestore();
     }

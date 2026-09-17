@@ -299,31 +299,36 @@ export function isLockStale(lockDir: string, staleMs: number): { stale: boolean;
   return { stale: false };
 }
 
-export function reclaimStaleLock(lockDir: string, staleMs: number): boolean {
+export function reclaimStaleLock(lockDir: string, staleMs: number): { reclaimed: boolean; error?: NodeJS.ErrnoException } {
   const nonce = crypto.randomBytes(4).toString('hex');
   const reclaimingDir = `${lockDir}.reclaiming.${process.pid}.${Date.now()}.${nonce}`;
 
   try {
     fs.renameSync(lockDir, reclaimingDir);
-  } catch {
-    // Another concurrent process already renamed or removed lockDir
-    return false;
+  } catch (err) {
+    // Another concurrent process already renamed or removed lockDir — or,
+    // rarely, a persistent filesystem error keeps the rename from ever
+    // succeeding (#636). Surface which one so a caller that gives up after
+    // repeated failures doesn't have to guess why.
+    return { reclaimed: false, error: err as NodeJS.ErrnoException };
   }
 
   const check = isLockStale(reclaimingDir, staleMs);
   if (check.stale) {
     console.warn(`[registry] reclaimed stale lock at ${lockDir} (${check.reason})`);
     fs.rmSync(reclaimingDir, { recursive: true, force: true });
-    return true;
+    return { reclaimed: true };
   }
 
-  // The lock was unexpectedly alive; restore it back to lockDir if possible
+  // The lock was unexpectedly alive; restore it back to lockDir if possible.
+  // The rename itself succeeded, so there is no error to report — the
+  // caller learns this was a "still alive" outcome by the absence of one.
   try {
     fs.renameSync(reclaimingDir, lockDir);
   } catch {
     fs.rmSync(reclaimingDir, { recursive: true, force: true });
   }
-  return false;
+  return { reclaimed: false };
 }
 
 export const ACQUIRE_LOCK_MAX_UNKNOWN_PASSES = 3;
@@ -385,21 +390,39 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
     if (!fs.existsSync(lockDir)) {
       // Unambiguous progress — the lock is simply gone — so an unknown-read
       // streak building against the vanished lock does not carry into
-      // whatever comes next.
+      // whatever comes next. The lock disappearing entirely is at least as
+      // strong a "this episode is over" signal as observing it not-stale
+      // below, so the reclaim-failure budget resets here too (#636 review).
       unknownPasses = 0;
+      failedReclaimAttempts = 0;
       continue;
     }
 
     const { stale } = isLockStale(lockDir, staleMs);
+    if (!stale) {
+      // A non-stale observation is forward progress unrelated to our own
+      // reclaim history — either nobody has ever needed to reclaim this
+      // lock yet, or a *different* stale episode ended without our help.
+      // Carrying a failure count across that boundary would let two
+      // unrelated one-off contention losses, separated by a live holding
+      // period, wrongly look like the same broken reclaim (#636 review).
+      failedReclaimAttempts = 0;
+    }
     if (stale && !reclaimedStale) {
-      const reclaimed = reclaimStaleLock(lockDir, staleMs);
+      const { reclaimed, error: reclaimError } = reclaimStaleLock(lockDir, staleMs);
       if (reclaimed) {
         reclaimedStale = true;
       } else {
         failedReclaimAttempts += 1;
+        console.warn(
+          `[registry] reclaim attempt ${failedReclaimAttempts}/${ACQUIRE_LOCK_MAX_RECLAIM_FAILURES} failed for ${lockDir}${reclaimError ? ` (${reclaimError})` : ' (lock was still alive on re-check)'}`,
+        );
         if (failedReclaimAttempts >= ACQUIRE_LOCK_MAX_RECLAIM_FAILURES) {
+          const reason = reclaimError
+            ? `the rename kept failing: ${reclaimError}`
+            : 'the lock kept appearing genuinely held on re-check';
           throw new Error(
-            `Failed to reclaim stale lock at ${lockDir} after ${ACQUIRE_LOCK_MAX_RECLAIM_FAILURES} consecutive attempts (the reclaim's rename kept failing — this is the reclaim itself being broken, not an ordinary timeout; check filesystem permissions on ${lockDir}, then remove it manually and retry)`,
+            `Failed to reclaim stale lock at ${lockDir} after ${ACQUIRE_LOCK_MAX_RECLAIM_FAILURES} consecutive attempts (${reason} — if nothing legitimate holds this lock, remove ${lockDir} manually and retry)`,
           );
         }
       }
