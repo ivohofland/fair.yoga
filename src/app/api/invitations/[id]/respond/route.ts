@@ -44,6 +44,9 @@ export const POST = withErrorHandler(async (
 
   if (!result.ok) {
     if (result.reason === 'NOT_FOUND') return respondError('Invitation not found', 404);
+    if (result.reason === 'STUDENT_ERASED') {
+      return respondError('This account has been deleted', 409);
+    }
     return respondError('This invitation has already been answered', 409, 'ALREADY_ANSWERED');
   }
   return respondOk({ id });

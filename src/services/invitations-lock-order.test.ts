@@ -4,12 +4,14 @@
  * to do it. A neighbour's lock noise can land a `55P03` there instead, which
  * this file would read as the defect it watches for.
  */
-import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
+import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { acceptInvitation, declineInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';
 import { linkTeacherStudent } from './roster-link';
+import { deleteStudentAccount } from './gdpr';
+import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 
@@ -1745,4 +1747,203 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
     });
     expect(row.status).toBe('pending');
   }, 15_000);
+});
+
+/**
+ * How long a paused racer may take to report it is in place, before a test
+ * fails naming the statement that never arrived — the bare `await` this
+ * replaces could hang until vitest's own 30s test timeout instead, which
+ * names the `it`, not the missing handshake.
+ */
+const HANDSHAKE_TIMEOUT_MS = 2_000;
+
+async function awaitHandshake(signal: Promise<void>, label: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      signal,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} never issued within ${HANDSHAKE_TIMEOUT_MS}ms`)),
+          HANDSHAKE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Resolves once some backend is waiting on a lock `holderPid` holds. Bounded
+ * well inside the 2s `lock_timeout` the waiter runs under.
+ */
+async function waitUntilBlockedBy(holderPid: number): Promise<void> {
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline) {
+    const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+       WHERE wait_event_type = 'Lock'
+         AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+    if ((row?.n ?? 0) > 0) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`nothing waited behind backend ${holderPid} within 1500ms`);
+}
+
+async function ownPid(tx: Prisma.TransactionClient): Promise<number> {
+  const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+  if (row === undefined) throw new Error('pg_backend_pid returned no row');
+  return row.pid;
+}
+
+/**
+ * A bare teacher/student pair, no link between them yet — the precondition
+ * `acceptInvitation` needs to genuinely INSERT the roster link, and
+ * `unlinkTeacher`'s tests below add their own link on top of this.
+ */
+async function makeGateFixture() {
+  const local = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const email = `gate-626-${local}@test.local`;
+  const teacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Gate', lastName: 'Teacher',
+      email: `gate-626-teacher-${local}@test.local`,
+      account: { create: { email: `gate-626-teacher-${local}@test.local` } },
+      bio: '#626 Student-gate fixture',
+      pageSlug: `gate-626-${local}`,
+    },
+    select: { id: true, accountId: true },
+  });
+  const student = await prisma.student.create({
+    data: {
+      firstName: 'Gate', lastName: 'Student', email, claimedAt: new Date(),
+      account: { create: { email } },
+    },
+    select: { id: true, accountId: true },
+  });
+  const studentAccountId = student.accountId;
+  if (studentAccountId === null) throw new Error('fixture student has no account');
+  return {
+    teacherId: teacher.id,
+    teacherAccountId: teacher.accountId,
+    studentId: student.id,
+    studentAccountId,
+    email,
+  };
+}
+
+type GateFixture = Awaited<ReturnType<typeof makeGateFixture>>;
+
+async function cleanupGateFixture(fx: GateFixture): Promise<void> {
+  await prisma.invitation.deleteMany({ where: { teacherId: fx.teacherId } });
+  await prisma.teacherBlock.deleteMany({ where: { teacherId: fx.teacherId } });
+  await prisma.studentPrivacy.deleteMany({ where: { teacherId: fx.teacherId } });
+  await prisma.teacherStudent.deleteMany({ where: { teacherId: fx.teacherId } });
+  await prisma.student.deleteMany({ where: { id: fx.studentId } });
+  await prisma.teacher.deleteMany({ where: { id: fx.teacherId } });
+  await prisma.account.deleteMany({ where: { id: { in: [fx.teacherAccountId, fx.studentAccountId] } } });
+}
+
+/**
+ * Pauses `deleteStudentAccount` right after it acquires the `Student` gate,
+ * before any of its writes — the same technique
+ * `src/app/api/registrations/route-lock-order.test.ts` uses for the booking
+ * route's own version of this gate (#625).
+ */
+function pauseErasureAtGate(studentId: string): {
+  reached: Promise<void>;
+  pid: () => number;
+  release: () => void;
+} {
+  let atGate!: () => void;
+  const reached = new Promise<void>((r) => { atGate = r; });
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  let pid = 0;
+  let paused = false;
+  const original = dbLocks.lockStudentForErasure;
+  const spy = vi.spyOn(dbLocks, 'lockStudentForErasure').mockImplementation(async (tx, id) => {
+    await original(tx, id);
+    if (id === studentId && !paused) {
+      paused = true;
+      pid = await ownPid(tx);
+      atGate();
+      await held;
+    }
+  });
+  onTestFinished(() => spy.mockRestore());
+  return { reached, pid: () => pid, release };
+}
+
+describe('acceptInvitation and unlinkTeacher take the Student gate (#626)', () => {
+  it('answers NOT_FOUND, not STUDENT_ERASED, for an already-erased student — deleteStudentAccount already anonymizes the Invitation (#520)', async () => {
+    const fx = await makeGateFixture();
+    try {
+      const invitation = await prisma.invitation.create({
+        data: {
+          teacherId: fx.teacherId, email: fx.email,
+          firstName: 'Gate', lastName: 'Student', status: 'pending',
+        },
+        select: { id: true },
+      });
+      await deleteStudentAccount(prisma, fx.studentId);
+
+      // `acceptInvitation`'s first statement looks the invitation up BY
+      // email, before the new Student gate ever runs — and
+      // `deleteStudentAccount` already rewrote this row's `email` to an
+      // anonymized address (#520), unconditionally. So once an erasure has
+      // fully committed, that lookup already returns nothing: NOT_FOUND, not
+      // the new gate's STUDENT_ERASED. The gate's own value is the race
+      // case, covered by the next test.
+      const result = await acceptInvitation(prisma, {
+        invitationId: invitation.id, studentId: fx.studentId, accountEmail: fx.email,
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
+      expect(
+        await prisma.teacherStudent.count({ where: { teacherId: fx.teacherId, studentId: fx.studentId } }),
+      ).toBe(0);
+    } finally {
+      await cleanupGateFixture(fx);
+    }
+  }, 15_000);
+
+  it('refuses acceptInvitation for a student erased mid-transaction, and writes nothing', async () => {
+    const fx = await makeGateFixture();
+    try {
+      const invitation = await prisma.invitation.create({
+        data: {
+          teacherId: fx.teacherId, email: fx.email,
+          firstName: 'Gate', lastName: 'Student', status: 'pending',
+        },
+        select: { id: true },
+      });
+
+      const erasure = pauseErasureAtGate(fx.studentId);
+      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        () => 'erased' as const,
+        (err: unknown) => ({ error: String(err) }),
+      );
+      let accepting: Promise<unknown> | undefined;
+      try {
+        await awaitHandshake(erasure.reached, 'erasure Student lock');
+        accepting = acceptInvitation(prisma, {
+          invitationId: invitation.id, studentId: fx.studentId, accountEmail: fx.email,
+        });
+        await waitUntilBlockedBy(erasure.pid());
+      } finally {
+        erasure.release();
+        await Promise.all([erasing, accepting]);
+      }
+
+      expect(await erasing).toBe('erased');
+      expect(await accepting).toEqual({ ok: false, reason: 'STUDENT_ERASED' });
+      expect(
+        await prisma.teacherStudent.count({ where: { teacherId: fx.teacherId, studentId: fx.studentId } }),
+      ).toBe(0);
+    } finally {
+      await cleanupGateFixture(fx);
+    }
+  }, 20_000);
 });
