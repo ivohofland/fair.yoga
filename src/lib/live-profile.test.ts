@@ -22,9 +22,10 @@ describe('liveProfile', () => {
     ).toThrow(/account holds more than one live profile of a kind: a, b/);
   });
 
-  // The defect this change closes: a caller whose select omits
-  // `where: { deletedAt: null }` used to hand back the tombstone here with no
-  // throw and no log, because `liveProfile` could not see `deletedAt` at all.
+  // A caller's own `where` is a fetch bound, not what correctness rests on.
+  // This is the case that decides it: the only profile of a kind on the
+  // account is erased, so a helper that did not read `deletedAt` would hand
+  // the tombstone back rather than report none.
   it('returns null for a lone soft-deleted row, not the row itself', () => {
     expect(liveProfile([{ id: 'erased', deletedAt: new Date() }])).toBeNull();
   });
