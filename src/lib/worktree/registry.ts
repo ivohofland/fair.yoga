@@ -352,6 +352,7 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
 
   let reclaimedStale = false;
   let failedReclaimAttempts = 0;
+  let benignRaceStreak = 0;
   // `null` means a read that succeeded and found no token (a legacy lock
   // shape) — a real, comparable value. A read that failed (ENOENT because a
   // sibling's mkdirSync landed before its owner.json write, or corrupted
@@ -406,6 +407,7 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
       // below, so the reclaim-failure budget resets here too (#636 review).
       unknownPasses = 0;
       failedReclaimAttempts = 0;
+      benignRaceStreak = 0;
       continue;
     }
 
@@ -418,21 +420,27 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
       // unrelated one-off contention losses, separated by a live holding
       // period, wrongly look like the same broken reclaim (#636 review).
       failedReclaimAttempts = 0;
+      benignRaceStreak = 0;
     }
     if (stale && !reclaimedStale) {
       const { reclaimed, error: reclaimError } = reclaimStaleLock(lockDir, staleMs);
       if (reclaimed) {
         reclaimedStale = true;
+        benignRaceStreak = 0;
       } else if (isBenignReclaimRaceError(reclaimError)) {
         // Lost a benign race, not a broken reclaim — does not count toward
-        // ACQUIRE_LOCK_MAX_RECLAIM_FAILURES. The next pass observes the
-        // resulting state change (lockDir gone, or a fresh holder) through
-        // the existsSync/isLockStale checks at the top of the next loop
-        // iteration, so this resolves within a pass or two rather than needing
-        // its own bound.
-        console.warn(`[registry] reclaim attempt lost a benign race for ${lockDir} (${reclaimError})`);
+        // ACQUIRE_LOCK_MAX_RECLAIM_FAILURES. If lockDir is now genuinely gone
+        // (a sibling removed it), the next pass's mkdirSync succeeds outright
+        // and claims the lock. If a fresh holder recreated lockDir, the next
+        // pass's existsSync/isLockStale checks detect it. If the environment
+        // is genuinely broken (lockDir's parent is missing), mkdirSync fails
+        // non-EEXIST and is rethrown immediately. Either way, benign races
+        // resolve without a separate bound.
+        benignRaceStreak += 1;
+        console.warn(`[registry] reclaim attempt lost a benign race for ${lockDir} (${reclaimError}) [${benignRaceStreak} in a row, uncounted]`);
       } else {
         failedReclaimAttempts += 1;
+        benignRaceStreak = 0;
         console.warn(
           `[registry] reclaim attempt ${failedReclaimAttempts}/${ACQUIRE_LOCK_MAX_RECLAIM_FAILURES} failed for ${lockDir}${reclaimError ? ` (${reclaimError})` : ' (lock was still alive on re-check)'}`,
         );
