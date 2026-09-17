@@ -447,7 +447,7 @@ gain `NOT_FOUND` with their wording kept.
 |---|---|---|---|
 | paid, unpaid, not-charged, remind (each route's own read); `GET /api/payments/[id]` | `Payment not found` | This payment no longer exists. | 404 · `NOT_FOUND` |
 | paid, unpaid, not-charged, remind (service) | a missed compare-and-swap whose re-read finds a state the swap would have accepted — today a self-contradictory `current status is "pending". Must be "pending" or "overdue".` | This payment was just changed elsewhere. Refresh and try again. | 409 · `CONCURRENT_MODIFICATION` |
-| paid, unpaid, not-charged, remind (service) | `Payment not found: ${paymentId}` (sent as **409**) | This payment no longer exists. No code in `src/` deletes a `Payment`, so no request can reach this; it is pinned at the service. | **404** · `NOT_FOUND` |
+| paid, unpaid, not-charged, remind (service) | `Payment not found: ${paymentId}` (sent as **409**) | This payment no longer exists. | **404** · `NOT_FOUND` |
 | paid | `Cannot mark payment as paid: current status is "${status}". Must be "pending" or "overdue".` | `paid` with the same method → unchanged · `paid` with another method: This payment is already marked paid. · `not_charged`: This payment was marked not charged. Mark it unpaid first. | 409 · `PAYMENT_ALREADY_PAID` / `PAYMENT_WAIVED` |
 | not-charged | `Cannot mark as not charged: current status is "${status}". Must be "pending" or "overdue".` | `not_charged` → unchanged · `paid`: This payment is already paid, so it can't be marked not charged. | 409 · `PAYMENT_ALREADY_PAID` |
 | unpaid | `Cannot undo: current status is "${status}". Must be "paid" or "not charged".` | → unchanged (`pending` / `overdue`) | — |

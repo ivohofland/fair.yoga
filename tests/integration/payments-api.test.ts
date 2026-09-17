@@ -125,11 +125,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-/**
- * An ownership refusal, with no `unchanged` answer ahead of it. Each door runs
- * this in a state where the unchanged condition holds, which is the only way a
- * check placed above the ownership gate becomes visible.
- */
+/** A plain ownership refusal: 403, with no `unchanged` outcome riding along. */
 async function expectForbidden(res: Response): Promise<void> {
   const body = (await res.json()) as { outcome?: unknown };
   expect({ status: res.status, outcome: body.outcome }).toEqual({ status: 403, outcome: undefined });
@@ -239,12 +235,12 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     expect(res.status).toBe(403);
   });
 
-  it('GET /api/classes/[id]/payments 404s an unknown class', async () => {
+  it('GET /api/classes/[id]/payments 404s an unknown class with NOT_FOUND', async () => {
     const res = await fetch(
       `${BASE_URL}/api/classes/00000000-0000-4000-8000-000000000000/payments`,
       { headers: cookie(teacherToken) },
     );
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
   });
 });
 
@@ -319,6 +315,11 @@ describe('POST /api/payments/[id]/remind', () => {
   });
 
   it("403s another teacher's reminder inside the cooldown rather than answering unchanged", async () => {
+    const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    // Otherwise the unchanged branch this test means to rule out isn't even
+    // reachable, and a 403 would pass for the wrong reason.
+    expect(Date.now() - stamped.reminderSentAt!.getTime()).toBeLessThan(MANUAL_REMIND_COOLDOWN_MS);
+
     const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
       method: 'POST',
       headers: cookie(otherTeacherToken),

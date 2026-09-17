@@ -87,11 +87,14 @@ const PAYMENT_CHANGED: PaymentRefusal = {
  * Verified, not assumed.
  *
  * What actually catches a widened `select` is
- * `tests/integration/payments-api.test.ts` — `:150` for
- * `getOutstandingPayments`, `:175` for `GET /api/payments/[id]`, `:211` for
- * `getPaymentsForClass` — each asserting `tierAtBooking`/`tierRatio`/`price`
- * are `undefined` on the wire. Widen a `select` here and the corresponding
- * assertion goes red; skip that suite and nothing else will tell you.
+ * `tests/integration/payments-api.test.ts` — for `getOutstandingPayments`,
+ * `'GET /api/payments withholds the email and surname of a student who shared
+ * neither'`; for `GET /api/payments/[id]`, `'GET /api/payments/[id] applies
+ * the same gate as the list'`; for `getPaymentsForClass`, `'GET
+ * /api/classes/[id]/payments withholds the surname too'` — each asserting
+ * `tierAtBooking`/`tierRatio`/`price` are `undefined` on the wire. Widen a
+ * `select` here and the corresponding assertion goes red; skip that suite and
+ * nothing else will tell you.
  *
  * Those assertions name the fields they deny, so they catch a widened `select`
  * and nothing else. The `Object.keys(…).sort()` assertion beside each of them
