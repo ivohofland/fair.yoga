@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { getSession } from '@/lib/session';
 import { prisma } from '@/lib/db';
+import { isSafeRelativePath } from '@/lib/schemas';
 import { TabBar } from '@/components/layout/tab-bar';
 import { LiveUpdates } from '@/components/layout/live-updates';
 
@@ -15,9 +16,12 @@ export default async function TeacherLayout({
   // sign-in form it cannot use — except /settings, which courteously
   // maps to their own settings (x-pathname stamped by the proxy).
   if (!session?.teacherId) {
+    const pathname = (await headers()).get('x-pathname');
     if (session?.studentId) {
-      const pathname = (await headers()).get('x-pathname') ?? '';
-      redirect(pathname.startsWith('/settings') ? '/account' : '/bookings');
+      redirect((pathname ?? '').startsWith('/settings') ? '/account' : '/bookings');
+    }
+    if (pathname && isSafeRelativePath(pathname)) {
+      redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
     }
     redirect('/login');
   }
