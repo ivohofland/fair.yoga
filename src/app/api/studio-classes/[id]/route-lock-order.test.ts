@@ -119,7 +119,9 @@ describe('DELETE /api/studio-classes/[id] against a concurrent delete of the sam
   });
 
   it('answers NOT_FOUND from its P2025 catch when the other delete commits first', async () => {
-    // Manual and past-dated: removable by every rule `studioClassDeletability` has.
+    // No `scheduleRuleId`, and dated well before today: a removal this route
+    // is meant to allow, so the race below is the only thing left to decide
+    // the answer.
     const sc = await createStudioClassFixture(prisma, {
       teacherId,
       classType: 'Twin Removal',
