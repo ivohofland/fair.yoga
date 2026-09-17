@@ -331,11 +331,10 @@ Replace with:
 ```typescript
   const accepted = await db.$transaction(async (tx) => {
     // The Student gate (#183, #626): this transaction's first lock, before
-    // its roster-link insert below — a child-row insert that takes `FOR KEY
-    // SHARE` on the student and would otherwise wait on a `Student` row the
-    // erasure has already committed past. Who holds the other half, and why
-    // this mode and order: `docs/lock-order.md`, "The `Student` row is the
-    // erasure's gate".
+    // its roster-link insert below. A write racing this student's erasure
+    // serialises here, and one that waited reads the erasure's committed
+    // `deletedAt` and refuses before writing anything. Modes and order:
+    // `docs/lock-order.md`, "The `Student` row is the erasure's gate".
     await lockLiveStudent(tx, input.studentId);
 
     // `TeacherStudent` BEFORE `Invitation`. `unlinkTeacher`,
@@ -529,12 +528,12 @@ Replace with:
 ```typescript
   const unlinked = await db.$transaction(async (tx) => {
     // The Student gate (#183, #626): this transaction's first lock, before
-    // `withdrawWaitingEntriesForTeacher`'s `Class` locks below and before the
-    // `StudentPrivacy` upsert further down — a child-row insert that takes
-    // `FOR KEY SHARE` on the student and would otherwise wait on a
-    // `Student` row the erasure has already committed past. Who holds the
-    // other half, and why this mode and order: `docs/lock-order.md`, "The
-    // `Student` row is the erasure's gate".
+    // `withdrawWaitingEntriesForTeacher`'s `Class` locks below and the
+    // `StudentPrivacy` upsert further down. A write racing this student's
+    // erasure serialises here, and one that waited reads the erasure's
+    // committed `deletedAt` and refuses before writing anything. Modes and
+    // order: `docs/lock-order.md`, "The `Student` row is the erasure's
+    // gate".
     await lockLiveStudent(tx, input.studentId);
 
     // FIRST, before any write below. A `waiting` entry for one of this
@@ -763,11 +762,10 @@ export interface StudentPrivacyFields {
  * Writes a student's per-teacher privacy settings.
  *
  * Gated by the Student erasure lock (#183, #626): this transaction's first
- * lock, before the upsert below — a child-row insert that takes `FOR KEY
- * SHARE` on the student and would otherwise wait on a `Student` row the
- * erasure has already committed past, leaving privacy settings on a profile
- * that no longer exists. Who holds the other half, and why this mode and
- * order: `docs/lock-order.md`, "The `Student` row is the erasure's gate".
+ * lock, before the upsert below. A write racing this student's erasure
+ * serialises here, and one that waited reads the erasure's committed
+ * `deletedAt` and refuses before writing anything. Modes and order:
+ * `docs/lock-order.md`, "The `Student` row is the erasure's gate".
  *
  * Authorization (does the caller own this profile, is this teacher linked to
  * it) is the route's job, not this function's — it writes whatever
