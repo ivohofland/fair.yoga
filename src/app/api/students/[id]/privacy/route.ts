@@ -111,6 +111,15 @@ export const PUT = withErrorHandler(async (
   }
 
   const result = await updateStudentPrivacy(prisma, { studentId: id, teacherId, fields: privacyFields });
-  if (!result.ok) return respondError('This account has been deleted', 409);
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'STUDENT_ERASED':
+        return respondError('This account has been deleted', 409);
+      default: {
+        const unhandled: never = result.reason;
+        throw new Error(`unhandled privacy write reason: ${unhandled}`);
+      }
+    }
+  }
   return respondOk(result.value);
 });

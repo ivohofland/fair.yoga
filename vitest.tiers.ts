@@ -136,6 +136,8 @@ export const LOCK_CONTENTION_TESTS = [
   // #625: the `gdpr-lock-order.test.ts` shape, for the booking route; its
   // header carries the reason.
   'src/app/api/registrations/route-lock-order.test.ts',
+  // #626: the same shape, for the privacy route.
+  'src/app/api/students/[id]/privacy/route-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
