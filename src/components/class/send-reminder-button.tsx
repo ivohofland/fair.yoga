@@ -33,8 +33,9 @@ interface SendReminderButtonProps {
  * two-minute `MANUAL_REMIND_COOLDOWN_MS` (`services/payments.ts`), but that
  * window is a retry guard, not a policy. It exists so a double-click or a
  * retried request duns the student once (#196); a second deliberate nudge two
- * minutes later goes through, and the server answers a suppressed one with a
- * 409 the button surfaces through `onError`. The stamp also defers the
+ * minutes later goes through, and the server answers a suppressed one
+ * `unchanged`, carrying the stamp that suppressed it, which this button
+ * reports through `onSent` like any other send. The stamp also defers the
  * automatic dunning sweep by `REMIND_EVERY_DAYS`
  * (`services/payment-reminders.ts`): a send on a `pending` payment stamps it
  * too, and because `markOverduePayments` never clears the stamp, that deferral
@@ -75,9 +76,10 @@ export function SendReminderButton({
     }
 
     // The server commits the notification + stamp before it responds, so past
-    // this point the reminder HAS been sent. A malformed or field-less body
-    // must not be dressed up as a failure — that would provoke a second,
-    // duplicate nudge.
+    // this point a reminder HAS been sent — by this request, or, on an
+    // `unchanged` answer, by the one whose stamp the body carries. A malformed
+    // or field-less body must not be dressed up as a failure — that would
+    // provoke a second, duplicate nudge.
     try {
       const json = (await res.json()) as { data: { reminderSentAt: string } };
       if (typeof json?.data?.reminderSentAt !== 'string') {

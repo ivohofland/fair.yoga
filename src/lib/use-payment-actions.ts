@@ -9,10 +9,10 @@ import { readUndoStatus } from '@/lib/payment-status';
  * Mark-paid and mark-not-charged, both with transient undo. "Mark paid" is
  * the app's most repeated action, so it stays one tap — no confirm; "Not
  * charged" mirrors that shape for the grace policy. The safety net is Undo,
- * offered only for payments settled in this session (justMarked): old
- * records keep a clean row and can't be unmarked casually. Undo returns the
- * payment to 'pending'; the hourly dunning sweep re-derives 'overdue' from
- * the payment's age where applicable.
+ * offered only where a tap on this page settled the payment or found it
+ * already settled that way (justMarked) — the answer a retried tap gets — so
+ * a record settled before the page loaded can't be unmarked casually. Undo
+ * returns the payment to 'pending', or reports the unpaid status it had.
  */
 export function usePaymentActions(initial: Record<string, PaymentStatus>) {
   const [paymentState, setPaymentState] = useState<Record<string, PaymentStatus>>(initial);
@@ -104,7 +104,8 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
         return false;
       }
 
-      // Past this point the undo HAS happened — same principle as
+      // Past this point the payment is unpaid — this request reopened it, or it
+      // already was and the answer is `unchanged`. Same principle as
       // `send-reminder-button.tsx`, which commits before it responds too. An
       // unreadable body must not be dressed up as a failure or leave the UI in
       // its pre-action state; it is logged and the local state resolves to

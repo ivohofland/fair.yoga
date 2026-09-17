@@ -172,7 +172,7 @@ describe('AddRoomFlow', () => {
    * failure, and `'Search failed. Please try again.'` left the codebase
    * entirely. Nothing failed, because this file had no test on either path.
    *
-   * The same distinction is stated for a write at src/lib/use-payment-actions.ts:51.
+   * The same distinction is stated for a write in `markPaid` (src/lib/use-payment-actions.ts).
    */
   it('says the search failed, not that the network did, when the server refuses', async () => {
     fetchMock.mockImplementation(async () => ({ ok: false, json: async () => ({}) }));

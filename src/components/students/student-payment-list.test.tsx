@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { StudentPaymentList } from './student-payment-list';
 
 /**
@@ -73,5 +73,34 @@ describe('StudentPaymentList', () => {
     ]);
     expect(screen.getByRole('button', { name: 'Mark paid — Vinyasa, Tue 2 Sep' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark paid — Yin, Thu 4 Sep' })).toBeInTheDocument();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('announces a refused mark-paid as an alert', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: {
+            message: 'This payment was marked not charged. Mark it unpaid first.',
+            code: 'PAYMENT_WAIVED',
+          },
+        }),
+      }),
+    );
+    renderList([
+      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12 },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark paid — Vinyasa, Tue 2 Sep' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This payment was marked not charged. Mark it unpaid first.',
+    );
   });
 });

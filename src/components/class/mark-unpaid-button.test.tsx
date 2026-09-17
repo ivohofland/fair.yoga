@@ -205,36 +205,59 @@ describe('MarkUnpaidButton', () => {
   it('clears a failed attempt, so a reopened confirm is not pre-labelled as failed', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
-      json: async () => ({ error: 'Cannot undo: current status is "pending". Must be "paid".' }),
+      status: 404,
+      json: async () => ({
+        error: { message: 'This payment no longer exists.', code: 'NOT_FOUND' },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     openConfirm();
 
     fireEvent.click(screen.getByRole('button', { name: /confirm unpaid/i }));
-    await screen.findByText('Cannot undo: current status is "pending". Must be "paid".');
+    await screen.findByText('This payment no longer exists.');
 
     fireEvent.click(screen.getByRole('button', { name: /keep/i }));
     fireEvent.click(screen.getByRole('button', { name: /mark unpaid/i }));
 
-    expect(
-      screen.queryByText('Cannot undo: current status is "pending". Must be "paid".'),
-    ).toBeNull();
+    expect(screen.queryByText('This payment no longer exists.')).toBeNull();
   });
 
+  /** The body the server sends when the payment is gone. */
   it('shows the server error and re-enables on a failed POST', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
-      json: async () => ({ error: 'Cannot undo: current status is "pending". Must be "paid".' }),
+      status: 404,
+      json: async () => ({
+        error: { message: 'This payment no longer exists.', code: 'NOT_FOUND' },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     openConfirm();
 
     fireEvent.click(screen.getByRole('button', { name: /confirm unpaid/i }));
 
-    expect(
-      await screen.findByText('Cannot undo: current status is "pending". Must be "paid".'),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('This payment no longer exists.');
     expect(screen.getByRole('button', { name: /confirm unpaid/i })).toBeEnabled();
     expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  /**
+   * An undo of a payment that is already unpaid answers 200 `unchanged` — the
+   * answer a retried confirm gets. It settles exactly as an applied undo does.
+   */
+  it('settles to "Marked unpaid" on an unchanged answer', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { status: 'overdue' }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    openConfirm();
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm unpaid/i }));
+
+    expect(await screen.findByText('Marked unpaid')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
   });
 });
