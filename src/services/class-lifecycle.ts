@@ -1210,8 +1210,9 @@ class UpdateClassRefusal extends Error {
  *
  * `terminal` carries the state, which is what tells a completed class from a
  * cancelled one. It is `TerminalClassState` rather than `ClassStatus` because
- * since #327 one of the two is not a status at all — a cancelled class keeps
- * whatever live status it had, and its cancellation is a column on the entry.
+ * since #327 what it names is not always a status at all — a cancelled class
+ * keeps whatever live status it had, and its cancellation is a column on the
+ * entry.
  *
  * `past_start` carries NOTHING: a past start is one refusal whether the
  * offending value arrived as `date`, as `startTime`, or as both, and a carried

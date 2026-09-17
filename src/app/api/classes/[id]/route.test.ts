@@ -79,8 +79,13 @@ describe('PUT /api/classes/[id] — refusals', () => {
 
   it('answers a locked economic edit with SETTINGS_LOCKED', async () => {
     updateClass.mockResolvedValueOnce({ ok: false, reason: 'locked', fields: ['roomCost'] });
-
-    await expectRefusal(await put({ roomCost: 1 }), 'SETTINGS_LOCKED');
+    // Spied only to keep the route's own log line out of the run's output.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => log);
+    try {
+      await expectRefusal(await put({ roomCost: 1 }), 'SETTINGS_LOCKED');
+    } finally {
+      info.mockRestore();
+    }
   });
 
   /**

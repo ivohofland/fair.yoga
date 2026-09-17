@@ -143,7 +143,7 @@ describe('ToggleTemplateButton', () => {
 
   // Only a stale page can offer Resume on an archived template. The refusal
   // re-reads the page, so the controls it shows next match the template.
-  it('refreshes the page on TEMPLATE_ARCHIVED, and still shows why', async () => {
+  it('sets the refusal message and refreshes the page on TEMPLATE_ARCHIVED', async () => {
     stubFetch({
       ok: false,
       json: async () => ({

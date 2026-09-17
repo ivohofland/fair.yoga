@@ -47,7 +47,7 @@ const SLOT_TAKEN = {
   ],
 } as const satisfies Record<RuleSlotHolder, readonly [string, string]>;
 
-/** The 409 both room-archive checks in this file answer with. */
+/** The 409 for putting a recurring class on a room that is archived. */
 function roomArchivedResponse() {
   return respondError(
     'This room is archived. Unarchive it to add a recurring class here.',

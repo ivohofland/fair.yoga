@@ -477,7 +477,7 @@ describe('POST /api/class-templates', () => {
     }
   });
 
-  // Refused before any write, so neither case holds a slot.
+  // Refused before any write, so nothing here holds a slot.
   it("refuses another teacher's room with ROOM_NOT_ON_LIST, and creates nothing", async () => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
