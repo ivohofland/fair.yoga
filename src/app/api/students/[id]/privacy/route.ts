@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updatePrivacySchema } from '@/lib/schemas';
 import { log } from '@/lib/log';
+import { updateStudentPrivacy } from '@/services/student-privacy';
 
 /**
  * A student may only read or write privacy settings for a teacher they are
@@ -109,25 +110,7 @@ export const PUT = withErrorHandler(async (
     return respondError('Access denied', 403, 'TEACHER_NOT_LINKED');
   }
 
-  const privacy = await prisma.studentPrivacy.upsert({
-    where: {
-      studentId_teacherId: {
-        studentId: id,
-        teacherId,
-      },
-    },
-    update: privacyFields,
-    create: {
-      studentId: id,
-      teacherId,
-      shareFullName: privacyFields.shareFullName ?? false,
-      shareEmail: privacyFields.shareEmail ?? false,
-      sharePhone: privacyFields.sharePhone ?? false,
-      shareBirthday: privacyFields.shareBirthday ?? false,
-      shareAddress: privacyFields.shareAddress ?? false,
-      receiveComms: privacyFields.receiveComms ?? true,
-    },
-  });
-
-  return respondOk(privacy);
+  const result = await updateStudentPrivacy(prisma, { studentId: id, teacherId, fields: privacyFields });
+  if (!result.ok) return respondError('This account has been deleted', 409);
+  return respondOk(result.value);
 });
