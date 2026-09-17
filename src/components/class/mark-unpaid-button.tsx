@@ -37,9 +37,9 @@ export function MarkUnpaidButton({
         // #40. The refresh below normally replaces this row (the payment moves
         // Received → Outstanding) and this component unmounts, so `done` is
         // never seen. When the commit is dropped it is the only thing standing
-        // between the teacher and a dead button: the action HAS committed, so
-        // re-offering it would earn a 409 ("current status is 'pending'") over
-        // an action that worked. Say what happened instead, and offer the
+        // between the teacher and a button that reads as if nothing happened:
+        // the payment IS unpaid — this request reopened it, or the server
+        // answered `unchanged` because it already was. Say so, and offer the
         // repaint that failed.
         setDone(true);
         router.refresh();
@@ -123,7 +123,11 @@ export function MarkUnpaidButton({
       >
         Keep
       </button>
-      {error && <span className="text-[13px] text-danger">{error}</span>}
+      {error && (
+        <span role="alert" className="text-[13px] text-danger">
+          {error}
+        </span>
+      )}
     </span>
   );
 }

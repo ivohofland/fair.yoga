@@ -245,18 +245,18 @@ describe('OutstandingPaymentRow', () => {
 
   /**
    * #58. `undo` renders whatever status the server's response carries, guard
-   * included, rather than rendering the response verbatim or assuming the
-   * result is always 'pending'. Today the reversal always writes 'pending'
-   * unconditionally — the hourly dunning sweep re-derives 'overdue' later,
-   * from the payment's age — so the 'overdue' response mocked below is a
-   * hypothetical exercising the read path, not current server behavior. The
-   * round trip still earns its keep: it is what keeps this correct the day
-   * the reversal starts returning a re-derived status itself, and this is
-   * the only test here that fails if someone "simplifies" the round trip to
-   * a hardcoded 'pending'.
+   * included, rather than assuming the result is always 'pending'. The body
+   * mocked below is a real answer: an undo of a payment that is already
+   * unpaid is `unchanged` and carries the stored status, which is 'overdue'
+   * for a payment left unpaid long enough. This is the only test here that
+   * fails if someone "simplifies" the round trip to a hardcoded 'pending'.
    */
   it('renders the status the undo response carries', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'overdue' } }) });
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { status: 'overdue' }, outcome: 'unchanged' }),
+    });
     vi.stubGlobal('fetch', fetchMock);
     renderCollidingPair();
 
@@ -321,13 +321,12 @@ describe('OutstandingPaymentRow', () => {
    * failure set 'Network error. Try again.' and returned false: the row kept
    * `isPaid`, kept showing "✓ Paid" and its Undo button, and — because
    * `isOutstanding` derives from the same stale value — hid the reminder button
-   * for a debt that now really existed. A second Undo then got the service's
-   * contradictory `Cannot undo: current status is "pending"`.
+   * for a debt that now really existed.
    *
    * The three assertions are the three halves of that bug: the row leaves the
    * paid state, no error banner is raised, and `undo` returned true so the
    * caller's `router.refresh()` runs and reconciles against the server. Same
-   * principle, and the same shape, as `send-reminder-button.tsx:71-86`.
+   * principle, and the same shape, as `send-reminder-button.tsx`'s `handleSend`.
    */
   it('treats a committed undo with an unreadable body as the success it is', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -405,13 +404,20 @@ describe('OutstandingPaymentRow', () => {
   });
 
   /**
-   * #134. A structured error body returned with a non-ok status is extracted
-   * and displayed to the teacher rather than claiming a network error.
+   * #134. A refusal is extracted and displayed to the teacher rather than
+   * claimed as a network error. The body is the one the server sends when a
+   * stale row offers Mark paid on a payment since marked not charged.
    */
-  it('shows the server error message when mark-paid is refused with a JSON error', async () => {
+  it('shows the server refusal when mark-paid is refused', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
-      json: async () => ({ error: 'Payment already marked paid' }),
+      status: 409,
+      json: async () => ({
+        error: {
+          message: 'This payment was marked not charged. Mark it unpaid first.',
+          code: 'PAYMENT_WAIVED',
+        },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     renderCollidingPair();
@@ -423,7 +429,34 @@ describe('OutstandingPaymentRow', () => {
     expect(
       await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     ).toBeInTheDocument();
-    expect(await screen.findByRole('alert')).toHaveTextContent('Payment already marked paid');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This payment was marked not charged. Mark it unpaid first.',
+    );
+  });
+
+  /**
+   * A mark the server finds already done answers 200 `unchanged` — what a
+   * retried tap receives when the first one's response was lost. The row
+   * settles as for an applied mark, Undo included, and raises no alert.
+   */
+  it('settles on an unchanged mark-paid answer, with Undo and no alert', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { status: 'paid' }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRow({ status: 'pending' });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Mark paid —/ }));
+
+    expect(await screen.findByText('✓ Paid')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: 'Undo marking Anna Smith as paid for Vinyasa · 2 Sep · 18:00',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   /**
@@ -507,14 +540,19 @@ describe('OutstandingPaymentRow', () => {
   });
 
   /**
-   * Mirrors the mark-paid JSON-error test above: a structured error body
-   * returned with a non-ok status is extracted and displayed rather than
-   * claiming a network error.
+   * Mirrors the mark-paid refusal test above, with the body the server sends
+   * when the payment was paid in the meantime.
    */
-  it('shows the server error message when mark-not-charged is refused with a JSON error', async () => {
+  it('shows the server refusal when mark-not-charged is refused', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
-      json: async () => ({ error: 'Payment already marked not charged' }),
+      status: 409,
+      json: async () => ({
+        error: {
+          message: "This payment is already paid, so it can't be marked not charged.",
+          code: 'PAYMENT_ALREADY_PAID',
+        },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     renderRow({ status: 'pending' });
@@ -524,7 +562,29 @@ describe('OutstandingPaymentRow', () => {
     expect(
       await screen.findByRole('button', { name: /^Not charged —/ }),
     ).toBeInTheDocument();
-    expect(await screen.findByRole('alert')).toHaveTextContent('Payment already marked not charged');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "This payment is already paid, so it can't be marked not charged.",
+    );
+  });
+
+  it('settles on an unchanged not-charged answer, with Undo and no alert', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { status: 'not_charged' }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRow({ status: 'pending' });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Not charged —/ }));
+
+    expect(await screen.findByText('⊘ Not charged')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: 'Undo marking Anna Smith as not charged for Vinyasa · 2 Sep · 18:00',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   /**

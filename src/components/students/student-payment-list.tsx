@@ -28,7 +28,11 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
 
   return (
     <>
-      {error && <p className="text-sm text-danger mb-3">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-danger mb-3">
+          {error}
+        </p>
+      )}
       <div className="flex flex-col">
         {items.map((item) => {
           // `?? item.status`, not `?? 'pending'` — same reasoning as
