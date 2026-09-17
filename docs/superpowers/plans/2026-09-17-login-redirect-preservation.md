@@ -95,16 +95,16 @@
   - Add test: when `?redirect=//evil.com` or `https://evil.com` or string > 200 chars is present, `fetch` body contains no `redirect` property.
   - Add test: when `?redirect=/students/s-1` is present, `<PasskeySignIn />` receives `redirect="/students/s-1"`.
 
-- [ ] **Step 1: Update `src/app/(public)/login/page.tsx`**
+- [x] **Step 1: Update `src/app/(public)/login/page.tsx`**
   Add `<Suspense>`, `useSearchParams`, `isSafeRelativePath`, and parameter forwarding.
 
-- [ ] **Step 2: Update `src/app/(public)/login/page.test.tsx`**
+- [x] **Step 2: Update `src/app/(public)/login/page.test.tsx`**
   Add unit tests for valid parameter forwarding, unsafe parameter rejection, and passkey forwarding.
 
-- [ ] **Step 3: Run login tests and verify green**
+- [x] **Step 3: Run login tests and verify green**
   Run: `pnpm exec vitest run src/app/\(public\)/login/page.test.tsx`
 
-- [ ] **Step 4: Mutation probe**
+- [x] **Step 4: Mutation probe**
   Temporarily bypass the `isSafeRelativePath` check in `src/app/(public)/login/page.tsx` (e.g. forward `rawRedirect` directly). Run `pnpm exec vitest run src/app/\(public\)/login/page.test.tsx`, observe the unsafe redirect test fail, restore `page.tsx`, and re-run to confirm green.
 
 ---
@@ -142,17 +142,17 @@
   - Test `redirectNonStudent(null, '//evil.com')` redirects to bare `/login`.
   - Test `redirectNonStudent(null)` redirects to bare `/login`.
 
-- [ ] **Step 1: Update `src/lib/student-guard.ts` and create `src/lib/student-guard.test.ts`**
+- [x] **Step 1: Update `src/lib/student-guard.ts` and create `src/lib/student-guard.test.ts`**
   Implement optional `redirectPath` with `isSafeRelativePath` validation and test all branches.
 
-- [ ] **Step 2: Update `src/app/(student)/layout.tsx`, `src/app/(teacher)/layout.tsx`, and `src/lib/session.ts`**
+- [x] **Step 2: Update `src/app/(student)/layout.tsx`, `src/app/(teacher)/layout.tsx`, and `src/lib/session.ts`**
   Forward `x-pathname` header to login redirect when unauthenticated or expired.
 
-- [ ] **Step 3: Run guard and layout tests**
+- [x] **Step 3: Run guard and layout tests**
   Run: `pnpm exec vitest run src/lib/student-guard.test.ts`
   Run: `pnpm exec vitest run --project components`
 
-- [ ] **Step 4: Mutation probe**
+- [x] **Step 4: Mutation probe**
   Temporarily disable the `redirectPath` handling in `src/lib/student-guard.ts` (always redirect to `/login`). Run `pnpm exec vitest run src/lib/student-guard.test.ts`, observe test failure, restore `student-guard.ts`, and re-run to confirm green.
 
 ---
@@ -175,10 +175,10 @@
     - Wait for URL and assert browser lands on `/settings/rooms` (heading "Rooms"), NOT `/schedule`.
 - Run full verification suite: `pnpm run typecheck`, `pnpm run lint`, `pnpm test`.
 
-- [ ] **Step 1: Update `tests/e2e/auth.spec.ts`**
+- [x] **Step 1: Update `tests/e2e/auth.spec.ts`**
   Add the new protected routes to the redirect check and add the end-to-end destination preservation test.
 
-- [ ] **Step 2: Run verification**
+- [x] **Step 2: Run verification**
   Run: `pnpm run typecheck`
   Run: `pnpm run lint`
   Run: `pnpm test`

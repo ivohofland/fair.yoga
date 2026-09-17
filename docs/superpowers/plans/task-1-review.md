@@ -1,120 +1,65 @@
-# Task 1 Review: Upgrade Toggle Payload Pins in api-types.ts & Clean Up template-action-messages.test.ts (#207)
+# Task 1 Review: Widen `src/proxy.ts` matcher and verify proxy routing (#615)
 
-**Issue:** #207  
-**Plan Reference:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md` (Task 1 section)  
+**Issue:** #615  
+**Plan Reference:** `docs/superpowers/plans/2026-09-17-login-redirect-preservation.md` (Task 1)  
+**Design Spec:** `docs/superpowers/specs/2026-09-17-login-redirect-preservation-design.md`  
 **Implementer Report:** `docs/superpowers/plans/task-1-report.md`  
 **Reviewer:** Antigravity Code Reviewer  
-**Date:** 2026-09-14  
+**Date:** 2026-09-17  
 
 ---
 
-## Verdict: CHANGES REQUESTED (Minor cleanup required before commit)
+## Verdict: APPROVED
 
-The core `NoneOf` pin implementation in `src/lib/api-types.ts` is exemplary: it follows the repo's pin conventions, compiles cleanly under strict mode, and provably names the offending relation when mutated. The removal of the redundant test block in `src/components/settings/template-action-messages.test.ts` matches the plan.
-
-However, **4 unused imports were left behind** in `src/components/settings/template-action-messages.test.ts` when removing lines 741–764. These must be cleaned up before committing Task 1.
+Task 1 changes in `src/proxy.ts` and `src/proxy.test.ts` fully comply with the design specification and implementation plan. All 9 protected route prefixes are accounted for, code quality and comment discipline are maintained, test assertions are exact, and mutation testing proves the guard bites as expected. Clean verification passed with 0 errors across typecheck, lint, and vitest.
 
 ---
 
-## Detailed Findings
+## Review Checklist & Detailed Findings
 
-### 1. Spec & Plan Compliance: PARTIALLY COMPLIANT (Unused imports left behind)
-- **`src/lib/api-types.ts`**:
-  - Replaced `import type { Assert, Equals }` with `import type { NoneOf }` from `@/lib/type-pins`.
-  - Replaced lines 111–116 (`Assert<Equals<..., false>>`) with the `NoneOf` pins `_classIsNotStudio` and `_studioIsNotClass` verbatim per plan.
-- **`src/components/settings/template-action-messages.test.ts`**:
-  - Removed lines 741–764 (`describe('the two toggle payloads are not interchangeable', ...)`) with the redundant `@ts-expect-error` calls and dummy `expect(true).toBe(true)` assertions.
-  - **Defect**: The plan specified:
-    > Task 1: Upgrade Toggle Payload Pins in `src/lib/api-types.ts` & Clean Up `template-action-messages.test.ts`
-  - The import statement in `src/components/settings/template-action-messages.test.ts` still imports 4 symbols that were only used in the deleted test block:
-    - Line 6: `resolveTemplateConfirmation`
-    - Line 7: `resolveStudioConfirmation`
-    - Line 12: `type StudioTemplateToggleResponse`
-    - Line 13: `type TemplateToggleResponse`
+### 1. Spec & Plan Compliance: FULLY COMPLIANT
+- **9 Protected Route Prefixes**:
+  `config.matcher` in `src/proxy.ts` was expanded from the original 5 prefixes to include all 9 protected prefixes:
+  - `/schedule/:path*`
+  - `/studio-class/:path*`
+  - `/students/:path*`
+  - `/inbox/:path*`
+  - `/settings/:path*`
+  - `/class/:path*`
+  - `/bookings/:path*`
+  - `/account/:path*`
+  - `/updates/:path*`
+- Matches the spec and plan verbatim.
+- **Reserved Slug Invariant**: All 9 prefixes are part of `RESERVED_SLUGS` (`src/lib/schemas.ts`), guaranteeing that no teacher profile slug (`/[slug]`) can clash with these matcher routes.
+- **Public Route Safety**: Public routes (`/`, `/[slug]`, `/[slug]/book/[classId]`, `/login`, `/signup`, `/verify`, `/api/*`) are not matched and remain accessible without credentials.
 
-### 2. Quality & Correctness: HIGH (with 1 hygiene defect)
-- **Instantiation Pattern**:
-  - The pins use the canonical instantiation pattern:
-    ```ts
-    const _classIsNotStudio: NoneOf<
-      TemplateToggleResponse extends StudioTemplateToggleResponse
-        ? 'TemplateToggleResponse extends StudioTemplateToggleResponse'
-        : never
-    > = true;
-    void _classIsNotStudio;
+### 2. Code Quality & Standards: HIGH
+- **Strict TypeScript**: No usage of `any`. Helper functions and signatures in `src/proxy.test.ts` are strongly typed (`options?: { cookies?: Record<string, string>; headers?: Record<string, string> }`).
+- **No Unwanted Side Effects**: The changes in `src/proxy.ts` are minimal and focused exclusively on `config.matcher`. Existing proxy behavior (unauthenticated redirect vs pass-through + `x-pathname` stamping) remains intact.
+- **Comment Discipline**: In compliance with `CLAUDE.md` and repository rules, no counts or rosters are introduced in comments. Comments only describe the code they sit on.
+- **Linter & Compiler**: `pnpm run typecheck` (`tsc --noEmit`) and `pnpm exec eslint src/proxy.ts src/proxy.test.ts` pass with 0 warnings or errors.
 
-    const _studioIsNotClass: NoneOf<
-      StudioTemplateToggleResponse extends TemplateToggleResponse
-        ? 'StudioTemplateToggleResponse extends TemplateToggleResponse'
-        : never
-    > = true;
-    void _studioIsNotClass;
-    ```
-  - Follows `const ...: NoneOf<...> = true; void ...;` exactly as specified in `src/lib/type-pins.ts`.
-  - Conditional branch evaluates to `never` when the types are mutually disjoint, resolving to `NoneOf<never>` which is `true`.
-- **Offender Naming**:
-  - Verified via live mutation tests:
-    - **Mutation 1** (setting `TemplateToggleResponse.templateKind` to `'studio'`):
-      TypeScript compiler rejects assignment with:
-      ```
-      src/lib/api-types.ts(114,7): error TS2322: Type 'true' is not assignable to type '"TemplateToggleResponse extends StudioTemplateToggleResponse"'.
-      ```
-    - **Mutation 2** (setting `StudioTemplateToggleResponse.templateKind` to `'class'`):
-      TypeScript compiler rejects assignment with:
-      ```
-      src/lib/api-types.ts(121,7): error TS2322: Type 'true' is not assignable to type '"StudioTemplateToggleResponse extends TemplateToggleResponse"'.
-      ```
-  - Both directions clearly name the offending direction and condition.
-- **Import Hygiene**:
-  - `src/lib/api-types.ts`: Clean. Old `Assert` and `Equals` imports were removed.
-  - `src/components/settings/template-action-messages.test.ts`: **NOT Clean**. Dead imports must be removed.
+### 3. Test Quality & Assertions: ROBUST & EXACT
+- **Exact Array Equality**: `matches the 9 protected route prefixes` asserts `toEqual` against the exact list of 9 prefixes.
+- **Explicit Redirect Targets**:
+  - Tests verify unauthenticated requests to `/schedule`, `/studio-class/sc-1`, `/account/privacy`, and `/updates`.
+  - Assertions check both HTTP status (`307`) and exact `Location` header (`http://localhost:3000/login?redirect=...`).
+  - Query parameter preservation is verified with `/account/privacy?tab=invitations` -> `.../login?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations`.
+- **Authenticated Behavior**: Existing tests verify header stamping and stripping of spoofed client-supplied `x-pathname`.
 
-### 3. Comment Discipline: COMPLIANT
-- `src/lib/api-types.ts`:
-  - Pin comment:
-    ```ts
-    // Compile-time pins asserting that the class and studio toggle response types
-    // remain mutually non-interchangeable via `templateKind` (#93, #119, #206, #207).
-    // Expressed with NoneOf so a broken invariant names the offending direction.
-    ```
-    Accurately cites all lineage issues: #93, #119, #206, #207.
-  - The docblock on `TemplateToggleResponse` (lines 20–37) accurately explains the role of `templateKind` as the discriminator and references the compile-time pin below.
-  - No stale claims or orphaned assertions.
+### 4. Mutation Proof: VERIFIED
+- **Mutation Tested**: Temporarily removed `'/schedule/:path*'` from `config.matcher` in `src/proxy.ts`.
+- **Result**: Vitest immediately caught the mutation with a clear failure in `matches the 9 protected route prefixes`:
+  `AssertionError: expected [ '/studio-class/:path*', …(7) ] to deeply equal [ '/schedule/:path*', …(8) ]`
+- **Restoration**: Restored `src/proxy.ts` and confirmed suite is back to 10 passed tests (100% green).
+- Proves that the test suite directly guards `config.matcher` entries.
 
-### 4. Verification: PASSED
-- `git diff`: Confirmed modifications are restricted strictly to `src/lib/api-types.ts` and `src/components/settings/template-action-messages.test.ts`.
-- `pnpm run typecheck`: Exit code 0 (`tsc --noEmit` passed with 0 errors).
-- `pnpm exec vitest run --project unit src/components/settings/template-action-messages.test.ts`: Exit code 0 (1 test file, 68 tests passed).
+### 5. Clean Verification Run
+- `pnpm exec vitest run src/proxy.test.ts`: 10 passed (10 tests, 244ms).
+- `pnpm run typecheck`: Passed (`tsc --noEmit` exited 0).
+- `pnpm exec eslint src/proxy.ts src/proxy.test.ts`: Passed (0 errors/warnings).
 
 ---
 
-## Action Required
-
-Before committing Task 1:
-In `src/components/settings/template-action-messages.test.ts`, remove the 4 unused imports from lines 6–7 and lines 12–13:
-
-```diff
-diff --git a/src/components/settings/template-action-messages.test.ts b/src/components/settings/template-action-messages.test.ts
-index 1761969f..d1ac0856 100644
---- a/src/components/settings/template-action-messages.test.ts
-+++ b/src/components/settings/template-action-messages.test.ts
-@@ -3,14 +3,10 @@ import {
-   pauseMessage,
-   archiveMessage,
-   archiveStudioMessage,
--  resolveTemplateConfirmation,
--  resolveStudioConfirmation,
-   resumeMessage,
-   resumeStudioMessage,
-   templateUpdatedMessage,
-   UNARCHIVE_MESSAGE,
--  type StudioTemplateToggleResponse,
--  type TemplateToggleResponse,
- } from './template-action-messages';
-```
-
-Once this cleanup is applied and verified, Task 1 is approved for commit:
-```bash
-git add src/lib/api-types.ts src/components/settings/template-action-messages.test.ts
-git commit -m "fix(api-types): express toggle payload non-interchangeability with NoneOf pins (#207)"
-```
+## Conclusion & Readiness
+Task 1 is complete, verified, and approved. The implementation is ready to proceed to Task 2 ("Forward `redirect` in `/login` with safety validation").

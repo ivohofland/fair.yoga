@@ -1,143 +1,103 @@
-# Task 3 Review: Migrate Verdict Pin in studio-class-editability.ts & studio-class-editability.test.ts (#207)
+# Task 3 Review: Defense-in-depth in layouts and session guards
 
-**Issue:** #207  
-**Plan Reference:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md` (Task 3 section)  
-**Implementer Report:** `docs/superpowers/plans/task-3-report.md`  
-**Reviewer:** Antigravity Code Reviewer  
-**Date:** 2026-09-14  
+**Issue:** #615  
+**Review Target:** Task 3 (Plan: `docs/superpowers/plans/2026-09-17-login-redirect-preservation.md`, Spec: `docs/superpowers/specs/2026-09-17-login-redirect-preservation-design.md`, Report: `docs/superpowers/plans/task-3-report.md`)  
+**Verdict:** **APPROVED**
 
 ---
 
-## Verdict: APPROVED
+## 1. Executive Summary
 
-The Task 3 implementation satisfies all requirements from the plan and repository standards (`AGENTS.md`, `CLAUDE.md`). The verdict union pin (`_illegalVerdictCannotStand`) is properly instantiated with `const ...: NoneOf<...> = true; void ...` beside `StudioClassEditVerdict` in `src/services/studio-class-editability.ts`, accurately prevents the illegal state `{ scheduleEditable: false; dateEditable: true }`, and names the offending type relation upon compiler failure. The redundant trailing `@ts-expect-error` pin was cleanly removed from `src/services/studio-class-editability.test.ts`, and the test docblock accurately explains the distinction between the parameter guard and the union pin. All typechecks, unit tests, and lint checks pass cleanly.
+Task 3 implements defense-in-depth destination preservation for scenarios where an unauthenticated or expired session cookie passes edge cookie-presence checks in `proxy.ts`. 
 
----
-
-## Detailed Findings
-
-### 1. Spec & Plan Compliance: FULLY COMPLIANT
-
-- **`src/services/studio-class-editability.ts`**:
-  - Imported `type { NoneOf }` from `@/lib/type-pins`.
-  - Added compile-time pin `_illegalVerdictCannotStand` immediately following `StudioClassEditVerdict`:
-    ```ts
-    // Compile-time pin asserting dateEditable cannot stand without scheduleEditable (#207).
-    const _illegalVerdictCannotStand: NoneOf<
-      { scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict
-        ? '{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict'
-        : never
-    > = true;
-    void _illegalVerdictCannotStand;
-    ```
-  - Exactly conforms to the plan specification.
-- **`src/services/studio-class-editability.test.ts`**:
-  - Removed lines 195–204 containing the redundant `@ts-expect-error _illegalVerdict` constant and comment.
-  - Updated the docblock on `it('refuses a widened row at the type level')` to document that the call-site parameter check is verified by `npm run typecheck` only (`tsc --noEmit`) and is invisible to test runners, and that the union invariant (`dateEditable ⇒ scheduleEditable`) is pinned separately beside `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
-  - Confirmed all remaining imports in the test file remain referenced (e.g. `StudioClassEditVerdict` is actively used in fixtures `EDITABLE` and `INCOME_RECORD`). No dead imports.
-
-### 2. Quality & Correctness: HIGH
-
-- **Instantiation Pattern**:
-  - Follows canonical `const ...: NoneOf<...> = true; void ...;` instantiation required by `@/lib/type-pins`.
-  - Suppressed from unused-variable lint via `void _illegalVerdictCannotStand;`.
-- **Accurate Invariant Enforcement**:
-  - When `StudioClassEditVerdict` only permits `{ scheduleEditable: false; dateEditable: false }` and `{ scheduleEditable: true; dateEditable: boolean }`, the condition `{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict` evaluates to `false`, resolving to `never`.
-  - `NoneOf<never>` resolves to `true`, and `true = true` compiles cleanly.
-- **Offender Naming & Mutation Verification**:
-  - Conducted an independent live mutation test:
-    - Mutated `StudioClassEditVerdict` in `src/services/studio-class-editability.ts` to include `| { scheduleEditable: boolean; dateEditable: boolean }`.
-    - Executed `pnpm run typecheck`. The compiler rejected the assignment with error `TS2322`:
-      ```
-      src/services/studio-class-editability.ts(72,7): error TS2322: Type 'true' is not assignable to type '"{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict"'.
-      ```
-    - The compiler output unambiguously identifies the exact invalid state (`{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict`) rather than a bare boolean failure.
-    - Code was restored cleanly and verified green.
-
-### 3. Comment Discipline: COMPLIANT
-
-- **Citation of #207**:
-  - `src/services/studio-class-editability.ts:71` explicitly cites Issue #207:
-    ```ts
-    // Compile-time pin asserting dateEditable cannot stand without scheduleEditable (#207).
-    ```
-- **Separation of Parameter Guard and Union Pin**:
-  - In `src/services/studio-class-editability.test.ts`, the docblock on `it('refuses a widened row at the type level')` clearly explains:
-    1. The parameter `@ts-expect-error` guard protects against widening the input parameter to accept undeclared fields (e.g., `cancelledAt`), verified only by `npm run typecheck` (`tsc --noEmit`).
-    2. The union invariant (`dateEditable ⇒ scheduleEditable`) is pinned separately on the return type beside `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
-  - *(Minor note)*: Appending `(#207)` to the test docblock reference (`... via NoneOf (#207).`) would provide dual-file issue tracking, but the citation in the source pin fully satisfies repository traceability requirements.
-
-### 4. Verification: PASSED
-
-- **`pnpm run typecheck`**: Exit code 0 (`tsc --noEmit` passed with 0 errors).
-- **`pnpm exec vitest run --project unit src/services/studio-class-editability.test.ts`**: Exit code 0 (1 test file, 17 tests passed).
-- **`pnpm exec eslint src/services/studio-class-editability.ts src/services/studio-class-editability.test.ts`**: Exit code 0 (clean, 0 errors, 0 warnings).
-- **`git diff`**:
-  ```diff
-  diff --git a/src/services/studio-class-editability.test.ts b/src/services/studio-class-editability.test.ts
-  index 7333aba7..b68e2054 100644
-  --- a/src/services/studio-class-editability.test.ts
-  +++ b/src/services/studio-class-editability.test.ts
-  @@ -181,6 +181,11 @@ describe('studioClassEditability', () => {
-      * verdict read cancellation or template state would ship silently. This
-      * directive is what fails `tsc` when the signature widens, as TS2578
-      * (unused '@ts-expect-error') pointing here.
-  +   *
-  +   * This `@ts-expect-error` parameter check is verified by `npm run typecheck`
-  +   * only (`tsc --noEmit`) and is invisible to test runners. The union invariant
-  +   * (`dateEditable ⇒ scheduleEditable`) is pinned separately beside
-  +   * `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
-      */
-     it('refuses a widened row at the type level', () => {
-       studioClassEditability(
-  @@ -191,13 +196,3 @@ describe('studioClassEditability', () => {
-       );
-     });
-   });
-  -
-  -/**
-  - * The union's own pin. `dateEditable ⇒ scheduleEditable` is held by the TYPE,
-  - * not merely by the one producer — the matrix sweep above still runs because
-  - * it also pins zone behaviour, but it is no longer the only thing standing
-  - * between a second producer and an illegal verdict.
-  - */
-  -// @ts-expect-error dateEditable cannot stand without scheduleEditable
-  -const _illegalVerdict: StudioClassEditVerdict = { scheduleEditable: false, dateEditable: true };
-  -void _illegalVerdict;
-  diff --git a/src/services/studio-class-editability.ts b/src/services/studio-class-editability.ts
-  index 0bc21bb5..8fc3306e 100644
-  --- a/src/services/studio-class-editability.ts
-  +++ b/src/services/studio-class-editability.ts
-  @@ -1,4 +1,5 @@
-   import { startOfLocalDay } from '@/lib/timezone';
-  +import type { NoneOf } from '@/lib/type-pins';
-   
-   // Re-exported so SERVER consumers need only this module. Client surfaces must
-   // import `@/services/studio-class-edit-refusals` directly — reaching them
-  @@ -67,6 +68,14 @@ export type StudioClassEditVerdict =
-     /** Not past: the whole schedule may change; `date` only on a manual row. */
-     | { scheduleEditable: true; dateEditable: boolean };
-   
-  +// Compile-time pin asserting dateEditable cannot stand without scheduleEditable (#207).
-  +const _illegalVerdictCannotStand: NoneOf<
-  +  { scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict
-  +    ? '{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict'
-  +    : never
-  +> = true;
-  +void _illegalVerdictCannotStand;
-  +
-   /**
-    * Is this calendar date strictly before the teacher's local today?
-    *
-  ```
+All plan and spec requirements for Task 3 are fully satisfied:
+- `redirectNonStudent` preserves `redirectPath` while ensuring precedence for signed-in teachers (`session?.teacherId -> /schedule`).
+- `StudentLayout`, `TeacherLayout`, and `requireTeacherSession` retrieve `x-pathname` from `headers()` and validate with `isSafeRelativePath` prior to building the redirect target.
+- Full backward compatibility is preserved for existing callers across the codebase.
+- No `any` types or unsafe constructs are introduced. Comment discipline strictly aligns with repository rules.
+- Robust unit tests were added in `src/lib/student-guard.test.ts`.
+- Mutation tests were verified independently and proved that both destination preservation and teacher precedence guards bite.
+- Clean verification passed across unit tests, component tests, TypeScript typechecking, and ESLint.
 
 ---
 
-## Conclusion & Next Step
+## 2. Detailed Checklist & Spec Compliance
 
-Task 3 is approved. The implementer may proceed to stage and commit:
+### A. Spec & Plan Compliance
+- [x] **`redirectNonStudent` in `src/lib/student-guard.ts`:**
+  - Widened signature to `redirectNonStudent(session: SessionUser | null, redirectPath?: string | null): never`.
+  - **Teacher Precedence:** Checked first via `if (session?.teacherId) redirect('/schedule')`. A teacher accessing student routes is always sent to `/schedule`, regardless of whether `redirectPath` is provided.
+  - **Destination Preservation:** `else if (redirectPath && isSafeRelativePath(redirectPath))` redirects to `/login?redirect=${encodeURIComponent(redirectPath)}`.
+  - **Fallback:** Unauthenticated callers with null, empty, or unsafe paths fall back to bare `/login`.
+- [x] **`StudentLayout` in `src/app/(student)/layout.tsx`:**
+  - Reads `const pathname = (await headers()).get('x-pathname');`.
+  - Forwards `pathname` to `redirectNonStudent(session, pathname)`.
+- [x] **`TeacherLayout` in `src/app/(teacher)/layout.tsx`:**
+  - Reads `pathname` from `(await headers()).get('x-pathname')`.
+  - Maintains courteous redirection to `/account` or `/bookings` when `session?.studentId` is present.
+  - For unauthenticated requests (`!session?.teacherId && !session?.studentId`), redirects to `/login?redirect=${encodeURIComponent(pathname)}` if `pathname && isSafeRelativePath(pathname)`, else bare `/login`.
+- [x] **`requireTeacherSession` in `src/lib/session.ts`:**
+  - When `!session?.teacherId`, reads `x-pathname` from `(await headers()).get('x-pathname')`.
+  - Redirects to `/login?redirect=${encodeURIComponent(pathname)}` if `pathname && isSafeRelativePath(pathname)`, else bare `/login`.
 
-```bash
-git add src/services/studio-class-editability.ts src/services/studio-class-editability.test.ts
-git commit -m "fix(studio-class-editability): express verdict illegal state pin with NoneOf (#207)"
-```
+### B. Code Quality & Invariants
+- [x] **No `any`:** Zero occurrences of `any` across touched files and new test files. Strict TypeScript compliance verified.
+- [x] **Backward Compatibility:** All existing invocations of `redirectNonStudent(session)` in pages (`bookings/page.tsx`, `account/privacy/page.tsx`, `account/tier/page.tsx`, `account/page.tsx`, `account/data/page.tsx`, `account/notifications/page.tsx`, `updates/page.tsx`) pass a single argument and behave identically to their original implementation.
+- [x] **Comment Discipline:** No comment rosters, counts, or changelog commentary. Comments accurately explain rationale and intent.
+- [x] **Framework Conformance:** Properly complies with Next.js 16 asynchronous `headers()` API (`await headers()`).
+
+### C. Test Robustness (`src/lib/student-guard.test.ts`)
+- [x] Verifies teacher redirect to `/schedule` without `redirectPath`.
+- [x] Verifies teacher redirect to `/schedule` with `redirectPath` present (proving teacher precedence).
+- [x] Verifies unauthenticated session with valid `redirectPath` redirects to `/login?redirect=%2Faccount%2Fprivacy`.
+- [x] Verifies unauthenticated session with unsafe redirect paths (`//evil.com`, `/\\evil.com`, `https://evil.com`) falls back to `/login`.
+- [x] Verifies unauthenticated session without `redirectPath` redirects to `/login`.
+- [x] Verifies unauthenticated session with `null` or `''` redirects to `/login`.
+- [x] Verifies exact redirect arguments and call counts (`toHaveBeenCalledTimes(1)`).
+- [x] Clean mock lifecycle with `beforeEach(() => vi.clearAllMocks())`.
+
+---
+
+## 3. Mutation Testing Verification
+
+During code review, two independent mutation probes were performed against `src/lib/student-guard.ts`:
+
+1. **Destination Preservation Bypass Probe:**
+   - **Mutation:** Removed `else if (redirectPath && isSafeRelativePath(redirectPath))` branch, routing all unauthenticated callers to bare `/login`.
+   - **Result:** `vitest` failed immediately:
+     ```
+     FAIL src/lib/student-guard.test.ts > redirectNonStudent > redirects unauthenticated session with valid redirectPath to login with encoded redirect
+     AssertionError: expected "vi.fn()" to be called with arguments: [ Array(1) ]
+     Received:
+     - "/login?redirect=%2Faccount%2Fprivacy",
+     + "/login"
+     ```
+2. **Teacher Precedence Inversion Probe:**
+   - **Mutation:** Evaluated `redirectPath` before checking `session?.teacherId`.
+   - **Result:** `vitest` failed immediately:
+     ```
+     FAIL src/lib/student-guard.test.ts > redirectNonStudent > redirects a teacher session to /schedule even when redirectPath is provided
+     AssertionError: expected "vi.fn()" to be called with arguments: [ '/schedule' ]
+     Received:
+     - "/schedule",
+     + "/login?redirect=%2Faccount%2Fprivacy"
+     ```
+
+Both probes confirmed that the test suite actively bites on regressions.
+
+---
+
+## 4. Verification Commands & Results
+
+| Check | Command | Status | Notes |
+|---|---|---|---|
+| **Unit Tests** | `pnpm exec vitest run src/lib/student-guard.test.ts` | **PASS** | 6 passed (6) |
+| **Component Tier** | `pnpm exec vitest run --project components` | **PASS** | 72 test files, 593 tests passed |
+| **TypeScript** | `pnpm run typecheck` | **PASS** | `tsc --noEmit` exited 0 |
+| **ESLint** | `pnpm run lint` | **PASS** | 0 errors |
+
+---
+
+## 5. Conclusion
+
+Task 3 meets all functional, security, and quality requirements outlined in the design spec and implementation plan. The implementation is ready to proceed to Task 4.

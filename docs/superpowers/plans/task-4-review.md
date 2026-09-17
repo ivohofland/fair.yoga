@@ -1,111 +1,86 @@
-# Task 4 Review: Audit & Document Remaining Call-Site @ts-expect-error Directives (#207)
+# Task 4 Review: E2E Test Verification and Whole-Suite Verify (#615)
 
-**Issue:** #207  
-**Plan Reference:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md` (Task 4 section)  
+**Issue:** #615  
+**Plan Reference:** `docs/superpowers/plans/2026-09-17-login-redirect-preservation.md` (Task 4)  
+**Spec Reference:** `docs/superpowers/specs/2026-09-17-login-redirect-preservation-design.md`  
 **Implementer Report:** `docs/superpowers/plans/task-4-report.md`  
 **Reviewer:** Antigravity Code Reviewer  
-**Date:** 2026-09-14  
+**Date:** 2026-09-17  
 
 ---
 
-## Verdict: APPROVED (WITH MINOR COMMENT EDIT RECOMMENDED)
+## Verdict: APPROVED
 
-The Task 4 implementation achieves full compliance with the plan specification and repository standards (`AGENTS.md`, `CLAUDE.md`). All test files carrying remaining call-site `@ts-expect-error` directives across the entire codebase were systematically audited and documented to make their enforcement model explicit: verified by `npm run typecheck` only (`tsc --noEmit`) and invisible to Vitest runtime test execution.
-
-One minor comment duplication was discovered in `src/services/studio-class-deletion.test.ts:162-164` that should be cleaned up prior to staging and committing.
+The Task 4 changes in `tests/e2e/auth.spec.ts` fully satisfy the requirements in the plan and specification. All 9 protected route prefixes are verified in the unauthenticated redirect test, and the destination preservation test asserts that the browser navigates directly to the requested destination (`/settings/rooms`) and not to the default role home (`/schedule`).
 
 ---
 
 ## Detailed Findings
 
-### 1. Spec & Plan Compliance: FULLY COMPLIANT
+### 1. Spec Compliance: FULLY COMPLIANT
 
-A complete codebase sweep was performed searching for all `@ts-expect-error` occurrences across `src/` and `tests/`.
+- **Protected Route Prefixes**:
+  The `protectedRoutes` array in `test('unauthenticated user is redirected to login from protected routes')` was expanded from 5 to all 9 protected prefixes specified in the design doc:
+  1. `/settings` (`/settings/:path*`)
+  2. `/students` (`/students/:path*`)
+  3. `/inbox` (`/inbox/:path*`)
+  4. `/bookings` (`/bookings/:path*`)
+  5. `/class/new` (`/class/:path*`)
+  6. `/schedule` (`/schedule/:path*`)
+  7. `/studio-class/sc-1` (`/studio-class/:path*`)
+  8. `/account/privacy` (`/account/:path*`)
+  9. `/updates` (`/updates/:path*`)
 
-- **Audit Completeness**:
-  Every call-site `@ts-expect-error` directive in the repository is located in one of 15 test files (the 14 files enumerated in the Task 4 plan plus `rule-lifecycle.test.ts` identified during implementation). All other occurrences in `src/` are non-directive comment citations.
-- **Enforcement Clarity**:
-  In all 15 test files, every `@ts-expect-error` site or helper has an explicit docblock or commentary stating:
-  1. It is verified by `npm run typecheck` only (`tsc --noEmit`).
-  2. It is invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
+  Each route is tested in a loop confirming that an unauthenticated visit redirects to `/login?redirect=${encodeURIComponent(route)}`.
 
-#### Breakdown of Audited Files (15 files)
+- **Destination Preservation Assertion**:
+  `test('unauthenticated user visiting protected route with redirect preserves destination through sign-in')` verifies:
+  1. Unauthenticated navigation to `/settings/rooms` redirects to `/login?redirect=%2Fsettings%2Frooms`.
+  2. Submission of the login email form with `teacherEmail` succeeds with confirmation message `Check your inbox for the link.`.
+  3. The `fair_yoga_origin` cookie nonce is retrieved from the browser context.
+  4. A magic link token is created with `redirectTo: '/settings/rooms'` bound to the browser nonce.
+  5. Navigating to `/verify?token=${rawToken}` consumes the token.
+  6. The test waits for navigation: `await page.waitForURL('/settings/rooms', { timeout: 10_000 })`.
+  7. It asserts the destination page rendered: `await expect(page.getByRole('heading', { name: 'Rooms' })).toBeVisible()`.
+  8. It explicitly asserts that the browser did not land on the teacher home fallback: `await expect(page).not.toHaveURL(/\/schedule/)`.
 
-1. **`src/services/studio-class-template-lifecycle.test.ts`** (`_studioTemplateForbiddenFieldsAreRejected`): Explicit notice added.
-2. **`src/services/class-template-lifecycle.test.ts`** (`_templateForbiddenFieldsAreRejected`): Explicit notice added.
-3. **`src/services/class-lifecycle.test.ts`**:
-   - `_completionTimingIsRequired`: Explicit notice added.
-   - `_transitionRangesAreNarrow`: Explicit notice added.
-   - `updateClass's non-empty tuple guarantee` (`noUncheckedIndexedAccess` test): Explicit docblock added.
-4. **`src/services/studio-class-deletion.test.ts`** (`it('refuses template state at the type level')`): Explicit notice added.
-5. **`src/services/studio-class-editability.test.ts`** (`it('refuses a widened row at the type level')`): Parameter guard docblock aligned with typecheck-only notice and `NoneOf` union pin pointer.
-6. **`src/services/rule-lifecycle.test.ts`** (`it('refuses a childTable, logNoun, or editNoun that belongs to the other family')`): Docblock aligned to cite Vitest runtime invisibility.
-7. **`src/services/entry-generation.test.ts`** (`_theBrandRejectsUnbrandedEpochMs`): Explicit notice added.
-8. **`src/lib/db-locks.test.ts`** (`_theBrandRejectsABareClient`): Explicit notice added.
-9. **`src/lib/rule-slot-holder.test.ts`** (`_theProbeRejectsATransactionClient`): Explicit notice added.
-10. **`src/lib/entry-conflict.test.ts`** (`_theProbeRejectsATransactionClient`): Explicit notice added.
-11. **`src/lib/registration-status.test.ts`** (`_theListRejectsAForeignEnum`): Explicit notice added.
-12. **`src/lib/timezone.test.ts`** (`_theBrandRejectsPlainNumber`): Explicit notice added.
-13. **`src/lib/worktree/identity.test.ts`** (`_rawNameBrandRejectsPlainString`, `_dbSlugBrandRejectsPlainString`, `_dbNamesForSlugRejectsRawName`): Explicit notice added.
-14. **`src/lib/worktree/registry.test.ts`** (`_allocatePortArgsCannotBeSwapped`): Explicit notice added.
-15. **`src/lib/api-utils.test.ts`**:
-    - `respondTyped` compile-time contract test: Explicit docblock added.
-    - `ApiLogDetail` clobber test: Explicit docblock notice added.
-    - `paramsFirstHandler` signature guard: Explicit docblock notice added.
+- **Token Helper Compatibility**:
+  `createMagicLinkToken` in `tests/e2e/auth.spec.ts` was updated with `redirectTo?: string`, passing `...(redirectTo ? { redirectTo } : {})` into `prisma.magicLinkToken.create`. Existing test calls remain intact without modification.
 
 ---
 
-### 2. Comment Discipline: COMPLIANT WITH ONE MINOR EDIT
+### 2. Code Quality: FULLY COMPLIANT
 
-- **Accuracy and Scope**:
-  - The comments adhere to the repo rule: "A comment annotates the code it sits on."
-  - They clearly explain *why* the construct exists (compiler failure via `TS2578` on unused `@ts-expect-error`) and *how* it is tested (`tsc --noEmit`), dispelling any false expectation that Vitest test runners execute these type checks.
-  - No stale references or dead links were introduced.
-
-- **Minor Stutter / Duplication Finding**:
-  - **Location**: `src/services/studio-class-deletion.test.ts:162-164`
-  - **Current Text**:
-    ```ts
-    * Not because of excess-property checking: an OPTIONAL widening
-    * (`template?: …`) is legal to supply and legal to omit, so every production
-    * call site compiles either way, literal or variable. What catches it is this
-    * What catches it is this directive. Under a widening the line below stops being an error,
-    * and an unused `@ts-expect-error` is itself `TS2578` — so `tsc` fails here, and measurably
-    * nowhere else.
-    ```
-  - **Issue**: The phrase `"What catches it is this"` was accidentally duplicated across lines 162 and 163.
-  - **Recommended Patch**:
-    ```diff
-    --- a/src/services/studio-class-deletion.test.ts
-    +++ b/src/services/studio-class-deletion.test.ts
-    @@ -160,8 +160,7 @@ describe('studioClassDeletability', () => {
-        * Not because of excess-property checking: an OPTIONAL widening
-        * (`template?: …`) is legal to supply and legal to omit, so every production
-        * call site compiles either way, literal or variable. What catches it is this
-    -   * What catches it is this directive. Under a widening the line below stops being an error,
-    +   * directive. Under a widening the line below stops being an error,
-        * and an unused `@ts-expect-error` is itself `TS2578` — so `tsc` fails here, and measurably
-        * nowhere else.
-    ```
+- **Strict Typing & No `any`**:
+  No `any` or loose types were introduced. `createMagicLinkToken` parameters (`email: string, nonce: string, redirectTo?: string`) and return type `Promise<string>` are strictly typed.
+- **Playwright Best Practices**:
+  The new test uses web-first assertions and standard locators:
+  - `expect(page).toHaveURL(...)`
+  - `page.getByLabel(...)`
+  - `page.getByRole(...)`
+  - `page.getByText(...)`
+  - `expect(...).toBeVisible()`
+  - `page.waitForURL(...)`
+  - `expect(page).not.toHaveURL(...)`
+- **Cleanliness & Alignment**:
+  Matches the established idioms in `tests/e2e/auth.spec.ts` and the serial execution mode configured for the describe block.
 
 ---
 
-### 3. Verification: PASSED
+### 3. Clean Verify: PASSED
 
-1. **`pnpm run typecheck`**:
-   - Exit code: 0 (`tsc --noEmit` passed with 0 errors).
-2. **`pnpm run lint`**:
-   - Exit code: 0 (0 errors, 6 pre-existing warnings in unrelated files).
-3. **`git diff`**:
-   - Strictly scoped to documentation and JSDoc blocks across the 15 test files. No runtime logic or test assertions altered.
-
----
-
-## Conclusion & Next Step
-
-Task 4 is approved. After applying the minor docblock edit in `src/services/studio-class-deletion.test.ts`, the implementer may proceed to stage and commit:
-
-```bash
-git add -u
-git commit -m "docs(tests): clarify typecheck-only enforcement on remaining call-site @ts-expect-error guards (#207)"
-```
+1. **Typecheck (`pnpm run typecheck`)**:
+   ```
+   $ tsc --noEmit
+   Exit code: 0
+   ```
+2. **ESLint (`pnpm exec eslint tests/e2e/auth.spec.ts`)**:
+   ```
+   Exit code: 0 (0 errors, 0 warnings)
+   ```
+3. **Component Suite (`pnpm exec vitest run --project components "src/app/(public)/login/page.test.tsx"`)**:
+   ```
+   Test Files  1 passed (1)
+        Tests  9 passed (9)
+   Duration  1.34s
+   ```
