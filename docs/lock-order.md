@@ -1124,6 +1124,9 @@ itself:
 | `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | first lock of its transaction, right after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap answers an erased one with `AlreadyErasedError`, and an absent one fails before the transaction opens, at `findUniqueOrThrow` (`P2025`) |
 | `addToWaitlist` (`waitlist.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: `StudentErasedError`, surfaced as `WaitlistJoinError` `student_erased` (409 from `POST /api/waitlist`) |
 | `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first statement of its transaction, on the student's booking and the teacher's roster add alike | `FOR SHARE` | refuses: 409, `This account has been deleted` to the student, `This student's account no longer exists` to the teacher; an absent one is answered 404 `Student not found` before the transaction opens |
+| `acceptInvitation` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its roster-link insert | `FOR SHARE` | refuses: 409, `This account has been deleted` (`POST /api/invitations/[id]/respond`) |
+| `unlinkTeacher` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its `Class` locks and its `StudentPrivacy` upsert | `FOR SHARE` | refuses: 409, `This account has been deleted` (`DELETE /api/teacher-links/[teacherId]`) |
+| `updateStudentPrivacy` (`src/services/student-privacy.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: 409, `This account has been deleted` (`PUT /api/students/[id]/privacy`) |
 
 **`Student → Class` at every site.** Each takes the `Student` row before its first
 `Class` row, so an erasure and a gated writer can meet only at the `Student`
@@ -1316,31 +1319,29 @@ transaction to end, so the read after it sees the entry. Pinned by
 `src/services/gdpr-lock-order.test.ts` ("refuses to commit when an entry for
 the student was still being written outside its lock set").
 
-An ungated writer can be. Any ungated writer that inserts a `Student` child
-row, taking `FOR KEY SHARE`, and then waits on a row the erasure has already
-written closes a cycle with that closing `UPDATE`:
+An ungated writer can. Any ungated writer that inserts a `Student` child row,
+taking `FOR KEY SHARE`, and then waits on a row the erasure has already
+written closes a cycle with that closing `UPDATE` — three writers were
+reasoned into this shape, none reproduced before its gate landed, and all
+three are now gated:
 
-- `acceptInvitation` (`src/services/invitations.ts`) inserts the roster link
-  and then updates an `Invitation` row the erasure anonymises. Tracked in
-  #626.
-- `unlinkTeacher` (same file), when its `StudentPrivacy` upsert inserts,
-  then deletes a `TeacherStudent` row the erasure has deleted. Tracked in
-  #626.
-
-Each case above is reasoned from the code, none has been reproduced, and each
-predates the gate. The booking's case is closed by #625. Its cycle was
-reproduced against the ungated route on 2026-09-16, by the test
-`src/app/api/registrations/route-lock-order.test.ts` ("refuses a booking whose
-roster link the erasure has already deleted"): the booking's roster-link
-insert failed with `40P01`, and the route answered 503.
+- The booking route (`POST /api/registrations`), closed by #625. Its cycle
+  WAS reproduced against the ungated route on 2026-09-16, by the test
+  `src/app/api/registrations/route-lock-order.test.ts` ("refuses a booking
+  whose roster link the erasure has already deleted"): the booking's
+  roster-link insert failed with `40P01`, and the route answered 503.
+- `acceptInvitation` (`src/services/invitations.ts`), which inserts the
+  roster link and then updates an `Invitation` row the erasure anonymises.
+  Closed by #626, unreproduced.
+- `unlinkTeacher` (same file), whose `StudentPrivacy` upsert inserts, then
+  deletes a `TeacherStudent` row the erasure has deleted. Closed by #626,
+  unreproduced.
 
 ### Who is not gated yet
 
-The inserters into tables with a foreign key to `Student`, other than
-`addToWaitlist` and `POST /api/registrations`:
+The inserters into tables with a foreign key to `Student`, other than the
+five gated writers above:
 
-- `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`), and
-  `PUT /api/students/[id]/privacy` — ungated, tracked in #626.
 - `promoteNext` and `claimSpot` (`src/services/waitlist.ts`) — ungated and
   not tracked, because they need no gate: each inserts only for a student
   holding a `waiting` entry in the class it has locked, which puts that class
@@ -1353,7 +1354,7 @@ most of them (`linkTeacherStudent`, `activateRegistration`):
     git grep -n -E '(linkTeacherStudent|activateRegistration)\(' -- src ':!*.test.ts' \
       | grep -vE ':[0-9]+: *(\*|//)'
 
-On 2026-09-16 the first returned five statement sites — the privacy route,
+On 2026-09-16 the first returned five statement sites — `student-privacy.ts`,
 `unlinkTeacher`'s privacy upsert, `linkTeacherStudent`, `activateRegistration`
 and `addToWaitlist`'s own `create` — and the second the two helpers'
 definitions plus their callers: the registrations route, `acceptInvitation`,
@@ -1369,9 +1370,10 @@ blocks, and the last drops a single-line `import` statement):
       | grep -vE ':[0-9]+: +[A-Za-z]+,$' \
       | grep -vE ':[0-9]+:import '
 
-On 2026-09-16 it returned five lines: the two definitions in `db-locks.ts`, and
-one call each in `gdpr.ts`, `waitlist.ts` and `src/app/api/registrations/route.ts`.
-A new gated writer is a sixth.
+On 2026-09-17 it returned eight lines: the two definitions in `db-locks.ts`,
+and one call each in `gdpr.ts`, `waitlist.ts`,
+`src/app/api/registrations/route.ts`, and `student-privacy.ts`, and two in
+`invitations.ts` (`acceptInvitation` and `unlinkTeacher`).
 
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
