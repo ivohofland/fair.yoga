@@ -473,6 +473,81 @@ describe('acquireLock / releaseLock staleness recovery', () => {
     releaseLock(lockDir);
   });
 
+  it('does not spuriously time out when a token read is unreadable rather than genuinely unchanged (#631)', () => {
+    // A legacy-shaped lock (no token field) held by this same live process —
+    // never reclaimable, so acquireLock can only proceed by waiting for it
+    // to be released. Forces the "did the holder change" comparison instead
+    // of the staleness-reclaim path.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+
+    // The first read genuinely observes the token-less lock. The very next
+    // read of owner.json — whichever of acquireLock's internal checks makes
+    // it, since nothing here depends on that — lands as the real holder
+    // releases: it fails, and the directory is gone by the time anything
+    // reads again. That reproduces the #631 race (a sibling's mkdirSync
+    // landing before its owner.json write) without pinning which numbered
+    // call belongs to which internal check.
+    const realReadFileSync = fs.readFileSync;
+    let calls = 0;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      calls++;
+      if (calls === 2) {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+        const err = new Error('ENOENT') as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      }
+      return realReadFileSync(...args);
+    }) as typeof fs.readFileSync);
+
+    try {
+      const handle = acquireLock(lockDir, { retries: 1, delayMs: 1 });
+      // The unreadable observation actually happened, and what came back is
+      // a lock this call itself created — not one left over by a path that
+      // skipped consulting the previous holder entirely.
+      expect(calls).toBeGreaterThanOrEqual(2);
+      expect(handle.pid).toBe(process.pid);
+      expect(readLockInfo(lockDir).info?.token).toBe(handle.token);
+      releaseLock(lockDir, handle.token);
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
+  it('times out rather than waiting forever when a lock read never becomes readable', () => {
+    // A live, non-stale holder whose owner.json permission-denies every
+    // read: isLockStale's own age fallback never fires (the directory stays
+    // fresh), so the only thing that can end the wait is the unknown-read
+    // bound — proves tolerating a transient unreadable read (previous test)
+    // does not turn into waiting on a permanently unreadable one forever.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+
+    const realReadFileSync = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      const err = new Error('EACCES') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as typeof fs.readFileSync);
+
+    try {
+      expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
+        /lock info stayed unreadable/,
+      );
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
   it('releaseLock does not delete lock directory if token or pid does not match', () => {
     fs.mkdirSync(lockDir);
     fs.writeFileSync(
