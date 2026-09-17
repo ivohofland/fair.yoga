@@ -18,6 +18,7 @@ import {
   releaseLock,
   isLockStale,
   isPidAlive,
+  isBenignReclaimRaceError,
   readLockInfo,
   assertLockHeld,
   RegistryCollisionError,
@@ -342,6 +343,30 @@ describe('isPidAlive', () => {
     } finally {
       killSpy.mockRestore();
     }
+  });
+});
+
+describe('isBenignReclaimRaceError', () => {
+  it('returns true for ENOENT', () => {
+    const err = new Error('no such file or directory') as NodeJS.ErrnoException;
+    err.code = 'ENOENT';
+    expect(isBenignReclaimRaceError(err)).toBe(true);
+  });
+
+  it('returns true for ENOTDIR', () => {
+    const err = new Error('not a directory') as NodeJS.ErrnoException;
+    err.code = 'ENOTDIR';
+    expect(isBenignReclaimRaceError(err)).toBe(true);
+  });
+
+  it('returns false for EPERM', () => {
+    const err = new Error('operation not permitted') as NodeJS.ErrnoException;
+    err.code = 'EPERM';
+    expect(isBenignReclaimRaceError(err)).toBe(false);
+  });
+
+  it('returns false for undefined (no error)', () => {
+    expect(isBenignReclaimRaceError(undefined)).toBe(false);
   });
 });
 
@@ -950,6 +975,63 @@ describe('acquireLock / releaseLock staleness recovery', () => {
     } finally {
       readSpy.mockRestore();
       existsSpy.mockRestore();
+      renameSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not count benign reclaim races (ENOENT/ENOTDIR) toward failedReclaimAttempts bound (#638)', () => {
+    // A lock that is stale (backdated mtime, owner.json unreadable) on every
+    // pass. fs.renameSync is mocked to throw ENOENT (a benign race — a
+    // sibling already renamed or removed lockDir) for the first
+    // ACQUIRE_LOCK_MAX_RECLAIM_FAILURES + 2 calls (5), then throw EPERM
+    // (a persistent filesystem problem) on every call after that. Without
+    // the fix, all 5 ENOENT failures would accumulate toward the bound,
+    // tripping it after 3 + 0 = 3 calls total; with the fix, the ENOENT
+    // calls don't count, so the bound is only tripped after 5 (uncounted)
+    // + 3 (genuine) = 8 calls, each throwing EPERM until the bound is hit.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    const oldTime = new Date(Date.now() - 100_000);
+    fs.utimesSync(lockDir, oldTime, oldTime);
+
+    const realReadFileSync = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      const err = new Error('EACCES') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as typeof fs.readFileSync);
+
+    let renameCalls = 0;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      renameCalls += 1;
+      if (renameCalls <= ACQUIRE_LOCK_MAX_RECLAIM_FAILURES + 2) {
+        const err = new Error('ENOENT') as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      }
+      const err = new Error('EPERM') as NodeJS.ErrnoException;
+      err.code = 'EPERM';
+      throw err;
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
+        /the rename kept failing.*EPERM/,
+      );
+      // 5 benign (ENOENT) + 3 genuine (EPERM) = 8 total. If benign races
+      // were incorrectly counted, the throw would happen after call 3
+      // instead, and the error message would name ENOENT.
+      expect(renameSpy).toHaveBeenCalledTimes((ACQUIRE_LOCK_MAX_RECLAIM_FAILURES + 2) + ACQUIRE_LOCK_MAX_RECLAIM_FAILURES);
+      expect(fs.existsSync(lockDir)).toBe(true);
+    } finally {
+      readSpy.mockRestore();
       renameSpy.mockRestore();
       warnSpy.mockRestore();
     }

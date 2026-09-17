@@ -299,6 +299,17 @@ export function isLockStale(lockDir: string, staleMs: number): { stale: boolean;
   return { stale: false };
 }
 
+// ENOENT/ENOTDIR mean a sibling already renamed or removed lockDir out from
+// under us mid-reclaim — ordinary multi-way contention, not a broken
+// reclaim (#638). Anything else (EPERM, EACCES, EXDEV, EMFILE/ENFILE, an
+// unrecognized code, or no code at all) is treated as a genuine, persistent
+// filesystem problem and counts toward ACQUIRE_LOCK_MAX_RECLAIM_FAILURES.
+const BENIGN_RECLAIM_RACE_CODES = new Set<string>(['ENOENT', 'ENOTDIR']);
+
+export function isBenignReclaimRaceError(error: NodeJS.ErrnoException | undefined): boolean {
+  return error?.code !== undefined && BENIGN_RECLAIM_RACE_CODES.has(error.code);
+}
+
 export function reclaimStaleLock(lockDir: string, staleMs: number): { reclaimed: boolean; error?: NodeJS.ErrnoException } {
   const nonce = crypto.randomBytes(4).toString('hex');
   const reclaimingDir = `${lockDir}.reclaiming.${process.pid}.${Date.now()}.${nonce}`;
@@ -412,6 +423,13 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
       const { reclaimed, error: reclaimError } = reclaimStaleLock(lockDir, staleMs);
       if (reclaimed) {
         reclaimedStale = true;
+      } else if (isBenignReclaimRaceError(reclaimError)) {
+        // Lost a benign race, not a broken reclaim — does not count toward
+        // ACQUIRE_LOCK_MAX_RECLAIM_FAILURES. The next pass observes the
+        // resulting state change (lockDir gone, or a fresh holder) through
+        // the existsSync/isLockStale checks above and below, so this
+        // resolves within a pass or two rather than needing its own bound.
+        console.warn(`[registry] reclaim attempt lost a benign race for ${lockDir} (${reclaimError})`);
       } else {
         failedReclaimAttempts += 1;
         console.warn(
