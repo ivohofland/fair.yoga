@@ -13,14 +13,14 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Layouts can't see the pathname; stamp it so the (teacher) layout can
-  // send a student-only session from /settings to their own settings.
+  // Layouts can't see the pathname; stamp it with any query parameters so
+  // layouts and guards can preserve destination on invalid sessions, and so
+  // the (teacher) layout can send a student-only session from /settings to their own.
   const requestHeaders = new Headers(request.headers);
   // Belt and suspenders: set() replaces, but never let a client-supplied
-  // value even transit (unmatched teacher routes skip this proxy, so
-  // the layout treats the header as advisory with hardcoded targets only).
+  // value even transit.
   requestHeaders.delete('x-pathname');
-  requestHeaders.set('x-pathname', request.nextUrl.pathname);
+  requestHeaders.set('x-pathname', request.nextUrl.pathname + request.nextUrl.search);
   return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
