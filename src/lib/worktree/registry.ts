@@ -326,7 +326,7 @@ export function reclaimStaleLock(lockDir: string, staleMs: number): boolean {
   return false;
 }
 
-const ACQUIRE_LOCK_MAX_UNKNOWN_PASSES = 3;
+export const ACQUIRE_LOCK_MAX_UNKNOWN_PASSES = 3;
 
 export function acquireLock(lockDir: string, options?: LockOptions): LockHandle {
   const retries = options?.retries ?? DEFAULT_LOCK_OPTIONS.retries;
@@ -340,10 +340,13 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
   // content) also coerces to `null` but is not comparable to anything:
   // observedTokenKnown/currentTokenKnown track which one we have, so two
   // unrelated failed reads are never mistaken for the same unchanged holder
-  // (#631). A failed read only buys ACQUIRE_LOCK_MAX_UNKNOWN_PASSES extra
-  // passes before acquireLock gives up anyway — otherwise an owner.json that
-  // never becomes readable (permission error, permanent corruption) would
-  // wait forever instead of timing out.
+  // (#631). A *consecutive* run of failed reads only buys
+  // ACQUIRE_LOCK_MAX_UNKNOWN_PASSES extra passes before acquireLock gives up
+  // — any single successful read resets that budget — so an unreadable
+  // owner.json (permission error, permanent corruption) times out rather
+  // than waiting forever, as long as the lock never also looks stale: a
+  // stale lock whose reclaim keeps failing retries the reclaim itself
+  // forever below, a pre-existing gap unrelated to this bound.
   let observedToken: string | null | undefined = undefined;
   let observedTokenKnown = false;
   let unknownPasses = 0;
@@ -375,6 +378,10 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
     }
 
     if (!fs.existsSync(lockDir)) {
+      // Unambiguous progress — the lock is simply gone — so an unknown-read
+      // streak building against the vanished lock does not carry into
+      // whatever comes next.
+      unknownPasses = 0;
       continue;
     }
 
@@ -392,18 +399,18 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
 
     // Check if the lock holder changed while we were waiting. An unknown
     // read on either side is never proof of an unchanged holder — only two
-    // successfully-read, equal tokens are — but it is also never more than
-    // ACQUIRE_LOCK_MAX_UNKNOWN_PASSES passes' worth of proof of anything, so
-    // a lock whose info never becomes readable still times out.
-    const { info: currentInfo } = readLockInfo(lockDir);
+    // successfully-read, equal tokens are — see observedTokenKnown's
+    // declaration above for how long an unknown read is tolerated instead.
+    const { info: currentInfo, error: currentError } = readLockInfo(lockDir);
     const currentToken = currentInfo?.token ?? null;
     const currentTokenKnown = currentInfo !== null;
     unknownPasses = currentTokenKnown ? 0 : unknownPasses + 1;
 
     if (observedToken !== undefined && (!observedTokenKnown || !currentTokenKnown)) {
       if (unknownPasses >= ACQUIRE_LOCK_MAX_UNKNOWN_PASSES) {
+        const reason = currentError ? `${currentError}` : 'owner.json failed to parse';
         throw new Error(
-          `Timed out waiting for lock at ${lockDir} (lock info stayed unreadable for ${ACQUIRE_LOCK_MAX_UNKNOWN_PASSES} passes — could not confirm the holder)`,
+          `Timed out waiting for lock at ${lockDir} (lock info stayed unreadable for ${ACQUIRE_LOCK_MAX_UNKNOWN_PASSES} consecutive passes: ${reason} — if nothing legitimate holds this lock, remove ${lockDir} and retry)`,
         );
       }
       observedToken = currentToken;
