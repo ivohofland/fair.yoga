@@ -1,7 +1,10 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, type NextResponse } from 'next/server';
+import type { RegistrationStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
+  respondTyped,
+  respondUnchanged,
   respondError,
   requireSession,
   parseBody,
@@ -17,6 +20,12 @@ import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
+
+/** A PUT's response body, applied or unchanged. */
+type AttendanceBody = { id: string; status: RegistrationStatus };
+
+/** A DELETE's response body, applied or unchanged. */
+type CancelledBooking = { id: string; status: 'cancelled' | 'late_cancel' };
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -147,10 +156,13 @@ export const PUT = withErrorHandler(async (
   // A `Class` row lock would also close the race and is not used: this write
   // moves no money, and locking the hottest row in the app to protect a
   // one-tick scheduling delay is not proportionate.
+  const requested = parsed.data.status;
   const updated = await prisma.registration.updateMany({
     where: {
       id,
-      status: { not: 'cancelled' },
+      // The requested status too: a row already holding it is not rewritten,
+      // and the re-read below answers it as unchanged.
+      status: { notIn: ['cancelled', requested] },
       // The class's cancellation is an ENTRY column since #327, not a status.
       class: { calendarEntry: { cancelledAt: null } },
       // NOT(late_cancel AND class open), written as its contrapositive so each
@@ -158,7 +170,7 @@ export const PUT = withErrorHandler(async (
       // negation.
       OR: [{ status: { not: 'late_cancel' } }, { class: { status: { not: 'open' } } }],
     },
-    data: { status: parsed.data.status },
+    data: { status: requested },
   });
 
   if (updated.count === 0) {
@@ -174,20 +186,48 @@ export const PUT = withErrorHandler(async (
         class: { select: { status: true, calendarEntry: { select: { cancelledAt: true } } } },
       },
     });
-    if (!current) return respondError('Registration not found', 404);
+    if (!current) return respondError('This booking no longer exists.', 404, 'NOT_FOUND');
     if (current.class.calendarEntry.cancelledAt !== null) {
-      return respondError('Cannot record attendance on a cancelled class', 409);
-    }
-    if (current.status === 'late_cancel') {
       return respondError(
-        'This student cancelled late. You can mark them attended once the class has started.',
+        "This class has been cancelled, so attendance can't be recorded.",
         409,
+        'CLASS_CANCELLED',
       );
     }
-    return respondError('Cannot record attendance on a cancelled registration', 409);
+    if (current.status === requested) {
+      return respondUnchanged<AttendanceBody>({ id, status: requested });
+    }
+    switch (current.status) {
+      case 'late_cancel':
+        return respondError(
+          'This student cancelled late. Attendance can be recorded once the class has started.',
+          409,
+          'CLASS_NOT_STARTED',
+        );
+      case 'cancelled':
+        return respondError(
+          "This booking was cancelled, so attendance can't be recorded.",
+          409,
+          'REGISTRATION_CANCELLED',
+        );
+      case 'registered':
+      case 'attended':
+      case 'no_show':
+        // A status the write would have matched: another write moved the row
+        // between the two statements.
+        return respondError(
+          'This booking was just changed elsewhere. Refresh and try again.',
+          409,
+          'CONCURRENT_MODIFICATION',
+        );
+      default: {
+        const unreachable: never = current.status;
+        throw new Error(`unhandled registration status: ${String(unreachable)}`);
+      }
+    }
   }
 
-  return respondOk({ id, status: parsed.data.status });
+  return respondTyped<AttendanceBody>({ id, status: requested });
 });
 
 export const DELETE = withErrorHandler(async (
@@ -220,7 +260,7 @@ export const DELETE = withErrorHandler(async (
     },
   });
 
-  if (!registration) return respondError('Registration not found', 404);
+  if (!registration) return respondError('This booking no longer exists.', 404, 'NOT_FOUND');
 
   // Allow cancellation by the student themselves or the class teacher
   const isStudent = registration.studentId === session.studentId;
@@ -228,17 +268,25 @@ export const DELETE = withErrorHandler(async (
 
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 
-  // A registration can only be cancelled while the class is still upcoming;
-  // cancelling on a completed class would orphan its payment.
-  // TWO reads, not one, since #327 split them: `completed` is still a status,
-  // `cancelled` is a column on the entry.
-  if (registration.class.status === 'completed'
-      || registration.class.calendarEntry.cancelledAt !== null) {
-    const state = registration.class.status === 'completed' ? 'completed' : 'cancelled';
-    return respondError(`Cannot cancel a registration on a ${state} class`, 409);
+  // A cancelled class makes the request moot, so it is answered before the
+  // booking's own state. A cancelled class is an entry column since #327.
+  if (registration.class.calendarEntry.cancelledAt !== null) {
+    return respondError('This class has been cancelled.', 409, 'CLASS_CANCELLED');
   }
-  if (registration.status === 'cancelled' || registration.status === 'late_cancel') {
-    return respondError('Registration is already cancelled', 409);
+
+  // Before the finished-class refusal: a cancel that already holds is done,
+  // whatever happened to the class since. Branched on `isStudent`, as the
+  // notice below is.
+  const alreadyCancelled = answerForCancelledRow(id, registration.status, isStudent);
+  if (alreadyCancelled) return alreadyCancelled;
+
+  // Cancelling on a completed class would orphan its payment.
+  if (registration.class.status === 'completed') {
+    return respondError(
+      "This class has finished, so the booking can't be cancelled.",
+      409,
+      'CLASS_TERMINAL',
+    );
   }
 
   // Enforce cancellation deadline for students (teachers can always cancel).
@@ -266,14 +314,14 @@ export const DELETE = withErrorHandler(async (
       // not, so an unscoped write here can land *after* a teacher's free
       // cancel and silently rewrite `cancelled` → `late_cancel`, billing a
       // student for a class the teacher had let them out of. The scope also
-      // gives the loser of two concurrent late cancels the 409 the sibling
-      // branch already gives, instead of a second 200.
+      // keeps the loser of two concurrent late cancels from writing twice: it
+      // re-reads and is answered as unchanged, as the sibling branch's is.
       const updated = await prisma.registration.updateMany({
         where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
         data: { status: 'late_cancel', cancelledAt: new Date() },
       });
       if (updated.count === 0) {
-        return respondError('Registration is already cancelled', 409);
+        return answerMissedCancel(id, isStudent);
       }
       // The seat is free even though the canceller is still charged.
       await promoteAfterCancel(registration.classId);
@@ -286,7 +334,7 @@ export const DELETE = withErrorHandler(async (
         buildBody: (phrase) =>
           `Your booking for ${phrase} is cancelled. It was past the cancellation deadline, so this class is still charged.`,
       });
-      return respondOk({ id, status: 'late_cancel' });
+      return respondTyped<CancelledBooking>({ id, status: 'late_cancel' });
     }
   }
 
@@ -298,7 +346,7 @@ export const DELETE = withErrorHandler(async (
     data: { status: 'cancelled', cancelledAt: new Date() },
   });
   if (updated.count === 0) {
-    return respondError('Registration is already cancelled', 409);
+    return answerMissedCancel(id, isStudent);
   }
 
   // Hybrid waitlist promotion: auto-promote, broadcast, or stay frozen
@@ -335,8 +383,53 @@ export const DELETE = withErrorHandler(async (
         },
   );
 
-  return respondOk({ id, status: 'cancelled' });
+  return respondTyped<CancelledBooking>({ id, status: 'cancelled' });
 });
+
+/**
+ * The answer to a cancel whose registration is already cancelled, or `null`
+ * when the cancel still has work to do. Either cancelled status is what a
+ * student's cancel asks for. A teacher's cancel is free: a `late_cancel` row
+ * is still charged, so it is refused rather than reported done.
+ */
+function answerForCancelledRow(
+  id: string,
+  status: RegistrationStatus,
+  byStudent: boolean,
+): NextResponse | null {
+  if (status === 'cancelled' || (byStudent && status === 'late_cancel')) {
+    return respondUnchanged<CancelledBooking>({ id, status });
+  }
+  if (status === 'late_cancel') {
+    return respondError(
+      'This student already cancelled late, and the late-cancellation charge stands.',
+      409,
+      'ALREADY_LATE_CANCELLED',
+    );
+  }
+  return null;
+}
+
+/**
+ * A cancel whose scoped write matched nothing: after the read above, the row
+ * left the cancellable statuses or was deleted. Decided from a fresh read.
+ */
+async function answerMissedCancel(id: string, byStudent: boolean): Promise<NextResponse> {
+  const current = await prisma.registration.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+  if (!current) return respondError('This booking no longer exists.', 404, 'NOT_FOUND');
+  return (
+    answerForCancelledRow(id, current.status, byStudent) ??
+    // Active again: a rebooking reactivated the row between the two statements.
+    respondError(
+      'This booking was just changed elsewhere. Refresh and try again.',
+      409,
+      'CONCURRENT_MODIFICATION',
+    )
+  );
+}
 
 /**
  * The class a cancellation notice is about, named the way every cancellation

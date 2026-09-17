@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
 import { inviteContact } from '@/services/invitations';
 import { prisma as appPrisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { POST } from './route';
+import * as waitlistService from '@/services/waitlist';
+import { expectUnchanged } from '../../../../tests/api-assertions';
 
 /**
  * What this route hands `resolveInvitationOnLink` (#418), pinned where it can
@@ -387,9 +389,8 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
 /**
  * The student's own booking writes `Student.tierSelectedAt` after its
  * transaction has committed, so by then the booking exists. A failure of that
- * write is answered as the booking's success, and logged: answering it as an
- * error would send the student to retry a booking they hold, and the retry
- * would be refused as already registered.
+ * write is answered as the booking's success, and logged: the booking holds,
+ * and a retry would only be answered as unchanged.
  *
  * The spy is on the `@/lib/db` singleton the handler calls through, so the
  * failure is forced on the handler's own write; the booking's transaction
@@ -512,5 +513,181 @@ describe('POST /api/registrations — a failed tier-marker write after the booki
       message,
     );
     expect(warn).not.toHaveBeenCalledWith(expect.anything(), message);
+  });
+});
+
+/**
+ * A booking that already exists, found two ways: by the transaction's own
+ * check, and by the unique key when a twin request committed first. The twin
+ * is staged at `activateRegistration`, the write that would meet the key: the
+ * stand-in reactivates the row on this file's own connection — the booking's
+ * transaction holds no lock on it — and then raises the violation the real
+ * insert would have raised.
+ */
+describe('POST /api/registrations — a booking that already exists', () => {
+  let teacherId: string;
+  let roomId: string;
+  let classId: string;
+  let studentId: string;
+  let token: string;
+  const accountIds: string[] = [];
+
+  function book(): Promise<Response> {
+    return POST(new NextRequest('http://localhost:3000/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify({ classId }),
+    }));
+  }
+
+  function uniqueViolation(): Prisma.PrismaClientKnownRequestError {
+    return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: { target: ['classId', 'studentId'] },
+    });
+  }
+
+  beforeAll(async () => {
+    const teacherEmail = `reg-held-teacher-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Reg', lastName: 'Held',
+        email: teacherEmail,
+        account: { create: { email: teacherEmail } },
+        bio: 'registrations-route held-booking fixture teacher',
+        pageSlug: `reg-held-${suffix}`,
+        defaultTimezone: 'UTC',
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountIds.push(teacher.accountId);
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Reg Held Studio', address: `${suffix} Held St`, city: 'Amsterdam',
+        postcode: '1234RH', floor: '1', roomName: 'Main', maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 20, rentalRate: 25 },
+      select: { id: true },
+    });
+
+    const cls = await createClassFixture(prisma, {
+      teacherId, teacherRoomId: teacherRoom.id,
+      classType: 'Reg Held Vinyasa',
+      date: new Date('2099-08-03'),
+      startTime: new Date('1970-01-01T10:00:00Z'),
+      durationMinutes: 60,
+      roomCost: 25, minRate: 15, targetRate: 25,
+      minStudents: 1, maxStudents: 8,
+      status: 'open',
+    });
+    classId = cls.id;
+
+    // `tierSelectedAt` stays null: the unchanged answer must not write it.
+    const studentEmail = `reg-held-student-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Reg', lastName: 'Held',
+        email: studentEmail, incomeTier: 3, claimedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    const studentAccountId = student.accountId;
+    if (!studentAccountId) throw new Error('fixture: the claimed student has no account');
+    accountIds.push(studentAccountId);
+    token = await seedSession(prisma, studentAccountId);
+
+    await prisma.registration.create({
+      data: { classId, studentId, status: 'registered', tierAtBooking: 3 },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  // Runs first: the two below change the row's status.
+  it('answers unchanged, and writes neither the tier marker nor a notification', async () => {
+    const before = await prisma.registration.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId } },
+    });
+
+    const res = await book();
+
+    expect(await expectUnchanged(res)).toEqual({ id: before.id, status: 'registered' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: before.id } });
+    expect(after.updatedAt).toEqual(before.updatedAt);
+    const marker = await prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      select: { tierSelectedAt: true },
+    });
+    expect(marker.tierSelectedAt).toBeNull();
+    expect(await prisma.notification.count({ where: { relatedClassId: classId } })).toBe(0);
+  });
+
+  it('answers the twin of a booking that committed first as unchanged', async () => {
+    const row = await prisma.registration.update({
+      where: { classId_studentId: { classId, studentId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+    const twin = vi
+      .spyOn(waitlistService, 'activateRegistration')
+      .mockImplementationOnce(async () => {
+        await prisma.registration.update({
+          where: { id: row.id },
+          data: { status: 'registered', cancelledAt: null },
+        });
+        throw uniqueViolation();
+      });
+    onTestFinished(() => twin.mockRestore());
+
+    const res = await book();
+
+    expect(twin).toHaveBeenCalledTimes(1);
+    expect(await expectUnchanged(res)).toEqual({ id: row.id, status: 'registered' });
+    expect(await prisma.notification.count({ where: { relatedClassId: classId } })).toBe(0);
+  });
+
+  /**
+   * The re-read has to find an ACTIVE row. A twin cancelled again before the
+   * re-read proves nothing about this request, so the violation reaches
+   * `withErrorHandler` like any other.
+   */
+  it('lets a unique violation whose twin is no longer active reach the error handler', async () => {
+    await prisma.registration.update({
+      where: { classId_studentId: { classId, studentId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+    const twin = vi
+      .spyOn(waitlistService, 'activateRegistration')
+      .mockRejectedValueOnce(uniqueViolation());
+    onTestFinished(() => twin.mockRestore());
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as unknown as void);
+    onTestFinished(() => warn.mockRestore());
+
+    const res = await book();
+
+    expect(twin).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { outcome?: unknown };
+    expect(body.outcome).toBeUndefined();
   });
 });

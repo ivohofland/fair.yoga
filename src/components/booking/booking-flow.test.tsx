@@ -138,6 +138,36 @@ describe('BookingFlow', () => {
     expect((fetchMock.mock.calls[0] ?? [])[0]).toBe('/api/registrations');
   });
 
+  describe('what the server answers', () => {
+    function stubReply(status: number, body: unknown) {
+      fetchMock.mockResolvedValue({
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => body,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    it('shows the booking as confirmed when the server finds it already booked', async () => {
+      stubReply(200, { data: { id: 'reg-1', status: 'registered' }, outcome: 'unchanged' });
+      renderFlow({ currentTier: 3 });
+
+      fireEvent.click(screen.getByRole('button', { name: /Book — around/ }));
+
+      expect(await screen.findByText("You're in")).toBeInTheDocument();
+    });
+
+    it('shows a booking refusal in the server’s words', async () => {
+      stubReply(409, { error: { message: 'This class is full.', code: 'CLASS_FULL' } });
+      renderFlow({ currentTier: 3 });
+
+      fireEvent.click(screen.getByRole('button', { name: /Book — around/ }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('This class is full.');
+      expect(screen.queryByText("You're in")).not.toBeInTheDocument();
+    });
+  });
+
   // #389. product-concept.md's booking-flow nudge — friendly, never blocking.
   describe('open payments nudge', () => {
     it('shows no reminder when there are no open payments', () => {

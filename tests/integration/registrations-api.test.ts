@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../class-fixtures';
 import { formatDayHeader } from '@/lib/format';
 import { isEssential } from '@/services/notification-policy';
+import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -124,13 +126,13 @@ async function makeLateCancelClass(maxStudents: number, minuteOffset: number): P
 // For the cross-teacher ownership test: a class the *other* teacher owns, so
 // an owner-roster student and an owner-teacher session can still collide with
 // it via studentId.
-async function makeOtherTeacherClass(maxStudents: number): Promise<string> {
+async function makeOtherTeacherClass(maxStudents: number, startTime: string): Promise<string> {
   const cls = await createClassFixture(prisma, {
       teacherId: otherTeacherId,
       teacherRoomId: otherTeacherRoomId,
       classType: 'Reg API (other teacher)',
       date: new Date('2099-06-01'),
-      startTime: hhmmToTime('09:00'),
+      startTime: hhmmToTime(startTime),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
@@ -294,7 +296,7 @@ describe('POST /api/registrations', () => {
    * of two teachers sharing a student.
    */
   it('rejects the owner posting their own roster student into another teacher\'s class', async () => {
-    const classId = await makeOtherTeacherClass(5);
+    const classId = await makeOtherTeacherClass(5, '09:00');
     const res = await post(ownerToken, { classId, studentId: studentIds[0] });
     expect(res.status).toBe(403);
 
@@ -331,6 +333,7 @@ describe('POST /api/registrations', () => {
 
     const statuses = [a.status, b.status].sort();
     expect(statuses).toEqual([201, 409]);
+    await expectRefusal(a.status === 409 ? a : b, 'CLASS_FULL');
 
     const count = await prisma.registration.count({
       where: { classId, status: 'registered' },
@@ -347,12 +350,111 @@ describe('POST /api/registrations', () => {
     expect(cls.settingsLocked).toBe(true);
   });
 
-  it('returns 409 (not 500) for a duplicate registration', async () => {
+  it('answers a repeated booking as unchanged, and writes nothing', async () => {
     const classId = await makeClass(5);
-    const first = await post(studentTokens[0]!, { classId });
-    expect(first.status).toBe(201);
-    const dup = await post(studentTokens[0]!, { classId });
-    expect(dup.status).toBe(409);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    const booked = (await expectApplied(await post(studentTokens[0]!, { classId }), 201)) as {
+      id: string;
+    };
+    const before = await prisma.registration.findUniqueOrThrow({ where: { id: booked.id } });
+    const notices = await prisma.notification.count({ where: { relatedClassId: classId } });
+    expect(notices).toBe(2);
+
+    const again = await post(studentTokens[0]!, { classId });
+
+    expect(await expectUnchanged(again)).toEqual({ id: booked.id, status: 'registered' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: booked.id } });
+    expect(after.updatedAt).toEqual(before.updatedAt);
+    expect(await prisma.registration.count({ where: { classId } })).toBe(1);
+    expect(await prisma.notification.count({ where: { relatedClassId: classId } })).toBe(notices);
+  });
+
+  it('answers a teacher re-adding a booked student as unchanged', async () => {
+    const classId = await makeClass(5);
+    const added = (await expectApplied(
+      await post(ownerToken, { classId, studentId: studentIds[1] }),
+      201,
+    )) as { id: string };
+    const before = await prisma.registration.findUniqueOrThrow({ where: { id: added.id } });
+
+    const again = await post(ownerToken, { classId, studentId: studentIds[1] });
+
+    expect(await expectUnchanged(again)).toEqual({ id: added.id, status: 'registered' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: added.id } });
+    expect(after.updatedAt).toEqual(before.updatedAt);
+    expect(await prisma.registration.count({ where: { classId } })).toBe(1);
+  });
+
+  /**
+   * The last seat, which is what the order of the checks is for: the holder's
+   * retry finds its own booking before it finds the class full, and a student
+   * without one finds the class full.
+   */
+  it('answers the holder of the last seat as unchanged and the next student as full', async () => {
+    const classId = await makeClass(1);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    await expectApplied(await post(studentTokens[0]!, { classId }), 201);
+
+    await expectUnchanged(await post(studentTokens[0]!, { classId }));
+    await expectRefusal(await post(studentTokens[1]!, { classId }), 'CLASS_FULL');
+
+    expect(await prisma.registration.count({ where: { classId } })).toBe(1);
+  });
+
+  /**
+   * Cancelling a class leaves its registrations `registered`, so the booking
+   * check would find this student's seat. The cancellation is checked first:
+   * the class being off is what the student needs to hear.
+   */
+  it('tells a booked student retrying on a cancelled class that it was cancelled', async () => {
+    const classId = await makeClass(5);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    await expectApplied(await post(studentTokens[0]!, { classId }), 201);
+    const { calendarEntryId } = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntryId: true },
+    });
+    await prisma.calendarEntry.update({
+      where: { id: calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
+
+    await expectRefusal(await post(studentTokens[0]!, { classId }), 'CLASS_CANCELLED');
+  });
+
+  it('refuses a student booking into a class that is not taking bookings', async () => {
+    const classId = await makeClass(5);
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    await expectRefusal(await post(studentTokens[0]!, { classId }), 'CLASS_NOT_BOOKABLE');
+    expect(await prisma.registration.count({ where: { classId } })).toBe(0);
+  });
+
+  /**
+   * The one test that can see the booking check placed above the ownership
+   * check: the student already holds a seat in the other teacher's class, so a
+   * check that ran first would tell this teacher "unchanged" about a class
+   * they do not teach.
+   */
+  it("refuses another teacher's class even when the student already holds a seat in it", async () => {
+    const classId = await makeOtherTeacherClass(5, '11:00');
+    const held = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+
+    const res = await post(ownerToken, { classId, studentId: studentIds[0] });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { outcome?: unknown };
+    expect(body.outcome).toBeUndefined();
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: held.id } });
+    expect(after.updatedAt).toEqual(held.updatedAt);
   });
 
   it('teacher adds before class respect capacity — not walk-ins', async () => {
@@ -363,7 +465,7 @@ describe('POST /api/registrations', () => {
     // Full class + far from start: the owner's add is a normal registration
     // and must NOT silently bypass capacity.
     const add = await post(ownerToken, { classId, studentId: studentIds[1] });
-    expect(add.status).toBe(409);
+    await expectRefusal(add, 'CLASS_FULL');
   });
 
   it('allows the owner to add a walk-in beyond capacity during class', async () => {
@@ -387,9 +489,8 @@ describe('POST /api/registrations', () => {
     const readJson = (await read.json()) as { data: { isWalkIn: boolean } };
     expect(readJson.data.isWalkIn).toBe(true);
 
-    // Students still cannot register into a running class.
-    const student = await post(studentTokens[0]!, { classId });
-    expect(student.status).toBe(409);
+    // A student already booked into the running class is answered as booked.
+    await expectUnchanged(await post(studentTokens[0]!, { classId }));
   });
 
   /**
@@ -582,9 +683,7 @@ describe('POST /api/registrations', () => {
 
     // Pre-fix: 201. The server read `status: 'open'` before the lock, could not
     // see the uncommitted cancellation, and booked a cancelled class.
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toBe('Cannot register for a class with status "cancelled"');
+    await expectRefusal(res, 'CLASS_CANCELLED');
     expect(await prisma.registration.count({ where: { classId } })).toBe(0);
   });
 
@@ -626,9 +725,7 @@ describe('POST /api/registrations', () => {
 
     // Pre-fix: 201. The count was fresh (1) but was compared against the stale
     // cap of 2, so the second booking fit a class that now holds one.
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Class is full');
+    await expectRefusal(res, 'CLASS_FULL');
     expect(await prisma.registration.count({ where: { classId } })).toBe(1);
   });
 
@@ -1226,13 +1323,9 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
       body: JSON.stringify({ status: 'attended' }),
     });
-    expect(res.status).toBe(409);
-    // The MESSAGE, not just the code. The defect this replaced was a refusal
-    // whose reason never reached the teacher, so a 409 with unhelpful copy
-    // would be only half a fix — and swapping the two `respondError` bodies in
-    // the route is otherwise green.
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('once the class has started');
+    // The code, not just the status: the defect this replaced was a refusal
+    // whose reason never reached the teacher, and the code is what names it.
+    await expectRefusal(res, 'CLASS_NOT_STARTED');
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
     expect(after.status).toBe('late_cancel');
   });
@@ -1253,7 +1346,7 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
       body: JSON.stringify({ status: 'no_show' }),
     });
-    expect(res.status).toBe(409);
+    await expectRefusal(res, 'CLASS_NOT_STARTED');
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
     expect(after.status).toBe('late_cancel');
   });
@@ -1312,7 +1405,7 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
       body: JSON.stringify({ status: 'attended' }),
     });
-    expect(res.status).toBe(409);
+    await expectRefusal(res, 'REGISTRATION_CANCELLED');
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
     expect(after.status).toBe('cancelled');
   });
@@ -1333,7 +1426,7 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
       body: JSON.stringify({ status: 'attended' }),
     });
-    expect(res.status).toBe(409);
+    await expectRefusal(res, 'CLASS_CANCELLED');
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
     expect(after.status).toBe('registered');
   });
@@ -1365,6 +1458,91 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
     expect(res.status).toBe(200);
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
     expect(after.status).toBe('no_show');
+  });
+
+  function putStatus(token: string, id: string, status: string): Promise<Response> {
+    return fetch(`${BASE_URL}/api/registrations/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  it('answers a repeated attendance mark as unchanged, without rewriting the row', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+    await expectApplied(await putStatus(ownerToken, reg.id, 'attended'));
+    const before = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+
+    const again = await putStatus(ownerToken, reg.id, 'attended');
+
+    expect(await expectUnchanged(again)).toEqual({ id: reg.id, status: 'attended' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('attended');
+    expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+
+  /**
+   * The undo tap on a late cancel the teacher had marked present, arriving
+   * after the class is back to what it asks for. Nothing to write.
+   */
+  it('answers a late cancel re-marked as late cancel as unchanged while the class is open', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+    });
+
+    const res = await putStatus(ownerToken, reg.id, 'late_cancel');
+
+    expect(await expectUnchanged(res)).toEqual({ id: reg.id, status: 'late_cancel' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('late_cancel');
+    expect(after.updatedAt).toEqual(reg.updatedAt);
+  });
+
+  it('applies a different status to a row already marked', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'attended', tierAtBooking: 3 },
+    });
+
+    const res = await putStatus(ownerToken, reg.id, 'no_show');
+
+    expect(await expectApplied(res)).toEqual({ id: reg.id, status: 'no_show' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('no_show');
+  });
+
+  it('tells the teacher the class was cancelled before it compares statuses', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'attended', tierAtBooking: 3 },
+    });
+    const { calendarEntryId } = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntryId: true },
+    });
+    await prisma.calendarEntry.update({
+      where: { id: calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
+
+    await expectRefusal(await putStatus(ownerToken, reg.id, 'attended'), 'CLASS_CANCELLED');
+  });
+
+  it("refuses another teacher's attendance mark even when the status already matches", async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'attended', tierAtBooking: 3 },
+    });
+
+    const res = await putStatus(otherTeacherToken, reg.id, 'attended');
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { outcome?: unknown };
+    expect(body.outcome).toBeUndefined();
   });
 });
 
@@ -1502,14 +1680,12 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
   it('broadcasts one spot_available set when the same cancel arrives twice at once', async () => {
     const { classId, registrationId } = await makeBroadcastFixture(0);
 
-    // The two plain fetches in Promise.all serialised on the first run —
-    // the second request landed after the first committed, so its PRE-CHECK
-    // (not the guard under test) returned the 409 and the test passed green
-    // against the bug. The deterministic lever from Task 1 fixes that: a
-    // holder takes the registration row lock BEFORE either request runs, so
-    // both pass the pre-check (uncommitted state is invisible under READ
-    // COMMITTED) and both park on the lock at the write — the interleaving
-    // a plain Promise.all cannot force.
+    // Two plain fetches in Promise.all serialise: the second lands after the
+    // first committed and is answered by its PRE-CHECK, not by the guard
+    // under test. A holder takes the registration row lock BEFORE either
+    // request runs, so both pass the pre-check (uncommitted state is
+    // invisible under READ COMMITTED) and both park on the lock at the
+    // write — the interleaving a plain Promise.all cannot force.
     const holder = new PrismaClient();
     let release!: () => void;
     let locked!: () => void;
@@ -1539,30 +1715,31 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
 
     // The lever is asserted, not assumed. Without this, a slow route compile
     // or a loaded machine lets both requests finish BEFORE the release, the
-    // second one 409s off its own pre-check instead of the guard under test,
-    // and the whole test goes green against the bug — which is exactly how
-    // this block's first draft passed before the fix existed.
+    // second one is answered off its own pre-check instead of the guard
+    // under test, and the whole test goes green against the bug.
     expect(settled).toBe(false);
     release();
     await holding;
     const [a, b] = await both;
     await holder.$disconnect();
 
-    // Asserted before the status pair, deliberately: the doubled broadcast is
+    // Asserted before the answers, deliberately: the doubled broadcast is
     // the defect — every waiting student notified twice for one freed seat —
-    // and this is the assertion whose failure message names it. With the
-    // statuses first, removing the guard fails on `[200, 200]`, which reports
-    // that two cancels succeeded without saying what that cost anyone.
+    // and this is the assertion whose failure message names it.
     const notifications = await prisma.notification.findMany({
       where: { relatedClassId: classId, recipientId: waiterId, type: 'spot_available' },
     });
     expect(notifications).toHaveLength(1);
 
-    // Either request can win, so the loser is identified rather than assumed.
-    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    // Either request can win; the other finds the booking already cancelled.
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const outcomes = await Promise.all(
+      [a, b].map(async (r) => ((await r.json()) as { outcome?: unknown }).outcome),
+    );
+    expect(outcomes.filter((o) => o === 'unchanged')).toHaveLength(1);
   });
 
-  it('409s the loser when two late cancels race', async () => {
+  it('answers the loser of two racing late cancels as unchanged', async () => {
     // The late-cancel branch, which the fixture above cannot reach — it places
     // `now` BEFORE the deadline on purpose, so both its cases take the
     // full-cancel path. This branch shipped without its scope for exactly that
@@ -1572,9 +1749,9 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     // An earlier version of this test was called "does not let a raced late
     // cancel rewrite a free cancel into a charged one" and could not fail
     // against that: narrowing the guard to `notIn: ['late_cancel']` leaves the
-    // money bug live and still produces [200, 409] here, because both racers
-    // start from `registered`. The money case needs a different starting
-    // state, and it is the test below.
+    // money bug live and still produces one applied and one unchanged answer
+    // here, because both racers start from `registered`. The money case needs
+    // a different starting state, and it is the test below.
     const classId = await makeLateCancelClass(5, 20);
     const created = await post(studentTokens[0]!, { classId });
     const { data } = (await created.json()) as { data: { id: string } };
@@ -1605,9 +1782,13 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const [a, b] = await both;
     await holder.$disconnect();
 
-    // One cancel, one refusal — the contract the full-cancel branch already
+    // One cancel, one unchanged answer — the contract the full-cancel branch
     // honours, asserted here so the two branches cannot drift apart.
-    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const outcomes = await Promise.all(
+      [a, b].map(async (r) => ((await r.json()) as { outcome?: unknown }).outcome),
+    );
+    expect(outcomes.filter((o) => o === 'unchanged')).toHaveLength(1);
 
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: data.id } });
     expect(after.status).toBe('late_cancel');
@@ -1622,11 +1803,11 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     //
     // Two racing late cancels cannot show this — they both start from
     // `registered`, so a guard that only excludes `late_cancel` still answers
-    // [200, 409]. The starting state has to be `cancelled`, and it has to
-    // arrive while the student's write is already parked, or the pre-check
-    // catches it and the CAS is never reached. So the holder takes the row,
-    // lets the student's request park on it, and only then commits the free
-    // cancel.
+    // one applied and one unchanged. The starting state has to be `cancelled`,
+    // and it has to arrive while the student's write is already parked, or
+    // the pre-check catches it and the CAS is never reached. So the holder
+    // takes the row, lets the student's request park on it, and only then
+    // commits the free cancel.
     const classId = await makeLateCancelClass(5, 40);
     const created = await post(studentTokens[0]!, { classId });
     const { data } = (await created.json()) as { data: { id: string } };
@@ -1668,21 +1849,30 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: data.id } });
     expect(after.status).toBe('cancelled');
 
-    expect(res.status).toBe(409);
+    // The student's goal — their booking cancelled — holds, and free.
+    expect(await expectUnchanged(res)).toEqual({ id: data.id, status: 'cancelled' });
   }, 20_000);
 
-  it('409s a second cancel of a registration already cancelled', async () => {
-    const { registrationId } = await makeBroadcastFixture(10);
+  it('answers a second cancel of a registration already cancelled as unchanged', async () => {
+    const { classId, registrationId } = await makeBroadcastFixture(10);
 
     const first = await fetch(`${BASE_URL}/api/registrations/${registrationId}`, {
       method: 'DELETE', headers: cookie(cancellerToken),
     });
-    expect(first.status).toBe(200);
+    await expectApplied(first);
 
     const second = await fetch(`${BASE_URL}/api/registrations/${registrationId}`, {
       method: 'DELETE', headers: cookie(cancellerToken),
     });
-    expect(second.status).toBe(409);
+    await expectUnchanged(second);
+
+    // The first cancel's broadcast and notice, once each.
+    expect(await prisma.notification.count({
+      where: { relatedClassId: classId, recipientId: waiterId, type: 'spot_available' },
+    })).toBe(1);
+    expect(await prisma.notification.count({
+      where: { relatedClassId: classId, recipientId: cancellerId, type: 'booking_cancelled' },
+    })).toBe(1);
   });
 });
 
@@ -1806,5 +1996,189 @@ describe('DELETE /api/registrations/[id] — the student is told their booking e
       where: { recipientType: 'teacher', recipientId: ownerId, relatedClassId: classId },
     });
     expect(teacherNotes.map((n) => n.type)).toEqual(['booking_confirmed']);
+  });
+});
+
+describe('DELETE /api/registrations/[id] — a booking already cancelled (#197)', () => {
+  function cancel(token: string, id: string): Promise<Response> {
+    return fetch(`${BASE_URL}/api/registrations/${id}`, {
+      method: 'DELETE',
+      headers: cookie(token),
+    });
+  }
+
+  async function cancelClass(classId: string): Promise<void> {
+    const { calendarEntryId } = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntryId: true },
+    });
+    await prisma.calendarEntry.update({
+      where: { id: calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
+  }
+
+  function notices(classId: string, type: 'booking_cancelled' | 'booking_removed'): Promise<number> {
+    return prisma.notification.count({
+      where: { relatedClassId: classId, recipientType: 'student', type },
+    });
+  }
+
+  it("answers a student's second cancel as unchanged, and sends no second notice", async () => {
+    const classId = await makeClass(5);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    const booked = (await expectApplied(await post(studentTokens[0]!, { classId }), 201)) as {
+      id: string;
+    };
+    await expectApplied(await cancel(studentTokens[0]!, booked.id));
+    const before = await prisma.registration.findUniqueOrThrow({ where: { id: booked.id } });
+
+    const again = await cancel(studentTokens[0]!, booked.id);
+
+    expect(await expectUnchanged(again)).toEqual({ id: booked.id, status: 'cancelled' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: booked.id } });
+    expect(after.cancelledAt).toEqual(before.cancelledAt);
+    expect(await notices(classId, 'booking_cancelled')).toBe(1);
+  });
+
+  it('answers a student who cancelled late and cancels again as unchanged', async () => {
+    // A distinct offset: `makeLateCancelClass`'s docblock says why each caller needs one.
+    const classId = await makeLateCancelClass(5, 80);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    const booked = (await expectApplied(await post(studentTokens[0]!, { classId }), 201)) as {
+      id: string;
+    };
+    expect(await expectApplied(await cancel(studentTokens[0]!, booked.id))).toEqual({
+      id: booked.id,
+      status: 'late_cancel',
+    });
+    const before = await prisma.registration.findUniqueOrThrow({ where: { id: booked.id } });
+
+    const again = await cancel(studentTokens[0]!, booked.id);
+
+    expect(await expectUnchanged(again)).toEqual({ id: booked.id, status: 'late_cancel' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: booked.id } });
+    expect(after.cancelledAt).toEqual(before.cancelledAt);
+    expect(await notices(classId, 'booking_cancelled')).toBe(1);
+  });
+
+  it("answers a teacher's second cancel as unchanged, and sends no second notice", async () => {
+    const classId = await makeClass(5);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    const booked = (await expectApplied(await post(studentTokens[1]!, { classId }), 201)) as {
+      id: string;
+    };
+    await expectApplied(await cancel(ownerToken, booked.id));
+
+    const again = await cancel(ownerToken, booked.id);
+
+    expect(await expectUnchanged(again)).toEqual({ id: booked.id, status: 'cancelled' });
+    expect(await notices(classId, 'booking_removed')).toBe(1);
+  });
+
+  /**
+   * A teacher's cancel is a free one. A row the student already cancelled late
+   * is still charged, so the teacher's request is not what the row says, and
+   * is refused rather than reported done.
+   */
+  it('refuses a teacher cancelling a late cancel for free: the student stays charged', async () => {
+    const classId = await makeClass(5);
+    const reg = await prisma.registration.create({
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'late_cancel',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
+    });
+
+    await expectRefusal(await cancel(ownerToken, reg.id), 'ALREADY_LATE_CANCELLED');
+
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('late_cancel');
+    expect(after.updatedAt).toEqual(reg.updatedAt);
+    expect(await notices(classId, 'booking_removed')).toBe(0);
+  });
+
+  it('tells a student their class was cancelled, even when their booking is cancelled too', async () => {
+    const classId = await makeClass(5);
+    const reg = await prisma.registration.create({
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'cancelled',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
+    });
+    await cancelClass(classId);
+
+    await expectRefusal(await cancel(studentTokens[0]!, reg.id), 'CLASS_CANCELLED');
+  });
+
+  /**
+   * The booking check sits above the finished-class refusal: a cancel that
+   * already holds is answered as done whatever happened to the class since.
+   */
+  it('answers a cancelled booking on a class that has since finished as unchanged', async () => {
+    const classId = await makeClass(5);
+    const reg = await prisma.registration.create({
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'cancelled',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'completed' } });
+
+    expect(await expectUnchanged(await cancel(studentTokens[0]!, reg.id))).toEqual({
+      id: reg.id,
+      status: 'cancelled',
+    });
+  });
+
+  it('refuses to cancel a live booking on a class that has finished', async () => {
+    const classId = await makeClass(5);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'completed' } });
+
+    await expectRefusal(await cancel(studentTokens[0]!, reg.id), 'CLASS_TERMINAL');
+
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('registered');
+  });
+
+  it("refuses another teacher's cancel even when the booking is already cancelled", async () => {
+    const classId = await makeClass(5);
+    const reg = await prisma.registration.create({
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'cancelled',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
+    });
+
+    const res = await cancel(otherTeacherToken, reg.id);
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { outcome?: unknown };
+    expect(body.outcome).toBeUndefined();
+  });
+
+  it('answers a booking that does not exist with its code', async () => {
+    await expectRefusal(await cancel(studentTokens[0]!, randomUUID()), 'NOT_FOUND');
   });
 });
