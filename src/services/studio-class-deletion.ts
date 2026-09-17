@@ -1,3 +1,4 @@
+import type { ApiErrorCode } from '@/lib/api-error-codes';
 import { startOfLocalDay } from '@/lib/timezone';
 
 /**
@@ -159,7 +160,7 @@ export const STUDIO_CLASS_REMOVAL_FACTS_SELECT = {
  */
 export const STUDIO_CLASS_REFUSALS: Record<
   StudioClassRefusal,
-  { readonly message: string; readonly code: string }
+  { readonly message: string; readonly code: ApiErrorCode }
 > = {
   regenerates: {
     message:

@@ -37,6 +37,7 @@ vi.mock('./api-errors', async (importOriginal) => {
 import {
   respondOk,
   respondTyped,
+  respondUnchanged,
   respondError,
   requireSession,
   requireTeacher,
@@ -130,6 +131,27 @@ describe('respondTyped', () => {
   });
 });
 
+describe('respondUnchanged', () => {
+  it('answers 200 with the data and an unchanged outcome beside it', async () => {
+    const response = respondUnchanged<{ id: string }>({ id: 'abc' });
+
+    expect(response).toBeInstanceOf(NextResponse);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ data: { id: 'abc' }, outcome: 'unchanged' });
+  });
+
+  it('enforces an explicit type argument, as respondTyped does', () => {
+    const res = respondUnchanged<{ id: string }>({ id: 'valid' });
+    expect(res.status).toBe(200);
+
+    // @ts-expect-error — omitting <T> defaults T to never, rejecting any payload
+    respondUnchanged({ id: 'omitted-type-parameter' });
+
+    // @ts-expect-error — the payload must match T
+    respondUnchanged<{ id: string }>({ id: 1 });
+  });
+});
+
 describe('respondError', () => {
   it('returns NextResponse with { error: { message } } body and correct status', async () => {
     const response = respondError('Not found', 404);
@@ -142,13 +164,13 @@ describe('respondError', () => {
   });
 
   it('includes code when provided', async () => {
-    const response = respondError('Validation failed', 422, 'VALIDATION_ERROR');
+    const response = respondError('This class no longer exists.', 404, 'NOT_FOUND');
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(404);
 
     const body = await response.json();
     expect(body).toEqual({
-      error: { message: 'Validation failed', code: 'VALIDATION_ERROR' },
+      error: { message: 'This class no longer exists.', code: 'NOT_FOUND' },
     });
   });
 });

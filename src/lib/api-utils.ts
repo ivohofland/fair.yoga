@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
 import { classifyApiError } from './api-errors';
+import type { ApiErrorCode } from './api-error-codes';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
@@ -32,10 +33,20 @@ export function respondTyped<T = never>(data: NoInfer<T>, status = 200): NextRes
   return NextResponse.json({ data }, { status });
 }
 
+/**
+ * The answer to a request whose goal already holds: 200, no write, no side
+ * effect. `outcome` sits beside `data` rather than inside it, so a client that
+ * reads `data` sees the same shape as for an applied request. Typed like
+ * `respondTyped`: `T` must be given, and `data` is checked against it.
+ */
+export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
+  return NextResponse.json({ data, outcome: 'unchanged' }, { status: 200 });
+}
+
 export function respondError(
   message: string,
   status: number,
-  code?: string
+  code?: ApiErrorCode,
 ): NextResponse {
   return NextResponse.json({ error: { message, code } }, { status });
 }
