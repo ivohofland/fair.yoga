@@ -1,17 +1,16 @@
 import type { CodedRefusal } from '@/lib/api-error-codes';
 
 /**
- * The refusals that more than one door under this resource sends, each written
- * once. A teacher who publishes, completes or cancels a class that is gone —
- * or one that is off — is told the same thing whichever door they reached, and
- * each copy of one sentence is another chance for them to stop agreeing. The
- * same argument `src/app/api/invitations/[id]/shared.ts` was pulled out for.
+ * Refusals the doors under this resource draw on, each sentence written once
+ * so that no two of them can drift. A second copy is a second thing to keep in
+ * step, and it stops agreeing the first time only one of the two is reworded —
+ * the argument `src/app/api/invitations/[id]/shared.ts` was pulled out for.
  *
- * VALUES, not response factories like that file's, because the doors here need
- * the parts rather than a finished `Response`: each maps its service's own
- * refusal reasons through a table these sit in, and the cancel door decides
- * inside its transaction and answers outside it. `satisfies CodedRefusal`
- * checks each one's status against its own code.
+ * VALUES, not the response factories that file exports, because a caller here
+ * needs the parts rather than a finished `Response`: to index one by a
+ * service's refusal reason, or to carry one out of a transaction and answer it
+ * outside. `satisfies CodedRefusal` checks each one's status against its own
+ * code.
  *
  * Its own file rather than an export from a `route.ts`: Next's Route Handler
  * convention restricts what a `route.ts` may export to HTTP verbs plus a small

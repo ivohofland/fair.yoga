@@ -76,6 +76,10 @@ export const POST = withErrorHandler(async (
     // The service asks about cancellation before the state machine, so a
     // same-status refusal here is a live class already where it was asked to
     // be.
+    //
+    // `from`, which is the status read from the row — not `to`, which is the
+    // status the request carried. They are equal on this branch, and the row
+    // is what `newStatus` describes.
     if (result.from === result.to) {
       return respondUnchanged<TransitionApplied>({ ok: true, newStatus: result.from });
     }

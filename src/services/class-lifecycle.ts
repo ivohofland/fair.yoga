@@ -184,10 +184,9 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  *
  * A SUPERSET over two functions, not a contract either one satisfies alone.
  * Both `transitionClass` and `completeClass` declare `TransitionDbResult`, so
- * each sees a type wider than its own range. Enumerated in full, because an
- * earlier revision named only `NOT_ENDED_YET` and `STARTS_IN_PAST` and called
- * them "the mirror" — a tidy symmetry that does not hold. Named by axis
- * instead:
+ * each sees a type wider than its own range. Enumerated in full, by axis: the
+ * two ranges are not mirror images of one another, so nothing shorter than
+ * this describes them.
  *
  * - SHARED: `NOT_FOUND`, `ILLEGAL_TRANSITION` — both functions call
  *   `validateTransition`, `transitionClass` in the diagnostic read after a

@@ -59,8 +59,12 @@ export const POST = withErrorHandler(async (
     // Decided from the status `completeClass` read under its lock, after its
     // cancellation check — not from `cls` above, which a concurrent
     // completion can overtake while this request waits for the lock.
+    //
+    // `from`, which is the status read from the row — not `to`, which is the
+    // status the request carried. They are equal on this branch, and the row
+    // is what `newStatus` describes.
     if (result.from === result.to) {
-      return respondUnchanged<CompleteApplied>({ ok: true, newStatus: result.to });
+      return respondUnchanged<CompleteApplied>({ ok: true, newStatus: result.from });
     }
     return respondError(
       transitionRefusalMessage(result.from, result.to),
