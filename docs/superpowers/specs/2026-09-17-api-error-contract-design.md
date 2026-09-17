@@ -16,7 +16,7 @@ but almost every number and one structural claim has moved.
 |---|---|
 | "Eighteen API endpoints" in the conflict family | **232** state-dependent error rows across **59** mutating pairs with a client caller (§2). **47** of those rows are reachable by the user's own retry. |
 | "Only 4 of the 18 pass a machine-readable code" | **96 of 232** rows carry a code; **50** distinct code strings, every one local to its route. |
-| "`readErrorMessage` discards codes entirely" | Still true, and `readErrorMessage` has 38 caller files. But a code-aware helper, `readError` (`src/lib/client-errors.ts:30`), **already exists** — #197's piece 2 is half built. Two client files branch on a code at all (`set-up-student-side.tsx` via `readError`, `share-room-button.tsx` by hand). |
+| "`readErrorMessage` discards codes entirely" | Still true, and **37** files import `readErrorMessage`. But a code-aware helper, `readError` (`src/lib/client-errors.ts:30`), **already exists** — #197's piece 2 is half built. Three client files branch on a code at all: `set-up-student-side.tsx` via `readError`, and `share-room-button.tsx` and `profile-setup-form.tsx` by parsing the body themselves with `code` typed `string`. |
 | `Invalid transition: cannot move from "open" to "open"…` | **Holds**, and the complete route sends the same shape for `completed → completed`. |
 | `Cannot undo: current status is "pending". Must be "paid".` — `payments.ts:158` | **Moved and widened**: now `… Must be "paid" or "not charged".` at `payments.ts:165`. |
 | `Cannot mark payment as paid: …` | **Holds** (`payments.ts:102`). Two more of the family exist: not-charged (`:200`) and remind (`:277`). The overdue variant (`:126`) belongs to `markPaymentOverdue`, which has no non-test caller and never reaches the wire. |
@@ -69,8 +69,12 @@ distinct strings.
 **Distinct codes: 50.** A lists 24 (one of them, `CLASS_NOT_ENDED_YET`,
 unreachable through its route); B adds 7 new ones (its eighth, `NOT_FOUND`,
 repeats A's); C adds 19 (18 on in-scope rows plus `NOT_YOUR_PROFILE`).
-24 + 7 + 19 = 50. `VALIDATION_ERROR` is a 51st string in `src/`, on an
-input-shape 400 and so outside the census.
+24 + 7 + 19 = 50. Re-derived independently from the source (every
+`respondError` third argument, constant, map and relay, expanded by hand where
+the type is `string`): 50, of which 40 are sent at 409, 4 at 503, 3 at 403, 2
+at 500 and 1 at 404 (40 + 4 + 3 + 2 + 1 = 50), and **no code is sent at two
+statuses**. `VALIDATION_ERROR` appears only in `api-utils.test.ts`, as a sample
+at 422; no production code sends it.
 
 **Uncoded 409s**, measured on this branch rather than taken from the census,
 because §4.2 makes them compile errors:
@@ -88,8 +92,14 @@ The `,?` matters — four of the uncoded calls are multi-line with a trailing
 comma, and a pattern that treats any comma after `409` as "a code follows"
 counts them as coded. Neither count sees a 409 passed through a variable (the
 transition route's status map, the cancel service's `httpStatus: 409 as
-const`, the template routes' `SLOT_TAKEN` maps); the compiler will, which is
-the census that matters for §4.2.
+const`, the template routes' `SLOT_TAKEN` maps); the compiler does, and that
+is the census that matters for §4.2. **Measured**, by temporarily giving
+`respondError` a 409-requires-a-code overload pair and running `tsc`: **28**
+call sites fail — the 26 above plus the two variable-status ones,
+`classes/[id]/cancel/route.ts:168` and `classes/[id]/transition/route.ts:85`
+(26 + 2 = 28) — and a 29th, `withErrorHandler`'s own call
+(`api-utils.ts:163`), which §4.3 resolves. The template routes' `SLOT_TAKEN` sites raise no
+error under the probe.
 
 **Rows verified by hand** before this spec relied on them: the capacity-before-
 duplicate order (`registrations/route.ts:175-189`); `claimSpot`'s
@@ -117,7 +127,7 @@ A new module with **no imports that cannot run in a browser**, so client
 components can import it.
 
 ```ts
-export type ApiErrorStatus = 400 | 403 | 404 | 409 | 422 | 429 | 500 | 503;
+export type ApiErrorStatus = 400 | 403 | 404 | 409 | 500 | 503;
 
 export const API_ERROR_STATUS = {
   NOT_FOUND: 404,
@@ -142,24 +152,30 @@ status union already is.
 with three kinds of exception, each named in §6's table:
 
 - **Retired**, because §5 turns its every site into a 2xx: `ALREADY_SHARED`,
-  `ALREADY_STUDENT`. Deleting the entry turns every remaining comparison
-  against it into a compile error, which is how the client branches in
-  `share-room-button.tsx` and `set-up-student-side.tsx` are found.
+  `ALREADY_STUDENT`. Deleting the entry turns a remaining comparison against
+  it into a compile error **only where the code is typed `ApiErrorCode`**.
+  `set-up-student-side.tsx` reads it through `readError` and is caught;
+  `share-room-button.tsx` and `profile-setup-form.tsx` type it `string` and
+  are not, so both move to `readError` first (§7).
 - **Renamed**, where a name only made sense inside one route and is ambiguous
   in a shared registry: `DUPLICATE` (teacher-rooms) → `ROOM_ALREADY_LISTED`.
   Its only readers are tests.
 - **Re-pointed**, where a site sends a code whose meaning is false for it:
   teacher-profile's ticket-path email collision sends `ACCOUNT_EXISTS`, not
-  `ALREADY_TEACHER` (§7).
+  `ALREADY_TEACHER` (§7); `PUT /api/invitations/[id]`'s email collision
+  ("Another of your contacts already uses this email address.") sends a new
+  `CONTACT_EMAIL_TAKEN`, not `ALREADY_INVITED`, which means "you already
+  invited this person".
+- **Not migrated:** `VALIDATION_ERROR`, which no production code sends; its
+  test is rewritten against a registered code.
 
 The inline `'ROOM_IN_USE'` literal at `teacher-rooms/[id]/route.ts:120` goes;
 `ROOM_IN_USE_CODE`/`ROOM_IN_USE_RACE_CODE` in `room-deletion.ts` become
 registry references.
 
-**Each existing code must be checked to have exactly one status before it
-moves in.** The census found none sent at two statuses, but it read for
-messages, not for this; the plan makes it an explicit step, and a code that
-does carry two is split rather than widened.
+**Each existing code has exactly one status** — checked for this purpose
+(§2), not inferred from the message census. A code found at two statuses
+later is split, not widened.
 
 ### 4.2 `respondError`
 
@@ -177,8 +193,13 @@ export function respondError(
 ): NextResponse;
 ```
 
-`ErrorStatus` is the union of every error status the app sends uncoded today
-(the compiler enumerates it; it is at least 400, 401, 403, 404, 429, 500, 503).
+`ErrorStatus` is `400 | 401 | 403 | 404 | 409 | 429 | 500 | 503` — every error
+status the app sends today, measured; no production code sends 422.
+
+Three sites widen a type the overloads cannot accept, and are narrowed: the
+transition route's reason map (`status: number`, `code: string`), the cancel
+route's `httpStatus` (an un-`const` `404` widens the union to `number`), and
+`STUDIO_CLASS_REFUSALS` (code typed `string`).
 
 - A 409 with no code matches neither overload.
 - A code with the wrong status fails the first overload. `NoInfer` is what makes
@@ -202,15 +223,15 @@ type ApiFailure =
 
 | Branch | Code |
 |---|---|
-| Terminal trigger (`That class can no longer be changed`) | `CLASS_TERMINAL` — already means exactly this at `classes/[id]/route.ts` |
+| Terminal trigger (`That class can no longer be changed`) | `CLASS_FROZEN` (new). Not `CLASS_TERMINAL`: this branch also classifies the frozen-schedule, completion-marker and rule-kind guards, so it means "a database guard refused a write to a frozen class", which is wider than `classes/[id]`'s "you tried to edit a finished or cancelled class". |
 | Escaped P2002 | `UNIQUE_CONFLICT` (new); message rewritten, §6 |
-| `ScheduleRule_teacher_slot_excl` | the existing code for "a template holds this weekday slot, holder unknown", if one exists with that exact meaning; otherwise new `RULE_SLOT_TAKEN`. The plan decides by reading the template routes' `SLOT_TAKEN` maps. |
-| `CalendarEntry_teacher_slot_excl` | same rule; otherwise new `ENTRY_SLOT_TAKEN` |
+| `ScheduleRule_teacher_slot_excl` | `RULE_SLOT_TAKEN` (new). The existing `TEMPLATE_SLOT_CONFLICT` and `STUDIO_TEMPLATE_SLOT_CONFLICT` carry the same sentence but each names the family that *asked*, which this branch cannot know. |
+| `CalendarEntry_teacher_slot_excl` | `ENTRY_SLOT_TAKEN` (new); no existing code means this |
 | Transient (503) | no code — unchanged |
 
 **No P2025 branch.** A blanket `P2025 → 404` would relabel a genuine bug — an
-update whose `where` is wrong — as "not found". §7 catches P2025 at the five
-sites where it means a row vanished, and nowhere else.
+update whose `where` is wrong — as "not found". §7.6 catches P2025 only at
+the sites where it means a row vanished.
 
 ### 4.4 `respondUnchanged`
 
@@ -243,7 +264,11 @@ export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
 - **#307**: the `catch` in `readError` calls `console.error` with the response
   status and URL before returning the fallback. `readErrorMessage` is
   reimplemented over `readError`, so it inherits the log and keeps its
-  signature for its 38 callers.
+  signature for the 37 files that import it.
+- `client-errors.ts` now value-imports `isApiErrorCode`. It stays safe for the
+  client bundle because `api-error-codes.ts` imports nothing, but
+  `src/lib/generation.ts`'s docblock names `client-errors.ts` as an example of
+  a module that value-imports nothing; that example is replaced.
 - New `src/lib/client-errors.test.ts` (§8), which is #307's acceptance.
 
 ## 5. What counts as already done
@@ -253,10 +278,21 @@ export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
 > A request whose goal the server can **prove** already holds answers **200
 > `outcome: 'unchanged'`**, performs no write, and has no side effect.
 > "Prove" means the stored state equals what the request asks for, **including
-> every value the request carries**. The check runs **after** authentication and
-> ownership — never before, or "unchanged versus 404" becomes an existence
-> oracle — and **before** any status, window or capacity refusal, so a retry is
-> never refused for a state its own first attempt created.
+> every value the request carries**.
+>
+> The check has a fixed place in the handler:
+>
+> 1. **Authentication and ownership.** Never after the check, or "unchanged
+>    versus 404" becomes an existence oracle.
+> 2. **Refusals that make the goal moot** — the class is cancelled, the
+>    payment is settled. A booked student retrying a booking on a class that
+>    has since been cancelled is told it was cancelled, not that the booking
+>    holds (cancelling a class leaves its registrations `registered`).
+> 3. **The unchanged check.**
+> 4. **Every other status, window or capacity refusal** — the class has
+>    started, the deadline has passed, the class is full. A retry is never
+>    refused for a state its own first attempt created, or for one that
+>    arrived after it without making its goal moot.
 
 A request that carries values the stored row does not match is not a retry of
 the request that created that row. Answering it `unchanged` would discard what
@@ -271,23 +307,24 @@ paragraph pointing there, beside the `FireAndForget` one.
 
 | Endpoint | `unchanged` when | Otherwise |
 |---|---|---|
-| `POST /api/classes/[id]/transition` | class already in the target status | `ILLEGAL_TRANSITION` per pair (§6.2), `CLASS_CANCELLED`, `CONCURRENT_MODIFICATION`, `NOT_FOUND` 404 |
-| `POST /api/classes/[id]/complete` | already `completed` | the route maps reasons to statuses and codes as the transition route does, instead of a blanket 409: `NOT_FOUND` **404**, `CLASS_CANCELLED`, `ILLEGAL_TRANSITION` |
+| `POST /api/classes/[id]/transition` | class already in the target status. `transitionClass` keeps returning `ILLEGAL_TRANSITION` for from = to, now carrying `from`, read under its lock; the **route** turns from = to into unchanged, after the cancelled check. | `CLASS_CANCELLED` (moot, first), `ILLEGAL_TRANSITION` per pair (§6.2), `CONCURRENT_MODIFICATION`, `CLASS_STARTS_IN_PAST`, `ROOM_ARCHIVED`, `NOT_FOUND` 404 |
+| `POST /api/classes/[id]/complete` | already `completed` — decided the same way, from `completeClass`'s `ILLEGAL_TRANSITION` result with `from`, so `autoCompleteClasses` and GDPR erasure (which also call `completeClass`) see no change | the route maps reasons to statuses and codes as the transition route does, instead of a blanket 409: `CLASS_CANCELLED`, `ILLEGAL_TRANSITION`, `NOT_FOUND` **404** |
 | `POST /api/classes/[id]/cancel` | already cancelled | `CLASS_NOT_CANCELLABLE` (started / finished), `NOT_FOUND` 404 |
-| `POST /api/payments/[id]/paid` | `paid` | `PAYMENT_WAIVED` (`not_charged`) |
+| `POST /api/payments/[id]/paid` | `paid` **with the same `method`** | `PAYMENT_WAIVED` (`not_charged`); `PAYMENT_ALREADY_PAID` (`paid` with a different method) |
 | `POST /api/payments/[id]/not-charged` | `not_charged` | `PAYMENT_ALREADY_PAID` (`paid`) |
-| `POST /api/payments/[id]/unpaid` | `pending` or `overdue` — both are "unpaid" to the teacher, and a reminder sweep can move `pending` to `overdue` between the two requests | none remains |
-| `POST /api/payments/[id]/remind` | inside the cooldown — a reminder was just sent, by this teacher or the sweep | `PAYMENT_SETTLED` (`paid` / `not_charged`) |
-| `POST /api/registrations` | an **active** registration for (class, student) exists. Checked after the roster and class-ownership gates, **before** the class-status and capacity checks. The P2002 catch (`:345`) re-reads and answers the same. | `CLASS_FULL`, `CLASS_NOT_BOOKABLE`, `CLASS_CANCELLED` |
-| `POST /api/waitlist/claim` | an active registration for (class, student) exists. Checked after the class-cancelled/not-open check, **before** the window, capacity and entry checks. | `CLASS_CANCELLED`, `CLASS_NOT_BOOKABLE`, `WAITLIST_FROZEN`, `CLAIM_NOT_OPEN`, `SPOT_TAKEN`, `NOT_ON_WAITLIST`, `NOT_FOUND` 404 |
-| `DELETE /api/registrations/[id]` (all three "already cancelled" sites) | already `cancelled` or `late_cancel` | `CLASS_TERMINAL` (per-action message) |
-| `DELETE /api/waitlist/[id]` | entry `removed` | `WAITLIST_ENTRY_INACTIVE` (`expired` / `promoted` / `claimed`); `NOT_FOUND` 404 |
+| `POST /api/payments/[id]/unpaid` | `pending` or `overdue` — both are "unpaid" to the teacher, and the hourly job's `markOverduePayments` can move `pending` to `overdue` between the two requests | none remains |
+| `POST /api/payments/[id]/remind` | inside the cooldown — a reminder was just sent, by this teacher or the sweep (both stamp `reminderSentAt`). The settled check stays **first** (moot). The body carries `reminderSentAt`, which the button reads. | `PAYMENT_SETTLED` (`paid` / `not_charged`) |
+| `POST /api/registrations` | an **active** registration for (class, student) exists. Order: roster and ownership gates → class cancelled → **this check** → class not bookable → capacity. The P2002 catch re-reads and answers the same. | `CLASS_CANCELLED` (moot, first), `CLASS_NOT_BOOKABLE`, `CLASS_FULL`, `STUDENT_ERASED` |
+| `POST /api/waitlist/claim` | an active registration for (class, student) exists. Order: class cancelled → **this check** → not open → window → capacity → entry. A successful claim writes the entry `promoted`; no client reads the claim body, so the unchanged body is `{ classId }`. | `CLASS_CANCELLED` (moot, first), `CLASS_NOT_BOOKABLE`, `WAITLIST_FROZEN`, `CLAIM_NOT_OPEN`, `SPOT_TAKEN`, `NOT_ON_WAITLIST`, `NOT_FOUND` 404 |
+| `DELETE /api/registrations/[id]` | **student:** stored `cancelled` or `late_cancel` — either satisfies "my booking is cancelled". **Teacher** (whose cancel writes `cancelled`, free): stored `cancelled` only. Order: ownership → class cancelled → **this check** → class finished. The two compare-and-swap sites re-read the row to decide. | `CLASS_CANCELLED` (moot, first); `ALREADY_LATE_CANCELLED` (teacher, stored `late_cancel`: the student stays charged); `CLASS_TERMINAL` (class finished); `NOT_FOUND` 404 (row gone at the re-read) |
+| `PUT /api/registrations/[id]` (attendance) | the stored status already equals the requested one — including a `late_cancel` request on a `late_cancel` row of a class not yet started, which today is refused | `CLASS_CANCELLED`, `CLASS_NOT_STARTED` (a late-cancelled row of a class not yet started, any other requested status), `REGISTRATION_CANCELLED` |
+| `DELETE /api/waitlist/[id]` | entry `removed`; `removeFromWaitlist`'s `NOT_WAITING` result gains the current status so the route can tell | `WAITLIST_ENTRY_INACTIVE` (`expired` / `promoted` / `claimed`); `NOT_FOUND` 404 |
 | `POST /api/rooms/[id]/publish` | already shared (both sites) | — |
-| `POST /api/teacher-rooms` | a **non-archived** link exists whose `capacityOverride`, `rentalRate` and `equipmentNotes` equal the request's effective values (both sites) | `ROOM_ALREADY_LISTED` (values differ), `ROOM_ARCHIVED` (link archived) |
+| `POST /api/teacher-rooms` | a **non-archived** link exists whose `capacityOverride` and `equipmentNotes` (each compared as `?? null`) and `rentalRate` (the request's value rounded to 2 decimals, the column being `Decimal(10,2)`) equal the stored ones (both sites) | `ROOM_ALREADY_LISTED` (values differ), `ROOM_ARCHIVED` (link archived) |
 | `POST /api/account/student-profile` | the session already has a live student side; or the create collides on `accountId` or (session path) `email` — under #623's live-only index that proves a live student side, re-read to return its id. The session path's names come from the teacher row, not from the user, so no value comparison is needed. | ticket path: `ACCOUNT_EXISTS` |
-| `POST /api/account/teacher-profile` | a live teacher side exists (pre-check, or a session-path collision on `accountId`/`email`/`pageSlug`, re-read) **and** its `firstName`, `lastName`, `bio`, `pageSlug` and effective `defaultTimezone` equal the request's | `ALREADY_TEACHER` (values differ); `SLUG_TAKEN` (slug held by another teacher); ticket path: `ACCOUNT_EXISTS` |
-| `POST /api/students` (invite) | a `pending` invitation for (teacher, email) exists with the same `firstName` and `lastName`; answers its id | `ALREADY_INVITED` (names differ), `ALREADY_LINKED`, `DECLINED`, `CONTACT_CHANGED` |
-| `POST /api/invitations/[id]/respond` | the invitation's status already equals the requested answer — and, for `accept`, the teacher link is live. The service's `NOT_PENDING` result gains the current status so the route can tell. | `ALREADY_ANSWERED`, `STUDENT_ERASED`, `NOT_FOUND` 404 |
+| `POST /api/account/teacher-profile` | **session path only:** a live teacher side exists (pre-check, or a collision on `accountId`/`email`/`pageSlug`, re-read) **and** its `firstName`, `lastName`, `bio`, `pageSlug` and effective `defaultTimezone` equal the request's | `ALREADY_TEACHER` (values differ); `SLUG_TAKEN` (slug held by another teacher); ticket path: `ACCOUNT_EXISTS` (only `email` can collide there — the account is created in the same statement) |
+| `POST /api/students` (invite) | a `pending` invitation for (teacher, email) exists with the same `firstName` and `lastName` — at the pre-check, and at the create-race catch by re-reading the winner; answers its id | `ALREADY_INVITED` (names differ), `ALREADY_LINKED`, `DECLINED`, `CONTACT_CHANGED` |
+| `POST /api/invitations/[id]/respond` | **accept:** already answers 200 on a repeat (the compare-and-swap misses, the re-read finds `accepted`); it becomes unchanged when that happens **and** `linkTeacherStudent` reports `'already-linked'` (a missed swap that restores a link is an ordinary 200). **Decline:** after a missed swap, a re-read finds `declined`. | `ALREADY_ANSWERED` (decline of an accepted row); `STUDENT_ERASED`; `NOT_FOUND` 404 (row gone at the re-read) |
 
 Retired by this table: `ALREADY_SHARED`, `ALREADY_STUDENT`. `ALREADY_TEACHER`
 and `ALREADY_INVITED` stay, narrowed to "differs from what you sent".
@@ -305,9 +342,9 @@ delete; a component reading some other endpoint's 404 must not borrow it.
 
 **Concurrent twins too.** A double-click sends both DELETEs before either
 commits; both pass the existence read and the loser's `delete` throws P2025.
-At rooms and teacher-rooms that is a 500 today (§7). Every group-(ii) door's
-concurrent path must answer `NOT_FOUND`; the plan verifies each door rather
-than assuming the three not named here are already safe.
+At rooms and teacher-rooms that is a 500 today (§7). Studio-class DELETE
+already handles its P2025, untested. Every group-(ii) door's concurrent path
+must answer `NOT_FOUND`, each with a test.
 
 ### 5.4 Group (iii) — creates that meet their twin
 
@@ -353,7 +390,7 @@ a refusal (§5.2).
 
 | Door | Current | Replacement | Status · code |
 |---|---|---|---|
-| transition (route read) | `Class not found` | This class no longer exists. | 404 · `NOT_FOUND` |
+| transition, complete, cancel (each route's own read); `PUT /api/classes/[id]` (both reads) | `Class not found` | This class no longer exists. | 404 · `NOT_FOUND` |
 | transition (service) | `Class not found: ${classId}` | This class no longer exists. | 404 · `NOT_FOUND` |
 | transition, complete | `Class ${classId} is cancelled` | This class has been cancelled. | 409 · `CLASS_CANCELLED` |
 | transition, complete | `Invalid transition: cannot move from "${from}" to "${to}". Valid transitions from "${from}": [...]` | from = to → unchanged; otherwise the table below | 409 · `ILLEGAL_TRANSITION` |
@@ -364,10 +401,13 @@ a refusal (§5.2).
 | cancel | `Class not found` (404, service re-read) | This class no longer exists. | 404 · `NOT_FOUND` |
 | `PUT /api/classes/[id]` | `Cannot update economic fields when settings are locked: ${fields}` | Prices and capacity are locked once the first student books. | 409 · `SETTINGS_LOCKED` |
 | `PUT /api/classes/[id]` | `Cannot edit a class that is ${state}` | `completed`: This class has finished and can no longer be changed. · cancelled: This class has been cancelled and can no longer be changed. | 409 · `CLASS_TERMINAL` |
-| `POST /api/classes` (both sites), `POST /api/class-templates`, `PUT /api/class-templates/[id]` | `Invalid teacher room` | That room isn't on your list any more. | 400 · `ROOM_NOT_ON_LIST` |
-| `POST /api/class-templates` (FK race) | `This room is archived.` for a **deleted** room | re-read as PUT does (#231): deleted → the `ROOM_NOT_ON_LIST` row above; archived → unchanged wording | 400 / 409 · `ROOM_NOT_ON_LIST` / `ROOM_ARCHIVED` |
-| `PATCH` on both template families | `Unarchive the template before activating it` | Wording per §6.1 rule 6 (the plan reads the label the recurring-class settings use); meaning unchanged | 409 · `TEMPLATE_ARCHIVED` |
+| `POST /api/classes` (both sites), `POST /api/class-templates`, `PUT /api/class-templates/[id]` (three sites) | `Invalid teacher room` | That room is no longer in your rooms. | 400 · `ROOM_NOT_ON_LIST` |
+| `POST /api/class-templates` (FK race) | `This room is archived.` for a **deleted** room | the same re-read PUT does (#231), with its three outcomes: deleted → the `ROOM_NOT_ON_LIST` row above; archived → today's wording, `ROOM_ARCHIVED`; open again → PUT's 503 | 400 / 409 / 503 · `ROOM_NOT_ON_LIST` / `ROOM_ARCHIVED` / `TEMPLATE_BUSY` |
+| `PATCH` on class templates | `Unarchive the template before activating it` | Unarchive this recurring class before resuming it. | 409 · `TEMPLATE_ARCHIVED` |
+| `PATCH` on studio templates | `Unarchive the template before activating it` | Unarchive this studio class before resuming it. | 409 · `TEMPLATE_ARCHIVED` |
 | `withErrorHandler` P2002 fallback | `Resource already exists` | That already exists. Refresh to see the latest. | 409 · `UNIQUE_CONFLICT` |
+| `withErrorHandler` frozen-class fallback | `That class can no longer be changed` | wording kept | 409 · `CLASS_FROZEN` |
+| `withErrorHandler` slot fallbacks (rule, entry) | today's two sentences | wording kept | 409 · `RULE_SLOT_TAKEN`, `ENTRY_SLOT_TAKEN` |
 
 `ILLEGAL_TRANSITION`, per (from, to) — `VALID_TRANSITIONS` has 4 × 4 = 16
 cells: 4 are from = to (unchanged), 3 are valid, and the 9 below are refused.
@@ -382,14 +422,18 @@ The message comes from one function with an exhaustive `switch` on `from` and a
 | `in_progress` | `draft`, `open` | This class has already started. |
 | `completed` | `draft`, `open`, `in_progress` | This class has already finished. |
 
-(2 + 1 + 1 + 2 + 3 = 9 ✓.)
+(2 + 1 + 1 + 2 + 3 = 9 ✓.) The `open → completed` cell cannot be reached
+today — the transition schema has no `completed` target, and `completeClass`
+finishes an open class directly — but the `switch` covers every cell so that a
+new status fails to compile.
 
 **Payments**
 
 | Door | Current | Replacement | Status · code |
 |---|---|---|---|
-| paid, unpaid, not-charged, remind | `Payment not found: ${paymentId}` (sent as **409**) | This payment no longer exists. | **404** · `NOT_FOUND` |
-| paid | `Cannot mark payment as paid: current status is "${status}". Must be "pending" or "overdue".` | `paid` → unchanged · `not_charged`: This payment was marked not charged. Put it back to unpaid first. | 409 · `PAYMENT_WAIVED` |
+| paid, unpaid, not-charged, remind (each route's own read) | `Payment not found` | This payment no longer exists. | 404 · `NOT_FOUND` |
+| paid, unpaid, not-charged, remind (service) | `Payment not found: ${paymentId}` (sent as **409**) | This payment no longer exists. No code in `src/` deletes a `Payment`, so no request can reach this; it is pinned at the service. | **404** · `NOT_FOUND` |
+| paid | `Cannot mark payment as paid: current status is "${status}". Must be "pending" or "overdue".` | `paid` with the same method → unchanged · `paid` with another method: This payment is already marked paid. · `not_charged`: This payment was marked not charged. Put it back to unpaid first. | 409 · `PAYMENT_ALREADY_PAID` / `PAYMENT_WAIVED` |
 | not-charged | `Cannot mark as not charged: current status is "${status}". Must be "pending" or "overdue".` | `not_charged` → unchanged · `paid`: This payment is already paid, so it can't be marked not charged. | 409 · `PAYMENT_ALREADY_PAID` |
 | unpaid | `Cannot undo: current status is "${status}". Must be "paid" or "not charged".` | → unchanged (`pending` / `overdue`) | — |
 | remind | `Cannot send a reminder: current status is "${status}". Must be "pending" or "overdue".` | This payment is already settled, so no reminder is needed. | 409 · `PAYMENT_SETTLED` |
@@ -406,9 +450,10 @@ The message comes from one function with an exhaustive `switch` on `from` and a
 | `POST /api/registrations` | `This student's account no longer exists` (teacher) / `This account has been deleted` (student) | wording kept, periods added | 409 · `STUDENT_ERASED` |
 | `PUT /api/registrations/[id]` | `Cannot record attendance on a cancelled class` | This class has been cancelled, so attendance can't be recorded. | 409 · `CLASS_CANCELLED` |
 | `PUT /api/registrations/[id]` | `Cannot record attendance on a cancelled registration` | This booking was cancelled, so attendance can't be recorded. | 409 · `REGISTRATION_CANCELLED` |
-| `PUT /api/registrations/[id]` | "You can mark them attended once the class has started." — also sent for a `no_show` request | names the status the request asked for (§7) | 409 as today · a code named for "attendance can't be recorded before the class starts"; the plan reuses an existing one only if its meaning is exactly that |
-| `DELETE /api/registrations/[id]` | `Cannot cancel a registration on a ${state} class` | This class has finished, so the booking can't be cancelled. (per state) | 409 · `CLASS_TERMINAL` |
-| `DELETE /api/registrations/[id]` ×3 | `Registration is already cancelled` | → unchanged | — |
+| `PUT /api/registrations/[id]` | `This student cancelled late. You can mark them attended once the class has started.` — sent for every requested status, `no_show` and a no-op `late_cancel` included | `late_cancel` requested → unchanged · otherwise: This student cancelled late. Attendance can be recorded once the class has started. | 409 · `CLASS_NOT_STARTED` (new) |
+| `DELETE /api/registrations/[id]` | `Cannot cancel a registration on a ${state} class`, class cancelled | This class has been cancelled. | 409 · `CLASS_CANCELLED` |
+| `DELETE /api/registrations/[id]` | the same template, class finished | This class has finished, so the booking can't be cancelled. | 409 · `CLASS_TERMINAL` |
+| `DELETE /api/registrations/[id]` ×3 | `Registration is already cancelled` | → unchanged (§5.2's per-requester rule) · teacher, stored `late_cancel`: This student already cancelled late, and the late-cancellation charge stands. · row gone at the re-read: This booking no longer exists. | 409 / 404 · `ALREADY_LATE_CANCELLED` (new) / `NOT_FOUND` |
 | `POST /api/waitlist` | `Cannot join the waitlist for a cancelled class` | This class has been cancelled. | 409 · `CLASS_CANCELLED` |
 | `POST /api/waitlist` | `Cannot join the waitlist for a class with status "${status}"` | This class isn't taking waitlist sign-ups. | 409 · `CLASS_NOT_BOOKABLE` |
 | `POST /api/waitlist` | `The class still has open spots — book directly instead` | The class still has open spots — book directly instead. | 409 · `CLASS_NOT_FULL` |
@@ -431,10 +476,10 @@ The message comes from one function with an exhaustive `switch` on `from` and a
 | `DELETE /api/rooms/[id]` | `Room not found` | This room no longer exists. | 404 · `NOT_FOUND` |
 | `DELETE /api/rooms/[id]` | P2025 on a concurrent twin → `Internal server error` | This room no longer exists. | 404 · `NOT_FOUND` |
 | publish ×2 | `This room is already shared` | → unchanged | — |
-| `POST /api/teacher-rooms` ×2 | `Teacher-room link already exists` | identical live link → unchanged · values differ: This room is already on your list. Edit it there to change its details. · link archived: This room is in your archived rooms. Unarchive it to use it again. | 409 · `ROOM_ALREADY_LISTED` / `ROOM_ARCHIVED` |
-| teacher-rooms PUT, PATCH, DELETE | `Teacher-room not found` | This room is no longer on your list. | 404 · `NOT_FOUND` |
-| teacher-rooms PUT, PATCH, DELETE | P2025 → `Internal server error` | This room is no longer on your list. | 404 · `NOT_FOUND` |
-| teacher-rooms DELETE | `ROOM_DELETE_BLOCKED_MESSAGE` ("…cannot be deleted. Archive it instead.") for the UI's **Unlink** | a per-door message that names removing the room from your list, not deleting it | 409 · `ROOM_IN_USE` / `ROOM_IN_USE_RACE` |
+| `POST /api/teacher-rooms` ×2 | `Teacher-room link already exists` | identical live link → unchanged · values differ: This room is already in your rooms. Edit it there to change its details. · link archived: This room is in your archived rooms. Unarchive it to use it again. | 409 · `ROOM_ALREADY_LISTED` / `ROOM_ARCHIVED` |
+| teacher-rooms PUT, PATCH, DELETE | `Teacher-room not found` | This room is no longer in your rooms. | 404 · `NOT_FOUND` |
+| teacher-rooms PUT, PATCH (inside `room-archive.ts`, via its existing `not_found` result), DELETE | P2025 → `Internal server error` | This room is no longer in your rooms. | 404 · `NOT_FOUND` |
+| teacher-rooms DELETE | `ROOM_DELETE_BLOCKED_MESSAGE` ("…cannot be deleted. Archive it instead.") for the UI's **Unlink room** | This room is used by your classes, so it can't be unlinked. Archive it instead. | 409 · `ROOM_IN_USE` / `ROOM_IN_USE_RACE` |
 | teacher-rooms PATCH (archive) | inline `'ROOM_IN_USE'` | registry reference | 409 · `ROOM_IN_USE` |
 
 **Studio classes** — `DELETE /api/studio-classes/[id]`: `Studio class not
@@ -447,13 +492,16 @@ found` and `That class is already gone.` keep their wording and gain
 |---|---|---|---|
 | student-profile ×3 | `Account already has a student profile` | → unchanged | — |
 | teacher-profile (pre-check, session collision) | `Account already has a teacher profile` | identical → unchanged · otherwise: You already have a teacher page. Edit it in Settings. | 409 · `ALREADY_TEACHER` |
-| teacher-profile (ticket-path `email`/`accountId` collision) | `Account already has a teacher profile` · `ALREADY_TEACHER` | This email now has an account. Please sign in and add a teacher profile. (student-profile's wording) | 409 · `ACCOUNT_EXISTS` |
-| teacher-profile, `PUT /api/teachers/[id]` | `Page address already in use` / `Page slug already in use` | one message: That page address is already taken. | 409 · `SLUG_TAKEN` |
+| teacher-profile (ticket-path `email` collision) | `Account already has a teacher profile` · `ALREADY_TEACHER` | This email now has an account. Please sign in and add a teacher profile. (student-profile's wording) | 409 · `ACCOUNT_EXISTS` |
+| teacher-profile, `PUT /api/teachers/[id]` | `Page address already in use` / `Page slug already in use` | one message, in the settings form's own label ("Page slug"): That page slug is already taken. The signup form shows its own sentence and keeps it. | 409 · `SLUG_TAKEN` |
+| `PUT /api/teachers/[id]` | a concurrent slug change reaches the P2002 fallback (no catch) | the same catch the pre-check's code uses | 409 · `SLUG_TAKEN` |
 | respond | `Invitation not found` | This invitation no longer exists. | 404 · `NOT_FOUND` |
 | respond | `This invitation has already been answered` | same answer → unchanged · otherwise wording kept, period added | 409 · `ALREADY_ANSWERED` |
-| `invitations/[id]/shared.ts` `NOT_FOUND()` (PUT, DELETE, resend) | `Contact not found` | This contact no longer exists. | 404 · `NOT_FOUND` |
+| `invitations/[id]/shared.ts` `NOT_FOUND()` (PUT, PATCH, DELETE, resend) | `Contact not found` | This contact no longer exists. | 404 · `NOT_FOUND` |
+| `PATCH /api/invitations/[id]` | P2025 from an unguarded `update` on a row deleted after the read → `Internal server error` | `NOT_FOUND()` | 404 · `NOT_FOUND` |
 | `invitations/[id]/route.ts` (post-CAS re-read) | `This contact changed while you were working on it. Reload and try again.` | wording kept | 409 · `CONTACT_CHANGED` (the invite refusal's code; same meaning) |
-| `shared.ts` `DECLINED()` | `This person declined. You can archive this contact, but it cannot be removed.` — also sent for edit and resend | per door: remove keeps today's sentence; edit and resend each say what is refused for them | 409 · `DECLINED_IS_PERMANENT` |
+| `PUT /api/invitations/[id]` (P2002) | `Another of your contacts already uses this email address.` · `ALREADY_INVITED` | wording kept | 409 · `CONTACT_EMAIL_TAKEN` (new) |
+| `shared.ts` `DECLINED()` | `This person declined. You can archive this contact, but it cannot be removed.` — also sent for edit and resend | `DECLINED(door)`: remove keeps today's sentence · edit: This person declined, so their details can't be changed. You can archive this contact. · resend: This person declined, so the invitation can't be sent again. | 409 · `DECLINED_IS_PERMANENT` |
 | `shared.ts` `NOT_PENDING()` | `This person already accepted your invitation — they are now on your Students list. Reload to see them.` | drops the claim that they are on the list — an accepted row can outlive its link (census C, surprise 6) | 409 · `NOT_PENDING` |
 | `POST /api/students` | `You have already invited this person — open their contact to resend or update their details.` | same names → unchanged · otherwise wording kept | 409 · `ALREADY_INVITED` |
 | `DELETE /api/teacher-links/[teacherId]` | `Teacher link not found` | You're no longer connected to this teacher. (one answer for both causes, by design) | 404 · `NOT_FOUND` |
@@ -471,36 +519,56 @@ Each is a defect on a row or client this branch already touches.
 2. **teacher-profile's ticket-path collision** answers `ALREADY_TEACHER` — "You
    already teach here / There is already a teacher page for {email}" — for an
    account that may be student-only. Now `ACCOUNT_EXISTS`, as student-profile
-   already does. Untested today; gets a test.
+   already does. Untested today; gets a test. `profile-setup-form.tsx`'s
+   ticket-mode "You already teach here" panel becomes the `ACCOUNT_EXISTS`
+   panel — its sign-in content already fits that meaning — and session mode
+   keeps `AlreadyTeachingPanel` for `ALREADY_TEACHER`.
 3. **`SLUG_TAKEN`'s two messages** become one; the comment at
    `teachers-api.test.ts:131-133` claiming `profile-form` needs the code (it
-   never reads it) is corrected.
+   never reads it) is corrected; `PUT /api/teachers/[id]` gains the slug catch
+   it lacks.
 4. **`DECLINED_IS_PERMANENT` and `NOT_PENDING` copy** (§6.2).
-5. **POST class-templates' deleted-room race** (§6.2).
-6. **P2025 → 404 `NOT_FOUND`** at five sites: `claimSpot`'s
+5. **POST class-templates' deleted-room race** (§6.2). Neither it nor POST's
+   `Invalid teacher room` has a test today; both get one.
+6. **P2025 → 404 `NOT_FOUND`** at six sites: `claimSpot`'s
    `findUniqueOrThrow` (a class a template archive deleted); teacher-rooms PUT
-   and PATCH on a link deleted after the read; and the concurrent twin of the
-   rooms and teacher-rooms DELETEs. Each is a targeted catch using
-   `isRecordNotFound` (`api-errors.ts:311`). The 2026-08-11 retry-safe spec
-   (§2.2 legend) named the two DELETEs and assigned the wart to #197.
+   on a link deleted after the read; teacher-rooms PATCH, caught inside
+   `room-archive.ts`; `PATCH /api/invitations/[id]`'s `update`; and the
+   concurrent twin of the rooms and teacher-rooms DELETEs. Each is a targeted
+   catch using `isRecordNotFound` (`api-errors.ts:311`). The 2026-08-11
+   retry-safe spec (§2.2 legend) named the two DELETEs and assigned the wart to
+   #197.
 7. **Client handling.**
    - `join-as-student.tsx:26`'s `res.status !== 409` goes; it keys on `res.ok`.
+   - `share-room-button.tsx` and `profile-setup-form.tsx` read errors through
+     `readError`, so a code they compare against is typed (§4.1).
    - `teacher-privacy-card.tsx` maps every 403 to "no longer connected",
      including `NOT_YOUR_PROFILE`; it branches on `TEACHER_NOT_LINKED`. Its
      comment pointing at a deleted CRM-removal route is corrected.
    - `create-student-form.tsx:88` calls `res.json()` on an error response with
      no catch; it uses `readError`.
-   - `student-count-editor.tsx:65-66` renders its error without
-     `role="alert"`, so a screen reader never announces it; it gains one.
+   - `student-count-editor.tsx:65-66` and `waitlist-entry-actions.tsx:82`
+     render their errors without `role="alert"`, so a screen reader never
+     announces them; both gain one.
    - The `DELETE /api/invitations/[id]` comment calling the vanished-row case
      "the retry this route is meant to survive" becomes true at the client and
      is reworded to say where.
-8. **`PUT /api/registrations/[id]`** answers a `late_cancel → no_show` request
-   with "You can mark them **attended** once the class has started."
-9. **Component tests mocking bodies the server never sends**:
-   `mark-unpaid-button.test.tsx:208,227`, `outstanding-payment-row.test.tsx:414,517`,
-   `add-walk-in.test.tsx:204`. Each mock is replaced by the body the server now
-   sends.
+8. **`PUT /api/registrations/[id]`** answers every requested status on a
+   late-cancelled row of a class not yet started with "You can mark them
+   **attended** once the class has started." (§6.2).
+9. **Component tests mocking bodies the server never sends.** Each mock is
+   replaced by the body the server now sends; where the mocked state becomes
+   a 200 unchanged, the test asserts success instead.
+   - payments: `mark-unpaid-button.test.tsx:208,227`,
+     `outstanding-payment-row.test.tsx:414,517`;
+   - bookings: `add-walk-in.test.tsx:204`, `attendance-list.test.tsx:131-137`
+     (`code: 'CONFLICT'`);
+   - classes: the complete, publish, cancel (two) and studio-class delete
+     buttons' error mocks;
+   - rooms: `delete-room-button.test.tsx:125`, `archive-room-button.test.tsx:69`,
+     `share-room-button.test.tsx:195`;
+   - people: `contact-form.test.tsx:247-251`, `set-up-student-side.test.tsx:22-26`,
+     and `teacher-privacy-card.test.tsx`'s code-less 403 and 404 mocks.
 10. **#307.** §4.5.
 
 ## 8. Testing
@@ -542,19 +610,33 @@ Each is a defect on a row or client this branch already touches.
 - **Group (ii):** delete, delete again → 404 `NOT_FOUND`. For rooms and
   teacher-rooms, the concurrent twin too.
 - **P2025 sites:** claim with an unknown `classId` → 404 `NOT_FOUND`. The
-  teacher-rooms PUT/PATCH vanished-link race needs a deterministic interleave;
-  the plan uses an existing lock-hold harness if one fits and otherwise tests
-  at the narrowest seam that reaches the catch, and says which.
-- **Rewritten, not deleted:** `waitlist-api.test.ts:268-278` (pins the old
-  second-claim refusal); the comment at `registrations/route.test.ts:391-392`;
-  every existing prose assertion on a row in §6.2, which becomes a code
-  assertion.
+  races use the repo's existing "uncommitted holder" pattern
+  (`src/app/api/classes/route.test.ts`): call the handler directly in the
+  `unit` tier while a second connection holds an uncommitted delete of the row,
+  confirm the handler is parked with `pg_blocking_pids`, then commit. Such a
+  file carries the `@serial-tier lock-contention` marker and is listed in
+  `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`). `room-archive.ts` runs under a
+  2 s lock timeout, so its hold must end inside that or the answer is a 503;
+  its PATCH case can instead use the `$extends` lever `room-archive.test.ts`
+  already uses to run a competing write at a chosen query.
+- **Rewritten, not deleted:** every existing test whose answer this branch
+  changes — status flips (409 → 200 on a group-(i) replay), prose assertions
+  on a row in §6.2 (which become code assertions), and exact-string pins of
+  rewritten copy. The plan names each file and line per task; the fact-finding
+  behind it found them in `payments-api`, `payments.test`, `registrations`
+  (route and lock-order), `waitlist-api`, `classes-api`, `class-edit.spec`
+  (e2e), `account-api`, `erased-profile-restart`, `student-profile-ticket`,
+  `students-api`, `invitations-api`, `cas-scope`, the privacy lock-order test
+  and `passkey-api`.
 
 ### 8.4 Components
 
 For each touched client: an unchanged 200 renders as success; the deleting
 components render their own `NOT_FOUND` as done; any other code renders as an
-error. §7.9's mocks are replaced.
+error. §7.9's mocks are replaced. Touched clients with no test file today get
+one: `send-reminder-button`, `cancel-booking-button`, `waitlist-entry-actions`,
+`join-as-student` and `settings/profile-form`; `create-student-form` gets its
+first error-path test.
 
 ### 8.5 Prove each guard bites
 
@@ -636,6 +718,8 @@ compiles lazily — and integration runs target this worktree's own app
 - **Renaming or retiring a code breaks a reader outside the repo.** There is
   none: the API has no external clients.
 - **The overloads may fight inference at sites that build a response through
-  a helper** (`clearDeclinedTicketCookie`, `casMatchedNothing`). The plan's
-  first task is the type change alone, so the compiler's full site list exists
-  before any copy task starts.
+  a helper** (`clearDeclinedTicketCookie`, `casMatchedNothing`). The
+  compiler's full site list was taken before the plan was written (§2), so no
+  task discovers it late. The tightening itself is the plan's **last** task:
+  made first, it would force a code onto every row a later task turns into a
+  2xx, and those codes would exist only to be deleted.
