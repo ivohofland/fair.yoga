@@ -89,12 +89,37 @@ describe('LoginPage', () => {
     expect(passkeySignInMock).toHaveBeenCalledWith({ redirect: '/students/s-1' });
   });
 
+  it('accepts valid redirect of exactly 200 characters', () => {
+    const exact200 = '/' + 'a'.repeat(199);
+    searchParams = new URLSearchParams({ redirect: exact200 });
+    render(<LoginPage />);
+    expect(passkeySignInMock).toHaveBeenCalledWith({ redirect: exact200 });
+  });
+
+  it('preserves query parameters in valid redirect destination', async () => {
+    searchParams = new URLSearchParams({ redirect: '/account/privacy?tab=invitations' });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<LoginPage />);
+    expect(passkeySignInMock).toHaveBeenCalledWith({ redirect: '/account/privacy?tab=invitations' });
+
+    submit();
+    expect(await screen.findByText('Check your inbox for the link.')).toBeInTheDocument();
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ email: 'anna@example.com', redirect: '/account/privacy?tab=invitations' });
+  });
+
   it.each([
     ['protocol-relative URL', '//evil.com'],
     ['backslash path', '/\\evil.com'],
     ['absolute URL', 'https://evil.com'],
-    ['string exceeding 200 chars', '/' + 'a'.repeat(201)],
-  ])('omits unsafe redirect (%s: %s) from POST body and PasskeySignIn', async (_, unsafeRedirect) => {
+    ['control-whitespace tab', '/\t/evil.com'],
+    ['string of 201 chars', '/' + 'a'.repeat(200)],
+    ['auth loop /login', '/login'],
+    ['auth loop /verify', '/verify'],
+  ])('omits unsafe or looping redirect (%s: %s) from POST body and PasskeySignIn', async (_, unsafeRedirect) => {
     searchParams = new URLSearchParams({ redirect: unsafeRedirect });
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);

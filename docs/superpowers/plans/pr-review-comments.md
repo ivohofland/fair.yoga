@@ -1,172 +1,231 @@
-# Comment & Documentation Review: PR #597 (Issue #207)
+# PR Review: Comments & Docblocks — PR #633 (Issue #615)
 
-- **PR:** #597
-- **Branch:** `fix/207-toggle-payload-type-pins` against `main`
-- **Issue:** #207 (Express toggle payload and lifecycle result non-interchangeability with `NoneOf` pins)
-- **Plan Reference:** [`docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md`](file:///Users/ivohofland/Projects/fair.yoga/docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md)
-- **Mutation Ledger:** [`docs/superpowers/plans/2026-09-14-toggle-payload-type-pins-mutations.md`](file:///Users/ivohofland/Projects/fair.yoga/docs/superpowers/plans/2026-09-14-toggle-payload-type-pins-mutations.md)
-- **Review Date:** 2026-09-14
-- **Reviewer:** Antigravity Comment Analyzer (following [`.agents/skills/comment-analyzer/SKILL.md`](file:///Users/ivohofland/Projects/fair.yoga/.agents/skills/comment-analyzer/SKILL.md))
-- **Overall Status:** **APPROVED WITH MINOR ADVISORY FIX** (1 comment discipline rule violation: hardcoded count in prose)
+- **PR:** #633
+- **Branch:** `solve_issue_615` against `origin/main`
+- **Issue:** #615 (Preserve destination on unauthenticated redirect across protected routes)
+- **Review Date:** 2026-09-17
+- **Reviewer:** PR Reviewer (Comments)
+- **Status:** **CHANGES REQUESTED** (2 Important stale/inaccurate comments, 1 Important reaching comment, 1 Important prose count violation)
 
 ---
 
 ## 1. Executive Summary
 
-This review audits all code comments, JSDoc docblocks, and test annotations introduced or modified across the entire branch `fix/207-toggle-payload-type-pins` (PR #597) against `main`.
+This review audits all code comments, docblocks, and annotations in files touched by PR #633 against `origin/main`, specifically enforcing the **Comment Discipline** standards from [`CLAUDE.md`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/CLAUDE.md):
+1. **Comment Discipline:** Comments must describe the code they sit beside, not reach past it into other modules.
+2. **Prose counts and rosters:** No prose counts or rosters of importers or matched routes.
+3. **No historical change logs:** No correction history or PR change notes in docblocks (those belong in git and the PR body).
+4. **No stale descriptions:** Comments invalidated or rendered misleading by PR #633 must be updated or removed.
 
-The changes in PR #597 touch comments in 18 source and test files:
-1. **Source type-pin definitions (3 files):**
-   - [`src/lib/api-types.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/api-types.ts#L111-L126)
-   - [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L323-L325)
-   - [`src/services/studio-class-editability.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/studio-class-editability.ts#L71-L77)
-2. **Test cleanups & migrated invariants (3 files):**
-   - [`src/components/settings/template-action-messages.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/components/settings/template-action-messages.test.ts) (removed redundant `@ts-expect-error` assertions)
-   - [`src/services/rule-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L95-L98)
-   - [`src/services/studio-class-editability.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/studio-class-editability.test.ts#L185-L189)
-3. **Typecheck-only enforcement notices (13 additional test files):**
-   - Explicitly documenting that call-site `@ts-expect-error` parameter assertions are verified by `npm run typecheck` only (`tsc --noEmit`) and invisible to Vitest runtime test execution.
-
-Overall, the documentation updates are clear, precise, and accurately describe the compilation-level behavior. Only **one rule violation** of the Fair.Yoga Comment Discipline was identified: a hardcoded prose count (`7`) in [`src/services/rule-lifecycle.test.ts:95`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L95).
-
----
-
-## 2. Findings Grouped by Category
-
-### 🚨 Critical Inaccuracies
-*Factually wrong claims that will mislead future developers.*
-
-None found in docblocks or inline code comments. The compile-time mechanisms (`NoneOf` conditional types, parameter type bounds, and `@ts-expect-error` unused-directive failure modes) are accurately explained across all modified comments.
-
-> [!NOTE]
-> **Advisory Observation — Test Title Discrepancy (Low Risk):**
-> In [`src/services/rule-lifecycle.test.ts:185, 206, 228`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L185), the test cases retain names from before the negative `@ts-expect-error` assertions were migrated:
-> - `it('rejects each family archive result where the other family is required', ...)`
-> - `it('rejects each family pause result where the other family is required', ...)`
-> - `it('rejects each family update result where the other family is required', ...)`
->
-> The docblock directly above at lines 177–178 accurately states what is true NOW:
-> > *"The tests below retain the positive assertions exercising the type shapes for each family."*
->
-> The test bodies now strictly exercise positive acceptance (`expect(takesStudio(studioResult)).toBe(true)`). The string titles in `it('rejects...')` are technically misnomers now that the negative rejection occurs in `rule-lifecycle.ts` compile-time pins, though this is test metadata rather than code comments.
+### Touched Files Reviewed
+- [`src/proxy.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.ts)
+- [`src/app/(public)/login/page.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.tsx)
+- [`src/app/(student)/layout.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(student)/layout.tsx)
+- [`src/app/(teacher)/layout.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx)
+- [`src/lib/session.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts)
+- [`src/lib/student-guard.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.ts)
+- [`tests/e2e/auth.spec.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/tests/e2e/auth.spec.ts)
+- [`src/proxy.test.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.test.ts) (touched test suite)
+- [`src/lib/student-guard.test.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.test.ts) (new test suite)
+- [`src/app/(public)/login/page.test.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.test.tsx) (new test suite)
 
 ---
 
-### ⚠️ Rule Violations (Comment Discipline)
-*Prose rosters, counts, cross-file claims, or historical narratives.*
+## 2. Findings by Severity
 
-#### Issue 1: Hardcoded Prose Count
-- **Location:** [`src/services/rule-lifecycle.test.ts:95-97`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L95-L97)
-- **Violation:** Violation of [CLAUDE.md](file:///Users/ivohofland/Projects/fair.yoga/CLAUDE.md) Comment Discipline Rule 2:
-  > *"Never write a count or a member list in prose — name the type. 'Every `SkipCounts` member' survives a fifth member; a prose roster does not... In a comment, never."*
-- **Current Text:**
-  ```ts
-   * The 7 `@ts-expect-error` property assignment checks below are verified by
-   * `npm run typecheck` only (`tsc --noEmit`) and are invisible to Vitest runtime test
-   * execution (tests do not typecheck or transpile types).
+### 🚨 Critical
+*None.* No security vulnerabilities or catastrophic misunderstandings are introduced directly by comments.
+
+---
+
+### ⚠️ Important
+*Inaccurate comments that mislead developers about control flow, reach across module boundaries, or violate repo comment discipline.*
+
+#### Finding 1: Stale & Contradictory Guard Description in Student Layout
+- **File:** [`src/app/(student)/layout.tsx:12-17`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(student)/layout.tsx#L12-L17)
+- **Violation:** Stale description / Inaccurate characterization of code.
+- **Current Code:**
+  ```tsx
+  const session = await getSession();
+  // A signed-in teacher-only account belongs on its own home, not a
+  // sign-in form it cannot use.
+  if (!session?.studentId) {
+    const pathname = (await headers()).get('x-pathname');
+    redirectNonStudent(session, pathname);
+  }
   ```
 - **Analysis:**
-  Specifying the literal count `7` in prose creates immediate comment rot risk if an 8th check is added (e.g. for an additional template property or descriptor noun) or if checks are refactored. None of the other 14 updated test files use hardcoded numbers (e.g., [`src/lib/api-utils.test.ts:109`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/api-utils.test.ts#L109) uses *"The `@ts-expect-error` compile-time type assertions below..."* and [`src/lib/db-locks.test.ts:54`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/db-locks.test.ts#L54) uses *"These checks are verified by..."*).
-- **Recommended Resolution:**
-  Remove `"7 "` to make the sentence durable:
-  ```diff
-  --- a/src/services/rule-lifecycle.test.ts
-  +++ b/src/services/rule-lifecycle.test.ts
-  @@ -95,3 +95,3 @@ describe('rule-lifecycle family descriptors', () => {
-  -   * The 7 `@ts-expect-error` property assignment checks below are verified by
-  +   * The `@ts-expect-error` property assignment checks below are verified by
-      * `npm run typecheck` only (`tsc --noEmit`) and are invisible to Vitest runtime test
-      * execution (tests do not typecheck or transpile types).
+  The comment claims that this block is only about a signed-in teacher-only account that belongs on `/schedule` rather than a sign-in form.
+  However, `if (!session?.studentId)` is the primary authentication and role gate for the entire `(student)` route group. When an **unauthenticated visitor** (`session === null`) requests any page under `(student)` (e.g. `/account/privacy`, `/updates`, `/bookings`), they enter this block and `redirectNonStudent(session, pathname)` redirects them to:
+  `redirect(`/login?redirect=${encodeURIComponent(redirectPath)}`)`
+  They **are** redirected to a sign-in form!
+  Stating *"not a sign-in form it cannot use"* directly contradicts the destination-preserving login redirect behavior implemented in PR #633. Furthermore, extracting `pathname = (await headers()).get('x-pathname')` was specifically added in PR #633 to preserve destination when redirecting to `/login`, yet the comment above it continues to assert that the block is only about avoiding sign-in forms for teachers.
+- **Remediation:**
+  Update the comment to accurately describe both cases handled by the guard:
+  ```tsx
+  // Guard student routes: redirect signed-in teachers to /schedule, and unauthenticated
+  // visitors to /login (preserving destination via x-pathname).
+  if (!session?.studentId) {
+    const pathname = (await headers()).get('x-pathname');
+    redirectNonStudent(session, pathname);
+  }
   ```
 
 ---
 
-### 🗑️ Redundant Comments
-*Comments that merely re-state obvious code.*
-
-None found. Every comment added or revised across the 18 files explains **why** an invariant is enforced at compile-time, **why** a specific failure mechanism (`NoneOf` vs `@ts-expect-error`) was selected, or alerts future maintainers that Vitest does not run type checks.
-
----
-
-### ✨ Positive Examples
-*Exemplary docblocks that clearly explain non-obvious rationale.*
-
-1. **Directional Error Diagnostics in `api-types.ts`:**
-   [`src/lib/api-types.ts:111-126`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/api-types.ts#L111-L126):
-   ```ts
-   // Compile-time pins asserting that the class and studio toggle response types
-   // remain mutually non-interchangeable via `templateKind` (#93, #119, #206, #207).
-   // Expressed with NoneOf so a broken invariant names the offending direction.
-   const _classIsNotStudio: NoneOf<
-     TemplateToggleResponse extends StudioTemplateToggleResponse
-       ? 'TemplateToggleResponse extends StudioTemplateToggleResponse'
-       : never
-   > = true;
-   void _classIsNotStudio;
-   ```
-   *Why exemplary:* Concise, explains the non-obvious design decision behind using string literal labels in conditional types with `NoneOf`, and links directly to issue lineage (#93, #119, #206, #207).
-
-2. **Clean Replacement of Historical Narration in `rule-lifecycle.ts`:**
-   [`src/services/rule-lifecycle.ts:323-325`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L323-L325):
-   ```ts
-    * Held by the compile-time `NoneOf` pins declared below (#207): a claim about
-    * what the compiler refuses is worth only the pin that makes the compiler
-    * refuse it.
-   ```
-   *Why exemplary:* Directly states what is true NOW. Replaced an outdated sentence that referenced `@ts-expect-error` in `rule-lifecycle.test.ts` and `template-action-messages.test.ts` without introducing any historical "previously this was..." narration.
-
-3. **Clarifying Scope Separation Between Parameter and Union Invariants:**
-   [`src/services/studio-class-editability.test.ts:185-189`](file:///Users/ivohofland/Projects/fair.yoga/src/services/studio-class-editability.test.ts#L185-L189):
-   ```ts
-    * This `@ts-expect-error` parameter check is verified by `npm run typecheck`
-    * only (`tsc --noEmit`) and is invisible to Vitest runtime test execution
-    * (tests do not typecheck or transpile types). The union invariant
-    * (`dateEditable ⇒ scheduleEditable`) is pinned separately beside
-    * `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
-   ```
-   *Why exemplary:* Prevents confusion by explaining why this test only checks input row parameter widening, while pointing the reader to the type definition file where the verdict shape itself is pinned.
-
-4. **Standardized Typecheck-Only Enforcement Notices:**
-   Applied across 15 test files with consistent phrasing:
-   `"This check is verified by npm run typecheck only (tsc --noEmit) and is invisible to Vitest runtime test execution (tests do not typecheck or transpile types)."`
-   *Why exemplary:* Solves a systemic cognitive pitfall where engineers assume passing unit tests imply `@ts-expect-error` lines were checked during test execution.
+#### Finding 2: Reaching Past File Boundary into Downstream Layout Implementation
+- **File:** [`src/proxy.ts:16-18`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.ts#L16-L18)
+- **Violation:** Comment Discipline (`CLAUDE.md`) — comment reaching past its own code to specify facts about another module.
+- **Current Code:**
+  ```ts
+  // Layouts can't see the pathname; stamp it with any query parameters so
+  // layouts and guards can preserve destination on invalid sessions, and so
+  // the (teacher) layout can send a student-only session from /settings to their own.
+  const requestHeaders = new Headers(request.headers);
+  ```
+- **Analysis:**
+  [`CLAUDE.md`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/CLAUDE.md) explicitly states:
+  > *"A comment annotates the code it sits on. Anything wider — counts, censuses, set membership, facts about another module — goes in `docs/` and the comment links to it. A claim reaching past its file has no owner: the person who invalidates it never sees it."*
+  The clause `and so the (teacher) layout can send a student-only session from /settings to their own` reaches directly into `src/app/(teacher)/layout.tsx` and details that layout's private routing decisions. If `(teacher)/layout.tsx` changes or extends how it routes `/settings` (or if `(student)/layout.tsx` or `requireTeacherSession` adopt similar mappings), this comment in `proxy.ts` has no owner and becomes stale.
+  `proxy.ts` should only describe what it does: stamping `x-pathname` (with search parameters) into request headers for downstream components that cannot read the incoming URL.
+- **Remediation:**
+  Keep the comment local to `proxy.ts`:
+  ```ts
+  // Server components and layouts cannot read the request URL; stamp x-pathname
+  // with the pathname and search query for downstream layouts and route guards.
+  const requestHeaders = new Headers(request.headers);
+  ```
 
 ---
 
-## 3. Comprehensive File-by-File Audit Table
-
-| File | Lines / Element | Comment Content & Intent | Discipline & Factual Accuracy | Status |
-|---|---|---|---|---|
-| [`src/lib/api-types.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/api-types.ts#L111-L126) | Lines 111–126 (`_classIsNotStudio`, `_studioIsNotClass`) | Annotates compile-time pins asserting mutual non-interchangeability via `templateKind`. Explains `NoneOf` error message purpose. | **Accurate & compliant.** Annotates immediate code, states current truth, no rosters or counts. | **PASS** ✅ |
-| [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L323-L325) | Lines 323–325 (`ArchiveRuleResult`) | Docblock updated to reference `NoneOf` pins declared below (#207). | **Accurate & compliant.** Replaced obsolete reference to test-level assertions. States what is true NOW. | **PASS** ✅ |
-| [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L368-L382) | Lines 368–382 (`_classArchiveIsNotStudio`, `_studioArchiveIsNotClass`) | Annotates archive result mutual non-interchangeability pins via `template: WithSlot<TChild>`. | **Accurate & compliant.** Accurately identifies `template: WithSlot<TChild>` as the discriminating carrier. | **PASS** ✅ |
-| [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L919-L920) | Lines 919–920 (`PauseRuleResult`) | Docblock updated to reference `NoneOf` pins declared below (#207). | **Accurate & compliant.** Cleanly updated without historical narrative. | **PASS** ✅ |
-| [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L997-L1011) | Lines 997–1011 (`_classPauseIsNotStudio`, `_studioPauseIsNotClass`) | Annotates pause result mutual non-interchangeability pins via `template: WithSlot<TChild>`. | **Accurate & compliant.** Accurately documents pin mechanism. | **PASS** ✅ |
-| [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L1611-L1625) | Lines 1611–1625 (`_classUpdateIsNotStudio`, `_studioUpdateIsNotClass`) | Annotates update result mutual non-interchangeability pins via `template: WithSlot<TChild>`. | **Accurate & compliant.** Accurately documents pin mechanism. | **PASS** ✅ |
-| [`src/services/studio-class-editability.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/studio-class-editability.ts#L71-L77) | Lines 71–77 (`_illegalVerdictCannotStand`) | Annotates `NoneOf` pin asserting that `dateEditable` cannot stand without `scheduleEditable` (#207). | **Accurate & compliant.** Directly states the invariant and sits immediately above the pin. | **PASS** ✅ |
-| [`src/components/settings/template-action-messages.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/components/settings/template-action-messages.test.ts) | Lines 730–739 | End of file after removing redundant test block lines 741–764. | **Accurate & compliant.** Clean removal, zero leftover comments or dangling references. | **PASS** ✅ |
-| [`src/services/rule-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L95-L98) | Lines 95–98 | Explains that property assignment checks are verified by `npm run typecheck` only. | **Rule Violation:** Contains literal count `"7"`. Needs `"7 "` removed. | **WARN** ⚠️ |
-| [`src/services/rule-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L172-L183) | Lines 172–183 | Docblock explaining that lifecycle result non-interchangeability is pinned via `NoneOf` in `rule-lifecycle.ts`, while tests retain positive shape assertions. | **Accurate & compliant.** States what is true NOW; prevents future maintainers from re-adding redundant negative assertions. | **PASS** ✅ |
-| [`src/services/studio-class-editability.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/studio-class-editability.test.ts#L185-L189) | Lines 185–189 | Docblock on `refuses a widened row at the type level` clarifying parameter check vs verdict pin. | **Accurate & compliant.** Clearly articulates the distinct roles of the parameter test and the `NoneOf` type pin. | **PASS** ✅ |
-| [`src/services/studio-class-deletion.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/studio-class-deletion.test.ts#L167-L169) | Lines 167–169 | Documents typecheck-only enforcement for `refuses template state at the type level`. | **Accurate & compliant.** Precise description of compiler vs Vitest behavior. | **PASS** ✅ |
-| [`src/lib/api-utils.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/api-utils.test.ts#L109-L113) | Lines 109–113, 456–459, 578–580 | Documents typecheck-only enforcement across 3 `@ts-expect-error` test blocks. | **Accurate & compliant.** Follows non-numeric phrasing ("assertions below", "check below"). | **PASS** ✅ |
-| [`src/lib/db-locks.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/db-locks.test.ts#L54-L55) | Lines 54–55 | Documents typecheck-only enforcement on `_theBrandRejectsABareClient`. | **Accurate & compliant.** Accurately uses plural ("These checks"). | **PASS** ✅ |
-| [`src/lib/entry-conflict.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/entry-conflict.test.ts#L274-L275) | Lines 274–275 | Documents typecheck-only enforcement on `_theProbeRejectsATransactionClient`. | **Accurate & compliant.** Singular check accurately described. | **PASS** ✅ |
-| [`src/lib/registration-status.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/registration-status.test.ts#L32-L33) | Lines 32–33 | Documents typecheck-only enforcement on `_theListRejectsAForeignEnum`. | **Accurate & compliant.** Preserves prior test reasoning while clarifying enforcement scope. | **PASS** ✅ |
-| [`src/lib/rule-slot-holder.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/rule-slot-holder.test.ts#L176-L177) | Lines 176–177 | Documents typecheck-only enforcement on `_theProbeRejectsATransactionClient`. | **Accurate & compliant.** Concise and accurate. | **PASS** ✅ |
-| [`src/lib/timezone.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/timezone.test.ts#L471-L472) | Lines 471–472 | Documents typecheck-only enforcement on `_theBrandRejectsPlainNumber`. | **Accurate & compliant.** Concise and accurate. | **PASS** ✅ |
-| [`src/lib/worktree/identity.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/worktree/identity.test.ts#L107-L108) | Lines 107–108 | Documents typecheck-only enforcement on `RawName` and `DbSlug` brand tests. | **Accurate & compliant.** Plural matches the group of helper functions. | **PASS** ✅ |
-| [`src/lib/worktree/registry.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/worktree/registry.test.ts#L709-L710) | Lines 709–710 | Documents typecheck-only enforcement on `_allocatePortArgsCannotBeSwapped`. | **Accurate & compliant.** Concise and accurate. | **PASS** ✅ |
-| [`src/services/class-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/class-lifecycle.test.ts#L37-L38) | Lines 37–38, 110–111, 2106–2107 | Documents typecheck-only enforcement on `_completionTimingIsRequired`, `_transitionRangesAreNarrow`, and `noUncheckedIndexedAccess`. | **Accurate & compliant.** Accurately annotates each separate compile-time assertion. | **PASS** ✅ |
-| [`src/services/class-template-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/class-template-lifecycle.test.ts#L37-L38) | Lines 37–38 | Documents typecheck-only enforcement on `_templateForbiddenFieldsAreRejected`. | **Accurate & compliant.** Distinguishes function-level parameter checking from model content pins. | **PASS** ✅ |
-| [`src/services/entry-generation.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/entry-generation.test.ts#L15-L16) | Lines 15–16 | Documents typecheck-only enforcement on `_theBrandRejectsUnbrandedEpochMs`. | **Accurate & compliant.** Accurately uses plural ("These checks"). | **PASS** ✅ |
-| [`src/services/studio-class-template-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/studio-class-template-lifecycle.test.ts#L13-L14) | Lines 13–14 | Documents typecheck-only enforcement on `_studioTemplateForbiddenFieldsAreRejected`. | **Accurate & compliant.** Concise and accurate. | **PASS** ✅ |
+#### Finding 3: Misplaced & Incomplete Guard Comment in Teacher Layout
+- **File:** [`src/app/(teacher)/layout.tsx:15-27`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx#L15-L27)
+- **Violation:** Comment Discipline & Stale/Misplaced description.
+- **Current Code:**
+  ```tsx
+  const session = await getSession();
+  // A signed-in student-only account belongs on its own home, not a
+  // sign-in form it cannot use — except /settings, which courteously
+  // maps to their own settings (x-pathname stamped by the proxy).
+  if (!session?.teacherId) {
+    const pathname = (await headers()).get('x-pathname');
+    if (session?.studentId) {
+      redirect((pathname ?? '').startsWith('/settings') ? '/account' : '/bookings');
+    }
+    if (pathname && isSafeRelativePath(pathname)) {
+      redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
+    }
+    redirect('/login');
+  }
+  ```
+- **Analysis:**
+  1. The comment sits directly above the outer guard `if (!session?.teacherId)`. But `if (!session?.teacherId)` now handles two branches: (a) student-only sessions (`if (session?.studentId)`), and (b) unauthenticated sessions redirecting to `/login` with preserved destination. The comment only describes the student branch. Placed above the outer guard, it falsely implies the whole guard is only about student-only sessions, leaving the newly added unauthenticated login redirect undocumented.
+  2. The parenthetical `(x-pathname stamped by the proxy)` is a cross-file claim reaching into `src/proxy.ts`.
+- **Remediation:**
+  Move the student-specific comment to sit directly above `if (session?.studentId)` and avoid reaching into `proxy.ts`:
+  ```tsx
+  if (!session?.teacherId) {
+    const pathname = (await headers()).get('x-pathname');
+    // A signed-in student-only account belongs on their own home, not a sign-in form.
+    // Courteously map /settings to their account settings.
+    if (session?.studentId) {
+      redirect((pathname ?? '').startsWith('/settings') ? '/account' : '/bookings');
+    }
+    if (pathname && isSafeRelativePath(pathname)) {
+      redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
+    }
+    redirect('/login');
+  }
+  ```
 
 ---
 
-## 4. Summary & Next Steps
+#### Finding 4: Hardcoded Prose Count of Matched Routes in Test Suite
+- **File:** [`src/proxy.test.ts:115`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.test.ts#L115)
+- **Violation:** Violation of `CLAUDE.md` rule: *"Never write a count or a member list in prose — name the type."*
+- **Current Code:**
+  ```ts
+  describe('config matcher', () => {
+    it('matches the 9 protected route prefixes', () => {
+      expect(config.matcher).toEqual([
+        '/schedule/:path*',
+        '/studio-class/:path*',
+        '/students/:path*',
+        '/inbox/:path*',
+        '/settings/:path*',
+        '/class/:path*',
+        '/bookings/:path*',
+        '/account/:path*',
+        '/updates/:path*',
+      ]);
+    });
+  });
+  ```
+- **Analysis:**
+  The test title was updated in this PR from `"matches the 5 protected route prefixes"` to `"matches the 9 protected route prefixes"`.
+  Hardcoding a numeric count in prose (`the 9 protected route prefixes`) causes immediate comment/test-description rot whenever routes are added or removed. The chase criteria specifically forbid prose counts of matched routes.
+- **Remediation:**
+  Drop the numeric literal from the test title:
+  ```ts
+  it('matches all protected route prefixes', () => {
+  ```
 
-1. **Overall Quality:** The PR's comments and docblocks are remarkably high quality, demonstrate thorough adherence to TypeScript compile-time principles, and remove historical clutter and misleading claims.
-2. **Action Item:**
-   - Apply the one-word deletion in [`src/services/rule-lifecycle.test.ts:95`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L95) to change `"The 7 \`@ts-expect-error\` property assignment checks..."` to `"The \`@ts-expect-error\` property assignment checks..."`.
-   - (Optional) Consider updating the test titles in [`src/services/rule-lifecycle.test.ts:185, 206, 228`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.test.ts#L185) from `"rejects each family ..."` to `"exercises type shapes for each family ..."` for completeness.
+---
+
+### 💡 Suggestion
+*Non-blocking improvements to clarity and consistency.*
+
+#### Finding 5: `createMagicLinkToken` Docblock Omits `redirectTo` Parameter
+- **File:** [`tests/e2e/auth.spec.ts:14-24`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/tests/e2e/auth.spec.ts#L14-L24)
+- **Observation:**
+  PR #633 added `redirectTo?: string` to `createMagicLinkToken`. The docblock was not updated to mention that `redirectTo` optionally sets the destination URL in the minted `magicLinkToken` record.
+- **Remediation:**
+  Add a brief note to the docblock describing `redirectTo`:
+  ```ts
+  /**
+   * Mints a token AND the browser that "requested" it, so a test can choose
+   * which branch it is exercising: pass the same nonce to `asOriginBrowser`
+   * for a same-browser open, or open the token from a context that never got
+   * `asOriginBrowser` to land in the handoff branch instead.
+   * Optionally binds `redirectTo` to exercise post-login destination preservation.
+   */
+  ```
+
+---
+
+#### Finding 6: `redirectNonStudent` Opening Sentence
+- **File:** [`src/lib/student-guard.ts:5-9`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.ts#L5-L9)
+- **Observation:**
+  The docblock states:
+  ```ts
+  /**
+   * Where a session without a student profile belongs. A signed-in teacher
+   * goes to their own home rather than a sign-in form they cannot use.
+   * Preserves the intended destination when sending an unauthenticated visitor to login.
+   */
+  ```
+  The third sentence (added in PR #633) is accurate and describes the code it sits beside. The opening sentence says *"Where a session without a student profile belongs"*, but `session` can be `null` (an unauthenticated visitor with no session). Sentence 3 clarifies this, so this is non-blocking.
+- **Remediation:**
+  Optional polish: *"Where a user or session without a student profile belongs."*
+
+---
+
+## 3. Files Audited with Zero Violations
+
+- [`src/lib/session.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts): Clean. Contains no comments; implementation is self-explanatory and consistent with the guard pattern.
+- [`src/app/(public)/login/page.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.tsx): Clean. The only comment is local to the bookmark signup link (`{/* For anyone who bookmarked /login before they had an account. */}`).
+- [`src/lib/student-guard.test.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.test.ts): Clean. Test titles are descriptive and avoid prose counts or stale claims.
+- [`src/app/(public)/login/page.test.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.test.tsx): Clean. No prose counts or stale descriptions.
+
+---
+
+## 4. Checklist Summary
+
+| File | Issue | Severity | Status |
+|---|---|---|---|
+| `src/app/(student)/layout.tsx:12-14` | Stale comment claiming guard only prevents teachers from seeing sign-in form; contradicts unauthenticated redirect to `/login` | **Important** | Needs Fix |
+| `src/proxy.ts:16-18` | Reaches past module boundary to describe `(teacher)` layout's `/settings` routing logic | **Important** | Needs Fix |
+| `src/app/(teacher)/layout.tsx:15-17` | Misplaced above outer guard; describes student branch only; reaches into proxy | **Important** | Needs Fix |
+| `src/proxy.test.ts:115` | Hardcoded prose count (`9 protected route prefixes`) in test title | **Important** | Needs Fix |
+| `tests/e2e/auth.spec.ts:14-24` | Docblock omits newly added `redirectTo` parameter | **Suggestion** | Optional |
+| `src/lib/student-guard.ts:5-9` | Minor phrasing polish on `session` vs visitor | **Suggestion** | Optional |

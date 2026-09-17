@@ -13,7 +13,11 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const rawRedirect = searchParams.get('redirect');
   const redirect =
-    rawRedirect && isSafeRelativePath(rawRedirect) && rawRedirect.length <= 200
+    rawRedirect &&
+    isSafeRelativePath(rawRedirect) &&
+    rawRedirect.length <= 200 &&
+    !rawRedirect.startsWith('/login') &&
+    !rawRedirect.startsWith('/verify')
       ? rawRedirect
       : undefined;
 

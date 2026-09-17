@@ -112,7 +112,7 @@ describe('proxy', () => {
   });
 
   describe('config matcher', () => {
-    it('matches the 9 protected route prefixes', () => {
+    it('matches all protected route prefixes', () => {
       expect(config.matcher).toEqual([
         '/schedule/:path*',
         '/studio-class/:path*',
