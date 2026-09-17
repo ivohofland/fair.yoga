@@ -98,6 +98,17 @@ describe('proxy', () => {
       const stampedPathname = response.headers.get('x-middleware-request-x-pathname');
       expect(stampedPathname).toBe('/settings/profile');
     });
+
+    it('preserves query parameters in stamped x-pathname header', () => {
+      const request = makeRequest('/account/privacy?tab=invitations', {
+        cookies: { fair_yoga_session: 'valid-session-token' },
+      });
+      const response = proxy(request);
+
+      expect(response.status).toBe(200);
+      const stampedPathname = response.headers.get('x-middleware-request-x-pathname');
+      expect(stampedPathname).toBe('/account/privacy?tab=invitations');
+    });
   });
 
   describe('config matcher', () => {
