@@ -205,7 +205,7 @@ function pauseErasureAtGate(studentId: string): {
 }
 
 describe('acceptInvitation and unlinkTeacher take the Student gate (#626)', () => {
-  it('refuses acceptInvitation for an already-erased student', async () => {
+  it('answers NOT_FOUND, not STUDENT_ERASED, for an already-erased student — deleteStudentAccount already anonymizes the Invitation (#520)', async () => {
     const fx = await makeGateFixture();
     try {
       const invitation = await prisma.invitation.create({
@@ -217,11 +217,19 @@ describe('acceptInvitation and unlinkTeacher take the Student gate (#626)', () =
       });
       await deleteStudentAccount(prisma, fx.studentId);
 
+      // `deleteStudentAccount` (gdpr.ts) unconditionally anonymizes every
+      // `Invitation.email` naming the erased student's address ("Unscoped
+      // by `delivered`, and by `status` and `isArchived`, on purpose
+      // (#520)"). `acceptInvitation`'s own first statement looks this
+      // invitation up BY email, before the new Student gate ever runs — so
+      // once an erasure has fully committed, that lookup already returns
+      // nothing and this path never reaches the gate at all. The gate's own
+      // value is the RACE case, covered by the next test below.
       const result = await acceptInvitation(prisma, {
         invitationId: invitation.id, studentId: fx.studentId, accountEmail: fx.email,
       });
 
-      expect(result).toEqual({ ok: false, reason: 'STUDENT_ERASED' });
+      expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
       expect(
         await prisma.teacherStudent.count({ where: { teacherId: fx.teacherId, studentId: fx.studentId } }),
       ).toBe(0);
@@ -272,9 +280,9 @@ describe('acceptInvitation and unlinkTeacher take the Student gate (#626)', () =
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts -t "Student gate (#626)"`
+Run: `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts -t "626"` (the plain string `-t "Student gate (#626)"` matches nothing — vitest's `-t` treats `(`/`)` as regex grouping, so use the substring form instead).
 
-Expected: both new tests FAIL. The first fails on `expect(result).toEqual({ ok: false, reason: 'STUDENT_ERASED' })` — today `acceptInvitation` returns `{ ok: true }` because it never checks the student's `deletedAt`. The second fails the same way once the erasure is released (`accepting` resolves `{ ok: true }`, not the erased refusal) — the `waitUntilBlockedBy` call itself will still pass, because the *unrelated* `linkTeacherStudent` insert genuinely does wait on the erasure's held `Student` row today (that wait is real, from `linkTeacherStudent`'s own `FOR KEY SHARE`); what fails is the outcome once released.
+Expected: the FIRST new test (NOT_FOUND) PASSES already — it pins existing behavior (`deleteStudentAccount`'s pre-existing Invitation anonymization), not new functionality, so it is not part of this task's RED step. The SECOND new test (the mid-transaction race) FAILS: once the erasure is released, `accepting` resolves `{ ok: true }` today, not the erased refusal, because `acceptInvitation` never checks the student's `deletedAt`. The `waitUntilBlockedBy` call itself will still pass even before the fix, because the *unrelated* `linkTeacherStudent` insert genuinely does wait on the erasure's held `Student` row today (that wait is real, from `linkTeacherStudent`'s own `FOR KEY SHARE`); what fails is the outcome once released.
 
 - [ ] **Step 3: Implement the gate in `acceptInvitation`**
 
@@ -333,9 +341,10 @@ Replace with:
     // `TeacherStudent` BEFORE `Invitation`. `unlinkTeacher`,
 ```
 
-Update the `.catch` and the return below it. Find:
+Update the transaction's own closing `return true;` (the last line inside the `db.$transaction(async (tx) => { ... })` callback, right before its closing `}).catch(`) to pin it as the literal type `true` rather than the widened `boolean` TypeScript infers for `$transaction`'s generic return type here. Find:
 
 ```typescript
+    return true;
   }).catch((err: unknown) => {
     if (err instanceof NotPendingError) return false;
     throw err;
@@ -347,6 +356,7 @@ Update the `.catch` and the return below it. Find:
 Replace with:
 
 ```typescript
+    return true as const;
   }).catch((err: unknown) => {
     if (err instanceof StudentErasedError) return 'STUDENT_ERASED' as const;
     if (err instanceof NotPendingError) return 'NOT_PENDING' as const;
@@ -355,6 +365,8 @@ Replace with:
   if (accepted !== true) return { ok: false, reason: accepted };
   return { ok: true };
 ```
+
+The `as const` on `return true` is required, not cosmetic: without it, `db.$transaction(...)`'s inferred return type widens to `boolean`, so `accepted !== true` would narrow to `false | 'STUDENT_ERASED' | 'NOT_PENDING'` — and `false` does not satisfy the function's declared `reason` union. `tsc --noEmit` in Step 6 below will not pass without this.
 
 In `src/app/api/invitations/[id]/respond/route.ts`, find:
 
@@ -379,7 +391,7 @@ Replace with:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts -t "Student gate (#626)"`
+Run: `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts -t "626"`
 
 Expected: both PASS.
 
@@ -399,9 +411,9 @@ Expected: no errors. In particular, confirm `accepted`'s inferred type (`true | 
 
 Temporarily comment out the one line `await lockLiveStudent(tx, input.studentId);` added in Step 3 (leave the surrounding comment in place). Run:
 
-Run: `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts -t "Student gate (#626)"`
+Run: `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts -t "626"`
 
-Expected: both new tests now FAIL — record the exact assertion failure text (it should be the same `{ ok: false, reason: 'STUDENT_ERASED' }` vs `{ ok: true }` mismatch from Step 2) for the PR body. Then restore the line and re-run Step 4 to confirm it's green again.
+Expected: the mid-transaction race test now FAILS — record the exact assertion failure text for the PR body. The NOT_FOUND test is unaffected (it never reaches this gate at all — see its own comment) and stays green; that is correct, not a sign the mutation didn't take. Then restore the line and re-run Step 4 to confirm both are green again.
 
 - [ ] **Step 8: Commit**
 
@@ -528,9 +540,10 @@ Replace with:
     // FIRST, before any write below. A `waiting` entry for one of this
 ```
 
-Update the `.catch` and the return below it. Find:
+Update the transaction's own closing `return true;` and the `.catch`/return below it. Find:
 
 ```typescript
+    return true;
   }).catch((err: unknown) => {
     // A concurrent erasure deleted the link out from under this transaction.
     // `NOT_LINKED` is what `DELETE /api/teacher-links/[teacherId]` turns into
@@ -555,6 +568,7 @@ Update the `.catch` and the return below it. Find:
 Replace with:
 
 ```typescript
+    return true as const;
   }).catch((err: unknown) => {
     // The Student gate refusing (#626): a `TeacherStudent` row can survive
     // an erasure that missed it — an ungated writer, or a row created before
@@ -582,6 +596,8 @@ Replace with:
   if (unlinked !== true) return { ok: false, reason: unlinked };
   return { ok: true };
 ```
+
+The `as const` on `return true` is required for the same reason as `acceptInvitation`'s (Task 1): without it, `unlinked`'s inferred type widens so that `unlinked !== true` narrows to include `false`, which does not satisfy the declared `reason` union. `tsc --noEmit` in Step 6 below will not pass without this.
 
 In `src/app/api/teacher-links/[teacherId]/route.ts`, find:
 
