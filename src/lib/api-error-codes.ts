@@ -3,8 +3,8 @@
  * it is always sent with. A client compares against `ApiErrorCode`, so a code
  * removed here fails to compile wherever a caller still expects it.
  *
- * This module imports nothing, because `'use client'` components value-import
- * it through `client-errors.ts`.
+ * Imports nothing: this module is value-imported by client code, so anything
+ * it pulled in would ship in the browser bundle.
  *
  * Adding a code: one entry here, at its status; the route sends it with
  * `respondError`; a test asserts it with `expectRefusal`.

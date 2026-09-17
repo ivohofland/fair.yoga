@@ -5,9 +5,9 @@
  * rather than the precaution it used to be. Two `'use client'` files now
  * VALUE-import it — `template-form.tsx` and `studio-template-form.tsx`, both
  * for `anyBlocked` — so this module is in the client bundle, and anything it
- * imported would ride along. `src/lib/tiers.ts`, `src/lib/class-fields.ts`,
- * `src/lib/api-error-codes.ts` and `src/lib/room-identity.ts` are in the same
- * position (`room-search.ts` says so about the last of those). Named as
+ * imported would ride along. `src/lib/tiers.ts`, `src/lib/class-fields.ts` and
+ * `src/lib/room-identity.ts` are in the same position (`room-search.ts` says so
+ * about the last of those). Named as
  * EXAMPLES, not as a roster: an earlier version of this sentence said they
  * "were previously the only members of that category", which upgraded an
  * exemplar into an exhaustive list and was wrong within one commit — the exact
