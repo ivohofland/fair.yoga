@@ -124,6 +124,7 @@ describe('AttendanceList', () => {
   it("surfaces the server's reason for a refusal and refreshes the stale page", async () => {
     fetchMock.mockResolvedValue({
       ok: false,
+      status: 409,
       // The shape `respondError` actually emits — `{ error: { message, code } }`,
       // not a bare string. The bare-string branch of `readErrorMessage` exists
       // for defensiveness; mocking it here would exercise a path the server
@@ -131,8 +132,8 @@ describe('AttendanceList', () => {
       json: async () => ({
         error: {
           message:
-            'This student cancelled late. You can mark them attended once the class has started.',
-          code: 'CONFLICT',
+            'This student cancelled late. Attendance can be recorded once the class has started.',
+          code: 'CLASS_NOT_STARTED',
         },
       }),
     });
@@ -147,5 +148,21 @@ describe('AttendanceList', () => {
     // Without this the teacher is stuck: the page's class status is a render-time
     // snapshot, so a refusal it no longer reflects would repeat forever.
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it('marks the student present when the server finds that already recorded', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { id: 'reg-late', status: 'attended' }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AttendanceList items={[lateCancel]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
+
+    await waitFor(() => expect(screen.getByText('Present')).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

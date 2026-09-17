@@ -45,10 +45,7 @@ const HANDSHAKE_MS = 2_000;
  */
 const BUSY_HOLD_MS = 4_000;
 
-const DELETED_MESSAGE = 'This account has been deleted';
-const GONE_MESSAGE = "This student's account no longer exists";
-
-type Settled = { status: number; message: string | null };
+type Settled = { status: number; code: string | null; rejection?: string };
 type ErasureOutcome = 'erased' | { error: string };
 type Tracked<T> = { racer: Promise<T>; settled: () => boolean };
 
@@ -62,20 +59,20 @@ function book(token: string, body: { classId: string; studentId?: string }): Pro
   );
 }
 
-/** A booking as a value: status and error message, never a rejection. */
+/** A booking as a value: status and error code, never a rejection. */
 function settle(response: Promise<Response>): Promise<Settled> {
   return response.then(
     async (res) => {
       const json: unknown = await res.json().catch(() => null);
       const error =
         typeof json === 'object' && json !== null && 'error' in json ? json.error : null;
-      const message =
-        typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string'
-          ? error.message
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+          ? error.code
           : null;
-      return { status: res.status, message };
+      return { status: res.status, code };
     },
-    (err: unknown) => ({ status: -1, message: String(err) }),
+    (err: unknown) => ({ status: -1, code: null, rejection: String(err) }),
   );
 }
 
@@ -372,7 +369,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       }
 
       expect(await erasing).toBe('erased');
-      expect(await booking?.racer).toEqual({ status: 409, message: DELETED_MESSAGE });
+      expect(await booking?.racer).toEqual({ status: 409, code: 'STUDENT_ERASED' });
       expect(await registeredCount(fx.studentId)).toBe(0);
       expect(await prisma.teacherStudent.count({ where: { studentId: fx.studentId } })).toBe(0);
       expect(bookingWaited).toBe(true);
@@ -406,7 +403,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       }
 
       expect(await erasing).toBe('erased');
-      expect(await booking?.racer).toEqual({ status: 409, message: GONE_MESSAGE });
+      expect(await booking?.racer).toEqual({ status: 409, code: 'STUDENT_ERASED' });
       expect(await registeredCount(fx.studentId)).toBe(0);
       expect(bookingWaited).toBe(true);
     } finally {
@@ -431,7 +428,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       }
 
       expect(await erasing).toBe('erased');
-      expect(await booking?.racer).toEqual({ status: 409, message: DELETED_MESSAGE });
+      expect(await booking?.racer).toEqual({ status: 409, code: 'STUDENT_ERASED' });
       expect(await registeredCount(fx.studentId)).toBe(0);
       expect(await prisma.teacherStudent.count({ where: { studentId: fx.studentId } })).toBe(0);
       expect(bookingWaited).toBe(true);
@@ -461,7 +458,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       }
 
       expect(await erasing).toBe('erased');
-      expect(await booking?.racer).toEqual({ status: 409, message: DELETED_MESSAGE });
+      expect(await booking?.racer).toEqual({ status: 409, code: 'STUDENT_ERASED' });
       expect(await registeredCount(fx.studentId)).toBe(0);
       expect(await prisma.teacherStudent.count({ where: { studentId: fx.studentId } })).toBe(0);
       expect(bookingWaited).toBe(true);
@@ -492,7 +489,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       }
 
       expect(await erasing).toBe('erased');
-      expect(await booking?.racer).toEqual({ status: 409, message: GONE_MESSAGE });
+      expect(await booking?.racer).toEqual({ status: 409, code: 'STUDENT_ERASED' });
       expect(await registeredCount(fx.studentId)).toBe(0);
       expect(bookingWaited).toBe(true);
     } finally {
@@ -567,7 +564,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
         book(fx.teacherToken, { classId: fx.outsideClassId, studentId: fx.studentId }),
       );
 
-      expect(res).toEqual({ status: 409, message: GONE_MESSAGE });
+      expect(res).toEqual({ status: 409, code: 'STUDENT_ERASED' });
       expect(await prisma.registration.count({ where: { studentId: fx.studentId } })).toBe(0);
     } finally {
       await cleanup(fx);
@@ -615,7 +612,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
 
       const res = await booking?.racer;
       expect(res?.status).toBe(503);
-      expect(res?.message).not.toBe(DELETED_MESSAGE);
+      expect(res?.code).toBeNull();
       expect(await holder).toBe('held');
       expect(await prisma.registration.count({ where: { studentId: fx.studentId } })).toBe(0);
       expect(bookingWaited).toBe(true);

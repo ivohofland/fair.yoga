@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { AddWalkIn } from './add-walk-in';
+import { routerRefresh } from '../../../tests/setup/components';
 
 /**
  * The picker fetches the full roster and filters it locally — no pagination,
@@ -201,7 +202,11 @@ describe('AddWalkIn', () => {
         };
       }
       if (url === '/api/registrations' && init?.method === 'POST') {
-        return { ok: false, status: 400, json: async () => ({ error: 'Class is full.' }) };
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({ error: { message: 'This class is full.', code: 'CLASS_FULL' } }),
+        };
       }
       throw new Error(`unexpected fetch ${url}`);
     });
@@ -213,11 +218,43 @@ describe('AddWalkIn', () => {
     fireEvent.change(screen.getByLabelText('Walk-in student'), { target: { value: 's1' } });
     fireEvent.click(screen.getByText('Add walk-in'));
 
-    await waitFor(() => expect(screen.getByText('Class is full.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('This class is full.')).toBeInTheDocument());
     expect(screen.getByLabelText('Walk-in student')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'zzz' } });
     expect(screen.getByText('No student matches.')).toBeInTheDocument();
+  });
+
+  it('closes the picker and refreshes when the student turns out to be booked already', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/students') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
+        };
+      }
+      if (url === '/api/registrations' && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { id: 'r1', status: 'registered' }, outcome: 'unchanged' }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Walk-in student'), { target: { value: 's1' } });
+    fireEvent.click(screen.getByText('Add walk-in'));
+
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   /**

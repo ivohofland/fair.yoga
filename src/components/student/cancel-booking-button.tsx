@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError } from '@/lib/client-errors';
 
 const DEADLINE_LABELS: Record<string, string> = {
   HOURS_48: '48 hours',
@@ -30,9 +30,15 @@ export function CancelBookingButton({ registrationId, cancelDeadline }: CancelBo
       const res = await fetch(`/api/registrations/${registrationId}`, { method: 'DELETE' });
       if (res.ok) {
         router.refresh();
-      } else {
-        setError(await readErrorMessage(res, 'Could not cancel. Try again.'));
+        return;
       }
+      const { code, message } = await readError(res, 'Could not cancel. Try again.');
+      // A booking that no longer exists is as cancelled as this button can make it.
+      if (code === 'NOT_FOUND') {
+        router.refresh();
+        return;
+      }
+      setError(message);
     } catch {
       setError('Network error. Try again.');
     } finally {

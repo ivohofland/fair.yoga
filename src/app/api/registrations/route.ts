@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
+import type { RegistrationStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import {
-  respondOk,
+  respondTyped,
+  respondUnchanged,
   respondError,
   requireSession,
   parseBody,
@@ -25,9 +27,6 @@ import { log } from '@/lib/log';
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
 
-/** Thrown inside the transaction when the student already holds a spot. */
-class AlreadyRegisteredError extends Error {}
-
 /** Thrown inside the transaction when the locked class row does not exist. */
 class ClassNotFoundError extends Error {}
 
@@ -35,16 +34,23 @@ class ClassNotFoundError extends Error {}
 class NotYourClassError extends Error {}
 
 /**
- * Thrown inside the transaction when the class's status forbids registration.
- * The status is folded into `message` at construction time; the `catch`
- * reads it back via `err.message`, so nothing needs to survive on the
- * instance beyond what `Error` already keeps.
+ * Thrown inside the transaction when the class cannot take this booking.
+ * `refusal` names the case, and the `catch` answers each with its own code.
  */
 class ClassStatusError extends Error {
-  constructor(classStatus: string) {
-    super(`Cannot register for a class with status "${classStatus}"`);
+  constructor(readonly refusal: 'cancelled' | 'not_bookable') {
+    super(`class refuses the booking: ${refusal}`);
   }
 }
+
+/** The booking a response names, applied or unchanged. */
+type BookingBody = { id: string; status: RegistrationStatus };
+
+/** What the transaction did: wrote the booking, or found it already held. */
+type BookingOutcome = {
+  readonly outcome: 'applied' | 'unchanged';
+  readonly booking: BookingBody;
+};
 
 /**
  * How long before a class starts a teacher-added registration counts as a
@@ -100,7 +106,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   try {
-    const registration = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx): Promise<BookingOutcome> => {
       // The booked student's row first, before the class row, on both paths.
       // A booking and an erasure of this student serialise here, and a
       // booking that waited reads the erasure's committed `deletedAt` and
@@ -145,18 +151,30 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         throw new NotYourClassError();
       }
 
-      // Students book open classes; the teacher can also add someone who
-      // shows up while the class is in progress.
-      const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
-      // TWO conditions since #327: a cancelled class keeps whatever status it
-      // had, so the allowlist alone would let a student book one. Reported as
-      // the same refusal — from a booker's side "this class is off" is what
-      // both mean — with a word that says which.
+      // A cancelled class keeps whatever status it had (#327), so it is a check
+      // of its own. It comes before the booking check below: a booked student
+      // retrying on a cancelled class is told the class is off.
       if (cls.calendarEntry.cancelledAt !== null) {
         throw new ClassStatusError('cancelled');
       }
+
+      // The booking this request asks for already exists. Checked before the
+      // status and capacity refusals below, so a retry is never refused for a
+      // state its own first attempt created. A cancelled registration keeps its
+      // row (unique per class+student) and is reactivated further down.
+      const existing = await tx.registration.findUnique({
+        where: { classId_studentId: { classId: body.classId, studentId } },
+        select: { id: true, status: true },
+      });
+      if (existing && ACTIVE_REGISTRATION_STATUSES.includes(existing.status)) {
+        return { outcome: 'unchanged', booking: existing };
+      }
+
+      // Students book open classes; the teacher can also add someone who
+      // shows up while the class is in progress.
+      const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
       if (!allowedStatuses.includes(cls.status)) {
-        throw new ClassStatusError(cls.status);
+        throw new ClassStatusError('not_bookable');
       }
 
       // Walk-ins are a class-time phenomenon: someone shows up at the door and
@@ -176,16 +194,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
       if (isFull && !isWalkIn) {
         throw new ClassFullError();
-      }
-
-      // A cancelled registration keeps its row (unique per class+student), so
-      // rebooking must reactivate it — a plain create would 409 forever.
-      const existing = await tx.registration.findUnique({
-        where: { classId_studentId: { classId: body.classId, studentId } },
-        select: { status: true },
-      });
-      if (existing && ACTIVE_REGISTRATION_STATUSES.includes(existing.status)) {
-        throw new AlreadyRegisteredError();
       }
 
       const reg = await activateRegistration(tx, {
@@ -274,8 +282,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         ]);
       }
 
-      return reg;
+      return { outcome: 'applied', booking: { id: reg.id, status: reg.status } };
     });
+
+    if (result.outcome === 'unchanged') {
+      return respondUnchanged<BookingBody>(result.booking);
+    }
+    const registration = result.booking;
 
     // Booking implies tier choice — but only the student's own booking.
     // Roster adds and walk-ins must not consume the income-selection
@@ -311,38 +324,44 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       }
     }
 
-    return respondOk({ id: registration.id, status: registration.status }, 201);
+    return respondTyped<BookingBody>(registration, 201);
   } catch (err) {
     if (err instanceof ClassNotFoundError) {
-      return respondError('Class not found', 404);
+      return respondError('This class no longer exists.', 404, 'NOT_FOUND');
     }
     if (err instanceof StudentErasedError) {
       return respondError(
-        isTeacher ? "This student's account no longer exists" : 'This account has been deleted',
+        isTeacher ? "This student's account no longer exists." : 'This account has been deleted.',
         409,
+        'STUDENT_ERASED',
       );
     }
     if (err instanceof NotYourClassError) {
       return respondError('Not your class', 403);
     }
     if (err instanceof ClassStatusError) {
-      return respondError(err.message, 409);
+      return err.refusal === 'cancelled'
+        ? respondError('This class has been cancelled.', 409, 'CLASS_CANCELLED')
+        : respondError("This class isn't taking bookings.", 409, 'CLASS_NOT_BOOKABLE');
     }
     if (err instanceof ClassFullError) {
-      return respondError('Class is full', 409);
+      return respondError('This class is full.', 409, 'CLASS_FULL');
     }
-    // The column set, not a bare `P2002`. `Registration @@unique([classId,
-    // studentId])` is the only conflict this message is true of; a bare check
-    // would put these words on any unique violation the transaction can raise,
-    // which is how a roster-link collision used to be reported as a booking
-    // the student did not have (#181). An unmatched `P2002` falls through to
-    // `withErrorHandler`, which answers 409 and logs `warn` naming
-    // `meta.target` — the right family for a unique violation, and observable.
-    if (
-      err instanceof AlreadyRegisteredError ||
-      isUniqueConflictOn(err, ['classId', 'studentId'])
-    ) {
-      return respondError('Student is already registered for this class', 409);
+    // The column set this transaction can raise a unique violation on:
+    // `Registration @@unique([classId, studentId])`, met when a twin request
+    // booked this student into this class first. Re-read outside the
+    // rolled-back transaction; an active row is the booking this request asks
+    // for. Anything else — a different column set, or a twin no longer active
+    // — falls through to `withErrorHandler`, which answers 409 and logs `warn`
+    // naming `meta.target`.
+    if (isUniqueConflictOn(err, ['classId', 'studentId'])) {
+      const twin = await prisma.registration.findUnique({
+        where: { classId_studentId: { classId: body.classId, studentId } },
+        select: { id: true, status: true },
+      });
+      if (twin && ACTIVE_REGISTRATION_STATUSES.includes(twin.status)) {
+        return respondUnchanged<BookingBody>(twin);
+      }
     }
     throw err;
   }
