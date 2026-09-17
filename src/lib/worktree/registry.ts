@@ -327,6 +327,7 @@ export function reclaimStaleLock(lockDir: string, staleMs: number): boolean {
 }
 
 export const ACQUIRE_LOCK_MAX_UNKNOWN_PASSES = 3;
+export const ACQUIRE_LOCK_MAX_RECLAIM_FAILURES = 3;
 
 export function acquireLock(lockDir: string, options?: LockOptions): LockHandle {
   const retries = options?.retries ?? DEFAULT_LOCK_OPTIONS.retries;
@@ -334,6 +335,7 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
   const staleMs = options?.staleMs ?? DEFAULT_LOCK_OPTIONS.staleMs;
 
   let reclaimedStale = false;
+  let failedReclaimAttempts = 0;
   // `null` means a read that succeeded and found no token (a legacy lock
   // shape) — a real, comparable value. A read that failed (ENOENT because a
   // sibling's mkdirSync landed before its owner.json write, or corrupted
@@ -344,9 +346,12 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
   // ACQUIRE_LOCK_MAX_UNKNOWN_PASSES extra passes before acquireLock gives up
   // — any single successful read resets that budget — so an unreadable
   // owner.json (permission error, permanent corruption) times out rather
-  // than waiting forever, as long as the lock never also looks stale: a
-  // stale lock whose reclaim keeps failing retries the reclaim itself
-  // forever below, a pre-existing gap unrelated to this bound.
+  // than waiting forever, as long as the lock never also looks stale. A
+  // stale lock whose reclaim keeps failing is a different failure mode —
+  // the reclaim itself broken, not merely a slow wait — bounded
+  // separately by failedReclaimAttempts/ACQUIRE_LOCK_MAX_RECLAIM_FAILURES
+  // below, with its own distinct error so the two don't read as the same
+  // timeout (#636).
   let observedToken: string | null | undefined = undefined;
   let observedTokenKnown = false;
   let unknownPasses = 0;
@@ -390,6 +395,13 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
       const reclaimed = reclaimStaleLock(lockDir, staleMs);
       if (reclaimed) {
         reclaimedStale = true;
+      } else {
+        failedReclaimAttempts += 1;
+        if (failedReclaimAttempts >= ACQUIRE_LOCK_MAX_RECLAIM_FAILURES) {
+          throw new Error(
+            `Failed to reclaim stale lock at ${lockDir} after ${ACQUIRE_LOCK_MAX_RECLAIM_FAILURES} consecutive attempts (the reclaim's rename kept failing — this is the reclaim itself being broken, not an ordinary timeout; check filesystem permissions on ${lockDir}, then remove it manually and retry)`,
+          );
+        }
       }
       observedToken = undefined;
       observedTokenKnown = false;

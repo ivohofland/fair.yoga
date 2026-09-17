@@ -14,6 +14,7 @@ import {
   writeRegistryLockedOrExplain,
   acquireLock,
   ACQUIRE_LOCK_MAX_UNKNOWN_PASSES,
+  ACQUIRE_LOCK_MAX_RECLAIM_FAILURES,
   releaseLock,
   isLockStale,
   isPidAlive,
@@ -742,6 +743,57 @@ describe('acquireLock / releaseLock staleness recovery', () => {
       // `unknownPasses = 0` drops this count, without failing any other
       // test in this file.
       expect(calls).toBe(4 + 3 + 2 * (ACQUIRE_LOCK_MAX_UNKNOWN_PASSES - 1));
+    } finally {
+      readSpy.mockRestore();
+      renameSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('bounds failed reclaim attempts rather than retrying a broken reclaim forever (#636)', () => {
+    // A lock that is BOTH unreadable (owner.json permission-denied, so
+    // isLockStale falls back to directory-age staleness) AND stale (mtime
+    // backdated past staleMs) takes the stale-reclaim branch on every
+    // pass. fs.renameSync is mocked to always throw — a persistent
+    // filesystem error (e.g. EPERM), not a sibling briefly winning the
+    // reclaim race — so reclaimStaleLock catches it and returns false on
+    // every call. reclaimedStale never flips true, and without
+    // ACQUIRE_LOCK_MAX_RECLAIM_FAILURES the branch's own `continue` would
+    // retry the doomed reclaim forever (#636).
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    const oldTime = new Date(Date.now() - 100_000);
+    fs.utimesSync(lockDir, oldTime, oldTime);
+
+    const realReadFileSync = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      const err = new Error('EACCES') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as typeof fs.readFileSync);
+
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      const err = new Error('EPERM') as NodeJS.ErrnoException;
+      err.code = 'EPERM';
+      throw err;
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
+        /reclaim itself being broken/,
+      );
+      // Pins the bound at exactly ACQUIRE_LOCK_MAX_RECLAIM_FAILURES: every
+      // stale-and-not-yet-reclaimed pass makes exactly one renameSync
+      // call, so throwing after N attempts costs exactly N renameSync
+      // calls — an off-by-one in the bound changes this count.
+      expect(renameSpy).toHaveBeenCalledTimes(ACQUIRE_LOCK_MAX_RECLAIM_FAILURES);
+      expect(fs.existsSync(lockDir)).toBe(true);
     } finally {
       readSpy.mockRestore();
       renameSpy.mockRestore();
