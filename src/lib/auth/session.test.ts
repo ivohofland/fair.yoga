@@ -9,6 +9,7 @@ import {
   createSession,
   validateSession,
   invalidateSession,
+  revokeRequestSession,
   getSessionToken,
   setSessionCookie,
   clearSessionCookie,
@@ -387,12 +388,49 @@ describe('validateSession', () => {
 });
 
 describe('invalidateSession', () => {
-  it('deletes the session so subsequent validate returns null', async () => {
+  it('deletes the session so subsequent validate returns null and returns true', async () => {
     const token = await createSession(db, teacherAccountId);
 
     expect(await validateSession(db, token)).not.toBeNull();
-    await invalidateSession(db, token);
+    const result = await invalidateSession(db, token);
+    expect(result).toBe(true);
     expect(await validateSession(db, token)).toBeNull();
+  });
+
+  it('returns false without throwing when token does not exist in the database', async () => {
+    const nonExistentToken = '0'.repeat(64);
+    const result = await invalidateSession(db, nonExistentToken);
+    expect(result).toBe(false);
+  });
+});
+
+describe('revokeRequestSession', () => {
+  it('returns false when request carries no session cookie', async () => {
+    const request = new NextRequest('http://localhost');
+    const result = await revokeRequestSession(db, request);
+    expect(result).toBe(false);
+  });
+
+  it('revokes active session and returns true when session exists', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const request = new NextRequest('http://localhost', {
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+    });
+
+    expect(await validateSession(db, token)).not.toBeNull();
+    const result = await revokeRequestSession(db, request);
+    expect(result).toBe(true);
+    expect(await validateSession(db, token)).toBeNull();
+  });
+
+  it('returns false without throwing when session cookie names an absent session', async () => {
+    const nonExistentToken = '0'.repeat(64);
+    const request = new NextRequest('http://localhost', {
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${nonExistentToken}` },
+    });
+
+    const result = await revokeRequestSession(db, request);
+    expect(result).toBe(false);
   });
 });
 

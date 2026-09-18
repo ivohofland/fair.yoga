@@ -1,164 +1,207 @@
-# Task 1 Report: Widen `src/proxy.ts` matcher and verify proxy routing
+# Task 1 Report: Refactor `invalidateSession` and `revokeRequestSession` with unit tests
 
 ## Overview
-Implemented Task 1 of Issue #615 to expand protected route coverage in `src/proxy.ts` so that unauthenticated visitors to `/schedule`, `/studio-class`, `/account`, and `/updates` routes are intercepted by proxy middleware and redirected to `/login?redirect=<path+query>` with `x-pathname` stamping on authenticated requests.
+Implemented Task 1 of the implementation plan (`docs/superpowers/plans/2026-09-18-session-delete-error-handling.md`) for Issue #641:
+- Refactored `invalidateSession(db, token)` in `src/lib/auth/session.ts` to use `db.session.deleteMany({ where: { id: sessionHash } })` and return `Promise<boolean>` (`count > 0`), ensuring missing records remain safe no-ops returning `false` while database errors bubble up.
+- Refactored `revokeRequestSession(db, request)` in `src/lib/auth/session.ts` to delegate directly to `invalidateSession(db, token)` once extracted from the cookie store.
+- Updated docblocks for both functions accurately describing their error semantics, return values, and callers.
+- Updated and expanded unit tests in `src/lib/auth/session.test.ts` covering both functions and all edge cases.
+- Validated with mutation testing and verified the full test suite (`pnpm run verify`).
 
-## Changes Made
+---
 
-### 1. `src/proxy.ts`
-Expanded `config.matcher` from 5 route prefixes to all 9 protected prefixes:
-- `/schedule/:path*`
-- `/studio-class/:path*`
-- `/students/:path*`
-- `/inbox/:path*`
-- `/settings/:path*`
-- `/class/:path*`
-- `/bookings/:path*`
-- `/account/:path*`
-- `/updates/:path*`
+## Files Changed
 
-### 2. `src/proxy.test.ts`
-- Updated the matcher test (`matches the 9 protected route prefixes`) to assert all 9 prefixes in `config.matcher`.
-- Added test cases verifying that unauthenticated requests to:
-  - `/schedule` -> `307` redirect to `/login?redirect=%2Fschedule`
-  - `/studio-class/sc-1` -> `307` redirect to `/login?redirect=%2Fstudio-class%2Fsc-1`
-  - `/account/privacy` -> `307` redirect to `/login?redirect=%2Faccount%2Fprivacy`
-  - `/updates` -> `307` redirect to `/login?redirect=%2Fupdates`
-- Added test verifying query parameter preservation on new routes:
-  - `/account/privacy?tab=invitations` -> `307` redirect to `/login?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations`
+1. `src/lib/auth/session.ts`:
+   - Updated `invalidateSession` signature to return `Promise<boolean>`.
+   - Used `deleteMany` so missing sessions do not throw and return `false`.
+   - Updated `revokeRequestSession` to delegate to `invalidateSession`.
+   - Updated docblocks for both functions.
+2. `src/lib/auth/session.test.ts`:
+   - Imported `revokeRequestSession`.
+   - Updated `describe('invalidateSession')` test to assert return value is `true` and that validate returns `null`.
+   - Added test for `invalidateSession` returning `false` without throwing when token does not exist in the database.
+   - Added `describe('revokeRequestSession')` covering:
+     - Returns `false` when request carries no session cookie.
+     - Revokes active session and returns `true` when session exists.
+     - Returns `false` without throwing when session cookie names an absent session.
+3. `docs/superpowers/plans/2026-09-18-session-delete-error-handling.md`:
+   - Marked Task 1 steps as completed.
 
 ---
 
 ## Code Diffs
 
-### `src/proxy.ts`
+### `src/lib/auth/session.ts`
 ```diff
-@@ -26,11 +26,15 @@
+@@ -120,29 +120,40 @@ export async function validateSession(
+   return null;
+ }
  
- export const config = {
-   matcher: [
-+    '/schedule/:path*',
-+    '/studio-class/:path*',
-     '/students/:path*',
-     '/inbox/:path*',
-     '/settings/:path*',
-     '/class/:path*',
-     '/bookings/:path*',
-+    '/account/:path*',
-+    '/updates/:path*',
-   ],
- };
++/**
++ * Invalidate a session by its raw token.
++ *
++ * Uses `deleteMany` rather than `delete`: a row that is already absent is this
++ * function's postcondition, not an error — missing records safely return `false`
++ * without throwing, while genuine database failures bubble to the caller.
++ *
++ * Returns `true` if a session was found and deleted, `false` if it did not exist.
++ */
+ export async function invalidateSession(
+   db: PrismaClient,
+-  token: string
+-): Promise<void> {
++  token: string,
++): Promise<boolean> {
+   const sessionHash = hashToken(token);
+-  await db.session.delete({
++  const { count } = await db.session.deleteMany({
+     where: { id: sessionHash },
+   });
++  return count > 0;
+ }
+ 
+ /**
+- * Revoke whatever session the request carries, if it carries one. For a door
+- * that ends a sign-in as a side effect of doing something else, where the
+- * caller has no token in hand to pass to `invalidateSession`.
+- *
+- * `deleteMany` rather than `delete`: a row that has already gone is this
+- * function's postcondition, not an error worth catching — and writing it that
+- * way keeps a genuine database failure from being swallowed alongside it.
++ * Revoke whatever session the request carries, if it carries one. For doors
++ * that end a sign-in (e.g. sign-out route, magic-link verification/claim) where
++ * the caller has an incoming `NextRequest` rather than a raw token.
+  *
++ * Delegates to `invalidateSession` once the session token is extracted from cookies.
+  *
+  * Answers whether a sign-in actually ended, which is narrower than whether a
+  * cookie was carried: a cookie naming a session that had already expired or
+  * been revoked cost its holder nothing, and a caller reporting the sign-out
+  * to them would be describing something that did not happen.
++ *
++ * Returns `true` if an active session was found and deleted, `false` if no cookie
++ * was present or the session was already absent. Genuine database failures bubble up.
+  */
+ export async function revokeRequestSession(
+   db: PrismaClient,
+@@ -150,8 +161,7 @@ export async function revokeRequestSession(
+ ): Promise<boolean> {
+   const token = getSessionToken(request);
+   if (!token) return false;
+-  const { count } = await db.session.deleteMany({ where: { id: hashToken(token) } });
+-  return count > 0;
++  return invalidateSession(db, token);
+ }
+ 
+ /**
 ```
 
-### `src/proxy.test.ts`
+### `src/lib/auth/session.test.ts`
 ```diff
-@@ -33,6 +33,45 @@
-       const location = response.headers.get('location');
-       expect(location).toBe('http://localhost:3000/login?redirect=%2Fstudents%2Fstu-1%3Ftab%3Dnotes%26filter%3Dactive');
-     });
-+    it('redirects unauthenticated request on /schedule to login with redirect param', () => {
-+      const request = makeRequest('/schedule');
-+      const response = proxy(request);
-+
-+      expect(response.status).toBe(307);
-+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Fschedule');
-+    });
-+
-+    it('redirects unauthenticated request on /studio-class/sc-1 to login with redirect param', () => {
-+      const request = makeRequest('/studio-class/sc-1');
-+      const response = proxy(request);
-+
-+      expect(response.status).toBe(307);
-+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Fstudio-class%2Fsc-1');
-+    });
-+
-+    it('redirects unauthenticated request on /account/privacy to login with redirect param', () => {
-+      const request = makeRequest('/account/privacy');
-+      const response = proxy(request);
-+
-+      expect(response.status).toBe(307);
-+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Faccount%2Fprivacy');
-+    });
-+
-+    it('redirects unauthenticated request on /updates to login with redirect param', () => {
-+      const request = makeRequest('/updates');
-+      const response = proxy(request);
-+
-+      expect(response.status).toBe(307);
-+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Fupdates');
-+    });
-+
-+    it('preserves query parameters on newly protected routes', () => {
-+      const request = makeRequest('/account/privacy?tab=invitations');
-+      const response = proxy(request);
-+
-+      expect(response.status).toBe(307);
-+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations');
-+    });
-   });
+@@ -9,6 +9,7 @@ import {
+   createSession,
+   validateSession,
+   invalidateSession,
++  revokeRequestSession,
+   getSessionToken,
+   setSessionCookie,
+   clearSessionCookie,
+@@ -336,13 +337,50 @@ describe('validateSession', () => {
+ });
  
-   describe('authenticated requests', () => {
-@@ -61,8 +100,12 @@
-   });
+ describe('invalidateSession', () => {
+-  it('deletes the session so subsequent validate returns null', async () => {
++  it('deletes the session so subsequent validate returns null and returns true', async () => {
+     const token = await createSession(db, teacherAccountId);
  
-   describe('config matcher', () => {
--    it('matches the 5 protected route prefixes', () => {
-+    it('matches the 9 protected route prefixes', () => {
-       expect(config.matcher).toEqual([
-+        '/schedule/:path*',
-+        '/studio-class/:path*',
-         '/students/:path*',
-         '/inbox/:path*',
-         '/settings/:path*',
-@@ -69,4 +112,6 @@
-         '/bookings/:path*',
-+        '/account/:path*',
-+        '/updates/:path*',
-       ]);
-     });
+     expect(await validateSession(db, token)).not.toBeNull();
+-    await invalidateSession(db, token);
++    const result = await invalidateSession(db, token);
++    expect(result).toBe(true);
+     expect(await validateSession(db, token)).toBeNull();
    });
++
++  it('returns false without throwing when token does not exist in the database', async () => {
++    const nonExistentToken = '0'.repeat(64);
++    const result = await invalidateSession(db, nonExistentToken);
++    expect(result).toBe(false);
++  });
++});
++
++describe('revokeRequestSession', () => {
++  it('returns false when request carries no session cookie', async () => {
++    const request = new NextRequest('http://localhost');
++    const result = await revokeRequestSession(db, request);
++    expect(result).toBe(false);
++  });
++
++  it('revokes active session and returns true when session exists', async () => {
++    const token = await createSession(db, teacherAccountId);
++    const request = new NextRequest('http://localhost', {
++      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
++    });
++
++    expect(await validateSession(db, token)).not.toBeNull();
++    const result = await revokeRequestSession(db, request);
++    expect(result).toBe(true);
++    expect(await validateSession(db, token)).toBeNull();
++  });
++
++  it('returns false without throwing when session cookie names an absent session', async () => {
++    const nonExistentToken = '0'.repeat(64);
++    const request = new NextRequest('http://localhost', {
++      headers: { Cookie: `${SESSION_COOKIE_NAME}=${nonExistentToken}` },
++    });
++
++    const result = await revokeRequestSession(db, request);
++    expect(result).toBe(false);
++  });
+ });
+ 
+ describe('getSessionToken', () => {
 ```
 
 ---
 
 ## Test Execution Output
 
-`pnpm exec vitest run src/proxy.test.ts`
+### `pnpm exec vitest run src/lib/auth/session.test.ts`
 ```
- RUN  v4.1.10 /Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
 
-[unit-db] DATABASE_URL_TEST not set — using DATABASE_URL as-is
-
- ✓ |unit| src/proxy.test.ts (10 tests) 8ms
-   ✓ proxy (10)
-     ✓ unauthenticated requests (7)
-       ✓ redirects to /login with redirect query param for protected path 3ms
-       ✓ preserves query parameters in redirect URL 0ms
-       ✓ redirects unauthenticated request on /schedule to login with redirect param 0ms
-       ✓ redirects unauthenticated request on /studio-class/sc-1 to login with redirect param 0ms
-       ✓ redirects unauthenticated request on /account/privacy to login with redirect param 0ms
-       ✓ redirects unauthenticated request on /updates to login with redirect param 0ms
-       ✓ preserves query parameters on newly protected routes 0ms
-     ✓ authenticated requests (2)
-       ✓ passes through and stamps x-pathname header 1ms
-       ✓ strips client-supplied x-pathname and overwrites with actual path 1ms
-     ✓ config matcher (1)
-       ✓ matches the 9 protected route prefixes 0ms
+[unit-db] unit tests run against ethical_yoga_test
 
  Test Files  1 passed (1)
-      Tests  10 passed (10)
-   Start at  09:20:37
-   Duration  292ms (transform 17ms, setup 0ms, import 84ms, tests 8ms, environment 0ms)
+      Tests  29 passed (29)
+   Start at  13:54:23
+   Duration  1.69s (transform 23ms, setup 0ms, import 114ms, tests 190ms, environment 0ms)
 ```
 
-`pnpm run typecheck`
+### `pnpm run typecheck`
 ```
 $ tsc --noEmit
 (clean exit 0)
 ```
 
-`pnpm exec eslint src/proxy.ts src/proxy.test.ts`
+### `pnpm run lint`
 ```
+$ eslint
+✖ 6 problems (0 errors, 6 warnings)
+(clean exit 0)
+```
+
+### `pnpm run verify`
+```
+Test Files  77 passed (77)
+     Tests  981 passed (981)
+  Duration  233.08s
+$ tsx scripts/check-lockfile.ts
+✓ pnpm-lock.yaml passes supply-chain policy (703 entries checked)
+$ tsx scripts/check-migrations.ts
+✓ No applied migrations amended
+$ tsx scripts/check-visual-baseline-freshness.ts
+✓ Visual baselines are up to date with the routes they cover
 (clean exit 0)
 ```
 
@@ -167,44 +210,52 @@ $ tsc --noEmit
 ## Mutation Testing Protocol
 
 ### Mutation Applied
-Removed `'/schedule/:path*'` from `config.matcher` in `src/proxy.ts`.
+Replaced `db.session.deleteMany` with `db.session.delete` in `src/lib/auth/session.ts`:
+```ts
+export async function invalidateSession(
+  db: PrismaClient,
+  token: string,
+): Promise<boolean> {
+  const sessionHash = hashToken(token);
+  await db.session.delete({
+    where: { id: sessionHash },
+  });
+  return true;
+}
+```
 
 ### Failure Observed
+Running `pnpm exec vitest run src/lib/auth/session.test.ts` failed with 2 errors:
 ```
- ❯ |unit| src/proxy.test.ts (10 tests | 1 failed) 11ms
-   ❯ proxy (10)
-     ✓ unauthenticated requests (7)
-     ✓ authenticated requests (2)
-     ❯ config matcher (1)
-       × matches the 9 protected route prefixes 4ms
+ ❯ |unit| src/lib/auth/session.test.ts (29 tests | 2 failed) 209ms
+     × returns false without throwing when token does not exist in the database 8ms
+     × returns false without throwing when session cookie names an absent session 3ms
 
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
 
- FAIL  |unit| src/proxy.test.ts > proxy > config matcher > matches the 9 protected route prefixes
-AssertionError: expected [ '/studio-class/:path*', …(7) ] to deeply equal [ '/schedule/:path*', …(8) ]
+ FAIL  |unit| src/lib/auth/session.test.ts > invalidateSession > returns false without throwing when token does not exist in the database
+PrismaClientKnownRequestError: 
+Invalid `db.session.delete()` invocation in
+/Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts:137:20
 
-- Expected
-+ Received
+  134   token: string,
+  135 ): Promise<boolean> {
+  136   const sessionHash = hashToken(token);
+→ 137   await db.session.delete(
+An operation failed because it depends on one or more records that were required but not found. No record was found for a delete.
 
-@@ -1,7 +1,6 @@
-  [
--   "/schedule/:path*",
-    "/studio-class/:path*",
-    "/students/:path*",
-    "/inbox/:path*",
-    "/settings/:path*",
-    "/class/:path*",
+ FAIL  |unit| src/lib/auth/session.test.ts > revokeRequestSession > returns false without throwing when session cookie names an absent session
+PrismaClientKnownRequestError: 
+Invalid `db.session.delete()` invocation in
+/Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts:137:20
 
- ❯ src/proxy.test.ts:105:30
-    103|   describe('config matcher', () => {
-    104|     it('matches the 9 protected route prefixes', () => {
-    105|       expect(config.matcher).toEqual([
-       |                              ^
-    106|         '/schedule/:path*',
-    107|         '/studio-class/:path*',
+  134   token: string,
+  135 ): Promise<boolean> {
+  136   const sessionHash = hashToken(token);
+→ 137   await db.session.delete(
+An operation failed because it depends on one or more records that were required but not found. No record was found for a delete.
 ```
 
 ### Restoration and Confirmation
-Restored `'/schedule/:path*'` in `src/proxy.ts`.
-Ran `pnpm exec vitest run src/proxy.test.ts`.
-Result: 10 passed (10). Suite is green.
+Restored `src/lib/auth/session.ts` back to `deleteMany`.
+Re-ran `pnpm exec vitest run src/lib/auth/session.test.ts`: 29 passed (29). All green.

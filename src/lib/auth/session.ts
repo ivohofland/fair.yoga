@@ -129,29 +129,40 @@ export async function validateSession(
   return null;
 }
 
+/**
+ * Invalidate a session by its raw token.
+ *
+ * Uses `deleteMany` rather than `delete`: a row that is already absent is this
+ * function's postcondition, not an error — missing records safely return `false`
+ * without throwing, while genuine database failures bubble to the caller.
+ *
+ * Returns `true` if a session was found and deleted, `false` if it did not exist.
+ */
 export async function invalidateSession(
   db: PrismaClient,
-  token: string
-): Promise<void> {
+  token: string,
+): Promise<boolean> {
   const sessionHash = hashToken(token);
-  await db.session.delete({
+  const { count } = await db.session.deleteMany({
     where: { id: sessionHash },
   });
+  return count > 0;
 }
 
 /**
- * Revoke whatever session the request carries, if it carries one. For a door
- * that ends a sign-in as a side effect of doing something else, where the
- * caller has no token in hand to pass to `invalidateSession`.
+ * Revoke whatever session the request carries, if it carries one. For doors
+ * that end a sign-in (e.g. sign-out route, magic-link verification/claim) where
+ * the caller has an incoming `NextRequest` rather than a raw token.
  *
- * `deleteMany` rather than `delete`: a row that has already gone is this
- * function's postcondition, not an error worth catching — and writing it that
- * way keeps a genuine database failure from being swallowed alongside it.
+ * Delegates to `invalidateSession` once the session token is extracted from cookies.
  *
  * Answers whether a sign-in actually ended, which is narrower than whether a
  * cookie was carried: a cookie naming a session that had already expired or
  * been revoked cost its holder nothing, and a caller reporting the sign-out
  * to them would be describing something that did not happen.
+ *
+ * Returns `true` if an active session was found and deleted, `false` if no cookie
+ * was present or the session was already absent. Genuine database failures bubble up.
  */
 export async function revokeRequestSession(
   db: PrismaClient,
@@ -159,8 +170,7 @@ export async function revokeRequestSession(
 ): Promise<boolean> {
   const token = getSessionToken(request);
   if (!token) return false;
-  const { count } = await db.session.deleteMany({ where: { id: hashToken(token) } });
-  return count > 0;
+  return invalidateSession(db, token);
 }
 
 /**
