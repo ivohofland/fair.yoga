@@ -71,7 +71,6 @@ describe('GET /api/auth/session — session extension race (#632)', () => {
         error: { message: 'Session expired' },
       });
 
-      // Must not log an error
       expect(errorSpy).not.toHaveBeenCalled();
       expect(updateSpy).toHaveBeenCalledTimes(1);
     } finally {
@@ -106,7 +105,6 @@ describe('GET /api/auth/session — session extension race (#632)', () => {
       },
     });
 
-    // Verify session was extended
     const session = await prisma.session.findUnique({ where: { id: sessionHash } });
     expect(session!.expiresAt.getTime()).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
   });

@@ -17,7 +17,7 @@ import {
 const db = new PrismaClient();
 const uniqueSuffix = Date.now();
 
-// Account fixtures covering teacher-only, student-only, and dual profile accounts.
+// Test fixtures for each SessionUser profile variant.
 let teacherAccountId: string;
 let studentAccountId: string;
 let dualAccountId: string;
@@ -348,7 +348,7 @@ describe('validateSession', () => {
     const realUpdate = db.session.update.bind(db.session);
     const updateSpy = vi.spyOn(db.session, 'update').mockImplementation(((args) => {
       return (async () => {
-        // Simulate concurrent deletion (logout or GDPR erasure) between read and update
+        // Simulate concurrent deletion (e.g. logout or GDPR erasure) between read and update
         await db.session.delete({ where: { id: sessionHash } });
         return realUpdate(args);
       })() as unknown as ReturnType<typeof realUpdate>;
