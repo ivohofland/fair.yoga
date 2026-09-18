@@ -1,241 +1,287 @@
-# PR Test Review: PR #633 (Issue #615) — Destination Preservation on Sign-In
+# Test Coverage & Resilience Audit: PR #642 (`fix/641-session-delete-errors`)
 
-- **PR:** #633 (`fix/615-login-redirect-preservation` against `origin/main`)
-- **Issue:** #615 (Preserve intended destination through sign-in flow)
-- **Reviewer:** PR Reviewer (Tests)
-- **Date:** 2026-09-17
-- **Touched Test Files:**
-  - `src/proxy.test.ts`
-  - `src/app/(public)/login/page.test.tsx`
-  - `src/lib/student-guard.test.ts`
-  - `tests/e2e/auth.spec.ts`
-- **Associated Source Files:**
-  - `src/proxy.ts`
-  - `src/app/(public)/login/page.tsx`
-  - `src/lib/student-guard.ts`
-  - `src/app/(teacher)/layout.tsx`
-  - `src/app/(student)/layout.tsx`
-  - `src/lib/session.ts`
-- **Verification Status:**
-  - `pnpm run typecheck`: **PASS (Exit code 0, 0 errors)**
-  - Unit & Component tests (`src/proxy.test.ts`, `src/app/(public)/login/page.test.tsx`, `src/lib/student-guard.test.ts`): **PASS (3 test files, 26 passed tests)**
+- **PR:** #642 (`fix/641-session-delete-errors` against `origin/main`)
+- **Issue:** #641 (Bubble database errors in `DELETE /api/auth/session`)
+- **Reviewer:** PR Test Coverage & Resilience Analyzer
+- **Date:** 2026-09-18
+- **Target Test Files Reviewed:**
+  - `src/lib/auth/session.test.ts`
+  - `src/app/api/auth/session/route.test.ts`
+  - `tests/integration/auth.test.ts`
+- **Associated Implementation Files:**
+  - `src/lib/auth/session.ts`
+  - `src/app/api/auth/session/route.ts`
 
 ---
 
-## 1. Executive Summary
+## 1. Test Coverage Summary
 
-PR #633 implements destination preservation for unauthenticated users attempting to access protected routes. The implementation touches three distinct layers:
-1. **Edge/Routing Proxy (`src/proxy.ts`)**: Expands route matcher from 5 to 9 prefixes and stamps `x-pathname` (including query parameters) on downstream requests.
-2. **Login View (`src/app/(public)/login/page.tsx`)**: Reads `?redirect` search parameter via `useSearchParams()`, sanitizes it using `isSafeRelativePath` and length check (`<= 200`), forwards it to `POST /api/auth/magic-link/send`, and passes it to `<PasskeySignIn />`.
-3. **Layout & Session Defense-in-Depth (`src/app/(teacher)/layout.tsx`, `src/app/(student)/layout.tsx`, `src/lib/session.ts`, `src/lib/student-guard.ts`)**: Reads `x-pathname` from headers when session verification fails, preserving redirect destinations for expired or revoked session cookies.
+PR #642 addresses a critical defect in session revocation: `DELETE /api/auth/session` previously wrapped `invalidateSession` in an unconstrained empty `catch {}` block (`// Session may already be deleted — that's fine`), silently swallowing genuine database errors (network drops, connection pool exhaustion) into HTTP 200 responses.
 
-This test review evaluates the test suite changes against test coverage gaps, assertion falsifiability/discrimination, boundary edge cases, and mock realism across unit, component, and E2E tiers.
+The fix operates across two distinct layers:
+1. **Service / Library Layer (`src/lib/auth/session.ts`)**:
+   - Refactored `invalidateSession(db, token)` to use `db.session.deleteMany({ where: { id: sessionHash } })` instead of `delete(...)`. Returning `Promise<boolean>` (`count > 0`), it treats an absent record as a safe postcondition returning `false` rather than throwing a Prisma `P2025` error, allowing genuine database exceptions to bubble up.
+   - Refactored `revokeRequestSession(db, request)` to delegate directly to `invalidateSession(db, token)` once extracted from the cookie store.
+2. **Route Handler Layer (`src/app/api/auth/session/route.ts`)**:
+   - Replaced the manual token extraction and empty `catch {}` block with `await revokeRequestSession(prisma, request)`.
+   - Allowed unhandled database exceptions to bubble out to `withErrorHandler`, which logs the failure via Pino (`log.error`) and returns HTTP 500 (`Internal server error`).
 
-### Summary of Findings by Severity
+### Overall Coverage Assessment: **EXCELLENT (9/10)**
 
-| Severity | Count | Key Focus |
+The PR establishes an exemplary test pyramid across unit (isolated mock and real test DB) and integration (live HTTP transport) tiers. Test assertions are discriminative and falsifiable, with proven sensitivity under mutation testing.
+
+| Dimension | Assessment | Notes |
 |---|:---:|---|
-| **Critical** | 1 | Non-discriminating E2E test assertion bypassing login form submission via synthetic token minting |
-| **Important** | 3 | Complete lack of tests for server layout/session defense-in-depth, boundary gaps on length limit, missing query-string tests in component & guard tests |
-| **Suggestion** | 4 | Session shapes with null roles in guard tests, matcher-to-`RESERVED_SLUGS` synchronization, mock realism of `redirect()`, and open-redirect evasion payloads |
+| **Behavioral Coverage** | Robust | Active session, absent session, no token, and DB failure cases are all exercised. |
+| **Tier Distribution** | Appropriate | Fast unit tests in `src/**/*.test.ts`, real HTTP wire test in `tests/integration/**/*.test.ts`. No sweep leakage. |
+| **Resilience & DAMP** | High | Tests avoid fragile private state inspection; tests verify observable outcomes (HTTP status, headers, DB side-effects). |
+| **Critical Gaps (8–10)** | None (0) | No blocking critical gaps identified. |
+| **Moderate Gaps (5–7)** | 1 | Missing no-cookie test case over HTTP wire in `tests/integration/auth.test.ts`. |
+| **Minor Improvements (1–4)** | 4 | Wire JSON assertion, direct rejection test at lib layer, 500 cookie-omission assertion, and explicit `{ count: 0 }` route mock. |
 
 ---
 
-## 2. 🚨 Critical Findings
+## 2. Vitest Tier Placement & Test Architecture
 
-### Finding 1: Non-Discriminating E2E Assertion in `tests/e2e/auth.spec.ts` — Synthetic Token Decouples Destination Preservation from Form Submission
+The repository defines four Vitest projects in `vitest.config.ts` and `vitest.tiers.ts`. The tests in PR #642 are partitioned as follows:
 
-- **File & Lines:** `tests/e2e/auth.spec.ts:225-248`
-- **Scenario:** End-to-end destination preservation test (`unauthenticated user visiting protected route with redirect preserves destination through sign-in`).
-- **Detailed Analysis:**
-  The test begins by visiting `/settings/rooms`, verifies redirection to `/login?redirect=%2Fsettings%2Frooms`, fills in `teacherEmail`, and clicks the submit button:
-  ```ts
-  await page.goto('/settings/rooms');
-  await expect(page).toHaveURL(/\/login\?redirect=%2Fsettings%2Frooms/);
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Vitest Test Architecture                        │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. unit (`src/**/*.test.ts`)                                           │
+│    ├── src/lib/auth/session.test.ts (Parallel node, DATABASE_URL_TEST) │
+│    └── src/app/api/auth/session/route.test.ts (Parallel node, mocked)  │
+├────────────────────────────────────────────────────────────────────────┤
+│ 2. integration (`tests/integration/**/*.test.ts`)                      │
+│    └── tests/integration/auth.test.ts (Live dev server on :3000)       │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-  await page.getByLabel('Email').fill(teacherEmail);
-  await page.getByRole('button', { name: 'Send me the link' }).click();
-
-  await expect(
-    page.getByText('Check your inbox for the link.')
-  ).toBeVisible();
-  ```
-  At this point, the browser has called `POST /api/auth/magic-link/send`. However, lines 238–244 do the following:
-  ```ts
-  const cookies = await page.context().cookies();
-  const originCookie = cookies.find((c) => c.name === 'fair_yoga_origin');
-  const nonce = originCookie?.value ?? '';
-  const rawToken = await createMagicLinkToken(teacherEmail, nonce, '/settings/rooms');
-
-  await page.goto(`/verify?token=${rawToken}`);
-  ```
-  `createMagicLinkToken(teacherEmail, nonce, '/settings/rooms')` directly creates an entirely new, independent record in `prisma.magicLinkToken` with `redirectTo: '/settings/rooms'` hardcoded in the test call.
-- **Why this fails falsifiability & discrimination:**
-  "A guard that cannot fail certifies nothing." (`AGENTS.md`).
-  If a regression is introduced into `src/app/(public)/login/page.tsx` that drops the `redirect` parameter from the fetch body (e.g., `body: JSON.stringify({ email })`), or if `POST /api/auth/magic-link/send` fails to persist `body.redirect`:
-  **This E2E test will STILL PASS!**
-  The test completely discards the token actually produced by the form submission and instead verifies against the synthetically injected token that was manually gifted `redirectTo: '/settings/rooms'`.
-- **Recommended Remediation:**
-  Assert that the token written to the database as a result of the UI form submission actually captured the redirect parameter before or during verification:
-  ```ts
-  // Assert the token produced by clicking the form actually preserved the redirect destination
-  const formToken = await prisma.magicLinkToken.findFirst({
-    where: { email: teacherEmail },
-    orderBy: { createdAt: 'desc' },
-  });
-  expect(formToken?.redirectTo).toBe('/settings/rooms');
-  ```
-  Alternatively, if verification requires a known token secret, the test should explicitly acknowledge that the database record is the subject of verification for the form submission step.
+### Tier Review Findings:
+1. **`src/lib/auth/session.test.ts` (`unit` tier)**:
+   - **Environment:** Node.
+   - **Database:** Dedicated isolated test database (`DATABASE_URL_TEST`).
+   - **Execution:** Runs in parallel (`fileParallelism: true`).
+   - **Verdict:** Correct. It tests `invalidateSession` and `revokeRequestSession` directly against PostgreSQL tables. Each test operates on a distinct session record generated by `createSession(db, teacherAccountId)` without global table sweeps or locks.
+2. **`src/app/api/auth/session/route.test.ts` (`unit` tier)**:
+   - **Environment:** Node.
+   - **Database:** Mocked via `vi.spyOn(prisma.session, 'deleteMany')`.
+   - **Execution:** Runs in parallel (`fileParallelism: true`).
+   - **Verdict:** Correct. Directly executes the route handler export `DELETE(request)`. Exercises the integration between the route handler, `revokeRequestSession`, and the outer `withErrorHandler` wrapper without requiring a live HTTP server or database connection. Spies are cleanly restored in `afterEach`.
+3. **`tests/integration/auth.test.ts` (`integration` tier)**:
+   - **Environment:** Node.
+   - **Target:** Live dev server on `:3000` via `fetch(`${BASE_URL}/api/auth/session`, ...)`.
+   - **Database:** Dev DB locally / CI database in CI.
+   - **Verdict:** Correct. Exercises genuine HTTP request parsing, cookie extraction across the network, and asserts actual database row deletion via `validateSession(prisma, sessionToken)`.
+4. **`unit-sweeps` Exclusion**:
+   - Neither test touches `SERIAL_TESTS` in `vitest.tiers.ts`. Neither file performs table-wide sweeps (like `auth-cleanup.test.ts` or `waitlist-reconciliation.test.ts`) or lock contention assertions. Placement in the parallel `unit` tier is completely safe and avoids slowing down the serial tier.
 
 ---
 
-## 3. ⚠️ Important Findings
+## 3. Behavioral Coverage & Edge Case Evaluation
 
-### Finding 2: Complete Absence of Tests for Server Layout & Session Defense-in-Depth (`requireTeacherSession`, `TeacherLayout`, `StudentLayout`)
+The table below audits behavioral coverage across the four critical edge cases:
 
-- **Files & Lines:**
-  - `src/lib/session.ts:18-21` (`requireTeacherSession`)
-  - `src/app/(teacher)/layout.tsx:22-24` (`TeacherLayout`)
-  - `src/app/(student)/layout.tsx:12-13` (`StudentLayout`)
-- **Scenario:** Visitor accesses a protected route with an invalid or expired `fair_yoga_session` cookie.
-- **Detailed Analysis:**
-  The PR modifies `requireTeacherSession` in `src/lib/session.ts`, `TeacherLayout` in `src/app/(teacher)/layout.tsx`, and `StudentLayout` in `src/app/(student)/layout.tsx` to read `x-pathname` from `headers()` and issue a redirect to `/login?redirect=${encodeURIComponent(pathname)}`.
-  This is explicitly designed to handle the expired/invalid cookie edge case (where `src/proxy.ts` passes the request through because a cookie header exists, stamps `x-pathname`, but the database session lookup fails).
-  However:
-  - There are **zero unit tests** for `requireTeacherSession` in `src/lib/session.ts`.
-  - There are **zero tests** for `TeacherLayout` or `StudentLayout` handling `x-pathname`.
-  - There are **zero integration or E2E tests** that send an invalid/expired session cookie to a protected route to verify that the server-side layout/guard preserves destination.
-  Only the helper function `redirectNonStudent` has unit tests (`src/lib/student-guard.test.ts`), leaving the server components and session guard that actually read from `headers()` completely untested.
-- **Why it matters:**
-  If Next.js header access (`(await headers()).get('x-pathname')`) fails or behaves differently during server component execution, or if `requireTeacherSession` constructs an incorrect URL, no test in the test suite will fail.
-- **Recommended Remediation:**
-  1. Add a unit test file `src/lib/session.test.ts` covering `requireTeacherSession`:
-     - When unauthenticated and `x-pathname` is a safe relative path -> redirects to `/login?redirect=...`.
-     - When unauthenticated and `x-pathname` is unsafe -> redirects to `/login`.
-     - When unauthenticated and `x-pathname` is absent -> redirects to `/login`.
-  2. Add an integration or E2E test making a request with an invalid `fair_yoga_session=expired-token` cookie to `/settings/rooms` and asserting redirect to `/login?redirect=%2Fsettings%2Frooms`.
+| Scenario | `session.test.ts` (Lib Unit) | `route.test.ts` (Route Unit) | `auth.test.ts` (HTTP Integration) | Verdict |
+|---|:---:|:---:|:---:|:---:|
+| **1. Active Session** | ✅ Covered (`validateSession` -> null, returns `true`) | ✅ Covered (Status 200, `deleteMany` called, cookie cleared) | ✅ Covered (HTTP 200, `Set-Cookie` cleared, DB validated null) | **Fully Covered** |
+| **2. Absent Session (Stale / Already Revoked)** | ✅ Covered (Returns `false`, does not throw P2025) | ⚠️ Implicitly Covered (via `{ count: 1 }` branch) | ✅ Covered (Idempotent 2nd call returns 200, cookie cleared) | **Fully Covered** |
+| **3. No Token (Missing Cookie Header)** | ✅ Covered (`revokeRequestSession` returns `false`) | ✅ Covered (Status 200, cookie cleared, `deleteMany` NOT called) | ⚠️ Missing (Never called over HTTP without cookie) | **Adequate (Unit guarded, HTTP gap)** |
+| **4. Database Failure (Error Propagation)** | ⚠️ Not directly asserted at lib layer | ✅ Covered (Status 500, logged via Pino, error propagated) | ℹ️ N/A (Cannot safely kill DB in integration) | **Well Guarded** |
 
----
+### Detailed Behavioral Walkthrough:
 
-### Finding 3: Boundary Gaps on String Length Limits in `login/page.test.tsx` and Architectural Inconsistency with Server Guards
+#### Scenario 1: Active Session Revocation
+- **Contract:** A user with an active cookie calls `DELETE /api/auth/session`. The database row must be removed, response must be HTTP 200 `{ data: { message: 'Logged out' } }`, and `Set-Cookie` must expire `fair_yoga_session` (`Max-Age=0`).
+- **Audit:**
+  - In `session.test.ts:340-347` & `363-373`: Asserts both `invalidateSession` and `revokeRequestSession` return `true` and that subsequent `validateSession` returns `null`.
+  - In `route.test.ts:23-44`: Verifies `res.status === 200`, message is `'Logged out'`, cookie header contains `Max-Age=0` and `fair_yoga_session=;`, and `deleteMany` was called once.
+  - In `auth.test.ts:202-220`: Verifies HTTP wire response is 200, cookie header is expired, and queries the database to confirm `after === null`.
+- **Verdict:** Flawless multi-tier verification.
 
-- **Files & Lines:**
-  - `src/app/(public)/login/page.test.tsx:96`
-  - `src/app/(public)/login/page.tsx:16`
-  - `src/lib/student-guard.ts:16`
-- **Scenario:** Validating maximum URL length constraints on `redirect` parameters.
-- **Detailed Analysis:**
-  In `src/app/(public)/login/page.tsx`:
-  ```ts
-  const redirect =
-    rawRedirect && isSafeRelativePath(rawRedirect) && rawRedirect.length <= 200
-      ? rawRedirect
-      : undefined;
-  ```
-  In `src/app/(public)/login/page.test.tsx`:
-  ```ts
-  ['string exceeding 200 chars', '/' + 'a'.repeat(201)] // length = 202
-  ```
-  - **Off-by-one boundary testing gap:** The test uses length 202 (`'/' + 201 'a's`). It tests neither the exact upper boundary (length 200, which must be accepted) nor the immediate off-by-one violation (length 201, which must be rejected).
-  - **Inconsistency across defense-in-depth guards:** While `login/page.tsx` and `relativePath` (`src/lib/schemas.ts:121`) enforce `length <= 200`, `redirectNonStudent` (`src/lib/student-guard.ts:16`), `TeacherLayout` (`layout.tsx:22`), and `requireTeacherSession` (`session.ts:18`) only check `isSafeRelativePath(pathname)` and **do not enforce length <= 200**. Consequently, `student-guard.test.ts` has zero tests for length boundaries.
-- **Why it matters:**
-  Boundary value analysis requires testing at $N$, $N+1$, and $N-1$. Testing at $N+2$ fails to verify whether the comparison operator was `<=` or `<`.
-- **Recommended Remediation:**
-  In `src/app/(public)/login/page.test.tsx`:
-  - Add a test verifying that a 200-character path is accepted: `'/' + 'a'.repeat(199)`.
-  - Update the rejection test to test the exact edge: `'/' + 'a'.repeat(200)` (201 characters).
+#### Scenario 2: Absent / Stale Session (Idempotency)
+- **Contract:** Revoking a session that does not exist in the database (or has already been revoked) must not throw, must be idempotent, and must return HTTP 200 with an expired cookie.
+- **Audit:**
+  - In `session.test.ts:349-353` & `375-383`: Asserts that passing a non-existent token (`'0'.repeat(64)`) returns `false` without throwing an unhandled exception.
+  - In `auth.test.ts:222-242`: Tests calling `DELETE /api/auth/session` a second time with the already-revoked session token. Asserts the second call returns HTTP 200 and expires the cookie.
+- **Verdict:** Highly resilient. Proves the contract against both the Prisma client and live HTTP requests.
+
+#### Scenario 3: No Token (Unauthenticated Request)
+- **Contract:** A request with no `Cookie` header must not make unnecessary database calls, must return HTTP 200, and must clear any client cookie.
+- **Audit:**
+  - In `session.test.ts:357-361`: Asserts `revokeRequestSession` returns `false` when no cookie is present.
+  - In `route.test.ts:46-64`: Verifies `deleteManySpy.not.toHaveBeenCalled()` and status 200 with expired cookie header.
+  - In `auth.test.ts`: Missing over HTTP (see Finding 1).
+- **Verdict:** Well covered in unit tests; minor gap in integration.
+
+#### Scenario 4: Database Error Propagation
+- **Contract:** If `db.session.deleteMany` fails (e.g. database disconnect), the error must bubble out of `revokeRequestSession`, reach `withErrorHandler`, be logged via Pino (`log.error`), and respond with HTTP 500 (`Internal server error`).
+- **Audit:**
+  - In `route.test.ts:66-92`: Mocks `prisma.session.deleteMany` rejection with `new Error('connection failed')`. Mocks `log.error`. Asserts status 500, error message `'Internal server error'`, and verifies `log.error` was called with `{ err: dbError, method: 'DELETE', path: '/api/auth/session' }` and log message `'unhandled API error'`.
+- **Verdict:** Directly pins the fix for issue #641.
 
 ---
 
-### Finding 4: Query String Preservation Untested in `login/page.test.tsx` and `student-guard.test.ts`
+## 4. 🚨 Critical Gaps (Rating 8–10)
 
-- **Files & Lines:**
-  - `src/app/(public)/login/page.test.tsx:67-84`
-  - `src/lib/student-guard.test.ts:38-42`
-- **Scenario:** Visiting a protected route containing query parameters (e.g. `/account/privacy?tab=invitations`).
-- **Detailed Analysis:**
-  A core motivation of Issue #615 was preserving query parameters across redirects (e.g. `/students/stu-1?tab=notes&filter=active`, `/account/privacy?tab=invitations`).
-  `src/proxy.test.ts` has solid coverage testing that `proxy` sets `?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations`.
-  However:
-  - In `src/app/(public)/login/page.test.tsx`, the only paths tested are `/account/privacy` and `/students/s-1`. There is no test verifying that when `redirect` contains query parameters (or URL-encoded query parameters), it is preserved intact in the `POST /api/auth/magic-link/send` body and passed to `PasskeySignIn`.
-  - In `src/lib/student-guard.test.ts`, the test only passes `redirectPath = '/account/privacy'`. It never verifies that `redirectNonStudent(null, '/account/privacy?tab=invitations')` properly encodes the query parameters into `/login?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations`.
-- **Recommended Remediation:**
-  - In `src/app/(public)/login/page.test.tsx`, add a test case with a query-parameterized redirect: `?redirect=/account/privacy?tab=invitations`.
-  - In `src/lib/student-guard.test.ts`, add a test asserting that `redirectNonStudent(null, '/account/privacy?tab=invitations')` calls `redirect('/login?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations')`.
+> **No Critical (8–10) Gaps Identified.**
+> All core paths, safety guarantees, error bubbling, and state transitions are thoroughly verified across unit and integration tests.
 
 ---
 
-## 4. 🔧 Suggestions & Test Quality Improvements
+## 5. ⚠️ Important & Moderate Improvements (Rating 5–7)
 
-### Finding 5: Missing Test for Dual-Null Role Sessions in `src/lib/student-guard.test.ts`
+### Finding 1 (Rating 6/10): Missing HTTP Integration Test for `DELETE /api/auth/session` Without Cookie Header
 
-- **File & Lines:** `src/lib/student-guard.test.ts:26-70`
+- **Files & Lines:** `tests/integration/auth.test.ts:201-242`
+- **Scenario:** An unauthenticated or anonymous visitor (or a user whose session cookie was already cleared by browser restart) triggers `DELETE /api/auth/session` over HTTP.
 - **Analysis:**
-  `src/lib/student-guard.test.ts` tests either `teacherSession` (`teacherId: 'teacher-1', studentId: null`) or `null`.
-  It does not test an authenticated session where an account exists but has neither role yet (`teacherId: null, studentId: null`).
-- **Recommendation:**
-  Add a test:
+  `tests/integration/auth.test.ts` only tests `DELETE /api/auth/session` by supplying a valid `headers: cookie(sessionToken)` header (both for the active session test and the idempotent retry test).
+  While `route.test.ts` has a unit test for this case (`returns 200 with logged out message and cleared cookie when no session cookie is present`), `route.test.ts` invokes the route handler in-process via `DELETE(request)`. It does not exercise Next.js's actual HTTP request-handling pipeline, cookie parsing across the network, or potential middleware/proxy interactions for a cookie-less request.
+- **Why it matters:**
+  If a server-level configuration or middleware rule were introduced that required a session cookie or rejected cookie-less DELETE requests to `/api/*`, unit tests would pass but production clients clicking "Sign out" while in a degraded/stale state would receive an unexpected status code over the wire.
+- **Suggested Test Addition (`tests/integration/auth.test.ts`)**:
   ```ts
-  it('redirects an account session with no teacher or student role to login with redirect param', () => {
-    const rolelessSession: SessionUser = {
-      ...teacherSession,
-      teacherId: null,
-      studentId: null,
-    };
-    redirectNonStudent(rolelessSession, '/account/privacy');
-    expect(redirect).toHaveBeenCalledWith('/login?redirect=%2Faccount%2Fprivacy');
+  it('returns 200 and clears cookie header when called without any session cookie', async () => {
+    const res = await fetch(`${BASE_URL}/api/auth/session`, {
+      method: 'DELETE',
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { message: string } };
+    expect(body.data.message).toBe('Logged out');
+
+    const setCookie = res.headers.get('set-cookie');
+    expect(setCookie).toContain('fair_yoga_session=;');
+    expect(setCookie).toContain('Max-Age=0');
   });
   ```
 
 ---
 
-### Finding 6: Missing Contract Synchronization Test Between `config.matcher` and `RESERVED_SLUGS`
+## 6. 🔧 Minor Improvements & Quality Enhancements (Rating 1–4)
 
-- **File & Lines:** `src/proxy.test.ts:114-128`
+### Finding 2 (Rating 4/10): Missing Direct Rejection Assertion in `src/lib/auth/session.test.ts`
+
+- **Files & Lines:** `src/lib/auth/session.test.ts:339-384`
+- **Scenario:** Database throws an unexpected error during `invalidateSession(db, token)` or `revokeRequestSession(db, request)`.
 - **Analysis:**
-  The design spec states:
-  > *"All 9 prefixes are already defined in `RESERVED_SLUGS` (`src/lib/schemas.ts:180-183`). No teacher page slug can shadow or conflict with them."*
-  `src/proxy.test.ts` tests `expect(config.matcher).toEqual([...])`. While this verifies literal array equality, it does not programmatically link `config.matcher` with `RESERVED_SLUGS`. If a developer adds a 10th prefix to `config.matcher` without registering it in `RESERVED_SLUGS`, a teacher could register that slug as their username, causing their public profile (`/[slug]`) to be intercepted by the auth proxy.
-- **Recommendation:**
-  Add a test in `src/proxy.test.ts` verifying that every top-level segment in `config.matcher` exists in `RESERVED_SLUGS`.
+  The core rationale of #641 is that `invalidateSession` and `revokeRequestSession` must let database errors bubble up to their callers rather than swallowing them.
+  While this error bubbling is thoroughly tested at the route layer in `src/app/api/auth/session/route.test.ts`, `invalidateSession` and `revokeRequestSession` are utility functions in `src/lib/auth/session.ts` consumed by multiple routes (`claim`, `verify`, `session/route`).
+  Neither function has a unit test in `session.test.ts` asserting that it propagates rejections when the database rejects.
+- **Suggested Test Outline (`src/lib/auth/session.test.ts`)**:
+  ```ts
+  it('propagates database errors when deleteMany rejects', async () => {
+    const mockDb = {
+      session: {
+        deleteMany: vi.fn().mockRejectedValue(new Error('connection timeout')),
+      },
+    } as unknown as PrismaClient;
+
+    await expect(invalidateSession(mockDb, 'any-token')).rejects.toThrow('connection timeout');
+  });
+  ```
 
 ---
 
-### Finding 7: Mock Realism — Next.js `redirect()` Control Flow Termination
+### Finding 3 (Rating 3/10): Integration Tests Omit Assertion on Wire Response JSON Payload
 
-- **File & Lines:** `src/lib/student-guard.test.ts:5-11`
+- **Files & Lines:** `tests/integration/auth.test.ts:213-217` & `237-241`
+- **Scenario:** Inspecting HTTP response body on successful revocation.
 - **Analysis:**
-  In Next.js, `redirect()` throws an internal `NEXT_REDIRECT` error and never returns (return type is `never`).
-  In `src/lib/student-guard.test.ts`, `redirect` is mocked as a standard `vi.fn()` that returns `undefined`.
-  Because all branches in `redirectNonStudent` currently terminate with `redirect(...)`, this mock does not cause immediate problems. However, if code were ever placed after a `redirect()` call, the test suite would not catch that it is unreachable in production.
-- **Recommendation:**
-  Document the mock choice with a comment, or mock `redirect` to throw an error simulating Next.js runtime termination.
+  In `tests/integration/auth.test.ts`, both tests assert `expect(res.status).toBe(200)` and inspect `res.headers.get('set-cookie')`, but neither reads `await res.json()`.
+  Verifying `body.data.message === 'Logged out'` in integration confirms the JSON wire serialization contract matches what client-side callers expect.
+- **Suggested Test Addition**:
+  ```ts
+  const body = (await res.json()) as { data: { message: string } };
+  expect(body.data.message).toBe('Logged out');
+  ```
 
 ---
 
-### Finding 8: Extended Open-Redirect Evasion Payloads in `login/page.test.tsx`
+### Finding 4 (Rating 3/10): Route Error Test Does Not Explicitly Assert Cookie Omission on 500
 
-- **File & Lines:** `src/app/(public)/login/page.test.tsx:92-97`
+- **Files & Lines:** `src/app/api/auth/session/route.test.ts:78-83`
+- **Scenario:** Checking response headers when `DELETE /api/auth/session` fails with HTTP 500.
 - **Analysis:**
-  The `it.each` table in `login/page.test.tsx` tests `//evil.com`, `/\\evil.com`, `https://evil.com`, and length > 200.
-  Common open-redirect evasion payloads that should also be rejected include:
-  - Relative URL missing leading slash: `'evil.com'` or `'google.com/path'`
-  - Protocol-less script payload: `'javascript:alert(1)'`
-  - Empty string: `''` (`?redirect=`)
-  - Carriage return / newline injection: `'/\r/evil.com'`
-- **Recommendation:**
-  Expand the parameterized table in `login/page.test.tsx` to include `'evil.com'`, `'javascript:alert(1)'`, and `''`.
+  When `revokeRequestSession` throws, `withErrorHandler` catches the exception and returns `respondError('Internal server error', 500)`. Because execution never reaches `clearSessionCookie(response.headers)`, no `set-cookie` header is emitted.
+  The test verifies status 500 and the error body, but does not assert `expect(res.headers.get('set-cookie')).toBeNull()`.
+  Asserting this pins down that a failing sign-out does not falsely tell the client browser to discard its credentials while the backend session remains intact.
+- **Suggested Test Addition**:
+  ```ts
+  expect(res.headers.get('set-cookie')).toBeNull();
+  ```
 
 ---
 
-## 5. Verification Checklist & Empirical Results
+### Finding 5 (Rating 2/10): No Explicit Mock for `{ count: 0 }` in `route.test.ts`
 
-| Check | Expected | Actual | Verdict |
-|---|---|---|:---:|
-| `tsc --noEmit` | Clean exit 0 | Exit code 0, 0 errors | **PASS** |
-| `src/proxy.test.ts` | All pass | 11 passed | **PASS** |
-| `src/app/(public)/login/page.test.tsx` | All pass | 9 passed | **PASS** |
-| `src/lib/student-guard.test.ts` | All pass | 6 passed | **PASS** |
-| Assertion Falsifiability | Fails when logic broken | E2E synthetic token does NOT fail if form drops redirect | **FAIL (Finding 1)** |
-| Boundary Testing | Edge cases ($N, N+1$) tested | 200/201 length boundary untested | **WARN (Finding 3)** |
-| Guard Coverage | All touched modules tested | `requireTeacherSession`, `(teacher)/layout`, `(student)/layout` untested | **WARN (Finding 2)** |
+- **Files & Lines:** `src/app/api/auth/session/route.test.ts:23-44`
+- **Scenario:** Session cookie present in request header, but session is absent in DB (`count === 0`).
+- **Analysis:**
+  In `route.test.ts`, test 1 explicitly mocks `deleteManySpy.mockResolvedValue({ count: 1 })`.
+  In `route.ts`, the handler calls `await revokeRequestSession(prisma, request)` and does not branch on the boolean result. Therefore `{ count: 0 }` and `{ count: 1 }` take the same code path.
+  While covered by integration tests, a unit test variant or parameterized test with `{ count: 0 }` would make this contract explicit at the unit tier.
+
+---
+
+## 7. Test Resilience, DAMP Design & Mock Quality
+
+### DAMP vs DRY
+The tests follow **DAMP** (Descriptive And Meaningful Phrases) principles:
+- In `src/lib/auth/session.test.ts`, each test case is self-contained with explicit token generation, setup, execution, and validation.
+- In `src/app/api/auth/session/route.test.ts`, each test creates its own `NextRequest` with explicit URLs and headers rather than relying on shared nested fixtures.
+
+### Mock Boundaries
+- **Appropriate Mocking:** The route unit test mocks `prisma.session.deleteMany` and `log.error`, but executes the real `withErrorHandler` and Next.js request/response primitives. This tests the boundary between route logic, framework middleware, and logging without mocking internal plumbing.
+- **Clean Teardown:** All spies in `route.test.ts` are scoped with `afterEach(() => { vi.restoreAllMocks(); })`, guaranteeing zero mock leakage across test files in the parallel unit runner.
+
+### Discrimination & Falsifiability
+- The assertions are genuinely discriminative:
+  - Checking `deleteManySpy.not.toHaveBeenCalled()` when no cookie is present guarantees that unnecessary DB queries cannot silently creep into the unauthenticated flow.
+  - Verifying `expect(logErrorSpy).toHaveBeenCalledWith(expect.objectContaining({ err: dbError, method: 'DELETE', path: '/api/auth/session' }), 'unhandled API error')` guarantees that the error details and request context are preserved in log output.
+
+---
+
+## 8. Mutation Testing Analysis
+
+Mutation testing principles (`AGENTS.md`: *"A guard that cannot fail certifies nothing"*) confirm that the test suite is sensitive to regressions:
+
+1. **Mutation Probe 1: Re-introducing Empty `catch {}` in `DELETE /api/auth/session`**
+   - **Mutation:** Wrapping `await revokeRequestSession(prisma, request)` in `try { ... } catch {}`.
+   - **Result:** `src/app/api/auth/session/route.test.ts` fails immediately:
+     `AssertionError: expected 200 to be 500`.
+   - **Verdict:** Guard certified.
+
+2. **Mutation Probe 2: Using `db.session.delete` Instead of `deleteMany` in `invalidateSession`**
+   - **Mutation:** Replacing `deleteMany` with `delete({ where: { id: sessionHash } })`.
+   - **Result:** When called with an absent token, Prisma throws `P2025` (RecordNotFound). `src/lib/auth/session.test.ts` ("returns false without throwing when token does not exist in the database") fails immediately with an uncaught rejection.
+   - **Verdict:** Guard certified.
+
+3. **Mutation Probe 3: Inverting Boolean Return Value (`return count === 0`)**
+   - **Mutation:** Returning `count === 0` in `invalidateSession`.
+   - **Result:** Fails both `invalidateSession` ("deletes the session so subsequent validate returns null and returns true") and `revokeRequestSession` ("revokes active session and returns true when session exists").
+   - **Verdict:** Guard certified.
+
+---
+
+## 9. Final Recommendations & Conclusion
+
+### Summary Checklist:
+
+| Check | Result |
+|---|:---:|
+| Behavioral coverage across all 4 key scenarios | **PASS** |
+| Proper Vitest tier placement (`unit` vs `integration`) | **PASS** |
+| No invalid `unit-sweeps` leakage | **PASS** |
+| Mock boundary realism & lifecycle teardown | **PASS** |
+| Falsifiability proven via mutation probes | **PASS** |
+| Critical Gaps (8–10) | **NONE** |
+
+### Recommendations (Non-blocking):
+1. Add an unauthenticated `DELETE` test in `tests/integration/auth.test.ts` (Finding 1) to verify wire behavior when no cookie header is sent.
+2. Assert JSON response bodies in `tests/integration/auth.test.ts` (Finding 3).
+3. Add a direct rejection test in `src/lib/auth/session.test.ts` (Finding 2).
+
+**Conclusion:** The test suite for PR #642 is resilient, robust, correctly tiered, and provides complete confidence that session invalidation errors are handled and propagated as intended.

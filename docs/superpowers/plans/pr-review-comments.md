@@ -1,231 +1,190 @@
-# PR Review: Comments & Docblocks — PR #633 (Issue #615)
+# PR Review: Comments & Docblocks — PR #642 (Issue #641)
 
-- **PR:** #633
-- **Branch:** `solve_issue_615` against `origin/main`
-- **Issue:** #615 (Preserve destination on unauthenticated redirect across protected routes)
-- **Review Date:** 2026-09-17
+- **PR:** #642
+- **Branch:** `fix/641-session-delete-errors` against `origin/main`
+- **Issue:** #641 (Propagate database errors during session deletion in `DELETE /api/auth/session`)
+- **Review Date:** 2026-09-18
 - **Reviewer:** PR Reviewer (Comments)
-- **Status:** **CHANGES REQUESTED** (2 Important stale/inaccurate comments, 1 Important reaching comment, 1 Important prose count violation)
+- **Status:** **CHANGES REQUESTED** (2 Important Comment Discipline violations, 1 Important cross-module inaccuracy, 0 Critical)
 
 ---
 
 ## 1. Executive Summary
 
-This review audits all code comments, docblocks, and annotations in files touched by PR #633 against `origin/main`, specifically enforcing the **Comment Discipline** standards from [`CLAUDE.md`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/CLAUDE.md):
-1. **Comment Discipline:** Comments must describe the code they sit beside, not reach past it into other modules.
-2. **Prose counts and rosters:** No prose counts or rosters of importers or matched routes.
-3. **No historical change logs:** No correction history or PR change notes in docblocks (those belong in git and the PR body).
-4. **No stale descriptions:** Comments invalidated or rendered misleading by PR #633 must be updated or removed.
+This review audits all code comments, docblocks, and annotations in files touched by PR #642 against `origin/main`, enforcing the **Comment Discipline** standards defined in [`CLAUDE.md`](file:///Users/ivohofland/Projects/fair.yoga/CLAUDE.md) and [`.agents/skills/comment-analyzer/SKILL.md`](file:///Users/ivohofland/Projects/fair.yoga/.agents/skills/comment-analyzer/SKILL.md):
+
+1. **A comment annotates the code it sits on:**
+   Claims reaching past their own file into other modules have no owner and rot when those modules change.
+2. **Never write a count or a member list in prose — name the type:**
+   Prose rosters of callers or endpoints rot when new callers appear or existing ones are refactored.
+3. **Where membership matters, tether it to the compiler:**
+   Use explicit types, exhaustive checks, or tethering rather than unverified prose claims.
+4. **Comments state what is true now:**
+   No historical narratives, previous behavior reconstructions, or issue/ticket tracking tags (`#641`) embedded in code docblocks. Those belong in git commit messages and the PR body.
+5. **Factual accuracy:**
+   Every claim in a comment or docblock must be verified against actual runtime logic, parameter types, and return values.
 
 ### Touched Files Reviewed
-- [`src/proxy.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.ts)
-- [`src/app/(public)/login/page.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.tsx)
-- [`src/app/(student)/layout.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(student)/layout.tsx)
-- [`src/app/(teacher)/layout.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx)
-- [`src/lib/session.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts)
-- [`src/lib/student-guard.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.ts)
-- [`tests/e2e/auth.spec.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/tests/e2e/auth.spec.ts)
-- [`src/proxy.test.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.test.ts) (touched test suite)
-- [`src/lib/student-guard.test.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.test.ts) (new test suite)
-- [`src/app/(public)/login/page.test.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.test.tsx) (new test suite)
+- [`src/lib/auth/session.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts)
+- [`src/app/api/auth/session/route.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.ts)
+- [`src/app/api/auth/session/route.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.test.ts) (new test suite)
+- [`src/lib/auth/session.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.test.ts) (touched test suite)
+- [`tests/integration/auth.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/tests/integration/auth.test.ts) (touched test suite)
 
 ---
 
 ## 2. Findings by Severity
 
-### 🚨 Critical
-*None.* No security vulnerabilities or catastrophic misunderstandings are introduced directly by comments.
+### 🚨 Critical Inaccuracies
+*None.* No security risks or critical runtime misdirections are caused by comments.
 
 ---
 
-### ⚠️ Important
-*Inaccurate comments that mislead developers about control flow, reach across module boundaries, or violate repo comment discipline.*
+### ⚠️ Rule Violations & Inaccuracies (Comment Discipline)
 
-#### Finding 1: Stale & Contradictory Guard Description in Student Layout
-- **File:** [`src/app/(student)/layout.tsx:12-17`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(student)/layout.tsx#L12-L17)
-- **Violation:** Stale description / Inaccurate characterization of code.
-- **Current Code:**
-  ```tsx
-  const session = await getSession();
-  // A signed-in teacher-only account belongs on its own home, not a
-  // sign-in form it cannot use.
-  if (!session?.studentId) {
-    const pathname = (await headers()).get('x-pathname');
-    redirectNonStudent(session, pathname);
-  }
-  ```
-- **Analysis:**
-  The comment claims that this block is only about a signed-in teacher-only account that belongs on `/schedule` rather than a sign-in form.
-  However, `if (!session?.studentId)` is the primary authentication and role gate for the entire `(student)` route group. When an **unauthenticated visitor** (`session === null`) requests any page under `(student)` (e.g. `/account/privacy`, `/updates`, `/bookings`), they enter this block and `redirectNonStudent(session, pathname)` redirects them to:
-  `redirect(`/login?redirect=${encodeURIComponent(redirectPath)}`)`
-  They **are** redirected to a sign-in form!
-  Stating *"not a sign-in form it cannot use"* directly contradicts the destination-preserving login redirect behavior implemented in PR #633. Furthermore, extracting `pathname = (await headers()).get('x-pathname')` was specifically added in PR #633 to preserve destination when redirecting to `/login`, yet the comment above it continues to assert that the block is only about avoiding sign-in forms for teachers.
-- **Remediation:**
-  Update the comment to accurately describe both cases handled by the guard:
-  ```tsx
-  // Guard student routes: redirect signed-in teachers to /schedule, and unauthenticated
-  // visitors to /login (preserving destination via x-pathname).
-  if (!session?.studentId) {
-    const pathname = (await headers()).get('x-pathname');
-    redirectNonStudent(session, pathname);
-  }
-  ```
-
----
-
-#### Finding 2: Reaching Past File Boundary into Downstream Layout Implementation
-- **File:** [`src/proxy.ts:16-18`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.ts#L16-L18)
-- **Violation:** Comment Discipline (`CLAUDE.md`) — comment reaching past its own code to specify facts about another module.
-- **Current Code:**
+#### Finding 1: Prose Call-Site Roster in `revokeRequestSession` Docblock
+- **File:** [`src/lib/auth/session.ts:144-146`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts#L144-L146)
+- **Violation:** Comment Discipline (`CLAUDE.md`) — Prose roster of callers reaching across module boundaries.
+- **Current Text:**
   ```ts
-  // Layouts can't see the pathname; stamp it with any query parameters so
-  // layouts and guards can preserve destination on invalid sessions, and so
-  // the (teacher) layout can send a student-only session from /settings to their own.
-  const requestHeaders = new Headers(request.headers);
+  /**
+   * Revoke whatever session the request carries, if it carries one. For doors
+   * that end a sign-in (e.g. sign-out route, magic-link verification/claim) where
+   * the caller has an incoming `NextRequest` rather than a raw token.
   ```
 - **Analysis:**
-  [`CLAUDE.md`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/CLAUDE.md) explicitly states:
+  [`CLAUDE.md`](file:///Users/ivohofland/Projects/fair.yoga/CLAUDE.md) explicitly prohibits writing rosters in prose:
   > *"A comment annotates the code it sits on. Anything wider — counts, censuses, set membership, facts about another module — goes in `docs/` and the comment links to it. A claim reaching past its file has no owner: the person who invalidates it never sees it."*
-  The clause `and so the (teacher) layout can send a student-only session from /settings to their own` reaches directly into `src/app/(teacher)/layout.tsx` and details that layout's private routing decisions. If `(teacher)/layout.tsx` changes or extends how it routes `/settings` (or if `(student)/layout.tsx` or `requireTeacherSession` adopt similar mappings), this comment in `proxy.ts` has no owner and becomes stale.
-  `proxy.ts` should only describe what it does: stamping `x-pathname` (with search parameters) into request headers for downstream components that cannot read the incoming URL.
-- **Remediation:**
-  Keep the comment local to `proxy.ts`:
+  > *"Never write a count or a member list in prose — name the type... `countSkipReasons`'s docblock had its member counts refreshed and its call-site roster left stale, and so described a state this repo was never in."*
+
+  The parenthetical roster `(e.g. sign-out route, magic-link verification/claim)` enumerates external endpoints calling `revokeRequestSession`. In `origin/main`, the docblock described the purpose without naming specific call sites ("For a door that ends a sign-in as a side effect of doing something else, where the caller has no token in hand to pass to `invalidateSession`"). Adding an informal call-site census creates an unowned list that rots whenever another door revokes a session (such as account deletion, passkey registration, or session reset) or an existing route is moved or renamed.
+- **Recommended Remediation:**
+  Remove the caller roster and keep the description focused on what the function accepts and does:
   ```ts
-  // Server components and layouts cannot read the request URL; stamp x-pathname
-  // with the pathname and search query for downstream layouts and route guards.
-  const requestHeaders = new Headers(request.headers);
+  /**
+   * Revoke whatever session the request carries, if it carries one. For endpoints
+   * that end a sign-in where the caller has an incoming `NextRequest` rather than
+   * a raw token.
   ```
 
 ---
 
-#### Finding 3: Misplaced & Incomplete Guard Comment in Teacher Layout
-- **File:** [`src/app/(teacher)/layout.tsx:15-27`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx#L15-L27)
-- **Violation:** Comment Discipline & Stale/Misplaced description.
-- **Current Code:**
-  ```tsx
-  const session = await getSession();
-  // A signed-in student-only account belongs on its own home, not a
-  // sign-in form it cannot use — except /settings, which courteously
-  // maps to their own settings (x-pathname stamped by the proxy).
-  if (!session?.teacherId) {
-    const pathname = (await headers()).get('x-pathname');
-    if (session?.studentId) {
-      redirect((pathname ?? '').startsWith('/settings') ? '/account' : '/bookings');
-    }
-    if (pathname && isSafeRelativePath(pathname)) {
-      redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
-    }
-    redirect('/login');
-  }
+#### Finding 2: Inaccurate Cross-Module Assertion in `revokeRequestSession` Docblock
+- **File:** [`src/lib/auth/session.ts:150-153`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts#L150-L153)
+- **Violation:** Factual Inaccuracy / Claim Reaching Past File Boundary.
+- **Current Text:**
+  ```ts
+   * Answers whether a sign-in actually ended, which is narrower than whether a
+   * cookie was carried: a cookie naming a session that had already expired or
+   * been revoked cost its holder nothing, and a caller reporting the sign-out
+   * to them would be describing something that did not happen.
   ```
 - **Analysis:**
-  1. The comment sits directly above the outer guard `if (!session?.teacherId)`. But `if (!session?.teacherId)` now handles two branches: (a) student-only sessions (`if (session?.studentId)`), and (b) unauthenticated sessions redirecting to `/login` with preserved destination. The comment only describes the student branch. Placed above the outer guard, it falsely implies the whole guard is only about student-only sessions, leaving the newly added unauthenticated login redirect undocumented.
-  2. The parenthetical `(x-pathname stamped by the proxy)` is a cross-file claim reaching into `src/proxy.ts`.
-- **Remediation:**
-  Move the student-specific comment to sit directly above `if (session?.studentId)` and avoid reaching into `proxy.ts`:
-  ```tsx
-  if (!session?.teacherId) {
-    const pathname = (await headers()).get('x-pathname');
-    // A signed-in student-only account belongs on their own home, not a sign-in form.
-    // Courteously map /settings to their account settings.
-    if (session?.studentId) {
-      redirect((pathname ?? '').startsWith('/settings') ? '/account' : '/bookings');
-    }
-    if (pathname && isSafeRelativePath(pathname)) {
-      redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
-    }
-    redirect('/login');
-  }
-  ```
+  The sentence *"and a caller reporting the sign-out to them would be describing something that did not happen"* makes an overbroad claim about caller behavior that is factually contradictory with the primary caller updated in this PR: [`src/app/api/auth/session/route.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.ts#L25-L32).
 
----
-
-#### Finding 4: Hardcoded Prose Count of Matched Routes in Test Suite
-- **File:** [`src/proxy.test.ts:115`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.test.ts#L115)
-- **Violation:** Violation of `CLAUDE.md` rule: *"Never write a count or a member list in prose — name the type."*
-- **Current Code:**
+  In `DELETE /api/auth/session`:
   ```ts
-  describe('config matcher', () => {
-    it('matches the 9 protected route prefixes', () => {
-      expect(config.matcher).toEqual([
-        '/schedule/:path*',
-        '/studio-class/:path*',
-        '/students/:path*',
-        '/inbox/:path*',
-        '/settings/:path*',
-        '/class/:path*',
-        '/bookings/:path*',
-        '/account/:path*',
-        '/updates/:path*',
-      ]);
-    });
+  export const DELETE = withErrorHandler(async (request: NextRequest) => {
+    await revokeRequestSession(prisma, request);
+
+    const response = respondOk({ message: 'Logged out' });
+    clearSessionCookie(response.headers);
+
+    return response;
   });
   ```
+  The sign-out route intentionally ignores the boolean return value and **always** reports `{ message: 'Logged out' }` (200 OK) because HTTP DELETE is idempotent. A user logging out when their session had already expired is still reported as "Logged out".
+
+  The assertion that a caller reporting sign-out would be "describing something that did not happen" was originally written when `revokeRequestSession` was exclusively used by magic-link endpoints (where `sessionEnded` tells the UI whether an existing active session was terminated upon claiming a signup ticket). When applied generally to session invalidation doors, this claim is factually false for the sign-out endpoint. Moreover, explaining what callers report reaches into the business logic of other modules.
+- **Recommended Remediation:**
+  Scope the paragraph strictly to the semantic difference between cookie presence and active session revocation, removing the claim about what callers report:
+  ```ts
+   * Answers whether an active session was actually deleted, which is narrower
+   * than whether a cookie was carried: a cookie naming a session that had already
+   * expired or been revoked cost its holder nothing.
+  ```
+  (The return contract in lines 155-156 already provides the exact boolean behavior: `Returns true if an active session was found and deleted, false if no cookie was present or the session was already absent. Genuine database failures bubble up.`)
+
+---
+
+#### Finding 3: Historical Ticket Reference (`#641`) in Route Test Docblock
+- **File:** [`src/app/api/auth/session/route.test.ts:15-16`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.test.ts#L15-L16)
+- **Violation:** Comment Discipline (`CLAUDE.md`) — Historical annotation / issue ticket reference in code docblock.
+- **Current Text:**
+  ```ts
+   * - When session deletion encounters a database failure, bubbles out of the handler
+   *   to `withErrorHandler`, which logs the error at `error` level and responds with HTTP 500 (#641).
+  ```
 - **Analysis:**
-  The test title was updated in this PR from `"matches the 5 protected route prefixes"` to `"matches the 9 protected route prefixes"`.
-  Hardcoding a numeric count in prose (`the 9 protected route prefixes`) causes immediate comment/test-description rot whenever routes are added or removed. The chase criteria specifically forbid prose counts of matched routes.
-- **Remediation:**
-  Drop the numeric literal from the test title:
+  [`CLAUDE.md`](file:///Users/ivohofland/Projects/fair.yoga/CLAUDE.md) states:
+  > *"Comments state what is true now. What a comment used to say belongs in git and the PR body — not 'this previously read X'..."*
+
+  Code docblocks specify the current contracts, behaviors, and invariants of the codebase. Appending GitHub issue ticket markers (`(#641)`) into code comments is a historical tracking artifact that belongs in git commit messages (`fix(auth): bubble database errors in DELETE /api/auth/session (#641)`) and the PR description, not in permanent source code docblocks.
+- **Recommended Remediation:**
+  Remove `(#641)` from line 16:
   ```ts
-  it('matches all protected route prefixes', () => {
+   * - When session deletion encounters a database failure, bubbles out of the handler
+   *   to `withErrorHandler`, which logs the error at `error` level and responds with HTTP 500.
   ```
 
 ---
 
-### 💡 Suggestion
-*Non-blocking improvements to clarity and consistency.*
+### 💡 Suggestions & Non-Blocking Observations
 
-#### Finding 5: `createMagicLinkToken` Docblock Omits `redirectTo` Parameter
-- **File:** [`tests/e2e/auth.spec.ts:14-24`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/tests/e2e/auth.spec.ts#L14-L24)
+#### Observation 1: Test Suite Docblock vs Spy Target
+- **File:** [`src/app/api/auth/session/route.test.ts:11`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.test.ts#L11)
+- **Current Text:**
+  `- When a session cookie is present, delegates revocation to revokeRequestSession and returns 200 with an expired cookie.`
 - **Observation:**
-  PR #633 added `redirectTo?: string` to `createMagicLinkToken`. The docblock was not updated to mention that `redirectTo` optionally sets the destination URL in the minted `magicLinkToken` record.
-- **Remediation:**
-  Add a brief note to the docblock describing `redirectTo`:
+  The test implementation spies on `prisma.session.deleteMany` rather than mocking or asserting delegation to `revokeRequestSession`. This is good testing practice (testing real integration between the route and the auth service layer), but the bullet says "delegates revocation to `revokeRequestSession`". This accurately describes the route implementation (`DELETE` calls `await revokeRequestSession(prisma, request)`), so this is acceptable as-is.
+
+---
+
+### ✨ Positive Examples
+
+#### 1. Rationale Documentation on `invalidateSession`
+- **File:** [`src/lib/auth/session.ts:123-131`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts#L123-L131)
+- **Text:**
   ```ts
   /**
-   * Mints a token AND the browser that "requested" it, so a test can choose
-   * which branch it is exercising: pass the same nonce to `asOriginBrowser`
-   * for a same-browser open, or open the token from a context that never got
-   * `asOriginBrowser` to land in the handoff branch instead.
-   * Optionally binds `redirectTo` to exercise post-login destination preservation.
+   * Invalidate a session by its raw token.
+   *
+   * Uses `deleteMany` rather than `delete`: a row that is already absent is this
+   * function's postcondition, not an error — missing records safely return `false`
+   * without throwing, while genuine database failures bubble to the caller.
+   *
+   * Returns `true` if a session was found and deleted, `false` if it did not exist.
    */
   ```
+- **Commendation:**
+  This docblock is an exemplary model of the repo's Comment Discipline:
+  - Explains the **non-obvious rationale** ("why `deleteMany` instead of `delete` on a unique primary key?"): Prisma's `delete` throws `P2025` (`RecordNotFound`), which previously tempted callers to wrap it in catch-all blocks. `deleteMany` achieves idempotence naturally without swallowing real DB failures.
+  - Annotates strictly local code.
+  - Precisely documents the return contract and error behavior (`Promise<boolean>`).
+  - Contains no historical baggage or prose rosters.
+
+#### 2. Clean Removal of Swallowed-Error Comment in Route Handler
+- **File:** [`src/app/api/auth/session/route.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.ts)
+- **Commendation:**
+  The PR cleanly removed the outdated comment:
+  `// Session may already be deleted — that's fine`
+  along with the unconstrained `try/catch` block that was responsible for issue #641. The updated route handler is clean, self-documenting, and free of redundant comments.
+
+#### 3. High-Quality Test Names Across Suites
+- **Files:** [`src/lib/auth/session.test.ts:339-384`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.test.ts#L339-L384), [`src/app/api/auth/session/route.test.ts:23-66`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.test.ts#L23-L66), [`tests/integration/auth.test.ts:201-242`](file:///Users/ivohofland/Projects/fair.yoga/tests/integration/auth.test.ts#L201-L242)
+- **Commendation:**
+  All newly added unit and integration tests feature clear, behavior-driven names without hardcoded prose counts or roster numbers (e.g. `'is idempotent when called a second time with the revoked token'`, `'propagates database error to withErrorHandler, logging error and answering 500'`).
 
 ---
 
-#### Finding 6: `redirectNonStudent` Opening Sentence
-- **File:** [`src/lib/student-guard.ts:5-9`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.ts#L5-L9)
-- **Observation:**
-  The docblock states:
-  ```ts
-  /**
-   * Where a session without a student profile belongs. A signed-in teacher
-   * goes to their own home rather than a sign-in form they cannot use.
-   * Preserves the intended destination when sending an unauthenticated visitor to login.
-   */
-  ```
-  The third sentence (added in PR #633) is accurate and describes the code it sits beside. The opening sentence says *"Where a session without a student profile belongs"*, but `session` can be `null` (an unauthenticated visitor with no session). Sentence 3 clarifies this, so this is non-blocking.
-- **Remediation:**
-  Optional polish: *"Where a user or session without a student profile belongs."*
+## 3. Checklist Summary
 
----
-
-## 3. Files Audited with Zero Violations
-
-- [`src/lib/session.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts): Clean. Contains no comments; implementation is self-explanatory and consistent with the guard pattern.
-- [`src/app/(public)/login/page.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.tsx): Clean. The only comment is local to the bookmark signup link (`{/* For anyone who bookmarked /login before they had an account. */}`).
-- [`src/lib/student-guard.test.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.test.ts): Clean. Test titles are descriptive and avoid prose counts or stale claims.
-- [`src/app/(public)/login/page.test.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.test.tsx): Clean. No prose counts or stale descriptions.
-
----
-
-## 4. Checklist Summary
-
-| File | Issue | Severity | Status |
-|---|---|---|---|
-| `src/app/(student)/layout.tsx:12-14` | Stale comment claiming guard only prevents teachers from seeing sign-in form; contradicts unauthenticated redirect to `/login` | **Important** | Needs Fix |
-| `src/proxy.ts:16-18` | Reaches past module boundary to describe `(teacher)` layout's `/settings` routing logic | **Important** | Needs Fix |
-| `src/app/(teacher)/layout.tsx:15-17` | Misplaced above outer guard; describes student branch only; reaches into proxy | **Important** | Needs Fix |
-| `src/proxy.test.ts:115` | Hardcoded prose count (`9 protected route prefixes`) in test title | **Important** | Needs Fix |
-| `tests/e2e/auth.spec.ts:14-24` | Docblock omits newly added `redirectTo` parameter | **Suggestion** | Optional |
-| `src/lib/student-guard.ts:5-9` | Minor phrasing polish on `session` vs visitor | **Suggestion** | Optional |
+| File | Line(s) | Issue | Severity | Status / Recommendation |
+|---|---|---|---|---|
+| [`src/lib/auth/session.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts) | 144-146 | Prose call-site roster `(e.g. sign-out route, magic-link verification/claim)` | **Important** | Remove call-site roster; describe capability locally |
+| [`src/lib/auth/session.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts) | 150-153 | Cross-module claim about what callers report is factually false for `DELETE /api/auth/session` | **Important** | Rephrase to describe session deletion semantics rather than caller reporting |
+| [`src/app/api/auth/session/route.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.test.ts) | 16 | Historical ticket marker `(#641)` in docblock | **Important** | Remove `(#641)` |
+| [`src/lib/auth/session.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts) | 123-131 | `invalidateSession` docblock | **Positive** | Exemplary rationale documentation |
+| [`src/app/api/auth/session/route.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.ts) | 25-32 | Removed swallowed-error comment with `try/catch` | **Positive** | Clean and self-explanatory |
+| [`src/lib/auth/session.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.test.ts) | 339-384 | Test titles and assertions | **Positive** | Clean, factual, no prose rosters |
+| [`tests/integration/auth.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/tests/integration/auth.test.ts) | 201-242 | Test titles and assertions | **Positive** | Clean, factual, no prose rosters |

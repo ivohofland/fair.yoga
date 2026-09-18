@@ -402,6 +402,17 @@ describe('invalidateSession', () => {
     const result = await invalidateSession(db, nonExistentToken);
     expect(result).toBe(false);
   });
+
+  it('re-throws when the database delete operation fails', async () => {
+    const dbError = new Error('database connection lost');
+    const mockDb = {
+      session: {
+        deleteMany: vi.fn().mockRejectedValue(dbError),
+      },
+    } as unknown as PrismaClient;
+
+    await expect(invalidateSession(mockDb, 'some-token')).rejects.toThrow('database connection lost');
+  });
 });
 
 describe('revokeRequestSession', () => {
