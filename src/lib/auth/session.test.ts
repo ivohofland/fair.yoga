@@ -302,6 +302,74 @@ describe('validateSession', () => {
     expect(await db.session.findUnique({ where: { id: sessionHash } })).toBeNull();
   });
 
+  it('re-throws database errors during expired session opportunistic deletion', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    await db.session.update({
+      where: { id: sessionHash },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    const deleteManySpy = vi
+      .spyOn(db.session, 'deleteMany')
+      .mockRejectedValueOnce(new Error('database connection lost'));
+
+    try {
+      await expect(validateSession(db, token)).rejects.toThrow('database connection lost');
+    } finally {
+      deleteManySpy.mockRestore();
+    }
+  });
+
+  it('re-throws database errors during profile-less session opportunistic deletion', async () => {
+    const bare = await db.account.create({
+      data: { email: `session-bare-err-${uniqueSuffix}@test.local` },
+    });
+    const token = await createSession(db, bare.id);
+
+    const deleteManySpy = vi
+      .spyOn(db.session, 'deleteMany')
+      .mockRejectedValueOnce(new Error('database deadlock'));
+
+    try {
+      await expect(validateSession(db, token)).rejects.toThrow('database deadlock');
+    } finally {
+      deleteManySpy.mockRestore();
+      await db.session.deleteMany({ where: { accountId: bare.id } });
+      await db.account.delete({ where: { id: bare.id } });
+    }
+  });
+
+  it('returns null without throwing when session row is concurrently deleted during cleanup', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    await db.session.update({
+      where: { id: sessionHash },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    const realDeleteMany = db.session.deleteMany.bind(db.session);
+    const deleteManySpy = vi.spyOn(db.session, 'deleteMany').mockImplementation(((args) => {
+      return (async () => {
+        // Concurrently delete before deleteMany runs, so deleteMany finds 0 rows
+        await realDeleteMany({ where: { id: sessionHash } });
+        const res = await realDeleteMany(args);
+        expect(res.count).toBe(0);
+        return res;
+      })() as unknown as ReturnType<typeof realDeleteMany>;
+    }) as typeof db.session.deleteMany);
+
+    try {
+      const result = await validateSession(db, token);
+      expect(result).toBeNull();
+      expect(deleteManySpy).toHaveBeenCalledTimes(1);
+    } finally {
+      deleteManySpy.mockRestore();
+    }
+  });
+
   it('returns null for a non-existent token', async () => {
     expect(await validateSession(db, 'nonexistent-token-value')).toBeNull();
   });

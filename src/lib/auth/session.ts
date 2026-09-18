@@ -66,7 +66,9 @@ export async function validateSession(
   }
 
   if (session.expiresAt <= new Date()) {
-    await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
+    // deleteMany is idempotent against concurrent deletions (no P2025 thrown
+    // if the row was already deleted) while surfacing genuine database errors.
+    await db.session.deleteMany({ where: { id: sessionHash } });
     return null;
   }
 
@@ -92,7 +94,9 @@ export async function validateSession(
   const liveTeacher = account ? liveProfile(account.teachers) : null;
   const liveStudent = account ? liveProfile(account.students) : null;
   if (!account || (!liveTeacher && !liveStudent)) {
-    await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
+    // deleteMany is idempotent against concurrent deletions (no P2025 thrown
+    // if the row was already deleted) while surfacing genuine database errors.
+    await db.session.deleteMany({ where: { id: sessionHash } });
     return null;
   }
 
