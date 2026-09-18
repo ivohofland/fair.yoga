@@ -21,7 +21,7 @@
 - Modify: `src/lib/auth/session.ts`
 - Test: `src/lib/auth/session.test.ts`
 
-- [ ] **Step 1: Refactor `invalidateSession` and `revokeRequestSession` in `src/lib/auth/session.ts`**
+- [x] **Step 1: Refactor `invalidateSession` and `revokeRequestSession` in `src/lib/auth/session.ts`**
   - Update `invalidateSession(db: PrismaClient, token: string): Promise<boolean>`:
     ```ts
     export async function invalidateSession(
@@ -48,7 +48,7 @@
     ```
   - Update docblocks for both functions accurately describing their behavior and callers.
 
-- [ ] **Step 2: Add comprehensive unit tests in `src/lib/auth/session.test.ts`**
+- [x] **Step 2: Add comprehensive unit tests in `src/lib/auth/session.test.ts`**
   - Update `describe('invalidateSession')`:
     - deletes the session so subsequent validate returns null and returns true
     - returns false without throwing when token does not exist in the database
@@ -57,7 +57,7 @@
     - revokes active session and returns true when session exists
     - returns false without throwing when session cookie names an absent session
 
-- [ ] **Step 3: Run unit tests and prove mutation**
+- [x] **Step 3: Run unit tests and prove mutation**
   - Run: `pnpm exec vitest run src/lib/auth/session.test.ts` (must pass).
   - Mutation probe: Mutate `invalidateSession` to throw on non-existent token (simulating `delete`). Verify test fails. Restore and re-verify green.
 
