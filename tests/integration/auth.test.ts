@@ -211,12 +211,27 @@ describe('DELETE /api/auth/session', () => {
     });
 
     expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { message: string } };
+    expect(body.data.message).toBe('Logged out');
     const setCookie = res.headers.get('set-cookie');
     expect(setCookie).toContain('fair_yoga_session=;');
     expect(setCookie).toContain('Max-Age=0');
 
     const after = await validateSession(prisma, sessionToken);
     expect(after).toBeNull();
+  });
+
+  it('returns 200 and clears cookie when called without a session cookie', async () => {
+    const res = await fetch(`${BASE_URL}/api/auth/session`, {
+      method: 'DELETE',
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { message: string } };
+    expect(body.data.message).toBe('Logged out');
+    const setCookie = res.headers.get('set-cookie');
+    expect(setCookie).toContain('fair_yoga_session=;');
+    expect(setCookie).toContain('Max-Age=0');
   });
 
   it('is idempotent when called a second time with the revoked token', async () => {
@@ -227,6 +242,8 @@ describe('DELETE /api/auth/session', () => {
       headers: cookie(sessionToken),
     });
     expect(firstRes.status).toBe(200);
+    const firstBody = (await firstRes.json()) as { data: { message: string } };
+    expect(firstBody.data.message).toBe('Logged out');
     expect(await validateSession(prisma, sessionToken)).toBeNull();
 
     const secondRes = await fetch(`${BASE_URL}/api/auth/session`, {
@@ -235,6 +252,8 @@ describe('DELETE /api/auth/session', () => {
     });
 
     expect(secondRes.status).toBe(200);
+    const secondBody = (await secondRes.json()) as { data: { message: string } };
+    expect(secondBody.data.message).toBe('Logged out');
     const secondCookie = secondRes.headers.get('set-cookie');
     expect(secondCookie).toContain('fair_yoga_session=;');
     expect(secondCookie).toContain('Max-Age=0');

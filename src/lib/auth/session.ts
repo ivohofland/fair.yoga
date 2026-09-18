@@ -150,16 +150,15 @@ export async function invalidateSession(
 }
 
 /**
- * Revoke whatever session the request carries, if it carries one. For doors
- * that end a sign-in (e.g. sign-out route, magic-link verification/claim) where
- * the caller has an incoming `NextRequest` rather than a raw token.
+ * Revoke whatever session the request carries, if it carries one. For
+ * endpoints that end a sign-in where the caller has an incoming `NextRequest`
+ * rather than a raw token.
  *
  * Delegates to `invalidateSession` once the session token is extracted from cookies.
  *
- * Answers whether a sign-in actually ended, which is narrower than whether a
- * cookie was carried: a cookie naming a session that had already expired or
- * been revoked cost its holder nothing, and a caller reporting the sign-out
- * to them would be describing something that did not happen.
+ * Answers whether an active session was actually deleted, which is narrower
+ * than whether a cookie was carried: a cookie naming a session that had already
+ * expired or been revoked cost its holder nothing.
  *
  * Returns `true` if an active session was found and deleted, `false` if no cookie
  * was present or the session was already absent. Genuine database failures bubble up.

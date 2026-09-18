@@ -1,266 +1,152 @@
-# Code Review: PR #633 (Issue #615) — Login Destination Preservation
+# Comprehensive Code Quality and Architecture Review: PR #642 (Issue #641)
 
-- **PR:** #633
-- **Branch:** `solve_issue_615` against `origin/main`
-- **Issue:** #615 (Preserve destination on sign-in across all protected routes)
-- **Reviewer:** PR Reviewer (Code)
-- **Review Date:** 2026-09-17
-- **Verdict:** **CHANGES REQUESTED** (1 Critical security vulnerability in open redirect validation, 1 Important UX/SSR finding on Suspense boundary)
+- **PR:** #642
+- **Branch:** `fix/641-session-delete-errors` against `origin/main`
+- **Issue:** #641 (Propagate database errors during session invalidation)
+- **Reviewer:** Antigravity Code Reviewer
+- **Review Date:** 2026-09-18
+- **Confidence Threshold:** >= 80 (high-confidence issues only)
+- **Verdict:** **APPROVED** (No high-confidence defects or guideline violations found)
 
 ---
 
 ## 1. Scope & Touched Files
 
-The diff against `origin/main` (`git diff origin/main`) touches 6 source files and corresponding test files:
+The diff against `origin/main` (`git diff origin/main...fix/641-session-delete-errors`) touches the following files:
 
 ### Source Files Under Review
-- [`src/proxy.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/proxy.ts) — Expands route matcher from 5 to all 9 protected prefixes; appends query parameters (`request.nextUrl.search`) to the redirect parameter and the stamped `x-pathname` header; ensures client-supplied `x-pathname` headers are deleted before forwarding.
-- [`src/app/(public)/login/page.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.tsx) — Reads `useSearchParams().get('redirect')`; validates with `isSafeRelativePath` and length `<= 200`; forwards sanitized redirect to `POST /api/auth/magic-link/send` and `<PasskeySignIn />`; wraps form in `<Suspense fallback={null}>`.
-- [`src/app/(student)/layout.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(student)/layout.tsx) — Reads `(await headers()).get('x-pathname')` and forwards it to `redirectNonStudent(session, pathname)`.
-- [`src/app/(teacher)/layout.tsx`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx) — Reads `(await headers()).get('x-pathname')` for unauthenticated/expired sessions; preserves destination via `redirect('/login?redirect=' + encodeURIComponent(pathname))` when safe.
-- [`src/lib/session.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts) — Updates `requireTeacherSession` to read `(await headers()).get('x-pathname')` and preserve destination when redirecting unauthenticated users.
-- [`src/lib/student-guard.ts`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.ts) — Updates `redirectNonStudent` to accept `redirectPath?: string | null` and preserve destination via `/login?redirect=...` if valid.
+- [`src/app/api/auth/session/route.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.ts): Replaces unconstrained `try/catch` block with `revokeRequestSession(prisma, request)`.
+- [`src/lib/auth/session.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts): Refactors `invalidateSession` to use `deleteMany` returning `Promise<boolean>`; refactors `revokeRequestSession` to delegate to `invalidateSession`.
+
+### Test Files Under Review
+- [`src/app/api/auth/session/route.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/app/api/auth/session/route.test.ts): Unit tests for `DELETE /api/auth/session` route handler (happy path, missing cookie, DB error propagation to `withErrorHandler`).
+- [`src/lib/auth/session.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.test.ts): Unit tests for `invalidateSession` and `revokeRequestSession` idempotency and return values.
+- [`tests/integration/auth.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/tests/integration/auth.test.ts): Integration tests exercising HTTP `DELETE /api/auth/session` over the wire.
 
 ---
 
 ## 2. Executive Summary
 
-PR #633 addresses the destination loss problem when unauthenticated or expired-session visitors navigate to protected routes:
-1. **Matcher expansion:** `src/proxy.ts` now intercepts unauthenticated requests across all 9 protected route prefixes (adding `/schedule/:path*`, `/studio-class/:path*`, `/account/:path*`, and `/updates/:path*`).
-2. **Query preservation:** Query parameters (`nextUrl.search`) are now preserved both in `/login?redirect=...` and in the stamped `x-pathname` request header.
-3. **Login form forwarding:** `/login` reads the `redirect` search parameter and attaches it to both magic link submission and passkey sign-in.
-4. **Defense-in-depth:** When an expired or invalid cookie bypasses the lightweight proxy check, layouts and guards inspect the stamped `x-pathname` header to preserve the user's intended destination on redirect to `/login`.
+PR #642 resolves issue #641 by replacing an unconstrained, empty `catch {}` block in `DELETE /api/auth/session` with proper error handling and propagation.
 
-The overall architectural direction is sound and cleanly integrates with downstream authentication handlers (`magicLinkSendSchema`, `POST /api/auth/magic-link/send`, `deliverSignInLink`, `verify`, and `claim`). However, the code review identified a **Critical security bypass in open redirect protection** and an **Important UX degradation caused by the Suspense boundary placement**.
+Previously, `DELETE /api/auth/session` used a blind `try { await invalidateSession(prisma, token); } catch {}` to suppress the `PrismaClientKnownRequestError` (`P2025`: Record not found) thrown by `prisma.session.delete` when a session did not exist. However, this pattern swallowed **all** exceptions, including serious infrastructure breakdowns such as database connection drops, lock timeouts, or server panics, returning HTTP 200 without logging the error or notifying operations.
+
+The PR resolves this at the root:
+1. **Idempotency at the data layer:** In `src/lib/auth/session.ts`, `invalidateSession` is refactored from `db.session.delete` to `db.session.deleteMany`. A missing record is this function's desired postcondition; `deleteMany` returns `{ count: 0 }` and resolves to `false` without throwing. Genuine database errors bubble up.
+2. **DRY delegation:** `revokeRequestSession` now delegates directly to `invalidateSession(db, token)` after reading the session cookie via `getSessionToken(request)`.
+3. **Transparent error propagation:** In `src/app/api/auth/session/route.ts`, the `try/catch` is removed. When database operations fail, the exception bubbles to `withErrorHandler`, which logs the error via structured Pino logging (`log.error`) and returns an HTTP 500 response. Missing or already-deleted sessions complete cleanly, clearing the client cookie and returning HTTP 200.
+
+Comprehensive review confirms that the implementation strictly adheres to all architectural guidelines and project rules, introduces zero regressions, and possesses exemplary test coverage.
 
 ---
 
-## 3. Findings & Detailed Analysis
+## 3. Detailed Review Dimensions
 
-### Finding 1: Open Redirect Bypass via WHATWG URL Control Whitespace Stripping
-- **Category:** **CRITICAL**
-- **Affected Files:**
-  - [`src/lib/schemas.ts:117`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/schemas.ts#L117) (`isSafeRelativePath`)
-  - [`src/app/(public)/login/page.tsx:16`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.tsx#L16)
-  - [`src/lib/student-guard.ts:16`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.ts#L16)
-  - [`src/app/(teacher)/layout.tsx:23`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx#L23)
-  - [`src/lib/session.ts:19`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts#L19)
+### 3.1. Compliance with AGENTS.md and CLAUDE.md
 
-#### Description & Root Cause
-The open redirect validation relies on `isSafeRelativePath`:
+| Rule / Principle | Status | Verification & Rationale |
+|---|---|---|
+| **Next.js 16 Conventions** | **COMPLIANT** | Route handler uses Next.js 16 App Router conventions (`NextRequest`, `NextResponse`). Route protection is handled in `src/proxy.ts` (exporting `proxy`, not `middleware.ts`). Cookies are accessed via the request's native cookie store in `NextRequest`. |
+| **TypeScript Strict Mode** | **COMPLIANT** | Non-negotiable `strict: true` adhered to. `tsc --noEmit` runs with zero errors. All function arguments and return types are strictly typed (`Promise<boolean>`). No `any`, no implicit types, no unsafe type assertions. |
+| **Service Layer Purity** | **COMPLIANT** | Pure authentication primitives remain organized under `src/lib/auth/`. The route handler (`src/app/api/auth/session/route.ts`) acts as a thin wrapper adapting HTTP requests to library functions. `src/services/` is untouched. |
+| **FireAndForget Contract** | **COMPLIANT** | All database calls that must be awaited are explicitly awaited (`await revokeRequestSession(...)`). No un-awaited background work or leaky promises. |
+| **Database Mutations & Migrations** | **COMPLIANT** | No changes made to `prisma/schema.prisma`. The schema and migration history remain in exact parity. |
+| **Comment Discipline** | **COMPLIANT** | Follows repository comment rules: docblocks annotate only the code they sit on, explain what is true now, avoid fragile member counts or cross-module rosters, and obsolete comments (`// Session may already be deleted — that's fine`) were cleanly deleted. |
+
+### 3.2. Route Handler Design (`src/app/api/auth/session/route.ts`)
+
+The refactored route handler is concise and robust:
+
 ```typescript
-export function isSafeRelativePath(path: string): boolean {
-  return path.startsWith('/') && !path.startsWith('//') && !path.includes('\\');
-}
-```
-This check is vulnerable to circumvention via ASCII whitespace and control character stripping defined in the **WHATWG URL Standard** (Section 4.1 "URL parsing"). Under the standard, browsers and compliant URL parsers strip all ASCII tabs (`\t` / `0x09`), line feeds (`\n` / `0x0A`), and carriage returns (`\r` / `0x0D`) from anywhere in the URL string prior to parsing the scheme, authority, and host.
+export const DELETE = withErrorHandler(async (request: NextRequest) => {
+  await revokeRequestSession(prisma, request);
 
-#### Exploit Mechanism
-1. An attacker constructs a link:
-   `https://fair.yoga/login?redirect=/%09/attacker.com` (or `/%0a/attacker.com` / `/%0d/attacker.com`).
-2. In `src/app/(public)/login/page.tsx`:
-   ```typescript
-   const rawRedirect = searchParams.get('redirect');
-   ```
-   `searchParams.get` decodes `%09` to literal `\t`.
-3. `isSafeRelativePath("/\t/attacker.com")` evaluates:
-   - `path.startsWith('/')` -> `true`
-   - `path.startsWith('//')` -> `false` (second character is `\t`, not `/`)
-   - `path.includes('\\')` -> `false`
-   - Returns `true`!
-4. Length check `rawRedirect.length <= 200` passes.
-5. The un-sanitized string `"/\t/attacker.com"` is submitted to `POST /api/auth/magic-link/send`, where `magicLinkSendSchema` validates it using `relativePath` (which also delegates to `isSafeRelativePath`).
-6. The token is stored in the database with `redirectTo = "/\t/attacker.com"`.
-7. Upon successful authentication:
-   - In `handoff-code-entry.tsx`:
-     ```typescript
-     window.location.assign(json.data.redirectTo);
-     ```
-     The browser resolves `"/\t/attacker.com"` against the current page origin (`https://fair.yoga`). The WHATWG parser strips `\t`, transforming `"/\t/attacker.com"` into `"//attacker.com"`, which navigates directly to `https://attacker.com/`.
-   - In standard browser URL resolution:
-     `new URL("/\t/attacker.com", "https://fair.yoga").href` resolves to `"https://attacker.com/"`.
+  const response = respondOk({ message: 'Logged out' });
+  clearSessionCookie(response.headers);
 
-#### Empirical Verification
-Running the WHATWG parser in Node 22 / Chromium:
-```javascript
-new URL("/\t/attacker.com", "https://fair.yoga").href  // -> "https://attacker.com/"
-new URL("/\n/attacker.com", "https://fair.yoga").href  // -> "https://attacker.com/"
-new URL("/\r/attacker.com", "https://fair.yoga").href  // -> "https://attacker.com/"
+  return response;
+});
 ```
-All three bypass the guard and execute an open redirect to external domains.
 
-#### Recommended Remediation
-Harden `isSafeRelativePath` in `src/lib/schemas.ts` to strip control characters before evaluating, and validate origin resolution using the WHATWG `URL` parser against a dummy base origin:
-```typescript
-export function isSafeRelativePath(path: string): boolean {
-  // Strip WHATWG whitespace / control characters that browsers remove during URL parsing
-  const stripped = path.replace(/[\t\r\n]/g, '');
-  if (!stripped.startsWith('/') || stripped.startsWith('//') || stripped.includes('\\')) {
-    return false;
-  }
-  try {
-    const parsed = new URL(stripped, 'http://localhost');
-    return parsed.origin === 'http://localhost' && parsed.pathname.startsWith('/');
-  } catch {
-    return false;
-  }
-}
-```
-Add unit tests in `src/lib/student-guard.test.ts` and `src/app/(public)/login/page.test.tsx` for `/%09/evil.com`, `/%0a/evil.com`, and `/%0d/evil.com`.
+- **Idempotent Logout Semantics:** Whether a request carries a valid session, an expired session, or no session cookie at all, the user's intent is to terminate any active session for that client. `revokeRequestSession` returns `false` safely for absent sessions without throwing, allowing the route to clear the client cookie and respond with HTTP 200 `{ data: { message: 'Logged out' } }`.
+- **Unhandled Exception Boundary:** By removing the local `try/catch`, unexpected database rejections bubble directly to `withErrorHandler`.
+- **Classification & Logging:** `withErrorHandler` passes the error to `classifyApiError(error)`, logging a structured object containing `err`, `method: 'DELETE'`, and `path: '/api/auth/session'` with `log.error`, and returning `{ error: { message: 'Internal server error' } }` with HTTP status 500.
+
+### 3.3. Library Functions (`src/lib/auth/session.ts`)
+
+#### `invalidateSession(db: PrismaClient, token: string): Promise<boolean>`
+- **Prisma Method Selection:** Refactored from `db.session.delete` to `db.session.deleteMany({ where: { id: sessionHash } })`. Under Prisma, `delete` throws error `P2025` when zero rows match the filter, whereas `deleteMany` returns `{ count: number }` without throwing.
+- **Return Contract:** Returns `count > 0`. Callers receive `true` if a session was active and successfully deleted, or `false` if the session was already absent.
+- **Error Semantics:** Network dropouts, connection pool exhaustion, or database crashes will cause `deleteMany` to reject, cleanly bubbling to the caller.
+
+#### `revokeRequestSession(db: PrismaClient, request: NextRequest): Promise<boolean>`
+- **Input Handling:** Safely reads token via `getSessionToken(request)`. If no token exists, returns `false` immediately, avoiding an unnecessary database round trip.
+- **Delegation:** Calls `invalidateSession(db, token)` directly, removing redundant token hashing and query construction.
+- **Backward Compatibility:** Preserves the `Promise<boolean>` signature expected by downstream consumers (`POST /api/auth/magic-link/claim` and `POST /api/auth/magic-link/verify`).
+
+### 3.4. Type Safety & Contract Analysis
+
+- **Return Type Precision:** `invalidateSession` widened its return type from `Promise<void>` to `Promise<boolean>`. In TypeScript, changing `void` to a concrete type (`boolean`) in an asynchronous function is fully backward-compatible with callers that simply `await` the function without capturing the return value.
+- **Consumer Integrity:**
+  - `src/app/api/auth/session/route.ts`: `await revokeRequestSession(prisma, request);` (type-safe, return value ignored).
+  - `src/app/api/auth/magic-link/claim/route.ts`: `const sessionEnded = await revokeRequestSession(prisma, request);` (consumes boolean, strictly typed).
+  - `src/app/api/auth/magic-link/verify/route.ts`: `const sessionEnded = await revokeRequestSession(prisma, request);` (consumes boolean, strictly typed).
+  - `tests/integration/auth.test.ts`: `await invalidateSession(prisma, sessionToken);` (type-safe).
+- **No `any` or Type Assertions:** Zero type suppression (`as any`, `@ts-ignore`) in production code.
+
+### 3.5. Error Semantics & Classification
+
+The PR corrects an architectural smell: treating an infrastructure failure as an expected domain outcome.
+- **Absence vs. Failure:** Session absence is an expected, idempotent state; database failure is an exceptional state. By handling absence through `deleteMany`'s `{ count: 0 }`, the code cleanly decouples expected domain idempotency from infrastructure errors.
+- **Integration with `classifyApiError`:** When `prisma.session.deleteMany` rejects with a database error, `classifyApiError` falls through to the generic 500 handler, logging `unhandled API error` and preserving the complete stack trace and request metadata.
+
+### 3.6. Regression Risks & Cross-Module Impact
+
+An audit of all callers of `invalidateSession` and `revokeRequestSession` was conducted:
+1. **Magic Link Claim (`/api/auth/magic-link/claim/route.ts`):** Relies on `revokeRequestSession` returning `boolean` to set `sessionEnded`. The refactoring preserves this exact behavior.
+2. **Magic Link Verify (`/api/auth/magic-link/verify/route.ts`):** Same behavior as above; tested and intact.
+3. **Session Cookie Clearing:** The route continues to invoke `clearSessionCookie(response.headers)`, ensuring `fair_yoga_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` (and `Secure` in production) is always appended to the response.
+4. **No Side-Effects on Other Routes:** The change is strictly scoped to session deletion and cookie extraction.
+
+### 3.7. Test Architecture & Coverage
+
+The PR introduces rigorous test coverage across all test tiers:
+
+1. **Library Unit Tests (`src/lib/auth/session.test.ts`):**
+   - Verifies `invalidateSession` deletes an existing session and returns `true`.
+   - Verifies `invalidateSession` returns `false` without throwing when the token does not exist in the database.
+   - Verifies `revokeRequestSession` returns `false` when no cookie header is present.
+   - Verifies `revokeRequestSession` revokes an active session and returns `true`.
+   - Verifies `revokeRequestSession` returns `false` without throwing when the cookie references an absent session.
+
+2. **Route Unit Tests (`src/app/api/auth/session/route.test.ts`):**
+   - Verifies HTTP 200, `{ data: { message: 'Logged out' } }`, and expired cookie headers when cookie is present.
+   - Verifies HTTP 200 and expired cookie headers when cookie is absent (confirming `deleteMany` is not invoked).
+   - Verifies database error propagation: spies on `prisma.session.deleteMany` with a rejection, asserts HTTP 500 response, and verifies `log.error` was called with `{ err, method: 'DELETE', path: '/api/auth/session' }`.
+   - Clean mock isolation using `afterEach(() => vi.restoreAllMocks())`.
+
+3. **Integration Tests (`tests/integration/auth.test.ts`):**
+   - Exercises the actual HTTP `DELETE /api/auth/session` endpoint with an active session.
+   - Asserts response status 200, `Set-Cookie` header attributes (`Max-Age=0`), and verifies session record removal in PostgreSQL via `validateSession`.
+   - Tests idempotency by calling the endpoint a second time with the revoked token and verifying HTTP 200 and cookie clearance.
+
+4. **Tier Membership & Contention:**
+   - `src/app/api/auth/session/route.test.ts` is purely unit-level with mocked dependencies, correctly running in parallel `unit` tier without introducing lock contention or requiring placement in `SERIAL_TESTS`.
 
 ---
 
-### Finding 2: Suspense Boundary Placement and Blank Viewport During SSR / Hydration
-- **Category:** **IMPORTANT**
-- **Affected File:** [`src/app/(public)/login/page.tsx:104-110`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(public)/login/page.tsx#L104-L110)
+## 4. Issue Findings & Confidence Scoring
 
-#### Description
-In Next.js 16 App Router, calling `useSearchParams()` in a client component de-opts static prerendering up to the nearest `<Suspense>` boundary. To satisfy this requirement, `LoginPage` was wrapped in `<Suspense fallback={null}>`:
-```tsx
-export default function LoginPage() {
-  return (
-    <Suspense fallback={null}>
-      <LoginForm />
-    </Suspense>
-  );
-}
-```
-However, `LoginForm` contains the **entire page UI**:
-- `<h1>Sign in with a link sent to your inbox</h1>`
-- Body copy and instructions
-- Email `<Input />` field
-- "Send me the link" `<Button />`
-- `<PasskeySignIn />` component
-- "Start teaching on fair.yoga" link
-
-#### Impact
-During SSR / initial HTML streaming, or when `useSearchParams()` suspends, React renders the fallback: `null`.
-As a result:
-- The initial HTML document delivered to the browser contains an empty container.
-- On slow mobile networks, before JavaScript bundles download and hydrate, visitors see a completely blank white screen.
-- SEO and First Contentful Paint (FCP) metrics for `/login` are negatively impacted.
-
-#### Recommended Remediation
-Either:
-1. **Provide a visual fallback**: Replace `fallback={null}` with a lightweight skeleton or static markup matching the login form shell (`<LoginFormFallback />`).
-2. **Narrow the Suspense boundary**: Render the page heading, email form, and static links in the outer component, and isolate `useSearchParams()` into a focused sub-component or hook that passes the redirect parameter without suspending the primary form markup.
-
----
-
-### Finding 3: Role Separation Discrepancy Between `requireTeacherSession` and `TeacherLayout`
-- **Category:** **SUGGESTION**
-- **Affected Files:**
-  - [`src/lib/session.ts:15-25`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts#L15-L25) (`requireTeacherSession`)
-  - [`src/app/(teacher)/layout.tsx:18-27`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx#L18-L27) (`TeacherLayout`)
-
-#### Description
-In `TeacherLayout`, role mismatch is handled with intelligent routing:
-```typescript
-if (!session?.teacherId) {
-  const pathname = (await headers()).get('x-pathname');
-  if (session?.studentId) {
-    redirect((pathname ?? '').startsWith('/settings') ? '/account' : '/bookings');
-  }
-  if (pathname && isSafeRelativePath(pathname)) {
-    redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
-  }
-  redirect('/login');
-}
-```
-If an active session belongs to a student, they are routed to `/account` or `/bookings`.
-
-In contrast, `requireTeacherSession` in `src/lib/session.ts` does not check `session?.studentId`:
-```typescript
-export async function requireTeacherSession(): Promise<TeacherSession> {
-  const session = await getSession();
-  if (!session?.teacherId) {
-    const pathname = (await headers()).get('x-pathname');
-    if (pathname && isSafeRelativePath(pathname)) {
-      redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
-    }
-    redirect('/login');
-  }
-  return { ...session, teacherId: session.teacherId };
-}
-```
-Currently, all pages calling `requireTeacherSession` reside within the `(teacher)` layout, which executes first. However, if `requireTeacherSession` is ever invoked in Server Actions or independent endpoints, a student session would be sent to `/login` rather than their student portal.
-
-#### Recommended Remediation
-Consider aligning `requireTeacherSession`'s fallback behavior or documenting that cross-role redirections are exclusively owned by the layout tier.
-
----
-
-### Finding 4: Bounding Query String Length on Server Component Redirects
-- **Category:** **SUGGESTION**
-- **Affected Files:**
-  - [`src/lib/student-guard.ts:16`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/student-guard.ts#L16)
-  - [`src/app/(teacher)/layout.tsx:23`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/app/(teacher)/layout.tsx#L23)
-  - [`src/lib/session.ts:19`](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615/src/lib/session.ts#L19)
-
-#### Description
-`src/proxy.ts` stamps `x-pathname` as `request.nextUrl.pathname + request.nextUrl.search`.
-In `LoginForm` (`src/app/(public)/login/page.tsx`), the parameter is validated with:
-```typescript
-rawRedirect && isSafeRelativePath(rawRedirect) && rawRedirect.length <= 200
-```
-However, the server component redirects (`redirectNonStudent`, `TeacherLayout`, `requireTeacherSession`) check `isSafeRelativePath(pathname)` but do not enforce `pathname.length <= 200`.
-
-If an unauthenticated request arrives with an unusually long query string (> 200 characters), the server will issue a redirect to `/login?redirect=<long_string>`, which `/login` will then discard upon client load, silently falling back to the role home.
-
-#### Recommended Remediation
-Enforce `redirectPath.length <= 200` in `redirectNonStudent`, `TeacherLayout`, and `requireTeacherSession` before generating the redirect URL, or strip excessive query parameters.
-
----
-
-## 4. Verification of Specific Review Areas
-
-### 4.1. Server Component Headers Access
-- **Compliance with Next.js 16**: In Next.js 15+, `headers()` returns a Promise and must be awaited. All three call sites (`StudentLayout`, `TeacherLayout`, `requireTeacherSession`) correctly use `(await headers()).get('x-pathname')`.
-- **Header Spoofing Protection**: In `src/proxy.ts`:
-  ```typescript
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.delete('x-pathname');
-  requestHeaders.set('x-pathname', request.nextUrl.pathname + request.nextUrl.search);
-  return NextResponse.next({ request: { headers: requestHeaders } });
-  ```
-  Deleting `x-pathname` before re-setting it guarantees that client-supplied headers cannot spoof internal route state.
-- **Dynamic Rendering Impact**: All routes under `(student)` and `(teacher)` already invoke `getSession()`, which accesses `cookies()` and queries the database. Reading `headers()` within the unauthorized branch introduces zero additional dynamic de-optimizations.
-
-### 4.2. Route Prefix Coverage
-- The 9 prefixes in `config.matcher`:
-  - `/schedule/:path*`
-  - `/studio-class/:path*`
-  - `/students/:path*`
-  - `/inbox/:path*`
-  - `/settings/:path*`
-  - `/class/:path*`
-  - `/bookings/:path*`
-  - `/account/:path*`
-  - `/updates/:path*`
-- Exhaustive verification against the filesystem confirms that 100% of route files under `src/app/(teacher)` and `src/app/(student)` fall under these 9 prefixes.
-- All 9 prefixes are registered in `RESERVED_SLUGS` (`src/lib/schemas.ts:180-183`), ensuring that no dynamic teacher slug (`/[slug]`) can shadow or conflict with protected paths.
-
-### 4.3. Downstream Authentication Flow
-- `magicLinkSendSchema`: Validates `redirect: relativePath.optional()`.
-- `POST /api/auth/magic-link/send`: Persists `redirectTo` in `magicLinkToken`.
-- `GET /api/auth/magic-link/verify`: Validates `isSafeRelativePath(tokenRedirect)` and returns `{ redirectTo }`.
-- `POST /api/auth/magic-link/claim`: Validates `isSafeRelativePath(tokenRedirect)` and returns `{ redirectTo }`.
-- `PasskeySignIn`: Forwards `redirect` to `POST /api/auth/passkey/authenticate/verify`.
-- The pipeline end-to-end preserves and honors the validated redirect destination.
-
----
-
-## 5. Summary of Findings
-
-| ID | Finding | Severity | File(s) | Action Required |
+| ID | Issue Description | Location | Severity | Confidence Score (0-100) |
 |---|---|---|---|---|
-| **SEC-1** | Open redirect circumvention via WHATWG control whitespace stripping (`\t`, `\n`, `\r`) | **Critical** | `src/lib/schemas.ts`, `src/app/(public)/login/page.tsx` | Strip control characters and validate origin with `new URL()` parser |
-| **UX-1** | `<Suspense fallback={null}>` renders blank screen during SSR / hydration of `/login` | **Important** | `src/app/(public)/login/page.tsx` | Add meaningful visual fallback skeleton or isolate `useSearchParams` |
-| **ARCH-1** | `requireTeacherSession` does not mirror `TeacherLayout`'s student redirect routing | **Suggestion** | `src/lib/session.ts` | Consider routing student sessions to `/account` or `/bookings` |
-| **DEF-1** | Server component redirects do not check length `<= 200` before creating `/login?redirect=...` | **Suggestion** | `src/lib/student-guard.ts`, `src/app/(teacher)/layout.tsx`, `src/lib/session.ts` | Guard length `<= 200` to prevent generating URLs `/login` will drop |
+| — | *No defects, security issues, or rule violations found.* | — | — | — |
+
+*Note: In accordance with review instructions, only high-confidence issues (>= 80) are reported. All evaluated areas passed with zero high-confidence concerns.*
 
 ---
 
-## 6. Verdict
+## 5. Conclusion & Recommendations
 
-**CHANGES REQUESTED** due to **SEC-1** (Critical Open Redirect vulnerability). Addressing SEC-1 and refining UX-1 will ensure the PR is safe and performant for production release.
+PR #642 is an exemplary pull request. It precisely targets the defect described in issue #641, cleans up code duplication between `revokeRequestSession` and `invalidateSession`, aligns error handling with the repository's architectural patterns, and provides comprehensive unit, route, and integration test coverage with verified mutation resilience.
+
+**Recommendation:** **MERGE WITHOUT MODIFICATION.**
