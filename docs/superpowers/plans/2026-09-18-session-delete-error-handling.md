@@ -70,7 +70,7 @@
 - New: `src/app/api/auth/session/route.test.ts`
 - Modify: `tests/integration/auth.test.ts`
 
-- [ ] **Step 1: Refactor `DELETE` in `src/app/api/auth/session/route.ts`**
+- [x] **Step 1: Refactor `DELETE` in `src/app/api/auth/session/route.ts`**
   - Remove `getSessionToken` and `invalidateSession` imports; import `revokeRequestSession`.
   - Replace the handler body with:
     ```ts
@@ -84,18 +84,18 @@
     });
     ```
 
-- [ ] **Step 2: Create unit tests in `src/app/api/auth/session/route.test.ts`**
+- [x] **Step 2: Create unit tests in `src/app/api/auth/session/route.test.ts`**
   - Test `DELETE`:
     - returns 200 with `{ message: 'Logged out' }` and expired cookie when session cookie is present
     - returns 200 with `{ message: 'Logged out' }` and expired cookie when no session cookie is present
     - bubbles database errors: when `prisma.session.deleteMany` throws, `withErrorHandler` catches it, logs via `log.error`, and responds with status 500
 
-- [ ] **Step 3: Add integration tests in `tests/integration/auth.test.ts`**
+- [x] **Step 3: Add integration tests in `tests/integration/auth.test.ts`**
   - Add test for `DELETE /api/auth/session` over HTTP:
     - active session -> returns 200, sets expired cookie header, `validateSession` returns null
     - idempotent -> repeated request with already-revoked session returns 200 and clears cookie
 
-- [ ] **Step 4: Run tests and prove mutation**
+- [x] **Step 4: Run tests and prove mutation**
   - Run: `pnpm exec vitest run src/app/api/auth/session/route.test.ts`
   - Run: `pnpm exec vitest run --project integration tests/integration/auth.test.ts`
   - Mutation probe: Wrap `await revokeRequestSession(prisma, request)` in `try {} catch {}` in `src/app/api/auth/session/route.ts`. Run `route.test.ts`. Verify it fails because status 500 was expected but 200 was received. Restore and re-verify green.

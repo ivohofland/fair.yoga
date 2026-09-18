@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import {
-  getSessionToken,
-  invalidateSession,
+  revokeRequestSession,
   clearSessionCookie,
 } from '@/lib/auth';
 import {
@@ -24,15 +23,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 });
 
 export const DELETE = withErrorHandler(async (request: NextRequest) => {
-  const token = getSessionToken(request);
-
-  if (token) {
-    try {
-      await invalidateSession(prisma, token);
-    } catch {
-      // Session may already be deleted — that's fine
-    }
-  }
+  await revokeRequestSession(prisma, request);
 
   const response = respondOk({ message: 'Logged out' });
   clearSessionCookie(response.headers);

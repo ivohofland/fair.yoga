@@ -13,7 +13,7 @@ import {
   generateMagicLinkToken,
   verifyMagicLinkToken,
 } from '@/lib/auth';
-import { hashToken, uniqueSuffix } from '../helpers';
+import { hashToken, uniqueSuffix, BASE_URL, cookie } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -197,3 +197,47 @@ describe('Session expiry', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('DELETE /api/auth/session', () => {
+  it('revokes active session, clears cookie, and invalidates session in database', async () => {
+    const sessionToken = await createSession(prisma, teacherAccountId);
+
+    const before = await validateSession(prisma, sessionToken);
+    expect(before).not.toBeNull();
+
+    const res = await fetch(`${BASE_URL}/api/auth/session`, {
+      method: 'DELETE',
+      headers: cookie(sessionToken),
+    });
+
+    expect(res.status).toBe(200);
+    const setCookie = res.headers.get('set-cookie');
+    expect(setCookie).toContain('fair_yoga_session=;');
+    expect(setCookie).toContain('Max-Age=0');
+
+    const after = await validateSession(prisma, sessionToken);
+    expect(after).toBeNull();
+  });
+
+  it('is idempotent when called a second time with the revoked token', async () => {
+    const sessionToken = await createSession(prisma, teacherAccountId);
+
+    const firstRes = await fetch(`${BASE_URL}/api/auth/session`, {
+      method: 'DELETE',
+      headers: cookie(sessionToken),
+    });
+    expect(firstRes.status).toBe(200);
+    expect(await validateSession(prisma, sessionToken)).toBeNull();
+
+    const secondRes = await fetch(`${BASE_URL}/api/auth/session`, {
+      method: 'DELETE',
+      headers: cookie(sessionToken),
+    });
+
+    expect(secondRes.status).toBe(200);
+    const secondCookie = secondRes.headers.get('set-cookie');
+    expect(secondCookie).toContain('fair_yoga_session=;');
+    expect(secondCookie).toContain('Max-Age=0');
+  });
+});
+
