@@ -1,261 +1,190 @@
-# Task 1 Report: Refactor `invalidateSession` and `revokeRequestSession` with unit tests
+# Task 1 Implementation Report: Opportunistic Session Deletion Error Handling
 
-## Overview
-Implemented Task 1 of the implementation plan (`docs/superpowers/plans/2026-09-18-session-delete-error-handling.md`) for Issue #641:
-- Refactored `invalidateSession(db, token)` in `src/lib/auth/session.ts` to use `db.session.deleteMany({ where: { id: sessionHash } })` and return `Promise<boolean>` (`count > 0`), ensuring missing records remain safe no-ops returning `false` while database errors bubble up.
-- Refactored `revokeRequestSession(db, request)` in `src/lib/auth/session.ts` to delegate directly to `invalidateSession(db, token)` once extracted from the cookie store.
-- Updated docblocks for both functions accurately describing their error semantics, return values, and callers.
-- Updated and expanded unit tests in `src/lib/auth/session.test.ts` covering both functions and all edge cases.
-- Validated with mutation testing and verified the full test suite (`pnpm run verify`).
+**Plan:** `docs/superpowers/plans/2026-09-18-validate-session-delete-error-handling.md`  
+**Task:** Task 1: Refactor opportunistic session deletion in `src/lib/auth/session.ts` and add unit tests  
+**Branch:** `fix/643-validate-session-delete-errors`
 
 ---
 
-## Files Changed
+## 1. Summary of Implementation
 
-1. `src/lib/auth/session.ts`:
-   - Updated `invalidateSession` signature to return `Promise<boolean>`.
-   - Used `deleteMany` so missing sessions do not throw and return `false`.
-   - Updated `revokeRequestSession` to delegate to `invalidateSession`.
-   - Updated docblocks for both functions.
-2. `src/lib/auth/session.test.ts`:
-   - Imported `revokeRequestSession`.
-   - Updated `describe('invalidateSession')` test to assert return value is `true` and that validate returns `null`.
-   - Added test for `invalidateSession` returning `false` without throwing when token does not exist in the database.
-   - Added `describe('revokeRequestSession')` covering:
-     - Returns `false` when request carries no session cookie.
-     - Revokes active session and returns `true` when session exists.
-     - Returns `false` without throwing when session cookie names an absent session.
-3. `docs/superpowers/plans/2026-09-18-session-delete-error-handling.md`:
-   - Marked Task 1 steps as completed.
+In `src/lib/auth/session.ts`:
+- Replaced `await db.session.delete({ where: { id: sessionHash } }).catch(() => {});` with `await db.session.deleteMany({ where: { id: sessionHash } });` in `validateSession` at both opportunistic deletion sites:
+  1. Expired session cleanup (`session.expiresAt <= new Date()`).
+  2. Account with no live profiles cleanup (`!account || (!liveTeacher && !liveStudent)`).
+- Documented inline why `deleteMany` is used: it is idempotent against concurrent deletion without throwing Prisma error `P2025` (e.g. when another worker or request already deleted the row), while allowing genuine database infrastructure failures (deadlocks, connection timeouts, disconnects) to bubble to callers.
+
+In `src/lib/auth/session.test.ts`:
+- Added 3 unit tests to the `describe('validateSession')` suite:
+  1. `re-throws database errors during expired session opportunistic deletion`: verifies that when `db.session.deleteMany` rejects with a database error during expired session cleanup, `validateSession` bubbles the error to the caller.
+  2. `re-throws database errors during profile-less session opportunistic deletion`: verifies that when `db.session.deleteMany` rejects with a database error during profile-less session cleanup, `validateSession` bubbles the error to the caller.
+  3. `returns null without throwing when session row is concurrently deleted during cleanup`: verifies that when a concurrent process deletes the session row before `deleteMany` executes, `deleteMany` cleanly returns `{ count: 0 }` and `validateSession` returns `null` without throwing.
 
 ---
 
-## Code Diffs
+## 2. Unit Test Results
 
-### `src/lib/auth/session.ts`
-```diff
-@@ -120,29 +120,40 @@ export async function validateSession(
-   return null;
- }
- 
-+/**
-+ * Invalidate a session by its raw token.
-+ *
-+ * Uses `deleteMany` rather than `delete`: a row that is already absent is this
-+ * function's postcondition, not an error — missing records safely return `false`
-+ * without throwing, while genuine database failures bubble to the caller.
-+ *
-+ * Returns `true` if a session was found and deleted, `false` if it did not exist.
-+ */
- export async function invalidateSession(
-   db: PrismaClient,
--  token: string
--): Promise<void> {
-+  token: string,
-+): Promise<boolean> {
-   const sessionHash = hashToken(token);
--  await db.session.delete({
-+  const { count } = await db.session.deleteMany({
-     where: { id: sessionHash },
-   });
-+  return count > 0;
- }
- 
- /**
-- * Revoke whatever session the request carries, if it carries one. For a door
-- * that ends a sign-in as a side effect of doing something else, where the
-- * caller has no token in hand to pass to `invalidateSession`.
-- *
-- * `deleteMany` rather than `delete`: a row that has already gone is this
-- * function's postcondition, not an error worth catching — and writing it that
-- * way keeps a genuine database failure from being swallowed alongside it.
-+ * Revoke whatever session the request carries, if it carries one. For doors
-+ * that end a sign-in (e.g. sign-out route, magic-link verification/claim) where
-+ * the caller has an incoming `NextRequest` rather than a raw token.
-  *
-+ * Delegates to `invalidateSession` once the session token is extracted from cookies.
-  *
-  * Answers whether a sign-in actually ended, which is narrower than whether a
-  * cookie was carried: a cookie naming a session that had already expired or
-  * been revoked cost its holder nothing, and a caller reporting the sign-out
-  * to them would be describing something that did not happen.
-+ *
-+ * Returns `true` if an active session was found and deleted, `false` if no cookie
-+ * was present or the session was already absent. Genuine database failures bubble up.
-  */
- export async function revokeRequestSession(
-   db: PrismaClient,
-@@ -150,8 +161,7 @@ export async function revokeRequestSession(
- ): Promise<boolean> {
-   const token = getSessionToken(request);
-   if (!token) return false;
--  const { count } = await db.session.deleteMany({ where: { id: hashToken(token) } });
--  return count > 0;
-+  return invalidateSession(db, token);
- }
- 
- /**
-```
+Command: `pnpm exec vitest run src/lib/auth/session.test.ts`
 
-### `src/lib/auth/session.test.ts`
-```diff
-@@ -9,6 +9,7 @@ import {
-   createSession,
-   validateSession,
-   invalidateSession,
-+  revokeRequestSession,
-   getSessionToken,
-   setSessionCookie,
-   clearSessionCookie,
-@@ -336,13 +337,50 @@ describe('validateSession', () => {
- });
- 
- describe('invalidateSession', () => {
--  it('deletes the session so subsequent validate returns null', async () => {
-+  it('deletes the session so subsequent validate returns null and returns true', async () => {
-     const token = await createSession(db, teacherAccountId);
- 
-     expect(await validateSession(db, token)).not.toBeNull();
--    await invalidateSession(db, token);
-+    const result = await invalidateSession(db, token);
-+    expect(result).toBe(true);
-     expect(await validateSession(db, token)).toBeNull();
-   });
-+
-+  it('returns false without throwing when token does not exist in the database', async () => {
-+    const nonExistentToken = '0'.repeat(64);
-+    const result = await invalidateSession(db, nonExistentToken);
-+    expect(result).toBe(false);
-+  });
-+});
-+
-+describe('revokeRequestSession', () => {
-+  it('returns false when request carries no session cookie', async () => {
-+    const request = new NextRequest('http://localhost');
-+    const result = await revokeRequestSession(db, request);
-+    expect(result).toBe(false);
-+  });
-+
-+  it('revokes active session and returns true when session exists', async () => {
-+    const token = await createSession(db, teacherAccountId);
-+    const request = new NextRequest('http://localhost', {
-+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
-+    });
-+
-+    expect(await validateSession(db, token)).not.toBeNull();
-+    const result = await revokeRequestSession(db, request);
-+    expect(result).toBe(true);
-+    expect(await validateSession(db, token)).toBeNull();
-+  });
-+
-+  it('returns false without throwing when session cookie names an absent session', async () => {
-+    const nonExistentToken = '0'.repeat(64);
-+    const request = new NextRequest('http://localhost', {
-+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${nonExistentToken}` },
-+    });
-+
-+    const result = await revokeRequestSession(db, request);
-+    expect(result).toBe(false);
-+  });
- });
- 
- describe('getSessionToken', () => {
-```
-
----
-
-## Test Execution Output
-
-### `pnpm exec vitest run src/lib/auth/session.test.ts`
 ```
  RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
 
 [unit-db] unit tests run against ethical_yoga_test
 
  Test Files  1 passed (1)
-      Tests  29 passed (29)
-   Start at  13:54:23
-   Duration  1.69s (transform 23ms, setup 0ms, import 114ms, tests 190ms, environment 0ms)
+      Tests  35 passed (35)
+   Start at  21:57:29
+   Duration  1.53s (transform 28ms, setup 0ms, import 131ms, tests 192ms, environment 0ms)
 ```
 
-### `pnpm run typecheck`
-```
-$ tsc --noEmit
-(clean exit 0)
+All 35 tests in `src/lib/auth/session.test.ts` passed.
+
+---
+
+## 3. Mutation Testing Probes
+
+### Mutation Probe 1: Expired Session Cleanup Guard
+
+**Mutation Applied:** Temporarily re-introduced `.catch(() => {})` on the expired session opportunistic cleanup in `src/lib/auth/session.ts`:
+```diff
+   if (session.expiresAt <= new Date()) {
+     // deleteMany is idempotent against concurrent deletions (no P2025 thrown
+     // if the row was already deleted) while surfacing genuine database errors.
+-    await db.session.deleteMany({ where: { id: sessionHash } });
++    await db.session.deleteMany({ where: { id: sessionHash } }).catch(() => {});
+     return null;
+   }
 ```
 
-### `pnpm run lint`
+**Test Execution:** `pnpm exec vitest run src/lib/auth/session.test.ts`  
+**Result:** FAILED as expected. The test caught the swallowed error.
+
+**Exact Failure Output:**
 ```
-$ eslint
-✖ 6 problems (0 errors, 6 warnings)
-(clean exit 0)
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
+
+[unit-db] unit tests run against ethical_yoga_test
+ ❯ |unit| src/lib/auth/session.test.ts (35 tests | 1 failed) 213ms
+     × re-throws database errors during expired session opportunistic deletion 8ms
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/lib/auth/session.test.ts > validateSession > re-throws database errors during expired session opportunistic deletion
+AssertionError: promise resolved "null" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+null
+
+ ❯ src/lib/auth/session.test.ts:319:47
+    317|
+    318|     try {
+    319|       await expect(validateSession(db, token)).rejects.toThrow('databa…
+       |                                               ^
+    320|     } finally {
+    321|       deleteManySpy.mockRestore();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 34 passed (35)
+   Start at  21:57:35
+   Duration  1.46s (transform 28ms, setup 0ms, import 124ms, tests 213ms, environment 0ms)
 ```
 
-### `pnpm run verify`
+**Restoration Verification:** Restored `src/lib/auth/session.ts` and re-ran tests:
 ```
-Test Files  77 passed (77)
-     Tests  981 passed (981)
-  Duration  233.08s
-$ tsx scripts/check-lockfile.ts
-✓ pnpm-lock.yaml passes supply-chain policy (703 entries checked)
-$ tsx scripts/check-migrations.ts
-✓ No applied migrations amended
-$ tsx scripts/check-visual-baseline-freshness.ts
-✓ Visual baselines are up to date with the routes they cover
-(clean exit 0)
+ Test Files  1 passed (1)
+      Tests  35 passed (35)
 ```
 
 ---
 
-## Mutation Testing Protocol
+### Mutation Probe 2: Profile-Less Session Cleanup Guard
 
-### Mutation Applied
-Replaced `db.session.deleteMany` with `db.session.delete` in `src/lib/auth/session.ts`:
-```ts
-export async function invalidateSession(
-  db: PrismaClient,
-  token: string,
-): Promise<boolean> {
-  const sessionHash = hashToken(token);
-  await db.session.delete({
-    where: { id: sessionHash },
-  });
-  return true;
+**Mutation Applied:** Temporarily re-introduced `.catch(() => {})` on the profile-less session opportunistic cleanup in `src/lib/auth/session.ts`:
+```diff
+   if (!account || (!liveTeacher && !liveStudent)) {
+     // deleteMany is idempotent against concurrent deletions (no P2025 thrown
+     // if the row was already deleted) while surfacing genuine database errors.
+-    await db.session.deleteMany({ where: { id: sessionHash } });
++    await db.session.deleteMany({ where: { id: sessionHash } }).catch(() => {});
+     return null;
+   }
+```
+
+**Test Execution:** `pnpm exec vitest run src/lib/auth/session.test.ts`  
+**Result:** FAILED as expected. The test caught the swallowed error.
+
+**Exact Failure Output:**
+```
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
+
+[unit-db] unit tests run against ethical_yoga_test
+ ❯ |unit| src/lib/auth/session.test.ts (35 tests | 1 failed) 178ms
+     × re-throws database errors during profile-less session opportunistic deletion 12ms
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/lib/auth/session.test.ts > validateSession > re-throws database errors during profile-less session opportunistic deletion
+AssertionError: promise resolved "null" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
 }
+
++ Received:
+null
+
+ ❯ src/lib/auth/session.test.ts:336:47
+    334|
+    335|     try {
+    336|       await expect(validateSession(db, token)).rejects.toThrow('databa…
+       |                                               ^
+    337|     } finally {
+    338|       deleteManySpy.mockRestore();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 34 passed (35)
+   Start at  21:57:43
+   Duration  1.47s (transform 34ms, setup 0ms, import 134ms, tests 178ms, environment 0ms)
 ```
 
-### Failure Observed
-Running `pnpm exec vitest run src/lib/auth/session.test.ts` failed with 2 errors:
+**Restoration Verification:** Restored `src/lib/auth/session.ts` and re-ran tests:
 ```
- ❯ |unit| src/lib/auth/session.test.ts (29 tests | 2 failed) 209ms
-     × returns false without throwing when token does not exist in the database 8ms
-     × returns false without throwing when session cookie names an absent session 3ms
-
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
-
- FAIL  |unit| src/lib/auth/session.test.ts > invalidateSession > returns false without throwing when token does not exist in the database
-PrismaClientKnownRequestError: 
-Invalid `db.session.delete()` invocation in
-/Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts:137:20
-
-  134   token: string,
-  135 ): Promise<boolean> {
-  136   const sessionHash = hashToken(token);
-→ 137   await db.session.delete(
-An operation failed because it depends on one or more records that were required but not found. No record was found for a delete.
-
- FAIL  |unit| src/lib/auth/session.test.ts > revokeRequestSession > returns false without throwing when session cookie names an absent session
-PrismaClientKnownRequestError: 
-Invalid `db.session.delete()` invocation in
-/Users/ivohofland/Projects/fair.yoga/src/lib/auth/session.ts:137:20
-
-  134   token: string,
-  135 ): Promise<boolean> {
-  136   const sessionHash = hashToken(token);
-→ 137   await db.session.delete(
-An operation failed because it depends on one or more records that were required but not found. No record was found for a delete.
+ Test Files  1 passed (1)
+      Tests  35 passed (35)
 ```
 
-### Restoration and Confirmation
-Restored `src/lib/auth/session.ts` back to `deleteMany`.
-Re-ran `pnpm exec vitest run src/lib/auth/session.test.ts`: 29 passed (29). All green.
+---
+
+## 4. Full Verification (`pnpm run verify`)
+
+Executed `pnpm run verify`:
+1. **Typecheck:** `pnpm run typecheck` (`tsc --noEmit`) -> **0 errors**
+2. **Lint:** `pnpm run lint` (`eslint`) -> **0 errors** (6 existing warnings in unrelated files)
+3. **Vitest Suite:** All 4 test projects (`unit`, `unit-sweeps`, `integration`, `components`):
+   - **77 passed test files**
+   - **984 passed tests**
+4. **Supply Chain & Migration Checks:**
+   - `✓ pnpm-lock.yaml passes supply-chain policy (703 entries checked)`
+   - `✓ No applied migrations amended`
+   - `✓ Visual baselines are up to date with the routes they cover`
+
+---
+
+## 5. Git Status
+
+Per instructions, **no git commits have been made**. The working tree on branch `fix/643-validate-session-delete-errors` has the following modified files:
+- `src/lib/auth/session.ts`
+- `src/lib/auth/session.test.ts`
+- `docs/superpowers/plans/task-1-report.md`
