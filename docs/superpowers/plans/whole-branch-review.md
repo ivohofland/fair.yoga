@@ -1,29 +1,31 @@
-# Whole-Branch Review: Login Destination Preservation (#615)
+# Whole-Branch Review: Session Invalidation Error Handling (#641)
 
-## 1. Cross-Task Consistency
+## Verdict: APPROVED
 
-### **CRITICAL: Query Parameter Loss on Invalid Sessions**
-While `proxy.ts` correctly preserves query parameters for visitors without a cookie (`request.nextUrl.pathname + request.nextUrl.search`), it drops them for visitors with an **invalid or expired** session cookie.
-- **Where:** `src/proxy.ts` sets the layout header as `requestHeaders.set('x-pathname', request.nextUrl.pathname);` (omitting `.search`).
-- **Impact:** When a user with an expired session cookie visits `/account/privacy?tab=invitations`, `proxy.ts` allows the request through to the layouts. `TeacherLayout` and `StudentLayout` then read `x-pathname` (which is just `/account/privacy`) and redirect the user to `/login?redirect=%2Faccount%2Fprivacy`, silently dropping their query parameters.
-- **Fix:** Update `proxy.ts` to include the search string in the header (e.g., `request.nextUrl.pathname + request.nextUrl.search`). (Note that `(pathname ?? '').startsWith('/settings')` in `TeacherLayout` will still work perfectly if query parameters are appended).
+## Review Dimensions
 
-## 2. Stale Comments and Claims
+### 1. Cross-Task Blindness
+Task 1 and Task 2 mesh seamlessly. Task 1 refactored `invalidateSession` and `revokeRequestSession` to use `deleteMany`, converting absent-record exceptions into a safe boolean return (`false`). This provided the exact safety guarantee required by Task 2, allowing the `DELETE /api/auth/session` route to invoke `revokeRequestSession` directly without wrapping it in an empty `catch` block. The integration is structurally sound, and neither task breaks assumptions relied upon by the other.
 
-### **IMPORTANT: Stale Proxy Comment**
-- **Where:** `src/proxy.ts` lines 20-21.
-- **Issue:** The comment states: `(unmatched teacher routes skip this proxy, so the layout treats the header as advisory with hardcoded targets only)`.
-- **Fix:** This is now definitively stale. Task 1 expanded `config.matcher` to include all 9 protected route prefixes, meaning there are no "unmatched teacher routes" anymore. The comment should be updated to reflect that the proxy now universally intercepts all protected routes.
+### 2. Error Semantics
+The error semantics have been fully corrected:
+- **Idempotency:** When the session cookie is absent or points to a non-existent DB record, `revokeRequestSession` correctly returns `false` without throwing, allowing the route to safely return HTTP 200 and clear the cookie.
+- **Error Propagation:** Genuine database failures (e.g., connection drops) encountered during `deleteMany` are no longer swallowed. They bubble out of `revokeRequestSession` and are caught by `withErrorHandler` in `DELETE /api/auth/session`, which logs the error via `pino` and responds with HTTP 500 (`Internal server error`).
 
-## 3. Security and Invariants
+### 3. Invalidation & References Check
+- No stale references were left behind. The obsolete comment `// Session may already be deleted — that's fine` was correctly deleted along with the `catch {}` block in `src/app/api/auth/session/route.ts`.
+- `invalidateSession` is only consumed internally in `src/lib/auth/session.ts` and its test file.
+- `revokeRequestSession` is consumed by the magic link `claim` and `verify` routes, which already expected a `Promise<boolean>` and continue to function correctly with the refactored internal delegation.
 
-### **CLEAN: Open Redirect and Encoding Chain**
-- `isSafeRelativePath` safely handles and validates the redirect parameter. It correctly rejects protocol-relative attacks like `//evil.com` and browsers' backslash normalization `/\evil.com`.
-- The URL encoding chain is robust:
-  - `proxy.ts` safely encodes parameters via `loginUrl.searchParams.set('redirect', ...)`
-  - `src/app/(public)/login/page.tsx` safely decodes them via `useSearchParams().get('redirect')`
-  - The layouts re-encode them correctly via `encodeURIComponent(pathname)`
-- No double-encoding or decoding issues exist in the implemented flows.
+### 4. Comment Discipline
+- **Compliant:** Comments adhere strictly to the repository's `CLAUDE.md` Comment Discipline rules.
+- The rationale for `deleteMany` over `delete` was appropriately moved to `invalidateSession` (where the DB call actually occurs) rather than staying on `revokeRequestSession`.
+- Docblocks describe the immediate function's behavior clearly (what is true now) without introducing brittle counts or cross-module rosters.
 
-## Conclusion
-The branch successfully implements the destination preservation logic across the proxy, layouts, and auth pages. Addressing the query parameter drop in the invalid-session fallback and the stale comment in `proxy.ts` will bring the branch to completion.
+### 5. Test Coverage & Resilience
+- **Unit Tests:** `src/lib/auth/session.test.ts` thoroughly covers `invalidateSession` and `revokeRequestSession` for both active and absent sessions.
+- **Route Unit Tests:** `src/app/api/auth/session/route.test.ts` perfectly asserts the 3 branches: present cookie, absent cookie, and the 500 status on database rejection.
+- **Integration Tests:** `tests/integration/auth.test.ts` exercises the complete HTTP boundary and verifies both successful revocation and idempotency over the wire.
+- **Mutation Tested:** Probes confirm that regression errors (like swallowing errors or using `delete`) cause tests to fail immediately.
+
+The branch is ready to be merged.
