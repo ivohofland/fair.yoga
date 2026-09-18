@@ -1,254 +1,285 @@
-# Task 2 Report: Forward `redirect` in `/login` with safety validation
+# Task 2 Report: Refactor `DELETE /api/auth/session` to propagate errors, add route unit tests and integration tests
 
 ## Overview
-Implemented Task 2 of Issue #615 to read, sanitize, and forward the `redirect` query parameter on the `/login` page:
-- Wrapped the login form in a `LoginForm` component and rendered it inside a `<Suspense fallback={null}>` boundary in `LoginPage` (default export) to safely read `useSearchParams()`.
-- Validated and sanitized `redirect` using `isSafeRelativePath` and length limit ($\le 200$), discarding unsafe values (`//evil.com`, `/\evil.com`, `https://evil.com`, length $> 200$) silently to `undefined`.
-- Forwarded `redirect` in the JSON request body to `POST /api/auth/magic-link/send`.
-- Passed `redirect` to `<PasskeySignIn redirect={redirect} />`.
-- Added comprehensive unit/component tests in `src/app/(public)/login/page.test.tsx` and performed mutation testing.
+Implemented Task 2 of the implementation plan (`docs/superpowers/plans/2026-09-18-session-delete-error-handling.md`) for Issue #641:
+- Refactored `DELETE` handler in `src/app/api/auth/session/route.ts`:
+  - Replaced imports: dropped `getSessionToken` and `invalidateSession`, imported `revokeRequestSession` from `@/lib/auth`.
+  - Updated handler to call `await revokeRequestSession(prisma, request);` directly without the previous swallow-all empty `catch {}` block.
+  - Retained cookie clearing (`clearSessionCookie(response.headers)`) and 200 response `{ data: { message: 'Logged out' } }`.
+- Created route unit tests in `src/app/api/auth/session/route.test.ts`:
+  - Directly invoked `DELETE` handler with `NextRequest`.
+  - Verified 200 + cleared session cookie (`Max-Age=0`) when session cookie is present.
+  - Verified 200 + cleared session cookie when no session cookie is present without calling `prisma.session.deleteMany`.
+  - Verified database error propagation: when `prisma.session.deleteMany` rejects (e.g. `new Error('connection failed')`), the error bubbles out of the handler into `withErrorHandler`, which logs via `log.error` with request context (`method: 'DELETE'`, `path: '/api/auth/session'`) and responds with HTTP 500 (`Internal server error`).
+- Added HTTP integration tests in `tests/integration/auth.test.ts`:
+  - Tested `DELETE /api/auth/session` over HTTP against the running app using `fetch` and `cookie(sessionToken)`.
+  - Verified 200 status, `Set-Cookie` with `Max-Age=0`, and that `validateSession(prisma, sessionToken)` returns `null`.
+  - Verified idempotency: second `DELETE /api/auth/session` with the revoked token returns 200 and clears the cookie.
+- Executed mutation testing protocol:
+  - Wrapped `await revokeRequestSession(prisma, request)` in `try {} catch {}`.
+  - Verified `route.test.ts` caught the defect by failing with `expected 200 to be 500`.
+  - Restored code and confirmed tests pass.
+- Verified the complete gate (`pnpm run verify`: typecheck, lint, full vitest unit/integration/components/sweeps suites, lockfile, migrations, visual baseline).
 
-## Changes Made
+---
 
-### 1. `src/app/(public)/login/page.tsx`
-- Extracted login form into `LoginForm`.
-- Exported `LoginPage` wrapping `LoginForm` in `<Suspense fallback={null}>`.
-- Used `useSearchParams()` to retrieve `redirect` query parameter.
-- Sanitized with `isSafeRelativePath(rawRedirect) && rawRedirect.length <= 200`.
-- Passed `{ email, ...(redirect ? { redirect } : {}) }` to `POST /api/auth/magic-link/send`.
-- Passed `redirect` prop to `<PasskeySignIn redirect={redirect} />`.
+## Files Changed
 
-### 2. `src/app/(public)/login/page.test.tsx`
-- Mocked `next/navigation` (`useSearchParams`, `useRouter`) and `@/components/booking/passkey-sign-in` (`PasskeySignIn`).
-- Added tests verifying:
-  - Without redirect query param: POST body has no `redirect` property and `PasskeySignIn` receives `undefined`.
-  - With valid redirect (`?redirect=/account/privacy`): POST body includes `redirect: '/account/privacy'` and `PasskeySignIn` receives `'/account/privacy'`.
-  - With valid redirect (`?redirect=/students/s-1`): `PasskeySignIn` receives `'/students/s-1'`.
-  - With unsafe redirects (`//evil.com`, `/\evil.com`, `https://evil.com`, string $> 200$ chars): POST body omits `redirect` property and `PasskeySignIn` receives `undefined`.
-  - Search params suspense fallback rendering.
+1. `src/app/api/auth/session/route.ts`:
+   - Replaced `getSessionToken` and `invalidateSession` imports with `revokeRequestSession`.
+   - Removed empty `try { ... } catch {}` block; called `await revokeRequestSession(prisma, request);` directly so database errors bubble to `withErrorHandler`.
+2. `src/app/api/auth/session/route.test.ts` (New):
+   - Created route handler unit tests verifying 200 on present session cookie, 200 on absent session cookie, and 500 + `log.error` on database error.
+3. `tests/integration/auth.test.ts`:
+   - Imported `BASE_URL` and `cookie` from `../helpers`.
+   - Added `describe('DELETE /api/auth/session')` integration tests for active session revocation and idempotency over HTTP.
+4. `docs/superpowers/plans/2026-09-18-session-delete-error-handling.md`:
+   - Marked all Task 2 steps as completed.
 
 ---
 
 ## Code Diffs
 
-### `src/app/(public)/login/page.tsx`
+### `src/app/api/auth/session/route.ts`
 ```diff
-@@ -1,7 +1,8 @@
- 'use client';
+@@ -1,7 +1,6 @@
+ import { NextRequest } from 'next/server';
+ import {
+-  getSessionToken,
+-  invalidateSession,
++  revokeRequestSession,
+   clearSessionCookie,
+ } from '@/lib/auth';
+ import {
+@@ -24,15 +23,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
+ });
  
--import { useState } from 'react';
-+import { useState, Suspense } from 'react';
- import Link from 'next/link';
-+import { useSearchParams } from 'next/navigation';
- import { Button } from '@/components/ui/button';
- import { Input } from '@/components/ui/input';
- import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
-@@ -8,5 +9,13 @@
- import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
-+import { isSafeRelativePath } from '@/lib/schemas';
+ export const DELETE = withErrorHandler(async (request: NextRequest) => {
+-  const token = getSessionToken(request);
+-
+-  if (token) {
+-    try {
+-      await invalidateSession(prisma, token);
+-    } catch {
+-      // Session may already be deleted — that's fine
+-    }
+-  }
++  await revokeRequestSession(prisma, request);
  
--export default function LoginPage() {
-+function LoginForm() {
-+  const searchParams = useSearchParams();
-+  const rawRedirect = searchParams.get('redirect');
-+  const redirect =
-+    rawRedirect && isSafeRelativePath(rawRedirect) && rawRedirect.length <= 200
-+      ? rawRedirect
-+      : undefined;
-+
-   const [email, setEmail] = useState('');
-   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
- 
-@@ -19,7 +28,7 @@
-       const res = await fetch('/api/auth/magic-link/send', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
--        body: JSON.stringify({ email }),
-+        body: JSON.stringify({ email, ...(redirect ? { redirect } : {}) }),
-       });
-       if (res.ok) {
-         setStatus('sent');
-@@ -76,7 +85,7 @@
-           </form>
- 
-           <div className="mt-4">
--            <PasskeySignIn />
-+            <PasskeySignIn redirect={redirect} />
-           </div>
- 
-           {/* For anyone who bookmarked /login before they had an account. */}
-@@ -90,4 +99,12 @@
-     </div>
-   );
- }
-+
-+export default function LoginPage() {
-+  return (
-+    <Suspense fallback={null}>
-+      <LoginForm />
-+    </Suspense>
-+  );
-+}
+   const response = respondOk({ message: 'Logged out' });
+   clearSessionCookie(response.headers);
 ```
 
-### `src/app/(public)/login/page.test.tsx`
+### `src/app/api/auth/session/route.test.ts`
+```ts
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
+import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
+import { DELETE } from './route';
+
+/**
+ * Route unit tests for `DELETE /api/auth/session`.
+ *
+ * Direct test of the route handler:
+ * - When a session cookie is present, delegates revocation to `revokeRequestSession`
+ *   and returns 200 with an expired cookie.
+ * - When no session cookie is present, safely returns 200 with an expired cookie
+ *   without querying the database.
+ * - When session deletion encounters a database failure, bubbles out of the handler
+ *   to `withErrorHandler`, which logs the error at `error` level and responds with HTTP 500 (#641).
+ */
+describe('DELETE /api/auth/session', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns 200 with logged out message and cleared cookie when session cookie is present', async () => {
+    const deleteManySpy = vi.spyOn(prisma.session, 'deleteMany').mockResolvedValue({ count: 1 });
+
+    const request = new NextRequest('http://localhost:3000/api/auth/session', {
+      method: 'DELETE',
+      headers: {
+        cookie: 'fair_yoga_session=active-session-token',
+      },
+    });
+
+    const res = await DELETE(request);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { message: string } };
+    expect(body.data.message).toBe('Logged out');
+
+    const setCookie = res.headers.get('set-cookie');
+    expect(setCookie).toContain('fair_yoga_session=;');
+    expect(setCookie).toContain('Max-Age=0');
+
+    expect(deleteManySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 200 with logged out message and cleared cookie when no session cookie is present', async () => {
+    const deleteManySpy = vi.spyOn(prisma.session, 'deleteMany');
+
+    const request = new NextRequest('http://localhost:3000/api/auth/session', {
+      method: 'DELETE',
+    });
+
+    const res = await DELETE(request);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { message: string } };
+    expect(body.data.message).toBe('Logged out');
+
+    const setCookie = res.headers.get('set-cookie');
+    expect(setCookie).toContain('fair_yoga_session=;');
+    expect(setCookie).toContain('Max-Age=0');
+
+    expect(deleteManySpy).not.toHaveBeenCalled();
+  });
+
+  it('propagates database error to withErrorHandler, logging error and answering 500', async () => {
+    const dbError = new Error('connection failed');
+    vi.spyOn(prisma.session, 'deleteMany').mockRejectedValue(dbError);
+    const logErrorSpy = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
+
+    const request = new NextRequest('http://localhost:3000/api/auth/session', {
+      method: 'DELETE',
+      headers: {
+        cookie: 'fair_yoga_session=active-session-token',
+      },
+    });
+
+    const res = await DELETE(request);
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Internal server error');
+
+    expect(logErrorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: dbError,
+        method: 'DELETE',
+        path: '/api/auth/session',
+      }),
+      'unhandled API error',
+    );
+  });
+});
+```
+
+### `tests/integration/auth.test.ts`
 ```diff
-@@ -1,6 +1,26 @@
- import { describe, it, expect, vi, afterEach } from 'vitest';
- import { render, screen, fireEvent } from '@testing-library/react';
-+
-+let searchParams = new URLSearchParams();
-+let suspendSearchParams = false;
-+
-+vi.mock('next/navigation', () => ({
-+  useSearchParams: () => {
-+    if (suspendSearchParams) throw new Promise<void>(() => {});
-+    return searchParams;
-+  },
-+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
-+}));
-+
-+const passkeySignInMock = vi.fn();
-+vi.mock('@/components/booking/passkey-sign-in', () => ({
-+  PasskeySignIn: (props: { redirect?: string }) => {
-+    passkeySignInMock(props);
-+    return <div data-testid="passkey-sign-in" data-redirect={props.redirect ?? ''} />;
-+  },
-+}));
-+
- import LoginPage from './page';
+@@ -13,7 +13,7 @@ import {
+   generateMagicLinkToken,
+   verifyMagicLinkToken,
+ } from '@/lib/auth';
+-import { hashToken, uniqueSuffix } from '../helpers';
++import { hashToken, uniqueSuffix, BASE_URL, cookie } from '../helpers';
  
- function submit(email = 'anna@example.com') {
-@@ -9,6 +29,9 @@
- describe('LoginPage', () => {
-   afterEach(() => {
-     vi.unstubAllGlobals();
-+    passkeySignInMock.mockClear();
-+    searchParams = new URLSearchParams();
-+    suspendSearchParams = false;
+ const prisma = new PrismaClient();
+ const suffix = uniqueSuffix();
+@@ -197,3 +197,47 @@ describe('Session expiry', () => {
+     expect(result).toBeNull();
    });
- 
-   it('swaps itself for the sent-message panel, with the handoff code entry rendered', async () => {
-@@ -19,4 +42,75 @@
-     expect(await screen.findByText('Check your inbox for the link.')).toBeInTheDocument();
-     expect(screen.getByLabelText('Code')).toBeInTheDocument();
-   });
-+
-+  it('omits redirect from POST body and passes undefined to PasskeySignIn when redirect param is absent', async () => {
-+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-+    vi.stubGlobal('fetch', fetchMock);
-+
-+    render(<LoginPage />);
-+
-+    expect(passkeySignInMock).toHaveBeenCalledWith({ redirect: undefined });
-+
-+    submit();
-+
-+    expect(await screen.findByText('Check your inbox for the link.')).toBeInTheDocument();
-+    expect(fetchMock).toHaveBeenCalled();
-+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-+    expect(url).toBe('/api/auth/magic-link/send');
-+    const body = JSON.parse(init.body as string);
-+    expect(body).toEqual({ email: 'anna@example.com' });
-+    expect(body).not.toHaveProperty('redirect');
-+  });
-+
-+  it('sends valid redirect in POST body to /api/auth/magic-link/send and passes to PasskeySignIn', async () => {
-+    searchParams = new URLSearchParams({ redirect: '/account/privacy' });
-+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-+    vi.stubGlobal('fetch', fetchMock);
-+
-+    render(<LoginPage />);
-+
-+    expect(passkeySignInMock).toHaveBeenCalledWith({ redirect: '/account/privacy' });
-+
-+    submit();
-+
-+    expect(await screen.findByText('Check your inbox for the link.')).toBeInTheDocument();
-+    expect(fetchMock).toHaveBeenCalled();
-+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-+    expect(url).toBe('/api/auth/magic-link/send');
-+    const body = JSON.parse(init.body as string);
-+    expect(body).toEqual({ email: 'anna@example.com', redirect: '/account/privacy' });
-+  });
-+
-+  it('passes valid redirect to PasskeySignIn for protected routes like /students/s-1', () => {
-+    searchParams = new URLSearchParams({ redirect: '/students/s-1' });
-+    render(<LoginPage />);
-+    expect(passkeySignInMock).toHaveBeenCalledWith({ redirect: '/students/s-1' });
-+  });
-+
-+  it.each([
-+    ['protocol-relative URL', '//evil.com'],
-+    ['backslash path', '/\\evil.com'],
-+    ['absolute URL', 'https://evil.com'],
-+    ['string exceeding 200 chars', '/' + 'a'.repeat(201)],
-+  ])('omits unsafe redirect (%s: %s) from POST body and PasskeySignIn', async (_, unsafeRedirect) => {
-+    searchParams = new URLSearchParams({ redirect: unsafeRedirect });
-+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-+    vi.stubGlobal('fetch', fetchMock);
-+
-+    render(<LoginPage />);
-+
-+    expect(passkeySignInMock).toHaveBeenCalledWith({ redirect: undefined });
-+
-+    submit();
-+
-+    expect(await screen.findByText('Check your inbox for the link.')).toBeInTheDocument();
-+    expect(fetchMock).toHaveBeenCalled();
-+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-+    expect(url).toBe('/api/auth/magic-link/send');
-+    const body = JSON.parse(init.body as string);
-+    expect(body).toEqual({ email: 'anna@example.com' });
-+    expect(body).not.toHaveProperty('redirect');
-+  });
-+
-+  it('renders fallback when search params suspend', () => {
-+    suspendSearchParams = true;
-+    const { container } = render(<LoginPage />);
-+    expect(container).toBeEmptyDOMElement();
-+  });
  });
++
++describe('DELETE /api/auth/session', () => {
++  it('revokes active session, clears cookie, and invalidates session in database', async () => {
++    const sessionToken = await createSession(prisma, teacherAccountId);
++
++    const before = await validateSession(prisma, sessionToken);
++    expect(before).not.toBeNull();
++
++    const res = await fetch(`${BASE_URL}/api/auth/session`, {
++      method: 'DELETE',
++      headers: cookie(sessionToken),
++    });
++
++    expect(res.status).toBe(200);
++    const setCookie = res.headers.get('set-cookie');
++    expect(setCookie).toContain('fair_yoga_session=;');
++    expect(setCookie).toContain('Max-Age=0');
++
++    const after = await validateSession(prisma, sessionToken);
++    expect(after).toBeNull();
++  });
++
++  it('is idempotent when called a second time with the revoked token', async () => {
++    const sessionToken = await createSession(prisma, teacherAccountId);
++
++    const firstRes = await fetch(`${BASE_URL}/api/auth/session`, {
++      method: 'DELETE',
++      headers: cookie(sessionToken),
++    });
++    expect(firstRes.status).toBe(200);
++    expect(await validateSession(prisma, sessionToken)).toBeNull();
++
++    const secondRes = await fetch(`${BASE_URL}/api/auth/session`, {
++      method: 'DELETE',
++      headers: cookie(sessionToken),
++    });
++
++    expect(secondRes.status).toBe(200);
++    const secondCookie = secondRes.headers.get('set-cookie');
++    expect(secondCookie).toContain('fair_yoga_session=;');
++    expect(secondCookie).toContain('Max-Age=0');
++  });
++});
 ```
 
 ---
 
 ## Test Execution Output
 
-### 1. `pnpm exec vitest run "src/app/(public)/login/page.test.tsx"`
+### `pnpm exec vitest run src/app/api/auth/session/route.test.ts`
 ```
- RUN  v4.1.10 /Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_615
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
 
- ✓ |components| src/app/(public)/login/page.test.tsx (9 tests) 174ms
-   ✓ LoginPage (9)
-     ✓ swaps itself for the sent-message panel, with the handoff code entry rendered 95ms
-     ✓ omits redirect from POST body and passes undefined to PasskeySignIn when redirect param is absent 19ms
-     ✓ sends valid redirect in POST body to /api/auth/magic-link/send and passes to PasskeySignIn 12ms
-     ✓ passes valid redirect to PasskeySignIn for protected routes like /students/s-1 2ms
-     ✓ omits unsafe redirect (protocol-relative URL: //evil.com) from POST body and PasskeySignIn 11ms
-     ✓ omits unsafe redirect (backslash path: /\evil.com) from POST body and PasskeySignIn 11ms
-     ✓ omits unsafe redirect (absolute URL: https://evil.com) from POST body and PasskeySignIn 11ms
-     ✓ omits unsafe redirect (string exceeding 200 chars: /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) from POST body and PasskeySignIn 10ms
-     ✓ renders fallback when search params suspend 2ms
+[unit-db] unit tests run against ethical_yoga_test
 
  Test Files  1 passed (1)
-      Tests  9 passed (9)
-   Start at  09:25:49
-   Duration  1.32s (transform 87ms, setup 171ms, import 218ms, tests 174ms, environment 635ms)
+      Tests  3 passed (3)
+   Start at  17:16:30
+   Duration  1.76s (transform 108ms, setup 0ms, import 503ms, tests 9ms, environment 0ms)
 ```
 
-### 2. `pnpm run typecheck`
+### `pnpm exec vitest run --project integration tests/integration/auth.test.ts`
 ```
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  17:16:35
+   Duration  771ms (transform 132ms, setup 0ms, import 500ms, tests 152ms, environment 0ms)
+```
+
+### `pnpm run verify`
+```
+$ pnpm run typecheck && pnpm run lint && pnpm test && pnpm run check-lockfile && pnpm run check-migrations && pnpm run check-visual-baseline-freshness
 $ tsc --noEmit
-(clean exit 0)
-```
+$ eslint .
+$ pnpm run test:unit && pnpm run test:sweeps
+$ vitest run --project unit --project integration --project components
 
-### 3. `pnpm exec vitest run --project components`
-```
- Test Files  72 passed (72)
-      Tests  593 passed (593)
-   Start at  09:25:05
-   Duration  17.49s (transform 4.23s, setup 22.32s, import 10.16s, tests 21.02s, environment 85.17s)
+ Test Files  103 passed (103)
+      Tests  839 passed (839)
+   Start at  17:16:49
+   Duration  26.16s (transform 3.01s, setup 5.56s, import 17.51s, tests 14.88s, environment 1.87s)
+
+$ vitest run --project unit-sweeps
+
+ Test Files  30 passed (30)
+      Tests  183 passed (183)
+   Start at  17:17:17
+   Duration  26.06s (transform 3.86s, setup 305ms, import 6.09s, tests 23.36s, environment 0ms)
+
+$ pnpm install --frozen-lockfile --prefer-offline
+Lockfile is up to date, resolution step is skipped
+Already up to date
+$ prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code
+No difference detected.
+$ tsx scripts/check-visual-baseline-freshness.ts
+Baseline freshness: checked 1 snapshots across 1 directories. All fresh.
 ```
 
 ---
@@ -256,53 +287,67 @@ $ tsc --noEmit
 ## Mutation Testing Protocol
 
 ### Mutation Applied
-Temporarily bypassed safety validation in `src/app/(public)/login/page.tsx`:
-```diff
- function LoginForm() {
-   const searchParams = useSearchParams();
-   const rawRedirect = searchParams.get('redirect');
--  const redirect =
--    rawRedirect && isSafeRelativePath(rawRedirect) && rawRedirect.length <= 200
--      ? rawRedirect
--      : undefined;
-+  const redirect = rawRedirect ?? undefined;
+Wrapped `await revokeRequestSession(prisma, request)` in `try { ... } catch {}` in `src/app/api/auth/session/route.ts`:
+```ts
+export const DELETE = withErrorHandler(async (request: NextRequest) => {
+  try {
+    await revokeRequestSession(prisma, request);
+  } catch {}
+
+  const response = respondOk({ message: 'Logged out' });
+  clearSessionCookie(response.headers);
+
+  return response;
+});
 ```
 
 ### Failure Observed
-`pnpm exec vitest run "src/app/(public)/login/page.test.tsx"`
+Running `pnpm exec vitest run src/app/api/auth/session/route.test.ts` failed with 1 test failure:
 ```
- ❯ |components| src/app/(public)/login/page.test.tsx (9 tests | 4 failed) 133ms
-   ❯ LoginPage (9)
-     ✓ swaps itself for the sent-message panel, with the handoff code entry rendered 93ms
-     ✓ omits redirect from POST body and passes undefined to PasskeySignIn when redirect param is absent 13ms
-     ✓ sends valid redirect in POST body to /api/auth/magic-link/send and passes to PasskeySignIn 10ms
-     ✓ passes valid redirect to PasskeySignIn for protected routes like /students/s-1 2ms
-     × omits unsafe redirect (protocol-relative URL: //evil.com) from POST body and PasskeySignIn 5ms
-     × omits unsafe redirect (backslash path: /\evil.com) from POST body and PasskeySignIn 2ms
-     × omits unsafe redirect (absolute URL: https://evil.com) from POST body and PasskeySignIn 2ms
-     × omits unsafe redirect (string exceeding 200 chars: /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) from POST body and PasskeySignIn 3ms
-     ✓ renders fallback when search params suspend 2ms
+ FAIL  |unit| src/app/api/auth/session/route.test.ts > DELETE /api/auth/session > propagates database error to withErrorHandler, logging error and answering 500
+AssertionError: expected 200 to be 500 // Object.is equality
 
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+- Expected
++ Received
 
- FAIL  |components| src/app/(public)/login/page.test.tsx > LoginPage > omits unsafe redirect (protocol-relative URL: //evil.com) from POST body and PasskeySignIn
-AssertionError: expected "vi.fn()" to be called with arguments: [ { redirect: undefined } ]
-Received: [ { "redirect": "//evil.com" } ]
+- 500
++ 200
 
- FAIL  |components| src/app/(public)/login/page.test.tsx > LoginPage > omits unsafe redirect (backslash path: /\evil.com) from POST body and PasskeySignIn
-AssertionError: expected "vi.fn()" to be called with arguments: [ { redirect: undefined } ]
-Received: [ { "redirect": "/\\evil.com" } ]
+ ❯ src/app/api/auth/session/route.test.ts:80:24
+     78|     const res = await DELETE(request);
+     79|
+     80|     expect(res.status).toBe(500);
+       |                        ^
+     81|     const body = (await res.json()) as { error: { message: string } };
+     82|     expect(body.error.message).toBe('Internal server error');
 
- FAIL  |components| src/app/(public)/login/page.test.tsx > LoginPage > omits unsafe redirect (absolute URL: https://evil.com) from POST body and PasskeySignIn
-AssertionError: expected "vi.fn()" to be called with arguments: [ { redirect: undefined } ]
-Received: [ { "redirect": "https://evil.com" } ]
 
- FAIL  |components| src/app/(public)/login/page.test.tsx > LoginPage > omits unsafe redirect (string exceeding 200 chars: /aaa...) from POST body and PasskeySignIn
-AssertionError: expected "vi.fn()" to be called with arguments: [ { redirect: undefined } ]
-Received: [ { "redirect": "/aaa..." } ]
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Duration  1.82s
 ```
 
 ### Restoration and Confirmation
-Restored `src/app/(public)/login/page.tsx` to use `isSafeRelativePath` and `length <= 200`.
-Re-ran `pnpm exec vitest run "src/app/(public)/login/page.test.tsx"`.
-Result: 9 passed (9). Suite is completely green.
+Restored `src/app/api/auth/session/route.ts` back to:
+```ts
+export const DELETE = withErrorHandler(async (request: NextRequest) => {
+  await revokeRequestSession(prisma, request);
+
+  const response = respondOk({ message: 'Logged out' });
+  clearSessionCookie(response.headers);
+
+  return response;
+});
+```
+Re-ran `pnpm exec vitest run src/app/api/auth/session/route.test.ts`: 3 passed (3). Green.
+Re-ran `pnpm exec vitest run --project integration tests/integration/auth.test.ts`: 7 passed (7). Green.
+
+---
+
+## Git State
+As instructed, git changes have NOT been committed:
+- `src/app/api/auth/session/route.ts` (modified)
+- `tests/integration/auth.test.ts` (modified)
+- `src/app/api/auth/session/route.test.ts` (untracked)
+- `docs/superpowers/plans/2026-09-18-session-delete-error-handling.md` (modified)
+- `docs/superpowers/plans/task-2-report.md` (untracked)
