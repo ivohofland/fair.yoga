@@ -24,6 +24,13 @@ const stubLocation = () => {
   return assign;
 };
 
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 describe('DeleteRoomButton', () => {
   const fetchMock = vi.fn();
 
@@ -120,22 +127,43 @@ describe('DeleteRoomButton', () => {
 
   it('surfaces the server’s own refusal and does not navigate', async () => {
     const assign = stubLocation();
-    fetchMock.mockResolvedValue({
-      ok: false,
-      json: () => Promise.resolve({ error: { message: 'This room is still in use.' } }),
-    });
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        error: {
+          code: 'ROOM_IN_USE',
+          message: 'This room is still in use and cannot be deleted. Archive it instead.',
+        },
+      }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     render(<DeleteRoomButton roomId="room-1" roomName="Sunrise Studio" />);
     openConfirm();
     confirmDelete();
 
-    await waitFor(() =>
-      expect(screen.getByText('This room is still in use.')).toBeInTheDocument(),
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This room is still in use and cannot be deleted. Archive it instead.',
     );
     expect(assign).not.toHaveBeenCalled();
     // Re-enabled, because the teacher is still on this page and may retry.
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  // A double-click, or a retry after a lost response: the room is gone, which
+  // is what this delete asked for.
+  it('treats a room that is already gone as deleted, and leaves', async () => {
+    const assign = stubLocation();
+    fetchMock.mockResolvedValue(
+      jsonResponse(404, { error: { code: 'NOT_FOUND', message: 'This room no longer exists.' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DeleteRoomButton roomId="room-1" roomName="Sunrise Studio" />);
+    openConfirm();
+    confirmDelete();
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/settings/rooms'));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('reports a network failure rather than falling silent', async () => {

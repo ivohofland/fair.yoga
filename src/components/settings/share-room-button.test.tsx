@@ -181,18 +181,12 @@ describe('ShareRoomButton', () => {
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
-  // ALREADY_SHARED is the server saying the room is already in the state we
-  // asked for, which is not a failure. It is reachable without a second
-  // device: a first attempt commits, its response is lost, the teacher sees
-  // "Network error", the page never refreshed (refresh is on the success path
-  // only), so the button is still there and they press it again.
-  //
-  // Painting that red tells someone their successful share failed — twice,
-  // about a one-way door. Reconcile with the server instead.
-  it('treats ALREADY_SHARED as reconcile, not as a red failure', async () => {
+  // A repeat of a share whose first response was lost is answered 200
+  // unchanged. The button treats it as the success it is.
+  it('treats an unchanged answer as a successful share', async () => {
     mockSearchThenPublish([], {
-      ok: false,
-      body: { error: { code: 'ALREADY_SHARED', message: 'This room is already shared' } },
+      ok: true,
+      body: { data: { id: 'mine', isPublic: true }, outcome: 'unchanged' },
     });
     render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
 
@@ -200,7 +194,24 @@ describe('ShareRoomButton', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Share room$/ }));
 
     await waitFor(() => expect(refreshMock).toHaveBeenCalled());
-    expect(screen.queryByText('This room is already shared')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // Both mean the page describes a room that no longer looks the way it was
+  // rendered: the reason is shown, and the page refreshes so the control stops
+  // offering an action that cannot succeed.
+  it.each([
+    ['NOT_ROOM_CREATOR', 'Only the room creator can share this room'],
+    ['NOT_FOUND', 'This room no longer exists.'],
+  ])('shows the %s refusal and refreshes the page', async (code, message) => {
+    mockSearchThenPublish([], { ok: false, body: { error: { code, message } } });
+    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: /^Share room$/ }));
+
+    expect(await screen.findByText(message)).toBeDefined();
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
   });
 
   // A cancelled search is still in flight. Without a request token it lands

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError } from '@/lib/client-errors';
 
 interface UnlinkRoomButtonProps {
   teacherRoomId: string;
@@ -24,7 +24,10 @@ export function UnlinkRoomButton({ teacherRoomId, roomName }: UnlinkRoomButtonPr
       if (res.ok) {
         router.push('/settings/rooms');
       } else {
-        setError(await readErrorMessage(res, 'Failed to unlink room. Please try again.'));
+        const { code, message } = await readError(res, 'Failed to unlink room. Please try again.');
+        // The link being gone is what this unlink asked for, whoever removed it.
+        if (code === 'NOT_FOUND') router.push('/settings/rooms');
+        else setError(message);
       }
     } catch {
       setError('Network error. Please try again.');
