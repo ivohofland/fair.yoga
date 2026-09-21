@@ -83,8 +83,7 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
     try {
       const res = await fetch(`/api/rooms/${roomId}/publish`, { method: 'POST' });
       // Any 2xx is a share that holds, including the `unchanged` answer to a
-      // repeat whose first response was lost (docs/technical-architecture.md,
-      // The Services Layer → Error responses).
+      // repeat whose first response was lost.
       if (res.ok) {
         router.refresh();
         return;
