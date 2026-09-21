@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -253,16 +254,27 @@ describe('Room identity indexes', () => {
     const err = await prisma.room.create({ data: room(otherTeacherId, true, 'PubA') })
       .catch((e: unknown) => e);
     expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
-    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target)
-      .toEqual(['address', 'floor', 'roomName']);
+    // #260: Room_public_identity_unique is an expression index on lower(trim(...)),
+    // which Postgres decompiles to TRIM(BOTH FROM ...) in meta.target.
+    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target).toEqual([
+      'lower(TRIM(BOTH FROM address))',
+      'lower(TRIM(BOTH FROM floor))',
+      'lower(TRIM(BOTH FROM roomName))',
+    ]);
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
   });
 
   it('scopes private rooms per creator: same teacher twice is rejected', async () => {
     await prisma.room.create({ data: room(teacherId, false, 'PrivA') });
     const err = await prisma.room.create({ data: room(teacherId, false, 'PrivA') })
       .catch((e: unknown) => e);
-    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target)
-      .toEqual(['createdById', 'address', 'floor', 'roomName']);
+    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target).toEqual([
+      'createdById',
+      'lower(TRIM(BOTH FROM address))',
+      'lower(TRIM(BOTH FROM floor))',
+      'lower(TRIM(BOTH FROM roomName))',
+    ]);
+    expect(isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])).toBe(true);
   });
 
   it('scopes private rooms per creator: a different teacher is allowed', async () => {
