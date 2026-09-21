@@ -152,7 +152,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   // touches nothing), so a later test's create at the same date can collide
   // under `CalendarEntry_teacher_slot_excl` once the template-level collision
   // above stops masking it. No test here reads or asserts the created
-  // class's literal startTime. Routed through `slotTime` (see its docblock)
+  // class's literal startTime. Routed through `slotTime` (`tests/class-fixtures.ts`)
   // rather than a raw `09:${counter}` literal, matching `makeTemplate`'s own
   // counter above.
   let makeClassCounter = 0;
