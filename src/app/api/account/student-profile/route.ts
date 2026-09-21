@@ -1,6 +1,6 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, type NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
-import { respondOk, respondError, withErrorHandler } from '@/lib/api-utils';
+import { respondOk, respondError, respondUnchanged, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { studentProfileSchema } from '@/lib/schemas';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
@@ -12,7 +12,32 @@ import {
   clearDeclinedTicketCookie,
 } from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { liveProfile } from '@/lib/live-profile';
 import { log } from '@/lib/log';
+
+/**
+ * The answer to a join whose goal already holds: this account's live student
+ * side, named the way a first join names the one it creates. The session
+ * path posts nothing a stored row could differ from, because its names come
+ * from the teacher row, so there is no value to compare.
+ */
+function studentSideExists(studentId: string): NextResponse {
+  return respondUnchanged<{ studentId: string }>({ studentId });
+}
+
+/**
+ * The account's live student side, or null. `liveProfile` decides liveness;
+ * the `where` only bounds the fetch.
+ */
+async function liveStudentIdOf(accountId: string): Promise<string | null> {
+  const account = await prisma.account.findUniqueOrThrow({
+    where: { id: accountId },
+    select: {
+      students: { where: { deletedAt: null }, select: { id: true, deletedAt: true } },
+    },
+  });
+  return liveProfile(account.students)?.id ?? null;
+}
 
 /**
  * Creates the student profile (#399). Two authorizations, one route: the
@@ -45,11 +70,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     };
   } else {
     const session = authorization.session;
+    // After authorization, which is this route's ownership gate:
+    // `session.studentId` is the caller's own live student side.
     if (session.studentId) {
-      return clearDeclinedTicketCookie(
-        respondError('Account already has a student profile', 409, 'ALREADY_STUDENT'),
-        authorization,
-      );
+      return clearDeclinedTicketCookie(studentSideExists(session.studentId), authorization);
     }
     // A guard whose response is unreachable and whose CHECK is not: this is
     // the narrowing that gives the teacher lookup below a `string` id, and
@@ -99,24 +123,27 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   // `session.studentId` above is the pre-check, and it is a plain read, so a
-  // second tap of this button passes it and one of the two loses here.
-  // Answering with the pre-check's own code keeps the two paths
-  // indistinguishable to the client (#161).
+  // second tap of this button passes it and one of the two loses here. The
+  // loser answers as the pre-check would: `unchanged`, naming the student
+  // side the winner created (#161).
   //
   // On the SESSION path, a double-tap writes the same `accountId` AND the
   // same `email`, so both indexes have a pending entry and Postgres reports
-  // whichever it reaches first — the catch below checks `accountId` first
-  // but must still recognize an `email` hit as the same benign case.
-  // Naming that collision is not an enumeration oracle: the route is
-  // authenticated, writing for the caller's own account, and
-  // `Account.email @unique` means no other account holds this address, so no
-  // foreign row can be the one that collided.
+  // whichever it reaches first. The catch below treats either as the same
+  // case and re-reads the account's live student side. Under the live-only
+  // `Student_account_live_unique`, and with erasure rewriting an erased
+  // row's address, either collision means that side exists. Answering it is
+  // not an enumeration oracle: the route is authenticated and writes for the
+  // caller's own account, and `Account.email @unique` means no other account
+  // holds this address.
   //
-  // The TICKET path has no session and no "caller's own account" — its
+  // The TICKET path has no session and no "caller's own account". Its
   // `email` collision means a DIFFERENT account appeared for this address
   // during the ticket's one-hour window (a real, if narrow, race — not a
   // double-tap), so the catch below answers it separately, with its own
-  // message and a log line.
+  // code and a log line. Its `accountId` cannot collide: the account is
+  // created in the same statement.
+  //
   // Only the `create` is inside: every branch of the catch below names a
   // unique constraint or partial unique index on the student row, so a
   // failure from the session mint that followed would be reported as a
@@ -136,34 +163,36 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       select: { id: true, accountId: true },
     });
   } catch (err) {
-    if (isUniqueConflictOn(err, ['accountId'])) {
-      return clearDeclinedTicketCookie(
-        respondError('Account already has a student profile', 409, 'ALREADY_STUDENT'),
-        authorization,
-      );
-    }
-    if (isUniqueConflictOn(err, ['email'])) {
-      if (auth.source === 'ticket') {
-        // Not the caller's own account — see the comment above this block.
-        // Worth a log line: unlike the session path's double-tap, this is
-        // not the benign, expected shape of this collision.
-        log.warn(
-          { route: 'student-profile' },
-          'student profile ticket path lost to an email that gained an account during the ticket window',
+    if (
+      auth.source === 'session' &&
+      (isUniqueConflictOn(err, ['accountId']) || isUniqueConflictOn(err, ['email']))
+    ) {
+      const studentId = await liveStudentIdOf(auth.accountId);
+      if (studentId === null) {
+        log.error(
+          { err, route: 'student-profile' },
+          'student profile create collided on its own account key, but the account holds no live student side',
         );
-        return respondError(
-          'This email now has an account. Please sign in and add a student profile.',
-          409,
-          'ACCOUNT_EXISTS',
-        );
+        throw new Error('student profile create: account key collision with no live student side');
       }
-      return clearDeclinedTicketCookie(
-        respondError('Account already has a student profile', 409, 'ALREADY_STUDENT'),
-        authorization,
+      return clearDeclinedTicketCookie(studentSideExists(studentId), authorization);
+    }
+    if (auth.source === 'ticket' && isUniqueConflictOn(err, ['email'])) {
+      // Not the caller's own account — see the comment above this block.
+      // Worth a log line: unlike the session path's double-tap, this is
+      // not the benign, expected shape of this collision.
+      log.warn(
+        { route: 'student-profile' },
+        'student profile ticket path lost to an email that gained an account during the ticket window',
+      );
+      return respondError(
+        'This email now has an account. Please sign in and add a student profile.',
+        409,
+        'ACCOUNT_EXISTS',
       );
     }
     // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
-    // code-less 409, which is the defect this catch exists to remove.
+    // generic conflict, which is the defect this catch exists to remove.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       // `error`, not `warn` as in api-errors.ts's generic P2002 fallback:
       // this route's census of reachable unique keys is exhaustive, so an
@@ -171,7 +200,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // ordinary lost race.
       log.error(
         { err, rawTarget: err.meta?.target },
-        'student profile create hit a unique constraint that is neither the accountId column nor the email key',
+        'student profile create hit a unique constraint its authorization path cannot reach',
       );
       throw new Error('student profile create: unrecognised unique constraint');
     }

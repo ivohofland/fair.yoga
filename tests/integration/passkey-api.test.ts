@@ -9,8 +9,9 @@ const prisma = new PrismaClient();
  * The verify route must reject an unsafe redirect at the request boundary
  * — before the challenge is consumed or any session is minted. Proves the
  * route is wired to the strict schema, which the schema unit tests alone
- * cannot show. A bogus challengeId also yields 400, so each assertion
- * checks the error text to pin *which* rejection fired.
+ * cannot show. A bogus challengeId also yields 400, so each assertion pins
+ * *which* rejection fired: a validation 400 names the failing field first
+ * (`parseBody`), and the challenge refusal is an uncoded 400 that names none.
  */
 describe('POST /api/auth/passkey/authenticate/verify', () => {
   const post = (body: unknown) =>
@@ -35,7 +36,9 @@ describe('POST /api/auth/passkey/authenticate/verify', () => {
   it('a safe redirect passes validation and fails only on the challenge', async () => {
     const res = await post({ response: {}, challengeId: 'x', redirect: '/somewhere' });
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain('challenge');
+    const body = (await res.json()) as { error: { message: string; code?: string } };
+    expect(body.error.message).not.toMatch(/^redirect:/);
+    expect(body.error.code).toBeUndefined();
   });
 });
 

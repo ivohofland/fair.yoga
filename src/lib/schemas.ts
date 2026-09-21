@@ -196,6 +196,12 @@ export const pageSlugField = z
   .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
   .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved');
 
+/**
+ * The refusal for a page slug another teacher holds. Worded with the label
+ * the settings form shows for this field.
+ */
+export const PAGE_SLUG_TAKEN_MESSAGE = 'That page slug is already taken.';
+
 export const teacherSignupSchema = z.object({ email: emailField }).strict();
 
 // #258: every teacher was hardcoded to Europe/Amsterdam and never asked.

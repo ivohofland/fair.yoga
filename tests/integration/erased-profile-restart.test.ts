@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { deleteStudentAccount, deleteTeacherAccount } from '@/services/gdpr';
 import { BASE_URL, cookie, freshIp, seedSession, uniqueSuffix } from '../helpers';
+import { expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -139,16 +140,18 @@ describe('an erased profile no longer bars its account (#623)', () => {
     expect(new URL(page.url).pathname).toBe('/schedule');
   });
 
-  it('still answers ALREADY_STUDENT when the student side is genuinely live', async () => {
+  it('answers unchanged, naming the live student side, when one genuinely exists beside an erased one', async () => {
     const acct = await account('already-live');
     await liveTeacher(acct, 'already-live-teacher');
-    await prisma.student.create({
+    await erasedStudent(acct.id, 'already-live');
+    const live = await prisma.student.create({
       data: {
         accountId: acct.id,
         firstName: 'Already', lastName: 'Live',
         email: acct.email,
         claimedAt: new Date(),
       },
+      select: { id: true },
     });
     const token = await seedSession(prisma, acct.id);
 
@@ -158,16 +161,16 @@ describe('an erased profile no longer bars its account (#623)', () => {
     });
 
     // This exercises the route's PRE-CHECK (`if (session.studentId)`), which
-    // returns before the create is attempted — not the catch. Worth pinning
-    // in its own right: the pre-check is what keeps `ALREADY_STUDENT` meaning
-    // "you already have a live student side" now that an erased one no longer
-    // produces that code. The proof that `isUniqueConflictOn(err,
-    // ['accountId'])` still matches over a PARTIAL index is in
-    // `tests/integration/live-profile-unique.test.ts`, which asserts that
-    // predicate on a real violation.
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.error.code).toBe('ALREADY_STUDENT');
+    // returns before the create is attempted — not the catch. The id it
+    // names is the live side's; the erased one beside it is not a student
+    // side this account has. The proof that
+    // `isUniqueConflictOn(err, ['accountId'])` still matches over a PARTIAL
+    // index is in `tests/integration/live-profile-unique.test.ts`, which
+    // asserts that predicate on a real violation.
+    expect(await expectUnchanged(res)).toEqual({ studentId: live.id });
+    expect(
+      await prisma.student.count({ where: { accountId: acct.id, deletedAt: null } }),
+    ).toBe(1);
   });
 
   // #623's literal reproduction: every other fixture above hand-builds the

@@ -45,7 +45,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // requested the link trades it for a session at /claim.
       return respondOk({ handoffCode: outcome.code });
     }
-    return respondError('Invalid or expired magic link', MAGIC_LINK_REFUSED_STATUS);
+    return respondError('This sign-in link has expired or was already used.', MAGIC_LINK_REFUSED_STATUS);
   }
 
   const { email, redirectTo: tokenRedirect, purpose } = outcome;

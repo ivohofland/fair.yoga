@@ -19,7 +19,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const challenge = getAndDeleteChallenge('authentication', body.challengeId);
   if (!challenge) {
-    return respondError('Invalid or expired challenge', 400);
+    return respondError('This sign-in attempt expired. Please try again.', 400);
   }
 
   const response = body.response as unknown as AuthenticationResponseJSON;

@@ -8,7 +8,8 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import { updateTeacherSchema } from '@/lib/schemas';
+import { updateTeacherSchema, PAGE_SLUG_TAKEN_MESSAGE } from '@/lib/schemas';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -44,13 +45,14 @@ export const PUT = withErrorHandler(async (
   if ('error' in parsed) return parsed.error;
   const updateData = parsed.data;
 
-  // Check for pageSlug conflicts
+  // A plain read, so a slug another teacher claims after it reaches the
+  // update below instead, whose catch gives the same answer.
   if (updateData.pageSlug) {
     const existing = await prisma.teacher.findUnique({
       where: { pageSlug: updateData.pageSlug },
     });
     if (existing && existing.id !== id) {
-      return respondError('Page slug already in use', 409, 'SLUG_TAKEN');
+      return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
     }
   }
 
@@ -58,10 +60,18 @@ export const PUT = withErrorHandler(async (
     return respondError('No valid fields to update', 400);
   }
 
-  const teacher = await prisma.teacher.update({
-    where: { id },
-    data: updateData,
-  });
+  let teacher;
+  try {
+    teacher = await prisma.teacher.update({
+      where: { id },
+      data: updateData,
+    });
+  } catch (err) {
+    if (isUniqueConflictOn(err, ['pageSlug'])) {
+      return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
+    }
+    throw err;
+  }
 
   return respondOk(teacher);
 });
