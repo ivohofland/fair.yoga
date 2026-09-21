@@ -7,6 +7,7 @@ import { PublicRoomNotice } from './public-room-notice';
 import { RoomMatchList } from './room-match-list';
 import { searchPublicRooms, type RoomResult } from '@/lib/room-search';
 import { findIdentityMatch, type RoomIdentity } from '@/lib/room-identity';
+import { readError } from '@/lib/client-errors';
 
 interface ShareRoomButtonProps {
   roomId: string;
@@ -81,32 +82,21 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
     setError('');
     try {
       const res = await fetch(`/api/rooms/${roomId}/publish`, { method: 'POST' });
+      // Any 2xx is a share that holds, including the `unchanged` answer to a
+      // repeat whose first response was lost (docs/technical-architecture.md,
+      // The Services Layer → Error responses).
       if (res.ok) {
         router.refresh();
         return;
       }
 
-      const json: { error?: { code?: string; message?: string } } = await res.json();
-
-      // ALREADY_SHARED is not a failure — it is the server reporting that the
-      // room is already in the state we asked for. The realistic way to reach
-      // it is a first attempt that committed and whose response was lost: the
-      // teacher saw "Network error", the page never refreshed because
-      // `router.refresh()` is on the success path only, so the button is still
-      // there and they press it again. Painting this red would tell them their
-      // (successful) share failed twice, about a one-way door. Reconcile with
-      // the server instead — the same principle use-payment-actions.ts states
-      // for a committed undo.
-      if (json.error?.code === 'ALREADY_SHARED') {
-        router.refresh();
-        return;
-      }
+      const { code, message } = await readError(res, 'Failed to share this room.');
 
       // NOT_ROOM_CREATOR and NOT_FOUND both mean this page is describing a row
       // that no longer looks the way it was rendered. Show the reason, and
       // refresh so the controls stop offering an action that cannot succeed.
-      setError(json.error?.message ?? 'Failed to share this room.');
-      if (json.error?.code === 'NOT_ROOM_CREATOR' || json.error?.code === 'NOT_FOUND') {
+      setError(message);
+      if (code === 'NOT_ROOM_CREATOR' || code === 'NOT_FOUND') {
         router.refresh();
       }
     } catch {

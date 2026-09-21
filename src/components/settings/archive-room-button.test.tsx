@@ -66,16 +66,35 @@ describe('ArchiveRoomButton', () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 409,
-      json: async () => ({ error: { message: 'This room is used by an upcoming class.' } }),
+      json: async () => ({
+        error: { code: 'ROOM_IN_USE', message: '1 unfinished class still uses this room.' },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<ArchiveRoomButton teacherRoomId="tr-1" isArchived={false} />);
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(
-      await screen.findByText('This room is used by an upcoming class.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('1 unfinished class still uses this room.')).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  // Archiving is not a delete: a link that is gone was not archived, so this
+  // stays an error.
+  it('shows the server message when the link is gone, and stays', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        error: { code: 'NOT_FOUND', message: 'This room is no longer in your rooms.' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveRoomButton teacherRoomId="tr-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('This room is no longer in your rooms.')).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
   });
 

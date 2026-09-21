@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { readError } from '@/lib/client-errors';
 
 interface DeleteRoomButtonProps {
   roomId: string;
@@ -23,8 +24,10 @@ export function DeleteRoomButton({ roomId, roomName }: DeleteRoomButtonProps) {
       if (res.ok) {
         deleted = true;
       } else {
-        const json: { error?: { message?: string } } = await res.json();
-        setError(json.error?.message ?? 'Failed to delete room.');
+        const { code, message } = await readError(res, 'Failed to delete room.');
+        // The room being gone is what this delete asked for, whoever removed it.
+        if (code === 'NOT_FOUND') deleted = true;
+        else setError(message);
       }
     } catch {
       setError('Network error. Please try again.');
