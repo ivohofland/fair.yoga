@@ -28,9 +28,9 @@
  * invisible.
  */
 export interface RoomIdentity {
-  address: string;
-  floor: string;
-  roomName: string;
+  readonly address: string;
+  readonly floor: string;
+  readonly roomName: string;
 }
 
 /**
@@ -44,6 +44,10 @@ export function normalizeRoomField(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/**
+ * True when two room identities describe the same physical room in the commons.
+ * Derives from `normalizeRoomField`, matching Postgres's `lower(trim(...))` index.
+ */
 export function sameRoomIdentity(a: RoomIdentity, b: RoomIdentity): boolean {
   return (
     normalizeRoomField(a.address) === normalizeRoomField(b.address) &&

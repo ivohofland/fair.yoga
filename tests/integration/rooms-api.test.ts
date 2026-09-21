@@ -841,4 +841,44 @@ describe('PUT /api/rooms/[id] collides on the slot key (#196)', () => {
     const stillOccupied = await prisma.room.findUniqueOrThrow({ where: { id: occupied.id } });
     expect(stillOccupied.roomName).toBe('Occupied');
   });
+
+  it('refuses a rename colliding on a case or whitespace variant of an existing private room (#260)', async () => {
+    const occupied = await prisma.room.create({
+      data: {
+        venueName: 'PUT Slot Venue',
+        address: slotAddress,
+        city: 'Amsterdam',
+        postcode: '1011 AB',
+        floor: '4',
+        roomName: 'Studio Variant',
+        maxCapacity: 10,
+        createdById: creatorId,
+        isPublic: false,
+      },
+    });
+    const mover = await prisma.room.create({
+      data: {
+        venueName: 'PUT Slot Venue',
+        address: slotAddress,
+        city: 'Amsterdam',
+        postcode: '1011 AB',
+        floor: '4',
+        roomName: 'Different Room',
+        maxCapacity: 10,
+        createdById: creatorId,
+        isPublic: false,
+      },
+    });
+
+    const res = await put(creatorToken, mover.id, { roomName: '  studio variant  ' });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: mover.id } });
+    expect(after.roomName).toBe('Different Room');
+
+    const stillOccupied = await prisma.room.findUniqueOrThrow({ where: { id: occupied.id } });
+    expect(stillOccupied.roomName).toBe('Studio Variant');
+  });
 });

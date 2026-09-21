@@ -325,7 +325,7 @@ Why the two resolve in opposite directions, given #520 filed them as the same sh
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Base properties are read-only after creation. Changes via admin only. Duplicate detection at creation time (address + room_name).
+Base properties are read-only after creation. Changes via admin only. Duplicate detection covers `(address, floor, room_name)` normalized across case and whitespace via `lower(trim(...))` expression indexes: `Room_public_identity_unique` globally for shared rooms (`is_public = true`), and `Room_private_identity_unique` per teacher for private rooms (`created_by`, `is_public = false`) (#196, #260). Enforced at room creation and room publish time.
 
 ### TeacherRoom (per-teacher override)
 
@@ -749,8 +749,8 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
   anonymisation, psql) is rejected rather than rewritten. Before this, the plain
   btree unique keys under `en_US.utf8` made `Foo@x.com` and `foo@x.com` two
   distinct identities: sign-in silently missed, and signup could create a second
-  Account for one human.
 - **Invitation and TeacherBlock** (#166) exist because a teacher may not link a student unilaterally. `POST /api/students` creates only an Invitation; the TeacherStudent link forms when the invitee accepts it or books a class. Declining leaves the Invitation row itself as a tombstone against re-inviting, and both ways of saying no — declining, and unlinking after being linked — write a TeacherBlock as well, so the two "no" states are uniform. The two rows do different jobs: the Invitation row is what makes a re-invite answer DECLINED, the TeacherBlock is what makes one undeliverable, and only the block survives the subject's own erasure (#522 — see the TeacherBlock section above).
+- **Room identity is case- and whitespace-insensitive** (#260). PostgreSQL expression indexes `Room_public_identity_unique` (on `(lower(trim(address)), lower(trim(floor)), lower(trim(roomName))) WHERE isPublic = true`) and `Room_private_identity_unique` (on `(createdById, lower(trim(address)), lower(trim(floor)), lower(trim(roomName))) WHERE isPublic = false`) enforce uniqueness without modifying teacher-entered text in the database. Client-side predicate `sameRoomIdentity` (`src/lib/room-identity.ts`) mirrors this normalization using `normalizeRoomField`, and `isUniqueConflictOn` (`src/lib/unique-conflict.ts`) unwraps decompiled expression targets so route handlers continue matching standard column lists.
 
 ## Open Questions
 
