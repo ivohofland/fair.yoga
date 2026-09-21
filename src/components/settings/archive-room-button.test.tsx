@@ -58,9 +58,10 @@ describe('ArchiveRoomButton', () => {
    * swept with the same shape and their own tests. Not counted here — the
    * count in this comment was already wrong by the end of the wave that
    * wrote it. The success path navigates away, so a failure that says
-   * nothing looks exactly like a click that never registered. These three
-   * are the tests that fail if the `else`/`catch` is removed again — the two
-   * above pass either way.
+   * nothing looks exactly like a click that never registered. Every test
+   * below mocks a failing or rejected fetch, and each one goes red if the
+   * `else`/`catch` is removed again; the two tests above this comment pass
+   * either way, since their mock always resolves `ok: true`.
    */
   it('shows the server message when the PATCH fails', async () => {
     fetchMock.mockResolvedValue({

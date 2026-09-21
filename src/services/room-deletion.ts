@@ -64,7 +64,7 @@ export const ROOM_DELETE_RESTRICT_FKS = [
  * The earlier wording was accurate only when a class was the blocker. A room
  * blocked solely by a template has ZERO classes (that is the state issue 103
  * reproduced), so it sent the teacher to a schedule showing nothing — the
- * exact failure `describeRoomBlockers` documents at `room-archive.ts:74-79`
+ * exact failure `describeRoomBlockers` documents at `room-archive.ts:109-114`
  * for its own "unfinished" vs "upcoming" choice.
  *
  * AND DO NOT REACH FOR `describeRoomBlockers` TO SAY IT BETTER. The two doors

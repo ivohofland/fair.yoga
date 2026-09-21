@@ -184,7 +184,7 @@ export const PUT = withErrorHandler(async (
   //
   // THE GUARDS ABOVE ARE REPEATED IN THIS WRITE'S `where`, AND THAT IS NOT
   // BELT-AND-BRACES — it closes a race #73 itself opened. The guards ran
-  // against a row read at :135; `POST /api/rooms/[id]/publish` can commit
+  // against a row read at :142; `POST /api/rooms/[id]/publish` can commit
   // `isPublic: true` between that read and this write. It needs no second
   // device: the room detail page renders `EditRoomForm` and `ShareRoomButton`
   // on the same screen. Without the predicate here, the edit lands on a
@@ -217,7 +217,7 @@ export const PUT = withErrorHandler(async (
     // Find out which of the three predicates stopped it rather than asserting
     // one — #72 was exactly this branch naming a cause it had not checked.
     // Reaching here means the row changed under us, since all three held at
-    // :135-144.
+    // :142-151.
     const current = await prisma.room.findUnique({
       where: { id },
       select: { isPublic: true, createdById: true },
