@@ -80,7 +80,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.room.deleteMany({ where: { address } });
+  await prisma.room.deleteMany({ where: { address: { contains: suffix } } });
   await prisma.teacher.deleteMany({ where: { pageSlug: { contains: suffix } } });
   // Issue 177: Account must be deleted after Teacher due to FK reference
   await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
@@ -141,6 +141,34 @@ describe('POST /api/rooms/[id]/publish', () => {
         postcode: '1234PB',
         floor: '1',
         roomName: 'Contested',
+        maxCapacity: 10,
+        createdById: creatorId,
+        isPublic: false,
+      },
+    });
+
+    const res = await publish(creatorToken, mine.id);
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+    expect(json.error.message).toBe('A shared room at this address already exists');
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: mine.id } });
+    expect(after.isPublic).toBe(false);
+    const stillShared = await prisma.room.findUniqueOrThrow({ where: { id: holder.id } });
+    expect(stillShared.isPublic).toBe(true);
+  });
+
+  it('refuses when a shared room already holds that identity under case or whitespace variant (#260)', async () => {
+    const holder = await makeRoom('CasePublishHolder', true);
+    const mine = await prisma.room.create({
+      data: {
+        venueName: 'Publish Studio',
+        address: address.toLowerCase(),
+        city: 'Amsterdam',
+        postcode: '1234PB',
+        floor: ' 1 ',
+        roomName: 'casepublishholder ',
         maxCapacity: 10,
         createdById: creatorId,
         isPublic: false,

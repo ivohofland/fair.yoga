@@ -740,6 +740,41 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
     });
     expect(rows).toHaveLength(1);
   });
+
+  it('rejects a second PUBLIC room differing only in case or whitespace (#260)', async () => {
+    const first = roomBody({ address: slotAddress, floor: '2', roomName: 'CasePublic' });
+    expect((await post(first, creatorToken)).status).toBe(201);
+
+    const second = roomBody({
+      address: slotAddress.toLowerCase(),
+      floor: ' 2 ',
+      roomName: 'casepublic ',
+    });
+    const res = await post(second, creatorToken);
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+    expect(json.error.message).toBe('A shared room at this address already exists');
+  });
+
+  it('rejects a second PRIVATE room differing only in case or whitespace from the same teacher (#260)', async () => {
+    const first = roomBody({ isPublic: false, address: slotAddress, floor: '3', roomName: 'CasePrivate' });
+    expect((await post(first, creatorToken)).status).toBe(201);
+
+    const second = roomBody({
+      isPublic: false,
+      address: slotAddress.toLowerCase(),
+      floor: ' 3 ',
+      roomName: 'caseprivate ',
+    });
+    const res = await post(second, creatorToken);
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+    expect(json.error.message).toBe(
+      'You already have a room at this address. Add a floor or room name to tell them apart.',
+    );
+  });
 });
 
 /**
