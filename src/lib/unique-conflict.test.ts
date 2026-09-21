@@ -110,4 +110,51 @@ describe('isUniqueConflictOn', () => {
     expect(isUniqueConflictOn('not an error', ['teacherId', 'date', 'startTime'])).toBe(false);
     expect(isUniqueConflictOn(undefined, ['teacherId', 'date', 'startTime'])).toBe(false);
   });
+
+  // Expression index unwrapping (#260)
+  it('unwraps Postgres expression index targets to their column names', () => {
+    // Measured shape from Room_public_identity_unique:
+    // Postgres decompiles lower(trim(...)) to lower(TRIM(BOTH FROM col))
+    const publicErr = prismaError('P2002', {
+      target: [
+        'lower(TRIM(BOTH FROM address))',
+        'lower(TRIM(BOTH FROM floor))',
+        'lower(TRIM(BOTH FROM roomName))',
+      ],
+    });
+    expect(isUniqueConflictOn(publicErr, ['address', 'floor', 'roomName'])).toBe(true);
+
+    // Measured shape from Room_private_identity_unique:
+    const privateErr = prismaError('P2002', {
+      target: [
+        'createdById',
+        'lower(TRIM(BOTH FROM address))',
+        'lower(TRIM(BOTH FROM floor))',
+        'lower(TRIM(BOTH FROM roomName))',
+      ],
+    });
+    expect(isUniqueConflictOn(privateErr, ['createdById', 'address', 'floor', 'roomName'])).toBe(true);
+  });
+
+  it('unwraps expression targets regardless of order', () => {
+    const err = prismaError('P2002', {
+      target: [
+        'lower(TRIM(BOTH FROM roomName))',
+        'lower(TRIM(BOTH FROM address))',
+        'lower(TRIM(BOTH FROM floor))',
+      ],
+    });
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+  });
+
+  it('is false when an expression target wraps a different column', () => {
+    const err = prismaError('P2002', {
+      target: [
+        'lower(TRIM(BOTH FROM venueName))',
+        'lower(TRIM(BOTH FROM floor))',
+        'lower(TRIM(BOTH FROM roomName))',
+      ],
+    });
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(false);
+  });
 });
