@@ -209,3 +209,35 @@ export function slotDate(base: Date | string, counter: number): Date {
   d.setUTCDate(d.getUTCDate() + counter);
   return d;
 }
+
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM` time string,
+ * wrapping cleanly into subsequent hours.
+ *
+ * Used beside `slotDate` to space fixtures so they do not collide under
+ * `CalendarEntry_teacher_slot_excl` or `ScheduleRule_teacher_slot_excl`.
+ *
+ * While `slotDate` spaces fixtures by whole days when dates can vary, suites
+ * whose date is fixed or part of what they assert (such as schedule rules,
+ * templates, and weekly generators) must space fixtures in time instead,
+ * with a gap at least as wide as the fixture's own duration.
+ *
+ * Enforces Postgres's `time` type upper bound ('24:00:00') with an explicit
+ * error naming the offending minute offset when the counter runs out of slots,
+ * and validates the resulting `HH:MM` shape.
+ */
+export function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (hour > 24 || (hour === 24 && minute !== 0)) {
+    throw new Error(
+      `slotTime(${totalMinutesFrom9am}) would produce '${startTime}', past '24:00:00' — the last time-of-day value Postgres's \`time\` accepts. The caller has run its counter out of slots in this block.`,
+    );
+  }
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
+
