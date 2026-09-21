@@ -8,7 +8,7 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, CancelDeadline, WaitlistEntry } from '@prisma/client';
+import type { PrismaClient, CancelDeadline, WaitlistEntry, WaitlistStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
@@ -38,11 +38,15 @@ import { readSeatCount } from './capacity';
 // which is not an importer of this module.
 import { log } from '@/lib/log';
 
-/** Raised when a promotion/claim is not allowed in the current class state. */
+/**
+ * Raised when a promotion/claim is not allowed in the current class state.
+ * A claim's message is user-facing copy: the claim route sends it as it is.
+ */
 export class WaitlistPromotionError extends Error {
   constructor(
     message: string,
     public readonly reason:
+      | 'class_cancelled'
       | 'class_not_open'
       | 'class_full'
       | 'window_frozen'
@@ -54,11 +58,15 @@ export class WaitlistPromotionError extends Error {
   }
 }
 
-/** Raised when joining the waitlist is not allowed. */
+/**
+ * Raised when joining the waitlist is not allowed. The message is user-facing
+ * copy: the join route sends it as it is.
+ */
 export class WaitlistJoinError extends Error {
   constructor(
     message: string,
     public readonly reason:
+      | 'class_cancelled'
       | 'class_not_open'
       | 'class_not_full'
       | 'already_registered'
@@ -68,6 +76,12 @@ export class WaitlistJoinError extends Error {
     this.name = 'WaitlistJoinError';
   }
 }
+
+/** What a claim did. A refused claim throws `WaitlistPromotionError` instead. */
+export type ClaimResult =
+  | { readonly outcome: 'claimed'; readonly entry: WaitlistEntry }
+  | { readonly outcome: 'already_registered' }
+  | { readonly outcome: 'class_not_found' };
 
 /**
  * Creates or reactivates a registration row. Both Registration and
@@ -229,7 +243,7 @@ export async function addToWaitlist(
       await lockLiveStudent(tx, studentId);
     } catch (err) {
       if (err instanceof StudentErasedError) {
-        throw new WaitlistJoinError('This account has been deleted', 'student_erased');
+        throw new WaitlistJoinError('This account has been deleted.', 'student_erased');
       }
       throw err;
     }
@@ -243,29 +257,26 @@ export async function addToWaitlist(
         calendarEntry: { select: { teacherId: true, cancelledAt: true } },
       },
     });
-    // TWO conditions, not one, since #327: a cancelled class keeps whatever
-    // status it had, so `status !== 'open'` no longer covers it. Same reason
-    // and same shape at every `!== 'open'` gate in this file.
-    if (cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
-      throw new WaitlistJoinError(
-        cls.calendarEntry.cancelledAt !== null
-          ? 'Cannot join the waitlist for a cancelled class'
-          : `Cannot join the waitlist for a class with status "${cls.status}"`,
-        'class_not_open',
-      );
+    // Two checks, because a cancelled class keeps whatever status it had
+    // (#327); each has a reason of its own.
+    if (cls.calendarEntry.cancelledAt !== null) {
+      throw new WaitlistJoinError('This class has been cancelled.', 'class_cancelled');
+    }
+    if (cls.status !== 'open') {
+      throw new WaitlistJoinError("This class isn't taking waitlist sign-ups.", 'class_not_open');
     }
 
     const { isFull } = await readSeatCount(tx, classId);
     if (!isFull) {
       throw new WaitlistJoinError(
-        'The class still has open spots — book directly instead',
+        'The class still has open spots — book directly instead.',
         'class_not_full',
       );
     }
 
     if (await hasActiveRegistration(tx, classId, studentId)) {
       throw new WaitlistJoinError(
-        'You are already registered for this class',
+        'You are already registered for this class.',
         'already_registered',
       );
     }
@@ -407,7 +418,11 @@ export async function removeFromWaitlist(
   db: PrismaClient,
   classId: string,
   studentId: string,
-): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_WAITING' }> {
+): Promise<
+  | { ok: true }
+  | { ok: false; reason: 'NOT_FOUND' }
+  | { ok: false; reason: 'NOT_WAITING'; status: WaitlistStatus }
+> {
   return db.$transaction(async (tx) => {
     // The same row and lock mode `addToWaitlist`, `promoteNext`, `claimSpot`
     // and `withdrawWaitingEntriesForTeacher` take, all through `lockClassRow`
@@ -444,17 +459,17 @@ export async function removeFromWaitlist(
       data: { status: 'removed' },
     });
     if (result.count === 0) {
-      // Which of the two it was, decided INSIDE the lock so the answer cannot
-      // race the thing it is describing. One indexed lookup on a unique key,
-      // and only on a path where the write has already failed — effectively
-      // free, and it is the difference between telling a student their entry
-      // does not exist and telling them it is no longer theirs to leave.
+      // Which it was, decided INSIDE the lock so the answer cannot race the
+      // thing it is describing. One indexed lookup on a unique key, and only
+      // on a path where the write has already failed. The status is what lets
+      // the caller tell a student who already left from one whose entry some
+      // other path closed.
       const existing = await tx.waitlistEntry.findUnique({
         where: { classId_studentId: { classId, studentId } },
-        select: { id: true },
+        select: { status: true },
       });
       return existing
-        ? ({ ok: false, reason: 'NOT_WAITING' } as const)
+        ? ({ ok: false, reason: 'NOT_WAITING', status: existing.status } as const)
         : ({ ok: false, reason: 'NOT_FOUND' } as const);
     }
 
@@ -518,11 +533,12 @@ export async function promoteNext(
       },
     });
 
-    if (cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
+    if (cls.calendarEntry.cancelledAt !== null) {
+      throw new WaitlistPromotionError('Cannot promote into a cancelled class', 'class_cancelled');
+    }
+    if (cls.status !== 'open') {
       throw new WaitlistPromotionError(
-        cls.calendarEntry.cancelledAt !== null
-          ? 'Cannot promote into a cancelled class'
-          : `Cannot promote into a class with status "${cls.status}"`,
+        `Cannot promote into a class with status "${cls.status}"`,
         'class_not_open',
       );
     }
@@ -640,11 +656,14 @@ export async function claimSpot(
   classId: string,
   studentId: string,
   now?: Date,
-): Promise<WaitlistEntry> {
-  return db.$transaction(async (tx) => {
+): Promise<ClaimResult> {
+  return db.$transaction(async (tx): Promise<ClaimResult> => {
     await lockClassRow(tx, classId);
 
-    const cls = await tx.class.findUniqueOrThrow({
+    // `findUnique`: the id comes from the request, and archiving a recurring
+    // class deletes its future classes, so a claim can arrive for one that is
+    // gone.
+    const cls = await tx.class.findUnique({
       where: { id: classId },
       include: {
         calendarEntry: {
@@ -652,14 +671,21 @@ export async function claimSpot(
         },
       },
     });
+    if (!cls) return { outcome: 'class_not_found' };
 
-    if (cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
-      throw new WaitlistPromotionError(
-        cls.calendarEntry.cancelledAt !== null
-          ? 'Cannot claim a spot in a cancelled class'
-          : `Cannot claim a spot in a class with status "${cls.status}"`,
-        'class_not_open',
-      );
+    if (cls.calendarEntry.cancelledAt !== null) {
+      throw new WaitlistPromotionError('This class has been cancelled.', 'class_cancelled');
+    }
+
+    // The seat this claim asks for is already the student's. After the
+    // cancellation, which makes the claim moot, and before every refusal
+    // below, so a retry is never refused for the state its first attempt made.
+    if (await hasActiveRegistration(tx, classId, studentId)) {
+      return { outcome: 'already_registered' };
+    }
+
+    if (cls.status !== 'open') {
+      throw new WaitlistPromotionError("This class isn't taking bookings.", 'class_not_open');
     }
 
     const window = getWaitlistWindow(
@@ -671,27 +697,29 @@ export async function claimSpot(
     );
     if (window === 'frozen') {
       throw new WaitlistPromotionError(
-        'The waitlist is frozen — the cancellation deadline has passed',
+        'The cancellation deadline has passed, so spots can no longer be claimed.',
         'window_frozen',
       );
     }
     if (window !== 'first_come_first_claimed') {
       throw new WaitlistPromotionError(
-        'Spots can only be claimed in the final hour before the deadline — before that the queue promotes automatically',
+        'Spots can only be claimed in the final hour before the deadline — before that the queue promotes automatically.',
         'wrong_window',
       );
     }
 
+    // The claimant holds no seat (checked above), so a full class means
+    // someone else took it.
     const { isFull } = await readSeatCount(tx, classId);
     if (isFull) {
-      throw new WaitlistPromotionError('The spot has already been claimed', 'class_full');
+      throw new WaitlistPromotionError('Someone else just took the spot.', 'class_full');
     }
 
     const entry = await tx.waitlistEntry.findFirst({
       where: { classId, studentId, status: 'waiting' },
     });
     if (!entry) {
-      throw new WaitlistPromotionError('You are not on the waitlist for this class', 'entry_not_waiting');
+      throw new WaitlistPromotionError('You are not on the waitlist for this class.', 'entry_not_waiting');
     }
 
     const student = await tx.student.findUniqueOrThrow({
@@ -736,7 +764,7 @@ export async function claimSpot(
 
     await reorderWaitingEntries(tx, classId);
 
-    return updatedEntry;
+    return { outcome: 'claimed', entry: updatedEntry };
   });
 }
 

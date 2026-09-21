@@ -349,6 +349,24 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     });
   });
 
+  it('rejects joining a cancelled class with a reason of its own', async () => {
+    const cancelledClassId = await makeClass('open', 2);
+    const { calendarEntryId } = await prisma.class.findUniqueOrThrow({
+      where: { id: cancelledClassId },
+      select: { calendarEntryId: true },
+    });
+    await prisma.calendarEntry.update({
+      where: { id: calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
+
+    await expect(addToWaitlist(prisma, cancelledClassId, studentIds[0]!)).rejects.toMatchObject({
+      reason: 'class_cancelled',
+    });
+
+    await prisma.calendarEntry.deleteMany({ where: { id: calendarEntryId } });
+  });
+
   it('rejects joining when already actively registered', async () => {
     await expect(addToWaitlist(prisma, classId, fillerIds[0]!)).rejects.toMatchObject({
       reason: 'already_registered',
@@ -483,7 +501,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     // theirs to leave. The route answers this with a 409 and a refresh rather
     // than denying the entry exists.
     const result = await removeFromWaitlist(prisma, staleClassId, studentIds[0]!);
-    expect(result).toEqual({ ok: false, reason: 'NOT_WAITING' });
+    expect(result).toEqual({ ok: false, reason: 'NOT_WAITING', status: 'expired' });
 
     const entry = await prisma.waitlistEntry.findUniqueOrThrow({
       where: { classId_studentId: { classId: staleClassId, studentId: studentIds[0]! } },
@@ -492,6 +510,22 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
 
     await prisma.waitlistEntry.deleteMany({ where: { classId: staleClassId } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: staleClassId } } } });
+  });
+
+  it('reports an entry already removed with its status, and writes nothing', async () => {
+    const leftClassId = await makeClass('open', 2);
+    const left = await prisma.waitlistEntry.create({
+      data: { classId: leftClassId, studentId: studentIds[0]!, position: 1, status: 'removed' },
+    });
+
+    const result = await removeFromWaitlist(prisma, leftClassId, studentIds[0]!);
+
+    expect(result).toEqual({ ok: false, reason: 'NOT_WAITING', status: 'removed' });
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: left.id } });
+    expect(after.updatedAt).toEqual(left.updatedAt);
+
+    await prisma.waitlistEntry.deleteMany({ where: { classId: leftClassId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: leftClassId } } } });
   });
 });
 
@@ -752,9 +786,7 @@ describe('promoteNext (DB)', () => {
  * `claimSpot` had no unit coverage of any kind: its only execution under test
  * anywhere was one HTTP case from #64, which had to reach the claim window
  * with a wall-clock-relative fixture. It takes an injectable clock, so the
- * whole matrix can be pinned deterministically here instead — and the guards
- * fire in a fixed order (status → window → capacity → entry), so each case
- * below has to satisfy every guard ahead of the one it targets.
+ * whole matrix can be pinned deterministically here instead.
  */
 describe('claimSpot (DB)', () => {
   // One fixed class drives every instant, so nothing here reads the wall clock:
@@ -974,11 +1006,11 @@ describe('claimSpot (DB)', () => {
     );
   });
 
-  it('refuses a claim on a class that is no longer open', async () => {
+  it('refuses a claim on a cancelled class', async () => {
     const classId = await makeFullClass();
     await freeTheSpot(classId);
-    // Cancelled after the waitlist formed — the status guard runs first, so
-    // this fires even though the window and capacity are both fine.
+    // Cancelled after the waitlist formed — the cancellation guard runs
+    // first, so this fires even though the window and capacity are both fine.
     await prisma.calendarEntry.update({
       where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { calendarEntryId: true } })).calendarEntryId },
       data: { cancelledAt: new Date() },
@@ -986,7 +1018,7 @@ describe('claimSpot (DB)', () => {
 
     await expectRejection(
       claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW),
-      'class_not_open',
+      'class_cancelled',
     );
   });
 
@@ -994,7 +1026,9 @@ describe('claimSpot (DB)', () => {
     const classId = await makeFullClass();
     await freeTheSpot(classId);
 
-    const entry = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+    const result = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+    if (result.outcome !== 'claimed') throw new Error(`expected a claim, got ${result.outcome}`);
+    const { entry } = result;
 
     expect(entry.status).toBe('promoted');
     expect(entry.promotedAt).not.toBeNull();
@@ -1014,6 +1048,88 @@ describe('claimSpot (DB)', () => {
     });
     expect(notifications).toHaveLength(1);
     expect(notifications[0]!.type).toBe('booking_confirmed');
+  });
+
+  /** Claims the freed spot for `waiterId`, and returns what the claim wrote. */
+  const claimOnce = async (classId: string) => {
+    await freeTheSpot(classId);
+    const result = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+    if (result.outcome !== 'claimed') throw new Error(`fixture: expected a claim, got ${result.outcome}`);
+    const registration = await prisma.registration.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: waiterId } },
+    });
+    return { entry: result.entry, registration };
+  };
+
+  it('answers the claimant’s own second claim as already registered, and writes nothing', async () => {
+    const classId = await makeFullClass();
+    const first = await claimOnce(classId);
+
+    // The class is full again: the refusal a retry must not meet.
+    const again = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+
+    expect(again).toEqual({ outcome: 'already_registered' });
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: first.entry.id } });
+    expect(entry.updatedAt).toEqual(first.entry.updatedAt);
+    const registration = await prisma.registration.findUniqueOrThrow({
+      where: { id: first.registration.id },
+    });
+    expect(registration.updatedAt).toEqual(first.registration.updatedAt);
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: classId, recipientId: waiterId, type: 'booking_confirmed' },
+      }),
+    ).toBe(1);
+  });
+
+  it('answers a claim retried after the deadline as already registered', async () => {
+    const classId = await makeFullClass();
+    await claimOnce(classId);
+
+    expect(await claimSpot(prisma, classId, waiterId, AT_DEADLINE)).toEqual({
+      outcome: 'already_registered',
+    });
+  });
+
+  it('answers a claim retried after the class started as already registered', async () => {
+    const classId = await makeFullClass();
+    await claimOnce(classId);
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    expect(await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW)).toEqual({
+      outcome: 'already_registered',
+    });
+  });
+
+  it('refuses a claim retried after the class was cancelled', async () => {
+    const classId = await makeFullClass();
+    await claimOnce(classId);
+    await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
+
+    await expectRejection(
+      claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW),
+      'class_cancelled',
+    );
+  });
+
+  it('refuses a claim on a class that has started', async () => {
+    const classId = await makeFullClass();
+    await freeTheSpot(classId);
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    await expectRejection(
+      claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW),
+      'class_not_open',
+    );
+  });
+
+  it('reports a class that does not exist as not found', async () => {
+    expect(await claimSpot(prisma, crypto.randomUUID(), waiterId, IN_CLAIM_WINDOW)).toEqual({
+      outcome: 'class_not_found',
+    });
   });
 });
 

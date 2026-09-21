@@ -1,13 +1,19 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
-  respondOk,
+  respondTyped,
+  respondUnchanged,
   respondError,
   requireSession,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
 import { removeFromWaitlist } from '@/services/waitlist';
+
+/** The body of a leave, applied or unchanged. */
+type LeaveBody = { message: string };
+
+const ENTRY_GONE = 'This waitlist spot no longer exists.';
 
 export const DELETE = withErrorHandler(async (
   request: NextRequest,
@@ -19,7 +25,7 @@ export const DELETE = withErrorHandler(async (
   const { id } = await params;
 
   const entry = await prisma.waitlistEntry.findUnique({ where: { id } });
-  if (!entry) return respondError('Waitlist entry not found', 404);
+  if (!entry) return respondError(ENTRY_GONE, 404, 'NOT_FOUND');
 
   // Only the student themselves or the class teacher can remove
   const isOwnEntry = entry.studentId === session.studentId;
@@ -34,22 +40,28 @@ export const DELETE = withErrorHandler(async (
     }
   }
 
-  // Two refusals, two answers. The entry read above can be GONE by the time the
-  // removal runs — a concurrent `deleteStudentAccount` deletes every
-  // `WaitlistEntry` the student holds — and 404 is honest for that; it also
-  // replaced the bare 500 Prisma's `P2025` used to fall through to.
-  //
-  // But it can equally still be there and no longer theirs to leave, which is
-  // what a stale render produces every time a class starts with this page open:
-  // `closeQueueOnStart` (#216) flips the row to `expired`, and `NOT_FOUND` for
-  // that denies the existence of a row the student is looking at and will find
-  // again in their own data export. 409 and a refresh, not a denial.
+  // Three answers when the removal writes nothing. The entry read above can be
+  // GONE by now — a concurrent `deleteStudentAccount` deletes every
+  // `WaitlistEntry` the student holds — and not-found is honest for that. It
+  // can be `removed`, which is what leaving writes: the goal holds. Or it can
+  // be closed some other way — a stale render when a class starts and
+  // `closeQueueOnStart` (#216) flips the row to `expired` — and denying a row
+  // the student is looking at would be false, so that is a refusal and a
+  // refresh.
   const result = await removeFromWaitlist(prisma, entry.classId, entry.studentId);
   if (!result.ok) {
-    return result.reason === 'NOT_FOUND'
-      ? respondError('Waitlist entry not found', 404)
-      : respondError('That waitlist spot is no longer active — refresh to see the latest.', 409);
+    if (result.reason === 'NOT_FOUND') {
+      return respondError(ENTRY_GONE, 404, 'NOT_FOUND');
+    }
+    if (result.status === 'removed') {
+      return respondUnchanged<LeaveBody>({ message: 'Removed from waitlist' });
+    }
+    return respondError(
+      'That waitlist spot is no longer active — refresh to see the latest.',
+      409,
+      'WAITLIST_ENTRY_INACTIVE',
+    );
   }
 
-  return respondOk({ message: 'Removed from waitlist' });
+  return respondTyped<LeaveBody>({ message: 'Removed from waitlist' });
 });

@@ -933,7 +933,7 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
    * The write is still correctly refused — that part was never in doubt — but
    * the answer has to distinguish "gone" from "no longer yours to leave".
    */
-  it('409s leaving a queue that closed under the student, without denying the entry exists', async () => {
+  it('refuses leaving a queue that closed under the student, without denying the entry exists', async () => {
     const classId = await makeClass(1);
     const entry = await prisma.waitlistEntry.create({
       data: { classId, studentId: studentIds[0]!, position: 1, status: 'expired' },
@@ -941,15 +941,65 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
 
     const res = await del(studentTokens[0]!, entry.id);
 
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('no longer active');
-    expect(json.error.message).not.toContain('not found');
+    // Inactive, not not-found: the row is there and the student can see it.
+    await expectRefusal(res, 'WAITLIST_ENTRY_INACTIVE');
 
     // Still refused, and still `expired` — "never got in" must not become
     // "withdrew" on the way to a better error message.
     const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
     expect(after.status).toBe('expired');
+  });
+
+  it('answers leaving a queue already left as unchanged, and renumbers nothing twice', async () => {
+    const classId = await makeClass(1);
+    const mine = await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[0]!, position: 1, status: 'waiting' },
+    });
+    const theirs = await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[1]!, position: 2, status: 'waiting' },
+    });
+
+    await expectApplied(await del(studentTokens[0]!, mine.id));
+    const renumbered = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(renumbered.position).toBe(1);
+
+    const again = await del(studentTokens[0]!, mine.id);
+
+    expect(await expectUnchanged(again)).toEqual({ message: 'Removed from waitlist' });
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(after.position).toBe(1);
+    expect(after.updatedAt).toEqual(renumbered.updatedAt);
+    const left = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: mine.id } });
+    expect(left.status).toBe('removed');
+  });
+
+  it('answers an entry some other path already removed as unchanged', async () => {
+    const classId = await makeClass(1);
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[0]!, position: 1, status: 'removed' },
+    });
+
+    await expectUnchanged(await del(studentTokens[0]!, entry.id));
+
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after.updatedAt).toEqual(entry.updatedAt);
+  });
+
+  it('refuses a student leaving someone else’s entry even when it has already been left', async () => {
+    const classId = await makeClass(1);
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[0]!, position: 1, status: 'removed' },
+    });
+
+    const res = await del(studentTokens[1]!, entry.id);
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { outcome?: unknown };
+    expect(body.outcome).toBeUndefined();
+  });
+
+  it('answers an entry that does not exist with its code', async () => {
+    await expectRefusal(await del(studentTokens[0]!, randomUUID()), 'NOT_FOUND');
   });
 });
 

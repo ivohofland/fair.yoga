@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError, readErrorMessage } from '@/lib/client-errors';
 
 interface WaitlistEntryActionsProps {
   entryId: string;
@@ -51,7 +51,13 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
         router.refresh();
         return;
       }
-      setError(await readErrorMessage(res, 'Could not leave the waitlist. Try again.'));
+      const { code, message } = await readError(res, 'Could not leave the waitlist. Try again.');
+      // A waitlist spot that no longer exists is as left as this button can make it.
+      if (code === 'NOT_FOUND') {
+        router.refresh();
+        return;
+      }
+      setError(message);
     } catch {
       setError('Network error. Try again.');
     } finally {
@@ -79,7 +85,7 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
       >
         {busy === 'leave' ? 'Leaving...' : 'Leave waitlist'}
       </button>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
 }
