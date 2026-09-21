@@ -24,31 +24,10 @@ import {
   handleSpotFreed,
 } from './waitlist';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { createClassFixture } from '../../tests/class-fixtures';
+import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
-
-/**
- * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
- * the next hour rather than ever emitting an invalid minute like `'09:60'`.
- * `CalendarEntry.startTime` is `@db.Time` and would refuse the row outright at
- * the DB, which is a less useful failure here than this guard's message
- * naming the fixture counter that produced it. Mirrors `waitlist.test.ts`'s
- * `slotTime` (and `class-template-lifecycle.test.ts`'s) — every class below
- * shares one teacher, so `CalendarEntry_teacher_slot_excl` refuses any two of
- * them whose ranges overlap, and a raw `HH:${counter}` literal would produce
- * exactly that once the counter crosses 30.
- */
-function slotTime(totalMinutesFrom9am: number): string {
-  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
-  const minute = totalMinutesFrom9am % 60;
-  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
-    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
-  }
-  return startTime;
-}
 
 let teacherId: string;
 let accountId: string;
