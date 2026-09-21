@@ -40,13 +40,25 @@ import { Prisma } from '@prisma/client';
  * one layer up, in #298. The caution still binds the next pair someone
  * introduces: if a future pair's caller DOES need to know which model
  * collided, consolidation (not this matcher) is the right answer.
+ *
+ * Expression indexes (#260): `Room_public_identity_unique` and
+ * `Room_private_identity_unique` use `lower(trim(...))` expression keys.
+ * PostgreSQL decompiles these in `meta.target` as `lower(TRIM(BOTH FROM address))`.
+ * Target expressions are unwrapped to their base column identifier so callers
+ * continue to branch on standard column arrays (`['address', 'floor', 'roomName']`).
  */
+function extractColumnIdentifier(targetExpr: string): string {
+  const stripped = targetExpr.replace(/["']/g, '');
+  const match = stripped.match(/([a-zA-Z0-9_]+)\s*\)*$/);
+  return match ? match[1]! : stripped;
+}
+
 export function isUniqueConflictOn(err: unknown, columns: readonly string[]): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;
   const target = err.meta?.target;
   if (!Array.isArray(target)) return false;
   if (target.length !== columns.length) return false;
-  const got = [...(target as string[])].sort();
+  const got = [...(target as string[])].map(extractColumnIdentifier).sort();
   const want = [...columns].sort();
   return got.every((c, i) => c === want[i]);
 }
