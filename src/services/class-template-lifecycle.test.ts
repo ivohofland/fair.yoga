@@ -1326,7 +1326,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   // `CalendarEntry_teacher_slot_excl` since #327). This was masked in the
   // original baseline: those tests never even reached this call, because the
   // template-level collision fixed above threw first.
-  // Routed through `slotTime` (see its docblock), like `makeTemplate`'s own
+  // Routed through `slotTime` (`tests/class-fixtures.ts`), like `makeTemplate`'s own
   // counter above: the raw `09:${counter}` it replaced could never reach past
   // `09:59`. If a call ever does run the block out of slots, `slotTime` throws
   // naming the counter value that did it — which is why no call count is

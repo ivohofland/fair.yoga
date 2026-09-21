@@ -11,6 +11,11 @@ describe('slotTime', () => {
       expect(slotTime(30)).toBe('09:30');
     });
 
+    it('zero-pads single-digit minutes correctly', () => {
+      expect(slotTime(1)).toBe('09:01');
+      expect(slotTime(65)).toBe('10:05');
+    });
+
     it('formats 75 minutes across hour boundary as 10:15', () => {
       expect(slotTime(75)).toBe('10:15');
     });

@@ -240,4 +240,3 @@ export function slotTime(totalMinutesFrom9am: number): string {
   }
   return startTime;
 }
-
