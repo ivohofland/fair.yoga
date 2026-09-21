@@ -703,8 +703,10 @@ describe('POST /api/classes/[id]/transition', () => {
     // technique: a second client holds the `Class` row `FOR UPDATE` so the
     // handler's CAS parks, and the rewrite lands while it is parked. Copy
     // `announcements-api.test.ts` (~`:240-290`), which does this on a `Class`
-    // row; see also `payments-api.test.ts:361`, `registrations-api.test.ts:700`
-    // and `account-api.test.ts:615`. It appears in eight integration files.
+    // row; see also `payments-api.test.ts:361`, `registrations-api.test.ts`'s
+    // `'answers 503 rather than blocking when another transaction holds the
+    // class row'`, and `account-api.test.ts:615`. It appears in eight
+    // integration files.
     const holder = new PrismaClient();
     let release!: () => void;
     let locked!: () => void;

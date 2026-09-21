@@ -436,6 +436,10 @@ describe('POST /api/registrations', () => {
     expect(await prisma.registration.count({ where: { classId } })).toBe(0);
   });
 
+  it('answers a booking into a class that does not exist with its code', async () => {
+    await expectRefusal(await post(studentTokens[0]!, { classId: randomUUID() }), 'NOT_FOUND');
+  });
+
   /**
    * The one test that can see the booking check placed above the ownership
    * check: the student already holds a seat in the other teacher's class, so a
@@ -1543,6 +1547,10 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
     expect(res.status).toBe(403);
     const body = (await res.json()) as { outcome?: unknown };
     expect(body.outcome).toBeUndefined();
+  });
+
+  it('answers a booking that does not exist with its code', async () => {
+    await expectRefusal(await putStatus(ownerToken, randomUUID(), 'attended'), 'NOT_FOUND');
   });
 });
 

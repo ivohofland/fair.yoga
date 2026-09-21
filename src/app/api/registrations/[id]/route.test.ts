@@ -146,4 +146,13 @@ describe('PUT /api/registrations/[id] — an attendance write that missed', () =
     await expectRefusal(await mark('no_show'), 'CONCURRENT_MODIFICATION');
     expect(updateMany).toHaveBeenCalledTimes(1);
   });
+
+  it('answers not found when the row is gone by the time the write is scoped', async () => {
+    findUnique
+      .mockResolvedValueOnce({ ...bookingRow(), class: { calendarEntry: { teacherId: 'teacher-1' } } })
+      .mockResolvedValueOnce(null);
+
+    await expectRefusal(await mark('attended'), 'NOT_FOUND');
+    expect(updateMany).toHaveBeenCalledTimes(1);
+  });
 });
