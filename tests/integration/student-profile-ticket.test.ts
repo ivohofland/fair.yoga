@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { mintSignupTicket } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp, seedSession } from '../helpers';
+import { expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -77,7 +78,7 @@ describe('POST /api/account/student-profile — a session cookie outranks a tick
 });
 
 describe('POST /api/account/student-profile — the declined ticket cookie on a refusal', () => {
-  it('clears the declined ticket cookie on ALREADY_STUDENT, as the success paths do', async () => {
+  it('clears the declined ticket cookie on an unchanged join, as the success paths do', async () => {
     // The cookie is dead weight either way, but it outlives the refusal by up
     // to an hour — and every OTHER exit on this route clears it, so a reader
     // cannot tell from the code which exits were meant to and which forgot.
@@ -87,7 +88,7 @@ describe('POST /api/account/student-profile — the declined ticket cookie on a 
         firstName: 'Already', lastName: 'Student', email, incomeTier: 3,
         claimedAt: new Date(), account: { create: { email } },
       },
-      select: { accountId: true },
+      select: { id: true, accountId: true },
     });
     if (!student.accountId) throw new Error('fixture: student created without an account');
     const sessionToken = await seedSession(prisma, student.accountId);
@@ -105,7 +106,7 @@ describe('POST /api/account/student-profile — the declined ticket cookie on a 
       body: JSON.stringify({}),
     });
 
-    expect(res.status).toBe(409);
+    expect(await expectUnchanged(res)).toEqual({ studentId: student.id });
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
 });
@@ -195,17 +196,33 @@ describe('POST /api/account/student-profile — ticket authorization', () => {
   // — not the caller's own row, since there is no caller. Simulated
   // directly (a real timing race isn't reachable over HTTP): seed the
   // Account between minting the ticket and posting the request.
-  it('answers ACCOUNT_EXISTS, not the generic ALREADY_STUDENT, when an account claims the address during the ticket window', async () => {
+  it('answers ACCOUNT_EXISTS when an account claims the address during the ticket window', async () => {
     const email = `profile-ticket-raced-${suffix}@test.local`;
     const ticket = await mintSignupTicket(prisma, email, 'student');
     await prisma.account.create({ data: { email } });
 
     const res = await post(ticket, { firstName: 'Raced', lastName: 'Out' });
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.error.code).toBe('ACCOUNT_EXISTS');
-    expect(body.error.code).not.toBe('ALREADY_STUDENT');
+    await expectRefusal(res, 'ACCOUNT_EXISTS');
     expect(await prisma.student.findUnique({ where: { email } })).toBeNull();
+  });
+
+  it('answers ACCOUNT_EXISTS, not unchanged, when the account that took the address already has a student side', async () => {
+    const email = `profile-ticket-raced-student-${suffix}@test.local`;
+    const ticket = await mintSignupTicket(prisma, email, 'student');
+    const holder = await prisma.student.create({
+      data: {
+        firstName: 'Other', lastName: 'Holder', email, incomeTier: 3,
+        claimedAt: new Date(), account: { create: { email } },
+      },
+      select: { id: true },
+    });
+
+    const res = await post(ticket, { firstName: 'Raced', lastName: 'Out' });
+
+    await expectRefusal(res, 'ACCOUNT_EXISTS');
+    expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
+    const rows = await prisma.student.findMany({ where: { email }, select: { id: true } });
+    expect(rows).toEqual([holder]);
   });
 });
 

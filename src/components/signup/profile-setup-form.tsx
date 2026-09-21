@@ -9,6 +9,8 @@ import { PageAddressField, slugFromName } from './page-address-field';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { AlreadyTeachingPanel } from './already-teaching-panel';
+import { readError } from '@/lib/client-errors';
+import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 const BIO_MAX = 250;
 
@@ -119,7 +121,13 @@ function detectTimeZone(): string | undefined {
  * not. Saying "we've emailed you a fresh link" when that request failed is
  * worse than saying nothing. Both are TICKET-mode only — see `mode`.
  */
-type Status = 'idle' | 'submitting' | 'expired' | 'expired-stuck' | 'already-teacher';
+type Status =
+  | 'idle'
+  | 'submitting'
+  | 'expired'
+  | 'expired-stuck'
+  | 'already-teacher'
+  | 'account-exists';
 
 /**
  * Which of the profile route's two authorizations is behind this form.
@@ -263,10 +271,6 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
       return;
     }
 
-    const body: { error?: { code?: string; message?: string } } = await res
-      .json()
-      .catch(() => ({}));
-
     if (res.status === 401) {
       // Session mode: nothing expired here except the session itself, and a
       // signup email would be addressed to someone who already has an
@@ -291,16 +295,26 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
       return;
     }
 
-    // Terminal: this address already has a page, so nothing typed here will
-    // ever be submitted from this form.
-    if (body.error?.code === 'ALREADY_TEACHER') {
+    const { code, message } = await readError(res, 'Something went wrong. Please try again.');
+
+    // Terminal: this account already has a teacher page, and this form
+    // would make a second one.
+    if (code === 'ALREADY_TEACHER') {
       forgetDraft();
       setStatus('already-teacher');
       return;
     }
 
+    // Terminal for this ticket, not for the draft: the address has an account
+    // now, and signing in with it brings the same address back to this page,
+    // where the draft is restored.
+    if (code === 'ACCOUNT_EXISTS') {
+      setStatus('account-exists');
+      return;
+    }
+
     setStatus('idle');
-    if (body.error?.code === 'SLUG_TAKEN') {
+    if (code === 'SLUG_TAKEN') {
       // The route already replaced the ticket it spent on this request, so the
       // retry this message asks for is a plain resubmit. Stamped with the
       // address it is about, so editing a name out from under it retires it.
@@ -309,23 +323,27 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
         message: 'That address is taken — please pick another.',
       });
     } else {
-      setFormError(body.error?.message ?? 'Something went wrong. Please try again.');
+      setFormError(message);
     }
   }
 
   if (status === 'already-teacher') {
-    if (mode === 'session') {
-      return <AlreadyTeachingPanel email={email} />;
-    }
+    return <AlreadyTeachingPanel email={email} />;
+  }
+
+  if (status === 'account-exists') {
     return (
       <div className="py-4">
-        <p className="type-subtitle">You already teach here</p>
+        <p className="type-subtitle">You already have an account</p>
         <p className="type-body mt-2 max-w-[420px]">
-          There is already a teacher page for {email}.{' '}
-          <Link href="/login" className="text-teal">
+          There is already an account for {email}.{' '}
+          <Link
+            href={`/login?redirect=${encodeURIComponent(TEACHER_PROFILE_PATH)}`}
+            className="text-teal"
+          >
             Sign in
           </Link>{' '}
-          and you are back where you left off.
+          to add a teacher page to it.
         </p>
       </div>
     );

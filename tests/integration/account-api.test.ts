@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -10,8 +11,8 @@ const suffix = uniqueSuffix();
 /**
  * The account-scoped routes on a teacher account that becomes dual:
  * joining as a student (including claiming an unclaimed CRM row with the
- * same email), the double-join 409, the dual export shape, and the dual
- * notifications feed.
+ * same email), the double-join unchanged answer, the dual export shape, and
+ * the dual notifications feed.
  */
 
 const email = `accapi-teacher-${suffix}@test.local`;
@@ -81,12 +82,19 @@ describe('POST /api/account/student-profile', () => {
     expect(await prisma.student.count({ where: { email } })).toBe(1);
   });
 
-  it('rejects a second join with a machine-readable 409', async () => {
+  it('answers a second join unchanged, naming the side it already has, and writes nothing', async () => {
+    const select = { claimedAt: true, updatedAt: true } as const;
+    const before = await prisma.student.findUniqueOrThrow({ where: { id: unclaimedStudentId }, select });
+    const sessionsBefore = await prisma.session.count({ where: { accountId } });
+
     const res = await authed('/api/account/student-profile', { method: 'POST' });
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { code?: string } };
-    expect(body.error.code).toBe('ALREADY_STUDENT');
+    expect(await expectUnchanged(res)).toEqual({ studentId: unclaimedStudentId });
+    expect(await prisma.student.count({ where: { email } })).toBe(1);
+    expect(
+      await prisma.student.findUniqueOrThrow({ where: { id: unclaimedStudentId }, select }),
+    ).toEqual(before);
+    expect(await prisma.session.count({ where: { accountId } })).toBe(sessionsBefore);
   });
 });
 
@@ -920,8 +928,8 @@ describe('DELETE /api/account', () => {
  * `session.studentId` is the pre-check, so two concurrent "join as a student"
  * requests both read a session with no student profile, both find no
  * unclaimed row to claim, and both reach the create; the loser collides.
- * Unhandled, that `P2002` answers 409 with NO `code`, so the client cannot
- * tell it apart from any other conflict (#161).
+ * It answers as the pre-check would: 200 `unchanged`, naming the student
+ * side the winner created (#161, #197).
  *
  * BOTH keys are caught, and this test is what says why. The holder writes the
  * caller's own `accountId` AND the caller's own `email`, so
@@ -934,7 +942,7 @@ describe('DELETE /api/account', () => {
  * caller's own account, and `Account.email @unique` means no other account
  * can hold this address. See the spec.
  */
-describe('POST /api/account/student-profile answers a raced join with ALREADY_STUDENT (#161)', () => {
+describe('POST /api/account/student-profile answers a raced join unchanged (#161, #197)', () => {
   const raceEmail = `race-join-${suffix}@test.local`;
   let raceAccountId: string;
   let raceToken: string;
@@ -964,17 +972,18 @@ describe('POST /api/account/student-profile answers a raced join with ALREADY_ST
     await prisma.account.deleteMany({ where: { email: raceEmail } });
   });
 
-  it('returns 409 ALREADY_STUDENT when the create loses to a concurrent join', async () => {
+  it('answers unchanged, naming the winner, when the create loses to a concurrent join', async () => {
     const holder = new PrismaClient();
     let release!: () => void;
     let holding!: Promise<unknown>;
     const released = new Promise<void>((r) => { release = r; });
+    let holderStudentId = '';
 
     await new Promise<void>((parked, failed) => {
       holding = holder.$transaction(async (tx) => {
         // The caller's own accountId and email — exactly what a second tap of
         // the same button writes, so both unique keys are contended.
-        await tx.student.create({
+        const holderRow = await tx.student.create({
           data: {
             firstName: 'Holder',
             lastName: 'Join',
@@ -982,7 +991,9 @@ describe('POST /api/account/student-profile answers a raced join with ALREADY_ST
             claimedAt: new Date(),
             accountId: raceAccountId,
           },
+          select: { id: true },
         });
+        holderStudentId = holderRow.id;
         parked();
         await released;
       }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
@@ -996,7 +1007,7 @@ describe('POST /api/account/student-profile answers a raced join with ALREADY_ST
     let settled = false;
     void pending.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 1000));
-    // Without this, a fast answer means the request 409'd off its own
+    // Without this, a fast answer means the request answered off its own
     // pre-check and raced nothing — see teacher-rooms-api.test.ts for the
     // full argument.
     expect(settled).toBe(false);
@@ -1006,10 +1017,7 @@ describe('POST /api/account/student-profile answers a raced join with ALREADY_ST
     const res = await pending;
     await holder.$disconnect();
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { code?: string; message: string } };
-    expect(body.error.code).toBe('ALREADY_STUDENT');
-    expect(body.error.message).toBe('Account already has a student profile');
+    expect(await expectUnchanged(res)).toEqual({ studentId: holderStudentId });
 
     // One student row, and it is the holder's.
     const rows = await prisma.student.findMany({ where: { email: raceEmail } });

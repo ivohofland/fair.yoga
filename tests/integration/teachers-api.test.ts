@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { expectRefusal } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -127,12 +128,10 @@ describe('PUT /api/teachers/[id]', () => {
       { pageSlug: `settings-other-${suffix}` },
       teacherToken,
     );
-    expect(res.status).toBe(409);
-    // The code pins the deliberate pre-check: the P2002 fallback also
-    // returns 409, but without SLUG_TAKEN the settings form can't render
-    // its inline error.
-    const json = (await res.json()) as { error: { code?: string } };
-    expect(json.error.code).toBe('SLUG_TAKEN');
+    // The pre-check's answer. A slug claimed after that read reaches the
+    // update's own catch, which answers the same code
+    // (`src/app/api/teachers/[id]/route-lock-order.test.ts`).
+    await expectRefusal(res, 'SLUG_TAKEN');
   });
 
   it("rejects reading another teacher's profile — the raw row carries bank details", async () => {

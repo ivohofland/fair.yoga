@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { mintSignupTicket } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp, seedSession } from '../helpers';
+import { expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -99,6 +100,30 @@ describe('POST /api/account/teacher-profile — a session always beats a ticket 
     );
 
     expect(res.status).toBe(409);
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+  });
+
+  it('clears the declined ticket cookie on an unchanged resubmit too', async () => {
+    const email = `tp-precedence-same-${suffix}@test.local`;
+    const slug = `tp-same-${suffix}`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Same', lastName: 'Values', email, bio: '', pageSlug: slug,
+        account: { create: { email } },
+      },
+      select: { id: true, accountId: true },
+    });
+    const sessionToken = await seedSession(prisma, teacher.accountId);
+    const ticket = await mintSignupTicket(
+      prisma, `tp-precedence-same-ticket-${suffix}@test.local`, 'teacher',
+    );
+
+    const res = await post(
+      `fair_yoga_session=${sessionToken}; fair_yoga_signup=${ticket}`,
+      { firstName: 'Same', lastName: 'Values', bio: '', pageSlug: slug },
+    );
+
+    expect(await expectUnchanged(res)).toEqual({ teacherId: teacher.id });
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
 

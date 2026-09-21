@@ -20,9 +20,9 @@ describe('SetUpStudentSide (#172)', () => {
 
   it('treats a student side that already exists as done', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => ({ error: { code: 'ALREADY_STUDENT', message: 'Already a student' } }),
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { studentId: 's-1' }, outcome: 'unchanged' }),
     }));
     render(<SetUpStudentSide />);
 
@@ -31,21 +31,22 @@ describe('SetUpStudentSide (#172)', () => {
     await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith(STUDENT_INVITATION_PATH));
   });
 
-  // The shape `classifyApiError` produces for a unique-constraint violation
-  // that escaped a route's own catch: a 409 carrying no code. Keying on the
-  // status alone reported it as success and navigated to a page this account
-  // cannot open.
-  it('does not claim success for a 409 that is not ALREADY_STUDENT', async () => {
+  // A student side that already exists is a 200, so no 409 is a disguised
+  // success. Treating one as success navigated to a page this account cannot
+  // open, which bounced it to the schedule saying nothing.
+  it('does not claim success for any 409', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
       status: 409,
-      json: async () => ({ error: { message: 'Resource already exists' } }),
+      json: async () => ({
+        error: { code: 'UNIQUE_CONFLICT', message: 'That already exists. Refresh to see the latest.' },
+      }),
     }));
     render(<SetUpStudentSide />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Set up student side' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Resource already exists/);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/That already exists/);
     expect(routerPush).not.toHaveBeenCalled();
   });
 

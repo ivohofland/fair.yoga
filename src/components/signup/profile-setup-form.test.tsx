@@ -98,6 +98,22 @@ describe('ProfileSetupForm', () => {
     expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
   });
 
+  it('treats an unchanged answer as success in session mode', async () => {
+    const assign = stubLocation();
+    stubFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { teacherId: 't-1' }, outcome: 'unchanged' }),
+    }));
+    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+  });
+
   it('restores a draft left for the same address, and discards one left for a different address', async () => {
     window.localStorage.setItem(
       DRAFT_KEY,
@@ -121,24 +137,28 @@ describe('ProfileSetupForm', () => {
     expect(firstNameInputs[firstNameInputs.length - 1]).toHaveValue('');
   });
 
-  it('shows the terminal ALREADY_TEACHER state and clears the draft', async () => {
-    window.localStorage.setItem(
-      DRAFT_KEY,
-      JSON.stringify({ email: 'anna@example.com', firstName: 'Anna', lastName: 'X', bio: '', pageSlug: 'anna-x', slugEdited: true }),
-    );
+  it('shows the ACCOUNT_EXISTS state in ticket mode, signing in back to this page, and keeps the draft', async () => {
     stubFetch(() => ({
       ok: false,
       status: 409,
-      json: async () => ({ error: { code: 'ALREADY_TEACHER', message: 'Account already has a teacher profile' } }),
+      json: async () => ({
+        error: {
+          code: 'ACCOUNT_EXISTS',
+          message: 'This email now has an account. Please sign in and add a teacher profile.',
+        },
+      }),
     }));
     render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
 
-    expect(await screen.findByText('You already teach here')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument();
-    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+    expect(await screen.findByText('You already have an account')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/login?redirect=%2Fsignup%2Fprofile',
+    );
+    expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull();
   });
 
   it('shows the ALREADY_TEACHER state with a schedule link and sign-out in session mode', async () => {
@@ -190,7 +210,7 @@ describe('ProfileSetupForm', () => {
     stubFetch(() => ({
       ok: false,
       status: 409,
-      json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'Page address already in use' } }),
+      json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page slug is already taken.' } }),
     }));
     render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
 

@@ -146,6 +146,10 @@ export const LOCK_CONTENTION_TESTS = [
   // doors; each file's header carries its reason.
   'src/app/api/rooms/[id]/route-race.test.ts',
   'src/app/api/teacher-rooms/[id]/route-race.test.ts',
+  // #197: the same shape, for the lost-race answers of the routes these files
+  // sit beside. Each header carries its reason.
+  'src/app/api/account/teacher-profile/route-lock-order.test.ts',
+  'src/app/api/teachers/[id]/route-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

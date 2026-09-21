@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { mintSignupTicket, generateMagicLinkToken, hashNonce, validateSession } from '@/lib/auth';
+import { expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -644,6 +645,48 @@ describe('POST /api/account/teacher-profile', () => {
     expect((await res.json()).error.code).toBe('SLUG_TAKEN');
   });
 
+  // The ticket path creates the account in the same statement, so an address
+  // collision there is another account, possibly one with no teacher side at
+  // all. It is seeded between minting the ticket and posting, which is how
+  // `student-profile-ticket.test.ts` reaches the same branch.
+  it('answers ACCOUNT_EXISTS when the address gained an account during the ticket window', async () => {
+    const email = `teacher-signup-account-exists-${suffix}@test.local`;
+    const slug = `account-exists-${suffix}`;
+    let accountId: string | null = null;
+    try {
+      const ticket = await mintSignupTicket(prisma, email, 'teacher');
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Student', lastName: 'Only', email, claimedAt: new Date(),
+          account: { create: { email } },
+        },
+        select: { accountId: true },
+      });
+      accountId = student.accountId;
+
+      const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `fair_yoga_signup=${ticket}`,
+          ...freshIp(),
+        },
+        body: JSON.stringify({ firstName: 'Late', lastName: 'Ticket', bio: '', pageSlug: slug }),
+      });
+
+      await expectRefusal(res, 'ACCOUNT_EXISTS');
+      expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
+      expect(await prisma.teacher.findUnique({ where: { pageSlug: slug } })).toBeNull();
+    } finally {
+      await prisma.magicLinkToken.deleteMany({ where: { email } });
+      if (accountId) {
+        await prisma.session.deleteMany({ where: { accountId } });
+        await prisma.student.deleteMany({ where: { accountId } });
+        await prisma.account.deleteMany({ where: { id: accountId } });
+      }
+    }
+  });
+
   // Fix round 1, Finding 2: SLUG_TAKEN used to be a dead end — the ticket
   // was already spent by the time the conflict was known, and the client's
   // cookie kept naming a deleted token. The 409 now sets a fresh ticket;
@@ -954,6 +997,101 @@ describe('POST /api/account/teacher-profile — session mode', () => {
     // No new session: this caller already had one. Only the ticket branch
     // mints one, and it is the ticket test above that asserts the positive.
     expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
+  });
+
+  it('answers an identical resubmit unchanged, and writes nothing', async () => {
+    const before = await prisma.teacher.findUniqueOrThrow({
+      where: { pageSlug: sessionModeSlug },
+      select: { id: true, updatedAt: true },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionModeToken), ...freshIp() },
+      // No `defaultTimezone`, the same as the create above. The route's
+      // Amsterdam default is part of what gets compared.
+      body: JSON.stringify({
+        firstName: 'Student', lastName: 'Turned Teacher', bio: '', pageSlug: sessionModeSlug,
+      }),
+    });
+
+    expect(await expectUnchanged(res)).toEqual({ teacherId: before.id });
+    expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
+    expect(await prisma.teacher.count({ where: { accountId: sessionModeAccountId } })).toBe(1);
+    const after = await prisma.teacher.findUniqueOrThrow({
+      where: { pageSlug: sessionModeSlug },
+      select: { id: true, updatedAt: true },
+    });
+    expect(after).toEqual(before);
+  });
+
+  it('refuses a resubmit whose bio differs with ALREADY_TEACHER, and keeps the stored bio', async () => {
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionModeToken), ...freshIp() },
+      body: JSON.stringify({
+        firstName: 'Student', lastName: 'Turned Teacher', bio: 'Changed my mind', pageSlug: sessionModeSlug,
+      }),
+    });
+
+    await expectRefusal(res, 'ALREADY_TEACHER');
+    const teacher = await prisma.teacher.findUniqueOrThrow({
+      where: { pageSlug: sessionModeSlug },
+      select: { bio: true },
+    });
+    expect(teacher.bio).toBe('');
+  });
+
+  it('treats a different detected timezone as a different request', async () => {
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionModeToken), ...freshIp() },
+      body: JSON.stringify({
+        firstName: 'Student', lastName: 'Turned Teacher', bio: '', pageSlug: sessionModeSlug,
+        defaultTimezone: 'America/Los_Angeles',
+      }),
+    });
+
+    await expectRefusal(res, 'ALREADY_TEACHER');
+    const teacher = await prisma.teacher.findUniqueOrThrow({
+      where: { pageSlug: sessionModeSlug },
+      select: { defaultTimezone: true },
+    });
+    expect(teacher.defaultTimezone).toBe('Europe/Amsterdam');
+  });
+
+  // The ordering pin (spec §5.1). Authorization is this route's ownership gate,
+  // and the unchanged check reads only the CALLER's account. Another account
+  // that sends this teacher's exact values is not repeating anything: it
+  // collides on the slug and is told so.
+  it("answers another account's identical body SLUG_TAKEN, not unchanged", async () => {
+    const otherEmail = `teacher-signup-session-other-${suffix}@test.local`;
+    const other = await prisma.student.create({
+      data: {
+        firstName: 'Other', lastName: 'Account', email: otherEmail, claimedAt: new Date(),
+        account: { create: { email: otherEmail } },
+      },
+      select: { accountId: true },
+    });
+    const otherAccountId = other.accountId;
+    if (otherAccountId === null) throw new Error('fixture: student created without an account');
+    try {
+      const token = await seedSession(prisma, otherAccountId);
+      const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(token), ...freshIp() },
+        body: JSON.stringify({
+          firstName: 'Student', lastName: 'Turned Teacher', bio: '', pageSlug: sessionModeSlug,
+        }),
+      });
+
+      await expectRefusal(res, 'SLUG_TAKEN');
+      expect(await prisma.teacher.count({ where: { accountId: otherAccountId } })).toBe(0);
+    } finally {
+      await prisma.session.deleteMany({ where: { accountId: otherAccountId } });
+      await prisma.student.deleteMany({ where: { accountId: otherAccountId } });
+      await prisma.account.deleteMany({ where: { id: otherAccountId } });
+    }
   });
 
   it('answers ALREADY_TEACHER for a session that already has one', async () => {

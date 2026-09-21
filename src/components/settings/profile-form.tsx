@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface ProfileFormProps {
   teacherId: string;
@@ -120,8 +121,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
       });
 
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
-        setError(json.error?.message ?? 'Failed to save');
+        setError(await readErrorMessage(res, 'Failed to save'));
         return;
       }
 

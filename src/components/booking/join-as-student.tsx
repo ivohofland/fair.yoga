@@ -21,9 +21,9 @@ export function JoinAsStudent({ firstName }: JoinAsStudentProps) {
     setState('working');
     try {
       const res = await fetch('/api/account/student-profile', { method: 'POST' });
-      // 409 ALREADY_STUDENT means the profile exists (double tap, earlier
-      // half-finished attempt) — that is success from where the user sits.
-      if (!res.ok && res.status !== 409) {
+      // A student side that already exists (double tap, earlier half-finished
+      // attempt) answers 200 `unchanged`, so `res.ok` is the whole test.
+      if (!res.ok) {
         setMessage(await readErrorMessage(res, 'Could not set up your student side. Try again.'));
         setState('error');
         return;
