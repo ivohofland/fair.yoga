@@ -2888,8 +2888,9 @@ Re-derive the writer set with:
     grep -rn "cancelledAt: new Date()" --include="*.ts" src/ | grep -v '\.test\.'
 
 which returns 7 lines. Three write `Registration.cancelledAt` — a different
-column on a different table — at `api/registrations/[id]/route.ts:269`, `:285`
-and `gdpr.ts:529`. `7 − 3 = 4`, the FIRST four rows of the table above — this
+column on a different table — at `api/registrations/[id]/route.ts`'s DELETE
+handler (its late-cancel and full-cancel `updateMany` calls) and `gdpr.ts:529`.
+`7 − 3 = 4`, the FIRST four rows of the table above — this
 command cannot find the fifth. The subtraction has to be done by READING each
 hit rather than by path alone: `gdpr.ts:529` writes a `Registration` while
 *filtering* on `calendarEntry: { cancelledAt: null }`, so the needle appears

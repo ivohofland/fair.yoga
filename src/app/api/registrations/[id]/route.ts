@@ -108,7 +108,7 @@ export const PUT = withErrorHandler(async (
     include: { class: { select: { calendarEntry: { select: { teacherId: true } } } } },
   });
 
-  if (!registration) return respondError('Registration not found', 404);
+  if (!registration) return respondError('This booking no longer exists.', 404, 'NOT_FOUND');
   if (registration.class.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }

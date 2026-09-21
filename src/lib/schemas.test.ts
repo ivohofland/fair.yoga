@@ -496,8 +496,9 @@ const EXPECTED: Record<string, readonly string[]> = {
   // it through `new Date(...)` (UTC midnight) before Prisma sees it.
   createClassSchema: ['date'],
   // A teacher registers a student from their own roster; ownership is checked
-  // in src/app/api/registrations/route.ts:87-92 (the TeacherStudent link is
-  // looked up and a missing link 403s before the registration is created).
+  // in `src/app/api/registrations/route.ts`'s POST handler, where the acting
+  // teacher's `TeacherStudent` link to the target student is looked up and a
+  // missing link 403s before the registration is created.
   createRegistrationSchema: ['studentId'],
   // Whether a newly created room is shared is legitimately the creator's call.
   createRoomSchema: ['isPublic'],

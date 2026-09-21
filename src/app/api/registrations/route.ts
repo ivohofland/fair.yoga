@@ -347,13 +347,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (err instanceof ClassFullError) {
       return respondError('This class is full.', 409, 'CLASS_FULL');
     }
-    // The column set this transaction can raise a unique violation on:
-    // `Registration @@unique([classId, studentId])`, met when a twin request
-    // booked this student into this class first. Re-read outside the
-    // rolled-back transaction; an active row is the booking this request asks
-    // for. Anything else — a different column set, or a twin no longer active
-    // — falls through to `withErrorHandler`, which answers 409 and logs `warn`
-    // naming `meta.target`.
+    // This check matches the column set of `Registration @@unique([classId,
+    // studentId])`, met when a twin request booked this student into this
+    // class first. Re-read outside the rolled-back transaction; an active row
+    // is the booking this request asks for. A violation matching some other
+    // column set, or a twin no longer active, falls through to
+    // `withErrorHandler`, which answers 409 and logs `warn` naming
+    // `meta.target`.
     if (isUniqueConflictOn(err, ['classId', 'studentId'])) {
       const twin = await prisma.registration.findUnique({
         where: { classId_studentId: { classId: body.classId, studentId } },

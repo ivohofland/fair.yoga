@@ -624,7 +624,9 @@ describe('POST /api/registrations — a booking that already exists', () => {
     await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   });
 
-  // Runs first: the two below change the row's status.
+  // Must run first: it needs the row this describe's `beforeAll` seeds as
+  // `registered`, and every sibling below mutates that row's status before
+  // asserting against it.
   it('answers unchanged, and writes neither the tier marker nor a notification', async () => {
     const before = await prisma.registration.findUniqueOrThrow({
       where: { classId_studentId: { classId, studentId } },

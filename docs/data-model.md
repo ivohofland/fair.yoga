@@ -537,7 +537,7 @@ if the erasure took the row first (#625).** `POST /api/registrations` and
 and the teacher's roster add alike.
 
 A booking that finds the profile erased writes nothing and answers 409
-`STUDENT_ERASED`. A teacher sees `This student's account no longer exists.`. A
+`STUDENT_ERASED`. A teacher sees `This student's account no longer exists.` A
 student sees `This account has been deleted.` only when their request raced
 the erasure. A self-booking made after the erasure committed never gets that
 far: the erasure removed its session, so the request is answered 401 —
