@@ -66,7 +66,7 @@ export const POST = withErrorHandler(async (
   if (room.isPublic) return respondUnchanged<Room>(room);
 
   // The three guards above are repeated in this write's `where`, closing the
-  // window between the read at :53 and the write. `prisma.room.update` here
+  // window between the read at :57 and the write. `prisma.room.update` here
   // would raise P2025 if a concurrent `DELETE /api/rooms/[id]` removed the
   // row first — and `classifyApiError` has no P2025 branch, so losing that
   // race would answer 500 and page someone. `DeleteRoomButton` renders on the

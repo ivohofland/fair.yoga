@@ -4,8 +4,9 @@
  * `TeacherRoom` holds the teacher's private rental rate, which CLAUDE.md says is
  * "never shared between teachers", so the ownership chain on `[id]` is
  * money-adjacent and cross-tenant rather than a routine guard. That, plus the
- * two state guards (the create-side duplicate 409 and the delete-side class
- * history 409), is what earns tests here: per `docs/technical-architecture.md`,
+ * two state guards (the create-side answer to an existing link and the
+ * delete-side class history 409), is what earns tests here: per
+ * `docs/technical-architecture.md`,
  * a route gets its own HTTP guard test when its authorization is *bespoke* or it
  * carries a *business invariant*, not for re-testing the shared
  * `requireTeacher` helper on every verb.
@@ -680,8 +681,8 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
   });
 
   it("refuses another teacher's link before it reveals whether it is in use", async () => {
-    // Ownership must lose to nothing. Swap the ownership check at `:140-142`
-    // with the blocker count at `:147-148` and this becomes a 409 naming the
+    // Ownership must lose to nothing. Swap the ownership check at `:154` with
+    // the blocker count at `:161-162` and this becomes a 409 naming the
     // room's state — telling a stranger whether a link id they do not own is
     // in use.
     // The sibling route pins the same ordering (`rooms-api.test.ts`). The
