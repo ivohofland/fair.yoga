@@ -17,12 +17,9 @@ function prismaError(code: string, meta?: Record<string, unknown>) {
 /**
  * Unit coverage for `isUniqueConflictOn`'s own branches. `slot-constraints
  * .test.ts` measures the real `meta.target` shape Postgres/Prisma actually
- * produce for all six #196 indexes against a live DB — that is the premise
- * this helper is built on. It never calls `isUniqueConflictOn` itself, so
- * every branch below (the set-compare, the length guard, the two "not a
- * P2002 at all" exits) was covered only transitively, through eleven call
- * sites that all happen to pass a matching column set. This file tests the
- * function directly instead.
+ * produce for the unique indexes against a live DB — that is the premise
+ * this helper is built on. This file tests `isUniqueConflictOn` directly
+ * across all input variations and edge cases.
  */
 describe('isUniqueConflictOn', () => {
   it('is true when meta.target names exactly the given columns, same order', () => {
@@ -154,6 +151,35 @@ describe('isUniqueConflictOn', () => {
         'lower(TRIM(BOTH FROM floor))',
         'lower(TRIM(BOTH FROM roomName))',
       ],
+    });
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(false);
+  });
+
+  it('unwraps quoted column identifiers in expression targets', () => {
+    const err = prismaError('P2002', {
+      target: [
+        'lower(TRIM(BOTH FROM "address"))',
+        'lower(TRIM(BOTH FROM "floor"))',
+        'lower(TRIM(BOTH FROM "roomName"))',
+      ],
+    });
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+  });
+
+  it('handles expression targets with trailing whitespace', () => {
+    const err = prismaError('P2002', {
+      target: [
+        'lower(TRIM(BOTH FROM address)) ',
+        'lower(TRIM(BOTH FROM floor))  ',
+        ' lower(TRIM(BOTH FROM roomName)) ',
+      ],
+    });
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+  });
+
+  it('returns false cleanly when meta.target contains non-string elements', () => {
+    const err = prismaError('P2002', {
+      target: [null, 123, undefined],
     });
     expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(false);
   });

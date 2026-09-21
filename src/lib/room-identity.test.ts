@@ -32,14 +32,21 @@ describe('sameRoomIdentity', () => {
   // `Room_public_identity_unique` and `Room_private_identity_unique` are
   // expression indexes over `lower(trim(...))` (#260). This predicate mirrors
   // them by normalizing each field with `normalizeRoomField`.
-  it('treats case variants as the same room, matching the index', () => {
+  it('treats case variants across all three fields as the same room, matching the index', () => {
     expect(sameRoomIdentity(base, { ...base, address: 'prinsengracht 42' })).toBe(true);
+    expect(sameRoomIdentity(base, { ...base, floor: '2' })).toBe(true);
+    expect(sameRoomIdentity({ ...base, floor: '2nd' }, { ...base, floor: '2ND' })).toBe(true);
     expect(sameRoomIdentity(base, { ...base, roomName: 'studio a' })).toBe(true);
   });
 
-  it('treats whitespace variants as the same room, matching the index', () => {
-    expect(sameRoomIdentity(base, { ...base, address: 'Prinsengracht 42 ' })).toBe(true);
-    expect(sameRoomIdentity(base, { ...base, floor: ' 2' })).toBe(true);
+  it('treats whitespace variants across all three fields as the same room, matching the index', () => {
+    expect(sameRoomIdentity(base, { ...base, address: ' Prinsengracht 42 ' })).toBe(true);
+    expect(sameRoomIdentity(base, { ...base, floor: ' 2 ' })).toBe(true);
+    expect(sameRoomIdentity(base, { ...base, roomName: ' Studio A ' })).toBe(true);
+  });
+
+  it('preserves internal whitespace differences (does not collapse spaces)', () => {
+    expect(sameRoomIdentity(base, { ...base, roomName: 'Studio  A' })).toBe(false);
   });
 });
 
