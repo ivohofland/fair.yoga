@@ -53,7 +53,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.room.deleteMany({ where: { address: { in: [address, variantAddress] } } });
+  await prisma.room.deleteMany({ where: { address: { contains: suffix } } });
   await prisma.teacher.deleteMany({ where: { pageSlug: `roomagree-${suffix}` } });
   // Issue 177: Account must be deleted after Teacher due to FK reference
   await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
@@ -62,20 +62,20 @@ afterAll(async () => {
 
 describe('sameRoomIdentity agrees with Room_public_identity_unique', () => {
   it('accepts as shared two rooms the predicate calls different', async () => {
-    // Guard the test's own premise: if the predicate ever starts calling
-    // these the same, this assertion says so before Postgres is consulted.
+    const addr1 = `${suffix} Agreement St A`;
+    const addr2 = `${suffix} Agreement St B`;
     expect(
       sameRoomIdentity(
-        { address, floor: '1', roomName: 'Hall' },
-        { address: variantAddress, floor: '1', roomName: 'Hall' },
+        { address: addr1, floor: '1', roomName: 'Hall' },
+        { address: addr2, floor: '1', roomName: 'Hall' },
       ),
     ).toBe(false);
 
-    await shared(address, '1', 'Hall');
-    await expect(shared(variantAddress, '1', 'Hall')).resolves.toBeDefined();
+    await shared(addr1, '1', 'Hall');
+    await expect(shared(addr2, '1', 'Hall')).resolves.toBeDefined();
   });
 
-  it('refuses as shared a second room the predicate calls the same', async () => {
+  it('refuses as shared a second room the predicate calls the same (identical fields)', async () => {
     expect(
       sameRoomIdentity(
         { address, floor: '2', roomName: 'Annex' },
@@ -85,19 +85,36 @@ describe('sameRoomIdentity agrees with Room_public_identity_unique', () => {
 
     await shared(address, '2', 'Annex');
 
-    // Asserted on the error's IDENTITY, not merely that one was thrown. A
-    // bare `rejects.toThrow()` passes on any failure at all — a missing
-    // column, a bad foreign key, a typo in the fixture — so a broken fixture
-    // would read as the index doing its job, which is the one thing this test
-    // exists to observe.
-    //
-    // Via the repo's own helper rather than a hand-written shape, for the
-    // reason its docblock gives: a partial index Prisma cannot see still
-    // reports `meta.target` as the COLUMN-NAME ARRAY, not the index name. So
-    // this also pins that the collision is the three-column public shape —
-    // `Room_public_identity_unique`, the index the predicate mirrors — and
-    // not the four-column private one the row just left.
     const err = await shared(address, '2', 'Annex').catch((e: unknown) => e);
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+  });
+
+  it('refuses as shared a second room differing only by case (#260)', async () => {
+    expect(
+      sameRoomIdentity(
+        { address, floor: '3', roomName: 'Studio A' },
+        { address: variantAddress, floor: '3', roomName: 'studio a' },
+      ),
+    ).toBe(true);
+
+    await shared(address, '3', 'Studio A');
+
+    const err = await shared(variantAddress, '3', 'studio a').catch((e: unknown) => e);
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+  });
+
+  it('refuses as shared a second room differing only by whitespace (#260)', async () => {
+    const paddedAddress = `  ${address}  `;
+    expect(
+      sameRoomIdentity(
+        { address, floor: '4', roomName: 'Attic' },
+        { address: paddedAddress, floor: ' 4 ', roomName: 'Attic ' },
+      ),
+    ).toBe(true);
+
+    await shared(address, '4', 'Attic');
+
+    const err = await shared(paddedAddress, ' 4 ', 'Attic ').catch((e: unknown) => e);
     expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
   });
 });
