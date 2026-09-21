@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
+import { isRecordNotFound } from '@/lib/api-errors';
 import {
   respondOk,
   respondError,
@@ -14,10 +15,16 @@ import { setTeacherRoomArchived, describeRoomBlockers } from '@/services/room-ar
 import {
   countTeacherRoomDeleteBlockers,
   isRoomDeleteBlocked,
-  ROOM_DELETE_BLOCKED_MESSAGE,
   ROOM_IN_USE_CODE,
   ROOM_IN_USE_RACE_CODE,
+  TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE,
 } from '@/services/room-deletion';
+
+/**
+ * The answer for a link that does not exist, including one deleted
+ * mid-request, at every door below except GET.
+ */
+const LINK_GONE = 'This room is no longer in your rooms.';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -50,7 +57,7 @@ export const PUT = withErrorHandler(async (
   if (isErrorResponse(session)) return session;
 
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
-  if (!teacherRoom) return respondError('Teacher-room not found', 404);
+  if (!teacherRoom) return respondError(LINK_GONE, 404, 'NOT_FOUND');
 
   if (teacherRoom.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
@@ -64,12 +71,17 @@ export const PUT = withErrorHandler(async (
     return respondError('No valid fields to update', 400);
   }
 
-  const updated = await prisma.teacherRoom.update({
-    where: { id },
-    data: updateData,
-  });
-
-  return respondOk(updated);
+  try {
+    const updated = await prisma.teacherRoom.update({
+      where: { id },
+      data: updateData,
+    });
+    return respondOk(updated);
+  } catch (err) {
+    // Deleted after the read above: the same answer that read gives.
+    if (isRecordNotFound(err)) return respondError(LINK_GONE, 404, 'NOT_FOUND');
+    throw err;
+  }
 });
 
 export const PATCH = withErrorHandler(async (
@@ -112,12 +124,12 @@ export const PATCH = withErrorHandler(async (
     }
   }
 
-  if (result.reason === 'not_found') return respondError('Teacher-room not found', 404);
+  if (result.reason === 'not_found') return respondError(LINK_GONE, 404, 'NOT_FOUND');
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'in_use') {
     // 409, matching the sibling DELETE below: a conflict with current state,
     // not a malformed request.
-    return respondError(describeRoomBlockers(result.blockers), 409, 'ROOM_IN_USE');
+    return respondError(describeRoomBlockers(result.blockers), 409, ROOM_IN_USE_CODE);
   }
 
   // Exhaustiveness for the `ok: false` half: a new ArchiveRoomResult reason
@@ -137,7 +149,7 @@ export const DELETE = withErrorHandler(async (
   if (isErrorResponse(session)) return session;
 
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
-  if (!teacherRoom) return respondError('Teacher-room not found', 404);
+  if (!teacherRoom) return respondError(LINK_GONE, 404, 'NOT_FOUND');
 
   if (teacherRoom.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
@@ -152,7 +164,7 @@ export const DELETE = withErrorHandler(async (
       { teacherRoomId: id, teacherId: session.teacherId, blockers },
       'room delete refused: the room is still in use',
     );
-    return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, ROOM_IN_USE_CODE);
+    return respondError(TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE, 409, ROOM_IN_USE_CODE);
   }
 
   // THE CHECK ABOVE IS NOT REDUNDANT WITH THE CATCH BELOW, AND REMOVING IT
@@ -176,9 +188,9 @@ export const DELETE = withErrorHandler(async (
       // `warn`, not the `info` the pre-check uses, and NOT optional: reaching
       // here means the pre-check did NOT stop this delete. Either we lost the
       // race, or the pre-check's predicate has drifted from the foreign key's
-      // — and the second is otherwise completely silent, because this branch
-      // answers with the same status, body and code the pre-check does. It is
-      // also the branch that reopens the deadlock edge above.
+      // — and the second is otherwise silent to the teacher, because this
+      // branch answers with the same status and message the pre-check does.
+      // It is also the branch that reopens the deadlock edge above.
       // `err` under that key deliberately: `log.ts` asks for it so pino
       // serializes the stack, the sibling catch at `invitations/[id]:88` does
       // the same, and WHICH constraint fired is what separates the two causes
@@ -189,8 +201,11 @@ export const DELETE = withErrorHandler(async (
         { err, teacherRoomId: id, teacherId: session.teacherId },
         'room delete refused by the FK backstop: the pre-check said it was clear',
       );
-      return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, ROOM_IN_USE_RACE_CODE);
+      return respondError(TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE, 409, ROOM_IN_USE_RACE_CODE);
     }
+    // A concurrent delete of the same link committed first: the same answer
+    // the read above gives.
+    if (isRecordNotFound(err)) return respondError(LINK_GONE, 404, 'NOT_FOUND');
     throw err;
   }
 

@@ -14,11 +14,12 @@
  *     pins the product decision and is blind to the order.
  *   - non-creator on an ALREADY-SHARED room is the only case that separates
  *     them: creator-first answers NOT_ROOM_CREATOR, isPublic-first answers
- *     ALREADY_SHARED.
+ *     the unchanged 200 meant for a repeat of the creator's own share.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -97,9 +98,11 @@ describe('POST /api/rooms/[id]/publish', () => {
     expect(after.isPublic).toBe(true);
   });
 
-  it('answers 404 for a room that does not exist', async () => {
-    const res = await publish(creatorToken, '00000000-0000-0000-0000-000000000000');
-    expect(res.status).toBe(404);
+  it('answers NOT_FOUND for a room that does not exist', async () => {
+    await expectRefusal(
+      await publish(creatorToken, '00000000-0000-0000-0000-000000000000'),
+      'NOT_FOUND',
+    );
   });
 
   // PRODUCT DECISION — blind to guard order by construction.
@@ -114,21 +117,38 @@ describe('POST /api/rooms/[id]/publish', () => {
     expect(after.isPublic).toBe(false);
   });
 
-  // GUARD ORDER — the only case that can detect a swap.
-  it('answers a non-creator on an already-shared room with NOT_ROOM_CREATOR, not ALREADY_SHARED', async () => {
+  // GUARD ORDER — the only case that can detect a swap. The unchanged
+  // condition holds (the room is shared), so only the creator check running
+  // first keeps this a refusal.
+  it('answers a non-creator on an already-shared room with NOT_ROOM_CREATOR, not an unchanged answer', async () => {
     const room = await makeRoom('SharedNotYours', true);
-    const res = await publish(otherToken, room.id);
-    expect(res.status).toBe(403);
-    const json = (await res.json()) as { error: { code: string } };
-    expect(json.error.code).toBe('NOT_ROOM_CREATOR');
+    await expectRefusal(await publish(otherToken, room.id), 'NOT_ROOM_CREATOR');
   });
 
-  it('refuses the creator re-sharing an already-shared room', async () => {
+  // A retry after a lost response: the first share committed.
+  it('answers a repeat of a share as unchanged, and writes nothing', async () => {
+    const room = await makeRoom('Twice', false);
+    await expectApplied(await publish(creatorToken, room.id));
+    const shared = await prisma.room.findUniqueOrThrow({ where: { id: room.id } });
+    expect(shared.isPublic).toBe(true);
+
+    const data = (await expectUnchanged(await publish(creatorToken, room.id))) as {
+      id: string;
+      isPublic: boolean;
+    };
+    expect(data).toMatchObject({ id: room.id, isPublic: true });
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: room.id } });
+    expect(after.updatedAt.getTime()).toBe(shared.updatedAt.getTime());
+  });
+
+  it('answers the creator sharing a room that was created shared as unchanged', async () => {
     const room = await makeRoom('AlreadyShared', true);
-    const res = await publish(creatorToken, room.id);
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { code: string } };
-    expect(json.error.code).toBe('ALREADY_SHARED');
+    await expectUnchanged(await publish(creatorToken, room.id));
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: room.id } });
+    expect(after.isPublic).toBe(true);
+    expect(after.updatedAt.getTime()).toBe(room.updatedAt.getTime());
   });
 
   it('refuses when a shared room already holds that identity, and leaves both rows alone', async () => {

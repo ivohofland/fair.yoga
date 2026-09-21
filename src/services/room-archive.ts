@@ -3,6 +3,7 @@ import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
+import { isRecordNotFound } from '@/lib/api-errors';
 
 /**
  * Whether a teacher's room link may be archived (issue 76).
@@ -270,6 +271,9 @@ export async function setTeacherRoomArchived(
       ]);
       return { ok: false, reason: 'in_use', blockers: { classes, templates } };
     }
+    // The link was deleted after the read at the top: the same answer that
+    // read gives.
+    if (isRecordNotFound(e)) return { ok: false, reason: 'not_found' };
     throw e;
   }
 

@@ -21,6 +21,7 @@ import {
   isRoomDeleteBlocked,
   ROOM_DELETE_RESTRICT_FKS,
   ROOM_DELETE_BLOCKED_MESSAGE,
+  TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE,
 } from './room-deletion';
 
 const prisma = new PrismaClient();
@@ -111,13 +112,19 @@ describe('countRoomDeleteBlockers', () => {
 });
 
 describe('the shared constants', () => {
-  // Pins the exact string both routes return. The `Class` guard already
+  // Pins the exact string the room delete returns. The `Class` guard already
   // shipped this wording; a template blocker reuses it deliberately (spec
-  // §2.1), so a future edit that "improves" one door's copy has to face the
-  // fact that it changes both.
+  // §2.1).
   it('names one refusal for both blockers', () => {
     expect(ROOM_DELETE_BLOCKED_MESSAGE).toBe(
       'This room is still in use and cannot be deleted. Archive it instead.',
+    );
+  });
+
+  // The door that removes one teacher's link names its own action.
+  it('names the unlink refusal by the action it refuses', () => {
+    expect(TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE).toBe(
+      "This room is used by your classes, so it can't be unlinked. Archive it instead.",
     );
   });
 
