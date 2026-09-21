@@ -1,7 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { sameRoomIdentity, findIdentityMatch } from './room-identity';
+import { sameRoomIdentity, findIdentityMatch, normalizeRoomField } from './room-identity';
 
 const base = { address: 'Prinsengracht 42', floor: '2', roomName: 'Studio A' };
+
+describe('normalizeRoomField', () => {
+  it('trims leading and trailing whitespace and lowercases', () => {
+    expect(normalizeRoomField('  Studio A  ')).toBe('studio a');
+  });
+
+  it('handles already-clean strings', () => {
+    expect(normalizeRoomField('prinsengracht 42')).toBe('prinsengracht 42');
+  });
+
+  it('handles empty strings', () => {
+    expect(normalizeRoomField('')).toBe('');
+    expect(normalizeRoomField('   ')).toBe('');
+  });
+});
 
 describe('sameRoomIdentity', () => {
   it('matches when all three fields are identical', () => {
@@ -14,33 +29,17 @@ describe('sameRoomIdentity', () => {
     expect(sameRoomIdentity(base, { ...base, roomName: 'Studio B' })).toBe(false);
   });
 
-  // The two cases below are the point of this file.
-  //
-  // `Room_public_identity_unique` is a plain btree over three `text` columns
-  // with no `citext` and no `lower()`, so Postgres compares them byte for
-  // byte. This predicate must do the same. The realistic regression here is
-  // not a wrong boolean — it is someone adding `.toLowerCase()` or `.trim()`
-  // to make matching "more helpful". Every test above passes against that
-  // version; one of these two fails for each of them — `.toLowerCase()`
-  // leaves the whitespace test green, `.trim()` leaves the case test green.
-  //
-  // A predicate STRICTER than the index refuses a share Postgres would have
-  // accepted, and does it invisibly: the teacher is told "already shared"
-  // about a room that is neither theirs nor the same. A predicate LOOSER than
-  // the index merely lets the write reach the 409 that already exists. Only
-  // the second is recoverable, so this one copies the index exactly.
-  //
-  // Duplicates that differ only by case therefore remain possible. That is
-  // pre-existing (#196 chose this key), it is tracked as #260, and the
-  // mitigation is the neighbourhood search putting both in front of a human.
-  it('treats case variants as different rooms, because the index does', () => {
-    expect(sameRoomIdentity(base, { ...base, address: 'prinsengracht 42' })).toBe(false);
-    expect(sameRoomIdentity(base, { ...base, roomName: 'studio a' })).toBe(false);
+  // `Room_public_identity_unique` and `Room_private_identity_unique` are
+  // expression indexes over `lower(trim(...))` (#260). This predicate mirrors
+  // them by normalizing each field with `normalizeRoomField`.
+  it('treats case variants as the same room, matching the index', () => {
+    expect(sameRoomIdentity(base, { ...base, address: 'prinsengracht 42' })).toBe(true);
+    expect(sameRoomIdentity(base, { ...base, roomName: 'studio a' })).toBe(true);
   });
 
-  it('treats whitespace variants as different rooms, because the index does', () => {
-    expect(sameRoomIdentity(base, { ...base, address: 'Prinsengracht 42 ' })).toBe(false);
-    expect(sameRoomIdentity(base, { ...base, floor: ' 2' })).toBe(false);
+  it('treats whitespace variants as the same room, matching the index', () => {
+    expect(sameRoomIdentity(base, { ...base, address: 'Prinsengracht 42 ' })).toBe(true);
+    expect(sameRoomIdentity(base, { ...base, floor: ' 2' })).toBe(true);
   });
 });
 

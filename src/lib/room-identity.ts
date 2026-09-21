@@ -2,23 +2,17 @@
  * The identity a shared room occupies in the commons.
  *
  * This mirrors `Room_public_identity_unique`, declared in
- * `prisma/migrations/20260811202634_teacher_slot_unique_indexes/migration.sql:33`:
+ * `prisma/migrations/20260921183434_room_identity_case_whitespace_indexes/migration.sql`:
  *
  *     CREATE UNIQUE INDEX "Room_public_identity_unique"
- *       ON "Room" ("address", "floor", "roomName") WHERE "isPublic" = true;
+ *       ON "Room" (lower(trim("address")), lower(trim("floor")), lower(trim("roomName")))
+ *       WHERE "isPublic" = true;
  *
- * Three raw `text` columns — no `citext`, no `lower()` — so the comparison
- * below is byte-exact on purpose. Do not add `.toLowerCase()` or `.trim()`
- * here without changing the index in the same commit: a predicate stricter
- * than the index refuses shares the database would have accepted. The
- * teacher is not left in silence — they are told "already shared" about a
- * room that is neither theirs nor the same, which is worse: what is
- * invisible is that the message is wrong.
- *
- * Consequence, tracked as #260: two rooms differing only by case or trailing
- * whitespace are distinct to both this predicate and the index. The
- * neighbourhood search in the sharing flow surfaces both to a human, which is
- * the mitigation that flow relies on.
+ * Both this predicate and the index normalize all three fields via
+ * `lower(trim(...))` (#260), so two rooms differing only by case or whitespace
+ * are recognized as the same room by both layers. If either changes without the
+ * other, the agreement test in `tests/integration/room-identity-index.test.ts`
+ * fails.
  *
  * Import-free by requirement. `share-room-button.tsx` is a client component
  * and value-imports this; a transitive edge to `@/lib/log` (pino, server-only)
@@ -39,8 +33,23 @@ export interface RoomIdentity {
   roomName: string;
 }
 
+/**
+ * Canonical normalisation for room identity fields (#260).
+ *
+ * Trims leading/trailing whitespace and folds case to lowercase, matching
+ * `Room_public_identity_unique` and `Room_private_identity_unique`
+ * in PostgreSQL.
+ */
+export function normalizeRoomField(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export function sameRoomIdentity(a: RoomIdentity, b: RoomIdentity): boolean {
-  return a.address === b.address && a.floor === b.floor && a.roomName === b.roomName;
+  return (
+    normalizeRoomField(a.address) === normalizeRoomField(b.address) &&
+    normalizeRoomField(a.floor) === normalizeRoomField(b.floor) &&
+    normalizeRoomField(a.roomName) === normalizeRoomField(b.roomName)
+  );
 }
 
 export function findIdentityMatch<T extends RoomIdentity>(
