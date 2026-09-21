@@ -8,10 +8,21 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import type { CodeWithStatus } from '@/lib/api-error-codes';
 import { addToWaitlist, WaitlistJoinError } from '@/services/waitlist';
 import { createWaitlistSchema } from '@/lib/schemas';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { CLASS_GONE } from '../classes/[id]/shared';
+
+/** The code each join refusal is sent with. The message is the service's own. */
+const JOIN_REFUSAL_CODE = {
+  class_cancelled: 'CLASS_CANCELLED',
+  class_not_open: 'CLASS_NOT_BOOKABLE',
+  class_not_full: 'CLASS_NOT_FULL',
+  already_registered: 'ALREADY_REGISTERED',
+  student_erased: 'STUDENT_ERASED',
+} as const satisfies Record<WaitlistJoinError['reason'], CodeWithStatus<409>>;
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireStudent(request);
@@ -24,7 +35,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     where: { id: parsed.data.classId },
     select: { id: true },
   });
-  if (!cls) return respondError('Class not found', 404);
+  if (!cls) return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
 
   try {
     const entry = await addToWaitlist(prisma, parsed.data.classId, session.studentId);
@@ -61,7 +72,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondOk(entry, 201);
   } catch (err) {
     if (err instanceof WaitlistJoinError) {
-      return respondError(err.message, 409);
+      return respondError(err.message, 409, JOIN_REFUSAL_CODE[err.reason]);
     }
     throw err;
   }

@@ -166,6 +166,23 @@ describe('BookingFlow', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('This class is full.');
       expect(screen.queryByText("You're in")).not.toBeInTheDocument();
     });
+
+    it('shows a waitlist refusal in the server’s words', async () => {
+      stubReply(409, {
+        error: {
+          message: 'The class still has open spots — book directly instead.',
+          code: 'CLASS_NOT_FULL',
+        },
+      });
+      renderFlow({ currentTier: 3, isFull: true });
+
+      fireEvent.click(screen.getByRole('button', { name: /join the waitlist/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'The class still has open spots — book directly instead.',
+      );
+      expect(screen.queryByText("You're on the waitlist")).not.toBeInTheDocument();
+    });
   });
 
   // #389. product-concept.md's booking-flow nudge — friendly, never blocking.

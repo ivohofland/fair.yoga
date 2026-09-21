@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -17,6 +19,11 @@ let roomId: string;
 let teacherRoomId: string;
 let farFutureClassId: string;
 let freedSpotClassId: string;
+let rivalId: string;
+let rivalToken: string;
+let frozenClassId: string;
+let cancelledClassId: string;
+let draftClassId: string;
 
 // Shared anchor for freedSpotClassId (below) and claimClassId (in the
 // nested describe further down) — see the comment where each is derived
@@ -153,7 +160,7 @@ beforeAll(async () => {
       classType: 'Waitlist API Freed Spot',
       date: freedSpotDate,
       startTime: hhmmToTime(freedSpotStartTime),
-      // ONE MINUTE (#327). The three clock-derived fixtures in this file sit
+      // ONE MINUTE (#327). The claim-window fixtures in this file sit
         // ONE minute apart by construction — their offsets are chosen to land
         // inside the claim window — and
         // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP where the key
@@ -172,10 +179,96 @@ beforeAll(async () => {
   await prisma.waitlistEntry.create({
     data: { classId: freedSpotClassId, studentId, position: 1, status: 'waiting' },
   });
+
+  // A second student with a live session, for claims that must come from
+  // someone other than the claimant above. No entry: a test that needs one
+  // writes it.
+  const rival = await prisma.student.create({
+    data: {
+      firstName: 'Waitlist',
+      lastName: 'Rival',
+      email: `waitlistapi-rival-${suffix}@test.local`,
+      claimedAt: new Date(),
+      account: { create: { email: `waitlistapi-rival-${suffix}@test.local` } },
+      incomeTier: 3,
+    },
+  });
+  rivalId = rival.id;
+  rivalToken = await seedSession(prisma, rival.accountId!);
+
+  // Past its cancellation deadline from the start: five hours out against a
+  // six-hour deadline. `HOURS_1` keeps the auto-cancel sweep off it for four
+  // hours, and it starts long after the suite ends. One minute long, for the
+  // reason the freed-spot fixture above gives.
+  const frozenStart = new Date(baseNow.getTime() + 5 * 60 * 60 * 1000);
+  const frozenClass = await createClassFixture(prisma, {
+    teacherId,
+    teacherRoomId,
+    classType: 'Waitlist API Frozen',
+    date: new Date(
+      Date.UTC(frozenStart.getUTCFullYear(), frozenStart.getUTCMonth(), frozenStart.getUTCDate()),
+    ),
+    startTime: hhmmToTime(
+      `${String(frozenStart.getUTCHours()).padStart(2, '0')}:${String(
+        frozenStart.getUTCMinutes(),
+      ).padStart(2, '0')}`,
+    ),
+    durationMinutes: 1,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 1,
+    maxStudents: 1,
+    cancelDeadline: 'HOURS_6',
+    autoCancelCheck: 'HOURS_1',
+    status: 'open',
+  });
+  frozenClassId = frozenClass.id;
+
+  // Cancelled, with the claimant holding a seat in it.
+  const cancelledClass = await createClassFixture(prisma, {
+    teacherId,
+    teacherRoomId,
+    classType: 'Waitlist API Cancelled',
+    date: new Date('2099-06-04'),
+    startTime: hhmmToTime('09:00'),
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 1,
+    maxStudents: 2,
+    status: 'open',
+  });
+  cancelledClassId = cancelledClass.id;
+  await prisma.registration.create({
+    data: { classId: cancelledClassId, studentId, status: 'registered', tierAtBooking: 3 },
+  });
+  await prisma.calendarEntry.update({
+    where: { id: cancelledClass.calendarEntry.id },
+    data: { cancelledAt: new Date() },
+  });
+
+  // Not yet published.
+  const draftClass = await createClassFixture(prisma, {
+    teacherId,
+    teacherRoomId,
+    classType: 'Waitlist API Draft',
+    date: new Date('2099-06-05'),
+    startTime: hhmmToTime('09:00'),
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 1,
+    maxStudents: 2,
+    status: 'draft',
+  });
+  draftClassId = draftClass.id;
 });
 
 afterAll(async () => {
-  const classIds = [farFutureClassId, freedSpotClassId];
+  const classIds = [farFutureClassId, freedSpotClassId, frozenClassId, cancelledClassId, draftClassId];
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
@@ -195,6 +288,15 @@ afterAll(async () => {
   await prisma.session.deleteMany({ where: { accountId: studentAccount.accountId! } });
   await prisma.student.delete({ where: { id: studentId } });
   await prisma.account.deleteMany({ where: { email: studentAccount.email } });
+
+  const rivalAccount = await prisma.student.findUniqueOrThrow({
+    where: { id: rivalId },
+    select: { accountId: true, email: true },
+  });
+  await prisma.notification.deleteMany({ where: { recipientId: rivalId } });
+  await prisma.session.deleteMany({ where: { accountId: rivalAccount.accountId! } });
+  await prisma.student.delete({ where: { id: rivalId } });
+  await prisma.account.deleteMany({ where: { email: rivalAccount.email } });
 
   const teacherAccount = await prisma.teacher.findUniqueOrThrow({
     where: { id: teacherId },
@@ -228,15 +330,11 @@ describe('POST /api/waitlist/claim', () => {
     expect(res.status).toBe(400);
   });
 
-  it('409s a claim outside the first-come-first-claimed window', async () => {
+  it('refuses a claim outside the first-come-first-claimed window', async () => {
     const res = await claim(studentToken, { classId: farFutureClassId });
-    expect(res.status).toBe(409);
 
-    // Pin WHICH 409 fired — claimSpot has five distinct reasons; matching
-    // only the status would also pass for the wrong branch. Substring is
-    // verbatim from claimSpot's `wrong_window` throw in src/services/waitlist.ts.
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toMatch(/final hour|window/i);
+    // The code names the branch; the status alone would pass for any of them.
+    await expectRefusal(res, 'CLAIM_NOT_OPEN');
 
     // No state change: the entry keeps waiting, no registration is created.
     const entry = await prisma.waitlistEntry.findUniqueOrThrow({
@@ -245,6 +343,16 @@ describe('POST /api/waitlist/claim', () => {
     expect(entry.status).toBe('waiting');
     expect(
       await prisma.registration.count({ where: { classId: farFutureClassId, studentId } }),
+    ).toBe(0);
+  });
+
+  it('refuses a claim from a student who is not on the waitlist', async () => {
+    // Before the claim below takes the spot: this case needs it free.
+    const res = await claim(rivalToken, { classId: freedSpotClassId });
+
+    await expectRefusal(res, 'NOT_ON_WAITLIST');
+    expect(
+      await prisma.registration.count({ where: { classId: freedSpotClassId, studentId: rivalId } }),
     ).toBe(0);
   });
 
@@ -265,16 +373,78 @@ describe('POST /api/waitlist/claim', () => {
     expect(registration.id).toBe(json.data.registrationId);
   });
 
-  it('409s a second claim on the same now-filled spot (class_full)', async () => {
-    // freedSpotClassId now holds 1 active registration against
-    // maxStudents: 1 (from the 201 test above) and is still inside the
-    // claim window, so this repeat claim hits claimSpot's `class_full`
-    // branch — the entire point of first-come-first-claimed.
-    const res = await claim(studentToken, { classId: freedSpotClassId });
-    expect(res.status).toBe(409);
+  it('answers the claimant’s own second claim as unchanged, and writes nothing', async () => {
+    // freedSpotClassId holds this student's registration from the 201 test
+    // above and is still inside the claim window: the seat this retry asks
+    // for is already theirs.
+    const registration = await prisma.registration.findUniqueOrThrow({
+      where: { classId_studentId: { classId: freedSpotClassId, studentId } },
+    });
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId: freedSpotClassId, studentId } },
+    });
 
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toMatch(/already been claimed/i);
+    const res = await claim(studentToken, { classId: freedSpotClassId });
+
+    expect(await expectUnchanged(res)).toEqual({ classId: freedSpotClassId });
+    const registrationAfter = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    expect(registrationAfter.updatedAt).toEqual(registration.updatedAt);
+    const entryAfter = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(entryAfter.updatedAt).toEqual(entry.updatedAt);
+    // The first claim's "Spot claimed", and no second one. Typed, because the
+    // app's reconciliation sweep may have broadcast `spot_available` to this
+    // student while the spot stood free.
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: freedSpotClassId, recipientId: studentId, type: 'booking_confirmed' },
+      }),
+    ).toBe(1);
+  });
+
+  it('tells another waiting student the spot is taken', async () => {
+    // The claimant's entry is `promoted` now, so position 1 is free.
+    await prisma.waitlistEntry.create({
+      data: { classId: freedSpotClassId, studentId: rivalId, position: 1, status: 'waiting' },
+    });
+
+    const res = await claim(rivalToken, { classId: freedSpotClassId });
+
+    await expectRefusal(res, 'SPOT_TAKEN');
+    const rivalEntry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId: freedSpotClassId, studentId: rivalId } },
+    });
+    expect(rivalEntry.status).toBe('waiting');
+    expect(
+      await prisma.registration.count({ where: { classId: freedSpotClassId, studentId: rivalId } }),
+    ).toBe(0);
+  });
+
+  it('refuses a claim once the cancellation deadline has passed', async () => {
+    await expectRefusal(await claim(studentToken, { classId: frozenClassId }), 'WAITLIST_FROZEN');
+  });
+
+  /**
+   * The claimant holds a seat in this class, so the booking check would find
+   * it. The cancellation is checked first.
+   */
+  it('tells a claimant holding a seat in a cancelled class that it was cancelled', async () => {
+    await expectRefusal(
+      await claim(studentToken, { classId: cancelledClassId }),
+      'CLASS_CANCELLED',
+    );
+  });
+
+  it('refuses a claim on a class that is not taking bookings', async () => {
+    await expectRefusal(await claim(studentToken, { classId: draftClassId }), 'CLASS_NOT_BOOKABLE');
+    expect(
+      await prisma.registration.count({ where: { classId: draftClassId, studentId } }),
+    ).toBe(0);
+  });
+
+  it('answers a claim on a class that does not exist with its code', async () => {
+    await expectRefusal(await claim(studentToken, { classId: randomUUID() }), 'NOT_FOUND');
   });
 });
 
@@ -391,7 +561,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         classType: 'Waitlist API Roster Claim',
         date: claimDate,
         startTime: hhmmToTime(claimStartTime),
-        // ONE MINUTE (#327). The three clock-derived fixtures in this file sit
+        // ONE MINUTE (#327). The claim-window fixtures in this file sit
         // ONE minute apart by construction — their offsets are chosen to land
         // inside the claim window — and
         // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP where the key
@@ -638,7 +808,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         classType: 'Waitlist API Lock Claim',
         date: lockClaimDate,
         startTime: hhmmToTime(lockClaimStartTime),
-        // ONE MINUTE (#327). The three clock-derived fixtures in this file sit
+        // ONE MINUTE (#327). The claim-window fixtures in this file sit
         // ONE minute apart by construction — their offsets are chosen to land
         // inside the claim window — and
         // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP where the key
@@ -751,4 +921,125 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
       }),
     ).toBe(0);
   }, 20_000);
+});
+
+describe('POST /api/waitlist — each refusal carries its code', () => {
+  let joinerId: string;
+  let joinerToken: string;
+  let fillerId: string;
+  let cancelledJoinClassId: string;
+  let draftJoinClassId: string;
+  let notFullJoinClassId: string;
+  let heldJoinClassId: string;
+
+  const join = (token: string, body: unknown) =>
+    fetch(`${BASE_URL}/api/waitlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify(body),
+    });
+
+  /** A far-future class on its own date, so no two share a slot. */
+  async function joinClass(date: string, maxStudents: number, status: 'open' | 'draft') {
+    return createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Waitlist API Join Refusal',
+      date: new Date(date),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents,
+      status,
+    });
+  }
+
+  beforeAll(async () => {
+    const joiner = await prisma.student.create({
+      data: {
+        firstName: 'Join',
+        lastName: 'Refused',
+        email: `waitlistapi-join-refused-${suffix}@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `waitlistapi-join-refused-${suffix}@test.local` } },
+        incomeTier: 3,
+      },
+    });
+    joinerId = joiner.id;
+    joinerToken = await seedSession(prisma, joiner.accountId!);
+
+    const filler = await prisma.student.create({
+      data: {
+        firstName: 'Join',
+        lastName: 'Filler',
+        email: `waitlistapi-join-filler-${suffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    fillerId = filler.id;
+
+    // Full, then cancelled.
+    const cancelled = await joinClass('2099-06-10', 1, 'open');
+    cancelledJoinClassId = cancelled.id;
+    await prisma.registration.create({
+      data: { classId: cancelledJoinClassId, studentId: fillerId, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.calendarEntry.update({
+      where: { id: cancelled.calendarEntry.id },
+      data: { cancelledAt: new Date() },
+    });
+
+    draftJoinClassId = (await joinClass('2099-06-11', 1, 'draft')).id;
+    notFullJoinClassId = (await joinClass('2099-06-12', 5, 'open')).id;
+
+    // Full, and the seat is the joiner's own.
+    heldJoinClassId = (await joinClass('2099-06-13', 1, 'open')).id;
+    await prisma.registration.create({
+      data: { classId: heldJoinClassId, studentId: joinerId, status: 'registered', tierAtBooking: 3 },
+    });
+  });
+
+  afterAll(async () => {
+    const classIds = [cancelledJoinClassId, draftJoinClassId, notFullJoinClassId, heldJoinClassId];
+    const studentIds = [joinerId, fillerId];
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
+
+    const joinerAccount = await prisma.student.findUniqueOrThrow({
+      where: { id: joinerId },
+      select: { accountId: true, email: true },
+    });
+    await prisma.session.deleteMany({ where: { accountId: joinerAccount.accountId! } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.account.deleteMany({ where: { email: joinerAccount.email } });
+  });
+
+  async function joinedEntries(classId: string): Promise<number> {
+    return prisma.waitlistEntry.count({ where: { classId, studentId: joinerId } });
+  }
+
+  it('refuses a cancelled class', async () => {
+    await expectRefusal(await join(joinerToken, { classId: cancelledJoinClassId }), 'CLASS_CANCELLED');
+    expect(await joinedEntries(cancelledJoinClassId)).toBe(0);
+  });
+
+  it('refuses a class that is not taking sign-ups', async () => {
+    await expectRefusal(await join(joinerToken, { classId: draftJoinClassId }), 'CLASS_NOT_BOOKABLE');
+    expect(await joinedEntries(draftJoinClassId)).toBe(0);
+  });
+
+  it('refuses a class with a free seat', async () => {
+    await expectRefusal(await join(joinerToken, { classId: notFullJoinClassId }), 'CLASS_NOT_FULL');
+    expect(await joinedEntries(notFullJoinClassId)).toBe(0);
+  });
+
+  it('refuses a student who already holds a seat', async () => {
+    await expectRefusal(await join(joinerToken, { classId: heldJoinClassId }), 'ALREADY_REGISTERED');
+    expect(await joinedEntries(heldJoinClassId)).toBe(0);
+  });
 });
