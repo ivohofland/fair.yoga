@@ -31,45 +31,11 @@ import { isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
-import { createClassFixture } from '../../tests/class-fixtures';
+import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
-
-/**
- * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
- * the next hour rather than ever emitting an invalid minute like `'09:60'`.
- * `CalendarEntry.startTime` is `@db.Time` and would refuse such a value
- * outright at the DB, which is a less useful failure here than this guard's
- * message naming the fixture counter that produced it. A copy of
- * `class-template-lifecycle.test.ts`'s own `slotTime`, not an import from
- * it — lock-order siblings duplicate fixture helpers rather than share them
- * (`docs/superpowers/specs/2026-09-05-lock-contention-extraction-design.md`
- * §2).
- */
-function slotTime(totalMinutesFrom9am: number): string {
-  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
-  const minute = totalMinutesFrom9am % 60;
-  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  // Postgres's `time` accepts up to '24:00:00' and nothing later, but the
-  // shape check below can't see that: `\d{2}` matches '25' and '99' exactly
-  // as readily as '09'. Checked here instead, naming the `totalMinutesFrom9am`
-  // this was called with — the caller derives that value from its own
-  // counter, so the number here is what lets the next person find which call
-  // ran the block out of slots.
-  if (hour > 24 || (hour === 24 && minute !== 0)) {
-    throw new Error(
-      `slotTime(${totalMinutesFrom9am}) would produce '${startTime}', past ` +
-        `'24:00:00' — the last time-of-day value Postgres's \`time\` accepts. ` +
-        'The caller has run its counter out of slots in this block.',
-    );
-  }
-  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
-    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
-  }
-  return startTime;
-}
 
 // Hoisted to module scope, like `class-template-lifecycle.test.ts`'s own
 // `seedTeacher`: a pure function of `label` (plus the module-scope

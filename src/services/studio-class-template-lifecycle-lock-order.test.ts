@@ -69,7 +69,7 @@ import {
 } from './studio-class-template-lifecycle';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { createStudioClassFixture } from '../../tests/class-fixtures';
+import { createStudioClassFixture, slotTime } from '../../tests/class-fixtures';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 const prisma = new PrismaClient();
@@ -82,34 +82,6 @@ const prisma = new PrismaClient();
 // the namespaces disjoint by construction rather than by luck, and every
 // `afterAll` below sweeps its own describe's teacher only.
 const uniqueSuffix = `studiotpllock-${Date.now()}`;
-
-/**
- * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
- * the next hour rather than emitting an invalid minute like `'09:60'` once a
- * block's counter crosses 30. `totalMinutes % 60` is always 0-59 by
- * construction, so the shape check is a cheap self-proof of that invariant
- * rather than a defence this formula can fail. The HOUR check is not:
- * Postgres's `time` accepts nothing past `'24:00:00'`, and `/\d{2}/` matches
- * `'25'` and `'99'` as readily as `'09'`. It throws naming the argument it
- * was called with, because the caller derives that from its own counter and
- * the number is what lets the next person find which block ran out of slots.
- */
-function slotTime(totalMinutesFrom9am: number): string {
-  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
-  const minute = totalMinutesFrom9am % 60;
-  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  if (hour > 24 || (hour === 24 && minute !== 0)) {
-    throw new Error(
-      `slotTime(${totalMinutesFrom9am}) would produce '${startTime}', past ` +
-        `'24:00:00' — the last time-of-day value Postgres's \`time\` accepts. ` +
-        'The caller has run its counter out of slots in this block.',
-    );
-  }
-  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
-    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
-  }
-  return startTime;
-}
 
 /**
  * One teacher per describe below, each under this file's own suffix.

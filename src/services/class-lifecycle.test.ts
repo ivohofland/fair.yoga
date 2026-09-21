@@ -17,7 +17,7 @@ import {
   UpdateClassInvariantError,
   type EconomicField,
 } from './class-lifecycle';
-import { createClassFixture, slotDate } from '../../tests/class-fixtures';
+import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtures';
 
 // We use string literals matching the Prisma ClassStatus enum values.
 // This keeps tests independent of the Prisma client being generated.
@@ -301,40 +301,6 @@ describe('ECONOMIC_FIELDS', () => {
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
-
-/**
- * Turns total-minutes-from-9am into a valid `HH:MM`, wrapping into the next
- * hour rather than ever emitting an invalid minute like `'09:60'` — a raw
- * `HH:${n}` literal would build exactly that, and
- * `CalendarEntry.startTime` is `@db.Time` and would refuse the row outright at
- * the DB, which is a less useful failure than this guard's message naming the
- * value that produced it. Mirrors `class-template-lifecycle.test.ts`'s
- * `slotTime`.
- *
- * Called with a CONSTANT, never a running counter: since #327 the slot
- * constraint is a RANGE overlap, so two 60-minute fixtures a minute apart
- * collide where the exact-start key it replaced let them through. What varies
- * per call is the DATE instead — `slotDate` (`tests/class-fixtures.ts`), a day
- * per call, which is disjoint whatever the duration.
- *
- * Nothing here needs the call sites to agree on an hour, and no roster of them
- * is kept: every `(DB)` block below stands up its OWN teacher in its
- * `beforeAll`, and `CalendarEntry_teacher_slot_excl` is scoped per teacher
- * (`"teacherId" WITH =`), so two blocks cannot collide with each other however
- * their hours line up. Within a block it is `slotDate` that keeps the fixtures
- * apart. The current callers are whatever this returns:
- *
- *   grep -n "slotTime(" src/services/class-lifecycle.test.ts
- */
-function slotTime(totalMinutesFrom9am: number): string {
-  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
-  const minute = totalMinutesFrom9am % 60;
-  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
-    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
-  }
-  return startTime;
-}
 
 describe('transitionClass (DB)', () => {
   let teacherId: string;

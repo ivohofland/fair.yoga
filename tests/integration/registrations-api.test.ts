@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
-import { createClassFixture } from '../class-fixtures';
+import { createClassFixture, slotTime } from '../class-fixtures';
 import { formatDayHeader } from '@/lib/format';
 import { isEssential } from '@/services/notification-policy';
 
@@ -24,25 +24,6 @@ let roomId: string;
 const studentIds: string[] = [];
 let unlinkedStudentId: string;
 const classIds: string[] = [];
-
-/**
- * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
- * the next hour rather than ever emitting an invalid minute like `'09:60'`
- * once the counter below crosses 60 — a raw `09:${counter}` literal would
- * build exactly that. `CalendarEntry.startTime` is `@db.Time` and would refuse
- * the row outright at the DB, which is a less useful failure here than this
- * guard's message naming the counter that produced it.
- * Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
- */
-function slotTime(totalMinutesFrom9am: number): string {
-  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
-  const minute = totalMinutesFrom9am % 60;
-  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
-    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
-  }
-  return startTime;
-}
 
 // Every class this helper creates shares ownerId, the same 2099-06-01 date,
 // and `status: 'open'` — none of that is what any test here cares about,

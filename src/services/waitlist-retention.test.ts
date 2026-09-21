@@ -11,7 +11,7 @@ import {
   WAITLIST_RETENTION_DAYS,
 } from './waitlist-retention';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { createClassFixture } from '../../tests/class-fixtures';
+import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
@@ -86,21 +86,8 @@ const classIds: string[] = [];
  * on RANGE OVERLAP per teacher, and several classes here share a date — which
  * is why every fixture below is `durationMinutes: 1`, so a minute of
  * separation is genuinely disjoint.
- * Routed through a wrapping helper rather than a raw `09:${counter}`
- * literal, which would emit `09:60` once the counter crosses 60 — the same
- * trap `class-terminal-status.test.ts`'s `slotTime` documents.
  */
 let slotCounter = 0;
-function slotTime(): string {
-  slotCounter += 1;
-  const hour = 9 + Math.floor(slotCounter / 60);
-  const minute = slotCounter % 60;
-  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
-    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
-  }
-  return startTime;
-}
 
 /**
  * One class in a given status on a given date, with one waitlist entry on it.
@@ -127,7 +114,7 @@ async function makeClassWithEntry(opts: {
       teacherRoomId,
       classType: 'Retention Test',
       date: opts.date,
-      startTime: hhmmToTime(slotTime()),
+      startTime: hhmmToTime(slotTime(slotCounter++)),
       // ONE MINUTE (#327): `slotTime` spaces fixtures a minute apart, and the
       // slot constraint is a range overlap now. This sweep reads `date`, never
       // the duration.
