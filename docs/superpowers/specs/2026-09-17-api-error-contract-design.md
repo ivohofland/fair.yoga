@@ -511,6 +511,7 @@ found` and `That class is already gone.` keep their wording and gain
 | student-profile ×3 | `Account already has a student profile` | → unchanged | — |
 | teacher-profile (pre-check, session collision) | `Account already has a teacher profile` | identical → unchanged · otherwise: You already have a teacher page. Edit it in Settings. | 409 · `ALREADY_TEACHER` |
 | teacher-profile (ticket-path `email` collision) | `Account already has a teacher profile` · `ALREADY_TEACHER` | This email now has an account. Please sign in and add a teacher profile. (student-profile's wording) | 409 · `ACCOUNT_EXISTS` |
+| `profile-setup-form.tsx` (ticket mode, `ACCOUNT_EXISTS` panel; client-only, not a server string) | "You already teach here / There is already a teacher page for {email}. Sign in and you are back where you left off." | You already have an account / There is already an account for {email}. Sign in to add a teacher page to it. — "Sign in" links to `/login?redirect=/signup/profile` | — |
 | teacher-profile, `PUT /api/teachers/[id]` | `Page address already in use` / `Page slug already in use` | one message, in the settings form's own label ("Page slug"): That page slug is already taken. The signup form shows its own sentence and keeps it. | 409 · `SLUG_TAKEN` |
 | `PUT /api/teachers/[id]` | a concurrent slug change reaches the P2002 fallback (no catch) | the same catch the pre-check's code uses | 409 · `SLUG_TAKEN` |
 | respond | `Invitation not found` | This invitation no longer exists. | 404 · `NOT_FOUND` |
@@ -539,9 +540,13 @@ Each is a defect on a row or client this branch already touches.
    already teach here / There is already a teacher page for {email}" — for an
    account that may be student-only. Now `ACCOUNT_EXISTS`, as student-profile
    already does. Untested today; gets a test. `profile-setup-form.tsx`'s
-   ticket-mode "You already teach here" panel becomes the `ACCOUNT_EXISTS`
-   panel — its sign-in content already fits that meaning — and session mode
-   keeps `AlreadyTeachingPanel` for `ALREADY_TEACHER`.
+   ticket-mode "You already teach here" panel is retired: ticket mode gains a
+   new `account-exists` state and panel, with its own copy (§6.2) and a
+   `?redirect=` back to `/signup/profile` that the old panel's plain `/login`
+   link lacked — `login/page.tsx` already reads and validates that param.
+   Session mode keeps `AlreadyTeachingPanel` for `ALREADY_TEACHER`, which is
+   now the only status that renders it, since the ticket path can no longer
+   send that code.
 3. **`SLUG_TAKEN`'s two messages** become one; the comment at
    `teachers-api.test.ts:131-133` claiming `profile-form` needs the code (it
    never reads it) is corrected; `PUT /api/teachers/[id]` gains the slug catch

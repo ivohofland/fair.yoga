@@ -77,11 +77,12 @@ describe('POST /api/account/student-profile — a session cookie outranks a tick
   });
 });
 
-describe('POST /api/account/student-profile — the declined ticket cookie on a refusal', () => {
+describe('POST /api/account/student-profile — the declined ticket cookie on an unchanged join', () => {
   it('clears the declined ticket cookie on an unchanged join, as the success paths do', async () => {
-    // The cookie is dead weight either way, but it outlives the refusal by up
-    // to an hour — and every OTHER exit on this route clears it, so a reader
-    // cannot tell from the code which exits were meant to and which forgot.
+    // The cookie is dead weight either way, but it outlives this response by
+    // up to an hour — and every OTHER exit on this route clears it, so a
+    // reader cannot tell from the code which exits were meant to and which
+    // forgot.
     const email = `profile-already-student-${suffix}@test.local`;
     const student = await prisma.student.create({
       data: {
