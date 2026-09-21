@@ -309,12 +309,13 @@ model TeacherBlock {
 // ============================================================================
 
 /// Carries two partial unique indexes Prisma cannot express and therefore
-/// cannot show: `Room_public_identity_unique` on (address, floor, roomName)
+/// cannot show: `Room_public_identity_unique` on
+/// (lower(trim(address)), lower(trim(floor)), lower(trim(roomName)))
 /// WHERE isPublic = true, and `Room_private_identity_unique` on
-/// (createdById, address, floor, roomName) WHERE isPublic = false (#196).
-/// Both are invisible to `migrate diff`, so neither will appear as drift and
-/// neither will be dropped — and equally neither will appear in this file
-/// unless someone keeps this comment true.
+/// (createdById, lower(trim(address)), lower(trim(floor)), lower(trim(roomName)))
+/// WHERE isPublic = false (#196, #260). Both are invisible to `migrate diff`,
+/// so neither will appear as drift and neither will be dropped — and equally
+/// neither will appear in this file unless someone keeps this comment true.
 model Room {
   id          String   @id @default(uuid())
   venueName   String
