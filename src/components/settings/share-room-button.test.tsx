@@ -197,9 +197,9 @@ describe('ShareRoomButton', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  // Both mean the page describes a room that no longer looks the way it was
-  // rendered: the reason is shown, and the page refreshes so the control stops
-  // offering an action that cannot succeed.
+  // NOT_ROOM_CREATOR and NOT_FOUND mean the page describes a room that no
+  // longer looks the way it was rendered: the reason is shown, and the page
+  // refreshes so the control stops offering an action that cannot succeed.
   it.each([
     ['NOT_ROOM_CREATOR', 'Only the room creator can share this room'],
     ['NOT_FOUND', 'This room no longer exists.'],
