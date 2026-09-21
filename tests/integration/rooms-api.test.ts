@@ -26,6 +26,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectRefusal } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -620,7 +621,7 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(await prisma.teacherRoom.count({ where: { roomId: deleteWithTemplateRoomId } })).toBe(1);
   });
 
-  it('the creator deletes a private, class-free room -> 200, room and teacher-rooms gone', async () => {
+  it('the creator deletes a private, class-free room -> 200, room and teacher-rooms gone; a second delete -> NOT_FOUND', async () => {
     // Premise: the room really does carry a teacher-room, or the cleanup
     // assertion below would pass vacuously.
     expect(await prisma.teacherRoom.count({ where: { roomId: deleteEmptyRoomId } })).toBe(1);
@@ -637,6 +638,14 @@ describe('DELETE /api/rooms/[id]', () => {
     // not that specific line of the handler.
     expect(await prisma.room.count({ where: { id: deleteEmptyRoomId } })).toBe(0);
     expect(await prisma.teacherRoom.count({ where: { roomId: deleteEmptyRoomId } })).toBe(0);
+
+    // A retry after a lost response: the room is already gone, which the
+    // Delete button reads as done.
+    await expectRefusal(await del(creatorToken, deleteEmptyRoomId), 'NOT_FOUND');
+  });
+
+  it('answers NOT_FOUND for a room that does not exist', async () => {
+    await expectRefusal(await del(creatorToken, '00000000-0000-0000-0000-000000000000'), 'NOT_FOUND');
   });
 });
 

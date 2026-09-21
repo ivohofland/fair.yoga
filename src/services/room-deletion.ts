@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { isRestrictViolationOn } from '@/lib/api-errors';
+import type { ApiErrorCode } from '@/lib/api-error-codes';
 
 /**
  * What blocks the HARD deletion of a room, and what to say when it does
@@ -82,6 +83,14 @@ export const ROOM_DELETE_BLOCKED_MESSAGE =
   'This room is still in use and cannot be deleted. Archive it instead.';
 
 /**
+ * The same refusal at the door that removes one teacher's link rather than
+ * the room. That door's action is unlinking, so the sentence names it; the
+ * reasoning above about naming neither blocker applies unchanged.
+ */
+export const TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE =
+  "This room is used by your classes, so it can't be unlinked. Archive it instead.";
+
+/**
  * True when a room-delete statement was refused by one of the foreign keys
  * above — the check-to-delete race, or a pre-check that has stopped working.
  *
@@ -116,8 +125,8 @@ export function isRoomDeleteBlocked(error: unknown): boolean {
  * `ROOM_IN_USE_RACE` also tells an operator which of the two causes fired,
  * matching the `warn` line beside it.
  */
-export const ROOM_IN_USE_CODE = 'ROOM_IN_USE';
-export const ROOM_IN_USE_RACE_CODE = 'ROOM_IN_USE_RACE';
+export const ROOM_IN_USE_CODE = 'ROOM_IN_USE' satisfies ApiErrorCode;
+export const ROOM_IN_USE_RACE_CODE = 'ROOM_IN_USE_RACE' satisfies ApiErrorCode;
 
 export type RoomDeleteBlockers = { classes: number; templates: number };
 

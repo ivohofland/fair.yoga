@@ -17,11 +17,12 @@
  * dress an undecided question as settled behaviour; it gets a test with the
  * decision, in whichever direction that goes.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -90,6 +91,28 @@ const send = (method: string, token: string, id: string, body?: unknown) =>
     headers: { 'Content-Type': 'application/json', ...cookie(token) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+
+/**
+ * A private room of the owner's with no link on it, one per case, so no
+ * create case depends on another's link. `roomName` keeps the private
+ * identity key distinct.
+ */
+async function freshRoom(roomName: string): Promise<string> {
+  const room = await prisma.room.create({
+    data: {
+      venueName: 'Teacher Rooms API Studio',
+      address: `${suffix} Retry St`,
+      city: 'Testville',
+      postcode: '1234TR',
+      floor: '1',
+      roomName,
+      maxCapacity: 10,
+      createdById: ownerId,
+      isPublic: false,
+    },
+  });
+  return room.id;
+}
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -290,22 +313,24 @@ describe('POST /api/teacher-rooms', () => {
     expect(res.status).toBe(401);
   });
 
-  it('links a teacher to a room, then refuses a second link for the same pair', async () => {
+  it('links a teacher to a room, and answers an identical second request as unchanged', async () => {
     const body = { roomId: freeRoomId, capacityOverride: 6, rentalRate: 18 };
 
-    const first = await create(ownerToken, body);
-    expect(first.status).toBe(201);
-    const created = (await first.json()) as { data: { id: string; rentalRate: string } };
-    expect(created.data.id).toBeTruthy();
+    const created = (await expectApplied(await create(ownerToken, body), 201)) as {
+      id: string;
+      rentalRate: string;
+    };
+    expect(created.id).toBeTruthy();
+    const before = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: created.id } });
 
-    // The uniqueness is on (teacherId, roomId), and the route reports it as a
-    // machine-readable 409 rather than letting the constraint surface as a 500.
-    const second = await create(ownerToken, body);
-    expect(second.status).toBe(409);
-    const err = (await second.json()) as { error: { code?: string } };
-    expect(err.error.code).toBe('DUPLICATE');
+    // A retry after a lost response: the link it asked for is already there,
+    // holding these values.
+    const unchanged = (await expectUnchanged(await create(ownerToken, body))) as { id: string };
+    expect(unchanged.id).toBe(created.id);
 
     expect(await prisma.teacherRoom.count({ where: { roomId: freeRoomId } })).toBe(1);
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: created.id } });
+    expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
   });
 
   // The uniqueness is per (teacher, room), so two teachers CAN hold the same
@@ -348,13 +373,105 @@ describe('POST /api/teacher-rooms', () => {
     expect(await prisma.teacherRoom.count({ where: { roomId: othersPrivateRoomId } })).toBe(0);
   });
 
-  it('404s a room that does not exist, instead of failing on the foreign key', async () => {
+  it('answers NOT_FOUND for a room that does not exist, instead of failing on the foreign key', async () => {
     const res = await create(ownerToken, {
       roomId: '00000000-0000-0000-0000-000000000000',
       capacityOverride: 5,
       rentalRate: 10,
     });
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
+  });
+
+  it('answers a retry whose rate carries more decimals than the column keeps as unchanged', async () => {
+    const roomId = await freshRoom('Retry Decimals');
+    const body = { roomId, capacityOverride: 6, rentalRate: 12.344 };
+
+    const created = (await expectApplied(await create(ownerToken, body), 201)) as {
+      rentalRate: string;
+    };
+    // The column is Decimal(10, 2): what it stores is the rounded rate.
+    expect(created.rentalRate).toBe('12.34');
+
+    await expectUnchanged(await create(ownerToken, body));
+    expect(await prisma.teacherRoom.count({ where: { roomId } })).toBe(1);
+  });
+
+  it('answers a null note as the same request as an absent one', async () => {
+    const roomId = await freshRoom('Retry Null Notes');
+    await expectApplied(
+      await create(ownerToken, { roomId, capacityOverride: 6, rentalRate: 18 }),
+      201,
+    );
+
+    await expectUnchanged(
+      await create(ownerToken, { roomId, capacityOverride: 6, rentalRate: 18, equipmentNotes: null }),
+    );
+    expect(await prisma.teacherRoom.count({ where: { roomId } })).toBe(1);
+  });
+
+  // Not a retry: the teacher typed different values, and answering unchanged
+  // would discard them.
+  it.each([
+    ['rate', { rentalRate: 19 }],
+    ['capacity', { capacityOverride: 7 }],
+    ['note', { equipmentNotes: 'Bring blocks' }],
+  ] as const)('refuses a second request with a different %s, and keeps the stored link', async (field, change) => {
+    const roomId = await freshRoom(`Differs ${field}`);
+    const body = { roomId, capacityOverride: 6, rentalRate: 18, equipmentNotes: 'Mats provided' };
+    const created = (await expectApplied(await create(ownerToken, body), 201)) as { id: string };
+
+    await expectRefusal(await create(ownerToken, { ...body, ...change }), 'ROOM_ALREADY_LISTED');
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: created.id } });
+    expect({
+      capacityOverride: after.capacityOverride,
+      rentalRate: Number(after.rentalRate),
+      equipmentNotes: after.equipmentNotes,
+    }).toEqual({ capacityOverride: 6, rentalRate: 18, equipmentNotes: 'Mats provided' });
+    expect(await prisma.teacherRoom.count({ where: { roomId } })).toBe(1);
+  });
+
+  it('refuses a request for a link the teacher has archived, even with identical values', async () => {
+    const roomId = await freshRoom('Retry Archived');
+    const body = { roomId, capacityOverride: 6, rentalRate: 18 };
+    const created = (await expectApplied(await create(ownerToken, body), 201)) as { id: string };
+    await expectApplied(await send('PATCH', ownerToken, `${created.id}?state=archived`));
+
+    await expectRefusal(await create(ownerToken, body), 'ROOM_ARCHIVED');
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: created.id } });
+    expect(after.isArchived).toBe(true);
+    expect(await prisma.teacherRoom.count({ where: { roomId } })).toBe(1);
+  });
+
+  // THE ORDERING CASE. The unchanged condition holds here (an identical live
+  // link exists), so only the room access gate running first keeps this a
+  // 403. Such a link can only predate #77; it is written directly because the
+  // route refuses to create it.
+  it("refuses a link to another teacher's private room even when an identical link already exists", async () => {
+    const theirs = await prisma.room.create({
+      data: {
+        venueName: 'Other Teacher Studio',
+        address: `${suffix} Legacy St`,
+        city: 'Testville',
+        postcode: '5678TR',
+        floor: '1',
+        roomName: 'Legacy Back Room',
+        maxCapacity: 10,
+        createdById: otherId,
+        isPublic: false,
+      },
+    });
+    await prisma.teacherRoom.create({
+      data: { teacherId: ownerId, roomId: theirs.id, capacityOverride: 5, rentalRate: 10 },
+    });
+
+    const res = await create(ownerToken, { roomId: theirs.id, capacityOverride: 5, rentalRate: 10 });
+
+    // The access refusal carries no code. Its status is what separates it
+    // from the unchanged 200.
+    expect(res.status).toBe(403);
+    expect(await prisma.teacherRoom.count({ where: { roomId: theirs.id } })).toBe(1);
   });
 });
 
@@ -403,6 +520,13 @@ describe('/api/teacher-rooms/[id] — the ownership chain', () => {
   it('404s an id that does not exist, before any ownership check can leak its absence', async () => {
     const res = await send('GET', ownerToken, '00000000-0000-0000-0000-000000000000');
     expect(res.status).toBe(404);
+  });
+
+  it('answers NOT_FOUND to an edit, archive or delete of a link that does not exist', async () => {
+    const missing = '00000000-0000-0000-0000-000000000000';
+    await expectRefusal(await send('PUT', ownerToken, missing, { rentalRate: 1 }), 'NOT_FOUND');
+    await expectRefusal(await send('PATCH', ownerToken, `${missing}?state=archived`), 'NOT_FOUND');
+    await expectRefusal(await send('DELETE', ownerToken, missing), 'NOT_FOUND');
   });
 });
 
@@ -526,11 +650,9 @@ describe('GET /api/teacher-rooms', () => {
 });
 
 describe('DELETE /api/teacher-rooms/[id]', () => {
-  it('refuses to delete a link that still carries class history, and says to archive instead', async () => {
+  it('refuses to unlink a link that still carries class history', async () => {
     const res = await send('DELETE', ownerToken, linkWithClassId);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain('Archive it instead');
+    await expectRefusal(res, 'ROOM_IN_USE');
 
     // The class is why the guard exists — Class.teacherRoom is Restrict, so
     // deleting the link would fail at the database rather than cascade.
@@ -542,6 +664,19 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     const res = await send('DELETE', ownerToken, linkId);
     expect(res.status).toBe(200);
     expect(await prisma.teacherRoom.count({ where: { id: linkId } })).toBe(0);
+  });
+
+  it('answers NOT_FOUND to a second delete of the same link', async () => {
+    const roomId = await freshRoom('Delete Twice');
+    const link = await prisma.teacherRoom.create({
+      data: { teacherId: ownerId, roomId, capacityOverride: 6, rentalRate: 18 },
+    });
+
+    await expectApplied(await send('DELETE', ownerToken, link.id));
+    // A retry after a lost response: the link is already gone, which the
+    // Unlink button reads as done.
+    await expectRefusal(await send('DELETE', ownerToken, link.id), 'NOT_FOUND');
+    expect(await prisma.teacherRoom.count({ where: { id: link.id } })).toBe(0);
   });
 
   it("refuses another teacher's link before it reveals whether it is in use", async () => {
@@ -624,14 +759,11 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     expect(await prisma.class.count({ where: { teacherRoomId: linkWithArchivedTemplateId } })).toBe(0);
 
     const res = await send('DELETE', ownerToken, linkWithArchivedTemplateId);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { message: string; code: string } };
-    expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
     // ROOM_IN_USE, not ROOM_IN_USE_RACE: this asserts the PRE-CHECK answered.
     // Disabling it makes the backstop reply with the race code and reddens
     // every case carrying this line — the cheap, deterministic half of the
     // guard the lock-ordering case above pins the expensive half of.
-    expect(body.error.code).toBe('ROOM_IN_USE');
+    await expectRefusal(res, 'ROOM_IN_USE');
 
     // Nothing removed. The template is what RESTRICTs the delete, and a
     // teacher cannot delete it either — there is no DELETE verb on
@@ -652,24 +784,20 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     expect(await prisma.class.count({ where: { teacherRoomId: linkWithLiveTemplateId } })).toBe(0);
 
     const res = await send('DELETE', ownerToken, linkWithLiveTemplateId);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { message: string; code: string } };
-    expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
     // ROOM_IN_USE, not ROOM_IN_USE_RACE: this asserts the PRE-CHECK answered.
     // Disabling it makes the backstop reply with the race code and reddens
     // every case carrying this line — the cheap, deterministic half of the
     // guard the lock-ordering case above pins the expensive half of.
-    expect(body.error.code).toBe('ROOM_IN_USE');
+    await expectRefusal(res, 'ROOM_IN_USE');
     expect(await prisma.teacherRoom.count({ where: { id: linkWithLiveTemplateId } })).toBe(1);
   });
 });
 
 /**
- * The pre-check at `:59` is a plain `findUnique`, so under READ COMMITTED a
- * concurrent attach to the same (teacher, room) passes it and loses on
- * `TeacherRoom_teacherId_roomId_key`. Unhandled, that `P2002` reaches
- * `withErrorHandler` and answers 409 with NO `code` — the same status the
- * pre-check gives, without the field a client can branch on (#161).
+ * The pre-check in `POST /api/teacher-rooms` is a plain `findUnique`, so under
+ * READ COMMITTED a concurrent attach to the same (teacher, room) passes it and
+ * loses on `TeacherRoom_teacherId_roomId_key` (#161). The loser re-reads the
+ * link that won and answers exactly as the pre-check would have for it.
  *
  * The lever is an UNCOMMITTED HOLDER, the one worked out in
  * `signup-api.test.ts` for the same shape: a second client inserts the
@@ -678,7 +806,7 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
  * index entry, and the holder commits so the request loses. Deterministic —
  * the interleaving is forced, not raced for.
  */
-describe('POST /api/teacher-rooms answers a raced duplicate with DUPLICATE (#161)', () => {
+describe('POST /api/teacher-rooms decides a raced duplicate from the link that won (#161)', () => {
   let raceRoomId: string;
 
   beforeAll(async () => {
@@ -699,54 +827,92 @@ describe('POST /api/teacher-rooms answers a raced duplicate with DUPLICATE (#161
     raceRoomId = room.id;
   });
 
+  afterEach(async () => {
+    await prisma.teacherRoom.deleteMany({ where: { roomId: raceRoomId } });
+  });
+
   afterAll(async () => {
     await prisma.teacherRoom.deleteMany({ where: { roomId: raceRoomId } });
     await prisma.room.deleteMany({ where: { id: raceRoomId } });
   });
 
-  it('returns 409 DUPLICATE when the create loses to a concurrent link', async () => {
+  /** Sends `body` while `holderLink` is inserted but uncommitted, and commits it once the request has parked. */
+  async function raceAgainst(
+    holderLink: { rentalRate: number; capacityOverride: number; isArchived?: boolean },
+    body: { capacityOverride: number; rentalRate: number },
+  ): Promise<Response> {
     const holder = new PrismaClient();
     let release!: () => void;
     let holding!: Promise<unknown>;
     const released = new Promise<void>((r) => { release = r; });
 
-    await new Promise<void>((parked, failed) => {
-      holding = holder.$transaction(async (tx) => {
-        await tx.teacherRoom.create({
-          data: { teacherId: ownerId, roomId: raceRoomId, rentalRate: 25, capacityOverride: 10 },
-        });
-        parked();
-        await released;
-      }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
-    });
+    try {
+      await new Promise<void>((parked, failed) => {
+        holding = holder.$transaction(async (tx) => {
+          await tx.teacherRoom.create({
+            data: { teacherId: ownerId, roomId: raceRoomId, ...holderLink },
+          });
+          parked();
+          await released;
+        }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
+      });
 
-    const pending = fetch(`${BASE_URL}/api/teacher-rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
-      body: JSON.stringify({ roomId: raceRoomId, capacityOverride: 10, rentalRate: 30 }),
-    });
+      const pending = fetch(`${BASE_URL}/api/teacher-rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+        body: JSON.stringify({ roomId: raceRoomId, ...body }),
+      });
 
-    // Asserted, not assumed: the holder's insert proves the index entry
-    // exists, not that the request reached it. A request that answered inside
-    // this second skipped the create on a committed row and raced nothing.
-    let settled = false;
-    void pending.then(() => { settled = true; });
-    await new Promise((r) => setTimeout(r, 1000));
-    expect(settled).toBe(false);
+      // Asserted, not assumed: the holder's insert proves the index entry
+      // exists, not that the request reached it. A request that answered inside
+      // this second skipped the create on a committed row and raced nothing.
+      let settled = false;
+      void pending.then(() => { settled = true; });
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(settled).toBe(false);
 
-    release();
-    await holding;
-    const res = await pending;
-    await holder.$disconnect();
+      release();
+      await holding;
+      return await pending;
+    } finally {
+      release();
+      await Promise.allSettled([holding]);
+      await holder.$disconnect();
+    }
+  }
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { code?: string; message: string } };
-    expect(body.error.code).toBe('DUPLICATE');
-    expect(body.error.message).toBe('Teacher-room link already exists');
+  it('refuses with ROOM_ALREADY_LISTED when the link that won carries a different rate', async () => {
+    const res = await raceAgainst(
+      { rentalRate: 25, capacityOverride: 10 },
+      { capacityOverride: 10, rentalRate: 30 },
+    );
 
+    await expectRefusal(res, 'ROOM_ALREADY_LISTED');
     // One link, and it is the holder's — proof the request lost the insert
     // rather than serialising past it.
     const links = await prisma.teacherRoom.findMany({ where: { roomId: raceRoomId } });
     expect(links.map((l) => Number(l.rentalRate))).toEqual([25]);
+  });
+
+  it('answers unchanged when the link that won is the one this request asked for', async () => {
+    const res = await raceAgainst(
+      { rentalRate: 25, capacityOverride: 10 },
+      { capacityOverride: 10, rentalRate: 25 },
+    );
+
+    const data = (await expectUnchanged(res)) as { id: string };
+    const links = await prisma.teacherRoom.findMany({ where: { roomId: raceRoomId } });
+    expect(links.map((l) => l.id)).toEqual([data.id]);
+  });
+
+  it('refuses with ROOM_ARCHIVED when the link that won is archived', async () => {
+    const res = await raceAgainst(
+      { rentalRate: 25, capacityOverride: 10, isArchived: true },
+      { capacityOverride: 10, rentalRate: 25 },
+    );
+
+    await expectRefusal(res, 'ROOM_ARCHIVED');
+    const links = await prisma.teacherRoom.findMany({ where: { roomId: raceRoomId } });
+    expect(links.map((l) => l.isArchived)).toEqual([true]);
   });
 });

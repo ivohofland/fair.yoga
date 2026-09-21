@@ -1,9 +1,10 @@
-import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { NextRequest, type NextResponse } from 'next/server';
+import { Prisma, type TeacherRoom } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondUnchanged,
   requireTeacher,
   parseBody,
   isErrorResponse,
@@ -12,6 +13,35 @@ import {
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
 import { createTeacherRoomSchema } from '@/lib/schemas';
+import { compareExistingLink, type RequestedLinkValues } from '@/services/teacher-room-attach';
+
+/**
+ * The answer to an attach request that finds the teacher's link to this room
+ * already there, whether at the pre-check or at a create that lost to a twin.
+ */
+function answerExistingLink(existing: TeacherRoom, requested: RequestedLinkValues): NextResponse {
+  const verdict = compareExistingLink(existing, requested);
+  switch (verdict) {
+    case 'archived':
+      return respondError(
+        'This room is in your archived rooms. Unarchive it to use it again.',
+        409,
+        'ROOM_ARCHIVED',
+      );
+    case 'unchanged':
+      return respondUnchanged<TeacherRoom>(existing);
+    case 'differs':
+      return respondError(
+        'This room is already in your rooms. Edit it there to change its details.',
+        409,
+        'ROOM_ALREADY_LISTED',
+      );
+    default: {
+      const unhandled: never = verdict;
+      return unhandled;
+    }
+  }
+}
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -49,31 +79,22 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     where: { id: roomId },
     select: { isPublic: true, createdById: true },
   });
-  if (!room) return respondError('Room not found', 404);
+  if (!room) return respondError('This room no longer exists.', 404, 'NOT_FOUND');
 
   if (!room.isPublic && room.createdById !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
-  // Check for duplicate
-  const existing = await prisma.teacherRoom.findUnique({
-    where: {
-      teacherId_roomId: {
-        teacherId: session.teacherId,
-        roomId,
-      },
-    },
-  });
-
-  if (existing) {
-    return respondError('Teacher-room link already exists', 409, 'DUPLICATE');
-  }
+  // After the room gates above, so an unchanged answer is never given for a
+  // room this teacher may not attach to.
+  const linkKey = { teacherId_roomId: { teacherId: session.teacherId, roomId } };
+  const existing = await prisma.teacherRoom.findUnique({ where: linkKey });
+  if (existing) return answerExistingLink(existing, parsed.data);
 
   // The pre-check above is a plain read, so a concurrent attach to the same
-  // (teacher, room) passes it and one of the two loses here. Answering with
-  // the pre-check's own code keeps the two paths indistinguishable to a
-  // client, which is the whole point: without it a race reaches
-  // `withErrorHandler` and returns 409 with no `code` at all (#161).
+  // (teacher, room) passes it and one of the two loses here. The loser
+  // re-reads the link that won and answers as the pre-check would have for
+  // it, so a client cannot tell the two paths apart (#161).
   //
   // Matched on the column set rather than on `P2002` alone. `TeacherRoom`
   // also declares `@@unique([id, isArchived])`, which this create cannot
@@ -93,7 +114,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondOk(teacherRoom, 201);
   } catch (err) {
     if (isUniqueConflictOn(err, ['teacherId', 'roomId'])) {
-      return respondError('Teacher-room link already exists', 409, 'DUPLICATE');
+      // The unique violation is raised only once the winner has committed, so
+      // this read sees it.
+      const winner = await prisma.teacherRoom.findUnique({ where: linkKey });
+      if (winner) return answerExistingLink(winner, parsed.data);
+      // The winner was removed again before this read. No link exists, and a
+      // retry can create one.
+      return respondError('The system was busy and could not finish that. Please try again.', 503);
     }
     // Not rethrown as a P2002: `classifyApiError` answers any P2002 with the
     // code-less 409 this catch exists to remove, so rethrowing would deliver

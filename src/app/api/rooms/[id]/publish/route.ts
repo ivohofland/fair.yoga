@@ -1,14 +1,18 @@
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma, type Room } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondUnchanged,
   requireTeacher,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+
+/** The answer for a room that does not exist, including one deleted mid-request. */
+const ROOM_GONE = 'This room no longer exists.';
 
 /**
  * Sharing a room — the only write that can flip an EXISTING room from
@@ -31,7 +35,7 @@ import { isUniqueConflictOn } from '@/lib/unique-conflict';
  * asks, and the creator may have left the platform. This route asks
  * `createdById?` first: only the creator may donate a room to the commons.
  * Reordering these to "match" the neighbours would answer a non-creator's
- * request about an already-shared room with ALREADY_SHARED instead of
+ * request about an already-shared room with the unchanged 200 instead of
  * NOT_ROOM_CREATOR — pinned in tests/integration/rooms-publish-api.test.ts.
  *
  * No pre-check for the duplicate, for the reason `POST /api/rooms` states at
@@ -51,15 +55,15 @@ export const POST = withErrorHandler(async (
   if (isErrorResponse(session)) return session;
 
   const room = await prisma.room.findUnique({ where: { id } });
-  if (!room) return respondError('Room not found', 404, 'NOT_FOUND');
+  if (!room) return respondError(ROOM_GONE, 404, 'NOT_FOUND');
 
   if (room.createdById !== session.teacherId) {
     return respondError('Only the room creator can share this room', 403, 'NOT_ROOM_CREATOR');
   }
 
-  if (room.isPublic) {
-    return respondError('This room is already shared', 409, 'ALREADY_SHARED');
-  }
+  // Already shared: a repeat of a share that succeeded. After the creator
+  // check, so a non-creator is refused rather than answered.
+  if (room.isPublic) return respondUnchanged<Room>(room);
 
   // The three guards above are repeated in this write's `where`, closing the
   // window between the read at :53 and the write. `prisma.room.update` here
@@ -90,19 +94,19 @@ export const POST = withErrorHandler(async (
   if (result.count === 0) {
     // Check which predicate failed rather than naming one. The order here
     // mirrors the guards above — creator before shared — so a lost race
-    // answers the same code the fast path would have.
-    const current = await prisma.room.findUnique({
-      where: { id },
-      select: { isPublic: true, createdById: true },
-    });
-    if (!current) return respondError('Room not found', 404, 'NOT_FOUND');
+    // answers what the fast path would have. The full row, so the unchanged
+    // answer carries the shape the applied one does.
+    const current = await prisma.room.findUnique({ where: { id } });
+    if (!current) return respondError(ROOM_GONE, 404, 'NOT_FOUND');
     if (current.createdById !== session.teacherId) {
       return respondError('Only the room creator can share this room', 403, 'NOT_ROOM_CREATOR');
     }
-    return respondError('This room is already shared', 409, 'ALREADY_SHARED');
+    // The write's one remaining predicate is `isPublic: false`: a twin share
+    // committed first.
+    return respondUnchanged<Room>(current);
   }
 
   const updated = await prisma.room.findUnique({ where: { id } });
-  if (!updated) return respondError('Room not found', 404, 'NOT_FOUND');
+  if (!updated) return respondError(ROOM_GONE, 404, 'NOT_FOUND');
   return respondOk(updated);
 });

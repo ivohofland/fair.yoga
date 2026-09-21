@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
+import { isRecordNotFound } from '@/lib/api-errors';
 import {
   respondOk,
   respondError,
@@ -20,6 +21,9 @@ import {
   ROOM_IN_USE_RACE_CODE,
 } from '@/services/room-deletion';
 
+/** The delete's answer for a room that does not exist, including one deleted mid-request. */
+const ROOM_GONE = 'This room no longer exists.';
+
 export const DELETE = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -29,7 +33,7 @@ export const DELETE = withErrorHandler(async (
   if (isErrorResponse(session)) return session;
 
   const room = await prisma.room.findUnique({ where: { id } });
-  if (!room) return respondError('Room not found', 404);
+  if (!room) return respondError(ROOM_GONE, 404, 'NOT_FOUND');
 
   if (room.isPublic) {
     return respondError('Shared rooms cannot be deleted', 403);
@@ -108,6 +112,9 @@ export const DELETE = withErrorHandler(async (
       );
       return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, ROOM_IN_USE_RACE_CODE);
     }
+    // A concurrent delete of the same room committed first: the same answer
+    // the read above gives.
+    if (isRecordNotFound(err)) return respondError(ROOM_GONE, 404, 'NOT_FOUND');
     throw err;
   }
 

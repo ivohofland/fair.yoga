@@ -142,6 +142,10 @@ export const LOCK_CONTENTION_TESTS = [
   'src/app/api/classes/[id]/complete/route-lock-order.test.ts',
   // #197: the same shape, for the studio class removal route.
   'src/app/api/studio-classes/[id]/route-lock-order.test.ts',
+  // #197: the `classes/route.test.ts` shape, for the room and teacher-room
+  // doors; each file's header carries its reason.
+  'src/app/api/rooms/[id]/route-race.test.ts',
+  'src/app/api/teacher-rooms/[id]/route-race.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

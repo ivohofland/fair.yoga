@@ -195,6 +195,41 @@ describe('setTeacherRoomArchived — ownership, idempotency, release valve', () 
     expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
 
+  // A link deleted between the service's read and its write. The extension
+  // runs the real read, then deletes the row before handing it back, which is
+  // that interleaving without a lock: the write runs under a 2 s lock bound
+  // that a held row would turn into a 503.
+  it.each(['archived', 'unarchived'] as const)(
+    'reports not_found when the link is deleted before the %s write',
+    async (target) => {
+      const f = await makeFixture();
+      if (target === 'unarchived') {
+        await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived');
+      }
+
+      let deleted = false;
+      const interposing = prisma.$extends({
+        query: {
+          teacherRoom: {
+            async findUnique({ args, query }) {
+              const row = await query(args);
+              if (!deleted) {
+                deleted = true;
+                await prisma.teacherRoom.delete({ where: { id: f.linkId } });
+              }
+              return row;
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      const result = await setTeacherRoomArchived(interposing, f.linkId, f.teacherId, target);
+
+      expect(deleted).toBe(true);
+      expect(result).toEqual({ ok: false, reason: 'not_found' });
+    },
+  );
+
   it('reports forbidden for another teacher’s link', async () => {
     const mine = await makeFixture();
     const theirs = await makeFixture();
