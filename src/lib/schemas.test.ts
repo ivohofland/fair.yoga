@@ -123,6 +123,16 @@ describe('isLoginRedirectTarget', () => {
     expect(isLoginRedirectTarget('/verify')).toBe(false);
     expect(isLoginRedirectTarget('/verify/anything')).toBe(false);
   });
+
+  // The loop guard and the shape check must read the same string. A browser
+  // drops the tab and goes to `/login`, so a guard reading the raw value
+  // waves through the loop it exists to stop — which is what it did until
+  // #197's review found it.
+  it('rejects a looping target wearing the whitespace a browser strips', () => {
+    expect(isLoginRedirectTarget('/\tlogin')).toBe(false);
+    expect(isLoginRedirectTarget('/\nverify')).toBe(false);
+    expect(isLoginRedirectTarget('/log\rin')).toBe(false);
+  });
 });
 
 describe('class size caps', () => {

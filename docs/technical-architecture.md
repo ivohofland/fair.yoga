@@ -145,8 +145,11 @@ caller, escaping the `.catch` entirely.
 A refusal is `respondError(message, status, code)`. The code comes from
 `src/lib/api-error-codes.ts`, which fixes one status per code: a 409 without
 a code, or a code at another status, does not compile. Clients branch on the
-code through `readError` (`src/lib/client-errors.ts`), never on the status —
-two refusals can share a status and mean different things — and tests assert
+code through `readError` (`src/lib/client-errors.ts`) rather than on the
+status — two refusals can share a status and mean different things. The
+exceptions are the statuses `ApiErrorStatus` excludes, today 401 and 429: no
+code can ever carry one, so a client that must recognise a dropped session or
+a rate limit has only the status to read, and several do. Tests assert
 it with `expectRefusal` (`tests/api-assertions.ts`), never the message, so
 copy can change without touching a test.
 
@@ -158,8 +161,16 @@ example: `edit`, `remove` and `resend` all send `DECLINED_IS_PERMANENT`, so
 the code cannot tell a caller which sentence was sent, and
 `cas-scope.test.ts` compares the body against `DECLINED_MESSAGE.remove` (its
 own exported entry), never the quoted sentence, so rewording the copy stays
-free while the door-routing pin still holds. This is the only reason to read
-`error.message` in a server-side test. Without it written down, whoever next
+free while the door-routing pin still holds. This is the only reason to write
+a NEW server-side assertion that reads `error.message` (spec §8.3). Older
+assertions predate the rule and still read messages directly — enumerate them
+with
+
+```bash
+grep -rnE "error\.message\)\.(toBe|toContain)\('" tests/integration src/app/api
+```
+
+— so finding one is not a licence to add another. Without this written down, whoever next
 meets a mutation that leaves a test green cannot tell "nothing caught this"
 from "nothing was ever meant to" — the question #197's own PR (`8e22db04`)
 had to answer the hard way, by re-deriving the acceptance criterion from the

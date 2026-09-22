@@ -1,4 +1,4 @@
-import type { ApiErrorCode } from '@/lib/api-error-codes';
+import type { CodedRefusal } from '@/lib/api-error-codes';
 import { startOfLocalDay } from '@/lib/timezone';
 
 /**
@@ -157,17 +157,22 @@ export const STUDIO_CLASS_REMOVAL_FACTS_SELECT = {
  * of its own. Before this, no caller read `reason` at all — a second refusal
  * would silently have inherited the regenerates message and logged that the
  * sweep would recreate a class when it would not.
+ *
+ * `CodedRefusal`, not `{ message: string; code: ApiErrorCode }`: the latter
+ * widens `code` to the whole union, so `respondError`'s `status: StatusOf<C>`
+ * infers `C` as every code at once and admits every status — the entry's own
+ * status stops being checked. Each entry carries its status and the call site
+ * passes `refusal.status`, which is what makes a code sent at the wrong
+ * status a compile error here as it is everywhere else (#197).
  */
-export const STUDIO_CLASS_REFUSALS: Record<
-  StudioClassRefusal,
-  { readonly message: string; readonly code: ApiErrorCode }
-> = {
+export const STUDIO_CLASS_REFUSALS = {
   regenerates: {
     message:
       'This class comes from a recurring template and is not yet past, so removing it would only create it again. Cancel it instead.',
+    status: 409,
     code: 'STUDIO_CLASS_REGENERATES',
   },
-};
+} as const satisfies Record<StudioClassRefusal, CodedRefusal>;
 
 export function studioClassDeletability(
   sc: { scheduleRuleId: string | null; date: Date },
