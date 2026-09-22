@@ -247,6 +247,31 @@ describe('respondError', () => {
     // merely matches one member — every member must share it
     respondError(unionRefusal.message, 409, unionRefusal.code);
 
+    /**
+     * The rejection sentinel forged by hand, carrying `__use`'s exact literal
+     * so that the only thing left for the parameter to reject is
+     * `__unconstructible`. Bound to a const so the call below fits on one
+     * line — a directive suppresses only the line directly after it, the same
+     * reason `paramsFirstHandler` at the end of this file is bound first.
+     */
+    const forgedSentinel = {
+      __use: 'respondRefusal — this code union spans more than one status',
+    } as const;
+
+    /**
+     * Declared and never invoked, unlike the checks above it: `tsc` checks an
+     * uncalled body just the same, while calling this one would throw inside
+     * `NextResponse.json`, the forged `status` being an object rather than a
+     * number. That throw is an accident of the fixture, not the guard.
+     */
+    const forgeRejectionSentinel = () =>
+      // @ts-expect-error — no expression inhabits `never`, so a hand-built
+      // literal cannot forge the sentinel. Drop `__unconstructible` and this
+      // line compiles, which turns the union-code rejection above into a
+      // suggestion a call site can write its way past rather than a wall.
+      respondError(unionRefusal.message, forgedSentinel, unionRefusal.code);
+    void forgeRejectionSentinel;
+
     // A union code whose members ALL share one status must still compile —
     // rejecting every union code outright would break several existing call
     // sites that already rely on this (#649).

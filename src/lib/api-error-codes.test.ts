@@ -48,8 +48,17 @@ describe('codedRefusal', () => {
     });
   });
 
-  it('produces a value assignable to CodedRefusal for any registered code', () => {
-    const refusal: CodedRefusal = codedRefusal('PAYMENT_WAIVED', 'x');
+  /**
+   * Annotated with the ONE member the code names, never the whole
+   * `CodedRefusal` union: the union accepts anything the union produces, so a
+   * wide annotation here would hold for a `codedRefusal` returning the bare
+   * union too, and would pin nothing.
+   */
+  it("produces a value assignable to its own code's member, not merely to the union", () => {
+    const refusal: Extract<CodedRefusal, { code: 'PAYMENT_WAIVED' }> = codedRefusal(
+      'PAYMENT_WAIVED',
+      'x',
+    );
     expect(refusal.status).toBe(409);
   });
 });
@@ -67,9 +76,19 @@ type _notFoundIs404 = Assert<Equals<StatusOf<'NOT_FOUND'>, 404>>;
 // Not `ApiErrorCode extends string`, which stays true once the registry's keys
 // widen to `string` and so cannot fail: this asserts the keys are still literal.
 type _codesAreNotBareString = Assert<Equals<Equals<ApiErrorCode, string>, false>>;
+// `codedRefusal`'s return type is the ONE member `C` names, not the whole
+// union — what a consumer narrows on downstream, and what a `respondError`
+// coded call site infers `C` from. Two-directional where the assignment in the
+// test above is one-directional: this also fails if the return type narrows
+// PAST its member (a literal `message`, say), which assigning into that member
+// would accept.
+type _codedRefusalNarrowsToItsCode = Assert<
+  Equals<ReturnType<typeof codedRefusal<'NOT_FOUND'>>, Extract<CodedRefusal, { code: 'NOT_FOUND' }>>
+>;
 void 0 as unknown as [
   _conflictCodesAre409,
   _serverCodesAre500Or503,
   _notFoundIs404,
   _codesAreNotBareString,
+  _codedRefusalNarrowsToItsCode,
 ];

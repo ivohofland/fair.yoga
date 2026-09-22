@@ -1,4 +1,4 @@
-import type { CodedRefusal } from '@/lib/api-error-codes';
+import { codedRefusal } from '@/lib/api-error-codes';
 
 /**
  * Refusals the doors under this resource draw on, each sentence written once
@@ -9,29 +9,20 @@ import type { CodedRefusal } from '@/lib/api-error-codes';
  * VALUES, not the response factories that file exports, because a caller here
  * needs the parts rather than a finished `Response`: to index one by a
  * service's refusal reason, or to carry one out of a transaction and answer it
- * outside. `satisfies CodedRefusal` checks each one's status against its own
- * code.
+ * outside. `codedRefusal` derives each one's status from its own code, so no
+ * status is hand-typed beside it.
  *
  * Its own file rather than an export from a `route.ts`: Next's Route Handler
  * convention restricts what a `route.ts` may export to HTTP verbs plus a small
  * fixed config allow-list.
  */
-export const CLASS_GONE = {
-  code: 'NOT_FOUND',
-  status: 404,
-  message: 'This class no longer exists.',
-} as const satisfies CodedRefusal;
+export const CLASS_GONE = codedRefusal('NOT_FOUND', 'This class no longer exists.');
 
 /** A class whose entry carries `cancelledAt`: it is off, whatever status it kept. */
-export const CLASS_CANCELLED = {
-  code: 'CLASS_CANCELLED',
-  status: 409,
-  message: 'This class has been cancelled.',
-} as const satisfies CodedRefusal;
+export const CLASS_CANCELLED = codedRefusal('CLASS_CANCELLED', 'This class has been cancelled.');
 
 /** A completion refused because the class's scheduled end is still ahead. */
-export const CLASS_NOT_ENDED_YET = {
-  code: 'CLASS_NOT_ENDED_YET',
-  status: 409,
-  message: "This class hasn't finished yet.",
-} as const satisfies CodedRefusal;
+export const CLASS_NOT_ENDED_YET = codedRefusal(
+  'CLASS_NOT_ENDED_YET',
+  "This class hasn't finished yet.",
+);
