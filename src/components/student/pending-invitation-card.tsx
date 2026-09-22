@@ -41,13 +41,12 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
       if (res.ok) {
         // #40, superseding review F7. F7 was right that a `finally` reset is
         // wrong here — the answer has committed, so a second click risks
-        // undoing or misreporting a real outcome over an action that already
-        // worked: a second DECLINE earns a 409 (`ALREADY_ANSWERED`) in red,
-        // while a second ACCEPT is now idempotent success (#181) rather than
-        // a refusal. F7's remedy was to leave `submitting` true, which froze
-        // all four controls when the refresh never committed: a student
-        // could give neither answer. Settling blocks the second POST the
-        // same way and still leaves them somewhere they can act.
+        // misreporting an outcome that already happened. F7's remedy was to
+        // leave `submitting` true, which froze all four controls when the
+        // refresh never committed: a student could give neither answer.
+        // Settling blocks the second POST the same way and still leaves them
+        // somewhere they can act. A repeated answer that does reach the
+        // route is a 200 `unchanged`, and it settles here too.
         setDone(response);
         router.refresh();
         return;

@@ -7,7 +7,7 @@ import type { updatePrivacySchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError } from '@/lib/client-errors';
 
 export interface TeacherPrivacyValues {
   shareFullName: boolean;
@@ -89,15 +89,14 @@ export function TeacherPrivacyCard({
       });
       if (res.ok) {
         setSaved(true);
-      } else if (res.status === 403) {
-        // The route 403s a teacher this student has no TeacherStudent link to,
-        // and `deleteTeacherAccount` in services/gdpr.ts hard-deletes every one
-        // of a teacher's links — regardless of whether the student has claimed
-        // their account — so this card can be on screen when its link
-        // disappears. "Try again" would be advice for a state no retry can
-        // reach. (The CRM-removal route cannot produce this: it refuses to
-        // remove a student with `claimedAt` set, and any student who can see
-        // this page is signed in and therefore claimed.)
+      } else if ((await readError(res, '')).code === 'TEACHER_NOT_LINKED') {
+        // The route answers `TEACHER_NOT_LINKED` for a teacher this student
+        // has no TeacherStudent link to, and a link can disappear while this
+        // card is on screen: `deleteTeacherAccount` (services/gdpr.ts)
+        // hard-deletes every link a teacher has, and this student's own
+        // unlink in another tab deletes this one. "Try again" would be advice
+        // for a state no retry can reach. Keyed on the code, not the status:
+        // `NOT_YOUR_PROFILE` is a 403 too, and it is not this state.
         setError('This teacher is no longer connected to your account, so these settings no longer apply.');
       } else {
         setError('Could not save. Try again.');
@@ -122,23 +121,27 @@ export function TeacherPrivacyCard({
    * `router.refresh()` on success is what drops this card from the list.
    *
    * `unlinking` is deliberately not reset on success (review F7): the DELETE
-   * has committed, so a second click would earn a 404 ("Teacher link not
-   * found") in red over an action that worked. F7's own remedy — leaving the
-   * flag true — froze this cluster whenever the refresh did not commit, so
-   * #40 replaced it with `unlinked`: the card settles, which blocks the second
-   * DELETE the same way and still leaves the student a control that works.
+   * has committed, and a second one must not be sent. Leaving the flag true
+   * froze this cluster whenever the refresh did not commit, so the card
+   * settles instead (`unlinked`, #40), which blocks the second DELETE and
+   * still leaves the student a control that works. A DELETE that reaches the
+   * route after the link is already gone answers 404 `NOT_FOUND`, and the
+   * card settles on that too: gone is what this control asked for.
    */
   async function handleUnlink() {
     setUnlinking(true);
     setUnlinkError('');
     try {
       const res = await fetch(`/api/teacher-links/${teacherId}`, { method: 'DELETE' });
-      if (res.ok) {
+      const failure = res.ok
+        ? null
+        : await readError(res, 'Could not remove this teacher. Try again.');
+      if (failure === null || failure.code === 'NOT_FOUND') {
         setUnlinked(true);
         router.refresh();
         return;
       }
-      setUnlinkError(await readErrorMessage(res, 'Could not remove this teacher. Try again.'));
+      setUnlinkError(failure.message);
       setUnlinking(false);
     } catch {
       setUnlinkError('Network error. Try again.');

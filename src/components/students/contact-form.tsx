@@ -67,9 +67,8 @@ export function ContactForm({
       if (!res.ok) {
         // #166: a declined contact's row is a tombstone — the PUT 409s with
         // its own explanation (DECLINED_IS_PERMANENT), which `readErrorMessage`
-        // surfaces verbatim instead of a generic retry prompt. Same idiom as
-        // `teacher-privacy-card.tsx`'s 403 handling, for the same reason: a
-        // retry can't fix a state this specific.
+        // surfaces verbatim instead of a generic retry prompt: a retry can't
+        // fix a state this specific.
         setError(await readErrorMessage(res, 'Failed to update contact'));
         return;
       }

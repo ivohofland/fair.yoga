@@ -86,8 +86,8 @@ describe('TeacherPrivacyCard', () => {
     expect(body.sharePhone).toBe(true);
   });
 
-  function stubFailure(status: number) {
-    fetchMock.mockResolvedValue({ ok: false, status, json: async () => ({}) });
+  function stubFailure(status: number, body: unknown = {}) {
+    fetchMock.mockResolvedValue({ ok: false, status, json: async () => body });
     vi.stubGlobal('fetch', fetchMock);
   }
 
@@ -105,9 +105,9 @@ describe('TeacherPrivacyCard', () => {
   // The route started 403ing unlinked teachers on the #146/#148 branch, and
   // `deleteTeacherAccount` hard-deletes every link a teacher has — so a card
   // can outlive its link. Retry advice for a state no retry can reach is the
-  // defect; these two pin that only the retryable failure says "try again".
-  it('403 says the link is gone, and does not suggest retrying', async () => {
-    stubFailure(403);
+  // defect; these pin that only a lost link says the link is gone.
+  it('TEACHER_NOT_LINKED says the link is gone, and does not suggest retrying', async () => {
+    stubFailure(403, { error: { code: 'TEACHER_NOT_LINKED', message: 'Access denied' } });
     renderCard();
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() =>
@@ -121,6 +121,14 @@ describe('TeacherPrivacyCard', () => {
     renderCard();
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(screen.getByText('Could not save. Try again.')).toBeTruthy());
+  });
+
+  it('does not read every 403 as a lost link', async () => {
+    stubFailure(403, { error: { code: 'NOT_YOUR_PROFILE', message: 'Access denied' } });
+    renderCard();
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(screen.getByText('Could not save. Try again.')).toBeTruthy());
+    expect(screen.queryByText(/no longer connected to your account/i)).toBeNull();
   });
 
   /**
@@ -258,19 +266,21 @@ describe('TeacherPrivacyCard', () => {
     it('clears a failed unlink, so a reopened confirm is not pre-labelled as failed', async () => {
       fetchMock.mockResolvedValue({
         ok: false,
-        status: 404,
-        json: async () => ({ error: { message: 'Teacher link not found' } }),
+        status: 409,
+        json: async () => ({
+          error: { code: 'STUDENT_ERASED', message: 'This account has been deleted.' },
+        }),
       });
       vi.stubGlobal('fetch', fetchMock);
       renderCard();
       fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
       fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
-      await screen.findByText('Teacher link not found');
+      await screen.findByText('This account has been deleted.');
 
       fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
       fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
 
-      expect(screen.queryByText('Teacher link not found')).toBeNull();
+      expect(screen.queryByText('This account has been deleted.')).toBeNull();
     });
 
     it('DELETEs /api/teacher-links/:teacherId and refreshes on success', async () => {
@@ -296,15 +306,35 @@ describe('TeacherPrivacyCard', () => {
     it('surfaces the server error message on a failed unlink, and does not refresh', async () => {
       fetchMock.mockResolvedValue({
         ok: false,
-        status: 404,
-        json: async () => ({ error: { message: 'Teacher link not found' } }),
+        status: 409,
+        json: async () => ({
+          error: { code: 'STUDENT_ERASED', message: 'This account has been deleted.' },
+        }),
       });
       vi.stubGlobal('fetch', fetchMock);
       renderCard();
       fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
       fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
-      expect(await screen.findByText('Teacher link not found')).toBeInTheDocument();
+      expect(await screen.findByText('This account has been deleted.')).toBeInTheDocument();
       expect(routerRefresh).not.toHaveBeenCalled();
+    });
+
+    it('settles as removed when the link is already gone', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          error: { code: 'NOT_FOUND', message: "You're no longer connected to this teacher." },
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
+
+      expect(await screen.findByText(/^Removed/)).toBeInTheDocument();
+      expect(routerRefresh).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText("You're no longer connected to this teacher.")).toBeNull();
     });
   });
 

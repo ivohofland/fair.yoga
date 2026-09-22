@@ -91,6 +91,21 @@ describe('PendingInvitationCard', () => {
     expect(screen.queryByRole('button', { name: /decline invitation/i })).toBeNull();
   });
 
+  it('settles to "Declined" when the server reports the decline was already given', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { id: 'inv-1' }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
+    fireEvent.click(screen.getByRole('button', { name: /^decline$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /decline invitation/i }));
+
+    expect(await screen.findByText(/^Declined/)).toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
   // G6, second half — Mode 2. If the POST hangs rather than resolving, the
   // settled state never renders, and Cancel is the only way out.
   it('leaves Cancel operable while the decline is in flight', async () => {
@@ -248,12 +263,12 @@ describe('PendingInvitationCard', () => {
 
   it('surfaces the server error message on a failed accept, and does not refresh', async () => {
     stubFailure(409, {
-      error: { message: 'This invitation has already been answered', code: 'ALREADY_ANSWERED' },
+      error: { message: 'This invitation has already been answered.', code: 'ALREADY_ANSWERED' },
     });
     render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
     fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
     expect(
-      await screen.findByText('This invitation has already been answered'),
+      await screen.findByText('This invitation has already been answered.'),
     ).toBeInTheDocument();
     expect(routerRefresh).not.toHaveBeenCalled();
   });
