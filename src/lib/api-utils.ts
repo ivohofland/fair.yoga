@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
 import { classifyApiError } from './api-errors';
-import type { ApiErrorCode, ApiErrorStatus, CodedRefusal, CodeWithStatus } from './api-error-codes';
+import type { ApiErrorCode, CodedRefusal, StatusOf } from './api-error-codes';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
@@ -50,25 +50,33 @@ export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
 type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
 
 /**
- * A refusal. A code fixes its status (`src/lib/api-error-codes.ts`), so a code
- * sent at another status does not compile. `C` is inferred from `code` and
- * `S` from `status`; the call is only accepted when `S` is a single literal
- * status AND every member of `C` is registered at that exact status
- * (`[C] extends [CodeWithStatus<S>]`) — a union `code` is fine as long as it
- * provably shares one status with the literal passed (several existing call
- * sites already rely on this), but a union spanning more than one status is
- * a compile error regardless of which status literal is passed, because no
- * single literal can be correct for all its members. A 409 must name its
- * code, because a conflict is exactly what a client has to tell apart. A
- * refusal read off a `Record<Reason, CodedRefusal>` map — where each member
- * carries its OWN status, not one shared by every member — uses
- * `respondRefusal` instead, never this overload split into two arguments.
- * The rules are in `docs/technical-architecture.md` (The Services Layer →
- * Error responses).
+ * Named so a rejected call's diagnostic points here instead of reading like an
+ * arbitrary `never`. Carries no data — it exists only as a distinct nominal
+ * type the coded overload's rejecting branch can resolve to.
  */
-export function respondError<C extends ApiErrorCode, S extends ApiErrorStatus>(
+type UseRespondRefusal = {
+  readonly __use: 'respondRefusal — this code union spans more than one status';
+};
+
+/**
+ * A refusal. `C` is inferred from `code`; `status` must equal `StatusOf<C>` —
+ * the one status every member of `C` is registered at. `StatusOf<C>`
+ * distributes over a union `C` on its own (indexed access on a union of keys
+ * distributes, and a union of identical literals collapses to one), so a
+ * union `code` is fine exactly when every member shares one status (several
+ * existing call sites rely on this), and is a compile error — naming
+ * `respondRefusal` in the diagnostic — the moment it spans more than one,
+ * regardless of which status literal is passed, because no single literal
+ * can be correct for all its members. A 409 must name its code, because a
+ * conflict is exactly what a client has to tell apart. A refusal read off a
+ * `Record<Reason, CodedRefusal>` map — where each member carries its OWN
+ * status, not one shared by every member — uses `respondRefusal` instead,
+ * never this overload split into two arguments. The rules are in
+ * `docs/technical-architecture.md` (The Services Layer → Error responses).
+ */
+export function respondError<C extends ApiErrorCode>(
   message: string,
-  status: IsUnion<S> extends true ? never : ([C] extends [CodeWithStatus<S>] ? S : never),
+  status: IsUnion<StatusOf<C>> extends true ? UseRespondRefusal : StatusOf<C>,
   code: C,
 ): NextResponse;
 export function respondError(message: string, status: Exclude<ErrorStatus, 409>): NextResponse;
