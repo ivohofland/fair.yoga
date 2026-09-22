@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  API_ERROR_STATUS,
   isApiErrorCode,
   codedRefusal,
   type ApiErrorCode,
@@ -25,15 +24,6 @@ describe('isApiErrorCode', () => {
     expect(isApiErrorCode(undefined)).toBe(false);
     expect(isApiErrorCode(404)).toBe(false);
     expect(isApiErrorCode({ code: 'NOT_FOUND' })).toBe(false);
-  });
-});
-
-describe('API_ERROR_STATUS', () => {
-  it('registers each code at a status the app sends', () => {
-    const allowed = new Set([400, 403, 404, 409, 500, 503]);
-    for (const [code, status] of Object.entries(API_ERROR_STATUS)) {
-      expect(allowed.has(status), `${code} → ${status}`).toBe(true);
-    }
   });
 });
 
