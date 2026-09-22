@@ -60,36 +60,92 @@ permanent compiler wall against any call site — the four above, or a fifth nob
 yet — recreating this exact collapse by passing a union-typed `code` straight to
 `respondError`.
 
-**Option 3 feasibility, spiked and confirmed:**
+**Option 3 feasibility — addendum, corrected during implementation (see "Mechanism correction"
+below for the full account).** The design below is the corrected, verified mechanism. An
+earlier spike tested `IsUnion<C> extends true ? never : StatusOf<C>` — rejecting *any* union
+`C` outright — and confirmed against a single literal call and two known-bad union calls. That
+spike never tested a union whose members all happen to share one status — a shape the rest of
+the codebase turned out to use ten times over (see the addendum below) — so it never caught
+that a bare union rejection also rejects those, which are not bugs. The corrected mechanism below fixes
+this: it still rejects any union `C`, but only where the literal `status` passed does not
+provably cover every member of `C` — the collapse this issue is about — rather than rejecting
+every union unconditionally.
 
 ```ts
 type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
 
-declare function respondErrorTight<C extends ApiErrorCode>(
+declare function respondErrorTight<C extends ApiErrorCode, S extends ApiErrorStatus>(
   message: string,
-  status: IsUnion<C> extends true ? never : StatusOf<C>,
+  status: IsUnion<S> extends true ? never : ([C] extends [CodeWithStatus<S>] ? S : never),
   code: C,
 ): void;
 
-respondErrorTight('ok', 403, 'NOT_YOUR_PROFILE');           // compiles — single literal code, unaffected
-respondErrorTight('bad', unionStatus, unionCode);            // TS2345: not assignable to 'never'
-respondErrorTight('bad', 409, unionCode);                    // TS2345: not assignable to 'never'
+respondErrorTight('ok', 403, 'NOT_YOUR_PROFILE');   // compiles — single literal code, unaffected
+respondErrorTight('bad', unionStatus, unionCode);    // TS2345: not assignable to 'never' — S itself is a union
+respondErrorTight('bad', 409, unionCode);            // TS2345: not assignable to 'never' — unionCode includes a non-409 member
+respondErrorTight('ok', 409, safeUnionCode);         // compiles — every member of safeUnionCode is registered at 409
 ```
 
-Run against the real project tsconfig (`pnpm run typecheck`), both union-typed calls were
-rejected and the literal-code call was untouched. `IsUnion` relies on distributive
-conditional types over a naked type parameter (`T extends T ? ... `), a standard TS idiom —
-the pattern doesn't distribute per-union-member the way a mapped type does, so `C` staying a
-union at the call site is exactly what makes `IsUnion<C>` resolve to `true`.
+Run against the real project tsconfig, all four behave as commented. `IsUnion` relies on
+distributive conditional types over a naked type parameter, a standard TS idiom. The
+`[C] extends [CodeWithStatus<S>]` check is deliberately tuple-wrapped to *suppress*
+distribution — a bare `C extends CodeWithStatus<S> ? S : never` distributes over `C`'s
+members and silently unions the per-member results back together (`never | S | S` collapses
+to `S`, discarding the one bad member), which is the same category of bug this whole issue is
+about. Caught this in the spike, before it reached a committed file.
+
+### Mechanism correction, found during implementation
+
+The plan's Task 1 landed with the `IsUnion<C>`-only mechanism above, reviewed and approved —
+correctly, against everything that spike tested. The task reviewer separately ran a full
+`pnpm run typecheck` as part of verifying the mechanism and noted, as corroborating evidence,
+that it also flagged roughly a dozen pre-existing call sites outside the diff. I verified this
+directly rather than take it as expected background noise: **14 real compile errors, 12
+files**, at Task 1's HEAD. 3 were the known sites above (B). The other **11** share a shape
+this document's Premise section never swept for: a *hardcoded* literal status passed alongside
+a union-typed `code` — e.g. `respondError(message, 409, SLOT_TAKEN[result.heldBy][1])` — which
+the original grep (scoped to `respondError\(.*\.status,.*\.code\)`) cannot match, because
+there is no `.status` read at all.
+
+Investigated each of the 11 by reading the source and checking every member's registered
+status in `src/lib/api-error-codes.ts`, not by assumption:
+
+- **10 are already safe** — `studio-classes/[id]/route.ts:141` (this document's own §"fifth
+  site", above), four `SLOT_TAKEN` destructured-tuple maps (`class-templates/route.ts`,
+  `class-templates/[id]/route.ts` ×2, `studio-class-templates/route.ts`,
+  `studio-class-templates/[id]/route.ts` ×2 — 6 call sites off 4 near-identical map
+  definitions), `students/route.ts:100`, and `waitlist/claim/route.ts:63` +
+  `waitlist/route.ts:75` (the latter two already typed `satisfies Record<Reason,
+  CodeWithStatus<409>>` — a pre-existing, independently-invented instance of exactly the
+  "every member shares one status" pattern the corrected mechanism now recognizes). Every
+  member of every one of these unions is registered at the exact literal status its call site
+  passes.
+- **1 is a genuine, if currently harmless, instance of the same bug**:
+  `src/app/api/payments/[id]/shared.ts:18`'s `respondPaymentRefusal` computes status via a
+  live `API_ERROR_STATUS[refusal.code]` lookup rather than a stored per-member field.
+  `PaymentRefusal` (`src/services/payments.ts:30-38`) genuinely spans two statuses (404
+  `NOT_FOUND`, 409 the other four) with no static per-member pinning — safe today only because
+  the lookup always recomputes the right value from the live table, never a hand-typed literal
+  that could drift. Added to scope (§B).
+
+Verified the corrected mechanism against the real codebase, not just the synthetic spike above:
+temporarily swapped it into `src/lib/api-utils.ts`, ran a whole-project `pnpm run typecheck`,
+reverted before committing anything. Result: 14 errors → exactly 4 (the 3 known sites plus
+`payments/[id]/shared.ts:18`). Zero false positives on the 10 safe sites, zero false negatives
+on the real bug shape.
 
 ## Design
 
 ### A. `src/lib/api-utils.ts`
 
 Add the private `IsUnion` type next to `respondError` (not exported — nothing outside this
-file needs it). Change the coded overload's `status` parameter type from `StatusOf<C>` to
-`IsUnion<C> extends true ? never : StatusOf<C>`. The uncoded 2-arg overload and the
-implementation signature are untouched.
+file needs it). Give the coded overload a second type parameter `S extends ApiErrorStatus`
+(inferred from `status`), and change `status`'s type from `StatusOf<C>` to
+`IsUnion<S> extends true ? never : ([C] extends [CodeWithStatus<S>] ? S : never)` — the
+corrected, non-distributive mechanism (see the spec's "Mechanism correction" section for why
+a bare `C extends CodeWithStatus<S>` is wrong). Import `ApiErrorStatus` and `CodeWithStatus`
+from `./api-error-codes` alongside the existing `ApiErrorCode`, `CodedRefusal`, `StatusOf`.
+The uncoded 2-arg overload and the implementation signature are untouched.
 
 Add:
 
@@ -109,7 +165,7 @@ Rewrite `respondError`'s docblock: state that a union-typed `code` is now a comp
 for a refusal read out of a `Record<Reason, CodedRefusal>` map. `respondError` itself remains
 correct and unchanged in behavior for a single literal code known at the call site.
 
-### B. Migrate the four confirmed call sites
+### B. Migrate the five confirmed call sites
 
 `transition/route.ts:94`, `cancel/route.ts:166`, `complete/route.ts:77`,
 `studio-classes/[id]/route.ts:382` each become:
@@ -121,6 +177,32 @@ return respondRefusal(refusal);
 replacing `return respondError(refusal.message, refusal.status, refusal.code);`. No other
 line in any of these four files changes — the refusal is already read into a local `refusal`
 binding in every case, so this is a pure call-site swap.
+
+**Fifth site, found during implementation:** `src/services/payments.ts:30-38`'s
+`PaymentRefusal` type gains a `status: StatusOf<C>` field per member (mirroring
+`CodedRefusal`'s shape) and its `satisfies` constraint changes from an implicit object-literal
+check to `satisfies Record<PaymentRefusal['code'], CodedRefusal>`-equivalent pinning (each of
+`PAYMENT_GONE`, `PAYMENT_CHANGED`, and the two inline refusals `respondPaymentRefusal`'s
+callers construct gets its own `status` alongside its existing `code`).
+`src/app/api/payments/[id]/shared.ts:17-19`'s `respondPaymentRefusal` changes from
+
+```ts
+export function respondPaymentRefusal(refusal: PaymentRefusal): NextResponse {
+  return respondError(refusal.message, API_ERROR_STATUS[refusal.code], refusal.code);
+}
+```
+
+to a thin call-through:
+
+```ts
+export function respondPaymentRefusal(refusal: PaymentRefusal): NextResponse {
+  return respondRefusal(refusal);
+}
+```
+
+removing the now-unneeded `API_ERROR_STATUS` import from that file. This closes the one
+genuine latent instance found in the "Mechanism correction" sweep, using the exact same
+`respondRefusal` path as the other four — not a special case.
 
 `CLASS_GONE`-style call sites (`respondError(CLASS_GONE.message, CLASS_GONE.status,
 CLASS_GONE.code)`, six of them across `waitlist/route.ts`, `classes/[id]/route.ts`, and the
