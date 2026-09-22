@@ -255,6 +255,25 @@ describe('classifyApiError', () => {
     void [uncoded, misfiled];
   });
 
+  // The 409 pins above cannot reach this arm: a `status: 409` literal never
+  // matches an arm whose status is `500 | 503`, so widening this one's `code`
+  // leaves every one of them still passing.
+  it('keeps a code registered at another status off a 500 or 503 classification, at compile time', () => {
+    const coded: ApiFailure = {
+      status: 503,
+      code: 'TEMPLATE_BUSY',
+      message: 'm',
+      logMessage: 'l',
+      level: 'error',
+    };
+    expect(coded.code).toBe('TEMPLATE_BUSY');
+
+    // @ts-expect-error — a 404 code on a 503 classification
+    const serverMisfiled: ApiFailure = { status: 503, code: 'NOT_FOUND', message: 'm', logMessage: 'l', level: 'error' };
+
+    void [serverMisfiled];
+  });
+
   it('maps P2002 to a 409 logged at warn, naming the constraint that fired', () => {
     const failure = classifyApiError(prismaError('P2002', { target: ['teacherId', 'roomId'] }));
 

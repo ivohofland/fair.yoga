@@ -37,10 +37,11 @@ describe('API_ERROR_STATUS', () => {
 
 // Structural pins: true for any membership, so adding a code never breaks them.
 type _conflictCodesAre409 = Assert<Equals<StatusOf<CodeWithStatus<409>>, 409>>;
-// The other half of the same narrowing, and the half that can go hollow: a
-// `CodeWithStatus<S>` nobody registers a code for is `never`, not an error, so
-// every optional `code` typed by it silently stops accepting any code at all.
-// Which types narrow this way, and why they do:
+// The `500 | 503` half. Either half can go hollow — a `CodeWithStatus<S>`
+// nobody registers a code for is `never`, not an error — and this is what
+// notices, since `StatusOf<never>` is `never` rather than `S`. It fires on a
+// partial hollowing too, where only one of the two statuses is left populated.
+// Why the type narrows this way:
 // docs/superpowers/specs/2026-09-17-api-error-contract-design.md §4.3.
 type _serverCodesAre500Or503 = Assert<Equals<StatusOf<CodeWithStatus<500 | 503>>, 500 | 503>>;
 type _notFoundIs404 = Assert<Equals<StatusOf<'NOT_FOUND'>, 404>>;
