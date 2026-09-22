@@ -7,6 +7,7 @@ import { PrismaClient } from '@prisma/client';
 // still covered through the real route — see the tombstone above the
 // registered-invitee notification test.
 import { inviteContact, unlinkTeacher } from '@/services/invitations';
+import { DECLINED_MESSAGE } from '@/app/api/invitations/[id]/shared';
 import { deleteStudentAccount } from '@/services/gdpr';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
@@ -307,15 +308,15 @@ describe('DELETE /api/invitations/[id]', () => {
       method: 'DELETE', headers: cookie(teacherToken),
     });
     expect(res.status).toBe(409);
-    // R44's per-door literal, at the ordinary pre-check door rather than the
-    // post-CAS one `cas-scope.test.ts` covers. The code is the same at all
-    // three doors, so only the sentence can catch this door handing
-    // `DECLINED` the wrong `ContactDoor` — which reads as "the invitation
-    // can't be sent again" to a teacher who pressed Remove.
+    // Which door, not which words. All three doors answer
+    // `DECLINED_IS_PERMANENT`, so the code cannot catch this one handing
+    // `DECLINED` the wrong `ContactDoor` — a teacher who pressed Remove
+    // reading "the invitation can't be sent again". Compared against the
+    // exported entry rather than a quoted sentence, so rewording the copy
+    // does not redden this: #197's rule is that tests pin the code, not the
+    // prose, and routing is the one thing here the code cannot express.
     const payload = (await res.clone().json()) as { error: { message: string } };
-    expect(payload.error.message).toBe(
-      'This person declined. You can archive this contact, but it cannot be removed.',
-    );
+    expect(payload.error.message).toBe(DECLINED_MESSAGE.remove);
     expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
     expect(await prisma.invitation.findUnique({ where: { id: declined.id } })).not.toBeNull();
   });
@@ -447,11 +448,9 @@ describe('PUT /api/invitations/[id]', () => {
         body: JSON.stringify({ email: `inv-put-escape-${suffix}@test.local` }),
       });
       expect(res.status).toBe(409);
-      // R44's per-door literal — see the DELETE door's own note above.
+      // Which door, not which words — see the DELETE door's own note above.
       const payload = (await res.clone().json()) as { error: { message: string } };
-      expect(payload.error.message).toBe(
-        "This person declined, so their details can't be changed. You can archive this contact.",
-      );
+      expect(payload.error.message).toBe(DECLINED_MESSAGE.edit);
       expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
 
       // The address never moved — otherwise the tombstone's uniqueness key
@@ -528,7 +527,7 @@ describe('PUT /api/invitations/[id]', () => {
     }
   });
 
-  it('refuses an email that another of this teacher\'s contacts already holds, in words a teacher can act on', async () => {
+  it('refuses an email that another of this teacher\'s contacts already holds with its own code, not the escaped-P2002 fallback', async () => {
     // F9, #166 review. Retyping one contact's address as another's is an
     // ordinary mistake, not a race — but it violates
     // `@@unique([teacherId, email])`, and the P2002 used to escape to
@@ -553,14 +552,10 @@ describe('PUT /api/invitations/[id]', () => {
         // collision has to be found on the normalised value, not the typed one.
         body: JSON.stringify({ email: occupiedEmail.toUpperCase() }),
       });
-      // Its own code, not the escaped-P2002 fallback's. The sentence too,
-      // because this test's title promises it and the code alone cannot keep
-      // that promise: #166's property is that the teacher is told which of
-      // their own contacts holds the address, not merely that something
-      // collided. `not.toBe('Resource already exists')` is dropped as
-      // genuinely subsumed — reaching the fallback would change the code.
-      const payload = (await res.clone().json()) as { error: { message: string } };
-      expect(payload.error.message).toBe('Another of your contacts already uses this email address.');
+      // Its own code, not the escaped-P2002 fallback's — which is the whole
+      // of what this test pins. The old `not.toBe('Resource already exists')`
+      // is subsumed by that: reaching the fallback would change the code.
+      // The wording is §6.2's to own, not this test's (#197).
       await expectRefusal(res, 'CONTACT_EMAIL_TAKEN');
 
       // A refused write is not a partial write.
@@ -747,10 +742,10 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
       method: 'POST', headers: cookie(teacherToken),
     });
     expect(res.status).toBe(409);
-    // R44's per-door literal — see the DELETE door's own note above. This is
-    // the sentence no test in the suite asserted before.
+    // Which door, not which words — see the DELETE door's own note above.
+    // This is the door whose entry no test in the suite reached before.
     const payload = (await res.clone().json()) as { error: { message: string } };
-    expect(payload.error.message).toBe("This person declined, so the invitation can't be sent again.");
+    expect(payload.error.message).toBe(DECLINED_MESSAGE.resend);
     expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
   });
 
