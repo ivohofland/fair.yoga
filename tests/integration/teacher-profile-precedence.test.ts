@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { mintSignupTicket } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp, seedSession } from '../helpers';
-import { expectUnchanged } from '../api-assertions';
+import { expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -99,7 +99,11 @@ describe('POST /api/account/teacher-profile — a session always beats a ticket 
       { firstName: 'No', lastName: 'Twice', bio: '', pageSlug: `tp-already-2-${suffix}` },
     );
 
-    expect(res.status).toBe(409);
+    // The code, not a bare 409: this door now has two of them, since a
+    // session-mode resubmit can also answer `SLUG_TAKEN`. A status alone
+    // would let the wrong one through and still pass a test named for this
+    // one.
+    await expectRefusal(res, 'ALREADY_TEACHER');
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
 
