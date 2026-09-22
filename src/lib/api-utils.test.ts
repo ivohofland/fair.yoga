@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { SessionUser } from './types';
-import type { CodedRefusal } from './api-error-codes';
+import type { ApiErrorCode, CodedRefusal } from './api-error-codes';
 
 // Mock auth module before importing api-utils
 vi.mock('./auth', () => ({
@@ -171,6 +171,23 @@ function pickSyntheticReason(): SyntheticReason {
   return 'gone';
 }
 
+/**
+ * A union-typed code whose members ALL share one status — the shape
+ * `CLAIM_REFUSAL_CODE` (`src/app/api/waitlist/claim/route.ts`) and several
+ * other existing call sites already have. `respondError` must keep accepting
+ * this at its one shared status: rejecting every union `code` outright would
+ * break those call sites for no reason (#649).
+ */
+type SyntheticSafeReason = 'a' | 'b';
+const SYNTHETIC_SAFE_CODE = {
+  a: 'CLASS_CANCELLED',
+  b: 'CLASS_NOT_BOOKABLE',
+} as const satisfies Record<SyntheticSafeReason, ApiErrorCode>;
+
+function pickSyntheticSafeReason(): SyntheticSafeReason {
+  return 'a';
+}
+
 describe('respondError', () => {
   it('returns NextResponse with { error: { message } } body and correct status', async () => {
     const response = respondError('Not found', 404);
@@ -229,6 +246,13 @@ describe('respondError', () => {
     // the union of every member's status (404 | 409), and 409 is assignable
     // to that union even though it is NOT_FOUND's wrong status
     respondError(unionRefusal.message, 409, unionRefusal.code);
+
+    // A union code whose members ALL share one status must still compile —
+    // rejecting every union code outright would break the several existing
+    // call sites that already rely on this (SLOT_TAKEN, CLAIM_REFUSAL_CODE,
+    // JOIN_REFUSAL_CODE, and others found while planning #649).
+    const safeCode = SYNTHETIC_SAFE_CODE[pickSyntheticSafeReason()];
+    expect(respondError('ok', 409, safeCode).status).toBe(409);
   });
 });
 
