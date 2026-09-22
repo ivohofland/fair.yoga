@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { SessionUser } from './types';
+import type { CodedRefusal } from './api-error-codes';
 
 // Mock auth module before importing api-utils
 vi.mock('./auth', () => ({
@@ -39,6 +40,7 @@ import {
   respondTyped,
   respondUnchanged,
   respondError,
+  respondRefusal,
   requireSession,
   requireTeacher,
   requireStudent,
@@ -152,6 +154,23 @@ describe('respondUnchanged', () => {
   });
 });
 
+/**
+ * A refusal read off a `Record<Reason, CodedRefusal>` by a non-literal key —
+ * the exact shape `TRANSITION_REFUSAL[result.reason]` has in
+ * `src/app/api/classes/[id]/transition/route.ts`. `code`'s inferred type
+ * here is the union `'NOT_FOUND' | 'PAYMENT_WAIVED'`, not either literal
+ * alone — that's what the tests below exercise (#649).
+ */
+type SyntheticReason = 'gone' | 'waived';
+const SYNTHETIC_REFUSAL = {
+  gone: { code: 'NOT_FOUND', status: 404, message: 'A gone.' },
+  waived: { code: 'PAYMENT_WAIVED', status: 409, message: 'B waived.' },
+} as const satisfies Record<SyntheticReason, CodedRefusal>;
+
+function pickSyntheticReason(): SyntheticReason {
+  return 'gone';
+}
+
 describe('respondError', () => {
   it('returns NextResponse with { error: { message } } body and correct status', async () => {
     const response = respondError('Not found', 404);
@@ -197,6 +216,49 @@ describe('respondError', () => {
 
     // @ts-expect-error — a status the app never sends
     respondError('Teapot.', 418);
+
+    const unionRefusal = SYNTHETIC_REFUSAL[pickSyntheticReason()];
+
+    // @ts-expect-error — unionRefusal.code is a union (read from
+    // SYNTHETIC_REFUSAL by a non-literal reason); a union-typed code must go
+    // through respondRefusal, not a split status/code call (#649)
+    respondError(unionRefusal.message, unionRefusal.status, unionRefusal.code);
+
+    // @ts-expect-error — same union, even at a status that happens to match
+    // one member: before #649 this compiled clean, because StatusOf<C> was
+    // the union of every member's status (404 | 409), and 409 is assignable
+    // to that union even though it is NOT_FOUND's wrong status
+    respondError(unionRefusal.message, 409, unionRefusal.code);
+  });
+});
+
+/**
+ * The `@ts-expect-error` line is verified by `pnpm run typecheck` only, same
+ * as `respondError`'s guard above.
+ */
+describe('respondRefusal', () => {
+  it('sends a literal CodedRefusal exactly as given', async () => {
+    const response = respondRefusal(SYNTHETIC_REFUSAL.gone);
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body).toEqual({ error: { message: 'A gone.', code: 'NOT_FOUND' } });
+  });
+
+  it("accepts a refusal read from a union-typed index, and sends that member's own status", async () => {
+    const refusal = SYNTHETIC_REFUSAL[pickSyntheticReason()];
+    const response = respondRefusal(refusal);
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body).toEqual({ error: { message: 'A gone.', code: 'NOT_FOUND' } });
+  });
+
+  it("rejects a status/code pair that is not one of CodedRefusal's own members", () => {
+    // @ts-expect-error — NOT_FOUND is registered at 404, not 409;
+    // CodedRefusal is a distributed union of { code, status } pairs, so this
+    // literal matches none of its members
+    respondRefusal({ code: 'NOT_FOUND', status: 409, message: 'wrong' });
   });
 });
 
