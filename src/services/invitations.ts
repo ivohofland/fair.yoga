@@ -204,6 +204,66 @@ async function rosterLinkState(
   };
 }
 
+type InviteInput = { teacherId: string; email: string; firstName: string; lastName: string };
+
+/**
+ * What `inviteContact` did. `applied`: it created or revived the invitation,
+ * and `value.delivered` says whether the caller delivers it. `unchanged`: this
+ * teacher's pending, unarchived invitation for the address already carries
+ * these names, so nothing was written and there is nothing to deliver —
+ * `delivered` is `false` so that a caller reading it alone still sends
+ * nothing.
+ */
+export type InviteOutcome =
+  | { ok: true; outcome: 'applied'; value: InviteResult }
+  | { ok: true; outcome: 'unchanged'; value: { id: string; delivered: false } }
+  | { ok: false; reason: InviteRefusal };
+
+/**
+ * The fields a pending invitation must already carry for a repeat to be the
+ * same request. Keyed by `InviteInput`'s fields other than the row's own key,
+ * so a field added there fails to compile here until it is compared too.
+ */
+const REPEAT_COMPARED = {
+  firstName: true,
+  lastName: true,
+} as const satisfies Record<Exclude<keyof InviteInput, 'teacherId' | 'email'>, true>;
+
+/**
+ * What the pre-check and the create-race re-read both select. `isArchived`
+ * is not a request value, so it is not in `REPEAT_COMPARED`; `isRepeatOf`
+ * reads it, and both reads select it through this one object.
+ */
+const REPEAT_SELECT = {
+  id: true,
+  status: true,
+  isArchived: true,
+  ...REPEAT_COMPARED,
+} as const;
+
+/**
+ * Whether `row` is what this request would leave behind: a pending,
+ * unarchived invitation carrying the request's own values. An archived
+ * pending contact is not — a fresh invite leaves a contact the teacher can
+ * see — so it stays `ALREADY_INVITED`.
+ */
+function isRepeatOf(
+  row: { status: string; isArchived: boolean } & Pick<InviteInput, keyof typeof REPEAT_COMPARED>,
+  requested: InviteInput,
+): boolean {
+  return (
+    row.status === 'pending' &&
+    !row.isArchived &&
+    (Object.keys(REPEAT_COMPARED) as Array<keyof typeof REPEAT_COMPARED>).every(
+      (field) => row[field] === requested[field],
+    )
+  );
+}
+
+function unchangedInvite(id: string): InviteOutcome {
+  return { ok: true, outcome: 'unchanged', value: { id, delivered: false } };
+}
+
 /**
  * Create a CRM contact and invite its owner — or, when an answered
  * invitation has outlived the link it created, return that row to `pending`
@@ -246,8 +306,8 @@ async function rosterLinkState(
  */
 export async function inviteContact(
   db: PrismaClient,
-  input: { teacherId: string; email: string; firstName: string; lastName: string },
-): Promise<{ ok: true; value: InviteResult } | { ok: false; reason: InviteRefusal }> {
+  input: InviteInput,
+): Promise<InviteOutcome> {
   const { teacherId, firstName, lastName } = input;
 
   // The CRM is the one place in this app where one human types ANOTHER
@@ -262,7 +322,7 @@ export async function inviteContact(
 
   const existing = await db.invitation.findUnique({
     where: { teacherId_email: { teacherId, email } },
-    select: { id: true, status: true },
+    select: REPEAT_SELECT,
   });
 
   // Every Invitation row left standing is one the teacher typed themselves
@@ -270,7 +330,16 @@ export async function inviteContact(
   // a 409 here tells them nothing they did not already have, and silence
   // would be cruelty rather than protection.
   if (existing?.status === 'declined') return { ok: false, reason: 'DECLINED' };
-  if (existing?.status === 'pending') return { ok: false, reason: 'ALREADY_INVITED' };
+  // A visible pending row with these names is this request already done. An
+  // archived one, or one with other names, is a different request for an
+  // address already invited. This is answered before the roster and block
+  // reads below, so a blocked, a gated-linked and a fresh address answer it
+  // through the same statements.
+  if (existing?.status === 'pending') {
+    return isRepeatOf(existing, input)
+      ? unchangedInvite(existing.id)
+      : { ok: false, reason: 'ALREADY_INVITED' };
+  }
 
   // What is left is an `accepted` row, or no row at all — and both turn on
   // the same question, asked the same way (F8, #166 review).
@@ -342,16 +411,14 @@ export async function inviteContact(
   } else {
     // The `findUnique` at the top of this function is a plain read, so a
     // concurrent invite of the same address passes it and one of the two
-    // loses here. `ALREADY_INVITED` is exact rather than a best guess: this
-    // is the only `Invitation` INSERT in this module — every other write to
-    // that table is an `updateMany` against a row that already exists — so
-    // the row that won was inserted by another `inviteContact` and carries
-    // the schema default `pending`, which is what this refusal names. Were
-    // any other writer able to INSERT, the winner could be a `declined`
-    // tombstone and this answer would be wrong.
-    //
-    // `PUT /api/invitations/[id]` already answers this same code for this
-    // same constraint.
+    // loses here. This is the only `Invitation` INSERT in this module —
+    // every other write to that table is an `updateMany` against a row that
+    // already exists — so the row that won was inserted by another
+    // `inviteContact` and carries the schema default `pending`. The winner is
+    // re-read and answered as the pre-check above answers a pending row:
+    // `unchanged` when `isRepeatOf` holds (a double submit), and
+    // `ALREADY_INVITED` otherwise, including when the re-read no longer finds
+    // it at all.
     try {
       const created = await db.invitation.create({
         data: { teacherId, email, firstName, lastName, delivered },
@@ -360,7 +427,13 @@ export async function inviteContact(
       invitationId = created.id;
     } catch (err) {
       if (isUniqueConflictOn(err, ['teacherId', 'email'])) {
-        return { ok: false, reason: 'ALREADY_INVITED' };
+        const winner = await db.invitation.findUnique({
+          where: { teacherId_email: { teacherId, email } },
+          select: REPEAT_SELECT,
+        });
+        return winner !== null && isRepeatOf(winner, input)
+          ? unchangedInvite(winner.id)
+          : { ok: false, reason: 'ALREADY_INVITED' };
       }
       // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
       // code-less 409, which is the defect this catch exists to remove.
@@ -379,7 +452,7 @@ export async function inviteContact(
     }
   }
 
-  return { ok: true, value: { id: invitationId, delivered } };
+  return { ok: true, outcome: 'applied', value: { id: invitationId, delivered } };
 }
 
 /**
@@ -1129,6 +1202,21 @@ export async function listDeclinedTeachers(
 class NotPendingError extends Error {}
 
 /**
+ * Rolls back `acceptInvitation`'s transaction when its compare-and-swap
+ * missed on a row that is gone, or that is `pending` again when re-read, and
+ * carries the refusal each one earns. It exists for the same reason
+ * `NotPendingError` above does: the roster-link write has already run by then.
+ */
+class AcceptMissError extends Error {
+  constructor(readonly reason: 'NOT_FOUND' | 'CONCURRENT_MODIFICATION') {
+    super(reason);
+  }
+}
+
+/** What answering an invitation did: wrote the answer, or found it already given. */
+export type ResponseOutcome = 'applied' | 'unchanged';
+
+/**
  * Accept an invitation.
  *
  * Authorization is by ADDRESS, not by id. The invitation id travels in a
@@ -1220,7 +1308,10 @@ class NotPendingError extends Error {}
 export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
-): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' | 'STUDENT_ERASED' }> {
+): Promise<
+  | { ok: true; outcome: ResponseOutcome }
+  | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' | 'CONCURRENT_MODIFICATION' | 'STUDENT_ERASED' }
+> {
   const email = requireNormalised(input.accountEmail);
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email, teacher: { deletedAt: null } },
@@ -1238,7 +1329,7 @@ export async function acceptInvitation(
       : { ok: false, reason: 'NOT_PENDING' };
   }
 
-  const accepted = await db.$transaction(async (tx) => {
+  const settled = await db.$transaction(async (tx) => {
     // The Student gate (#183, #626): this transaction's first lock, before
     // its roster-link insert below. A write racing this student's erasure
     // serialises here, and one that waited reads the erasure's committed
@@ -1284,12 +1375,14 @@ export async function acceptInvitation(
     //
     // Writing the roster link first is safe to do unconditionally: the link
     // is not the thing being decided. If the `updateMany` below then matches
-    // nothing — a concurrent decline or unlink got there first — the
-    // transaction rolls back and that write goes with it (see
-    // `NotPendingError` above for why that has to be a throw rather than a
-    // `return false`).
+    // a row that is gone or no longer answerable, the transaction rolls back
+    // and that write goes with it (see `NotPendingError` above for why that
+    // has to be a throw rather than a `return`).
     //
-    await linkTeacherStudent(tx, { teacherId: invitation.teacherId, studentId: input.studentId });
+    const link = await linkTeacherStudent(tx, {
+      teacherId: invitation.teacherId,
+      studentId: input.studentId,
+    });
 
     // The pending check lives in this `updateMany`'s `where`, not in a read
     // beforehand — a concurrent accept and decline from the same account
@@ -1300,37 +1393,39 @@ export async function acceptInvitation(
       where: { id: invitation.id, status: 'pending' },
       data: { status: 'accepted', respondedAt: new Date() },
     });
+    let outcome: ResponseOutcome = 'applied';
     if (updated.count === 0) {
-      // Zero rows can mean THREE different things, and only one of them is
-      // success. A concurrent DECLINE from the same account (the race the
-      // comment above names) leaves this row 'declined' — genuinely not what
-      // this call wanted, still NOT_PENDING. A concurrent DELETE — the
-      // teacher can remove a still-pending invitation outright
-      // (`DELETE /api/invitations/[id]`, which protects only `declined`
-      // rows from removal) — leaves no row at all; `findUnique`, not
-      // `findUniqueOrThrow`, is what keeps that case a clean NOT_PENDING
-      // instead of an unhandled `P2025` `classifyApiError` has no branch
-      // for. But `resolveInvitationOnLink` (services/link-consent.ts) can
-      // ALSO reach this exact row: a booking or waitlist join by this same
-      // account, with this same teacher, resolves the identical invitation
-      // as a side effect of the student's own consenting act (#166) — for a
-      // `pending` row, only when that act created the roster link, which
-      // `docs/data-model.md` (Invitation) states and derives. And the
-      // roster-link write above already waits for that transaction to fully
-      // commit before it can proceed (measured, #181 task 1), so by the time
-      // this line runs, that other writer's 'accepted' may already be
-      // visible. Which of the two wrote it is not something this branch
-      // reasons about: it re-READS the row, so it is right whatever the link
-      // state was. And an 'accepted' row is not a failure to report — the
-      // invitation IS accepted, which is what this call wanted too, just
-      // achieved by a different hand. Treating that case as success is what
-      // makes a stale double-tap of "Accept" idempotent instead of a 409, the
-      // same shape #197 asks for elsewhere.
+      // Zero rows: the row is no longer `pending`, and what it is now decides
+      // the answer. Gone — the teacher can delete a pending invitation
+      // outright (`DELETE /api/invitations/[id]` protects only `declined`
+      // rows) — is `NOT_FOUND`, the answer an unknown id gets; `findUnique`
+      // rather than `findUniqueOrThrow` keeps that a refusal instead of an
+      // unhandled `P2025`. `pending` again means the row moved away and back
+      // between the two statements, which is `CONCURRENT_MODIFICATION`: a
+      // retry would meet a row it can write. `declined`, from a concurrent
+      // decline by this same account, is `NOT_PENDING`, and so is any other
+      // status.
+      //
+      // `accepted` is what this call asks for. This account's own earlier
+      // accept can have written it, and so can `resolveInvitationOnLink`
+      // (services/link-consent.ts), which resolves this row as a side effect
+      // of the same student booking or joining a waitlist with this teacher —
+      // for a `pending` row, only when that act created the roster link
+      // (`docs/data-model.md`, Invitation). The roster-link write above waits
+      // for that transaction to commit (measured, #181 task 1), so its
+      // `accepted` can already be visible here. Which hand wrote it does not
+      // matter here; the link does. When the write above found the link
+      // already standing, nothing this call asks for is missing, and it
+      // answers `unchanged`. When the write above created the link, this call
+      // restored something, and it answers as an ordinary accept.
       const current = await tx.invitation.findUnique({
         where: { id: invitation.id },
         select: { status: true },
       });
-      if (current?.status !== 'accepted') throw new NotPendingError();
+      if (current === null) throw new AcceptMissError('NOT_FOUND');
+      if (current.status === 'pending') throw new AcceptMissError('CONCURRENT_MODIFICATION');
+      if (current.status !== 'accepted') throw new NotPendingError();
+      if (link === 'already-linked') outcome = 'unchanged';
     }
 
     // The outside pre-check reads TeacherBlock before this transaction opens,
@@ -1358,14 +1453,15 @@ export async function acceptInvitation(
     });
     if (blockedNow) throw new NotPendingError();
 
-    return true as const;
-  }).catch((err: unknown) => {
-    if (err instanceof StudentErasedError) return 'STUDENT_ERASED' as const;
-    if (err instanceof NotPendingError) return 'NOT_PENDING' as const;
+    return outcome;
+  }).catch((err: unknown): 'NOT_FOUND' | 'NOT_PENDING' | 'CONCURRENT_MODIFICATION' | 'STUDENT_ERASED' => {
+    if (err instanceof StudentErasedError) return 'STUDENT_ERASED';
+    if (err instanceof AcceptMissError) return err.reason;
+    if (err instanceof NotPendingError) return 'NOT_PENDING';
     throw err;
   });
-  if (accepted !== true) return { ok: false, reason: accepted };
-  return { ok: true };
+  if (settled === 'applied' || settled === 'unchanged') return { ok: true, outcome: settled };
+  return { ok: false, reason: settled };
 }
 
 /**
@@ -1384,7 +1480,10 @@ export async function acceptInvitation(
 export async function declineInvitation(
   db: PrismaClient,
   input: { invitationId: string; accountEmail: string },
-): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
+): Promise<
+  | { ok: true; outcome: ResponseOutcome }
+  | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' | 'CONCURRENT_MODIFICATION' }
+> {
   // Same precondition as `acceptInvitation` above: `accountEmail` and
   // `Invitation.email` must already be lowercase for this match to work.
   const email = requireNormalised(input.accountEmail);
@@ -1405,10 +1504,27 @@ export async function declineInvitation(
       where: { id: invitation.id, status: 'pending' },
       data: { status: 'declined', respondedAt: new Date() },
     });
-    // No sentinel error, unlike `acceptInvitation`'s `NotPendingError`: that
-    // one exists because its roster-link write has already run by this point.
-    // Here nothing has been written yet, so returning commits nothing.
-    if (updated.count === 0) return { ok: false, reason: 'NOT_PENDING' } as const;
+    // No sentinel error, unlike `acceptInvitation`'s: those exist because its
+    // roster-link write has already run by this point. Here nothing has been
+    // written yet, so returning commits nothing.
+    if (updated.count === 0) {
+      // No longer pending when the swap ran. Already `declined` is this
+      // request done: by this account, the only one the address match
+      // admits, or by its own unlink. Gone is an unknown id. `pending` again
+      // means the row moved away and back between the two statements, so a
+      // retry would meet a row it can write. Anything else was answered the
+      // other way.
+      const current = await tx.invitation.findUnique({
+        where: { id: invitation.id },
+        select: { status: true },
+      });
+      if (current === null) return { ok: false, reason: 'NOT_FOUND' } as const;
+      if (current.status === 'declined') return { ok: true, outcome: 'unchanged' } as const;
+      if (current.status === 'pending') {
+        return { ok: false, reason: 'CONCURRENT_MODIFICATION' } as const;
+      }
+      return { ok: false, reason: 'NOT_PENDING' } as const;
+    }
 
     // `Invitation` before `TeacherBlock`, per `docs/lock-order.md`.
     //
@@ -1426,7 +1542,7 @@ export async function declineInvitation(
       update: {},
       create: { teacherId: invitation.teacherId, email },
     });
-    return { ok: true } as const;
+    return { ok: true, outcome: 'applied' } as const;
   });
 }
 

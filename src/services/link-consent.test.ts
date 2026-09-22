@@ -245,10 +245,11 @@ describe('resolveInvitationOnLink', () => {
    * pair is refused `ALREADY_LINKED` — an answer no stranger's address can
    * produce.
    *
-   * The reason string is the assertion, not the refusal: both outcomes are
-   * `ok: false`, and only one of them is the disclosure.
+   * The whole result is the assertion: a stranger's pending invitation
+   * answers a same-names probe `unchanged`, and only `ALREADY_LINKED` is the
+   * disclosure.
    */
-  it('a gated address still answers ALREADY_INVITED on a second probe after the student books', async () => {
+  it('a gated address answers a same-names re-probe as a stranger\'s would, after the student books', async () => {
     const { teacherId, email } = await seedPair('oracle');
 
     const probeOne = await inviteContact(prisma, {
@@ -271,6 +272,8 @@ describe('resolveInvitationOnLink', () => {
     const probeTwo = await inviteContact(prisma, {
       teacherId, email, firstName: 'Guessed', lastName: 'Address',
     });
-    expect(probeTwo).toEqual({ ok: false, reason: 'ALREADY_INVITED' });
+    expect(probeTwo).toEqual({
+      ok: true, outcome: 'unchanged', value: { id: probeOne.value.id, delivered: false },
+    });
   });
 });

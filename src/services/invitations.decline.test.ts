@@ -129,7 +129,7 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       invitationId: invitation.id,
       accountEmail: email,
     });
-    expect(declined).toEqual({ ok: true });
+    expect(declined).toEqual({ ok: true, outcome: 'applied' });
 
     // Erasure rewrites Invitation.email, so the (teacherId, email) key the
     // refusal used to live on no longer matches the address the teacher types.
@@ -166,19 +166,122 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
     expect(again).toEqual({ ok: false, reason: 'DECLINED' });
   });
 
-  it('writes no block when the CAS misses, so a non-pending row cannot silently suppress', async () => {
+  it('answers a repeated decline unchanged, and writes no block', async () => {
     const { teacher, email } = await makeTeacherAndInvitee();
     const invitation = await invite(teacher.id, email);
     await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+    const before = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitation.id },
+      select: { respondedAt: true },
+    });
     await prisma.teacherBlock.deleteMany({ where: { teacherId: teacher.id, email } });
 
-    // The row is already `declined`, so the CAS matches nothing.
+    // The row is already `declined`, so the CAS matches nothing, and the
+    // re-read finds this request already done.
     const second = await declineInvitation(prisma, {
       invitationId: invitation.id,
       accountEmail: email,
     });
-    expect(second).toEqual({ ok: false, reason: 'NOT_PENDING' });
+    expect(second).toEqual({ ok: true, outcome: 'unchanged' });
 
+    const block = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(block).toBeNull();
+    const after = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitation.id },
+      select: { respondedAt: true },
+    });
+    expect(after).toEqual(before);
+  });
+
+  it('answers NOT_PENDING to a decline of an accepted row, and writes no block', async () => {
+    const { teacher, student, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+    expect(await acceptInvitation(prisma, {
+      invitationId: invitation.id,
+      studentId: student.id,
+      accountEmail: email,
+    })).toEqual({ ok: true, outcome: 'applied' });
+
+    const result = await declineInvitation(prisma, {
+      invitationId: invitation.id,
+      accountEmail: email,
+    });
+    expect(result).toEqual({ ok: false, reason: 'NOT_PENDING' });
+
+    const block = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(block).toBeNull();
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitation.id },
+      select: { status: true },
+    });
+    expect(row.status).toBe('accepted');
+  });
+
+  it('answers NOT_FOUND to a decline whose row is deleted between the read and the write', async () => {
+    const { teacher, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+
+    // Deletes the row from another connection just before the CAS runs. The
+    // interactive transaction's `tx` inherits the hook, as `failingBlock`
+    // below relies on for its own.
+    let hookFired = false;
+    const deleting = prisma.$extends({
+      query: {
+        invitation: {
+          async updateMany({ args, query }) {
+            hookFired = true;
+            await prisma.invitation.delete({ where: { id: invitation.id } });
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await declineInvitation(deleting, {
+      invitationId: invitation.id,
+      accountEmail: email,
+    });
+
+    expect(hookFired).toBe(true);
+    expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
+    const block = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(block).toBeNull();
+  });
+
+  // A swap that missed on a row the re-read finds `pending` again: the row
+  // moved away and back between the two statements. The hook stands in for
+  // that interleaving by reporting the miss without running the write.
+  it('answers CONCURRENT_MODIFICATION when the re-read finds the row pending again, and writes no block', async () => {
+    const { teacher, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+    let hookFired = false;
+    const missing = prisma.$extends({
+      query: {
+        invitation: {
+          async updateMany() {
+            hookFired = true;
+            return { count: 0 };
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await declineInvitation(missing, {
+      invitationId: invitation.id,
+      accountEmail: email,
+    });
+
+    expect(hookFired).toBe(true);
+    expect(result).toEqual({ ok: false, reason: 'CONCURRENT_MODIFICATION' });
     const block = await prisma.teacherBlock.findUnique({
       where: { teacherId_email: { teacherId: teacher.id, email } },
       select: { id: true },
@@ -371,7 +474,7 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
         invitationId: invitation.id,
         studentId: student.id,
         accountEmail: email,
-      })).toEqual({ ok: true });
+      })).toEqual({ ok: true, outcome: 'applied' });
       expect(await unlinkTeacher(prisma, {
         teacherId: teacher.id,
         studentId: student.id,
@@ -411,6 +514,87 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
         select: { status: true },
       });
       expect(row.status).toBe('accepted');
+    });
+  });
+
+  describe('acceptInvitation on a repeat (#197)', () => {
+    it('answers a repeated accept unchanged, and stamps nothing twice', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      const accept = () => acceptInvitation(prisma, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      });
+
+      expect(await accept()).toEqual({ ok: true, outcome: 'applied' });
+      const before = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitation.id },
+        select: { status: true, respondedAt: true },
+      });
+
+      expect(await accept()).toEqual({ ok: true, outcome: 'unchanged' });
+      const after = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitation.id },
+        select: { status: true, respondedAt: true },
+      });
+      expect(after).toEqual(before);
+      expect(await prisma.teacherStudent.count({
+        where: { teacherId: teacher.id, studentId: student.id },
+      })).toBe(1);
+    });
+
+    // The half of the rule that is not a repeat: an accepted row whose link
+    // is missing is restored, and that is an ordinary accept.
+    it('answers an accept that restores a missing link as applied', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      const accept = () => acceptInvitation(prisma, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      });
+
+      expect(await accept()).toEqual({ ok: true, outcome: 'applied' });
+      await prisma.teacherStudent.deleteMany({
+        where: { teacherId: teacher.id, studentId: student.id },
+      });
+
+      expect(await accept()).toEqual({ ok: true, outcome: 'applied' });
+      expect(await prisma.teacherStudent.count({
+        where: { teacherId: teacher.id, studentId: student.id },
+      })).toBe(1);
+    });
+
+    // The same stand-in as the decline test above: the swap reports a miss
+    // on a row that is still `pending`. The roster-link write had already
+    // run, so the refusal must roll it back.
+    it('answers CONCURRENT_MODIFICATION when the re-read finds the row pending again, and commits no link', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      let hookFired = false;
+      const missing = prisma.$extends({
+        query: {
+          invitation: {
+            async updateMany() {
+              hookFired = true;
+              return { count: 0 };
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      const result = await acceptInvitation(missing, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      });
+
+      expect(hookFired).toBe(true);
+      expect(result).toEqual({ ok: false, reason: 'CONCURRENT_MODIFICATION' });
+      expect(await prisma.teacherStudent.count({
+        where: { teacherId: teacher.id, studentId: student.id },
+      })).toBe(0);
     });
   });
 
@@ -459,7 +643,7 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
         invitationId: invitation.id,
         studentId: student.id,
         accountEmail: email,
-      })).toEqual({ ok: true });
+      })).toEqual({ ok: true, outcome: 'applied' });
 
       // `unlinkTeacher` is the refusal route this section is NOT keyed on:
       // it writes the same `TeacherBlock` a decline does, and flips a

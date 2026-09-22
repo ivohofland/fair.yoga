@@ -150,6 +150,8 @@ export const LOCK_CONTENTION_TESTS = [
   // sit beside. Each header carries its reason.
   'src/app/api/account/teacher-profile/route-lock-order.test.ts',
   'src/app/api/teachers/[id]/route-lock-order.test.ts',
+  'src/app/api/students/route-lock-order.test.ts',
+  'src/app/api/invitations/[id]/route-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
