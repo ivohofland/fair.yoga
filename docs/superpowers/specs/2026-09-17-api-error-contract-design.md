@@ -222,12 +222,18 @@ type ApiFailure =
   | { status: 500 | 503; code?: CodeWithStatus<500 | 503>; message; logMessage; level; detail? };
 ```
 
-Both arms narrow to the codes registered at their own status. `ApiErrorCode` on
-the second arm would admit a 404 code onto a 500 — the mistake the rest of §4
-exists to prevent, on the one arm where `code` is optional. The shipped type is
-`src/lib/api-errors.ts`; the narrowing is pinned in `api-error-codes.test.ts`
-(each set carries only its own status) and in `api-errors.test.ts` (a 409
-carrying a code registered elsewhere is rejected).
+The 409 arm narrows to the codes registered at 409; the second arm to those
+registered at 500 **or** 503. That is enough to keep a 404 code off a 500 —
+which `ApiErrorCode` there would have admitted, and which is the mistake the
+rest of §4 exists to prevent — and not enough to keep a 503 code off a 500.
+The second arm is the looser of the two, and the one where `code` is optional.
+
+The shipped type is `src/lib/api-errors.ts`. **Each arm needs its own pin,
+because neither reaches the other**: a `status: 409` literal never matches an
+arm whose status is `500 | 503`, so the 409 pins stay green however the second
+arm's `code` is widened, and vice versa. Both live in `api-errors.test.ts`.
+`api-error-codes.test.ts` pins `CodeWithStatus` itself — that its filter still
+selects, and that neither status has gone unpopulated.
 
 `withErrorHandler` passes `failure.code` through. The fallbacks gain codes:
 
@@ -624,7 +630,10 @@ Each is a defect on a row or client this branch already touches.
 - `respondError`: a 409 with no code; a code with the wrong status; an
   unregistered code — each an expected error. A correct call compiles.
 - `ApiFailure`: a 409 literal with no `code`; a 409 literal whose `code` is
-  registered at another status.
+  registered at another status; and the same misfiling on the 500/503 arm,
+  which the 409 pins cannot reach (§4.3).
+- `CodeWithStatus`: `StatusOf<CodeWithStatus<S>>` is `S`, for `S` of 409 and of
+  `500 | 503` (`api-error-codes.test.ts`, an `Assert<Equals<…>>` pin).
 - `respondUnchanged` with no type argument.
 - `readError(...).code` is `ApiErrorCode | undefined` (an `Assert<Equals<…>>`
   pin, `src/lib/type-pins`).
