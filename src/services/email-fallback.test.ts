@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { scopeSweep } from '../../tests/scoped-sweep';
 
 // RESEND_API_KEY is unset in the test environment, so the service takes the
 // dev path (logs instead of sending) — what we assert is the bookkeeping:
@@ -388,13 +389,15 @@ describe('processEmailFallback (DB)', () => {
         // precedent.
       }) as unknown as PrismaClient;
 
-      const outerSent = await processEmailFallback(overlapping);
+      const scoped = scopeSweep(overlapping, { Notification: { id: { in: [notification.id] } } });
+      const outerSent = await processEmailFallback(scoped.db);
 
       // The inbox first, not the counter: two here is the recipient reading
       // the same fallback email twice.
       expect(sendsTo(teacherEmail)).toBe(1);
       expect(interposed).toBe(1);
       // The interposed sweep won the claim; this one found it taken and skipped.
+      expect(scoped.rowsRead('Notification')).toBeGreaterThan(0);
       expect(outerSent).toBe(0);
       const after = await prisma.notification.findUniqueOrThrow({
         where: { id: notification.id },
@@ -406,7 +409,8 @@ describe('processEmailFallback (DB)', () => {
       const notification = await makeEligible();
       sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
 
-      await expect(processEmailFallback(prisma)).rejects.toThrow(/failed/);
+      const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
+      await expect(processEmailFallback(scoped.db)).rejects.toThrow(/failed/);
 
       expect(sendsTo(teacherEmail)).toBe(1);
       // Claimed, then released — a claim left standing would silently retire a
@@ -421,7 +425,8 @@ describe('processEmailFallback (DB)', () => {
       const notification = await makeEligible();
       sendMock.mockRejectedValueOnce(new Error('socket hang up'));
 
-      await expect(processEmailFallback(prisma)).rejects.toThrow(/failed/);
+      const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
+      await expect(processEmailFallback(scoped.db)).rejects.toThrow(/failed/);
 
       const after = await prisma.notification.findUniqueOrThrow({
         where: { id: notification.id },
@@ -453,7 +458,8 @@ describe('processEmailFallback (DB)', () => {
       // the claim is stuck on, so the row leaves the candidate pool forever.
       // The thrown message is the only place that fact reaches anyone who is
       // not already reading logs.
-      await expect(processEmailFallback(unreleasable)).rejects.toThrow(
+      const scoped = scopeSweep(unreleasable, { Notification: { id: { in: [notification.id] } } });
+      await expect(processEmailFallback(scoped.db)).rejects.toThrow(
         /1 of 1 sends failed; 1 claim\(s\) could not be released and will never be retried/,
       );
 
@@ -491,7 +497,8 @@ describe('processEmailFallback (DB)', () => {
       // `processEmailFallback` returned 0 and threw nothing — green health
       // through a total outage. Asserted before the rest because it is the
       // property whose failure names the defect.
-      await expect(processEmailFallback(unclaimable)).rejects.toThrow(
+      const scoped = scopeSweep(unclaimable, { Notification: { id: { in: [notification.id] } } });
+      await expect(processEmailFallback(scoped.db)).rejects.toThrow(
         /email fallback: 1 of 1 sends failed/,
       );
 
