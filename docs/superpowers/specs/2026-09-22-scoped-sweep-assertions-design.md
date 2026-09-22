@@ -116,10 +116,10 @@ class-generator tests, which pass `teacherId`.
 
 ```ts
 const scoped = scopeSweep(prisma, {
-  class: { id: { in: [cls.id] } },
+  Class: { id: { in: [cls.id] } },
 });
 const completed = await autoCompleteClasses(scoped.db, NOW);
-expect(scoped.rowsRead('class')).toBeGreaterThan(0); // the fixture was a candidate
+expect(scoped.rowsRead('Class')).toBeGreaterThan(0); // the fixture was a candidate
 expect(completed).toBe(0);
 ```
 
@@ -129,8 +129,9 @@ expect(completed).toBe(0);
   `deleteMany`. Single-row operations (`findUnique`, `update`, `delete`) pass
   through, because they are keyed by an id the sweep already chose from a
   scoped read. Unnamed models pass through too.
-- `scoped.rowsRead(model)` returns the rows the scoped `findMany`/`findFirst`
-  reads returned, summed. A `toBe(0)` assertion with no presence check stays
+- `scoped.rowsRead(model)` returns the rows the scoped `findMany`/`findFirst`/
+  `groupBy` reads returned, summed (`groupBy` because `timezone-audit.ts` and
+  `waitlist-retention.ts` read their candidates through it). A `toBe(0)` assertion with no presence check stays
   green when the fixture falls out of the sweep's own predicate, because the
   scope then filters an empty set. Every zero assertion therefore pairs with it.
 - Measured before design: a query extension fires inside an interactive
