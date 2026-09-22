@@ -45,8 +45,9 @@ export const PUT = withErrorHandler(async (
   if ('error' in parsed) return parsed.error;
   const updateData = parsed.data;
 
-  // A plain read, so a slug another teacher claims after it reaches the
-  // update below instead, whose catch gives the same answer.
+  // A plain read, so a slug another teacher claims between here and the
+  // update below slips past this check — the update's own catch answers it,
+  // with the same message and code.
   if (updateData.pageSlug) {
     const existing = await prisma.teacher.findUnique({
       where: { pageSlug: updateData.pageSlug },

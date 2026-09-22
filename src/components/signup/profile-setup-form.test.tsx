@@ -176,7 +176,10 @@ describe('ProfileSetupForm', () => {
           ok: false,
           status: 409,
           json: async () => ({
-            error: { code: 'ALREADY_TEACHER', message: 'Account already has a teacher profile' },
+            error: {
+              code: 'ALREADY_TEACHER',
+              message: 'You already have a teacher page. Edit it in Settings.',
+            },
           }),
         });
       }
@@ -198,6 +201,11 @@ describe('ProfileSetupForm', () => {
       '/schedule',
     );
     expect(screen.getByText('Setting up a page for a different address?')).toBeInTheDocument();
+    // The terminal state drops the draft: this account has a page already, so
+    // the form that produced this body can never be resubmitted. The only
+    // other terminal panel, `ACCOUNT_EXISTS` above, asserts the opposite and
+    // keeps it, which is why this belongs on the assertion and not on trust.
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     await waitFor(() =>
