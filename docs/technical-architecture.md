@@ -142,7 +142,11 @@ caller, escaping the `.catch` entirely.
 
 ### Error responses
 
-A refusal is `respondError(message, status, code)`. The code comes from
+A refusal is `respondError(message, status, code)` for a single literal code
+known at the call site, or `respondRefusal(refusal)` for one read whole off a
+`Record<Reason, CodedRefusal>` map — splitting such a refusal into separate
+`status`/`code` arguments does not compile, because a union-typed `code` no
+longer pins a single status (#649). The code comes from
 `src/lib/api-error-codes.ts`, which fixes one status per code: a 409 without
 a code, or a code at another status, does not compile. Clients branch on the
 code through `readError` (`src/lib/client-errors.ts`) rather than on the
