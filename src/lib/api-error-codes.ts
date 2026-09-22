@@ -7,7 +7,8 @@
  * it pulled in would ship in the browser bundle.
  *
  * Adding a code: one entry here, at its status; the route sends it with
- * `respondError`; a test asserts it with `expectRefusal`.
+ * `respondError`, or `respondRefusal` for a refusal read whole off a map; a
+ * test asserts it with `expectRefusal`.
  *
  * Full rules: `docs/technical-architecture.md` (The Services Layer → Error
  * responses).

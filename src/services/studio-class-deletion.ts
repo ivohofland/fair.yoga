@@ -159,13 +159,11 @@ export const STUDIO_CLASS_REMOVAL_FACTS_SELECT = {
  * sweep would recreate a class when it would not.
  *
  * `CodedRefusal`, not `{ message: string; code: ApiErrorCode }`: the latter
- * widens `code` to the whole union, so `respondError`'s `status: StatusOf<C>`
- * would infer `C` as every code at once and admit every status. What
- * actually pins each entry to its own status is this map's own
- * `satisfies Record<StudioClassRefusal, CodedRefusal>`, checked once at
- * definition; the call site passes the whole entry to `respondRefusal`
- * rather than splitting it into a `status` and a `code` argument, which is
- * what a union-typed `code` would otherwise silently widen (#649).
+ * widens `code` to the whole union, so no entry's status is checked against
+ * its own code. `satisfies Record<StudioClassRefusal, CodedRefusal>` checks
+ * each entry on its own, once, at definition; the call site hands the whole
+ * entry to `respondRefusal`, which carries that pairing to the response
+ * without re-deriving it (#649).
  */
 export const STUDIO_CLASS_REFUSALS = {
   regenerates: {

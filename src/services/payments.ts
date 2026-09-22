@@ -25,8 +25,9 @@ export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error:
 
 /**
  * A refusal from one of the teacher's payment actions below. `code` is a
- * registered code (`src/lib/api-error-codes.ts`), which fixes the HTTP status;
- * `message` is what the teacher reads.
+ * registered code (`src/lib/api-error-codes.ts`), which fixes the HTTP
+ * status; `status` is that code's own, pinned by `CodedRefusal`; `message`
+ * is what the teacher reads.
  */
 export type PaymentRefusal = Extract<
   CodedRefusal,
