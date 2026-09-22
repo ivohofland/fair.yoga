@@ -138,4 +138,58 @@ describe('CreateStudentForm', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await screen.findByText(/first name is required/i)).toBeInTheDocument();
   });
+
+  it('confirms in place when the server reports the invitation already stands', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { id: 'inv-1' }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CreateStudentForm />);
+    fillForm('Ada', 'Lovelace', 'ada@example.com');
+    await submit();
+    expect(await screen.findByText(/invitation sent/i)).toBeInTheDocument();
+  });
+
+  it('shows the refusal the server sends, and stays on the form', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'ALREADY_INVITED',
+          message: 'You have already invited this person — open their contact to resend or update their details.',
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CreateStudentForm />);
+    fillForm('Ada', 'Lovelace', 'ada@example.com');
+    await submit();
+    expect(
+      await screen.findByText(
+        'You have already invited this person — open their contact to resend or update their details.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/invitation sent/i)).toBeNull();
+  });
+
+  it('falls back to its own message when the error body cannot be read', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      url: '/api/students',
+      json: async () => {
+        throw new SyntaxError('Unexpected token <');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CreateStudentForm />);
+    fillForm('Ada', 'Lovelace', 'ada@example.com');
+    await submit();
+    expect(await screen.findByText('Failed to send the invitation')).toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
 });

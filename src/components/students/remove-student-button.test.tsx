@@ -10,7 +10,7 @@ import { RemoveStudentButton } from './remove-student-button';
  * would have noticed a bad repoint. It now fetches `DELETE
  * /api/invitations/[id]` instead; these tests pin that URL, the confirm
  * step, and that a declined contact's 409 arrives on screen through
- * `readErrorMessage` unmodified.
+ * `readError` unmodified.
  */
 describe('RemoveStudentButton', () => {
   const fetchMock = vi.fn();
@@ -95,5 +95,38 @@ describe('RemoveStudentButton', () => {
     render(<RemoveStudentButton invitationId="inv-1" studentName="Lena Visser" />);
     clickThroughConfirm();
     expect(await screen.findByText('Could not remove the contact. Try again.')).toBeInTheDocument();
+  });
+
+  it('treats a contact that is already gone as removed', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { code: 'NOT_FOUND', message: 'This contact no longer exists.' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RemoveStudentButton invitationId="inv-1" studentName="Lena Visser" />);
+    clickThroughConfirm();
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/students'));
+    expect(screen.queryByText('This contact no longer exists.')).toBeNull();
+  });
+
+  it('keeps a contact that changed under the request as an error', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'CONTACT_CHANGED',
+          message: 'This contact changed while you were working on it. Reload and try again.',
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RemoveStudentButton invitationId="inv-1" studentName="Lena Visser" />);
+    clickThroughConfirm();
+    expect(
+      await screen.findByText('This contact changed while you were working on it. Reload and try again.'),
+    ).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
   });
 });

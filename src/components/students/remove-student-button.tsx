@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError } from '@/lib/client-errors';
 
 interface RemoveStudentButtonProps {
   invitationId: string;
@@ -15,7 +15,7 @@ interface RemoveStudentButtonProps {
  * `DELETE /api/students/[id]`, is gone (Task 10 deleted it, along with the
  * unclaimed `Student` row it served). The 409 a declined
  * invitation answers with (`DECLINED_IS_PERMANENT`) arrives through
- * `readErrorMessage` below unchanged; the caller is what decides whether
+ * `readError` below unchanged; the caller is what decides whether
  * this button renders at all for that case (see
  * `/students/contacts/[id]/page.tsx`), since the fix for "present and
  * failing" belongs before the click, not in the error text.
@@ -33,9 +33,16 @@ export function RemoveStudentButton({ invitationId, studentName }: RemoveStudent
       const res = await fetch(`/api/invitations/${invitationId}`, { method: 'DELETE' });
       if (res.ok) {
         router.push('/students');
-      } else {
-        setError(await readErrorMessage(res, 'Could not remove the contact. Try again.'));
+        return;
       }
+      const { code, message } = await readError(res, 'Could not remove the contact. Try again.');
+      // This button asked for the contact to be gone, so a contact that is
+      // already gone is the outcome it asked for.
+      if (code === 'NOT_FOUND') {
+        router.push('/students');
+        return;
+      }
+      setError(message);
     } catch {
       setError('Network error. Try again.');
     } finally {

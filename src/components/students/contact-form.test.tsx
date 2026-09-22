@@ -8,8 +8,7 @@ import { ContactForm, ArchiveContactButton, ResendInvitationButton } from './con
  * file's `#136` comment) — this test holds what the pin cannot see, which is
  * what actually reaches `PUT /api/invitations/[id]`: a declined contact's
  * PUT 409s with `DECLINED_IS_PERMANENT`, and that specific message — not a
- * generic retry prompt — is what must reach the screen. The precedent is
- * `teacher-privacy-card.tsx:75-84`'s own handling of its 403.
+ * generic retry prompt — is what must reach the screen.
  *
  * Nothing fetches on mount, so the first submit/toggle is the only call.
  */
@@ -97,7 +96,7 @@ describe('ContactForm', () => {
       status: 409,
       json: async () => ({
         error: {
-          message: 'This person declined. You can archive this contact, but it cannot be removed.',
+          message: "This person declined, so their details can't be changed. You can archive this contact.",
           code: 'DECLINED_IS_PERMANENT',
         },
       }),
@@ -111,7 +110,7 @@ describe('ContactForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     expect(
       await screen.findByText(
-        'This person declined. You can archive this contact, but it cannot be removed.',
+        "This person declined, so their details can't be changed. You can archive this contact.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText('Failed to update contact')).toBeNull();
@@ -182,18 +181,18 @@ describe('ArchiveContactButton', () => {
    * tests deliberately: the two components were copied once with the same
    * missing `else`, and fixing one without the other is how they drift.
    */
-  it('shows the server message when the PATCH fails', async () => {
+  it('shows the server message when the PATCH fails, a missing contact included', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 404,
-      json: async () => ({ error: { message: 'Contact not found' } }),
+      json: async () => ({ error: { code: 'NOT_FOUND', message: 'This contact no longer exists.' } }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<ArchiveContactButton invitationId="inv-1" isArchived={false} />);
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(await screen.findByText('Contact not found')).toBeInTheDocument();
+    expect(await screen.findByText('This contact no longer exists.')).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
   });
 
@@ -247,14 +246,21 @@ describe('ResendInvitationButton', () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 409,
-      json: async () => ({ error: { message: 'This invitation is no longer pending.' } }),
+      json: async () => ({
+        error: {
+          code: 'NOT_PENDING',
+          message: 'This person already accepted your invitation. Reload to see the latest.',
+        },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<ResendInvitationButton invitationId="inv-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(await screen.findByText('This invitation is no longer pending.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('This person already accepted your invitation. Reload to see the latest.'),
+    ).toBeInTheDocument();
   });
 
   it('falls back to generic copy when the server sends no message', async () => {

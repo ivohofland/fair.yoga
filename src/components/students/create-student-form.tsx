@@ -7,6 +7,7 @@ import type { createInvitationSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface FormErrors {
   firstName?: string;
@@ -84,13 +85,13 @@ export function CreateStudentForm() {
         body: JSON.stringify(payload),
       });
 
+      // A repeat the server finds already done answers 200 `unchanged`: the
+      // invitation stands, so the confirmation below is true for it too.
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
         // #166: this route no longer creates a student, it sends an
         // invitation. The fallback only shows when the server sent no
-        // message of its own — the 409 refusals all carry theirs, from
-        // REFUSAL_MESSAGES.
-        setSubmitError(json.error?.message ?? 'Failed to send the invitation');
+        // readable message of its own.
+        setSubmitError(await readErrorMessage(res, 'Failed to send the invitation'));
         return;
       }
 
