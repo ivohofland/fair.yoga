@@ -230,9 +230,9 @@ const REPEAT_COMPARED = {
 } as const satisfies Record<Exclude<keyof InviteInput, 'teacherId' | 'email'>, true>;
 
 /**
- * What the pre-check and the create-race re-read both select. `isArchived`
- * is not a request value, so it is not in `REPEAT_COMPARED`; `isRepeatOf`
- * reads it, and both reads select it through this one object.
+ * What every repeat read selects. `isArchived` is not a request value, so it
+ * is not in `REPEAT_COMPARED`; `isRepeatOf` reads it, and it reaches that
+ * predicate through this one object.
  */
 const REPEAT_SELECT = {
   id: true,

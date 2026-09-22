@@ -308,6 +308,17 @@ describe('POST /api/students', () => {
 
     // ALREADY_INVITED, not ALREADY_LINKED: this refusal is about the
     // teacher's own pending invitation, which is theirs to know about.
+    //
+    // The sentence as well as the code. `REFUSAL_MESSAGES`'s own docblock
+    // (`services/invitations.ts`) states the F4/#166 property this is the
+    // only server-side assertion of: this refusal names the way out, and
+    // "the recovery is the part that has to survive an edit". The code
+    // cannot see the clause go, and the client tests that quote the sentence
+    // stub their own fetch, so they constrain the form and never the server.
+    const payload = (await res.clone().json()) as { error: { message: string } };
+    expect(payload.error.message).toBe(
+      'You have already invited this person — open their contact to resend or update their details.',
+    );
     await expectRefusal(res, 'ALREADY_INVITED');
     expect(await prisma.invitation.findUniqueOrThrow({ where: { id: before.id }, select })).toEqual(before);
   });

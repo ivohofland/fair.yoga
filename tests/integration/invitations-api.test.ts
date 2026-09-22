@@ -307,6 +307,15 @@ describe('DELETE /api/invitations/[id]', () => {
       method: 'DELETE', headers: cookie(teacherToken),
     });
     expect(res.status).toBe(409);
+    // R44's per-door literal, at the ordinary pre-check door rather than the
+    // post-CAS one `cas-scope.test.ts` covers. The code is the same at all
+    // three doors, so only the sentence can catch this door handing
+    // `DECLINED` the wrong `ContactDoor` — which reads as "the invitation
+    // can't be sent again" to a teacher who pressed Remove.
+    const payload = (await res.clone().json()) as { error: { message: string } };
+    expect(payload.error.message).toBe(
+      'This person declined. You can archive this contact, but it cannot be removed.',
+    );
     expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
     expect(await prisma.invitation.findUnique({ where: { id: declined.id } })).not.toBeNull();
   });
@@ -438,6 +447,11 @@ describe('PUT /api/invitations/[id]', () => {
         body: JSON.stringify({ email: `inv-put-escape-${suffix}@test.local` }),
       });
       expect(res.status).toBe(409);
+      // R44's per-door literal — see the DELETE door's own note above.
+      const payload = (await res.clone().json()) as { error: { message: string } };
+      expect(payload.error.message).toBe(
+        "This person declined, so their details can't be changed. You can archive this contact.",
+      );
       expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
 
       // The address never moved — otherwise the tombstone's uniqueness key
@@ -539,7 +553,14 @@ describe('PUT /api/invitations/[id]', () => {
         // collision has to be found on the normalised value, not the typed one.
         body: JSON.stringify({ email: occupiedEmail.toUpperCase() }),
       });
-      // Its own code, not the escaped-P2002 fallback's.
+      // Its own code, not the escaped-P2002 fallback's. The sentence too,
+      // because this test's title promises it and the code alone cannot keep
+      // that promise: #166's property is that the teacher is told which of
+      // their own contacts holds the address, not merely that something
+      // collided. `not.toBe('Resource already exists')` is dropped as
+      // genuinely subsumed — reaching the fallback would change the code.
+      const payload = (await res.clone().json()) as { error: { message: string } };
+      expect(payload.error.message).toBe('Another of your contacts already uses this email address.');
       await expectRefusal(res, 'CONTACT_EMAIL_TAKEN');
 
       // A refused write is not a partial write.
@@ -726,6 +747,10 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
       method: 'POST', headers: cookie(teacherToken),
     });
     expect(res.status).toBe(409);
+    // R44's per-door literal — see the DELETE door's own note above. This is
+    // the sentence no test in the suite asserted before.
+    const payload = (await res.clone().json()) as { error: { message: string } };
+    expect(payload.error.message).toBe("This person declined, so the invitation can't be sent again.");
     expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
   });
 
