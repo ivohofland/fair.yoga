@@ -47,7 +47,7 @@ export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
 export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
 
 /** True when `T` is a union with more than one member (`A | B`, not `A`). */
-type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
+export type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
 
 /**
  * Named so a rejected call's diagnostic points here instead of reading like an

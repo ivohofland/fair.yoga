@@ -7,7 +7,8 @@ import {
   type CodeWithStatus,
   type StatusOf,
 } from './api-error-codes';
-import type { Assert, Equals } from './type-pins';
+import type { IsUnion } from './api-utils';
+import type { Assert, Equals, NoneOf } from './type-pins';
 
 describe('isApiErrorCode', () => {
   it('accepts a registered code', () => {
@@ -63,6 +64,15 @@ type _conflictCodesAre409 = Assert<Equals<StatusOf<CodeWithStatus<409>>, 409>>;
 // docs/superpowers/specs/2026-09-17-api-error-contract-design.md §4.3.
 type _serverCodesAre500Or503 = Assert<Equals<StatusOf<CodeWithStatus<500 | 503>>, 500 | 503>>;
 type _notFoundIs404 = Assert<Equals<StatusOf<'NOT_FOUND'>, 404>>;
+// Each code sits at ONE literal status. A cast on an entry (`418 as
+// ApiErrorStatus`) passes `satisfies` and `sendError`'s parameter alike, since
+// the whole union fits both — but it widens that code's `StatusOf` to a union.
+// That drops the code out of every `CodeWithStatus<S>`, so the pins above never
+// see it; this one names it.
+type CodesWithUnionStatus = {
+  [C in ApiErrorCode]: IsUnion<StatusOf<C>> extends true ? C : never;
+}[ApiErrorCode];
+type _eachCodeHasOneStatus = Assert<NoneOf<CodesWithUnionStatus>>;
 // Not `ApiErrorCode extends string`, which stays true once the registry's keys
 // widen to `string` and so cannot fail: this asserts the keys are still literal.
 type _codesAreNotBareString = Assert<Equals<Equals<ApiErrorCode, string>, false>>;
@@ -79,6 +89,7 @@ void 0 as unknown as [
   _conflictCodesAre409,
   _serverCodesAre500Or503,
   _notFoundIs404,
+  _eachCodeHasOneStatus,
   _codesAreNotBareString,
   _codedRefusalNarrowsToItsCode,
 ];
