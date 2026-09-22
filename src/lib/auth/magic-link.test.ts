@@ -6,6 +6,7 @@ import {
   cleanupExpiredTokens,
 } from './magic-link';
 import { log } from '@/lib/log';
+import { scopeSweep } from '../../../tests/scoped-sweep';
 
 const db = new PrismaClient();
 
@@ -278,12 +279,14 @@ describe('cleanupExpiredTokens', () => {
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
 
-    const deleted = await cleanupExpiredTokens(db);
+    // Scoped for the same reason the `afterEach` above is: an unscoped sweep
+    // deletes sibling suites' rows too, and this database persists between
+    // local runs.
+    const scoped = scopeSweep(db, { MagicLinkToken: { email: { endsWith: '@example.com' } } });
+    const deleted = await cleanupExpiredTokens(scoped.db);
     expect(deleted).toBe(1);
 
-    // The non-expired one should still exist. Scoped for the same reason the
-    // `afterEach` above is: a bare `.count()` counts sibling suites' rows too,
-    // and this database persists between local runs.
+    // The non-expired one should still exist.
     const remaining = await db.magicLinkToken.count({
       where: { email: { endsWith: '@example.com' } },
     });
@@ -293,7 +296,8 @@ describe('cleanupExpiredTokens', () => {
   it('returns 0 when no tokens are expired', async () => {
     await generateMagicLinkToken(db, 'fresh@example.com');
 
-    const deleted = await cleanupExpiredTokens(db);
+    const scoped = scopeSweep(db, { MagicLinkToken: { email: { endsWith: '@example.com' } } });
+    const deleted = await cleanupExpiredTokens(scoped.db);
     expect(deleted).toBe(0);
   });
 });
