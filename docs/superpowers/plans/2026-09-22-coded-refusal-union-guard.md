@@ -8,11 +8,14 @@ a non-literal reason), and correct the shipped code and docs that claim the call
 checks this.
 
 **Architecture:** Add `respondRefusal(refusal: CodedRefusal)` to `src/lib/api-utils.ts` for
-the map-indexed refusal shape, and gate `respondError`'s coded overload with an `IsUnion<C>`
-conditional so a union-typed `code` is a compile error there too — the two together mean a
-map-indexed refusal can no longer reach `respondError` split into two arguments, by
-construction, at every current and future call site. Then migrate the four call sites that
-have this shape today and correct the one docblock that credits the wrong mechanism for it.
+the map-indexed refusal shape, and gate `respondError`'s coded overload so a union-typed
+`code` is only accepted when the literal `status` passed provably covers every member of that
+union (`[C] extends [CodeWithStatus<S>]`) — otherwise it's a compile error. This is more
+precise than rejecting every union `code` outright: ten call sites elsewhere in the codebase
+already pass a union `code` with a hardcoded status that happens to be correct for every
+member (verified during planning), and a blanket rejection would break all ten for no reason.
+Then migrate the five call sites that have the genuine bug shape today and correct the one
+docblock that credits the wrong mechanism for it.
 
 **Tech Stack:** TypeScript (strict), Next.js Route Handlers, Vitest (`@ts-expect-error` +
 `pnpm run typecheck` for compile-time guards, per the existing pattern in
@@ -49,19 +52,22 @@ have this shape today and correct the one docblock that credits the wrong mechan
 **Interfaces:**
 - Produces: `export function respondRefusal(refusal: CodedRefusal): NextResponse` — accepts
   any value of the `CodedRefusal` distributed union (`src/lib/api-error-codes.ts:107-109`) and
-  sends its `message`/`status`/`code` unchanged. This is what Task 2's four call sites call.
-- Produces: `respondError`'s coded overload now rejects a call where `C` (inferred from
-  `code`) is a union of more than one `ApiErrorCode` member — any such call becomes a compile
-  error regardless of what status is passed. The uncoded 2-arg overload
-  (`respondError(message, status: Exclude<ErrorStatus, 409>)`) is unchanged.
+  sends its `message`/`status`/`code` unchanged. This is what Task 2's five call sites call.
+- Produces: `respondError`'s coded overload now rejects a call where the literal `status`
+  passed does not provably cover every member of `code`'s inferred type `C` — a union `C`
+  whose members don't all share that one status becomes a compile error regardless of what
+  status is passed; a union `C` whose members DO all share the passed status compiles as
+  before. The uncoded 2-arg overload (`respondError(message, status: Exclude<ErrorStatus,
+  409>)`) is unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
-Edit `src/lib/api-utils.test.ts`. First, add a type-only import for `CodedRefusal` right after
-the existing `import type { SessionUser } from './types';` (line 4):
+Edit `src/lib/api-utils.test.ts`. First, add a type-only import for `ApiErrorCode` and
+`CodedRefusal` right after the existing `import type { SessionUser } from './types';`
+(line 4):
 
 ```ts
-import type { CodedRefusal } from './api-error-codes';
+import type { ApiErrorCode, CodedRefusal } from './api-error-codes';
 ```
 
 Add `respondRefusal` to the named import from `'./api-utils'` (currently lines 37-48):
@@ -103,6 +109,23 @@ function pickSyntheticReason(): SyntheticReason {
   return 'gone';
 }
 
+/**
+ * A union-typed code whose members ALL share one status — the shape
+ * `CLAIM_REFUSAL_CODE` (`src/app/api/waitlist/claim/route.ts`) and several
+ * other existing call sites already have. `respondError` must keep accepting
+ * this at its one shared status: rejecting every union `code` outright would
+ * break those call sites for no reason (#649).
+ */
+type SyntheticSafeReason = 'a' | 'b';
+const SYNTHETIC_SAFE_CODE = {
+  a: 'CLASS_CANCELLED',
+  b: 'CLASS_NOT_BOOKABLE',
+} as const satisfies Record<SyntheticSafeReason, ApiErrorCode>;
+
+function pickSyntheticSafeReason(): SyntheticSafeReason {
+  return 'a';
+}
+
 ```
 
 Inside the existing test `'ties a code to its status, and a conflict to a code, at compile
@@ -122,6 +145,13 @@ time'` (currently lines 182-200), add two new lines right before the test's clos
     // the union of every member's status (404 | 409), and 409 is assignable
     // to that union even though it is NOT_FOUND's wrong status
     respondError(unionRefusal.message, 409, unionRefusal.code);
+
+    // A union code whose members ALL share one status must still compile —
+    // rejecting every union code outright would break the several existing
+    // call sites that already rely on this (SLOT_TAKEN, CLAIM_REFUSAL_CODE,
+    // JOIN_REFUSAL_CODE, and others found while planning #649).
+    const safeCode = SYNTHETIC_SAFE_CODE[pickSyntheticSafeReason()];
+    expect(respondError('ok', 409, safeCode).status).toBe(409);
 ```
 
 Immediately after the `describe('respondError', ...)` block's closing `});` (currently line
@@ -161,7 +191,9 @@ describe('respondRefusal', () => {
 
 - [ ] **Step 2: Run typecheck and the test file to verify both fail**
 
-Run: `pnpm run typecheck`
+Run: `pnpm run typecheck` (the whole project, not a scoped subset — this task's mechanism
+must not falsely reject any other existing call site, and the only way to see that is the
+full compiler run)
 Expected: FAIL — `error TS2305: Module '"./api-utils"' has no exported member 'respondRefusal'`,
 plus `error TS2578: Unused '@ts-expect-error' directive.` on the two new lines inside the
 `'ties a code...'` test (today's `respondError` overload still accepts a union `code`, so
@@ -182,8 +214,11 @@ import type { ApiErrorCode, StatusOf } from './api-error-codes';
 to:
 
 ```ts
-import type { ApiErrorCode, CodedRefusal, StatusOf } from './api-error-codes';
+import type { ApiErrorCode, ApiErrorStatus, CodedRefusal, CodeWithStatus } from './api-error-codes';
 ```
+
+(`StatusOf` is no longer used directly in this file — the corrected mechanism uses
+`CodeWithStatus` instead.)
 
 Replace the block from the `respondError` docblock through `sendError`'s declaration
 (currently lines 49-71) with:
@@ -194,19 +229,24 @@ type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
 
 /**
  * A refusal. A code fixes its status (`src/lib/api-error-codes.ts`), so a code
- * sent at another status does not compile; a 409 must name its code, because
- * a conflict is exactly what a client has to tell apart. `C` is inferred from
- * `code`, so a union-typed `code` — reading a refusal off a
- * `Record<Reason, CodedRefusal>` map by a non-literal reason — poisons
- * `status`'s parameter type to `never` rather than being accepted at the
- * union of every member's status: use `respondRefusal` for that shape
- * instead. This overload is for a single literal code known at the call
- * site. The rules are in `docs/technical-architecture.md` (The Services
- * Layer → Error responses).
+ * sent at another status does not compile. `C` is inferred from `code` and
+ * `S` from `status`; the call is only accepted when `S` is a single literal
+ * status AND every member of `C` is registered at that exact status
+ * (`[C] extends [CodeWithStatus<S>]`) — a union `code` is fine as long as it
+ * provably shares one status with the literal passed (several existing call
+ * sites already rely on this), but a union spanning more than one status is
+ * a compile error regardless of which status literal is passed, because no
+ * single literal can be correct for all its members. A 409 must name its
+ * code, because a conflict is exactly what a client has to tell apart. A
+ * refusal read off a `Record<Reason, CodedRefusal>` map — where each member
+ * carries its OWN status, not one shared by every member — uses
+ * `respondRefusal` instead, never this overload split into two arguments.
+ * The rules are in `docs/technical-architecture.md` (The Services Layer →
+ * Error responses).
  */
-export function respondError<C extends ApiErrorCode>(
+export function respondError<C extends ApiErrorCode, S extends ApiErrorStatus>(
   message: string,
-  status: IsUnion<C> extends true ? never : StatusOf<C>,
+  status: IsUnion<S> extends true ? never : ([C] extends [CodeWithStatus<S>] ? S : never),
   code: C,
 ): NextResponse;
 export function respondError(message: string, status: Exclude<ErrorStatus, 409>): NextResponse;
@@ -238,12 +278,30 @@ function sendError(message: string, status: ErrorStatus, code?: ApiErrorCode): N
 
 - [ ] **Step 4: Run typecheck and the test file to verify both pass**
 
-Run: `pnpm run typecheck`
-Expected: PASS — no diagnostics.
+Run: `pnpm run typecheck` (whole project again — this is the step that proves the mechanism
+is precise, not just that the two changed files are clean)
+Expected: FAIL, with exactly 4 remaining diagnostics, all outside the two files this task
+touches — every one of them a genuine instance of the bug this issue is about, not a false
+positive:
+
+```
+src/app/api/classes/[id]/cancel/route.ts(166,42): error TS2345: ...
+src/app/api/classes/[id]/complete/route.ts(77,40): error TS2345: ...
+src/app/api/classes/[id]/transition/route.ts(94,40): error TS2345: ...
+src/app/api/payments/[id]/shared.ts(18,40): error TS2345: ...
+```
+
+These four are Task 2's job — expected and correct for this mechanism to flag, since none of
+them has been migrated to `respondRefusal` yet. If the count or the file list differs from
+this, STOP and report DONE_WITH_CONCERNS with the actual output — do not proceed assuming it's
+fine, and do not "fix" it by weakening the mechanism. If there are MORE than these 4 (a false
+positive on a site not in this list), the mechanism has a bug; read the flagged site and
+compare against the spec's "Mechanism correction" section before touching anything.
 
 Run: `pnpm exec vitest run src/lib/api-utils.test.ts`
 Expected: PASS — all tests green, including the new `respondRefusal` describe block and the
-extended `respondError` compile-time test.
+extended `respondError` compile-time test (both the two rejection cases and the one new
+acceptance case).
 
 - [ ] **Step 5: Commit**
 
@@ -254,23 +312,35 @@ git commit -m "feat(api): add respondRefusal, reject union-typed codes in respon
 
 ---
 
-## Task 2: Migrate the four call sites to `respondRefusal`
+## Task 2: Migrate the five call sites to `respondRefusal`
 
 **Files:**
 - Modify: `src/app/api/classes/[id]/transition/route.ts:5-11` (import), `:94` (call site)
 - Modify: `src/app/api/classes/[id]/cancel/route.ts:3-10` (import), `:166` (call site)
 - Modify: `src/app/api/classes/[id]/complete/route.ts:1-9` (import), `:77` (call site)
 - Modify: `src/app/api/studio-classes/[id]/route.ts:3-9` (import), `:382` (call site)
+- Modify: `src/services/payments.ts:30-38` (`PaymentRefusal` type), `:52-55` (`PAYMENT_GONE`),
+  `:62-65` (`PAYMENT_CHANGED`), `:150-153`, `:156-161`, `:272-278`, `:358-364` (four inline
+  refusal literals)
+- Modify: `src/app/api/payments/[id]/shared.ts:1-19` (import, `respondPaymentRefusal`)
 - Test: `tests/integration/classes-api.test.ts` (`describe('POST /api/classes/[id]/complete'`
   at :376, `describe('POST /api/classes/[id]/transition'` at :457, which also holds the cancel
-  door's tests), `tests/integration/studio-api.test.ts` (regenerates-refusal cases)
+  door's tests), `tests/integration/studio-api.test.ts` (regenerates-refusal cases),
+  `tests/integration/payments-api.test.ts` (confirmed: contains the `PAYMENT_ALREADY_PAID`,
+  `PAYMENT_SETTLED`, and `PAYMENT_WAIVED` refusal cases)
 
 **Interfaces:**
 - Consumes: `respondRefusal(refusal: CodedRefusal): NextResponse` from Task 1.
 
-This task is a pure refactor — each call site's `refusal` binding is unchanged, only how it
-reaches the response changes. No new observable behavior, so no new test is written; the
-existing integration tests are the regression check.
+This task is a pure refactor — every refusal's fields are unchanged, only how each one reaches
+the response changes (plus, for `PaymentRefusal`, gaining a `status` field it didn't carry
+before — still describing the exact same wire response, since the status those four codes
+send does not change). No new observable behavior, so no new test is written; the existing
+integration tests are the regression check.
+
+Steps 1-4 migrate the four sites the spec's Premise section found. Step 5 handles the fifth
+site, found during Task 1's build (`src/services/payments.ts` /
+`src/app/api/payments/[id]/shared.ts`) — same pattern, different shape of source change.
 
 - [ ] **Step 1: Migrate `transition/route.ts`**
 
@@ -385,12 +455,165 @@ refusal.code);`) with:
     return respondRefusal(refusal);
 ```
 
-- [ ] **Step 5: Run typecheck**
+- [ ] **Step 5: Migrate `payments.ts` and `payments/[id]/shared.ts`**
 
-Run: `pnpm run typecheck`
-Expected: PASS — no diagnostics.
+This is the fifth site, found during Task 1's build (not in the original four). Unlike the
+first four, `PaymentRefusal` doesn't carry a `status` field yet — it gains one, at each of its
+six construction sites, then its one call site becomes a thin pass-through.
 
-- [ ] **Step 6: Run the regression suites for all four routes**
+In `src/services/payments.ts`, add a type-only import for `CodedRefusal` — this file currently
+has no import from `@/lib/api-error-codes`. Add it as a new line among the existing imports
+(after `import type { PrismaClient, Payment, RegistrationStatus } from '@prisma/client';`):
+
+```ts
+import type { CodedRefusal } from '@/lib/api-error-codes';
+```
+
+Change the `PaymentRefusal` type (currently lines 30-38) from:
+
+```ts
+export type PaymentRefusal = {
+  readonly code:
+    | 'CONCURRENT_MODIFICATION'
+    | 'NOT_FOUND'
+    | 'PAYMENT_ALREADY_PAID'
+    | 'PAYMENT_SETTLED'
+    | 'PAYMENT_WAIVED';
+  readonly message: string;
+};
+```
+
+to:
+
+```ts
+export type PaymentRefusal = Extract<
+  CodedRefusal,
+  {
+    code:
+      | 'CONCURRENT_MODIFICATION'
+      | 'NOT_FOUND'
+      | 'PAYMENT_ALREADY_PAID'
+      | 'PAYMENT_SETTLED'
+      | 'PAYMENT_WAIVED';
+  }
+>;
+```
+
+(Reuses `CodedRefusal`'s existing per-member `status` pinning rather than hand-rolling a
+parallel one — `Extract` narrows the same five-member distributed union `CodedRefusal` already
+is down to just these five codes, each still carrying its own correct `status`.)
+
+Add `status: 404,` to `PAYMENT_GONE` (currently lines 52-55):
+
+```ts
+export const PAYMENT_GONE: PaymentRefusal = {
+  code: 'NOT_FOUND',
+  status: 404,
+  message: 'This payment no longer exists.',
+};
+```
+
+Add `status: 409,` to `PAYMENT_CHANGED` (currently lines 62-65):
+
+```ts
+const PAYMENT_CHANGED: PaymentRefusal = {
+  code: 'CONCURRENT_MODIFICATION',
+  status: 409,
+  message: 'This payment was just changed elsewhere. Refresh and try again.',
+};
+```
+
+Add `status: 409,` to the four inline refusal literals. First (currently lines 150-153):
+
+```ts
+        return {
+          kind: 'refused',
+          refusal: {
+            code: 'PAYMENT_ALREADY_PAID',
+            status: 409,
+            message: 'This payment is already marked paid.',
+          },
+        };
+```
+
+Second (currently lines 156-161):
+
+```ts
+        return {
+          kind: 'refused',
+          refusal: {
+            code: 'PAYMENT_WAIVED',
+            status: 409,
+            message: 'This payment was marked not charged. Mark it unpaid first.',
+          },
+        };
+```
+
+Third (currently lines 272-278):
+
+```ts
+        return {
+          kind: 'refused',
+          refusal: {
+            code: 'PAYMENT_ALREADY_PAID',
+            status: 409,
+            message: "This payment is already paid, so it can't be marked not charged.",
+          },
+        };
+```
+
+Fourth (currently lines 358-364):
+
+```ts
+        return {
+          kind: 'refused',
+          refusal: {
+            code: 'PAYMENT_SETTLED',
+            status: 409,
+            message: 'This payment is already settled, so no reminder is needed.',
+          },
+        };
+```
+
+In `src/app/api/payments/[id]/shared.ts`, change the import line (currently):
+
+```ts
+import { API_ERROR_STATUS } from '@/lib/api-error-codes';
+import { respondError, respondOk, respondUnchanged } from '@/lib/api-utils';
+```
+
+to (the `API_ERROR_STATUS` import is no longer used anywhere in this file):
+
+```ts
+import { respondError, respondOk, respondRefusal, respondUnchanged } from '@/lib/api-utils';
+```
+
+Change `respondPaymentRefusal` (currently lines 17-19) from:
+
+```ts
+export function respondPaymentRefusal(refusal: PaymentRefusal): NextResponse {
+  return respondError(refusal.message, API_ERROR_STATUS[refusal.code], refusal.code);
+}
+```
+
+to:
+
+```ts
+export function respondPaymentRefusal(refusal: PaymentRefusal): NextResponse {
+  return respondRefusal(refusal);
+}
+```
+
+(`respondError` stays imported — `loadOwnedPayment` still calls it directly at line 63 for the
+403 case, which is unaffected.)
+
+- [ ] **Step 6: Run typecheck**
+
+Run: `pnpm run typecheck` (whole project)
+Expected: PASS — no diagnostics. This is the step that closes out the "4 remaining diagnostics"
+Task 1 ended on — all four should now be gone.
+
+- [ ] **Step 7: Run the regression suites for all five routes**
 
 The app must already be live on `:3000` (do not start or restart it — check first; see the
 project's `verify` skill if it is not running).
@@ -403,11 +626,16 @@ too) passes unchanged, including the `expectRefusal` assertions on status and co
 Run: `pnpm exec vitest run --project integration tests/integration/studio-api.test.ts`
 Expected: PASS — the `STUDIO_CLASS_REGENERATES` refusal cases (409, that code) pass unchanged.
 
-- [ ] **Step 7: Commit**
+Run: `pnpm exec vitest run --project integration tests/integration/payments-api.test.ts`
+Expected: PASS — the `PAYMENT_ALREADY_PAID`, `PAYMENT_SETTLED`, `PAYMENT_WAIVED`, `NOT_FOUND`,
+and `CONCURRENT_MODIFICATION` refusal cases all pass unchanged (same status, same code, same
+message — only the internal path changed).
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add "src/app/api/classes/[id]/transition/route.ts" "src/app/api/classes/[id]/cancel/route.ts" "src/app/api/classes/[id]/complete/route.ts" "src/app/api/studio-classes/[id]/route.ts"
-git commit -m "refactor(api): route the four map-indexed refusals through respondRefusal (#649)"
+git add "src/app/api/classes/[id]/transition/route.ts" "src/app/api/classes/[id]/cancel/route.ts" "src/app/api/classes/[id]/complete/route.ts" "src/app/api/studio-classes/[id]/route.ts" src/services/payments.ts "src/app/api/payments/[id]/shared.ts"
+git commit -m "refactor(api): route the five map-indexed refusals through respondRefusal (#649)"
 ```
 
 ---
@@ -579,7 +807,11 @@ exactly as Task 2 left it; Step 5 is a read-only verification run.
 The PR body carries: the manual mutation-test results from the spec's Premise section (the
 three hand-applied mutations to `transition/route.ts`, `cancel/route.ts`, and
 `complete/route.ts` against pre-fix `main`, each confirmed to compile clean and reverted) as
-the record that the guard was missing before this plan landed, plus Task 4's exact error text
-as the record that it now bites. Name which `integration` files this branch touched
-(`tests/integration/classes-api.test.ts`, `tests/integration/studio-api.test.ts`) and cite the
+the record that the guard was missing before this plan landed; the spec's "Mechanism
+correction" addendum (14 errors → 4, on the real codebase, after replacing the first-cut
+`IsUnion<C>`-only mechanism with the `CodeWithStatus<S>`-based one) as the record that the
+first cut would have broken 10 unrelated call sites had it shipped as originally reviewed; and
+Task 4's exact error text as the record that the corrected guard still bites on the real bug
+shape. Name which `integration` files this branch touched (`tests/integration/classes-api.test.ts`,
+`tests/integration/studio-api.test.ts`, `tests/integration/payments-api.test.ts`) and cite the
 `pnpm run verify` run from Task 4 Step 5 with its pass/fail arithmetic.
