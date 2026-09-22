@@ -16,6 +16,7 @@ import {
   updateTeacherSchema,
   updateStudentSchema,
   isSafeRelativePath,
+  isLoginRedirectTarget,
   MAX_CLASS_SIZE,
   requireNormalised,
   pageSlugField,
@@ -92,6 +93,35 @@ describe('redirect path validation', () => {
     expect(isSafeRelativePath('/\t/evil.com')).toBe(false);
     expect(isSafeRelativePath('/\r/evil.com')).toBe(false);
     expect(isSafeRelativePath('/\n/evil.com')).toBe(false);
+  });
+});
+
+describe('isLoginRedirectTarget', () => {
+  // The predicate `/login`'s own page reads its `?redirect=` param through
+  // (`src/app/(public)/login/page.tsx`) — pinned here so a caller building a
+  // `/login?redirect=` link (`profile-setup-form.tsx`'s ACCOUNT_EXISTS panel)
+  // can assert its own value against the identical rule.
+  it('accepts an ordinary relative path', () => {
+    expect(isLoginRedirectTarget('/account/privacy')).toBe(true);
+    expect(isLoginRedirectTarget('/students/s-1')).toBe(true);
+  });
+
+  it('rejects what isSafeRelativePath already rejects', () => {
+    expect(isLoginRedirectTarget('//evil.com')).toBe(false);
+    expect(isLoginRedirectTarget('/\\evil.com')).toBe(false);
+    expect(isLoginRedirectTarget('https://evil.com')).toBe(false);
+  });
+
+  it('rejects a path over 200 characters, accepts exactly 200', () => {
+    expect(isLoginRedirectTarget('/' + 'a'.repeat(200))).toBe(false);
+    expect(isLoginRedirectTarget('/' + 'a'.repeat(199))).toBe(true);
+  });
+
+  it('rejects a target that would loop the sign-in flow back on itself', () => {
+    expect(isLoginRedirectTarget('/login')).toBe(false);
+    expect(isLoginRedirectTarget('/login/anything')).toBe(false);
+    expect(isLoginRedirectTarget('/verify')).toBe(false);
+    expect(isLoginRedirectTarget('/verify/anything')).toBe(false);
   });
 });
 

@@ -122,6 +122,28 @@ export function isSafeRelativePath(path: string): boolean {
 
 const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a relative path');
 
+/**
+ * The redirect `/login` (`src/app/(public)/login/page.tsx`) accepts, beyond
+ * `isSafeRelativePath`'s shape check: capped at 200 characters (matching
+ * `relativePath`'s own `.max(200)`) and refusing a target on `/login` or
+ * `/verify`, which would loop the sign-in flow back on itself.
+ *
+ * Exported so a caller that BUILDS a `/login?redirect=` link —
+ * `profile-setup-form.tsx`'s `ACCOUNT_EXISTS` panel is the one today — can
+ * assert its own emitted value against the identical rule `/login` enforces,
+ * rather than the two agreeing only by coincidence through
+ * `isSafeRelativePath` alone. Tighten this predicate and every such caller's
+ * own test reddens instead of silently drifting.
+ */
+export function isLoginRedirectTarget(path: string): boolean {
+  return (
+    isSafeRelativePath(path) &&
+    path.length <= 200 &&
+    !path.startsWith('/login') &&
+    !path.startsWith('/verify')
+  );
+}
+
 /** Where a `teacher_signup` ticket always lands (`signupTicketFor`,
  *  `src/lib/auth/signup-ticket.ts`). Lives here rather than there so a
  *  client component can import it without pulling in that module's

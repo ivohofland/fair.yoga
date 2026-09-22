@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ProfileSetupForm } from './profile-setup-form';
 import { routerPush } from '../../../tests/setup/components';
+import { isLoginRedirectTarget } from '@/lib/schemas';
 
 const DRAFT_KEY = 'fair_yoga_profile_draft';
 
@@ -154,10 +155,18 @@ describe('ProfileSetupForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
 
     expect(await screen.findByText('You already have an account')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
-      'href',
-      '/login?redirect=%2Fsignup%2Fprofile',
-    );
+    const signInHref = screen.getByRole('link', { name: 'Sign in' }).getAttribute('href') ?? '';
+    expect(signInHref).toBe('/login?redirect=%2Fsignup%2Fprofile');
+    // Tethered to the SAME predicate `/login`'s own page runs the param
+    // through (`isLoginRedirectTarget`, `src/lib/schemas.ts`), not just the
+    // literal above: the two are pinned independently today (this href is a
+    // string literal here; `/login/page.tsx` calls the predicate), sharing
+    // only `isSafeRelativePath`. Tighten the predicate and this assertion is
+    // what reddens — the literal above would stay green while the panel
+    // silently dropped its redirect.
+    const emittedRedirect = new URL(signInHref, 'http://localhost').searchParams.get('redirect');
+    expect(emittedRedirect).not.toBeNull();
+    expect(isLoginRedirectTarget(emittedRedirect ?? '')).toBe(true);
     // The whole sentence, not just the heading: "to continue" is deliberate
     // and load-bearing — it has to stay true for the collision shape that
     // already holds a teacher page, which this panel cannot distinguish.
