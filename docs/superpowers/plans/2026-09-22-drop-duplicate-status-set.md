@@ -31,12 +31,16 @@
 2. `pnpm run typecheck` and `pnpm run lint` green.
 3. Prove both remaining guards bite, each with the exact error text, then
    restore and confirm `git status` clean:
-   - a. Register `TEAPOT: 418` → TS2322 at the registry entry (`satisfies`).
+   - a. Register `TEAPOT: 418` → TS2322 at the registry entry (`satisfies`),
+     and TS2345 at `sendError` beside it.
    - b. Also delete `satisfies Record<string, ApiErrorStatus>` → TS2345 at
      `sendError` in `api-utils.ts`.
-   - c. Widen `ApiErrorStatus` with `418` and add a matching `ErrorStatus`
-     member alongside `TEAPOT: 418` → typecheck clean, and the unit file still
-     green: the correct change no longer reddens anything.
+   - c. Widen `ApiErrorStatus` and `ErrorStatus` with `422` and register
+     `UNPROCESSABLE: 422` → typecheck clean, and the unit files still green:
+     the correct change no longer reddens anything. Not `418`:
+     `api-utils.test.ts` holds it as its example of a status the app never
+     sends, so widening with it reddens that `@ts-expect-error` for a reason
+     unrelated to this test.
 4. `pnpm run verify` before pushing.
 
 Single task, so no whole-branch review (skill §5); PR review via
