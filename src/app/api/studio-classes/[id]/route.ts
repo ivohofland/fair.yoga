@@ -116,11 +116,7 @@ export const PUT = withErrorHandler(async (
   // partially apply. `.strict()` makes `Object.keys(gated)` total: every key
   // the client sent is either in this destructure or in `gated`.
   if (!verdict.scheduleEditable && Object.keys(gated).length > 0) {
-    return respondError(
-      STUDIO_CLASS_EDIT_REFUSALS.income_record.message,
-      409,
-      STUDIO_CLASS_EDIT_REFUSALS.income_record.code,
-    );
+    return respondRefusal(STUDIO_CLASS_EDIT_REFUSALS.income_record);
   }
 
   // Gate 2 — a generated row holds its `(scheduleRuleId, date)` key against the
@@ -139,7 +135,7 @@ export const PUT = withErrorHandler(async (
     const refusal = verdict.scheduleEditable
       ? STUDIO_CLASS_EDIT_REFUSALS.generated_date
       : STUDIO_CLASS_EDIT_REFUSALS.income_record;
-    return respondError(refusal.message, 409, refusal.code);
+    return respondRefusal(refusal);
   }
 
   // Gate 3 — a date may not move BACKWARDS across today. The verdict above
@@ -155,11 +151,7 @@ export const PUT = withErrorHandler(async (
   // which bounds its date field at neither end.
   if (dateString !== undefined
       && studioClassDateIsPast(new Date(dateString), now, session.defaultTimezone)) {
-    return respondError(
-      STUDIO_CLASS_EDIT_REFUSALS.past_date.message,
-      409,
-      STUDIO_CLASS_EDIT_REFUSALS.past_date.code,
-    );
+    return respondRefusal(STUDIO_CLASS_EDIT_REFUSALS.past_date);
   }
 
   // `startTime` stays inside `gated` — Gate 1's `Object.keys(gated)` check

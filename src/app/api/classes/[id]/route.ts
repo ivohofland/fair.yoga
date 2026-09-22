@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondRefusal,
   requireTeacher,
   parseBody,
   isErrorResponse,
@@ -18,7 +19,7 @@ import { CLASS_GONE } from './shared';
 
 /** The 404 for a class that is not there, whichever read in this file found it gone. */
 function classGone() {
-  return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
+  return respondRefusal(CLASS_GONE);
 }
 
 export const GET = withErrorHandler(async (
