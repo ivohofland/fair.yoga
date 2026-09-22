@@ -156,10 +156,11 @@ describe('respondUnchanged', () => {
 
 /**
  * A refusal read off a `Record<Reason, CodedRefusal>` by a non-literal key —
- * the exact shape `TRANSITION_REFUSAL[result.reason]` has in
- * `src/app/api/classes/[id]/transition/route.ts`. `code`'s inferred type
- * here is the union `'NOT_FOUND' | 'PAYMENT_WAIVED'`, not either literal
- * alone — that's what the tests below exercise (#649).
+ * the same shape `TRANSITION_REFUSAL[result.reason]` has in
+ * `src/app/api/classes/[id]/transition/route.ts` (though that map's own
+ * codes differ). Below, `SYNTHETIC_REFUSAL`'s own `code` is inferred as the
+ * union `'NOT_FOUND' | 'PAYMENT_WAIVED'`, not either literal alone — that's
+ * what the tests exercise (#649).
  */
 type SyntheticReason = 'gone' | 'waived';
 const SYNTHETIC_REFUSAL = {
@@ -242,15 +243,13 @@ describe('respondError', () => {
     respondError(unionRefusal.message, unionRefusal.status, unionRefusal.code);
 
     // @ts-expect-error — same union, even at a status that happens to match
-    // one member: before #649 this compiled clean, because StatusOf<C> was
-    // the union of every member's status (404 | 409), and 409 is assignable
-    // to that union even though it is NOT_FOUND's wrong status
+    // one member: a union code's status can't be narrowed by a literal that
+    // merely matches one member — every member must share it
     respondError(unionRefusal.message, 409, unionRefusal.code);
 
     // A union code whose members ALL share one status must still compile —
-    // rejecting every union code outright would break the several existing
-    // call sites that already rely on this (SLOT_TAKEN, CLAIM_REFUSAL_CODE,
-    // JOIN_REFUSAL_CODE, and others found while planning #649).
+    // rejecting every union code outright would break several existing call
+    // sites that already rely on this (#649).
     const safeCode = SYNTHETIC_SAFE_CODE[pickSyntheticSafeReason()];
     expect(respondError('ok', 409, safeCode).status).toBe(409);
   });
