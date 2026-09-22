@@ -11,6 +11,7 @@ import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { scopeSweep } from '../../tests/scoped-sweep';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -212,6 +213,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         },
       },
     }) as unknown as PrismaClient;
+    const scoped = scopeSweep(racing, { Class: { id: { in: [cls.id] } } });
 
     // The guard firing must be VISIBLE. Four outcomes return a bare `false`
     // from inside that transaction, and in production the scheduler discards
@@ -223,11 +225,12 @@ describe('class transitions (DB, timezone-aware)', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => log);
     try {
       const transitioned = await autoTransitionToInProgress(
-        racing,
+        scoped.db,
         new Date('2026-07-20T16:00:00Z'),
       );
 
       expect(hookCalls).toBe(1);
+      expect(scoped.rowsRead('Class')).toBeGreaterThan(0);
       expect(transitioned).toBe(0);
 
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
@@ -300,7 +303,8 @@ describe('class transitions (DB, timezone-aware)', () => {
 
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
       try {
-        const sweeping = autoTransitionToInProgress(prisma, new Date('2026-07-20T16:00:00Z'));
+        const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+        const sweeping = autoTransitionToInProgress(scoped.db, new Date('2026-07-20T16:00:00Z'));
         const settled = await Promise.race([
           sweeping.then(() => true),
           new Promise<false>((r) => setTimeout(() => r(false), 300)),
@@ -313,6 +317,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
         await holder;
         expect(await sweeping).toBe(0);
+        expect(scoped.rowsRead('Class')).toBeGreaterThan(0);
 
         const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
         expect(updated.status).toBe('open');
@@ -352,14 +357,18 @@ describe('class transitions (DB, timezone-aware)', () => {
         data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
       });
 
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
       const transitioned = await autoTransitionToInProgress(
-        prisma,
+        scoped.db,
         new Date('2026-07-20T16:00:00Z'),
       );
-      expect(transitioned).toBeGreaterThanOrEqual(1);
+      expect(transitioned).toBe(1);
 
       const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
       expect(after.status).toBe('expired');
+
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(updated.status).toBe('in_progress');
     } finally {
       // `finally`, not inline after the assertions — the convention this file
       // already records at its `#174` fixture. A failing assertion skipping its
@@ -385,7 +394,9 @@ describe('class transitions (DB, timezone-aware)', () => {
     // matches it, and `afterAll` reaps both rows), but inert-by-luck is not
     // the reason to leave it out.
     try {
-      await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      const cancelledCount = await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'));
+      expect(cancelledCount).toBe(1);
 
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.calendarEntry.cancelledAt).not.toBeNull();
@@ -883,10 +894,12 @@ describe('class transitions (DB, timezone-aware)', () => {
       },
       // Same cast rationale as the tests above.
     }) as unknown as PrismaClient;
+    const scoped = scopeSweep(racing, { Class: { id: { in: [cls.id] } } });
 
-    const cancelledCount = await autoCancelClasses(racing, new Date('2026-07-20T15:00:00Z'));
+    const cancelledCount = await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'));
 
     expect(hookCalls).toBe(1);
+    expect(scoped.rowsRead('Class')).toBeGreaterThan(0);
     expect(cancelledCount).toBe(0);
 
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
@@ -1029,6 +1042,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         },
       },
     }) as unknown as PrismaClient;
+    const scoped = scopeSweep(racing, { Class: { id: { in: [cls.id] } } });
 
     // The consumer side of the refusal reason, which nothing tested before.
     // `completeClass`'s own test pins that it RETURNS `NOT_ENDED_YET`; these
@@ -1038,9 +1052,10 @@ describe('class transitions (DB, timezone-aware)', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
     const error = vi.spyOn(log, 'error').mockImplementation(() => log);
     try {
-      const completed = await autoCompleteClasses(racing, new Date('2026-07-20T17:30:00Z'));
+      const completed = await autoCompleteClasses(scoped.db, new Date('2026-07-20T17:30:00Z'));
 
       expect(hookCalls).toBe(1);
+      expect(scoped.rowsRead('Class')).toBeGreaterThan(0);
       expect(completed).toBe(0);
 
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
@@ -1074,7 +1089,9 @@ describe('class transitions (DB, timezone-aware)', () => {
     });
 
     // Ends 17:00Z (16:00Z start + 60 min); 17:30Z is past that.
-    await autoCompleteClasses(prisma, new Date('2026-07-20T17:30:00Z'));
+    const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+    const completed = await autoCompleteClasses(scoped.db, new Date('2026-07-20T17:30:00Z'));
+    expect(completed).toBe(1);
 
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('completed');
