@@ -140,6 +140,67 @@ caller, escaping the `.catch` entirely.
 
 `grep -rn '): FireAndForget' src/` lists every function under this rule.
 
+### Error responses
+
+A refusal is `respondError(message, status, code)`. The code comes from
+`src/lib/api-error-codes.ts`, which fixes one status per code: a 409 without
+a code, or a code at another status, does not compile. Clients branch on the
+code through `readError` (`src/lib/client-errors.ts`), never on the status —
+two refusals can share a status and mean different things — and tests assert
+it with `expectRefusal` (`tests/api-assertions.ts`), never the message, so
+copy can change without touching a test.
+
+**The one exception is comparing a message against its own exported
+constant, never a literal — and only where several doors share one code and
+the sentence is the only thing that says which door answered.**
+`src/app/api/invitations/[id]/shared.ts`'s `DECLINED(door)` is the worked
+example: `edit`, `remove` and `resend` all send `DECLINED_IS_PERMANENT`, so
+the code cannot tell a caller which sentence was sent, and
+`cas-scope.test.ts` compares the body against `DECLINED_MESSAGE.remove` (its
+own exported entry), never the quoted sentence, so rewording the copy stays
+free while the door-routing pin still holds. This is the only reason to read
+`error.message` in a server-side test. Without it written down, whoever next
+meets a mutation that leaves a test green cannot tell "nothing caught this"
+from "nothing was ever meant to" — the question #197's own PR (`8e22db04`)
+had to answer the hard way, by re-deriving the acceptance criterion from the
+issue itself after a first pass pinned prose at five sites that did not need it.
+
+**Already done is not an error.** A request whose goal the server can prove
+already holds answers `respondUnchanged(data)`: 200, `{ data, outcome:
+'unchanged' }`, no write, no side effect. "Prove" means the stored state
+equals what the request asks for, including every value the request carries;
+a request carrying values the stored row lacks is not a retry of the request
+that made it. In a handler the check sits:
+
+1. after authentication and ownership — before them, "unchanged versus 404"
+   would answer whether something exists;
+2. after refusals that make the goal moot — the class is cancelled, the
+   payment is settled;
+3. before every other status, window or capacity refusal, so a retry is never
+   refused for a state its own first attempt created.
+
+A delete of a row that is already gone cannot be proven a retry, so it stays
+404 `NOT_FOUND`, and the component that issued the delete treats that code as
+done. A create that meets its twin stays a refusal naming the conflicting
+row.
+
+**Copy.** A refusal message:
+
+- uses the user's terms — never a model or table name, a status literal, an
+  id, or a list of valid values;
+- says what is true, then the next step when there is one;
+- says "someone else" only when the server knows it was not this user;
+- is a full sentence in sentence case with a closing period — no "Invalid…",
+  "Cannot…: …" or "Must be…", and no apology;
+- may vary with the action or the row it names, while its code keeps one
+  meaning;
+- names anything in the UI by the label the UI shows.
+
+**Adding a code:** one registry entry at its status; the route sends it; a
+test asserts it with `expectRefusal`. A reason → response map types its
+values `CodedRefusal`, so each entry's status is checked against its own code.
+`classifyApiError`'s fallbacks (`src/lib/api-errors.ts`) carry codes too.
+
 ### Pricing Engine (`services/pricing.ts`)
 
 The most critical piece of logic. Takes a class's economic settings and its registrations, returns the price each student pays.

@@ -173,6 +173,31 @@ describe('respondError', () => {
       error: { message: 'This class no longer exists.', code: 'NOT_FOUND' },
     });
   });
+
+  /**
+   * The `@ts-expect-error` lines are verified by `pnpm run typecheck` only.
+   * Each is a guard: loosen the overloads and the directive it sits on
+   * becomes unused, which is itself a compile error.
+   */
+  it('ties a code to its status, and a conflict to a code, at compile time', () => {
+    expect(respondError('This class no longer exists.', 404, 'NOT_FOUND').status).toBe(404);
+    expect(respondError('Teacher access required', 403).status).toBe(403);
+
+    // @ts-expect-error — a 409 must carry a code
+    respondError('A conflict with no code.', 409);
+
+    // @ts-expect-error — NOT_FOUND is registered at 404, not 409
+    respondError('Wrong status.', 409, 'NOT_FOUND');
+
+    // @ts-expect-error — PAYMENT_WAIVED is registered at 409, not 404
+    respondError('Wrong status.', 404, 'PAYMENT_WAIVED');
+
+    // @ts-expect-error — not a registered code
+    respondError('Unknown code.', 409, 'NOT_A_REGISTERED_CODE');
+
+    // @ts-expect-error — a status the app never sends
+    respondError('Teapot.', 418);
+  });
 });
 
 const testSchema = z.object({
@@ -451,7 +476,9 @@ describe('withErrorHandler', () => {
     );
 
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: { message: 'Resource already exists' } });
+    expect(await res.json()).toEqual({
+      error: { message: expect.any(String), code: 'UNIQUE_CONFLICT' },
+    });
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'POST',

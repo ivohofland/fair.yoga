@@ -6,6 +6,7 @@ import {
   isRestrictViolationOn,
   isTransientDbError,
   TERMINAL_TRIGGER_TAILS,
+  type ApiFailure,
 } from './api-errors';
 import {
   liveFunctions,
@@ -235,17 +236,36 @@ const calendarEntryExclusionConflictErrorFixture = new Prisma.PrismaClientUnknow
 );
 
 describe('classifyApiError', () => {
+  it('requires a registered 409 code on every 409 classification, at compile time', () => {
+    const coded: ApiFailure = {
+      status: 409,
+      code: 'UNIQUE_CONFLICT',
+      message: 'm',
+      logMessage: 'l',
+      level: 'warn',
+    };
+    expect(coded.code).toBe('UNIQUE_CONFLICT');
+
+    // @ts-expect-error — a 409 classification without a code
+    const uncoded: ApiFailure = { status: 409, message: 'm', logMessage: 'l', level: 'warn' };
+
+    // @ts-expect-error — a 404 code on a 409 classification
+    const misfiled: ApiFailure = { status: 409, code: 'NOT_FOUND', message: 'm', logMessage: 'l', level: 'warn' };
+
+    void [uncoded, misfiled];
+  });
+
   it('maps P2002 to a 409 logged at warn, naming the constraint that fired', () => {
     const failure = classifyApiError(prismaError('P2002', { target: ['teacherId', 'roomId'] }));
 
     expect(failure.status).toBe(409);
-    expect(failure.message).toBe('Resource already exists');
+    expect(failure.code).toBe('UNIQUE_CONFLICT');
     expect(failure.level).toBe('warn');
     expect(failure.detail).toEqual({ target: ['teacherId', 'roomId'] });
   });
 
   /**
-   * The whole point of splitting the two: "Resource already exists" is a
+   * The whole point of splitting the two: "That already exists." is a
    * reasonable thing to return to a client and a useless thing to find in a
    * log. Collapsing them back into one field is the regression this pins.
    */
@@ -271,6 +291,7 @@ describe('classifyApiError', () => {
     expect(failure.message).toBe(
       'You already have a recurring class or studio class at an overlapping time on that day.',
     );
+    expect(failure.code).toBe('RULE_SLOT_TAKEN');
     expect(failure.level).toBe('warn');
   });
 
@@ -288,6 +309,7 @@ describe('classifyApiError', () => {
     expect(failure.message).toBe(
       'You already have a class or studio class at an overlapping time on that date.',
     );
+    expect(failure.code).toBe('ENTRY_SLOT_TAKEN');
     expect(failure.logMessage).toBe('calendar entry slot exclusion escaped a route to the 409 fallback');
     expect(failure.level).toBe('warn');
   });
@@ -323,6 +345,7 @@ describe('classifyApiError', () => {
     expect(failure.status).toBe(409);
     expect(failure.level).toBe(level);
     expect(failure.message).toBe('That class can no longer be changed');
+    expect(failure.code).toBe('CLASS_FROZEN');
     // The column is absent from the message on purpose and present in the log
     // detail on purpose: the caller must not be told a half-truth, and the
     // operator must be able to facet on which trigger fired without grepping

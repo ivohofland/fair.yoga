@@ -8,7 +8,7 @@ import { prisma as appPrisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { POST } from './route';
 import * as waitlistService from '@/services/waitlist';
-import { expectUnchanged } from '../../../../tests/api-assertions';
+import { expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
 
 /**
  * What this route hands `resolveInvitationOnLink` (#418), pinned where it can
@@ -688,8 +688,6 @@ describe('POST /api/registrations — a booking that already exists', () => {
     const res = await book();
 
     expect(twin).toHaveBeenCalledTimes(1);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { outcome?: unknown };
-    expect(body.outcome).toBeUndefined();
+    await expectRefusal(res, 'UNIQUE_CONFLICT');
   });
 });
