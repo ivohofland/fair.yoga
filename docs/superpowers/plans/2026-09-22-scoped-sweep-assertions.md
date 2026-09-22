@@ -162,19 +162,21 @@ A hit that does **not** reproduce in step 1 is not rewritten. Report it with the
       expect(s.rowsRead('Account')).toBe(0);
     });
 
-    it('lets a hook layered on top see the args before the scope', async () => {
-      const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
+    it('lets a hook on the client handed in see the args before the scope', async () => {
       let seen: unknown;
-      const layered = s.db.$extends({
-        query: { teacher: { async findMany({ args, query }) { seen = args.where; return query(args); } } },
-      });
-      await layered.teacher.findMany({ where: { lastName: 'in' } });
-      expect(seen).toEqual({ lastName: 'in' });
+      let hookRows: string[] = [];
+      const hooked = prisma.$extends({
+        query: { teacher: { async findMany({ args, query }) { seen = args.where; const r = await query(args); hookRows = r.map((t) => t.id); return r; } } },
+      }) as unknown as PrismaClient;
+      const s = scopeSweep(hooked, { Teacher: { id: { in: [inId] } } });
+      await s.db.teacher.findMany({ where: { id: { in: [inId, outId] } } });
+      expect(seen).toEqual({ id: { in: [inId, outId] } });
+      expect(hookRows).toEqual([inId]); // the hook's own query() is scoped
     });
   });
   ```
 
-  The last case pins the composition rule the class-transitions and email-fallback race hooks depend on: they test `args.where`'s *shape*, so they must see the sweep's own `where`, not the scope's `AND` wrapper.
+  The last case pins the composition rule the class-transitions and email-fallback race hooks depend on. They test `args.where`'s *shape*, so they must see the sweep's own `where`, not the scope's `AND` wrapper. Prisma 6.19 runs query extensions in attachment order, which was measured in Task 1: the earliest-attached hook sees the caller's args. So a race hook is attached to the client passed **into** `scopeSweep`, never through `scoped.db.$extends(...)`, which would place it after the scope.
 
 - [ ] **Step 2: Run it and see it fail**
 
@@ -279,18 +281,18 @@ The spec's hits 1–5, plus the counter gap. Tests are named by title; the line 
 
 - [ ] **Step 2: Rewrite hits 1, 4, 5** ('does not transition … rescheduled', the `autoCancelClasses` race, 'does not complete a class rescheduled after the sweep read it')
 
-  Each already builds `racing = prisma.$extends({ query: { class: { findMany … } } })`. Build it on the scoped client instead, and assert presence:
+  Each already builds `racing = prisma.$extends({ query: { class: { findMany … } } })`. Keep that exactly as it is, hand it to `scopeSweep`, and call the sweep through the scoped client. Then assert presence:
 
   ```ts
-  const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
-  const racing = scoped.db.$extends({ /* the existing hook, unchanged */ }) as unknown as PrismaClient;
-  // … existing call, now through `racing`
+  const racing = prisma.$extends({ /* the existing hook, unchanged */ }) as unknown as PrismaClient;
+  const scoped = scopeSweep(racing, { Class: { id: { in: [cls.id] } } });
+  const completed = await autoCompleteClasses(scoped.db, new Date('2026-07-20T17:30:00Z'));
   expect(hookCalls).toBe(1);
   expect(scoped.rowsRead('Class')).toBeGreaterThan(0);
   expect(completed).toBe(0);
   ```
 
-  The `as unknown as PrismaClient` that each hook already carries stays where it is. Only the base changes, from `prisma` to `scoped.db`.
+  The race hook is attached first, so it still sees the sweep's own `where` shape (see Task 1's composition case). Never write `scoped.db.$extends(racing)`: that puts the hook after the scope, where its shape test no longer matches.
 
 - [ ] **Step 3: Rewrite hit 2** (the lock-race test asserting `expect(await sweeping).toBe(0)`)
 
@@ -357,7 +359,7 @@ Hits 10–14. `processEmailFallback` reads candidates through `getUnreadForEmail
 - [ ] **Step 1: Prove the coupling.** Plant stray notifications, older than the fixture (`createdAt` earlier than now − 45 min), unread, un-emailed:
   - one whose recipient is a `debris251-` teacher with a live account (way 2): record the send-failure tests going red on `emailSent`;
   - one whose recipient does not resolve (way 1): record the overlapping test's `outerSent` going red, and the "1 of 1" error-text tests going red with the "1 of N" text.
-- [ ] **Step 2: Rewrite.** In each census test, build `const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } })` and build the existing `overlapping`, `unreleasable` and `unclaimable` extensions on `scoped.db` instead of `prisma`. Where a test calls `processEmailFallback(prisma)` directly, pass `scoped.db`. Add `expect(scoped.rowsRead('Notification')).toBeGreaterThan(0)` where the test asserts `toBe(0)` (`outerSent`). The `Once` mocks stay: with the read scoped, the fixture is the only row a send can reach.
+- [ ] **Step 2: Rewrite.** In each census test, build `const scoped = scopeSweep(base, { Notification: { id: { in: [notification.id] } } })`. `base` is the test's existing `overlapping`, `unreleasable` or `unclaimable` client, whose extensions stay on `prisma` exactly as they are, or plain `prisma` where the test has none. Never write `scoped.db.$extends(...)`, which puts the hook after the scope (Task 1's composition case). Where a test calls `processEmailFallback(prisma)` directly, pass `scoped.db`. Add `expect(scoped.rowsRead('Notification')).toBeGreaterThan(0)` where the test asserts `toBe(0)` (`outerSent`). The `Once` mocks stay: with the read scoped, the fixture is the only row a send can reach.
 - [ ] **Step 3:** Run `pnpm exec vitest run --project unit-sweeps src/services/email-fallback.test.ts` → green. Commit:
 
   ```sh
