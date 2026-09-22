@@ -27,6 +27,14 @@ compile errors and the contract survives a caller who never read this file.
 to write a new one are in `docs/technical-architecture.md` (The Services
 Layer → Work that must not be awaited).
 
+**Refusals carry a registered code; "already done" answers 200.** Every 409
+from `respondError` names a code from `src/lib/api-error-codes.ts`, which fixes
+its status, and tests assert the code rather than the message. A request whose
+goal already holds answers `respondUnchanged` instead of a red error, with the
+check placed after ownership and after any refusal that makes the goal moot.
+The rules and the copy register are in `docs/technical-architecture.md` (The
+Services Layer → Error responses).
+
 **Database changes require migrations.** When modifying `prisma/schema.prisma`, always create a migration with `pnpm exec prisma migrate dev --name <description>`. Never apply schema changes with raw SQL or `db push` alone — migrations must be tracked so other environments can reproduce the change. Once applied, a migration file is immutable — comments included; see *Comment Discipline*.
 
 **Working a backlog issue?** Invoke the `solve-issue` skill (`.claude/skills/solve-issue/`) before anything else. It carries the whole arc — verify the issue's premise, brainstorm, spec (for difficult issues), plan, subagent build, multi-agent PR review, rebase-merge — plus the review gates and the failure modes this project keeps hitting. Written to run from an empty context, one issue per session. `.claude/skills/verify/` covers driving the running app.

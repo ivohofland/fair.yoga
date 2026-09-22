@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
 import { classifyApiError } from './api-errors';
-import type { ApiErrorCode } from './api-error-codes';
+import type { ApiErrorCode, StatusOf } from './api-error-codes';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
@@ -43,11 +43,30 @@ export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
   return NextResponse.json({ data, outcome: 'unchanged' }, { status: 200 });
 }
 
+/** Every error status the app sends. */
+export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
+
+/**
+ * A refusal. A code fixes its status (`src/lib/api-error-codes.ts`), so a code
+ * sent at another status does not compile; a 409 must name its code, because
+ * a conflict is exactly what a client has to tell apart. The rules are in
+ * `docs/technical-architecture.md` (The Services Layer → Error responses).
+ */
+export function respondError<C extends ApiErrorCode>(
+  message: string,
+  status: StatusOf<C>,
+  code: C,
+): NextResponse;
+export function respondError(message: string, status: Exclude<ErrorStatus, 409>): NextResponse;
 export function respondError(
   message: string,
-  status: number,
+  status: ErrorStatus,
   code?: ApiErrorCode,
 ): NextResponse {
+  return sendError(message, status, code);
+}
+
+function sendError(message: string, status: ErrorStatus, code?: ApiErrorCode): NextResponse {
   return NextResponse.json({ error: { message, code } }, { status });
 }
 
@@ -168,7 +187,7 @@ export function withErrorHandler<Rest extends unknown[]>(
         },
         failure.logMessage,
       );
-      return respondError(failure.message, failure.status);
+      return sendError(failure.message, failure.status, failure.code);
     }
   };
 }

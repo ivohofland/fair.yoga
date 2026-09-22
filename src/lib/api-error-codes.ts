@@ -8,6 +8,9 @@
  *
  * Adding a code: one entry here, at its status; the route sends it with
  * `respondError`; a test asserts it with `expectRefusal`.
+ *
+ * Full rules: `docs/technical-architecture.md` (The Services Layer → Error
+ * responses).
  */
 export type ApiErrorStatus = 400 | 403 | 404 | 409 | 500 | 503;
 

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { isExclusionConflictOn } from './exclusion-conflict';
+import type { CodeWithStatus } from './api-error-codes';
 
 /**
  * Extra log fields a classification contributes, spread flat into the log
@@ -30,8 +31,8 @@ export type ApiLogDetail = Record<string, unknown> & {
  * The outcome of classifying a thrown value at the API boundary: what the
  * client is told (`message`, `status`) and what the operator is told
  * (`logMessage`, `level`, `detail`). Deliberately two different strings —
- * "Resource already exists" is a reasonable thing to return and a useless
- * thing to find in a log.
+ * "That already exists. Refresh to see the latest." is a reasonable thing to
+ * return and a useless thing to find in a log.
  *
  * No case controls its own return; a case says what should happen, never when
  * to stop. That is the point of the module. Before it, the P2002 branch
@@ -45,14 +46,19 @@ export type ApiLogDetail = Record<string, unknown> & {
  * inside the API wrapper's `catch`, leaking the stack trace that wrapper
  * exists to contain. Widening the union is a deliberate one-line edit at the
  * moment a case needs it.
+ *
+ * A 409 names its code; a 500 or 503 may.
  */
-export type ApiFailure = {
-  readonly status: 409 | 500 | 503;
+type ApiFailureBase = {
   readonly message: string;
   readonly logMessage: string;
   readonly level: 'warn' | 'error';
   readonly detail?: ApiLogDetail;
 };
+
+export type ApiFailure =
+  | (ApiFailureBase & { readonly status: 409; readonly code: CodeWithStatus<409> })
+  | (ApiFailureBase & { readonly status: 500 | 503; readonly code?: CodeWithStatus<500 | 503> });
 
 /**
  * Matches the terminality triggers — plural since #247. Each raises
@@ -483,6 +489,7 @@ export function classifyApiError(error: unknown): ApiFailure {
       ) ?? 'unknown';
     return {
       status: 409,
+      code: 'CLASS_FROZEN',
       // Deliberately names no column. Every trigger that reaches this branch
       // means the same thing to the caller — the class is frozen — so any
       // wording that names one column is wrong for the others.
@@ -534,7 +541,8 @@ export function classifyApiError(error: unknown): ApiFailure {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
     return {
       status: 409,
-      message: 'Resource already exists',
+      code: 'UNIQUE_CONFLICT',
+      message: 'That already exists. Refresh to see the latest.',
       logMessage: 'unique constraint escaped a route to the 409 fallback',
       level: 'warn',
       detail: { target: error.meta?.target },
@@ -552,6 +560,7 @@ export function classifyApiError(error: unknown): ApiFailure {
   if (isExclusionConflictOn(error, 'ScheduleRule_teacher_slot_excl')) {
     return {
       status: 409,
+      code: 'RULE_SLOT_TAKEN',
       message: 'You already have a recurring class or studio class at an overlapping time on that day.',
       logMessage: 'schedule rule slot exclusion escaped a route to the 409 fallback',
       level: 'warn',
@@ -567,6 +576,7 @@ export function classifyApiError(error: unknown): ApiFailure {
   if (isExclusionConflictOn(error, 'CalendarEntry_teacher_slot_excl')) {
     return {
       status: 409,
+      code: 'ENTRY_SLOT_TAKEN',
       message: 'You already have a class or studio class at an overlapping time on that date.',
       logMessage: 'calendar entry slot exclusion escaped a route to the 409 fallback',
       level: 'warn',
