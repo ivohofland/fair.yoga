@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
 import { classifyApiError } from './api-errors';
-import type { ApiErrorCode, StatusOf } from './api-error-codes';
+import type { ApiErrorCode, CodedRefusal, StatusOf } from './api-error-codes';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
@@ -46,15 +46,24 @@ export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
 /** Every error status the app sends. */
 export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
 
+/** True exactly when `T` is a union with more than one member (`A | B`, not `A`). */
+type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
+
 /**
  * A refusal. A code fixes its status (`src/lib/api-error-codes.ts`), so a code
  * sent at another status does not compile; a 409 must name its code, because
- * a conflict is exactly what a client has to tell apart. The rules are in
- * `docs/technical-architecture.md` (The Services Layer → Error responses).
+ * a conflict is exactly what a client has to tell apart. `C` is inferred from
+ * `code`, so a union-typed `code` — reading a refusal off a
+ * `Record<Reason, CodedRefusal>` map by a non-literal reason — poisons
+ * `status`'s parameter type to `never` rather than being accepted at the
+ * union of every member's status: use `respondRefusal` for that shape
+ * instead. This overload is for a single literal code known at the call
+ * site. The rules are in `docs/technical-architecture.md` (The Services
+ * Layer → Error responses).
  */
 export function respondError<C extends ApiErrorCode>(
   message: string,
-  status: StatusOf<C>,
+  status: IsUnion<C> extends true ? never : StatusOf<C>,
   code: C,
 ): NextResponse;
 export function respondError(message: string, status: Exclude<ErrorStatus, 409>): NextResponse;
@@ -64,6 +73,19 @@ export function respondError(
   code?: ApiErrorCode,
 ): NextResponse {
   return sendError(message, status, code);
+}
+
+/**
+ * A refusal read whole off a `Record<Reason, CodedRefusal>` map (or any other
+ * already-correlated `CodedRefusal` value) — never split into a `status` and
+ * a `code` argument, which is what let a union-typed reason silently widen
+ * `respondError`'s status check to every member's status at once (#649). The
+ * pairing was already checked once, at the map's own
+ * `satisfies Record<Reason, CodedRefusal>` — this only carries it to the
+ * response.
+ */
+export function respondRefusal(refusal: CodedRefusal): NextResponse {
+  return sendError(refusal.message, refusal.status, refusal.code);
 }
 
 function sendError(message: string, status: ErrorStatus, code?: ApiErrorCode): NextResponse {
