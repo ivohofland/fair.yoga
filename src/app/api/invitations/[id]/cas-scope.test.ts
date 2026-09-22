@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { expectRefusal } from '../../../../../tests/api-assertions';
+import { DECLINED_MESSAGE } from './shared';
 
 /**
  * The four cells of `casMatchedNothing`'s per-caller truth table (route.ts)
@@ -142,10 +143,12 @@ describe("casMatchedNothing's per-caller truth table (#513)", () => {
     await expectRefusal(res, 'CONTACT_CHANGED');
   });
 
-  // R44: the routing is pinned by code, the door's wording by an explicit
-  // literal — not by comparing the response body to another call of the same
-  // factory, which would pin nothing about copy. The `remove` and `resend`
-  // sentences are otherwise unpinned anywhere in this suite.
+  // R44: which door, not which words. Comparing the body to another call of
+  // the same factory would pin neither — both sides would move together. The
+  // comparison is against `DECLINED_MESSAGE`'s own entry rather than a quoted
+  // sentence, so rewording the copy leaves these green: #197 asks that tests
+  // pin the code, and the door is the only thing here the code cannot say,
+  // all three answering `DECLINED_IS_PERMANENT`.
   it('PUT words a decline found after its CAS for the edit it refused', async () => {
     findFirst.mockResolvedValueOnce(PENDING_ROW).mockResolvedValueOnce(DECLINED_ROW);
     updateMany.mockResolvedValueOnce({ count: 0 });
@@ -153,9 +156,7 @@ describe("casMatchedNothing's per-caller truth table (#513)", () => {
     const res = await PUT(put(), { params: params() });
 
     const payload = (await res.clone().json()) as { error: { message: string } };
-    expect(payload.error.message).toBe(
-      "This person declined, so their details can't be changed. You can archive this contact.",
-    );
+    expect(payload.error.message).toBe(DECLINED_MESSAGE.edit);
     await expectRefusal(res, 'DECLINED_IS_PERMANENT');
   });
 
@@ -166,9 +167,7 @@ describe("casMatchedNothing's per-caller truth table (#513)", () => {
     const res = await DELETE(del(), { params: params() });
 
     const payload = (await res.clone().json()) as { error: { message: string } };
-    expect(payload.error.message).toBe(
-      'This person declined. You can archive this contact, but it cannot be removed.',
-    );
+    expect(payload.error.message).toBe(DECLINED_MESSAGE.remove);
     await expectRefusal(res, 'DECLINED_IS_PERMANENT');
   });
 });

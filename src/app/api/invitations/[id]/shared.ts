@@ -49,7 +49,14 @@ export const NOT_FOUND = () => respondError('This contact no longer exists.', 40
 /** The teacher action a contact refusal answers. */
 export type ContactDoor = 'edit' | 'remove' | 'resend';
 
-const DECLINED_MESSAGE = {
+/**
+ * Exported so a test can assert which entry a door selected without quoting
+ * the sentence: #197 asks that tests pin the code and not the prose, so the
+ * copy stays free to change, but all three doors share one code and only the
+ * sentence distinguishes them. Comparing against this object pins the
+ * routing and nothing about the wording.
+ */
+export const DECLINED_MESSAGE = {
   edit: "This person declined, so their details can't be changed. You can archive this contact.",
   remove: 'This person declined. You can archive this contact, but it cannot be removed.',
   resend: "This person declined, so the invitation can't be sent again.",
