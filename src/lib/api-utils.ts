@@ -51,11 +51,15 @@ type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
 
 /**
  * Named so a rejected call's diagnostic points here instead of reading like an
- * arbitrary `never`. Carries no data — it exists only as a distinct nominal
- * type the coded overload's rejecting branch can resolve to.
+ * arbitrary `never`. Carries no data — it exists only as a distinct named type
+ * the coded overload's rejecting branch can resolve to. `__unconstructible` is
+ * what keeps it unsatisfiable: `__use` alone is an ordinary string-literal
+ * field, which a caller can meet by writing the object out by hand, and no
+ * expression inhabits `never`.
  */
 type UseRespondRefusal = {
   readonly __use: 'respondRefusal — this code union spans more than one status';
+  readonly __unconstructible: never;
 };
 
 /**
@@ -64,8 +68,9 @@ type UseRespondRefusal = {
  * distributes over a union `C` on its own (indexed access on a union of keys
  * distributes, and a union of identical literals collapses to one), so a
  * union `code` is fine exactly when every member shares one status (several
- * existing call sites rely on this), and is a compile error — naming
- * `respondRefusal` in the diagnostic — the moment it spans more than one,
+ * existing call sites rely on this), and is a compile error — the diagnostic
+ * names the parameter type `UseRespondRefusal`, whose own declaration above
+ * says what to reach for instead — the moment it spans more than one,
  * regardless of which status literal is passed, because no single literal
  * can be correct for all its members. A 409 must name its code, because a
  * conflict is exactly what a client has to tell apart. A refusal read off a
