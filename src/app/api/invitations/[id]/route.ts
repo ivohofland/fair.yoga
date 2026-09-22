@@ -297,9 +297,8 @@ export const DELETE = withErrorHandler(async (
   // idiom as `revivePendingInvitation` (`services/invitations.ts`), which
   // CASes on `status: 'accepted'`. What a count of 0 MEANS is
   // `casMatchedNothing`'s question — a decline is only one of its answers,
-  // and "the row is already gone" is another: 404 `NOT_FOUND`, which the
-  // client that sent this delete (`remove-student-button.tsx`) treats as
-  // done.
+  // and "the row is already gone" is another: 404 `NOT_FOUND`. What a
+  // deleting client does with that is §5.3's rule, not this file's to state.
   const scope: InvitationCasScope = 'not-declined';
   const removed = await prisma.invitation.deleteMany({
     where: { id, ...CAS_FILTER[scope] },
