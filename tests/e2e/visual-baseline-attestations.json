@@ -1,0 +1,8 @@
+{
+  "login": {
+    "sourceSha256": "8e533b11a31f57e7b7e9ea93ab3c5b1a226f61784afdc926fcb65b9c4cf93a49",
+    "baselineSha256": "3c24a27953b78e9fece08f4b41bdbb082d8d931e31598a5d7f8c135e2f5429c2",
+    "verifiedAt": "2026-09-22",
+    "note": "#197 R57 moved the login redirect predicate into schemas.ts; nothing rendered changed."
+  }
+}

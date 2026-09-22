@@ -782,6 +782,35 @@ GitHub Actions runs on every PR:
 
 Main branch deploys automatically to VPS via SSH + Docker pull.
 
+### Visual baselines, and the change that renders nothing
+
+`check-visual-baseline-freshness` flags a route whose source file moved in this
+diff while its screenshot did not — usually someone forgot
+`pnpm exec playwright test visual --update-snapshots`.
+
+Sometimes the edit genuinely does not render: a predicate extracted into a
+shared module, an import reordered. Then the regenerated screenshot is
+byte-identical, git has nothing to record, and the route **cannot clear on its
+own** — the check compares a diff, and there is no diff to find.
+
+That case is settled by an attestation in
+`tests/e2e/visual-baseline-attestations.json`: a maintainer's record that one
+exact source and one exact baseline were verified to render the same. Write it
+with `pnpm run attest-visual-baseline <route> ["why"]`, which refuses unless
+it can earn the claim — it reruns the whole visual suite itself and aborts if
+a single baseline byte moved, because a change that moved a pixel needs its new
+screenshot committed, not a note saying it didn't.
+
+The record is two content hashes, not a route name, so it self-invalidates:
+edit the source again and `sourceSha256` stops matching; regenerate the
+baseline for real and `baselineSha256` does. It can never become a standing
+exemption for a route, only for the pairing someone actually checked. An
+allowlist entry or a `SKIP_VISUAL=1` would silence the route forever and leave
+no trace of why.
+
+Baselines are macOS-only (every file is `-darwin.png`), so the command refuses
+to run anywhere else: a Linux digest would attest to bytes CI never renders.
+
 ---
 
 ## Environment Variables

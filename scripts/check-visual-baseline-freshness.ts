@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import {
   ROUTE_BASELINES,
   VISUAL_SPEC_PATH,
+  ATTESTATION_PATH,
+  ATTEST_COMMAND,
   findCoverageGaps,
   findStaleRoutes,
 } from '../src/lib/visual-baseline-freshness';
@@ -51,9 +53,10 @@ try {
     }
     console.error(
       `\nIf a route's regenerated screenshot comes back byte-identical to its old baseline ` +
-        `(a non-visual source change), there is nothing new for git to commit and this check ` +
-        `cannot clear on its own. Baselines are macOS-only — ask a maintainer with a macOS ` +
-        `checkout to verify and, if needed, regenerate and commit the baseline.`,
+        `(a non-visual source change), there is nothing new for git to commit. Record that ` +
+        `instead: '${ATTEST_COMMAND}' reruns the visual suite, refuses if any baseline byte ` +
+        `moved, and writes a content-hashed attestation this check will accept. Baselines are ` +
+        `macOS-only, so run it on a macOS checkout and commit ${ATTESTATION_PATH}.`,
     );
     process.exit(1);
   }

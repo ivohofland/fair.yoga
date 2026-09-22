@@ -21,6 +21,8 @@
  * every other job.
  */
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { resolveBaseRef } from './migration-policy';
 
 export interface RouteBaseline {
@@ -144,6 +146,83 @@ export interface StaleRoute {
 
 const REGENERATE_COMMAND = 'pnpm exec playwright test visual --update-snapshots';
 
+export const ATTESTATION_PATH = 'tests/e2e/visual-baseline-attestations.json';
+
+export const ATTEST_COMMAND = 'pnpm run attest-visual-baseline <route>';
+
+/**
+ * A maintainer's record that one route's source changed WITHOUT changing what
+ * it renders — the case `findStaleRoutes` alone cannot clear, because a
+ * byte-identical regeneration leaves nothing for git to see.
+ *
+ * Both hashes are over content, not paths or timestamps, so the record
+ * self-invalidates: edit the source again and `sourceSha256` stops matching;
+ * regenerate the baseline for real and `baselineSha256` does. It can never
+ * become a standing exemption for a route, only for the one pairing a
+ * maintainer actually verified. `scripts/attest-visual-baseline.ts` is the
+ * only thing that should write one, and it refuses unless the regeneration it
+ * runs itself comes back byte-identical.
+ */
+export interface BaselineAttestation {
+  readonly sourceSha256: string;
+  readonly baselineSha256: string;
+  readonly verifiedAt: string;
+  readonly note?: string;
+}
+
+export type AttestationMap = Readonly<Record<string, BaselineAttestation>>;
+
+/**
+ * sha256 over each file's path and bytes in order. The path is hashed too, so
+ * two files swapping contents is a different digest than leaving them alone.
+ */
+export function hashFiles(
+  files: readonly string[],
+  readFile: (path: string) => Buffer = (p) => readFileSync(p),
+): string {
+  const digest = createHash('sha256');
+  for (const file of files) {
+    digest.update(file);
+    digest.update('\0');
+    digest.update(readFile(file));
+    digest.update('\0');
+  }
+  return digest.digest('hex');
+}
+
+function loadAttestations(readFile: (path: string) => Buffer): AttestationMap {
+  try {
+    return JSON.parse(readFile(ATTESTATION_PATH).toString('utf8')) as AttestationMap;
+  } catch {
+    // Absent or unreadable: no route is attested, which fails closed — every
+    // stale route stays reported.
+    return {};
+  }
+}
+
+/**
+ * Whether `route`'s current source and baseline content are exactly the pair a
+ * maintainer recorded as rendering identically. Any read failure (a deleted
+ * source file, an unreadable baseline) answers false, so a broken tree never
+ * clears a route.
+ */
+export function isAttested(
+  route: RouteBaseline,
+  attestations: AttestationMap,
+  readFile: (path: string) => Buffer,
+): boolean {
+  const attestation = attestations[route.name];
+  if (!attestation) return false;
+  try {
+    return (
+      attestation.sourceSha256 === hashFiles(route.sourceFiles, readFile) &&
+      attestation.baselineSha256 === hashFiles(route.baselineFiles, readFile)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Routes whose source file(s) changed in the diff between `base` and the
  * working tree without a matching change to their baseline file(s) — this
@@ -151,11 +230,15 @@ const REGENERATE_COMMAND = 'pnpm exec playwright test visual --update-snapshots'
  *
  * Scoped to the CURRENT diff, not all of history: a route is flagged only
  * by a source change not yet reflected in THIS diff's baseline, so an old,
- * already-merged change never re-flags a route forever. A single PR can
- * still get stuck if its own source edit is genuinely non-visual (the
- * regenerated screenshot comes back byte-identical, so `--update-snapshots`
- * produces nothing to commit) — see the CLI wrapper's failure message for
- * the escape hatch in that case.
+ * already-merged change never re-flags a route forever.
+ *
+ * A genuinely non-visual source edit regenerates a byte-identical screenshot,
+ * leaving nothing for git to see and no way for the route to clear on its
+ * own. That case is settled by an attestation (`ATTESTATION_PATH`): a
+ * maintainer's recorded, content-hashed claim that this exact source and this
+ * exact baseline were verified to render the same. `isAttested` is consulted
+ * only for a route this diff would otherwise flag, so an attestation can
+ * never suppress a route whose baseline legitimately changed.
  */
 export function findStaleRoutes(
   routes: readonly RouteBaseline[] = ROUTE_BASELINES,
@@ -163,10 +246,14 @@ export function findStaleRoutes(
     baseRef?: string;
     env?: Record<string, string | undefined>;
     execGit?: (cmd: string) => string;
+    attestations?: AttestationMap;
+    readFile?: (path: string) => Buffer;
   } = {},
 ): StaleRoute[] {
   const env = options.env ?? process.env;
   const exec = options.execGit ?? defaultExecGit;
+  const readFile = options.readFile ?? ((p: string) => readFileSync(p));
+  const attestations = options.attestations ?? loadAttestations(readFile);
   const base = options.baseRef ?? resolveBaseRef(env, exec);
 
   if (!options.baseRef && base === 'HEAD') {
@@ -197,10 +284,12 @@ export function findStaleRoutes(
   for (const route of routes) {
     const sourceChanged = route.sourceFiles.some((f) => changedPaths.has(f));
     const baselineChanged = route.baselineFiles.some((f) => changedPaths.has(f));
-    if (sourceChanged && !baselineChanged) {
+    if (sourceChanged && !baselineChanged && !isAttested(route, attestations, readFile)) {
       results.push({
         name: route.name,
-        detail: `source changed in this diff without a matching baseline update. Regenerate with: ${REGENERATE_COMMAND}`,
+        detail:
+          `source changed in this diff without a matching baseline update. Regenerate with: ${REGENERATE_COMMAND}` +
+          ` — or, if the regeneration comes back byte-identical because the change does not render, record that with: ${ATTEST_COMMAND}`,
       });
     }
   }
