@@ -11,7 +11,8 @@ import {
 } from '@/lib/api-utils';
 import { updateInvitationSchema, archiveStateQuerySchema } from '@/lib/schemas';
 import { log } from '@/lib/log';
-import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from './shared';
+import { isRecordNotFound } from '@/lib/api-errors';
+import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING, type ContactDoor } from './shared';
 
 /**
  * The `status` filter the caller's own CAS ran with — `'pending'` for PUT
@@ -71,19 +72,25 @@ const CAS_FILTER = {
  * policies differ, not because the mechanism does. DELETE has never claimed
  * a policy about `pending` — deleting an `accepted` row outright is the
  * whole point of leaving it the deliberate exception (`PUT`'s own docblock
- * below) — so it falls all the way through to the generic 409, exactly as it
- * did before #500. PUT's policy, since #500, is simply "not pending is
- * refused" regardless of how the row got there, so this same observation
- * answers `NOT_PENDING` there. `info`, not `warn`, for the branch that still
- * reaches the generic answer: nothing is wrong when this fires, and the
- * honest answer to the teacher is that the row moved, not a story about a
- * refusal.
+ * below) — so it falls all the way through to the `CONTACT_CHANGED` 409.
+ * PUT's policy, since #500, is simply "not pending is refused" regardless of
+ * how the row got there, so this same observation answers `NOT_PENDING`
+ * there. `info`, not `warn`, for the branch that reaches `CONTACT_CHANGED`:
+ * nothing is wrong when this fires, and the honest answer to the teacher is
+ * that the row moved, not a story about a refusal.
+ *
+ * `door` is the caller's action, so a decline found here is worded for it.
  */
-async function casMatchedNothing(teacherId: string, id: string, cas: InvitationCasScope) {
+async function casMatchedNothing(
+  teacherId: string,
+  id: string,
+  cas: InvitationCasScope,
+  door: ContactDoor,
+) {
   // Bounded: a throw here would turn a deterministic 409 into a 500, on the
   // retry path #196 exists to make safe. `'unread'` is its own outcome rather
   // than folding into `null`, which already means "gone" — and it falls to the
-  // neutral 409 below, never to `DECLINED()`/`NOT_PENDING()`. Reporting a
+  // `CONTACT_CHANGED` 409 below, never to `DECLINED`/`NOT_PENDING`. Reporting a
   // decline or an acceptance we could not read is the precise failure this
   // whole function was written to remove.
   const observed = await ownedInvitation(teacherId, id).catch((err: unknown) => {
@@ -92,7 +99,7 @@ async function casMatchedNothing(teacherId: string, id: string, cas: InvitationC
   });
   if (observed !== 'unread') {
     if (!observed) return NOT_FOUND();
-    if (observed.status === 'declined') return DECLINED();
+    if (observed.status === 'declined') return DECLINED(door);
     // Scoped to PUT's own CAS: DELETE's `'not-declined'` CAS still admits
     // `accepted` rows and deletes them outright, so an `accepted` re-read
     // there is the `resolveInvitationOnLink` race above, not a refusal —
@@ -121,6 +128,7 @@ async function casMatchedNothing(teacherId: string, id: string, cas: InvitationC
   return respondError(
     'This contact changed while you were working on it. Reload and try again.',
     409,
+    'CONTACT_CHANGED',
   );
 }
 
@@ -155,7 +163,7 @@ export const PUT = withErrorHandler(async (
   // on (teacherId, email) — editing the address off a declined row would
   // free that address for a fresh invite just as surely as deleting the row
   // would, so an edit is the same hole through a second door.
-  if (invitation.status === 'declined') return DECLINED();
+  if (invitation.status === 'declined') return DECLINED('edit');
 
   // Refuses the whole update, not just `email`, the same way the `declined`
   // refusal above already covers the whole body rather than one field. A
@@ -200,11 +208,10 @@ export const PUT = withErrorHandler(async (
   //
   // A pre-check would leave the race the fallback is for, so this catches
   // instead: the same shape `POST /api/registrations` uses for its own
-  // unique collision. `ALREADY_INVITED` is this domain's existing name for
-  // "a row already exists for this (teacher, address)" — the same code
-  // `POST /api/students` answers with, since it is the same constraint —
-  // but the message is the edit form's, because "another contact holds this
-  // address" is what the teacher standing on this page can act on.
+  // unique collision. `CONTACT_EMAIL_TAKEN` names exactly this — another of
+  // this teacher's contacts holds the address — and the message is the
+  // edit form's, because that is what the teacher standing on this page
+  // can act on.
   let changed: { count: number };
   const scope: InvitationCasScope = 'pending';
   try {
@@ -255,14 +262,14 @@ export const PUT = withErrorHandler(async (
       return respondError(
         'Another of your contacts already uses this email address.',
         409,
-        'ALREADY_INVITED',
+        'CONTACT_EMAIL_TAKEN',
       );
     }
     throw err;
   }
   // Not automatically the decline: the row may simply be gone. See
   // `casMatchedNothing`.
-  if (changed.count === 0) return casMatchedNothing(session.teacherId, id, scope);
+  if (changed.count === 0) return casMatchedNothing(session.teacherId, id, scope, 'edit');
   return respondOk({ id });
 });
 
@@ -282,21 +289,22 @@ export const DELETE = withErrorHandler(async (
   // harassment loop that declining exists to end. Archiving is the escape
   // hatch: it hides the row without disarming the uniqueness check that
   // `inviteContact` runs against it.
-  if (invitation.status === 'declined') return DECLINED();
+  if (invitation.status === 'declined') return DECLINED('remove');
 
   // The pre-check above is a read-then-write, so a decline committing in the
   // gap would reach a plain `delete({ where: { id } })` and destroy the
   // tombstone anyway. The status lives in the WHERE for that reason. Same
   // idiom as `revivePendingInvitation` (`services/invitations.ts`), which
   // CASes on `status: 'accepted'`. What a count of 0 MEANS is
-  // `casMatchedNothing`'s question — a decline is only one of its answers, and
-  // "the row is already gone" is the other, which for a DELETE is the retry
-  // this route is meant to survive.
+  // `casMatchedNothing`'s question — a decline is only one of its answers,
+  // and "the row is already gone" is another: 404 `NOT_FOUND`, which the
+  // client that sent this delete (`remove-student-button.tsx`) treats as
+  // done.
   const scope: InvitationCasScope = 'not-declined';
   const removed = await prisma.invitation.deleteMany({
     where: { id, ...CAS_FILTER[scope] },
   });
-  if (removed.count === 0) return casMatchedNothing(session.teacherId, id, scope);
+  if (removed.count === 0) return casMatchedNothing(session.teacherId, id, scope, 'remove');
   return respondOk({ id });
 });
 
@@ -334,11 +342,20 @@ export const PATCH = withErrorHandler(async (
   // declined row') fails if this is ever scoped. The read-then-write gap that
   // matters there is benign: two concurrent PATCHes converge on one
   // `isArchived`.
-  const updated = await prisma.invitation.update({
-    where: { id },
-    data: { isArchived: archiving },
-    select: { isArchived: true },
-  });
+  let updated: { isArchived: boolean };
+  try {
+    updated = await prisma.invitation.update({
+      where: { id },
+      data: { isArchived: archiving },
+      select: { isArchived: true },
+    });
+  } catch (err) {
+    // The row was read above and deleted before this write — the teacher's
+    // other tab removed the contact. It gets the same answer as an id that
+    // is not theirs.
+    if (isRecordNotFound(err)) return NOT_FOUND();
+    throw err;
+  }
 
   return respondOk({
     isArchived: updated.isArchived,

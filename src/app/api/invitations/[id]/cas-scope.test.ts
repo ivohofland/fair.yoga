@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { expectRefusal } from '../../../../../tests/api-assertions';
 
 /**
  * The four cells of `casMatchedNothing`'s per-caller truth table (route.ts)
@@ -20,7 +21,8 @@ import { NextRequest } from 'next/server';
  *
  * `PUT`+gone IS reachable there — the same lock-chokepoint harness the
  * integration suite already runs for DELETE+gone ("404s a delete whose row
- * vanished mid-request...", `tests/integration/invitations-api.test.ts:3474`)
+ * vanished mid-request, rather than blaming a decline", in
+ * `tests/integration/invitations-api.test.ts`)
  * would reach it too, since Postgres blocks an `UPDATE` on a row an
  * uncommitted `DELETE` holds the same way it blocks a second `DELETE`. It's
  * pinned here instead because mocking makes it cheap to cover alongside the
@@ -62,6 +64,7 @@ const { PUT, DELETE } = await import('./route');
 
 const PENDING_ROW = { id: 'inv-1', status: 'pending', isArchived: false, email: 'contact@test.local' };
 const ACCEPTED_ROW = { id: 'inv-1', status: 'accepted', isArchived: false, email: 'contact@test.local' };
+const DECLINED_ROW = { id: 'inv-1', status: 'declined', isArchived: false, email: 'contact@test.local' };
 
 function put(): NextRequest {
   return new NextRequest('http://localhost:3000/api/invitations/inv-1', {
@@ -84,15 +87,13 @@ beforeEach(() => {
 });
 
 describe("casMatchedNothing's per-caller truth table (#513)", () => {
-  it('PUT answers 404 when the post-CAS re-read finds the row gone', async () => {
+  it('PUT answers NOT_FOUND when the post-CAS re-read finds the row gone', async () => {
     findFirst.mockResolvedValueOnce(PENDING_ROW).mockResolvedValueOnce(null);
     updateMany.mockResolvedValueOnce({ count: 0 });
 
     const res = await PUT(put(), { params: params() });
 
-    expect(res.status).toBe(404);
-    const payload = (await res.json()) as { error: { message: string; code?: string } };
-    expect(payload.error.message).toBe('Contact not found');
+    await expectRefusal(res, 'NOT_FOUND');
     // Proves the flow actually reached the CAS write (and therefore that the
     // SECOND `findFirst` call — the post-CAS re-read — is what produced the
     // 404 above), not just that `PUT`'s own pre-check saw a gone row and
@@ -102,57 +103,72 @@ describe("casMatchedNothing's per-caller truth table (#513)", () => {
     expect(updateMany).toHaveBeenCalledTimes(1);
   });
 
-  it("DELETE falls through to the generic 409 when the re-read finds an accepted row, proving cas === 'pending' is what excludes it", async () => {
+  it("DELETE answers CONTACT_CHANGED when the re-read finds an accepted row, proving cas === 'pending' is what excludes it", async () => {
     findFirst.mockResolvedValueOnce(PENDING_ROW).mockResolvedValueOnce(ACCEPTED_ROW);
     deleteMany.mockResolvedValueOnce({ count: 0 });
 
     const res = await DELETE(del(), { params: params() });
 
-    expect(res.status).toBe(409);
-    const payload = (await res.json()) as { error: { message: string; code?: string } };
-    expect(payload.error.code).toBeUndefined();
-    expect(payload.error.message).toBe(
-      'This contact changed while you were working on it. Reload and try again.',
-    );
+    await expectRefusal(res, 'CONTACT_CHANGED');
     // The HTTP response and `deleteMany`'s call count are BOTH invariant to
     // swapping the two `findFirst` values above: DELETE's own pre-check
     // passes on `PENDING_ROW` or `ACCEPTED_ROW` alike (it only refuses
     // `declined`), so `deleteMany` runs once either way, and with `cas` fixed
     // at `'not-declined'` a `pending` or an `accepted` re-read both fall
-    // through to this same generic 409 — neither takes the `NOT_PENDING`
-    // branch. So pin what each of the two calls actually resolved to
-    // directly, which a mock-order swap WOULD change.
+    // through to this same CONTACT_CHANGED 409 — neither takes the
+    // `NOT_PENDING` branch. So pin what each of the two calls actually
+    // resolved to directly, which a mock-order swap WOULD change.
     expect(findFirst).toHaveBeenCalledTimes(2);
     const [preCheck, reRead] = findFirst.mock.results;
     await expect(preCheck?.value).resolves.toEqual(PENDING_ROW);
     await expect(reRead?.value).resolves.toEqual(ACCEPTED_ROW);
   });
 
-  it("PUT answers the generic 409 for the 'unread' arm when the re-read itself rejects", async () => {
+  it("PUT answers CONTACT_CHANGED for the 'unread' arm when the re-read itself rejects", async () => {
     findFirst.mockResolvedValueOnce(PENDING_ROW).mockRejectedValueOnce(new Error('connection lost'));
     updateMany.mockResolvedValueOnce({ count: 0 });
 
     const res = await PUT(put(), { params: params() });
 
-    expect(res.status).toBe(409);
-    const payload = (await res.json()) as { error: { message: string; code?: string } };
-    expect(payload.error.code).toBeUndefined();
-    expect(payload.error.message).toBe(
-      'This contact changed while you were working on it. Reload and try again.',
-    );
+    await expectRefusal(res, 'CONTACT_CHANGED');
   });
 
-  it("DELETE answers the generic 409 for the 'unread' arm when the re-read itself rejects", async () => {
+  it("DELETE answers CONTACT_CHANGED for the 'unread' arm when the re-read itself rejects", async () => {
     findFirst.mockResolvedValueOnce(PENDING_ROW).mockRejectedValueOnce(new Error('connection lost'));
     deleteMany.mockResolvedValueOnce({ count: 0 });
 
     const res = await DELETE(del(), { params: params() });
 
-    expect(res.status).toBe(409);
-    const payload = (await res.json()) as { error: { message: string; code?: string } };
-    expect(payload.error.code).toBeUndefined();
+    await expectRefusal(res, 'CONTACT_CHANGED');
+  });
+
+  // R44: the routing is pinned by code, the door's wording by an explicit
+  // literal — not by comparing the response body to another call of the same
+  // factory, which would pin nothing about copy. The `remove` and `resend`
+  // sentences are otherwise unpinned anywhere in this suite.
+  it('PUT words a decline found after its CAS for the edit it refused', async () => {
+    findFirst.mockResolvedValueOnce(PENDING_ROW).mockResolvedValueOnce(DECLINED_ROW);
+    updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await PUT(put(), { params: params() });
+
+    const payload = (await res.clone().json()) as { error: { message: string } };
     expect(payload.error.message).toBe(
-      'This contact changed while you were working on it. Reload and try again.',
+      "This person declined, so their details can't be changed. You can archive this contact.",
     );
+    await expectRefusal(res, 'DECLINED_IS_PERMANENT');
+  });
+
+  it('DELETE words a decline found after its CAS for the removal it refused', async () => {
+    findFirst.mockResolvedValueOnce(PENDING_ROW).mockResolvedValueOnce(DECLINED_ROW);
+    deleteMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await DELETE(del(), { params: params() });
+
+    const payload = (await res.clone().json()) as { error: { message: string } };
+    expect(payload.error.message).toBe(
+      'This person declined. You can archive this contact, but it cannot be removed.',
+    );
+    await expectRefusal(res, 'DECLINED_IS_PERMANENT');
   });
 });
