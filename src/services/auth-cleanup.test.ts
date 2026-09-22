@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { cleanupExpiredAuth } from './auth-cleanup';
+import { scopeSweep } from '../../tests/scoped-sweep';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -66,9 +67,15 @@ describe('cleanupExpiredAuth', () => {
   });
 
   it('deletes expired sessions and tokens, keeps live ones', async () => {
-    const result = await cleanupExpiredAuth(prisma);
-    expect(result.sessions).toBeGreaterThanOrEqual(1);
-    expect(result.magicLinkTokens).toBeGreaterThanOrEqual(1);
+    const scoped = scopeSweep(prisma, {
+      Session: { id: { in: [liveSessionId, deadSessionId] } },
+      MagicLinkToken: { tokenHash: { in: [liveTokenHash, deadTokenHash] } },
+    });
+    const result = await cleanupExpiredAuth(scoped.db);
+    // One dead, one live session (and token) built above: exactly one of
+    // each is a deletion candidate.
+    expect(result.sessions).toBe(1);
+    expect(result.magicLinkTokens).toBe(1);
 
     expect(await prisma.session.findUnique({ where: { id: liveSessionId } })).not.toBeNull();
     expect(await prisma.session.findUnique({ where: { id: deadSessionId } })).toBeNull();
