@@ -112,3 +112,27 @@ export type CodedRefusal = {
 export function isApiErrorCode(value: unknown): value is ApiErrorCode {
   return typeof value === 'string' && Object.hasOwn(API_ERROR_STATUS, value);
 }
+
+/**
+ * Builds a `CodedRefusal` from a code and a message, deriving `status` from
+ * `API_ERROR_STATUS` rather than letting a call site hand-type it beside
+ * `code` — the same "derive, don't duplicate" `respondPaymentRefusal` used to
+ * be the one place doing before #649/#652 folded every other map onto this.
+ *
+ * Returns `Extract<CodedRefusal, { code: C }>`, not the bare `CodedRefusal`
+ * union — the caller's literal `C` is what a consumer narrows on downstream
+ * (a `respondError` coded call site infers `C` from `.code` the same way it
+ * would from a hand-typed literal; the widened return type flattened that
+ * back to `ApiErrorCode` and broke every one of them). The cast is the one
+ * place this function trusts rather than re-derives:
+ * `{ code, status: API_ERROR_STATUS[code], message }` is exactly one member
+ * of `CodedRefusal`'s distributed union for the literal `C` a caller passes,
+ * but TypeScript does not narrow a generic function's return expression that
+ * way on its own — the signature is what keeps every call site checked.
+ */
+export function codedRefusal<C extends ApiErrorCode>(
+  code: C,
+  message: string,
+): Extract<CodedRefusal, { code: C }> {
+  return { code, status: API_ERROR_STATUS[code], message } as Extract<CodedRefusal, { code: C }>;
+}

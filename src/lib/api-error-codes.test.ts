@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   API_ERROR_STATUS,
   isApiErrorCode,
+  codedRefusal,
   type ApiErrorCode,
+  type CodedRefusal,
   type CodeWithStatus,
   type StatusOf,
 } from './api-error-codes';
@@ -32,6 +34,23 @@ describe('API_ERROR_STATUS', () => {
     for (const [code, status] of Object.entries(API_ERROR_STATUS)) {
       expect(allowed.has(status), `${code} → ${status}`).toBe(true);
     }
+  });
+});
+
+describe('codedRefusal', () => {
+  it('derives status from the registered code, never taking one as an argument', () => {
+    const refusal = codedRefusal('NOT_FOUND', 'This payment no longer exists.');
+
+    expect(refusal).toEqual({
+      code: 'NOT_FOUND',
+      status: 404,
+      message: 'This payment no longer exists.',
+    });
+  });
+
+  it('produces a value assignable to CodedRefusal for any registered code', () => {
+    const refusal: CodedRefusal = codedRefusal('PAYMENT_WAIVED', 'x');
+    expect(refusal.status).toBe(409);
   });
 });
 

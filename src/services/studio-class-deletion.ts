@@ -1,3 +1,4 @@
+import { codedRefusal } from '@/lib/api-error-codes';
 import type { CodedRefusal } from '@/lib/api-error-codes';
 import { startOfLocalDay } from '@/lib/timezone';
 
@@ -166,12 +167,10 @@ export const STUDIO_CLASS_REMOVAL_FACTS_SELECT = {
  * without re-deriving it (#649).
  */
 export const STUDIO_CLASS_REFUSALS = {
-  regenerates: {
-    message:
-      'This class comes from a recurring template and is not yet past, so removing it would only create it again. Cancel it instead.',
-    status: 409,
-    code: 'STUDIO_CLASS_REGENERATES',
-  },
+  regenerates: codedRefusal(
+    'STUDIO_CLASS_REGENERATES',
+    'This class comes from a recurring template and is not yet past, so removing it would only create it again. Cancel it instead.',
+  ),
 } as const satisfies Record<StudioClassRefusal, CodedRefusal>;
 
 export function studioClassDeletability(

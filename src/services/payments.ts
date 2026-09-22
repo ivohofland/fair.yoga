@@ -6,7 +6,7 @@
  */
 
 import type { PrismaClient, Payment, RegistrationStatus } from '@prisma/client';
-import type { CodedRefusal } from '@/lib/api-error-codes';
+import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { createBulkNotifications } from './notifications';
 import {
   projectStudentForTeacher,
@@ -53,22 +53,20 @@ export type PaymentOutcome =
   | { readonly kind: 'refused'; readonly refusal: PaymentRefusal };
 
 /** The answer when the payment row does not exist. */
-export const PAYMENT_GONE: PaymentRefusal = {
-  code: 'NOT_FOUND',
-  status: 404,
-  message: 'This payment no longer exists.',
-};
+export const PAYMENT_GONE: PaymentRefusal = codedRefusal(
+  'NOT_FOUND',
+  'This payment no longer exists.',
+);
 
 /**
  * The answer when a compare-and-swap missed but the re-read finds a state the
  * swap would have accepted: another action changed the row between the two
  * statements, so neither "already done" nor a status refusal is true.
  */
-const PAYMENT_CHANGED: PaymentRefusal = {
-  code: 'CONCURRENT_MODIFICATION',
-  status: 409,
-  message: 'This payment was just changed elsewhere. Refresh and try again.',
-};
+const PAYMENT_CHANGED: PaymentRefusal = codedRefusal(
+  'CONCURRENT_MODIFICATION',
+  'This payment was just changed elsewhere. Refresh and try again.',
+);
 
 /**
  * What a teacher-facing payment read returns.
@@ -155,20 +153,15 @@ export async function markPaymentPaid(
         if (payment.method === method) return { kind: 'unchanged', payment };
         return {
           kind: 'refused',
-          refusal: {
-            code: 'PAYMENT_ALREADY_PAID',
-            status: 409,
-            message: 'This payment is already marked paid.',
-          },
+          refusal: codedRefusal('PAYMENT_ALREADY_PAID', 'This payment is already marked paid.'),
         };
       case 'not_charged':
         return {
           kind: 'refused',
-          refusal: {
-            code: 'PAYMENT_WAIVED',
-            status: 409,
-            message: 'This payment was marked not charged. Mark it unpaid first.',
-          },
+          refusal: codedRefusal(
+            'PAYMENT_WAIVED',
+            'This payment was marked not charged. Mark it unpaid first.',
+          ),
         };
       case 'pending':
       case 'overdue':
@@ -282,11 +275,10 @@ export async function markPaymentNotCharged(
       case 'paid':
         return {
           kind: 'refused',
-          refusal: {
-            code: 'PAYMENT_ALREADY_PAID',
-            status: 409,
-            message: "This payment is already paid, so it can't be marked not charged.",
-          },
+          refusal: codedRefusal(
+            'PAYMENT_ALREADY_PAID',
+            "This payment is already paid, so it can't be marked not charged.",
+          ),
         };
       case 'pending':
       case 'overdue':
@@ -369,11 +361,10 @@ export async function sendPaymentReminder(
       if (!isOutstanding(payment.status)) {
         return {
           kind: 'refused',
-          refusal: {
-            code: 'PAYMENT_SETTLED',
-            status: 409,
-            message: 'This payment is already settled, so no reminder is needed.',
-          },
+          refusal: codedRefusal(
+            'PAYMENT_SETTLED',
+            'This payment is already settled, so no reminder is needed.',
+          ),
         };
       }
       // Outstanding, so the cooldown term is the one that missed — provided
