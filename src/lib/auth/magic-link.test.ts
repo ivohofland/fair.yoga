@@ -10,6 +10,13 @@ import { scopeSweep } from '../../../tests/scoped-sweep';
 
 const db = new PrismaClient();
 
+// The `cleanupExpiredTokens` tests below mint under this domain instead of
+// `@example.com`: that domain isn't unique to this file (other suites mint
+// under it too, in a different vitest project, on the same database), so a
+// scope built from it can read their rows in an isolated run of just this
+// block. This domain is unique to those two tests.
+const CLEANUP_TEST_DOMAIN = 'magic-link-cleanup.test.local';
+
 beforeAll(async () => {
   await db.$connect();
 });
@@ -20,9 +27,17 @@ afterAll(async () => {
 
 afterEach(async () => {
   // Scoped, not a truncate: sibling suites hold their own `magicLinkToken`
-  // rows and assert those survive their own sweeps. Every address this file
-  // mints is `*@example.com`, and this filter is what keeps it to those.
-  await db.magicLinkToken.deleteMany({ where: { email: { endsWith: '@example.com' } } });
+  // rows and assert those survive their own sweeps. This file mints
+  // `*@example.com` everywhere except the `cleanupExpiredTokens` tests
+  // below, which use `CLEANUP_TEST_DOMAIN`; this filter clears both.
+  await db.magicLinkToken.deleteMany({
+    where: {
+      OR: [
+        { email: { endsWith: '@example.com' } },
+        { email: { endsWith: `@${CLEANUP_TEST_DOMAIN}` } },
+      ],
+    },
+  });
 });
 
 describe('generateMagicLinkToken', () => {
@@ -269,34 +284,38 @@ describe('purpose (#385)', () => {
 
 describe('cleanupExpiredTokens', () => {
   it('removes expired tokens and returns the count', async () => {
-    // Create two tokens
-    await generateMagicLinkToken(db, 'a@example.com');
-    await generateMagicLinkToken(db, 'b@example.com');
+    // Create two tokens, under CLEANUP_TEST_DOMAIN — see its own comment for
+    // why not `@example.com`.
+    const suffix = Date.now();
+    const emailA = `cleanup-a-${suffix}@${CLEANUP_TEST_DOMAIN}`;
+    const emailB = `cleanup-b-${suffix}@${CLEANUP_TEST_DOMAIN}`;
+    await generateMagicLinkToken(db, emailA);
+    await generateMagicLinkToken(db, emailB);
 
     // Expire one of them
     await db.magicLinkToken.updateMany({
-      where: { email: 'a@example.com' },
+      where: { email: emailA },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
 
-    // Scoped for the same reason the `afterEach` above is: an unscoped sweep
-    // deletes sibling suites' rows too, and this database persists between
-    // local runs.
-    const scoped = scopeSweep(db, { MagicLinkToken: { email: { endsWith: '@example.com' } } });
+    // Scoped to exactly these two rows: an unscoped sweep deletes sibling
+    // suites' rows too, and this database persists between local runs.
+    const scoped = scopeSweep(db, { MagicLinkToken: { email: { in: [emailA, emailB] } } });
     const deleted = await cleanupExpiredTokens(scoped.db);
     expect(deleted).toBe(1);
 
     // The non-expired one should still exist.
     const remaining = await db.magicLinkToken.count({
-      where: { email: { endsWith: '@example.com' } },
+      where: { email: { in: [emailA, emailB] } },
     });
     expect(remaining).toBe(1);
   });
 
   it('returns 0 when no tokens are expired', async () => {
-    await generateMagicLinkToken(db, 'fresh@example.com');
+    const email = `cleanup-fresh-${Date.now()}@${CLEANUP_TEST_DOMAIN}`;
+    await generateMagicLinkToken(db, email);
 
-    const scoped = scopeSweep(db, { MagicLinkToken: { email: { endsWith: '@example.com' } } });
+    const scoped = scopeSweep(db, { MagicLinkToken: { email: { in: [email] } } });
     // Proves the scope reaches the fixture: without it, a scope matching no
     // rows would make `deleted` read 0 whether or not any token is expired.
     expect(await scoped.db.magicLinkToken.count()).toBeGreaterThan(0);
