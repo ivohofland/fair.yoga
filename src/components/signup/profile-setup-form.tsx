@@ -337,13 +337,20 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
         <p className="type-subtitle">You already have an account</p>
         <p className="type-body mt-2 max-w-[420px]">
           There is already an account for {email}.{' '}
+          {/* "to continue", not "to add a teacher page": this panel cannot
+              tell the two shapes of its collision apart. The address may hold
+              an account with no teacher side — the case this panel is for,
+              where signing in lands back here with the draft restored — or one
+              that already has a teacher page, which `bouncedTeacherForm` sends
+              to /schedule instead. Naming the page would be false in the
+              second. */}
           <Link
             href={`/login?redirect=${encodeURIComponent(TEACHER_PROFILE_PATH)}`}
             className="text-teal"
           >
             Sign in
           </Link>{' '}
-          to add a teacher page to it.
+          to continue.
         </p>
       </div>
     );
