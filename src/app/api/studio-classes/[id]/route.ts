@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondRefusal,
   requireTeacher,
   parseBody,
   isErrorResponse,
@@ -379,7 +380,7 @@ export const DELETE = withErrorHandler(async (
       },
       'studio class removal refused',
     );
-    return respondError(refusal.message, refusal.status, refusal.code);
+    return respondRefusal(refusal);
   }
 
   try {

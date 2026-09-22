@@ -52,7 +52,7 @@ describe('respondPaymentOutcome', () => {
     'answers a %s refusal at its registered status',
     async (code) => {
       await expectRefusal(
-        respondPaymentOutcome({ kind: 'refused', refusal: { code, message: 'Words.' } }),
+        respondPaymentOutcome({ kind: 'refused', refusal: { code, status: 409, message: 'Words.' } }),
         code,
       );
     },

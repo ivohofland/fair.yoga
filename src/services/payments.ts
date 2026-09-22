@@ -6,6 +6,7 @@
  */
 
 import type { PrismaClient, Payment, RegistrationStatus } from '@prisma/client';
+import type { CodedRefusal } from '@/lib/api-error-codes';
 import { createBulkNotifications } from './notifications';
 import {
   projectStudentForTeacher,
@@ -27,15 +28,17 @@ export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error:
  * registered code (`src/lib/api-error-codes.ts`), which fixes the HTTP status;
  * `message` is what the teacher reads.
  */
-export type PaymentRefusal = {
-  readonly code:
-    | 'CONCURRENT_MODIFICATION'
-    | 'NOT_FOUND'
-    | 'PAYMENT_ALREADY_PAID'
-    | 'PAYMENT_SETTLED'
-    | 'PAYMENT_WAIVED';
-  readonly message: string;
-};
+export type PaymentRefusal = Extract<
+  CodedRefusal,
+  {
+    code:
+      | 'CONCURRENT_MODIFICATION'
+      | 'NOT_FOUND'
+      | 'PAYMENT_ALREADY_PAID'
+      | 'PAYMENT_SETTLED'
+      | 'PAYMENT_WAIVED';
+  }
+>;
 
 /**
  * What a teacher's payment action did. `applied`: this call wrote the row.
@@ -51,6 +54,7 @@ export type PaymentOutcome =
 /** The answer when the payment row does not exist. */
 export const PAYMENT_GONE: PaymentRefusal = {
   code: 'NOT_FOUND',
+  status: 404,
   message: 'This payment no longer exists.',
 };
 
@@ -61,6 +65,7 @@ export const PAYMENT_GONE: PaymentRefusal = {
  */
 const PAYMENT_CHANGED: PaymentRefusal = {
   code: 'CONCURRENT_MODIFICATION',
+  status: 409,
   message: 'This payment was just changed elsewhere. Refresh and try again.',
 };
 
@@ -149,13 +154,18 @@ export async function markPaymentPaid(
         if (payment.method === method) return { kind: 'unchanged', payment };
         return {
           kind: 'refused',
-          refusal: { code: 'PAYMENT_ALREADY_PAID', message: 'This payment is already marked paid.' },
+          refusal: {
+            code: 'PAYMENT_ALREADY_PAID',
+            status: 409,
+            message: 'This payment is already marked paid.',
+          },
         };
       case 'not_charged':
         return {
           kind: 'refused',
           refusal: {
             code: 'PAYMENT_WAIVED',
+            status: 409,
             message: 'This payment was marked not charged. Mark it unpaid first.',
           },
         };
@@ -273,6 +283,7 @@ export async function markPaymentNotCharged(
           kind: 'refused',
           refusal: {
             code: 'PAYMENT_ALREADY_PAID',
+            status: 409,
             message: "This payment is already paid, so it can't be marked not charged.",
           },
         };
@@ -359,6 +370,7 @@ export async function sendPaymentReminder(
           kind: 'refused',
           refusal: {
             code: 'PAYMENT_SETTLED',
+            status: 409,
             message: 'This payment is already settled, so no reminder is needed.',
           },
         };
