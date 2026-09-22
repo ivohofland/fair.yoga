@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
 import { classifyApiError } from './api-errors';
-import type { ApiErrorCode, CodedRefusal, StatusOf } from './api-error-codes';
+import type { ApiErrorCode, ApiErrorStatus, CodedRefusal, CodeWithStatus } from './api-error-codes';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
@@ -51,19 +51,24 @@ type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
 
 /**
  * A refusal. A code fixes its status (`src/lib/api-error-codes.ts`), so a code
- * sent at another status does not compile; a 409 must name its code, because
- * a conflict is exactly what a client has to tell apart. `C` is inferred from
- * `code`, so a union-typed `code` — reading a refusal off a
- * `Record<Reason, CodedRefusal>` map by a non-literal reason — poisons
- * `status`'s parameter type to `never` rather than being accepted at the
- * union of every member's status: use `respondRefusal` for that shape
- * instead. This overload is for a single literal code known at the call
- * site. The rules are in `docs/technical-architecture.md` (The Services
- * Layer → Error responses).
+ * sent at another status does not compile. `C` is inferred from `code` and
+ * `S` from `status`; the call is only accepted when `S` is a single literal
+ * status AND every member of `C` is registered at that exact status
+ * (`[C] extends [CodeWithStatus<S>]`) — a union `code` is fine as long as it
+ * provably shares one status with the literal passed (several existing call
+ * sites already rely on this), but a union spanning more than one status is
+ * a compile error regardless of which status literal is passed, because no
+ * single literal can be correct for all its members. A 409 must name its
+ * code, because a conflict is exactly what a client has to tell apart. A
+ * refusal read off a `Record<Reason, CodedRefusal>` map — where each member
+ * carries its OWN status, not one shared by every member — uses
+ * `respondRefusal` instead, never this overload split into two arguments.
+ * The rules are in `docs/technical-architecture.md` (The Services Layer →
+ * Error responses).
  */
-export function respondError<C extends ApiErrorCode>(
+export function respondError<C extends ApiErrorCode, S extends ApiErrorStatus>(
   message: string,
-  status: IsUnion<C> extends true ? never : StatusOf<C>,
+  status: IsUnion<S> extends true ? never : ([C] extends [CodeWithStatus<S>] ? S : never),
   code: C,
 ): NextResponse;
 export function respondError(message: string, status: Exclude<ErrorStatus, 409>): NextResponse;
