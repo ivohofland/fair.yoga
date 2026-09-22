@@ -9,7 +9,6 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  * value then depends on that leftover: it can go red when it should pass, or
  * green when it should fail. This client ANDs a per-model filter into the
  * sweep's bulk statements so the sweep only ever sees what the test built.
- * `docs/test-database.md` states the convention.
  *
  * Single-row operations pass through untouched: they are keyed by an id the
  * sweep took from a scoped read. `rowsRead` exists because a scoped
@@ -19,9 +18,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  * Prisma runs query extensions in attachment order: the earliest-attached
  * hook sees the caller's own args, and each later one only sees what the
  * earlier ones forwarded. A hook that must see the sweep's own `where`
- * shape — the class-transitions and email-fallback race hooks do this —
- * therefore goes on the client passed in as `base`, before `scopeSweep`
- * ever runs: `scopeSweep(prisma.$extends(racing) as unknown as PrismaClient, scope)`.
+ * shape therefore goes on the client passed in as `base`, before
+ * `scopeSweep` ever runs: `scopeSweep(prisma.$extends(racing) as unknown as PrismaClient, scope)`.
  * Calling `.$extends(...)` on the returned `db` instead places the new hook
  * after the scope, where it only sees the AND-wrapped `where`.
  */

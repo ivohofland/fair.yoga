@@ -6,21 +6,29 @@ const prisma = new PrismaClient();
 const suffix = Date.now();
 let inId = '';
 let outId = '';
+// A second pair, scoped-deleted by the deleteMany case itself rather than
+// surviving to the end of the file — afterAll cleans both ids and both
+// accounts by their known (not re-queried) emails either way.
+let throwInId = '';
+let throwOutId = '';
+const emails: string[] = [];
 
 function teacherData(tag: string) {
   const email = `scoped-sweep-${tag}-${suffix}@test.local`;
+  emails.push(email);
   return { firstName: 'Scoped', lastName: tag, email, bio: '', pageSlug: `scoped-sweep-${tag}-${suffix}`, account: { create: { email } } };
 }
 
 beforeAll(async () => {
   inId = (await prisma.teacher.create({ data: teacherData('in') })).id;
   outId = (await prisma.teacher.create({ data: teacherData('out') })).id;
+  throwInId = (await prisma.teacher.create({ data: teacherData('throw-in') })).id;
+  throwOutId = (await prisma.teacher.create({ data: teacherData('throw-out') })).id;
 });
 
 afterAll(async () => {
-  const teachers = await prisma.teacher.findMany({ where: { id: { in: [inId, outId] } } });
-  await prisma.teacher.deleteMany({ where: { id: { in: [inId, outId] } } });
-  await prisma.account.deleteMany({ where: { email: { in: teachers.map((t) => t.email) } } });
+  await prisma.teacher.deleteMany({ where: { id: { in: [inId, outId, throwInId, throwOutId] } } });
+  await prisma.account.deleteMany({ where: { email: { in: emails } } });
   await prisma.$disconnect();
 });
 
@@ -38,7 +46,7 @@ describe('scopeSweep', () => {
   });
 
   it('scopes count, groupBy, updateMany and deleteMany', async () => {
-    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
+    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId, throwInId] } } });
     const both = { id: { in: [inId, outId] } };
     expect(await s.db.teacher.count({ where: both })).toBe(1);
     const groups = await s.db.teacher.groupBy({ by: ['id'], where: both });
@@ -47,6 +55,8 @@ describe('scopeSweep', () => {
     expect((await s.db.teacher.updateMany({ where: both, data: { bio: 'x' } })).count).toBe(1);
     const out = await prisma.teacher.findUniqueOrThrow({ where: { id: outId } });
     expect(out.bio).toBe('');
+    expect((await s.db.teacher.deleteMany({ where: { id: { in: [throwInId, throwOutId] } } })).count).toBe(1);
+    expect(await prisma.teacher.findUnique({ where: { id: throwOutId } })).not.toBeNull();
   });
 
   it('applies inside interactive transactions', async () => {
@@ -58,7 +68,10 @@ describe('scopeSweep', () => {
   it('leaves unnamed models and single-row operations alone', async () => {
     const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
     expect(await s.db.teacher.findUnique({ where: { id: outId } })).not.toBeNull();
-    expect(await s.db.account.count({ where: { email: { contains: `-${suffix}@` } } })).toBe(2);
+    // Account is not named in the scope, so an unscoped read reaches every
+    // account this file has created so far, by email.
+    const accounts = await s.db.account.findMany({ where: { email: { contains: `-${suffix}@` } } });
+    expect(accounts.map((a) => a.email).sort()).toEqual([...emails].sort());
     expect(s.rowsRead('Account')).toBe(0);
   });
 
