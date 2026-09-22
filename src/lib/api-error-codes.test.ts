@@ -37,8 +37,19 @@ describe('API_ERROR_STATUS', () => {
 
 // Structural pins: true for any membership, so adding a code never breaks them.
 type _conflictCodesAre409 = Assert<Equals<StatusOf<CodeWithStatus<409>>, 409>>;
+// The other half of the same narrowing, and the half that can go hollow: a
+// `CodeWithStatus<S>` nobody registers a code for is `never`, not an error, so
+// every optional `code` typed by it silently stops accepting any code at all.
+// Which types narrow this way, and why they do:
+// docs/superpowers/specs/2026-09-17-api-error-contract-design.md §4.3.
+type _serverCodesAre500Or503 = Assert<Equals<StatusOf<CodeWithStatus<500 | 503>>, 500 | 503>>;
 type _notFoundIs404 = Assert<Equals<StatusOf<'NOT_FOUND'>, 404>>;
 // Not `ApiErrorCode extends string`, which stays true once the registry's keys
 // widen to `string` and so cannot fail: this asserts the keys are still literal.
 type _codesAreNotBareString = Assert<Equals<Equals<ApiErrorCode, string>, false>>;
-void 0 as unknown as [_conflictCodesAre409, _notFoundIs404, _codesAreNotBareString];
+void 0 as unknown as [
+  _conflictCodesAre409,
+  _serverCodesAre500Or503,
+  _notFoundIs404,
+  _codesAreNotBareString,
+];
