@@ -160,10 +160,12 @@ export const STUDIO_CLASS_REMOVAL_FACTS_SELECT = {
  *
  * `CodedRefusal`, not `{ message: string; code: ApiErrorCode }`: the latter
  * widens `code` to the whole union, so `respondError`'s `status: StatusOf<C>`
- * infers `C` as every code at once and admits every status — the entry's own
- * status stops being checked. Each entry carries its status and the call site
- * passes `refusal.status`, which is what makes a code sent at the wrong
- * status a compile error here as it is everywhere else (#197).
+ * would infer `C` as every code at once and admit every status. What
+ * actually pins each entry to its own status is
+ * `satisfies Record<StudioClassRefusal, CodedRefusal>` above, checked once at
+ * definition; the call site passes the whole entry to `respondRefusal`
+ * rather than splitting it into a `status` and a `code` argument, which is
+ * what a union-typed `code` would otherwise silently widen (#649).
  */
 export const STUDIO_CLASS_REFUSALS = {
   regenerates: {
