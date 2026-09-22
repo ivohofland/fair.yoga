@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import {
   respondTyped,
   respondError,
+  respondRefusal,
   respondUnchanged,
   requireTeacher,
   isErrorResponse,
@@ -163,7 +164,7 @@ export const POST = withErrorHandler(async (
 
   if (outcome.kind === 'refused') {
     const { refusal } = outcome;
-    return respondError(refusal.message, refusal.status, refusal.code);
+    return respondRefusal(refusal);
   }
   if (outcome.kind === 'unchanged') {
     return respondUnchanged<CancelApplied>({ ok: true, cancelled: true });

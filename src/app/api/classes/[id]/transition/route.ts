@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondRefusal,
   respondUnchanged,
   requireTeacher,
   parseBody,
@@ -91,5 +92,5 @@ export const POST = withErrorHandler(async (
   }
 
   const refusal = TRANSITION_REFUSAL[result.reason];
-  return respondError(refusal.message, refusal.status, refusal.code);
+  return respondRefusal(refusal);
 });

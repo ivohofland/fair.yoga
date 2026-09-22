@@ -1,7 +1,6 @@
 import type { NextResponse } from 'next/server';
 import { Prisma, type Payment } from '@prisma/client';
-import { API_ERROR_STATUS } from '@/lib/api-error-codes';
-import { respondError, respondOk, respondUnchanged } from '@/lib/api-utils';
+import { respondError, respondOk, respondRefusal, respondUnchanged } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { PAYMENT_GONE, type PaymentOutcome, type PaymentRefusal } from '@/services/payments';
 
@@ -15,7 +14,7 @@ import { PAYMENT_GONE, type PaymentOutcome, type PaymentRefusal } from '@/servic
 
 /** A refusal from `services/payments.ts`, at the status its code is registered with. */
 export function respondPaymentRefusal(refusal: PaymentRefusal): NextResponse {
-  return respondError(refusal.message, API_ERROR_STATUS[refusal.code], refusal.code);
+  return respondRefusal(refusal);
 }
 
 /** What a payment action did. `data` is the payment row whether or not this call wrote it. */
