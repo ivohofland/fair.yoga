@@ -44,29 +44,33 @@ export async function ownedInvitation(teacherId: string, id: string) {
  * and belongs to someone else, which is a disclosure this route has no
  * reason to make.
  */
-export const NOT_FOUND = () => respondError('Contact not found', 404);
+export const NOT_FOUND = () => respondError('This contact no longer exists.', 404, 'NOT_FOUND');
+
+/** The teacher action a contact refusal answers. */
+export type ContactDoor = 'edit' | 'remove' | 'resend';
+
+const DECLINED_MESSAGE = {
+  edit: "This person declined, so their details can't be changed. You can archive this contact.",
+  remove: 'This person declined. You can archive this contact, but it cannot be removed.',
+  resend: "This person declined, so the invitation can't be sent again.",
+} as const satisfies Record<ContactDoor, string>;
 
 /**
- * The refusal a declined row earns, in one place — PUT's pre-check, DELETE's
- * pre-check, both of their post-CAS answers (via `casMatchedNothing`,
- * `route.ts`), and resend's pre-check all say exactly this, and each copy
- * of one sentence is another chance for them to stop agreeing.
+ * The refusal a declined row earns, in one place. The code is the same at
+ * every door; the sentence names the action the teacher just tried.
  */
-export const DECLINED = () =>
-  respondError(
-    'This person declined. You can archive this contact, but it cannot be removed.',
-    409,
-    'DECLINED_IS_PERMANENT',
-  );
+export const DECLINED = (door: ContactDoor) =>
+  respondError(DECLINED_MESSAGE[door], 409, 'DECLINED_IS_PERMANENT');
 
 /**
  * The refusal a row this route may not write to earns — every caller that
  * refuses a non-pending row answers with this, the same "one sentence, one
- * place" reasoning `DECLINED` above follows.
+ * place" reasoning `DECLINED` above follows. It says nothing about the
+ * Students list: an accepted row can outlive its link.
  */
 export const NOT_PENDING = () =>
   respondError(
-    'This person already accepted your invitation — they are now on your Students list. Reload to see them.',
+    'This person already accepted your invitation. Reload to see the latest.',
     409,
     'NOT_PENDING',
   );

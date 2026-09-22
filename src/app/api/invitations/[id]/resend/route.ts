@@ -72,7 +72,7 @@ export const POST = withErrorHandler(async (
   const invitation = await ownedInvitation(session.teacherId, id);
   if (!invitation) return NOT_FOUND();
 
-  if (invitation.status === 'declined') return DECLINED();
+  if (invitation.status === 'declined') return DECLINED('resend');
   if (invitation.status !== 'pending') {
     // Unreachable from the UI today — the contact detail page redirects
     // away from an accepted invitation before a Resend button could ever

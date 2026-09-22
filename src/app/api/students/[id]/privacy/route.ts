@@ -114,7 +114,7 @@ export const PUT = withErrorHandler(async (
   if (!result.ok) {
     switch (result.reason) {
       case 'STUDENT_ERASED':
-        return respondError('This account has been deleted', 409);
+        return respondError('This account has been deleted.', 409, 'STUDENT_ERASED');
       default: {
         const unhandled: never = result.reason;
         throw new Error(`unhandled privacy write reason: ${unhandled}`);

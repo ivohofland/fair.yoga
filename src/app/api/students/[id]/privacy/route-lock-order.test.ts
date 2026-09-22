@@ -23,9 +23,7 @@ const prisma = new PrismaClient();
 const HANDSHAKE_MS = 2_000;
 const WAIT_MS = 1_500;
 
-const DELETED_MESSAGE = 'This account has been deleted';
-
-type Settled = { status: number; message: string | null };
+type Settled = { status: number; code: string | null };
 
 function putPrivacy(
   token: string,
@@ -48,13 +46,13 @@ function settle(response: Promise<Response>): Promise<Settled> {
       const json: unknown = await res.json().catch(() => null);
       const error =
         typeof json === 'object' && json !== null && 'error' in json ? json.error : null;
-      const message =
-        typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string'
-          ? error.message
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+          ? error.code
           : null;
-      return { status: res.status, message };
+      return { status: res.status, code };
     },
-    (err: unknown) => ({ status: -1, message: String(err) }),
+    (err: unknown) => ({ status: -1, code: String(err) }),
   );
 }
 
@@ -210,7 +208,7 @@ describe('PUT /api/students/[id]/privacy takes the Student gate (#626)', () => {
       }
 
       expect(await erasing).toBe('erased');
-      expect(await writing?.racer).toEqual({ status: 409, message: DELETED_MESSAGE });
+      expect(await writing?.racer).toEqual({ status: 409, code: 'STUDENT_ERASED' });
       expect(
         await prisma.studentPrivacy.count({ where: { teacherId: fx.teacherId, studentId: fx.studentId } }),
       ).toBe(0);

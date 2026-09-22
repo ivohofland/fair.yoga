@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondUnchanged,
   requireStudent,
   parseBody,
   isErrorResponse,
@@ -45,16 +46,23 @@ export const POST = withErrorHandler(async (
   if (!result.ok) {
     switch (result.reason) {
       case 'NOT_FOUND':
-        return respondError('Invitation not found', 404);
+        return respondError('This invitation no longer exists.', 404, 'NOT_FOUND');
       case 'STUDENT_ERASED':
-        return respondError('This account has been deleted', 409);
+        return respondError('This account has been deleted.', 409, 'STUDENT_ERASED');
       case 'NOT_PENDING':
-        return respondError('This invitation has already been answered', 409, 'ALREADY_ANSWERED');
+        return respondError('This invitation has already been answered.', 409, 'ALREADY_ANSWERED');
+      case 'CONCURRENT_MODIFICATION':
+        return respondError(
+          'This invitation was just changed elsewhere. Refresh and try again.',
+          409,
+          'CONCURRENT_MODIFICATION',
+        );
       default: {
         const unhandled: never = result.reason;
         throw new Error(`unhandled invitation response reason: ${unhandled}`);
       }
     }
   }
+  if (result.outcome === 'unchanged') return respondUnchanged<{ id: string }>({ id });
   return respondOk({ id });
 });

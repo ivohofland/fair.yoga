@@ -45,9 +45,9 @@ export const DELETE = withErrorHandler(async (
   if (!result.ok) {
     switch (result.reason) {
       case 'STUDENT_ERASED':
-        return respondError('This account has been deleted', 409);
+        return respondError('This account has been deleted.', 409, 'STUDENT_ERASED');
       case 'NOT_LINKED':
-        return respondError('Teacher link not found', 404);
+        return respondError("You're no longer connected to this teacher.", 404, 'NOT_FOUND');
       default: {
         const unhandled: never = result.reason;
         throw new Error(`unhandled unlink reason: ${unhandled}`);

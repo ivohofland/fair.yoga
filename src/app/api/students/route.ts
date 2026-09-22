@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
+import { respondOk, respondError, respondUnchanged, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createInvitationSchema } from '@/lib/schemas';
 import { checkStudentWriteLimit, respondRateLimited } from '@/lib/rate-limit';
 import { inviteContact, deliverInvitation, REFUSAL_MESSAGES } from '@/services/invitations';
@@ -98,6 +98,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
   if (!result.ok) {
     return respondError(REFUSAL_MESSAGES[result.reason], 409, result.reason);
+  }
+  // This teacher's pending, unarchived invitation already carries these names: the
+  // request already happened, so there is nothing to stamp and nothing to
+  // deliver. The limiter above has still counted it.
+  if (result.outcome === 'unchanged') {
+    return respondUnchanged<{ id: string }>({ id: result.value.id });
   }
 
   // Unconditional — written regardless of `result.value.delivered`, covering
