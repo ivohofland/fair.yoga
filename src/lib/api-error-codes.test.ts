@@ -64,15 +64,18 @@ type _conflictCodesAre409 = Assert<Equals<StatusOf<CodeWithStatus<409>>, 409>>;
 // docs/superpowers/specs/2026-09-17-api-error-contract-design.md §4.3.
 type _serverCodesAre500Or503 = Assert<Equals<StatusOf<CodeWithStatus<500 | 503>>, 500 | 503>>;
 type _notFoundIs404 = Assert<Equals<StatusOf<'NOT_FOUND'>, 404>>;
-// Each code sits at ONE literal status. A cast on an entry (`418 as
-// ApiErrorStatus`) passes `satisfies` and `sendError`'s parameter alike, since
-// the whole union fits both — but it widens that code's `StatusOf` to a union.
-// That drops the code out of every `CodeWithStatus<S>`, so the pins above never
-// see it; this one names it.
-type CodesWithUnionStatus = {
-  [C in ApiErrorCode]: IsUnion<StatusOf<C>> extends true ? C : never;
-}[ApiErrorCode];
-type _eachCodeHasOneStatus = Assert<NoneOf<CodesWithUnionStatus>>;
+// Each code sits at ONE literal status. A cast on a registry entry (`418 as
+// ApiErrorStatus`) widens that code's `StatusOf` to a union, which the
+// per-status pins above do not detect; this one names the code. Generic so the
+// fixture below can pin the failing direction — against the real registry the
+// helper only ever resolves to `never`, which a hollowed body would too.
+type CodesWithUnionStatusIn<R> = {
+  [C in keyof R]: IsUnion<R[C]> extends true ? C : never;
+}[keyof R];
+type _eachCodeHasOneStatus = Assert<
+  NoneOf<CodesWithUnionStatusIn<{ [C in ApiErrorCode]: StatusOf<C> }>>
+>;
+type _unionStatusIsNamed = Assert<Equals<CodesWithUnionStatusIn<{ A: 409; B: 409 | 404 }>, 'B'>>;
 // Not `ApiErrorCode extends string`, which stays true once the registry's keys
 // widen to `string` and so cannot fail: this asserts the keys are still literal.
 type _codesAreNotBareString = Assert<Equals<Equals<ApiErrorCode, string>, false>>;
@@ -90,6 +93,7 @@ void 0 as unknown as [
   _serverCodesAre500Or503,
   _notFoundIs404,
   _eachCodeHasOneStatus,
+  _unionStatusIsNamed,
   _codesAreNotBareString,
   _codedRefusalNarrowsToItsCode,
 ];
