@@ -158,12 +158,13 @@ describe('ProfileSetupForm', () => {
     const signInHref = screen.getByRole('link', { name: 'Sign in' }).getAttribute('href') ?? '';
     expect(signInHref).toBe('/login?redirect=%2Fsignup%2Fprofile');
     // Tethered to the SAME predicate `/login`'s own page runs the param
-    // through (`isLoginRedirectTarget`, `src/lib/schemas.ts`), not just the
-    // literal above: the two are pinned independently today (this href is a
-    // string literal here; `/login/page.tsx` calls the predicate), sharing
-    // only `isSafeRelativePath`. Tighten the predicate and this assertion is
-    // what reddens — the literal above would stay green while the panel
-    // silently dropped its redirect.
+    // through (`isLoginRedirectTarget`, `src/lib/schemas.ts`). The two
+    // assertions catch opposite directions: change what the panel emits and
+    // the literal above reddens; TIGHTEN the predicate so `/login` starts
+    // rejecting a value the panel still emits unchanged, and only this one
+    // does — the href never moved, so the literal stays green while the
+    // redirect is silently dropped. Before #197's R57 the page spelled those
+    // clauses inline and the two ends agreed only by coincidence.
     const emittedRedirect = new URL(signInHref, 'http://localhost').searchParams.get('redirect');
     expect(emittedRedirect).not.toBeNull();
     expect(isLoginRedirectTarget(emittedRedirect ?? '')).toBe(true);

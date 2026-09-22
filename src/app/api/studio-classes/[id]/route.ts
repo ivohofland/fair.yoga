@@ -379,7 +379,7 @@ export const DELETE = withErrorHandler(async (
       },
       'studio class removal refused',
     );
-    return respondError(refusal.message, 409, refusal.code);
+    return respondError(refusal.message, refusal.status, refusal.code);
   }
 
   try {

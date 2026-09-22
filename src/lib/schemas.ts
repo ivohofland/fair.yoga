@@ -115,8 +115,15 @@ export const MAX_CLASS_SIZE = 200;
  * (`/\evil.com` — browsers normalize `\` to `/` before resolving), and
  * WHATWG control-whitespace stripping (`/\t/evil.com`).
  */
+/**
+ * What a browser drops from a URL before resolving it, so every guard below
+ * decides on the string the browser will actually use — not the one it was
+ * handed.
+ */
+const URL_STRIPPED_CHARS = /[\t\r\n]/g;
+
 export function isSafeRelativePath(path: string): boolean {
-  const stripped = path.replace(/[\t\r\n]/g, '');
+  const stripped = path.replace(URL_STRIPPED_CHARS, '');
   return stripped.startsWith('/') && !stripped.startsWith('//') && !stripped.includes('\\');
 }
 
@@ -136,11 +143,17 @@ const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a r
  * own test reddens instead of silently drifting.
  */
 export function isLoginRedirectTarget(path: string): boolean {
+  // The loop guard reads the STRIPPED copy, as the shape check does: a
+  // browser drops the tab from `/<tab>login` and goes to `/login`, so reading
+  // the raw string here would wave through exactly the loop this clause
+  // exists to stop. The length cap reads the raw string on purpose — it
+  // mirrors `relativePath`'s own `.max(200)`, which measures what was sent.
+  const stripped = path.replace(URL_STRIPPED_CHARS, '');
   return (
     isSafeRelativePath(path) &&
     path.length <= 200 &&
-    !path.startsWith('/login') &&
-    !path.startsWith('/verify')
+    !stripped.startsWith('/login') &&
+    !stripped.startsWith('/verify')
   );
 }
 
