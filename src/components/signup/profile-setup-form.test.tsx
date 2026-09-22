@@ -158,6 +158,12 @@ describe('ProfileSetupForm', () => {
       'href',
       '/login?redirect=%2Fsignup%2Fprofile',
     );
+    // The whole sentence, not just the heading: "to continue" is deliberate
+    // and load-bearing — it has to stay true for the collision shape that
+    // already holds a teacher page, which this panel cannot distinguish.
+    expect(screen.getByRole('link', { name: 'Sign in' }).closest('p')).toHaveTextContent(
+      'There is already an account for anna@example.com. Sign in to continue.',
+    );
     expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull();
   });
 
