@@ -9,7 +9,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import type { CodedRefusal } from '@/lib/api-error-codes';
+import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { notCancellableMessage } from '@/lib/transition-refusal';
 import { formatDayHeader } from '@/lib/format';
 import { createBulkNotifications, type CreateNotificationInput } from '@/services/notifications';
@@ -106,11 +106,7 @@ export const POST = withErrorHandler(async (
 
       return {
         kind: 'refused',
-        refusal: {
-          code: 'CLASS_NOT_CANCELLABLE',
-          status: 409,
-          message: notCancellableMessage(current.status),
-        },
+        refusal: codedRefusal('CLASS_NOT_CANCELLABLE', notCancellableMessage(current.status)),
       };
     }
 

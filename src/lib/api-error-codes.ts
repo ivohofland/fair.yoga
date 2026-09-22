@@ -116,14 +116,15 @@ export function isApiErrorCode(value: unknown): value is ApiErrorCode {
 /**
  * Builds a `CodedRefusal` from a code and a message, deriving `status` from
  * `API_ERROR_STATUS` rather than letting a call site hand-type it beside
- * `code` — the same "derive, don't duplicate" `respondPaymentRefusal` used to
- * be the one place doing before #649/#652 folded every other map onto this.
+ * `code`.
  *
  * Returns `Extract<CodedRefusal, { code: C }>`, not the bare `CodedRefusal`
  * union — the caller's literal `C` is what a consumer narrows on downstream
  * (a `respondError` coded call site infers `C` from `.code` the same way it
  * would from a hand-typed literal; the widened return type flattened that
- * back to `ApiErrorCode` and broke every one of them). The cast is the one
+ * back to `ApiErrorCode` and broke every one of them). `message` is not
+ * narrowed that way: it widens to plain `string`, where an `as const` object
+ * literal keeps `.message` as its own literal type. The cast is the one
  * place this function trusts rather than re-derives:
  * `{ code, status: API_ERROR_STATUS[code], message }` is exactly one member
  * of `CodedRefusal`'s distributed union for the literal `C` a caller passes,
