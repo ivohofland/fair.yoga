@@ -141,11 +141,15 @@ expect(completed).toBe(0);
   them is empty), so no read escapes the extension. The per-unit helpers they
   call that do use raw SQL (`entry-generation.ts`, `waitlist.ts`) are checked
   during the build: each must be keyed by an id that came from a scoped read.
-- The four existing race hooks (`racing` ×3, `overlapping`) are built on
-  `scoped.db` instead of `prisma`, so scope and race compose. Those hooks key on
-  the shape of the read. The scope's `AND` wraps `where`, so each hook's shape
-  test must read the original args. The build verifies this per hook, because a
-  hook that stops firing leaves `hookCalls === 1` red, not green.
+- The four existing race hooks (`racing` ×3, `overlapping`) compose by being
+  the client handed IN: `scopeSweep(prisma.$extends(racing), scope)`. Prisma 6.19
+  runs query extensions in attachment order, so the earliest-attached hook sees
+  the sweep's own args and each later one sees what the earlier forwarded
+  (measured in Task 1). A race hook attached first therefore still matches the
+  sweep's `where` by shape, and the scope `AND`s in after it. Calling `$extends`
+  on `scoped.db` would put the hook after the scope, where it sees only the
+  `AND` wrapper. A hook that stops firing leaves `hookCalls === 1` red, not
+  green.
 
 Rejected alternatives: a `teacherId` parameter on each production sweep (the
 issue's option 3) puts test-only surface in every unscoped sweep's signature.
