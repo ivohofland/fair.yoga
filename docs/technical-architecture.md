@@ -149,8 +149,11 @@ known at the call site, or `respondRefusal(refusal)` for one read whole off a
 status, because a union-typed `code` no longer pins a single status (#649).
 The code comes from
 `src/lib/api-error-codes.ts`, which fixes one status per code: a 409 without
-a code, or a code at another status, does not compile. Clients branch on the
-code through `readError` (`src/lib/client-errors.ts`) rather than on the
+a code, or a code at another status, does not compile. A `CodedRefusal` value
+is built with `codedRefusal(code, message)` from that same module, which reads
+`status` out of the registry rather than letting a call site hand-type it
+beside `code`. Clients branch on the code through `readError`
+(`src/lib/client-errors.ts`) rather than on the
 status — two refusals can share a status and mean different things. The
 exceptions are the statuses `ApiErrorStatus` excludes, today 401 and 429: no
 code can ever carry one, so a client that must recognise a dropped session or

@@ -10,10 +10,9 @@ import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
  * Imports only `codedRefusal`/`CodedRefusal` from the zero-import
  * `api-error-codes.ts` (see that module's own header), so client components
  * can still value-import this module directly — its sibling
- * `studio-class-editability.ts` reaches a server-only chain (see
- * `docs/technical-architecture.md`). The disabled-date explainer on the edit
- * form is the same string as the API's refusal by construction, not by two
- * copies staying lucky.
+ * `studio-class-editability.ts` reaches a server-only chain (see that file's
+ * own header). The disabled-date explainer on the edit form is the same string
+ * as the API's refusal by construction, not by two copies staying lucky.
  *
  * `as const satisfies Record<StudioClassEditRefusal, CodedRefusal>`: each
  * entry is built with `codedRefusal`, which derives `status` from the code
