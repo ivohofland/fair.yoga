@@ -10,6 +10,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import { codedRefusal } from '@/lib/api-error-codes';
 import type { CodedRefusal } from '@/lib/api-error-codes';
 import { transitionRefusalMessage } from '@/lib/transition-refusal';
 import {
@@ -39,13 +40,12 @@ type TransitionApplied = Extract<Awaited<ReturnType<typeof transitionClass>>, { 
 const TRANSITION_REFUSAL = {
   NOT_FOUND: CLASS_GONE,
   CANCELLED: CLASS_CANCELLED,
-  CONCURRENT_MODIFICATION: {
-    code: 'CONCURRENT_MODIFICATION',
-    status: 409,
-    message: 'This class was just changed elsewhere. Refresh and try again.',
-  },
-  STARTS_IN_PAST: { code: 'CLASS_STARTS_IN_PAST', status: 409, message: STARTS_IN_PAST_MESSAGE },
-  ROOM_ARCHIVED: { code: 'ROOM_ARCHIVED', status: 409, message: ROOM_ARCHIVED_MESSAGE },
+  CONCURRENT_MODIFICATION: codedRefusal(
+    'CONCURRENT_MODIFICATION',
+    'This class was just changed elsewhere. Refresh and try again.',
+  ),
+  STARTS_IN_PAST: codedRefusal('CLASS_STARTS_IN_PAST', STARTS_IN_PAST_MESSAGE),
+  ROOM_ARCHIVED: codedRefusal('ROOM_ARCHIVED', ROOM_ARCHIVED_MESSAGE),
   NOT_ENDED_YET: CLASS_NOT_ENDED_YET,
 } as const satisfies Record<Exclude<TransitionFailureReason, 'ILLEGAL_TRANSITION'>, CodedRefusal>;
 
