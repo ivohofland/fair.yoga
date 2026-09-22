@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor, teardownStudent } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -272,28 +273,96 @@ describe('POST /api/students', () => {
     expect(await prisma.teacherStudent.count({ where: { teacherId } })).toBe(linksBefore);
   });
 
-  it('returns 409 when the person is already invited', async () => {
+  it('answers a repeat with the same names unchanged, and stamps nothing twice', async () => {
+    const select = { id: true, firstName: true, lastName: true, lastNotifiedAt: true } as const;
+    const before = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: newEmail } },
+      select,
+    });
+
     const res = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-      body: JSON.stringify({
-        firstName: 'New',
-        lastName: 'Person',
-        email: newEmail,
-      }),
+      body: JSON.stringify({ firstName: 'New', lastName: 'Person', email: newEmail }),
     });
-    expect(res.status).toBe(409);
-    const json = await res.json();
+
+    expect(await expectUnchanged(res)).toEqual({ id: before.id });
+    expect(await prisma.invitation.count({ where: { teacherId, email: newEmail } })).toBe(1);
+    // `lastNotifiedAt` is the route's synchronous stamp before any delivery;
+    // it not moving is the route never reaching that write.
+    expect(await prisma.invitation.findUniqueOrThrow({ where: { id: before.id }, select })).toEqual(before);
+  });
+
+  it('refuses a repeat whose names differ with ALREADY_INVITED, and leaves the row as it was', async () => {
+    const select = { id: true, firstName: true, lastName: true, lastNotifiedAt: true } as const;
+    const before = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: newEmail } },
+      select,
+    });
+
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Newer', lastName: 'Person', email: newEmail }),
+    });
+
     // ALREADY_INVITED, not ALREADY_LINKED: this refusal is about the
     // teacher's own pending invitation, which is theirs to know about.
-    expect(json.error.code).toBe('ALREADY_INVITED');
-    // F4, #166 review: the message must name the way out, not just the wall.
-    // The invitation email is sent fire-and-forget, so a teacher whose send
-    // failed meets this refusal when they retry — and the recovery it now
-    // names is `POST /api/invitations/[id]/resend` (#173), not
-    // delete-and-recreate. Substring, not the whole sentence: what is pinned
-    // is that the refusal points somewhere, not this month's wording.
-    expect(json.error.message).toContain('resend');
+    await expectRefusal(res, 'ALREADY_INVITED');
+    expect(await prisma.invitation.findUniqueOrThrow({ where: { id: before.id }, select })).toEqual(before);
+  });
+
+  // An archived pending contact is not what a fresh invite leaves behind (a
+  // contact the teacher can see), so the same names do not make it a repeat.
+  it('refuses a same-names repeat of an archived contact with ALREADY_INVITED, and leaves it archived', async () => {
+    const archivedEmail = `crm-archived-pending-${suffix}@test.local`;
+    const select = { id: true, isArchived: true, lastNotifiedAt: true } as const;
+    const archived = await prisma.invitation.create({
+      data: {
+        teacherId, email: archivedEmail, firstName: 'Filed', lastName: 'Away', isArchived: true,
+      },
+      select,
+    });
+
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Filed', lastName: 'Away', email: archivedEmail }),
+    });
+
+    await expectRefusal(res, 'ALREADY_INVITED');
+    expect(await prisma.invitation.findUniqueOrThrow({ where: { id: archived.id }, select })).toEqual(archived);
+  });
+
+  it("creates a separate invitation for another teacher's identical body", async () => {
+    const other = await prisma.teacher.create({
+      data: {
+        firstName: 'Other', lastName: 'Inviter',
+        email: `crm-other-inviter-${suffix}@test.local`,
+        account: { create: { email: `crm-other-inviter-${suffix}@test.local` } },
+        bio: 'Second teacher for the repeat-ordering pin',
+        pageSlug: `crm-other-inviter-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    try {
+      const token = await seedSession(prisma, other.accountId);
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(token) },
+        body: JSON.stringify({ firstName: 'New', lastName: 'Person', email: newEmail }),
+      });
+
+      const data = (await expectApplied(res, 201)) as { id: string };
+      const row = await prisma.invitation.findUniqueOrThrow({ where: { id: data.id } });
+      expect(row.teacherId).toBe(other.id);
+      expect(await prisma.invitation.count({ where: { teacherId, email: newEmail } })).toBe(1);
+    } finally {
+      await prisma.invitation.deleteMany({ where: { teacherId: other.id } });
+      await prisma.session.deleteMany({ where: { accountId: other.accountId } });
+      await prisma.teacher.deleteMany({ where: { id: other.id } });
+      await prisma.account.deleteMany({ where: { id: other.accountId } });
+    }
   });
 
   // The defect #166 exists to fix, inverted into a test. This used to be
@@ -1426,9 +1495,10 @@ describe('POST /api/students — response disclosure (#162)', () => {
     for (const sweep of sweeps.splice(0)) await sweep();
   });
 
-  // 51 DISTINCT addresses, deliberately. Repeating one address would now be
-  // refused by `inviteContact`'s ALREADY_INVITED branch from the second
-  // request on, so a run of 409s would prove the de-duplication works and say
+  // 51 DISTINCT addresses, deliberately. Repeating one address would now
+  // answer `unchanged` (same names) or ALREADY_INVITED (different ones) from
+  // the second request on, so a run of those would prove the de-duplication
+  // works and say
   // nothing at all about the limiter — the 429 at the end would be the only
   // load-bearing assertion, and it would still arrive with the limiter
   // deleted if 409 were widened. Distinct addresses make all 51 requests ones
@@ -1504,9 +1574,9 @@ describe('POST /api/students — response disclosure (#162)', () => {
   // rate-limit.ts`). Task 10 of #166 deleted that branch, so the budget now
   // has one caller, and the claim worth pinning on POST alone is that the
   // limiter counts every call, not just the ones that create something:
-  // repeated invites to an address already invited are refused with 409
-  // ALREADY_INVITED by `inviteContact`, well after the limiter has already
-  // run, and still spend a hit apiece.
+  // repeated invites to an address already invited, under different names,
+  // are refused with 409 ALREADY_INVITED by `inviteContact`, well after the
+  // limiter has already run, and still spend a hit apiece.
   it('spends its budget on POST alone, refusals included', async () => {
     const shared: Fixture = await prisma.teacher.create({
       data: {
@@ -1539,9 +1609,9 @@ describe('POST /api/students — response disclosure (#162)', () => {
     });
     expect(first.status).toBe(201);
 
-    // Hits 2..49: the same address every time, refused as ALREADY_INVITED
-    // — and still metered, since the limiter runs before `inviteContact`
-    // ever sees the body.
+    // Hits 2..49: the same address every time under a different last name,
+    // refused as ALREADY_INVITED — and still metered, since the limiter runs
+    // before `inviteContact` ever sees the body.
     for (let i = 0; i < 48; i++) {
       const res = await fetch(`${BASE_URL}/api/students`, {
         method: 'POST',
@@ -1645,6 +1715,8 @@ describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)'
   });
 
   it('returns 409 ALREADY_INVITED when the create loses to a concurrent invite', async () => {
+    // The holder's names differ from the request's. A twin with the same
+    // names answers unchanged: `src/app/api/students/route-lock-order.test.ts`.
     const holder = new PrismaClient();
     let release!: () => void;
     let holding!: Promise<unknown>;
@@ -1679,12 +1751,7 @@ describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)'
     const res = await pending;
     await holder.$disconnect();
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { code?: string; message: string } };
-    expect(body.error.code).toBe('ALREADY_INVITED');
-    expect(body.error.message).toBe(
-      'You have already invited this person — open their contact to resend or update their details.',
-    );
+    await expectRefusal(res, 'ALREADY_INVITED');
 
     // One invitation, and it is the holder's.
     const rows = await prisma.invitation.findMany({ where: { email: raceEmail } });
