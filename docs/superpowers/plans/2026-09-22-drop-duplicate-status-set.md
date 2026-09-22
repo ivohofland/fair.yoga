@@ -57,7 +57,11 @@ in its place that restates no status list.
 
 1. Export `IsUnion` from `api-utils.ts` rather than copying it.
 2. Add `_eachCodeHasOneStatus`: `NoneOf` over the codes whose `StatusOf` is a
-   union, alongside the file's other structural pins.
+   union, alongside the file's other structural pins. The helper,
+   `CodesWithUnionStatusIn<R>`, is generic over a status map so that
+   `_unionStatusIsNamed` can pin its failing direction on a two-entry fixture:
+   against the real registry it only ever resolves to `never`, which a
+   hollowed body would too.
 
 **Verification:** each mutation restored, `git status` clean.
 
@@ -66,7 +70,12 @@ in its place that restates no status list.
 - `IsUnion` hollowed to `false` → the pin goes silent, but the #649
   `@ts-expect-error` cases in `api-utils.test.ts` report TS2578, so the
   dependency is not unguarded.
+- The helper's body hollowed (`IsUnion<C>` for `IsUnion<R[C]>`;
+  `R[C] extends number ? never : C`; `}[never]`) → the fixture reports TS2344
+  `Type 'false' does not satisfy the constraint 'true'`.
 - Not caught, accepted: a double cast to a single literal
-  (`418 as number as 409`), which is deliberate rather than a slip.
+  (`418 as number as 409`), which is deliberate rather than a slip; and
+  deleting `satisfies` together with registering a code at 401 or 429, which
+  is two separate edits to one reviewed file.
 
 Review: the PR review covers the whole branch; its fix wave gets one re-review.
