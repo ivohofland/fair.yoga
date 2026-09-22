@@ -9,6 +9,7 @@ import {
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { scopeSweep } from '../../tests/scoped-sweep';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -142,8 +143,9 @@ describe('payment reminders (DB)', () => {
   it('reminds overdue payments once, then not again within 7 days', async () => {
     const payment = await makePayment(new Date(now.getTime() - 10 * DAY), 'overdue');
 
-    const first = await sendPaymentReminders(prisma, now);
-    expect(first).toBeGreaterThanOrEqual(1);
+    const scoped = scopeSweep(prisma, { Payment: { id: { in: [payment.id] } } });
+    const first = await sendPaymentReminders(scoped.db, now);
+    expect(first).toBe(1);
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(stamped.reminderSentAt).not.toBeNull();
@@ -198,9 +200,10 @@ describe('payment reminders (DB)', () => {
 
   it('processPaymentReminders runs both phases', async () => {
     const payment = await makePayment(new Date(now.getTime() - 8 * DAY));
-    const result = await processPaymentReminders(prisma, now);
-    expect(result.markedOverdue).toBeGreaterThanOrEqual(1);
-    expect(result.reminded).toBeGreaterThanOrEqual(1);
+    const scoped = scopeSweep(prisma, { Payment: { id: { in: [payment.id] } } });
+    const result = await processPaymentReminders(scoped.db, now);
+    expect(result.markedOverdue).toBe(1);
+    expect(result.reminded).toBe(1);
 
     const after = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(after.status).toBe('overdue');
