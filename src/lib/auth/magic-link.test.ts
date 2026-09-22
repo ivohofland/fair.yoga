@@ -297,6 +297,9 @@ describe('cleanupExpiredTokens', () => {
     await generateMagicLinkToken(db, 'fresh@example.com');
 
     const scoped = scopeSweep(db, { MagicLinkToken: { email: { endsWith: '@example.com' } } });
+    // Proves the scope reaches the fixture: without it, a scope matching no
+    // rows would make `deleted` read 0 whether or not any token is expired.
+    expect(await scoped.db.magicLinkToken.count()).toBeGreaterThan(0);
     const deleted = await cleanupExpiredTokens(scoped.db);
     expect(deleted).toBe(0);
   });
