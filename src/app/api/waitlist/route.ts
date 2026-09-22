@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondRefusal,
   requireStudent,
   parseBody,
   isErrorResponse,
@@ -35,7 +36,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     where: { id: parsed.data.classId },
     select: { id: true },
   });
-  if (!cls) return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
+  if (!cls) return respondRefusal(CLASS_GONE);
 
   try {
     const entry = await addToWaitlist(prisma, parsed.data.classId, session.studentId);

@@ -46,7 +46,7 @@ export const POST = withErrorHandler(async (
     where: { id },
     include: { calendarEntry: { select: { teacherId: true } } },
   });
-  if (!cls) return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
+  if (!cls) return respondRefusal(CLASS_GONE);
   if (cls.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
