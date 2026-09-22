@@ -10,6 +10,7 @@ import { inviteContact, unlinkTeacher } from '@/services/invitations';
 import { deleteStudentAccount } from '@/services/gdpr';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
+import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
 import { createClassFixture } from '../class-fixtures';
@@ -291,6 +292,13 @@ describe('DELETE /api/invitations/[id]', () => {
     expect(await prisma.invitation.findUnique({ where: { id: pendingId } })).toBeNull();
   });
 
+  it('answers a second delete of the same contact NOT_FOUND', async () => {
+    const res = await fetch(`${BASE_URL}/api/invitations/${pendingId}`, {
+      method: 'DELETE', headers: cookie(teacherToken),
+    });
+    await expectRefusal(res, 'NOT_FOUND');
+  });
+
   it('refuses to delete a declined row, because that row is the tombstone', async () => {
     const declined = await prisma.invitation.create({
       data: { teacherId, email: declinedEmail, status: 'declined', respondedAt: new Date() },
@@ -531,12 +539,8 @@ describe('PUT /api/invitations/[id]', () => {
         // collision has to be found on the normalised value, not the typed one.
         body: JSON.stringify({ email: occupiedEmail.toUpperCase() }),
       });
-      expect(res.status).toBe(409);
-      const body = (await res.json()) as { error: { message: string; code?: string } };
-      expect(body.error.code).toBe('ALREADY_INVITED');
-      expect(body.error.message).toBe('Another of your contacts already uses this email address.');
-      // The exact string this test exists to keep off a contact form.
-      expect(body.error.message).not.toBe('Resource already exists');
+      // Its own code, not the escaped-P2002 fallback's.
+      await expectRefusal(res, 'CONTACT_EMAIL_TAKEN');
 
       // A refused write is not a partial write.
       const after = await prisma.invitation.findUniqueOrThrow({ where: { id: putTargetId } });
@@ -1384,6 +1388,58 @@ describe('POST /api/invitations/[id]/respond', () => {
     expect((await reinvite.json()).error.code).toBe('DECLINED');
   });
 
+  it('answers a repeated accept unchanged, and stamps nothing twice', async () => {
+    const before = await prisma.invitation.findUniqueOrThrow({
+      where: { id: inviteId },
+      select: { status: true, respondedAt: true },
+    });
+
+    const res = await respond(inviteId, respondingToken, 'accept');
+
+    expect(await expectUnchanged(res)).toEqual({ id: inviteId });
+    expect(
+      await prisma.invitation.findUniqueOrThrow({
+        where: { id: inviteId },
+        select: { status: true, respondedAt: true },
+      }),
+    ).toEqual(before);
+    expect(
+      await prisma.teacherStudent.count({ where: { teacherId, studentId: respondingStudentId } }),
+    ).toBe(1);
+  });
+
+  it('answers a repeated decline unchanged, and writes nothing twice', async () => {
+    const before = await prisma.invitation.findUniqueOrThrow({
+      where: { id: declineId },
+      select: { status: true, respondedAt: true },
+    });
+
+    const res = await respond(declineId, decliningToken, 'decline');
+
+    expect(await expectUnchanged(res)).toEqual({ id: declineId });
+    expect(
+      await prisma.invitation.findUniqueOrThrow({
+        where: { id: declineId },
+        select: { status: true, respondedAt: true },
+      }),
+    ).toEqual(before);
+    expect(await prisma.teacherBlock.count({ where: { teacherId, email: declineEmail } })).toBe(1);
+    expect(
+      await prisma.teacherStudent.count({ where: { teacherId, studentId: decliningStudentId } }),
+    ).toBe(0);
+  });
+
+  // The ordering pin (spec §5.1): the address match is the ownership gate,
+  // and it runs before the unchanged check. Each row below is already in the
+  // state the other student names, which would be `unchanged` for its owner.
+  it("answers NOT_FOUND, not unchanged, to a repeat of someone else's answer", async () => {
+    await expectRefusal(await respond(inviteId, decliningToken, 'accept'), 'NOT_FOUND');
+    await expectRefusal(await respond(declineId, respondingToken, 'decline'), 'NOT_FOUND');
+    expect(
+      await prisma.teacherStudent.count({ where: { teacherId, studentId: decliningStudentId } }),
+    ).toBe(0);
+  });
+
   it('refuses to accept an already-declined invitation, even by its rightful owner', async () => {
     // Without acceptInvitation's own pending check, its rightful owner could
     // re-POST accept on the same invitation after declining it, resurrecting
@@ -1404,7 +1460,7 @@ describe('POST /api/invitations/[id]/respond', () => {
     // authorizes them. This is gate 4 — without it, any signed-in student
     // who guesses or obtains an id accepts on a stranger's behalf.
     const res = await respond(otherPersonsInviteId, respondingToken, 'accept');
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
     expect(await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId: otherTeacherId, studentId: respondingStudentId } },
     })).toBeNull();
@@ -1569,10 +1625,9 @@ describe('POST /api/invitations/[id]/respond', () => {
     expect(inv.status).toBe('pending');
   });
 
-  it('refuses a second response to the same invitation', async () => {
+  it('refuses a decline of an invitation this student accepted', async () => {
     const again = await respond(inviteId, respondingToken, 'decline');
-    expect(again.status).toBe(409);
-    expect((await again.json()).error.code).toBe('ALREADY_ANSWERED');
+    await expectRefusal(again, 'ALREADY_ANSWERED');
   });
 
   it('refuses a teacher-only session', async () => {
@@ -1802,6 +1857,28 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     })).not.toBeNull();
   });
 
+  it('answers a second unlink of the same teacher NOT_FOUND, and writes nothing', async () => {
+    const before = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId: invitingTeacherId, email: studentEmail } },
+      select: { status: true, respondedAt: true },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/teacher-links/${invitingTeacherId}`, {
+      method: 'DELETE', headers: cookie(studentToken),
+    });
+
+    await expectRefusal(res, 'NOT_FOUND');
+    expect(
+      await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId: invitingTeacherId, email: studentEmail } },
+        select: { status: true, respondedAt: true },
+      }),
+    ).toEqual(before);
+    expect(
+      await prisma.teacherBlock.count({ where: { teacherId: invitingTeacherId, email: studentEmail } }),
+    ).toBe(1);
+  });
+
   it('leaves registrations and payments alone', async () => {
     expect(await prisma.registration.count({ where: { studentId } })).toBeGreaterThan(0);
   });
@@ -1810,7 +1887,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     const res = await fetch(`${BASE_URL}/api/teacher-links/${otherTeacherId}`, {
       method: 'DELETE', headers: cookie(studentToken),
     });
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
   });
 });
 
@@ -1863,13 +1940,19 @@ describe('POST /api/students — the block oracle (#166 task 6b, mechanism moved
       expect(freshInvitation.lastNotifiedEmail).toBe(freshEmail);
 
       // Unlike the design this replaces, the first POST to a blocked address
-      // really does create a row — so a second POST to either address now
-      // refuses the same way, for the same reason: both are already invited.
+      // really does create a row, so the same POST again answers the same way
+      // for either address: the invitation already stands, unchanged, and
+      // neither marker moves.
       const [blockedAgain, freshAgain] = await Promise.all([post(blockedEmail), post(freshEmail)]);
       expect(blockedAgain.status).toBe(freshAgain.status);
-      expect(blockedAgain.status).toBe(409);
-      expect((await blockedAgain.json()).error.code).toBe('ALREADY_INVITED');
-      expect((await freshAgain.json()).error.code).toBe('ALREADY_INVITED');
+      expect(await expectUnchanged(blockedAgain)).toEqual({ id: blockedJson.data.id });
+      expect(await expectUnchanged(freshAgain)).toEqual({ id: freshJson.data.id });
+      const [blockedAfter, freshAfter] = await Promise.all([
+        prisma.invitation.findUniqueOrThrow({ where: { id: blockedJson.data.id } }),
+        prisma.invitation.findUniqueOrThrow({ where: { id: freshJson.data.id } }),
+      ]);
+      expect(blockedAfter.lastNotifiedAt).toEqual(blockedInvitation.lastNotifiedAt);
+      expect(freshAfter.lastNotifiedAt).toEqual(freshInvitation.lastNotifiedAt);
 
       // The row the first POST created is real and ordinary — pending —
       // and the block that makes it undeliverable sits beside it, untouched.
@@ -2235,6 +2318,84 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
         await prisma.notification.deleteMany({ where: { recipientId: student.id } });
         await prisma.student.delete({ where: { id: student.id } });
       }
+    }
+  });
+
+  it('answers a repeat with the same names unchanged, and sends no second notification', async () => {
+    const repeatEmail = `notify-repeat-${suffix}@test.local`;
+    const controlEmail = `notify-repeat-control-${suffix}@test.local`;
+    const own = await prisma.teacher.create({
+      data: {
+        firstName: 'Repeat', lastName: 'Inviter',
+        email: `notify-repeat-teacher-${suffix}@test.local`,
+        account: { create: { email: `notify-repeat-teacher-${suffix}@test.local` } },
+        bio: 'Own limiter bucket for the repeat-notification test',
+        pageSlug: `notify-repeat-teacher-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    let student: { id: string } | undefined;
+    let control: { id: string } | undefined;
+    try {
+      const token = await seedSession(prisma, own.accountId);
+      const post = (email: string) =>
+        fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(token) },
+          body: JSON.stringify({ firstName: 'Repeat', lastName: 'Invitee', email }),
+        });
+      const notificationFor = (recipientId: string) => () =>
+        prisma.notification.findFirst({
+          where: { recipientType: 'student', recipientId, type: 'teacher_invitation' },
+        });
+      student = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'Repeat', email: repeatEmail },
+        select: { id: true },
+      });
+      control = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'Control', email: controlEmail },
+        select: { id: true },
+      });
+
+      const created = (await expectApplied(await post(repeatEmail), 201)) as { id: string };
+      await waitFor(notificationFor(student.id), {
+        description: 'first teacher_invitation for the repeated address (#197)',
+      });
+      const stamped = await prisma.invitation.findUniqueOrThrow({
+        where: { id: created.id },
+        select: { lastNotifiedAt: true },
+      });
+
+      expect(await expectUnchanged(await post(repeatEmail))).toEqual({ id: created.id });
+
+      // Absence is proven with a later control, as the stranger test below
+      // does. Delivery runs in order from this one process, so once the
+      // control's notification has landed, a second one for the repeated
+      // address would have landed too.
+      await expectApplied(await post(controlEmail), 201);
+      await waitFor(notificationFor(control.id), {
+        description: 'control teacher_invitation after the repeat (#197)',
+      });
+
+      expect(await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      })).toBe(1);
+      const after = await prisma.invitation.findUniqueOrThrow({
+        where: { id: created.id },
+        select: { lastNotifiedAt: true },
+      });
+      expect(after.lastNotifiedAt).toEqual(stamped.lastNotifiedAt);
+    } finally {
+      await prisma.invitation.deleteMany({ where: { teacherId: own.id } });
+      for (const s of [student, control]) {
+        if (s) {
+          await prisma.notification.deleteMany({ where: { recipientId: s.id } });
+          await prisma.student.delete({ where: { id: s.id } });
+        }
+      }
+      await prisma.session.deleteMany({ where: { accountId: own.accountId } });
+      await prisma.teacher.deleteMany({ where: { id: own.id } });
+      await prisma.account.deleteMany({ where: { id: own.accountId } });
     }
   });
 
@@ -2895,12 +3056,12 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
    * that pair for the wrong answer to move. A linked booker alone proves
    * nothing — there is no row to watch.
    *
-   * The second probe's REASON is the assertion, not the refusal:
-   * `ALREADY_INVITED` and `ALREADY_LINKED` are both `ok: false`, and only the
-   * second one tells the teacher that the address they guessed belongs to one
-   * of their own students.
+   * The second probe's OUTCOME is the assertion: it repeats the first probe's
+   * names, so a stranger's address answers `unchanged`, and only
+   * `ALREADY_LINKED` would tell the teacher that the address they guessed
+   * belongs to one of their own students.
    */
-  it('a booking by a linked-but-unshared student leaves the decoy pending, so a re-probe still says ALREADY_INVITED', async () => {
+  it('a booking by a linked-but-unshared student leaves the decoy pending, so a re-probe answers as a stranger\'s would', async () => {
     try {
       // Probe one: the gated success #417 ships. A real row, no delivery.
       const probeOne = await inviteContact(prisma, {
@@ -2927,12 +3088,14 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       expect(inv.status).toBe('pending');
       expect(inv.respondedAt).toBeNull();
 
-      // Probe two: the observable. Same refusal an un-accepted stranger's
-      // address produces.
+      // Probe two: the observable. The same answer a stranger's pending
+      // invitation gives to the same names.
       const probeTwo = await inviteContact(prisma, {
         teacherId: resolveTeacherId, email: gatedEmail, firstName: 'Guessed', lastName: 'Address',
       });
-      expect(probeTwo).toEqual({ ok: false, reason: 'ALREADY_INVITED' });
+      expect(probeTwo).toEqual({
+        ok: true, outcome: 'unchanged', value: { id: probeOne.value.id, delivered: false },
+      });
     } finally {
       // Both the registration and the probe's row, scoped to this student and
       // address: the describe's `afterAll` sweeps both regardless, and this is
@@ -3808,11 +3971,10 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
     const res = await deleting;
     await holder.$disconnect();
 
-    // The code first: answering DECLINED_IS_PERMANENT here is the defect, and
-    // a bare 404-vs-409 check would not say which wrong thing was said.
-    const body = (await res.json()) as { error: { code?: string } };
-    expect(body.error.code).toBeUndefined();
-    expect(res.status).toBe(404);
+    // The code, not just the status: answering DECLINED_IS_PERMANENT here is
+    // the defect, and a bare 404-vs-409 check would not say which wrong
+    // thing was said.
+    await expectRefusal(res, 'NOT_FOUND');
   }, 20_000);
 });
 
