@@ -512,7 +512,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       accountEmail: email,
     });
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, outcome: 'applied' });
     expect(writes).toEqual(['TeacherStudent', 'Invitation']);
 
     // The function's actual job, checked because "the writes happened in this
@@ -749,7 +749,8 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     const result = await acceptInvitation(prisma, {
       invitationId: invitation.id, studentId: student.id, accountEmail: email,
     });
-    expect(result).toEqual({ ok: true });
+    // `applied`, not `unchanged`: this student had no link, so the call made one.
+    expect(result).toEqual({ ok: true, outcome: 'applied' });
   });
 
   /**
@@ -760,8 +761,9 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * must be null-safe, not `findUniqueOrThrow` (#181 final review). Forced
    * via a handshake on `invitation.updateMany` rather than left to timing:
    * an unforced window this narrow would flake rather than fail cleanly.
+   * The row is gone, so the answer is the one an unknown id gets.
    */
-  it('a pending invitation deleted mid-accept still answers NOT_PENDING, not a bare 500', async () => {
+  it('a pending invitation deleted mid-accept answers NOT_FOUND, not a bare 500', async () => {
     const { studentId, email, invitationId } =
       await makeLinkedStudentWithPendingInvite({ linked: true });
 
@@ -796,7 +798,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     ]);
 
     expect(handshakeFired).toBe(true);
-    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
+    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_FOUND' });
   }, 15_000);
 });
 
@@ -1592,7 +1594,7 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
     const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
 
     expect(await acceptInvitation(prisma, { invitationId, studentId, accountEmail: email }))
-      .toEqual({ ok: true });
+      .toEqual({ ok: true, outcome: 'applied' });
 
     let calls = 0;
     let handshakeFired = false;
