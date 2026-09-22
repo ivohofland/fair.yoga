@@ -214,26 +214,31 @@ route's `httpStatus` (an un-`const` `404` widens the union to `number`), and
 
 ### 4.3 `classifyApiError`
 
-`ApiFailure` becomes a union whose 409 arm requires `code`:
+`ApiFailure` becomes a union of one arm per status, only the 409 one requiring
+`code`:
 
 ```ts
 type ApiFailure =
   | { status: 409; code: CodeWithStatus<409>; message; logMessage; level; detail? }
-  | { status: 500 | 503; code?: CodeWithStatus<500 | 503>; message; logMessage; level; detail? };
+  | { status: 500; code?: CodeWithStatus<500>; message; logMessage; level; detail? }
+  | { status: 503; code?: CodeWithStatus<503>; message; logMessage; level; detail? };
 ```
 
-The 409 arm narrows to the codes registered at 409; the second arm to those
-registered at 500 **or** 503. That is enough to keep a 404 code off a 500 —
-which `ApiErrorCode` there would have admitted, and which is the mistake the
-rest of §4 exists to prevent — and not enough to keep a 503 code off a 500.
-The second arm is the looser of the two, and the one where `code` is optional.
+**One arm per status, not one per band.** Each narrows to the codes registered
+at *that* status, so §4.1's "each existing code has exactly one status" holds
+here as it does at `respondError`. `code?: ApiErrorCode` on a server arm would
+admit a 404 code onto a 500 — the mistake the rest of §4 exists to prevent —
+but a single `{ status: 500 | 503; code?: CodeWithStatus<500 | 503> }` arm is
+not enough either: it keeps the 404 out and lets a 503 code onto a 500, which
+is the same mistake one notch smaller. Splitting costs two lines and changes no
+call site.
 
-The shipped type is `src/lib/api-errors.ts`. **Each arm needs its own pin,
-because neither reaches the other**: a `status: 409` literal never matches an
-arm whose status is `500 | 503`, so the 409 pins stay green however the second
-arm's `code` is widened, and vice versa. Both live in `api-errors.test.ts`.
-`api-error-codes.test.ts` pins `CodeWithStatus` itself — that its filter still
-selects, and that neither status has gone unpopulated.
+**No arm reaches another, so each needs its own pins.** A `status: 409` literal
+never matches a server arm, so the 409 pins stay green however a server arm's
+`code` is widened — and the reverse holds too. That is why the roster in §8.1
+names a misfiling per arm, the sibling-status pair included.
+
+The shipped type is `src/lib/api-errors.ts`; the pins are §8.1's.
 
 `withErrorHandler` passes `failure.code` through. The fallbacks gain codes:
 
@@ -629,11 +634,13 @@ Each is a defect on a row or client this branch already touches.
 
 - `respondError`: a 409 with no code; a code with the wrong status; an
   unregistered code — each an expected error. A correct call compiles.
-- `ApiFailure`: a 409 literal with no `code`; a 409 literal whose `code` is
-  registered at another status; and the same misfiling on the 500/503 arm,
-  which the 409 pins cannot reach (§4.3).
-- `CodeWithStatus`: `StatusOf<CodeWithStatus<S>>` is `S`, for `S` of 409 and of
-  `500 | 503` (`api-error-codes.test.ts`, an `Assert<Equals<…>>` pin).
+- `ApiFailure`: a 409 literal with no `code`; on every arm, a `code` registered
+  at another status — including a 503 code on the 500 arm and a 500 code on the
+  503 arm, which no other arm's pins reach (§4.3). A correct literal on each arm
+  compiles.
+- `StatusOf<CodeWithStatus<S>>` is `S`, for `S` of 409 and of `500 | 503`
+  (`api-error-codes.test.ts`, an `Assert<Equals<…>>` pin). It reddens on a
+  rewrite of either type, and on a status losing its last code.
 - `respondUnchanged` with no type argument.
 - `readError(...).code` is `ApiErrorCode | undefined` (an `Assert<Equals<…>>`
   pin, `src/lib/type-pins`).

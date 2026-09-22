@@ -58,7 +58,8 @@ type ApiFailureBase = {
 
 export type ApiFailure =
   | (ApiFailureBase & { readonly status: 409; readonly code: CodeWithStatus<409> })
-  | (ApiFailureBase & { readonly status: 500 | 503; readonly code?: CodeWithStatus<500 | 503> });
+  | (ApiFailureBase & { readonly status: 500; readonly code?: CodeWithStatus<500> })
+  | (ApiFailureBase & { readonly status: 503; readonly code?: CodeWithStatus<503> });
 
 /**
  * Matches the terminality triggers — plural since #247. Each raises

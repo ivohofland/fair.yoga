@@ -255,23 +255,37 @@ describe('classifyApiError', () => {
     void [uncoded, misfiled];
   });
 
-  // The 409 pins above cannot reach this arm: a `status: 409` literal never
-  // matches an arm whose status is `500 | 503`, so widening this one's `code`
-  // leaves every one of them still passing.
+  // The pins above do not exercise a server arm's `code`: a 409 literal never
+  // matches an arm carrying another status, so widening one of those leaves
+  // every one of them still passing. Each server status is its own arm too, so
+  // the sibling misfilings below are the only thing asserting that separation.
+  // Why one arm per status:
+  // docs/superpowers/specs/2026-09-17-api-error-contract-design.md §4.3.
   it('keeps a code registered at another status off a 500 or 503 classification, at compile time', () => {
-    const coded: ApiFailure = {
+    const coded503: ApiFailure = {
       status: 503,
       code: 'TEMPLATE_BUSY',
       message: 'm',
       logMessage: 'l',
       level: 'error',
     };
-    expect(coded.code).toBe('TEMPLATE_BUSY');
+    const coded500: ApiFailure = {
+      status: 500,
+      code: 'ERASURE_FAILED',
+      message: 'm',
+      logMessage: 'l',
+      level: 'error',
+    };
+    expect([coded503.code, coded500.code]).toEqual(['TEMPLATE_BUSY', 'ERASURE_FAILED']);
 
     // @ts-expect-error — a 404 code on a 503 classification
-    const serverMisfiled: ApiFailure = { status: 503, code: 'NOT_FOUND', message: 'm', logMessage: 'l', level: 'error' };
+    const misfiled404: ApiFailure = { status: 503, code: 'NOT_FOUND', message: 'm', logMessage: 'l', level: 'error' };
+    // @ts-expect-error — a code registered at 500, on a 503 classification
+    const misfiled500on503: ApiFailure = { status: 503, code: 'ERASURE_FAILED', message: 'm', logMessage: 'l', level: 'error' };
+    // @ts-expect-error — a code registered at 503, on a 500 classification
+    const misfiled503on500: ApiFailure = { status: 500, code: 'TEMPLATE_BUSY', message: 'm', logMessage: 'l', level: 'error' };
 
-    void [serverMisfiled];
+    void [misfiled404, misfiled500on503, misfiled503on500];
   });
 
   it('maps P2002 to a 409 logged at warn, naming the constraint that fired', () => {
