@@ -87,7 +87,7 @@ export default defineConfig(({ mode }) => {
             // directory would also collect the integration tier, which needs the
             // running app. Shared test helpers that live under `tests/` and have
             // a test of their own are listed here one by one.
-            include: ['src/**/*.test.ts', 'tests/api-assertions.test.ts'],
+            include: ['src/**/*.test.ts', 'tests/api-assertions.test.ts', 'tests/scoped-sweep.test.ts'],
             // `SERIAL_TESTS` (`vitest.tiers.ts`) is the membership list — edit that, or
             // one of the two lists it joins, not this array, or `unit` and
             // `unit-sweeps` drift apart.
