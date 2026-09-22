@@ -46,7 +46,7 @@ export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
 /** Every error status the app sends. */
 export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
 
-/** True exactly when `T` is a union with more than one member (`A | B`, not `A`). */
+/** True when `T` is a union with more than one member (`A | B`, not `A`). */
 type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
 
 /**
@@ -81,13 +81,14 @@ export function respondError(
 }
 
 /**
- * A refusal read whole off a `Record<Reason, CodedRefusal>` map (or any other
- * already-correlated `CodedRefusal` value) — never split into a `status` and
- * a `code` argument, which is what let a union-typed reason silently widen
- * `respondError`'s status check to every member's status at once (#649). The
- * pairing was already checked once, at the map's own
- * `satisfies Record<Reason, CodedRefusal>` — this only carries it to the
- * response.
+ * A refusal read whole off a `Record<Reason, CodedRefusal>` map — never split
+ * into a `status` and a `code` argument, which is what let a union-typed
+ * reason silently widen `respondError`'s status check to every member's
+ * status at once (#649). The pairing was already checked once, at the map's
+ * own `satisfies Record<Reason, CodedRefusal>` — this only carries it to the
+ * response. Works just as well for a single literal `CodedRefusal` value
+ * (e.g. `CLASS_GONE`), though `respondError` accepts those split apart too,
+ * since a single code is never a union.
  */
 export function respondRefusal(refusal: CodedRefusal): NextResponse {
   return sendError(refusal.message, refusal.status, refusal.code);
