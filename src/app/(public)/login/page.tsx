@@ -7,19 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
-import { isSafeRelativePath } from '@/lib/schemas';
+import { isLoginRedirectTarget } from '@/lib/schemas';
 
 function LoginForm() {
   const searchParams = useSearchParams();
   const rawRedirect = searchParams.get('redirect');
   const redirect =
-    rawRedirect &&
-    isSafeRelativePath(rawRedirect) &&
-    rawRedirect.length <= 200 &&
-    !rawRedirect.startsWith('/login') &&
-    !rawRedirect.startsWith('/verify')
-      ? rawRedirect
-      : undefined;
+    rawRedirect && isLoginRedirectTarget(rawRedirect) ? rawRedirect : undefined;
 
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
