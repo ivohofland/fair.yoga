@@ -62,13 +62,15 @@ describe('scopeSweep', () => {
     expect(s.rowsRead('Account')).toBe(0);
   });
 
-  it('lets a hook layered on top see the args before the scope', async () => {
-    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
+  it('lets a hook on the client handed in see the args before the scope', async () => {
     let seen: unknown;
-    const layered = s.db.$extends({
-      query: { teacher: { async findMany({ args, query }) { seen = args.where; return query(args); } } },
-    });
-    await layered.teacher.findMany({ where: { lastName: 'in' } });
-    expect(seen).toEqual({ lastName: 'in' });
+    let hookRows: (string | undefined)[] = [];
+    const hooked = prisma.$extends({
+      query: { teacher: { async findMany({ args, query }) { seen = args.where; const r = await query(args); hookRows = r.map((t) => t.id); return r; } } },
+    }) as unknown as PrismaClient;
+    const s = scopeSweep(hooked, { Teacher: { id: { in: [inId] } } });
+    await s.db.teacher.findMany({ where: { id: { in: [inId, outId] } } });
+    expect(seen).toEqual({ id: { in: [inId, outId] } });
+    expect(hookRows).toEqual([inId]); // the hook's own query() is scoped
   });
 });
