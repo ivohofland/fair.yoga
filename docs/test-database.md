@@ -74,6 +74,24 @@ The interference runs both ways:
   #321 went looking for the criterion systematically rather than one
   failure at a time.
 
+  **Sweep tests assert through a scoped client.** Serialising a file into
+  `unit-sweeps` protects it from files running *at the same time* — it does
+  nothing about rows earlier runs left behind, and nothing clears the test
+  database between runs. So a test asserting a sweep's return value, a
+  one-shot mock inside a sweep, or a sweep's cap or ordering passes the sweep
+  `scopeSweep(prisma, scope).db` (`tests/scoped-sweep.ts`) rather than
+  `prisma` itself. The scope keys on ids this test created — never on a pool
+  other suites also write to, such as a shared email domain. Pair a
+  `toBe(0)` with a presence check: `rowsRead(model) > 0` for a read the
+  scoped client saw, or a scoped `count()` taken before the sweep for a
+  statement `rowsRead` cannot see, such as a bare `deleteMany`. A hook that
+  must see the sweep's own `where` shape goes on the client handed IN to
+  `scopeSweep`, not on the `db` it returns — Prisma runs query extensions in
+  attachment order, so a hook attached after the scope sees only the
+  AND-wrapped `where`. A whole-table bracket (`before - after === deleted`)
+  stays unscoped: stray rows sit on both sides of it, so scoping would hide
+  nothing. #251.
+
   `fileParallelism: false` on `unit-sweeps` is what isolates it, and it
   isolates more than the option's name suggests: vitest routes such a project
   into a `sequential` group appended after the parallel groups, so it never
