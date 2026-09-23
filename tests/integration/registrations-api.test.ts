@@ -1726,9 +1726,10 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
    * `start − 1h ≤ now < start`, which works out to `offset ≤ 30` on one side
    * and `offset > −30` on the other.
    *
-   * `minStudents: 0`, not `1` — the fixture starts inside the auto-cancel
-   * check window, so zero active registrations must not read as below
-   * minimum once the canceller's registration is cancelled.
+   * `minStudents: 0`, not `1` — the server's scheduler runs auto-cancel on a
+   * real tick, and the fixture starts inside its check window, so zero
+   * active registrations must not read as below minimum once the
+   * canceller's registration is cancelled.
    */
   async function makeBroadcastFixture(minuteOffset: number) {
     const target = new Date(Date.now() + (30 + minuteOffset) * 60 * 1000);

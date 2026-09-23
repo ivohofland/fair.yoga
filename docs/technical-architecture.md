@@ -347,7 +347,8 @@ async function dispatch(notification: CreateNotification): Promise<void> {
   await pushRealTime(notification);
 
   // Layer 3: Schedule email fallback
-  // If not read within 30 minutes, send email
+  // If not read within 30 minutes, send email — on the next sweep regardless
+  // of age for a waitlist promotion (IMMEDIATE_EMAIL_TYPES, notification-policy.ts)
   await scheduleEmailFallback(notification, { delayMinutes: 30 });
 }
 ```
@@ -704,7 +705,7 @@ Six idempotent jobs run in-process on `setInterval`, started once when the Node 
 | Job | Schedule | What it does |
 |---|---|---|
 | Class transitions | Every minute | Advances open → in_progress, auto-cancels classes below min_students, auto-completes finished ones |
-| Email fallback | Every 5 minutes | Sends email for unread notifications older than 30 minutes |
+| Email fallback | Every 5 minutes | Sends email for unread notifications older than 30 minutes, or on the next sweep regardless of age for a waitlist promotion |
 | Class generation | Every hour | Extends recurring class and studio-class instances on the rolling 4-week window |
 | Payment reminders | Every hour | Flips pending payments to overdue after 7 days, then reminds on overdue payments not reminded in the last 7 days |
 | Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable |

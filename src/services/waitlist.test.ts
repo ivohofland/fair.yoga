@@ -154,7 +154,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
         startTime: hhmmToTime(slotTime(makeClassCounter)),
         // ONE MINUTE (#327): the slot constraint is a range overlap now, so a
         // fixture spaced a minute from the last must be a minute long. No
-        // waitlist test reads the duration — the cancel-deadline window these
+        // waitlist test reads the duration — the promotion window these
         // tests turn on is computed from the START.
         durationMinutes: 1,
         roomCost: 35,

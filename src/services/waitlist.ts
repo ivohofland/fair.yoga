@@ -1001,8 +1001,8 @@ export async function handleSpotFreed(
     // `PUT /api/registrations/[id]` scopes its write so `late_cancel → attended`
     // is refused while the class is `open`, and this branch only ever runs on an
     // `open` class. Once a class starts the move is allowed, and by then this
-    // branch cannot run at all — including right up against start itself,
-    // since this branch runs in the final hour before it (#236).
+    // branch cannot run at all. The argument does not lean on timing: this
+    // branch runs right up to class start (#236).
     //
     // `lockClassRow` here is the same helper `addToWaitlist`, `promoteNext`
     // and `claimSpot` above now take too — all four share the bounded 2s
