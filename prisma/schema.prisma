@@ -91,6 +91,7 @@ enum NotificationType {
   payment_request
   waitlist_promoted
   spot_available
+  spot_taken
   reminder
   announcement
   teacher_invitation

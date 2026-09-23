@@ -28,6 +28,8 @@ export const NOTIFICATION_RETENTION_DAYS = {
   waitlist_promoted: STANDARD_RETENTION_DAYS,
   // Worthless once its claim window has closed.
   spot_available: SHORT_RETENTION_DAYS,
+  // Same lifespan as the broadcast it answers, for the same reason.
+  spot_taken: SHORT_RETENTION_DAYS,
   reminder: STANDARD_RETENTION_DAYS,
   announcement: STANDARD_RETENTION_DAYS,
   teacher_invitation: STANDARD_RETENTION_DAYS,

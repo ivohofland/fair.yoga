@@ -22,6 +22,7 @@ import {
   lockClassRowsOrdered,
   lockLiveStudent,
   StudentErasedError,
+  type ClassLock,
   type TransactionClientOnly,
 } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
@@ -100,11 +101,28 @@ export type ClaimResult =
  * serializes the clear against `handleSpotFreed`'s set; a future booking path
  * inherits the clear for free, because reactivating a cancelled row is the
  * problem this function exists to solve and nothing else may do it.
+ *
+ * When a broadcast stood (`spotBroadcastAt` was set, read before this call
+ * clears it) and this fill leaves the class full, every student still
+ * `waiting` is sent `spot_taken` (#236): the broadcast told them a spot was
+ * open, and this fill is what closed it. Fullness is read under the same
+ * `lock` the caller already holds, via `readSeatCount`, so it reflects the
+ * fill this call just made rather than a snapshot from before it. The
+ * caller's own student is excluded from the notified set — in `claimSpot`
+ * their `WaitlistEntry` is still `waiting` at this point (it flips to
+ * `claimed` only after this returns), and without the exclusion a claimant
+ * would be told their own claim took their own spot.
  */
 export async function activateRegistration(
   tx: PrismaTransactionClient,
+  lock: ClassLock,
   input: { classId: string; studentId: string; tierAtBooking: number; isWalkIn?: boolean },
 ) {
+  const before = await tx.class.findUniqueOrThrow({
+    where: { id: input.classId },
+    select: { spotBroadcastAt: true, calendarEntry: { select: { classType: true } } },
+  });
+
   // Unconditionally, not "only when this fill made the class full". The
   // precise version needs a seat count on every booking and can drift from
   // the thing it is counting; this one cannot. The cost is that with two
@@ -120,26 +138,47 @@ export async function activateRegistration(
   const existing = await tx.registration.findUnique({
     where: { classId_studentId: { classId: input.classId, studentId: input.studentId } },
   });
-  if (existing) {
-    return tx.registration.update({
-      where: { id: existing.id },
-      data: {
-        status: 'registered',
-        cancelledAt: null,
-        tierAtBooking: input.tierAtBooking,
-        isWalkIn: input.isWalkIn ?? false,
-      },
+  const registration = existing
+    ? await tx.registration.update({
+        where: { id: existing.id },
+        data: {
+          status: 'registered',
+          cancelledAt: null,
+          tierAtBooking: input.tierAtBooking,
+          isWalkIn: input.isWalkIn ?? false,
+        },
+      })
+    : await tx.registration.create({
+        data: {
+          classId: input.classId,
+          studentId: input.studentId,
+          status: 'registered',
+          tierAtBooking: input.tierAtBooking,
+          isWalkIn: input.isWalkIn ?? false,
+        },
+      });
+
+  // A broadcast stood and this fill used the last seat: everyone still
+  // waiting was told a spot exists that no longer does.
+  if (before.spotBroadcastAt !== null && (await readSeatCount(tx, lock)).isFull) {
+    const waiting = await tx.waitlistEntry.findMany({
+      where: { classId: input.classId, status: 'waiting', studentId: { not: input.studentId } },
+      select: { studentId: true },
     });
+    await createBulkNotifications(
+      tx,
+      waiting.map((w) => ({
+        recipientType: 'student' as const,
+        recipientId: w.studentId,
+        type: 'spot_taken' as const,
+        title: 'The spot has been taken',
+        body: `The open spot in ${before.calendarEntry.classType} has been taken. You're still on the waitlist.`,
+        relatedClassId: input.classId,
+      })),
+    );
   }
-  return tx.registration.create({
-    data: {
-      classId: input.classId,
-      studentId: input.studentId,
-      status: 'registered',
-      tierAtBooking: input.tierAtBooking,
-      isWalkIn: input.isWalkIn ?? false,
-    },
-  });
+
+  return registration;
 }
 
 /** The transaction client the helpers below take. Every call site passes one. */
@@ -603,7 +642,7 @@ export async function promoteNext(
       select: { incomeTier: true },
     });
 
-    const registration = await activateRegistration(tx, {
+    const registration = await activateRegistration(tx, lock, {
       classId,
       studentId: nextEntry.studentId,
       tierAtBooking: student.incomeTier,
@@ -742,7 +781,7 @@ export async function claimSpot(
       select: { incomeTier: true },
     });
 
-    const registration = await activateRegistration(tx, {
+    const registration = await activateRegistration(tx, lock, {
       classId,
       studentId,
       tierAtBooking: student.incomeTier,

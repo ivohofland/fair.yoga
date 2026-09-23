@@ -53,6 +53,7 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   payment_request: 'A class has been priced — here is your share.',
   waitlist_promoted: 'Good news from the waitlist.',
   spot_available: 'A spot opened up.',
+  spot_taken: 'A spot you were waiting for has been taken.',
   reminder: 'A gentle reminder.',
   announcement: 'A message from your teacher.',
   teacher_invitation: 'A teacher would like to connect with you.',

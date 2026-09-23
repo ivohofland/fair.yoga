@@ -16,6 +16,7 @@ describe('essential types', () => {
       'class_cancelled',
       'payment_request',
       'spot_available',
+      'spot_taken',
       'waitlist_promoted',
     ]);
   });
