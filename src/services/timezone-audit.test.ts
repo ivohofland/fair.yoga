@@ -77,16 +77,18 @@ describe('auditTeacherTimezones', () => {
   });
 
   it('names an unresolvable stored zone and throws', async () => {
-    await seedTeacher('bad', SENTINEL);
+    const teacherId = await seedTeacher('bad', SENTINEL);
+    const scoped = scopeSweep(prisma, { Teacher: { id: { in: [teacherId] } } });
     await vi.spyOn(log, 'error').mockImplementation(() => undefined);
-    await expect(auditTeacherTimezones(prisma)).rejects.toThrow(InvalidTimezoneError);
+    await expect(auditTeacherTimezones(scoped.db)).rejects.toThrow(InvalidTimezoneError);
     vi.restoreAllMocks();
   });
 
   it('carries the offending zone on the error, so the log line names it', async () => {
-    await seedTeacher('named', SENTINEL);
+    const teacherId = await seedTeacher('named', SENTINEL);
+    const scoped = scopeSweep(prisma, { Teacher: { id: { in: [teacherId] } } });
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
-    await expect(auditTeacherTimezones(prisma)).rejects.toMatchObject({
+    await expect(auditTeacherTimezones(scoped.db)).rejects.toMatchObject({
       zones: expect.arrayContaining([SENTINEL]),
     });
     expect(error).toHaveBeenCalledWith(
