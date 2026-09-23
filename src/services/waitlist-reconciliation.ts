@@ -672,9 +672,11 @@ async function reconcileOne(
  *
  * `spotBroadcastAt !== null` is the real gate. It is set inside
  * `handleSpotFreed`'s broadcast transaction and cleared by
- * `activateRegistration` — that is, by any seat being FILLED. What invalidates
- * a broadcast is not time passing but the seat it announced being taken, so
- * that is where the clear belongs.
+ * `activateRegistration` — but only on the fill that leaves the class full
+ * (#236); a fill that leaves a seat open does not touch it, because that seat
+ * is still the one the broadcast announced. What invalidates a broadcast is
+ * not time passing but every seat it announced being taken, so that is where
+ * the clear belongs.
  *
  * This replaced a gate that asked whether a `spot_available` notification
  * existed anywhere in the current claim window, and the difference is the
