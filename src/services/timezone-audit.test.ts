@@ -80,7 +80,7 @@ describe('auditTeacherTimezones', () => {
     const teacherId = await seedTeacher('bad', SENTINEL);
     const scoped = scopeSweep(prisma, { Teacher: { id: { in: [teacherId] } } });
     vi.spyOn(log, 'error').mockImplementation(() => undefined);
-    onTestFinished(() => vi.restoreAllMocks());
+    onTestFinished(() => { vi.restoreAllMocks(); });
     await expect(auditTeacherTimezones(scoped.db)).rejects.toThrow(InvalidTimezoneError);
   });
 
