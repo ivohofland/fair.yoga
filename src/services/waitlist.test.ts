@@ -1105,7 +1105,9 @@ describe('claimSpot (DB)', () => {
     const { entry } = result;
 
     expect(entry.status).toBe('claimed');
-    expect(entry.promotedAt).not.toBeNull();
+    // The injected clock, not a fresh `new Date()` — the same `now` every
+    // other window decision in this call was made against.
+    expect(entry.promotedAt).toEqual(IN_CLAIM_WINDOW);
     expect(entry.registrationId).not.toBeNull();
 
     const registration = await prisma.registration.findUniqueOrThrow({

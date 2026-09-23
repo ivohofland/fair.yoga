@@ -37,7 +37,8 @@ export const URGENT_WINDOW_MINUTES = 120;
 /**
  * Types emailed on the first fallback sweep after they are created, not after
  * the unread threshold. A waitlist promotion is a booking the student did not
- * make at that moment, and its free-cancel window is shorter than the threshold.
+ * make at that moment, so it should reach them without waiting on the
+ * ordinary unread threshold below.
  */
 export const IMMEDIATE_EMAIL_TYPES: ReadonlySet<NotificationType> = new Set(['waitlist_promoted']);
 
