@@ -582,6 +582,23 @@ archive notification a `relatedClassId` and it becomes a transaction taking
 whatever the query planner returned — not the ascending order the rest of this
 document depends on.
 
+**A considered interaction that is not a `Class` edge at all: two writers
+contending on `Notification` rows directly (#223).** The daily retention sweep
+(`reapExpiredNotifications`) deletes expired rows in batches, each batch its
+own `DELETE … WHERE id IN (…)`; GDPR erasure (`deleteStudentAccount`,
+`deleteTeacherAccount`) deletes or reassigns a subject's notifications with a
+`deleteMany`/`updateMany` scoped by `recipientId`. Both can lock the same
+`Notification` rows — a subject with several expired rows, erased while the
+daily run is mid-sweep — and can take them in different orders, so a `40P01`
+between the two is possible. Both sides already classify `40P01` as transient:
+erasure runs behind `withErrorHandler`, so `classifyApiError`'s
+`isTransientDbError` branch answers it a retryable 503; the sweep's batches
+that already committed stay deleted, and `isolatedSweeps` logs the failing
+sweep and rethrows so the job's `lastError` surfaces it while the next daily
+run picks up the rest. The sweep takes no `Class` lock: deleting a row that
+references `Class` (via `relatedClassId`) takes no lock on the row it
+references, only on the row itself.
+
 Three things about that table are easy to get wrong and are the reason it exists:
 
 **The lock order of a loop is the order of the read it walks — unless something
