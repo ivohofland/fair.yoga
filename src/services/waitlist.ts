@@ -92,47 +92,52 @@ export type ClaimResult =
  * kept — plain `create` locks a student out of a class forever after one
  * cancellation. Reactivation resets the row instead.
  *
- * Also clears `Class.spotBroadcastAt`, and this is the only place that does
- * (#220). Filling a seat is what makes a standing first-come-first-claimed
- * broadcast stale — not time passing — so the clear belongs on the fill, and
- * this function is where every fill in the app converges: direct booking
- * (`POST /api/registrations`), `promoteNext` and `claimSpot`. All three hold
- * this class row's `FOR UPDATE` lock before they call, which is what
- * serializes the clear against `handleSpotFreed`'s set; a future booking path
- * inherits the clear for free, because reactivating a cancelled row is the
- * problem this function exists to solve and nothing else may do it.
+ * Also clears `Class.spotBroadcastAt` when — and only when — this fill
+ * leaves the class full (#220, #236). A standing first-come-first-claimed
+ * broadcast is an announcement that a seat is free; while a seat remains open
+ * after this fill, that announcement is still true, so the flag survives it
+ * untouched. Only the fill that takes the LAST free seat makes the broadcast
+ * stale, and that is exactly when it is cleared — read once, after the
+ * registration write, via `readSeatCount(tx, lock)`, the same lock every
+ * caller already holds, so the fullness this reads is the fullness this fill
+ * just produced rather than a stale snapshot. This function is where every
+ * fill in the app converges: direct booking (`POST /api/registrations`),
+ * `promoteNext` and `claimSpot`. All three hold this class row's
+ * `FOR UPDATE` lock before they call, which is what serializes the clear
+ * against `handleSpotFreed`'s set; a future booking path inherits the clear
+ * for free, because reactivating a cancelled row is the problem this
+ * function exists to solve and nothing else may do it.
  *
- * When a broadcast stood (`spotBroadcastAt` was set, read before this call
- * clears it) and this fill leaves the class full, every student still
- * `waiting` is sent `spot_taken` (#236): the broadcast told them a spot was
- * open, and this fill is what closed it. Fullness is read under the same
- * `lock` the caller already holds, via `readSeatCount`, so it reflects the
- * fill this call just made rather than a snapshot from before it. The
- * caller's own student is excluded from the notified set — in `claimSpot`
- * their `WaitlistEntry` is still `waiting` at this point (it flips to
- * `claimed` only after this returns), and without the exclusion a claimant
- * would be told their own claim took their own spot.
+ * The same fill-to-full transition is also when `spot_taken` goes out
+ * (#236): if a broadcast stood (`spotBroadcastAt` was set, read before this
+ * call can clear it) and the fill leaves the class full, every student still
+ * `waiting` is told the spot is gone — the broadcast said it was open, and
+ * this fill is what closed it. A fill that leaves a seat open sends nothing:
+ * the broadcast it would be answering is still true, and was not cleared
+ * above. The caller's own student is excluded from the notified set — in
+ * `claimSpot` their `WaitlistEntry` is still `waiting` at this point (it
+ * flips to `claimed` only after this returns), and without the exclusion a
+ * claimant would be told their own claim took their own spot.
+ *
+ * `lock` must be the same class as `input.classId`, asserted at entry:
+ * `readSeatCount` counts off `lock.classId`, while every other statement
+ * here counts off `input.classId`, and a mismatched pair would typecheck
+ * while silently reading one class's seats and writing another's.
  */
 export async function activateRegistration(
   tx: PrismaTransactionClient,
   lock: ClassLock,
   input: { classId: string; studentId: string; tierAtBooking: number; isWalkIn?: boolean },
 ) {
+  if (lock.classId !== input.classId) {
+    throw new Error(
+      `activateRegistration: lock is for class ${lock.classId} but input.classId is ${input.classId} — every caller must take both from the same class.`,
+    );
+  }
+
   const before = await tx.class.findUniqueOrThrow({
     where: { id: input.classId },
-    select: { spotBroadcastAt: true, calendarEntry: { select: { classType: true } } },
-  });
-
-  // Unconditionally, not "only when this fill made the class full". The
-  // precise version needs a seat count on every booking and can drift from
-  // the thing it is counting; this one cannot. The cost is that with two
-  // seats free in the claim window, each claim re-opens the gate and the
-  // remaining waiters are told again — but a seat genuinely is still free
-  // when that happens, so the second message is true and actionable, and the
-  // live path already re-broadcasts on every freed seat with no gate at all.
-  await tx.class.update({
-    where: { id: input.classId },
-    data: { spotBroadcastAt: null },
+    select: { spotBroadcastAt: true },
   });
 
   const existing = await tx.registration.findUnique({
@@ -158,24 +163,38 @@ export async function activateRegistration(
         },
       });
 
-  // A broadcast stood and this fill used the last seat: everyone still
-  // waiting was told a spot exists that no longer does.
-  if (before.spotBroadcastAt !== null && (await readSeatCount(tx, lock)).isFull) {
-    const waiting = await tx.waitlistEntry.findMany({
-      where: { classId: input.classId, status: 'waiting', studentId: { not: input.studentId } },
-      select: { studentId: true },
+  // Only the fill that takes the last free seat invalidates a standing
+  // broadcast — one that leaves a seat open does not, so the flag (and the
+  // spot_available it stands for) survives it untouched.
+  if ((await readSeatCount(tx, lock)).isFull) {
+    await tx.class.update({
+      where: { id: input.classId },
+      data: { spotBroadcastAt: null },
     });
-    await createBulkNotifications(
-      tx,
-      waiting.map((w) => ({
-        recipientType: 'student' as const,
-        recipientId: w.studentId,
-        type: 'spot_taken' as const,
-        title: 'The spot has been taken',
-        body: `The open spot in ${before.calendarEntry.classType} has been taken. You're still on the waitlist.`,
-        relatedClassId: input.classId,
-      })),
-    );
+
+    // A broadcast stood and this fill used the last seat: everyone still
+    // waiting was told a spot exists that no longer does.
+    if (before.spotBroadcastAt !== null) {
+      const { calendarEntry } = await tx.class.findUniqueOrThrow({
+        where: { id: input.classId },
+        select: { calendarEntry: { select: { classType: true } } },
+      });
+      const waiting = await tx.waitlistEntry.findMany({
+        where: { classId: input.classId, status: 'waiting', studentId: { not: input.studentId } },
+        select: { studentId: true },
+      });
+      await createBulkNotifications(
+        tx,
+        waiting.map((w) => ({
+          recipientType: 'student' as const,
+          recipientId: w.studentId,
+          type: 'spot_taken' as const,
+          title: 'The spot has been taken',
+          body: `The open spot in ${calendarEntry.classType} has been taken. You're still on the waitlist.`,
+          relatedClassId: input.classId,
+        })),
+      );
+    }
   }
 
   return registration;

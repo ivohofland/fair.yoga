@@ -820,6 +820,8 @@ describe('claimSpot (DB)', () => {
   let waiterId: string;
   /** A second waiter, for the #236 `spot_taken` tests — one claims, one keeps waiting. */
   let secondWaiterId: string;
+  /** A third waiter, for the #236 multi-seat-race test — never claims, stays waiting throughout. */
+  let thirdWaiterId: string;
   let outsiderId: string;
   const classIds: string[] = [];
   // Extra teachers (and their accounts) created below for calls after the
@@ -902,14 +904,15 @@ describe('claimSpot (DB)', () => {
   };
 
   /**
-   * A class with two free seats: `studentId` and `secondWaiterId` both queued
-   * as waiters — built directly rather than through `addToWaitlist`, which
+   * A class with two free seats and `studentIds` all queued as waiters, in
+   * order — built directly rather than through `addToWaitlist`, which
    * refuses to queue anyone against a class that still has spare capacity.
-   * Exists for the #236 `spot_taken` case where a claim fills a seat but the
-   * class is still not full afterward — `secondWaiterId` is the bystander who
-   * must hear nothing.
+   * Exists for the #236 `spot_taken` cases where a claim fills a seat but the
+   * class is not immediately full: with two waiters the second is the
+   * bystander who must hear nothing from a single claim; with three, two
+   * claims are needed before the third hears anything.
    */
-  const makeSpareCapacityClassWithWaiter = async (studentId: string): Promise<string> => {
+  const makeSpareCapacityClassWithWaiters = async (studentIds: readonly string[]): Promise<string> => {
     const classTeacherId = await nextClassTeacherId();
 
     const cls = await createClassFixture(prisma, {
@@ -931,11 +934,13 @@ describe('claimSpot (DB)', () => {
     await prisma.registration.create({
       data: { classId: cls.id, studentId: fillerId, tierAtBooking: 3 },
     });
-    await prisma.waitlistEntry.create({
-      data: { classId: cls.id, studentId, status: 'waiting', position: 1 },
-    });
-    await prisma.waitlistEntry.create({
-      data: { classId: cls.id, studentId: secondWaiterId, status: 'waiting', position: 2 },
+    await prisma.waitlistEntry.createMany({
+      data: studentIds.map((studentId, i) => ({
+        classId: cls.id,
+        studentId,
+        status: 'waiting' as const,
+        position: i + 1,
+      })),
     });
     return cls.id;
   };
@@ -996,6 +1001,7 @@ describe('claimSpot (DB)', () => {
     fillerId = await mk('filler');
     waiterId = await mk('waiter');
     secondWaiterId = await mk('second-waiter');
+    thirdWaiterId = await mk('third-waiter');
     outsiderId = await mk('outsider');
   });
 
@@ -1005,7 +1011,7 @@ describe('claimSpot (DB)', () => {
     await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     await prisma.student.deleteMany({
-      where: { id: { in: [fillerId, waiterId, secondWaiterId, outsiderId] } },
+      where: { id: { in: [fillerId, waiterId, secondWaiterId, thirdWaiterId, outsiderId] } },
     });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -1236,7 +1242,7 @@ describe('claimSpot (DB)', () => {
     // Two free seats before the claim: after it, one remains — the class is
     // never full, so the `.isFull` gate stays shut. secondWaiterId is still
     // waiting and would be told wrongly if that gate were missing.
-    const classId = await makeSpareCapacityClassWithWaiter(waiterId);
+    const classId = await makeSpareCapacityClassWithWaiters([waiterId, secondWaiterId]);
     await prisma.class.update({
       where: { id: classId },
       data: { spotBroadcastAt: new Date('2026-06-01T07:30:00Z') },
@@ -1248,6 +1254,55 @@ describe('claimSpot (DB)', () => {
     expect(
       await prisma.notification.count({ where: { relatedClassId: classId, type: 'spot_taken' } }),
     ).toBe(0);
+    // The seat the broadcast announced isn't gone — one is still free — so
+    // the flag stands, ready for `waitlist-reconciliation`'s gate to read.
+    const cls = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { spotBroadcastAt: true },
+    });
+    expect(cls.spotBroadcastAt).not.toBeNull();
+  });
+
+  it('sends spot_taken only once both free seats are claimed, in a multi-seat race (#236)', async () => {
+    // Two free seats, three waiters, one standing broadcast — a multi-seat
+    // race, the case a per-claim unconditional clear used to drop entirely
+    // (#236 review I-1): the first claim must not silence the broadcast for
+    // the seat that is still free.
+    const classId = await makeSpareCapacityClassWithWaiters([waiterId, secondWaiterId, thirdWaiterId]);
+    await prisma.class.update({
+      where: { id: classId },
+      data: { spotBroadcastAt: new Date('2026-06-01T07:30:00Z') },
+    });
+
+    // First claim: one of two free seats goes. The class is still not full,
+    // so the standing broadcast survives and nobody hears spot_taken yet.
+    const first = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+    expect(first.outcome).toBe('claimed');
+    expect(
+      await prisma.notification.count({ where: { relatedClassId: classId, type: 'spot_taken' } }),
+    ).toBe(0);
+    const afterFirst = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { spotBroadcastAt: true },
+    });
+    expect(afterFirst.spotBroadcastAt).not.toBeNull();
+
+    // Second claim: the last seat goes, the class is full, and only now does
+    // the flag clear and the still-waiting third student hear the spot is gone.
+    const second = await claimSpot(prisma, classId, secondWaiterId, IN_CLAIM_WINDOW);
+    expect(second.outcome).toBe('claimed');
+
+    const taken = await prisma.notification.findMany({
+      where: { relatedClassId: classId, type: 'spot_taken' },
+    });
+    expect(taken.map((n) => n.recipientId)).toEqual([thirdWaiterId]);
+    expect(taken.map((n) => n.recipientId)).not.toContain(waiterId);
+    expect(taken.map((n) => n.recipientId)).not.toContain(secondWaiterId);
+    const afterSecond = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { spotBroadcastAt: true },
+    });
+    expect(afterSecond.spotBroadcastAt).toBeNull();
   });
 
   it('sends nothing when no broadcast stood (#236)', async () => {
