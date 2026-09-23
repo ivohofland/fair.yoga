@@ -1096,7 +1096,14 @@ describe('reconcileWaitlists (DB)', () => {
     const streaks = createReconciliationStreaks();
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    onTestFinished(() => warn.mockRestore());
+    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // the real line does not leak into test output. This test asserts only
+    // the streak, not the log level.
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
 
     const faulty = prisma.$extends({
       query: {
@@ -1141,7 +1148,14 @@ describe('reconcileWaitlists (DB)', () => {
     const streaks = createReconciliationStreaks();
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    onTestFinished(() => warn.mockRestore());
+    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // the real line does not leak into test output. This test asserts only
+    // the streak, not the log level.
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
 
     const faulty = prisma.$extends({
       query: {
@@ -1204,9 +1218,14 @@ describe('reconcileWaitlists (DB)', () => {
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const debug = vi.spyOn(log, 'debug').mockImplementation(() => undefined);
+    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // the real line does not leak into test output. This test asserts only
+    // the streak, not the log level.
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     onTestFinished(() => {
       warn.mockRestore();
       debug.mockRestore();
+      error.mockRestore();
     });
 
     const faulty = prisma.$extends({
@@ -1502,7 +1521,14 @@ describe('reconcileWaitlists (DB)', () => {
     const streaks = createReconciliationStreaks();
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    onTestFinished(() => warn.mockRestore());
+    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // the real line does not leak into test output. This test asserts only
+    // the streak, not the log level.
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
 
     const faulty = prisma.$extends({
       query: {

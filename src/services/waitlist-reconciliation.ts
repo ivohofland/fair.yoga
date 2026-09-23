@@ -127,7 +127,7 @@ export interface ReconcileSummary {
   readonly failedClassIds: readonly string[];
   /**
    * The subset of `failedClassIds` whose failure `isTransientDbError`
-   * classified as a lost contention race — one a retry can win.
+   * classified as transient — one a retry can eventually win.
    *
    * A subset rather than a second partition, following `repairedClassIds`'
    * relationship to `reconciledClassIds`. It is what lets a caller separate "the
@@ -622,15 +622,15 @@ async function reconcileOne(
     //
     // Classified by kind, not blanket-`warn`: `TRANSIENT_KIND_LEVEL`
     // (`lib/api-errors.ts`) is the alerting contract, and it does not put every
-    // transient failure at `warn` — a `pool_exhausted` or `deadlock` is `error`
-    // there too, an operational fault rather than the system doing what it was
-    // configured to do. A schema drift, a dangling FK, a `P2002` regression
-    // inside `promoteNext` — none of those clear on retry either, and the
-    // trigger condition is not consumed by the failure, so the class fails
-    // again on every tick, forever. Blanket `warn` for every transient kind
-    // would make a permanently broken promotion path indistinguishable from
-    // routine contention, which is the shape of the defect this whole module
-    // exists to remove. Both live callers split on exactly this classification —
+    // transient failure at `warn` — some transient kinds log at `error` even
+    // though a retry can win them, and `TRANSIENT_KIND_LEVEL` says which. A
+    // schema drift, a dangling FK, a `P2002` regression inside `promoteNext`
+    // — none of those clear on retry either, and the trigger condition is
+    // not consumed by the failure, so the class fails again on every tick,
+    // forever. Blanket `warn` for every transient kind would make a
+    // permanently broken promotion path indistinguishable from routine
+    // contention, which is the shape of the defect this whole module exists
+    // to remove. Both live callers split on exactly this classification —
     // see `promoteAfterCancel` in the registrations route and
     // `deleteStudentAccount`'s post-commit loop.
     //
@@ -800,7 +800,7 @@ function report(
       payload,
       escalation === 'non_transient'
         ? 'waitlist reconciliation repaired nothing — every class it tried failed'
-        : 'waitlist reconciliation has lost every class to contention for too many consecutive ticks',
+        : 'waitlist reconciliation has lost every class to a transient database failure for too many consecutive ticks',
     );
     throw new ReconciliationFailedError(summary.failedClassIds, escalation);
   }
@@ -808,9 +808,14 @@ function report(
   if (summary.failedClassIds.length > 0 && summary.reconciledClassIds.length === 0) {
     // Every class hit a transient database failure and the streak is still
     // short. The next tick retries; the job stays healthy. This is the false
-    // alarm #269 was filed about, and the line that keeps it visible without
-    // paging anyone.
-    log.warn(payload, 'waitlist reconciliation lost every class to contention — retrying next tick');
+    // alarm #269 was filed about, and this tick-level line is what keeps it
+    // visible without paging anyone — the per-class lines earlier in the same
+    // tick may already have logged at `error`, when their kind's own level
+    // calls for it.
+    log.warn(
+      payload,
+      'waitlist reconciliation lost every class to a transient database failure — retrying next tick',
+    );
     return;
   }
 
