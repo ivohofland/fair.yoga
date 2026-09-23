@@ -338,6 +338,18 @@ describe('GET /bookings (page) — upcoming registration count', () => {
     expect(html).toContain('depending on how many join');
     expect(html).toContain(`/bookings-count-teacher-${suffix2}/book/${classId}`);
   });
+
+  it('hands the cancel button the cancel-deadline instant, not the class start', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
+    const html = await res.text();
+    // Independent of `cancelDeadlineInstant`: the fixture's class starts
+    // 2099-07-01 09:00 Europe/Amsterdam (CEST, UTC+2) = 2099-07-01T07:00:00Z,
+    // and the default HOURS_24 deadline is 24h before that. If the page ever
+    // hands the button the class start instead (or reads the wrong
+    // timezone), this literal stops appearing and the class-start instant
+    // (2099-07-01T07:00:00.000Z) would appear in its place.
+    expect(html).toContain('2099-06-30T07:00:00.000Z');
+  });
 });
 
 /**
