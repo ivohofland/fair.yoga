@@ -27,8 +27,11 @@ from sibling files running *at the same time*. It did nothing about rows that
 clears them (`grep -n "TRUNCATE\|deleteMany" tests/setup/*.ts` returns nothing).
 
 **Where the premise was incomplete: the scope.** The issue expected the pattern
-to recur "unlikely to be the only place". It recurs in ten files, and in two
-directions. The #453 comment on the issue measured the second direction. It
+to recur "unlikely to be the only place". The census below lists hits in nine
+files; the build confirmed coupling in eight of them (the studio generator's
+turned out unreachable, see "Lower grade"). Re-derive the eight with
+`git diff --name-only origin/main...fix/251-scope-sweep-count-assertions -- 'src/**/*.test.ts'`.
+It runs in two directions. The #453 comment on the issue measured the second direction. It
 fails in four ways, not one:
 
 1. **A global count asserted equal to 0 or N.** Stray rows make the test fail
