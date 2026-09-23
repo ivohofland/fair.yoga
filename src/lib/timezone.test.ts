@@ -480,10 +480,10 @@ describe('formatInstantInZone', () => {
     );
   });
 
-  it('falls back to UTC on an unknown timezone rather than throwing', () => {
+  it('falls back to UTC on an unknown timezone rather than throwing, and says so', () => {
     const spy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Not/AZone')).toBe(
-      'Thu 4 Jun 12:15',
+      'Thu 4 Jun 12:15 (UTC)',
     );
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
