@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient, CancelDeadline, WaitlistEntry, WaitlistStatus } from '@prisma/client';
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
 import { freeCancelUntil } from '@/lib/cancel-deadline';
+import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
 import { linkTeacherStudent } from './roster-link';
@@ -100,13 +101,9 @@ export type ClaimResult =
  * stale, and that is exactly when it is cleared — read once, after the
  * registration write, via `readSeatCount(tx, lock)`, the same lock every
  * caller already holds, so the fullness this reads is the fullness this fill
- * just produced rather than a stale snapshot. This function is where every
- * fill in the app converges: direct booking (`POST /api/registrations`),
- * `promoteNext` and `claimSpot`. All three hold this class row's
- * `FOR UPDATE` lock before they call, which is what serializes the clear
- * against `handleSpotFreed`'s set; a future booking path inherits the clear
- * for free, because reactivating a cancelled row is the problem this
- * function exists to solve and nothing else may do it.
+ * just produced rather than a stale snapshot. Every caller passes the
+ * `ClassLock` it holds for this class — the parameter enforces it — which is
+ * what serializes the clear against `handleSpotFreed`'s set.
  *
  * The same fill-to-full transition is also when `spot_taken` goes out
  * (#236): if a broadcast stood (`spotBroadcastAt` was set, read before this
@@ -240,8 +237,7 @@ export function cancelDeadlineInstant(
   return new Date(classStart.getTime() - DEADLINE_HOURS[cancelDeadline] * 60 * 60 * 1000);
 }
 
-/** Length of the first-come-first-claimed window that ends at class start. */
-export const CLAIM_WINDOW_MINUTES = 60;
+export { CLAIM_WINDOW_MINUTES };
 
 /** When the first-come-first-claimed window opens: class start − `CLAIM_WINDOW_MINUTES`. */
 export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZone: string): Date {
@@ -612,9 +608,8 @@ export async function promoteNext(
 
     // Hoisted so the window check, the entry's `promotedAt` write and the
     // notification's free-cancel time all reason about the SAME instant —
-    // `getWaitlistWindow` takes a clock rather than reading one of its own,
-    // but a `new Date()` at each call site would still be two separate reads
-    // a few ms apart if this weren't shared.
+    // `getWaitlistWindow` takes an optional clock, and a `new Date()` at each
+    // call site would be separate reads a few ms apart.
     const now = opts.now ?? new Date();
     const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now);
     if (window === 'frozen') {
@@ -689,11 +684,7 @@ export async function promoteNext(
     // answered.
 
     // Update the waitlist entry: promoted status, promotedAt, link to
-    // registration. `promotedAt: now` — the same instant `getWaitlistWindow`
-    // above reasoned about, hoisted at the top of this transaction — not a
-    // fresh `new Date()`, so this write and the notification's free-cancel
-    // time (below) agree with each other and with a test that injected
-    // `opts.now`.
+    // registration. `promotedAt: now`, the hoisted instant above.
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: nextEntry.id },
       data: {
@@ -1040,8 +1031,8 @@ export async function handleSpotFreed(
       // is what says so (#220). Written inside the same transaction and under
       // the same class row lock as the notifications, so the flag and the rows
       // it describes commit together — a broadcast that rolls back leaves no
-      // flag claiming it happened. `activateRegistration` clears it again the
-      // moment anyone fills a seat.
+      // flag claiming it happened. `activateRegistration` clears it on the
+      // fill that takes the last free seat.
       await tx.class.update({
         where: { id: classId },
         data: { spotBroadcastAt: now ?? new Date() },

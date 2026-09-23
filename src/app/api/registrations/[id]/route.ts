@@ -297,10 +297,8 @@ export const DELETE = withErrorHandler(async (
       registration.class.calendarEntry.teacher.defaultTimezone,
     );
 
-    // An auto-promoted student's free-cancel window extends past the bare
-    // deadline for #236's grace (`freeCancelUntilFor`, `cancel-deadline.ts`):
-    // the system placed them, so the clock the deadline copy promised them
-    // wasn't the one they got to act on.
+    // An auto-promoted booking's free-cancel instant can be later than the
+    // deadline (`freeCancelUntilFor`).
     const promotion = await prisma.waitlistEntry.findUnique({
       where: { registrationId: id },
       select: { status: true, promotedAt: true },
@@ -314,14 +312,15 @@ export const DELETE = withErrorHandler(async (
       // read-then-write and this handler opens no transaction, so two
       // concurrent cancels both pass it.
       //
-      // The scope is for money, not to guard against a doubled waitlist
-      // broadcast: `late_cancel` is in `CHARGED_STATUSES` (`class-lifecycle.ts`)
+      // The scope does two jobs. Waitlist: a late cancel frees a seat the
+      // queue can still take, so two concurrent late cancels must not both
+      // reach `promoteAfterCancel` — the loser matches no row, re-reads and is
+      // answered as unchanged, as the sibling branch's is.
+      //
+      // Money: `late_cancel` is in `CHARGED_STATUSES` (`class-lifecycle.ts`)
       // and `cancelled` is not, so an unscoped write here can land *after* a
       // teacher's free cancel and silently rewrite `cancelled` → `late_cancel`,
-      // billing a student for a class the teacher had let them out of. The
-      // scope also keeps the loser of two concurrent late cancels from writing
-      // twice: it re-reads and is answered as unchanged, as the sibling
-      // branch's is.
+      // billing a student for a class the teacher had let them out of.
       const updated = await prisma.registration.updateMany({
         where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
         data: { status: 'late_cancel', cancelledAt: new Date() },
@@ -521,9 +520,9 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  * old bare-client body could barely fail at all. #104 then put the
  * AUTO-PROMOTE branch behind the same helper, and that is the far larger
  * surface of the two: `getWaitlistWindow` returns `auto_promote` for
- * everything up to (class start − 1h), against exactly one hour of
- * `first_come_first_claimed`. Read this paragraph as being about both
- * branches. `api-errors.ts` states the
+ * everything up to (class start − `CLAIM_WINDOW_MINUTES`), against
+ * `CLAIM_WINDOW_MINUTES` of `first_come_first_claimed`. Read this paragraph
+ * as being about both branches. `api-errors.ts` states the
  * rule this obeys, with this exact scenario as its example: "`error` is the
  * level that pages someone, while a `lock_timeout` on a contended row is the
  * system doing what it was configured to do." Logging routine contention at
@@ -536,9 +535,9 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  * into the phrase this catch logs. On the broadcast branch
  * (`first_come_first_claimed`) every student queued on this class was silently
  * not told a seat opened. On the auto-promote branch, which covers everything
- * up to (class start − 1h) and is therefore the commoner of the two by a
- * wide margin, the loss is narrower and sharper: ONE specific student who
- * should now hold that seat does not. Either way `waiting` sizes it — 0 is a
+ * up to (class start − `CLAIM_WINDOW_MINUTES`) and is therefore the commoner
+ * of the two by a wide margin, the loss is narrower and sharper: ONE
+ * specific student who should now hold that seat does not. Either way `waiting` sizes it — 0 is a
  * non-event, 12 is a seat that now goes unsold and reprices the class for
  * everyone left. A failure before the window resolves — `.window` still
  * `null` — falls back to `spotFreedLoss`'s general phrase, because there is
@@ -558,9 +557,10 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  * tick" would otherwise read as unconditional: a drop in the last tick before
  * class start. The class is `frozen` by the next tick and the sweep does
  * nothing from start on, so for that final tick this line is still the only
- * record. It is not the multi-cancel case — a broadcast dropped
- * after an earlier one succeeded IS repaired, because `Class.spotBroadcastAt`
- * is cleared by the claim that consumed the earlier seat.
+ * record. It is not the multi-cancel case. While a seat is still free no
+ * repair is needed — the standing broadcast still describes it, and a class
+ * with a free seat takes no new waiters; once the last seat is taken the flag
+ * clears, and a later drop is re-broadcast by the sweep.
  */
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {

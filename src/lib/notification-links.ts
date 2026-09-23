@@ -31,11 +31,11 @@ export const STUDENT_INVITATION_LABEL = 'Review the invitation';
 /**
  * The student's own bookings list — where `waitlist_promoted` and
  * `spot_available` send them (#236). Unlike a class page, `/bookings` is a
- * student route, and it carries both the Cancel and the Claim button.
+ * student route.
  */
 export const STUDENT_BOOKINGS_PATH = '/bookings';
 
-/** The in-app label for that action on the email's button. */
+/** The email button's label for that action. */
 export const STUDENT_BOOKINGS_LABEL = 'Go to your bookings';
 
 /**

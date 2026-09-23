@@ -527,21 +527,17 @@ model Class {
   /// that is currently free — null when no broadcast stands for it (#220).
   ///
   /// Not "when a broadcast last happened". What invalidates a broadcast is not
-  /// time passing but a seat being FILLED, so `activateRegistration`
-  /// (services/waitlist.ts) clears this and `handleSpotFreed`'s broadcast
-  /// branch sets it. Every seat fill in the app funnels through that one
-  /// function — direct booking, `promoteNext`, `claimSpot` — and all three of
-  /// its callers already hold this row's `FOR UPDATE` lock, which is what
-  /// serializes the clear against the set.
+  /// time passing but the class becoming full again: while any seat is still
+  /// free the standing broadcast describes it. `activateRegistration`
+  /// (services/waitlist.ts) clears this on the fill that takes the last free
+  /// seat, under this row's `FOR UPDATE` lock, and `handleSpotFreed`'s
+  /// broadcast branch sets it.
   ///
-  /// This replaced a gate that asked "does a `spot_available` notification
-  /// exist in the current claim window". That question is a proxy, and it
-  /// answered wrong for the sequence the sweep exists to repair: seat frees,
-  /// broadcast succeeds, a waiter claims, the seat frees AGAIN, and the live
-  /// hook drops the second broadcast. The window still held the first
-  /// notification, so the reconciliation sweep suppressed itself for the rest
-  /// of the hour and the remaining waiters were never told. A null check
-  /// cannot make that mistake, because a claim clears it.
+  /// A null check, not "does a `spot_available` notification exist in the
+  /// current claim window": after the class fills and a seat frees AGAIN, the
+  /// window still holds the first notification, so that proxy would suppress
+  /// the sweep's repair of a dropped second broadcast. The flag was cleared by
+  /// the fill, so the null check does not.
   spotBroadcastAt DateTime?
 
   calendarEntry   CalendarEntry   @relation(fields: [calendarEntryId, kind, entryLive], references: [id, kind, live], onDelete: Cascade)

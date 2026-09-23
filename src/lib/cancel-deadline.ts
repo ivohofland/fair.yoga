@@ -17,7 +17,8 @@ export const FREE_CANCEL_GRACE_MINUTES = 15;
 /**
  * Until when a booking can be cancelled free: the cancel deadline, or — for a
  * booking an auto-promotion made — the later of that and promotion + grace.
- * `promotedAt` is null for every other booking.
+ * Pass `null` for any booking an auto-promotion did not make
+ * (`freeCancelUntilFor` does this).
  */
 export function freeCancelUntil(deadline: Date, promotedAt: Date | null): Date {
   if (promotedAt === null) return deadline;
