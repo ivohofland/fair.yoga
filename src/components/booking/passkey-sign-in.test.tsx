@@ -32,8 +32,8 @@ describe('PasskeySignIn', () => {
 
   /**
    * A real `Response` whose `json()` genuinely throws — the shape a proxy's
-   * HTML error page takes, which the plain `{ ok, status, json }` stubs
-   * elsewhere in this file cannot express.
+   * HTML error page takes, which the plain object stubs elsewhere in this
+   * file cannot express.
    */
   function htmlResponse(status = 502): Response {
     return new Response('<html><body>502 Bad Gateway</body></html>', {
@@ -135,6 +135,50 @@ describe('PasskeySignIn', () => {
       expect.objectContaining({ status: 429 }),
     );
     expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
+   * G. A refusal outside the 429 branch reached the outer catch with nothing
+   * telling a developer which request failed or why — this pins that both
+   * refusal sites log their status before throwing.
+   */
+  it('logs when the options request is refused with a non-429 status', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText("Passkey sign-in didn't work here — use the email link instead."),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[passkey-sign-in] options request refused',
+      { status: 500 },
+    );
+  });
+
+  it('logs when the verify request is refused', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { options: { challenge: 'c' }, challengeId: 'ch-1' } }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText("Passkey sign-in didn't work here — use the email link instead."),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[passkey-sign-in] verify request refused',
+      { status: 500 },
+    );
   });
 
   /**
