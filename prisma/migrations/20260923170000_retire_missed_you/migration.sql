@@ -1,8 +1,7 @@
--- missed_you is retired (#661): the payment_request body now carries the explanation.
+-- missed_you is retired (#661).
 -- AlterEnum
 BEGIN;
--- Delete before the cast, which fails on a row holding a value the new type lacks.
--- No code path ever created one, so the notice is expected to stay silent.
+-- Delete first: the cast below fails on any row still holding the value.
 DO $$
 DECLARE
   affected INT;
