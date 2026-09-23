@@ -14,7 +14,7 @@ import {
 import { updateRegistrationSchema } from '@/lib/schemas';
 import { transientDbFailure } from '@/lib/api-errors';
 import { cancelDeadlineInstant, handleSpotFreed, SpotFreedError, spotFreedLoss } from '@/services/waitlist';
-import { isPastCancelDeadline, freeCancelUntil } from '@/lib/cancel-deadline';
+import { isPastCancelDeadline, freeCancelUntilFor } from '@/lib/cancel-deadline';
 import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { formatDayHeader } from '@/lib/format';
@@ -298,17 +298,16 @@ export const DELETE = withErrorHandler(async (
     );
 
     // An auto-promoted student's free-cancel window extends past the bare
-    // deadline for #236's grace (`freeCancelUntil`) — only `promoted` carries
-    // it, not `claimed`: the system placed them, so the clock the deadline
-    // copy promised them wasn't the one they got to act on.
+    // deadline for #236's grace. `freeCancelUntilFor` (`cancel-deadline.ts`)
+    // is the one place that knows only `promoted` carries it, not `claimed`:
+    // the system placed them, so the clock the deadline copy promised them
+    // wasn't the one they got to act on. `/bookings` reads the same instant
+    // through the same helper, off its own fetch of this entry.
     const promotion = await prisma.waitlistEntry.findUnique({
       where: { registrationId: id },
       select: { status: true, promotedAt: true },
     });
-    const until = freeCancelUntil(
-      deadline,
-      promotion?.status === 'promoted' ? promotion.promotedAt : null,
-    );
+    const until = freeCancelUntilFor(deadline, promotion);
 
     if (isPastCancelDeadline(until, new Date())) {
       // Past the free-cancel instant — mark as late_cancel (still charged).

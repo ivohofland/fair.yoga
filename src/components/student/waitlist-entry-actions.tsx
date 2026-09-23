@@ -13,8 +13,8 @@ interface WaitlistEntryActionsProps {
 }
 
 /**
- * Claim an open spot (final hour before the deadline — first claim wins)
- * or leave the waitlist.
+ * Claim an open spot (final hour before class — first claim wins) or leave
+ * the waitlist.
  */
 export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEntryActionsProps) {
   const router = useRouter();
@@ -71,6 +71,12 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
         <div>
           <p className="type-caption text-teal mb-2">
             A spot opened up — the first to claim it gets it.
+          </p>
+          {/* Every claim lands past the cancel deadline — #236's free-cancel
+              grace is for an auto-promotion, never for the student's own
+              claim — so this is said before the button, not after a tap. */}
+          <p className="type-caption mb-2">
+            Claiming books you in, and you&apos;ll pay your share even if you can&apos;t make it.
           </p>
           <Button onClick={handleClaim} disabled={busy !== null}>
             {busy === 'claim' ? 'Claiming...' : 'Claim the spot'}

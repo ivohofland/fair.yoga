@@ -23,6 +23,17 @@ describe('WaitlistEntryActions', () => {
     renderActions(false);
     expect(screen.queryByRole('button', { name: 'Claim the spot' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Leave waitlist' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('Claiming books you in, and you\'ll pay your share even if you can\'t make it.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('warns that claiming books and charges before offering the claim button (#236)', () => {
+    renderActions(true);
+    expect(
+      screen.getByText('Claiming books you in, and you\'ll pay your share even if you can\'t make it.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Claim the spot' })).toBeInTheDocument();
   });
 
   describe('claim', () => {

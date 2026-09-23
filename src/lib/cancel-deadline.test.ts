@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { isPastCancelDeadline, freeCancelUntil, FREE_CANCEL_GRACE_MINUTES } from './cancel-deadline';
+import {
+  isPastCancelDeadline,
+  freeCancelUntil,
+  freeCancelUntilFor,
+  FREE_CANCEL_GRACE_MINUTES,
+} from './cancel-deadline';
 
 describe('isPastCancelDeadline', () => {
   const deadline = new Date('2026-04-09T09:00:00Z');
@@ -46,5 +51,28 @@ describe('freeCancelUntil', () => {
 
   it('the grace is fifteen minutes', () => {
     expect(FREE_CANCEL_GRACE_MINUTES).toBe(15);
+  });
+});
+
+describe('freeCancelUntilFor', () => {
+  const deadline = new Date('2026-06-01T06:00:00Z');
+  const promotedAt = new Date('2026-06-01T05:55:00Z'); // inside the last 15 minutes
+
+  it('is the deadline for no linked entry at all', () => {
+    expect(freeCancelUntilFor(deadline, null)).toEqual(deadline);
+  });
+
+  it('extends the deadline for a promoted entry, matching freeCancelUntil', () => {
+    expect(freeCancelUntilFor(deadline, { status: 'promoted', promotedAt })).toEqual(
+      freeCancelUntil(deadline, promotedAt),
+    );
+  });
+
+  it('gives a claimed entry no grace, even with the same promotedAt a promotion would extend on', () => {
+    expect(freeCancelUntilFor(deadline, { status: 'claimed', promotedAt })).toEqual(deadline);
+  });
+
+  it('gives a waiting entry no grace — it was never promoted', () => {
+    expect(freeCancelUntilFor(deadline, { status: 'waiting', promotedAt: null })).toEqual(deadline);
   });
 });

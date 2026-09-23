@@ -13,6 +13,8 @@ import { ClassPriceLine } from '@/components/booking/price-range';
 import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { getWaitlistWindow, cancelDeadlineInstant } from '@/services/waitlist';
+import { freeCancelUntilFor } from '@/lib/cancel-deadline';
+import { formatInstantInZone } from '@/lib/timezone';
 import { studentNotificationHref } from '@/lib/notification-links';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
@@ -61,6 +63,9 @@ export default async function StudentBookingsPage() {
           },
         },
         payment: true,
+        // Whether this booking's seat came from an auto-promotion, and when
+        // — the input `freeCancelUntilFor` needs to grant the #236 grace.
+        waitlistEntry: { select: { status: true, promotedAt: true } },
       },
     }),
     prisma.waitlistEntry.findMany({
@@ -275,6 +280,15 @@ export default async function StudentBookingsPage() {
                 cls.minStudents,
                 cls.maxStudents,
               );
+              const tz = cls.calendarEntry.teacher.defaultTimezone;
+              // The DELETE route reads this same instant off the same
+              // `waitlistEntry` shape, through the same `freeCancelUntilFor`
+              // (`cancel-deadline.ts`) — so the button's copy and the
+              // server's charge decision cannot read different clocks.
+              const freeCancelUntil = freeCancelUntilFor(
+                cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz),
+                reg.waitlistEntry,
+              );
               return (
                 <div key={reg.id} className="bg-sand-soft border border-border rounded-card p-5">
                   <div className="flex items-center justify-between gap-2">
@@ -325,12 +339,8 @@ export default async function StudentBookingsPage() {
                       <div className="mt-3">
                         <CancelBookingButton
                           registrationId={reg.id}
-                          cancelDeadline={cls.cancelDeadline}
-                          cancelDeadlineAt={cancelDeadlineInstant(
-                            cls.calendarEntry,
-                            cls.cancelDeadline,
-                            cls.calendarEntry.teacher.defaultTimezone,
-                          ).toISOString()}
+                          freeCancelUntilAt={freeCancelUntil.toISOString()}
+                          freeCancelUntilLabel={formatInstantInZone(freeCancelUntil, tz)}
                         />
                       </div>
                     )
