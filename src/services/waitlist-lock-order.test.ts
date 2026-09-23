@@ -694,20 +694,6 @@ describe('withdrawWaitingEntriesForTeacher re-checks status against a promotion 
     });
     await addToWaitlist(prisma, classId, studentIds[0]!);
 
-    // Precondition: exactly this fixture's own waiting entry. Without this,
-    // a sibling that died mid-mutation and left studentIds[0] waiting on its
-    // own class would surface here as a `lockSets`/`status` mismatch instead
-    // of naming the real cause.
-    expect(
-      await prisma.waitlistEntry.count({
-        where: {
-          studentId: studentIds[0]!,
-          status: 'waiting',
-          class: { calendarEntry: { teacherId } },
-        },
-      }),
-    ).toBe(1);
-
     const lockSets = captureLockSets();
 
     // A handshake, not a sleep: the sibling guards above measured
@@ -727,7 +713,19 @@ describe('withdrawWaitingEntriesForTeacher re-checks status against a promotion 
           where: { classId_studentId: { classId, studentId: studentIds[0]! } },
           data: { status: 'promoted' },
         });
-        await new Promise((r) => setTimeout(r, 800));
+        // A second handshake, not a fixed sleep: poll until Postgres reports
+        // this backend blocking another one — the withdrawal's own
+        // `FOR UPDATE` request landing on this same row — instead of
+        // guessing how long that takes to arrive.
+        const deadline = Date.now() + 5_000;
+        for (;;) {
+          const [row] = await tx.$queryRaw<Array<{ n: number }>>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+             WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))`;
+          if ((row?.n ?? 0) > 0) break;
+          if (Date.now() > deadline) throw new Error('withdrawal never blocked on the held Class row');
+          await new Promise((r) => setTimeout(r, 25));
+        }
         holderCommitting = true;
       },
       { timeout: 20_000 },
@@ -735,14 +733,33 @@ describe('withdrawWaitingEntriesForTeacher re-checks status against a promotion 
     await held;
 
     try {
+      // Precondition: exactly this fixture's own waiting entry. Without this,
+      // a sibling that died mid-mutation and left studentIds[0] waiting on its
+      // own class would surface here as a `lockSets`/`status` mismatch instead
+      // of naming the real cause.
+      expect(
+        await prisma.waitlistEntry.count({
+          where: {
+            studentId: studentIds[0]!,
+            status: 'waiting',
+            class: { calendarEntry: { teacherId } },
+          },
+        }),
+      ).toBe(1);
+
       await prisma.$transaction((tx) =>
         withdrawWaitingEntriesForTeacher(tx, { teacherId, studentId: studentIds[0]! }),
       );
-      // True only if the holder held C before the withdrawal reached it; the
-      // `[[classId]]` check below rules out the withdrawal arriving after
-      // the holder committed. Neither assertion proves the window alone —
-      // together they do.
-      expect(holderCommitting).toBe(true);
+      const holderCommittingAtReturn = holderCommitting;
+      await holder;
+
+      // True only if the holder set it before the withdrawal's blocked lock
+      // request could return — the holder releases the row (ending its
+      // transaction) only once it has set this; the `[[classId]]` check
+      // below rules out the withdrawal arriving after the holder had already
+      // committed. Neither assertion proves the window alone — together they
+      // do.
+      expect(holderCommittingAtReturn).toBe(true);
 
       expect(lockSets).toEqual([[classId]]);
 
@@ -751,7 +768,7 @@ describe('withdrawWaitingEntriesForTeacher re-checks status against a promotion 
       });
       expect(entry.status).toBe('promoted');
     } finally {
-      await holder;
+      await holder.catch(() => {});
       await prisma.waitlistEntry.deleteMany({ where: { classId } });
       await prisma.registration.deleteMany({ where: { classId } });
       await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
