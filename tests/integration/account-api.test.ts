@@ -653,9 +653,7 @@ describe('DELETE /api/account', () => {
   /**
    * `PARTIAL_ERASURE_BUSY`: the same lock race as `ERASURE_BUSY` above, but
    * on a dual account, where the student half commits before the teacher
-   * half reaches for the held class row. `erasureFailure` (`route.ts`) reads
-   * a committed student half as `partial`, which is what turns this into
-   * `PARTIAL_ERASURE_BUSY` rather than plain `ERASURE_BUSY`.
+   * half reaches for the held class row.
    *
    * The student profile carries no registrations or entries, so the student
    * half's own pre-lock finds nothing the holder below holds — the timeout
