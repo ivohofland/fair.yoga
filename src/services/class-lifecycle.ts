@@ -25,6 +25,7 @@ import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatEuro } from '@/lib/format';
+import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { log } from '@/lib/log';
 
 export { ECONOMIC_FIELDS, type EconomicField };
@@ -837,7 +838,7 @@ export async function completeClass(
         recipientId: reg.studentId,
         type: 'payment_request' as const,
         title: 'Payment requested',
-        body: `Your price for ${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} is ${formatEuro(s.price)}. Pay your teacher directly.`,
+        body: studentPaymentRequestBody(reg.status, cls.calendarEntry, s.price),
         relatedClassId: cls.id,
       };
     });
