@@ -1,5 +1,6 @@
 /**
- * Whether `now` has passed the cancel deadline.
+ * Whether `now` is strictly after the cancel deadline — the deadline instant
+ * itself is still in time.
  *
  * Pure and import-free, so a client component can import it directly.
  */

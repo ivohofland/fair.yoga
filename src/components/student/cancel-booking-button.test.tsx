@@ -12,8 +12,8 @@ function reply(status: number, body: unknown) {
   };
 }
 
-// Far enough past every fixed system time this file sets that the
-// request-flow tests (real clock, no fake timers) never cross it.
+// Ahead of the real clock, so the request-flow tests (no fake timers) open
+// the before-deadline confirm.
 const FUTURE_DEADLINE = '2099-01-01T00:00:00.000Z';
 
 describe('CancelBookingButton', () => {
@@ -99,9 +99,10 @@ describe('CancelBookingButton', () => {
 });
 
 /**
- * The deadline is decided once, at the first "Cancel booking" tap, and
- * stored — never recomputed from the clock at render. Scoped to this
- * describe block so the fetch-flow tests above keep the real clock.
+ * Whether the deadline has passed is decided once, at the first "Cancel
+ * booking" tap, and held — never recomputed from the clock at render.
+ * Scoped to this describe block so the fetch-flow tests above keep the real
+ * clock.
  */
 describe('CancelBookingButton deadline-aware copy', () => {
   const DEADLINE = '2026-06-01T12:00:00.000Z';
