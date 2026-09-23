@@ -37,6 +37,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { expectErased } from '../../tests/erasure-assertions';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -778,7 +779,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       },
     }) as unknown as PrismaClient;
 
-    const teacherErasure = deleteTeacherAccount(teacherRacing, teacherId)
+    const teacherErasure = expectErased(deleteTeacherAccount(teacherRacing, teacherId))
       .then(() => 'teacher-ok' as const)
       .catch((err: unknown) => ({ error: String(err) }) as const);
 
@@ -800,7 +801,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       // Time for the teacher's pre-lock to reach and block on its first row.
       await new Promise((r) => setTimeout(r, 200));
 
-      studentErasure = deleteStudentAccount(studentRacing, studentId)
+      studentErasure = expectErased(deleteStudentAccount(studentRacing, studentId))
         .then(() => 'student-ok' as const)
         .catch((err: unknown) => ({ error: String(err) }) as const);
 
@@ -1174,7 +1175,9 @@ it('waits for a class row another transaction holds before renumbering other stu
     );
     await new Promise((r) => setTimeout(r, 150));
 
-    const erasing = deleteStudentAccount(prisma, fixtureStudentId).then(() => 'returned' as const);
+    const erasing = expectErased(deleteStudentAccount(prisma, fixtureStudentId)).then(
+      () => 'returned' as const,
+    );
     const outcome = await Promise.race([
       erasing,
       new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
@@ -1250,7 +1253,7 @@ it.each(['waiting', 'promoted', 'claimed', 'expired', 'removed'] as const)(
     // locking; and the `holderReleased` check that used to sit beside it was
     // sampled before the holder's own sleep elapsed, so it could not fail
     // either way and carried no information.
-    const erasedAfterHolder = deleteStudentAccount(prisma, fixtureStudentId).then(
+    const erasedAfterHolder = expectErased(deleteStudentAccount(prisma, fixtureStudentId)).then(
       () => holderReleased,
     );
 
@@ -1550,7 +1553,7 @@ it('completes after real contention on more than one Class row lock', async () =
     // for either one.
     await new Promise((r) => setTimeout(r, 150));
 
-    const erasing = deleteStudentAccount(prisma, fixture.studentId).then(() => ({
+    const erasing = expectErased(deleteStudentAccount(prisma, fixture.studentId)).then(() => ({
       aReleasedAtReturn: aReleased,
       bReleasedAtReturn: bReleased,
     }));
@@ -1627,7 +1630,7 @@ it('does not deadlock against a transaction that locks the class first and then 
     // erasure starts — mirrors the settle in the wait test above.
     await new Promise((r) => setTimeout(r, 50));
 
-    const erasing = deleteStudentAccount(prisma, fixtureStudentId)
+    const erasing = expectErased(deleteStudentAccount(prisma, fixtureStudentId))
       .then(() => 'returned' as const)
       .catch((err: unknown) => ({ error: String(err) }) as const);
 
@@ -1797,7 +1800,9 @@ describe('deleteTeacherAccount blocks concurrent registrations on classes it loc
       });
     onTestFinished(() => spy.mockRestore());
 
-    const erasing = deleteTeacherAccount(prisma, teacherId).then(() => 'erased' as const);
+    const erasing = expectErased(deleteTeacherAccount(prisma, teacherId)).then(
+      () => 'erased' as const,
+    );
     await atLock;
 
     let registrationLanded = false;
@@ -2162,7 +2167,7 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
     await new Promise((r) => setTimeout(r, 100));
 
     let erasureSettled = false;
-    const erasing = deleteTeacherAccount(prisma, teacherId).then(() => {
+    const erasing = expectErased(deleteTeacherAccount(prisma, teacherId)).then(() => {
       erasureSettled = true;
     });
 
@@ -2273,7 +2278,7 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
     await new Promise((r) => setTimeout(r, 100));
 
     let erasureSettled = false;
-    const erasing = deleteTeacherAccount(prisma, teacherId).then(() => {
+    const erasing = expectErased(deleteTeacherAccount(prisma, teacherId)).then(() => {
       erasureSettled = true;
     });
 
@@ -2475,7 +2480,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       let erasing: Promise<'erased' | { error: string }> | undefined;
       try {
         await awaitHandshake(isParked, 'Student FOR SHARE holder');
-        erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
           () => 'erased' as const,
           (err: unknown) => ({ error: String(err) }),
         );
@@ -2514,7 +2519,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       });
       onTestFinished(() => spy.mockRestore());
 
-      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+      const erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
         () => 'erased' as const,
         (err: unknown) => err,
       );
@@ -2570,7 +2575,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       });
       onTestFinished(() => spy.mockRestore());
 
-      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+      const erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
         () => 'erased' as const,
         (err: unknown) => err,
       );
@@ -2654,7 +2659,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       let erasing: Promise<'erased' | { error: string }> | undefined;
       try {
         await awaitHandshake(promoterHolds, 'promoteNext class lock');
-        erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
           () => 'erased' as const,
           (err: unknown) => ({ error: String(err) }),
         );
@@ -2731,7 +2736,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       });
       onTestFinished(() => spy.mockRestore());
 
-      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+      const erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
         () => 'erased' as const,
         (err: unknown) => ({ error: String(err) }),
       );
@@ -2826,7 +2831,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       let erasing: Promise<'erased' | { error: string }> | undefined;
       try {
         await awaitHandshake(gateHeld, 'join Student lock');
-        erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
           () => 'erased' as const,
           (err: unknown) => ({ error: String(err) }),
         );

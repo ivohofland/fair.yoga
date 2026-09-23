@@ -4,12 +4,13 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import * as dbLocks from '@/lib/db-locks';
 import * as waitlist from '@/services/waitlist';
-import { deleteStudentAccount } from '@/services/gdpr';
+import { deleteStudentAccount, type ErasureOutcome } from '@/services/gdpr';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import { prisma as appPrisma } from '@/lib/db';
 import { cookie, seedSession } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
+import { expectErased } from '../../../../tests/erasure-assertions';
 import { POST } from './route';
 
 /**
@@ -76,8 +77,8 @@ function settle(response: Promise<Response>): Promise<Settled> {
   );
 }
 
-function settleErasure(erasure: Promise<unknown>): Promise<SettledErasure> {
-  return erasure.then(
+function settleErasure(erasure: Promise<ErasureOutcome>): Promise<SettledErasure> {
+  return expectErased(erasure).then(
     () => 'erased' as const,
     (err: unknown) => ({ error: String(err) }),
   );
