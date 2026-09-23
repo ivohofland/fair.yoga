@@ -299,10 +299,10 @@ export type ErasureHalf = 'student' | 'teacher';
 
 /**
  * What an erasure did. `erased: false` is not a failure: the profile was
- * already erased, by a concurrent request that won, and this call's own
- * transaction rolled back whole rather than commit a redundant second pass.
- * A caller that ignores the value is still correct — the goal holds either
- * way. Every genuine failure rejects.
+ * already erased — by an earlier call, or by a concurrent one that won — and
+ * this call's own transaction rolled back whole rather than commit a
+ * redundant second pass. A caller that ignores the value is still correct —
+ * the goal holds either way. Every genuine failure rejects.
  */
 export type ErasureOutcome = { erased: true } | { erased: false; reason: 'already-erased' };
 
