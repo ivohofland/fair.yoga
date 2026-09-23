@@ -6,6 +6,7 @@ import type { createRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
 import type { NewRoomForm } from './add-room-flow';
+import { readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PublicRoomNotice } from './public-room-notice';
@@ -120,14 +121,14 @@ export function RoomCreateStep({
       });
 
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
-        setCreateError(json.error?.message ?? 'Failed to create room');
+        setCreateError(await readErrorMessage(res, 'Failed to create room'));
         return;
       }
 
       const json: { data: RoomResult } = await res.json();
       onCreated(json.data);
-    } catch {
+    } catch (err) {
+      console.error('[room-create-step] request failed', err);
       setCreateError('Network error. Please try again.');
     } finally {
       setCreating(false);

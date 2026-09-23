@@ -16,6 +16,7 @@ import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation, formatDateWithYear, formatEuro } from '@/lib/format';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
+import { readErrorMessage } from '@/lib/client-errors';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -300,8 +301,7 @@ export default function CreateClassPage() {
       });
 
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
-        setSubmitError(json.error?.message ?? 'Failed to create class');
+        setSubmitError(await readErrorMessage(res, 'Failed to create class'));
         return;
       }
 

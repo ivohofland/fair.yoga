@@ -26,7 +26,20 @@ describe('AddRoomFlow', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
+
+  /**
+   * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+   * HTML error page takes, which the plain `{ ok, json }` stubs above cannot
+   * express.
+   */
+  function htmlResponse(status = 502): Response {
+    return new Response('<html><body>502 Bad Gateway</body></html>', {
+      status,
+      headers: { 'Content-Type': 'text/html' },
+    });
+  }
 
   function stubFetch() {
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
@@ -295,5 +308,68 @@ describe('AddRoomFlow', () => {
 
     expect(await screen.findByText('Network error. Please try again.')).toBeDefined();
     expect(screen.queryByText('Search failed. Please try again.')).toBeNull();
+  });
+
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the create step's own fallback
+   * and leaves a console record instead of the generic network copy a
+   * `SyntaxError` landing in its bare outer `catch` would produce.
+   */
+  it('shows the fallback and logs when the room create refusal body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: [] }) };
+      if (url === '/api/rooms' && init?.method === 'POST') return htmlResponse(502);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no rooms found/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
+
+    expect(await screen.findByText('Failed to create room')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
+  it('shows network copy and logs when the room create request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: [] }) };
+      if (url === '/api/rooms' && init?.method === 'POST') throw new TypeError('Failed to fetch');
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no rooms found/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[room-create-step] request failed', expect.any(TypeError));
   });
 });

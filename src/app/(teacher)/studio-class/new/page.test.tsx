@@ -23,7 +23,20 @@ describe('NewStudioClassPage', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
+
+  /**
+   * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+   * HTML error page takes, which the plain `{ ok, json }` stub above cannot
+   * express.
+   */
+  function htmlResponse(status = 502): Response {
+    return new Response('<html><body>502 Bad Gateway</body></html>', {
+      status,
+      headers: { 'Content-Type': 'text/html' },
+    });
+  }
 
   function stubFetch() {
     fetchMock.mockResolvedValue({
@@ -323,5 +336,40 @@ describe('NewStudioClassPage', () => {
     // before this line returns, so no waiting is needed to observe it.
     fireEvent.submit(form);
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+  });
+
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the page's own fallback and
+   * leaves a console record instead of the generic network copy a
+   * `SyntaxError` landing in the outer catch would produce.
+   */
+  it('shows the fallback and logs when the create refusal body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(htmlResponse(502));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(await screen.findByText('Failed to create studio class')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
+  it('shows network copy and logs when the request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[studio-class-new] request failed', expect.any(TypeError));
   });
 });

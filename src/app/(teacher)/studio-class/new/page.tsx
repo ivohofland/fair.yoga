@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { createStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
+import { readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
@@ -141,8 +142,7 @@ export default function NewStudioClassPage() {
       });
 
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
-        setError(json.error?.message ?? 'Failed to create studio class');
+        setError(await readErrorMessage(res, 'Failed to create studio class'));
         return;
       }
 
@@ -161,7 +161,8 @@ export default function NewStudioClassPage() {
       // income.
       setCreatedId(json.data.id);
       router.push(studioClassPath(json.data.id));
-    } catch {
+    } catch (err) {
+      console.error('[studio-class-new] request failed', err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

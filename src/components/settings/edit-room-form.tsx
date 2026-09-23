@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -96,8 +97,7 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
       });
 
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
-        setError(json.error?.message ?? 'Failed to save');
+        setError(await readErrorMessage(res, 'Failed to save'));
         return;
       }
 
@@ -113,14 +113,14 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
       });
 
       if (!trRes.ok) {
-        const json: { error?: { message?: string } } = await trRes.json();
-        setError(json.error?.message ?? 'Failed to save settings');
+        setError(await readErrorMessage(trRes, 'Failed to save settings'));
         return;
       }
 
       setSuccess('Saved');
       router.refresh();
-    } catch {
+    } catch (err) {
+      console.error('[edit-room-form] request failed', err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

@@ -5,6 +5,7 @@ import type { z } from 'zod';
 import type { createTeacherRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
+import { readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatRoomLocation } from '@/lib/format';
@@ -87,13 +88,13 @@ export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettings
       });
 
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
-        setSettingsError(json.error?.message ?? 'Failed to link room');
+        setSettingsError(await readErrorMessage(res, 'Failed to link room'));
         return;
       }
 
       onSaved();
-    } catch {
+    } catch (err) {
+      console.error('[room-settings-step] request failed', err);
       setSettingsError('Network error. Please try again.');
     } finally {
       setSaving(false);

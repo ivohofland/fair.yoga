@@ -18,7 +18,19 @@ describe('EditTeacherRoomForm', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
+
+  /**
+   * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+   * HTML error page takes.
+   */
+  function htmlResponse(status = 502): Response {
+    return new Response('<html><body>502 Bad Gateway</body></html>', {
+      status,
+      headers: { 'Content-Type': 'text/html' },
+    });
+  }
 
   function stubFetch() {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
@@ -75,5 +87,41 @@ describe('EditTeacherRoomForm', () => {
     );
     const { body } = await submit();
     expect(body.equipmentNotes).toBeNull();
+  });
+
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the form's own fallback and
+   * leaves a console record instead of the generic network copy a
+   * `SyntaxError` landing in the bare outer `catch` would produce.
+   */
+  it('shows the fallback and logs when the refusal body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(htmlResponse(502));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<EditTeacherRoomForm teacherRoomId="tr-1" initial={initial} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText('Failed to save')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
+  it('shows network copy and logs when the request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<EditTeacherRoomForm teacherRoomId="tr-1" initial={initial} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[edit-teacher-room-form] request failed',
+      expect.any(TypeError),
+    );
   });
 });
