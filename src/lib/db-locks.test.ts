@@ -418,6 +418,22 @@ describe('lockClassRowsOrdered', () => {
     expect(locked).toEqual([lowClassId, highClassId]);
   });
 
+  it("binds a value from the join fragment in source order with the where fragment's", async () => {
+    // studentB waits only on `lowClassId` (studentA waits on both), so the
+    // join's `studentId` parameter is what narrows the two-class `where` down
+    // to one. Swapped merge order would bind `studentBId` against a class id
+    // instead and `lowClassId`/`highClassId` against `studentId`, so the join
+    // would match nothing and this would come back `[]` instead — that
+    // difference is what the assertion below is pinning.
+    const locked = await prisma.$transaction((tx) =>
+      lockClassRowsOrdered(tx, {
+        join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id AND w."studentId" = ${studentBId}`,
+        where: Prisma.sql`c.id IN (${lowClassId}, ${highClassId})`,
+      }),
+    );
+    expect(locked).toEqual([lowClassId]);
+  });
+
   it('locks the Class rows and NOT the WaitlistEntry rows the join reaches', async () => {
     // The `OF c`. It is one of the four things `lockClassRowsOrdered`'s
     // docblock says it exists to own, and until #239's review it was the only
