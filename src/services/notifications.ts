@@ -17,7 +17,7 @@ import type {
 } from '@prisma/client';
 import { notificationBus } from '@/lib/event-bus';
 import { log } from '@/lib/log';
-import { isEmailEligible } from './notification-policy';
+import { isEmailEligible, IMMEDIATE_EMAIL_TYPES } from './notification-policy';
 import { classStartInstant } from '@/lib/timezone';
 
 /** Accepts a plain client or a transaction client so notification creation
@@ -168,11 +168,19 @@ export async function getUnreadForEmailFallback(
 
   // Class-linked rows are fetched regardless of age: a class starting
   // within the urgent window makes them eligible before the threshold.
+  // Immediate-email types are fetched regardless of age too, from the same
+  // set `isEmailEligible` checks below, so the two cannot drift — an
+  // immediate type this OR left out would still reach `isEmailEligible`,
+  // just up to `thresholdMinutes` late.
   const candidates = await db.notification.findMany({
     where: {
       isRead: false,
       emailSent: false,
-      OR: [{ createdAt: { lt: threshold } }, { relatedClassId: { not: null } }],
+      OR: [
+        { createdAt: { lt: threshold } },
+        { relatedClassId: { not: null } },
+        { type: { in: [...IMMEDIATE_EMAIL_TYPES] } },
+      ],
     },
     include: {
       relatedClass: {

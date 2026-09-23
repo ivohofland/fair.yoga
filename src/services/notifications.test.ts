@@ -393,4 +393,30 @@ describe('getUnreadForEmailFallback', () => {
     expect(ours2).toHaveLength(1);
     expect(ours2[0]!.id).toBe(oldNotificationId);
   });
+
+  // #236 m6: the SQL prefilter used to admit a row only by age or by
+  // carrying a relatedClassId, so an immediate-email type with neither —
+  // brand new, no class link — would have been dropped before
+  // `isEmailEligible` ever saw it.
+  it('returns a brand-new, class-less notification of an immediate-email type', async () => {
+    const freshImmediate = await prisma.notification.create({
+      data: {
+        recipientType: 'teacher',
+        recipientId: teacherId,
+        type: 'waitlist_promoted',
+        title: 'Immediate, no class link',
+        body: 'Created just now, with no relatedClassId.',
+        isRead: false,
+        emailSent: false,
+        relatedClassId: null,
+      },
+    });
+
+    const unread = await getUnreadForEmailFallback(prisma);
+    const ours = unread.filter((n) => n.id === freshImmediate.id);
+
+    expect(ours).toHaveLength(1);
+
+    await prisma.notification.delete({ where: { id: freshImmediate.id } });
+  });
 });

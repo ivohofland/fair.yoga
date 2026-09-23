@@ -5,7 +5,7 @@ import {
   renderMagicLinkEmail,
   renderInvitationEmail,
 } from './email-templates';
-import { STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH } from './notification-links';
+import { STUDENT_INVITATION_PATH, STUDENT_BOOKINGS_PATH, TEACHER_INVITATION_PATH } from './notification-links';
 
 describe('email templates', () => {
   it('escapes HTML in notification titles and bodies', () => {
@@ -113,6 +113,34 @@ describe('email templates', () => {
       'https://example.test',
     );
     expect(html).not.toContain('href=');
+  });
+
+  // #236 m5: the one email built to be read inside a 15-minute grace (or a
+  // 60-minute claim race) had nowhere to click.
+  it('links a waitlist promotion to the student bookings page (#236)', () => {
+    const { html } = renderNotificationEmail(
+      {
+        type: 'waitlist_promoted',
+        title: 'You are in',
+        body: 'A spot opened in Vinyasa and you moved off the waitlist.',
+        recipientType: 'student',
+      },
+      'https://example.test',
+    );
+    expect(html).toContain(`href="https://example.test${STUDENT_BOOKINGS_PATH}"`);
+  });
+
+  it('links a spot-available broadcast to the student bookings page (#236)', () => {
+    const { html } = renderNotificationEmail(
+      {
+        type: 'spot_available',
+        title: 'A spot opened up',
+        body: 'A spot opened in Vinyasa — first to claim it gets in.',
+        recipientType: 'student',
+      },
+      'https://example.test',
+    );
+    expect(html).toContain(`href="https://example.test${STUDENT_BOOKINGS_PATH}"`);
   });
 
   it('magic-link email carries the link and the expiry note', () => {
