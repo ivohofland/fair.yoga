@@ -37,8 +37,8 @@ describe('NewClassPage', () => {
 
   /**
    * A real `Response` whose `json()` genuinely throws — the shape a proxy's
-   * HTML error page takes, which the plain `{ ok, status, json }` stubs
-   * elsewhere in this file cannot express.
+   * HTML error page takes, which the plain object stubs elsewhere in this
+   * file cannot express.
    */
   function htmlResponse(status = 502): Response {
     return new Response('<html><body>502 Bad Gateway</body></html>', {
@@ -297,12 +297,11 @@ describe('NewClassPage', () => {
   });
 
   /**
-   * Past a 2xx the class WAS created — `POST /api/classes` commits before
-   * answering — so an unreadable body must not read as a failure that
-   * invites a resend into the 409 `DUPLICATE_CLASS_SLOT` guard (#327). The
-   * wizard has no id to settle on or push to, so it neither settles nor
-   * navigates; it stays on step 4 with "Create class" enabled and the
-   * reload copy shown.
+   * A 2xx means the server accepted the create, so an unreadable body must
+   * not read as a failure that invites a resend. The wizard has no id to
+   * settle on or push to, so it neither settles nor navigates; "Create
+   * class" is disabled instead of staying enabled for a click that would
+   * resend the same create.
    */
   it('shows the fallback and logs when the create success body is unreadable, and does not navigate', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -315,13 +314,42 @@ describe('NewClassPage', () => {
     await fillAndSubmit();
 
     expect(
-      await screen.findByText('Class created — reload to confirm before trying again.'),
+      await screen.findByText('Class created — find it on your Schedule.'),
     ).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       '[class-new] created, but the response was unreadable',
       expect.objectContaining({ err: expect.anything() }),
     );
     expect(routerPush).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /create class/i })).toBeDisabled();
+  });
+
+  /**
+   * H. Same outcome as the test above, reached through a readable body that
+   * lacks `data.id` rather than an unreadable one — the `typeof … !==
+   * 'string'` guard is what catches this shape.
+   */
+  it('shows the fallback and logs when the create success body has no id, and does not navigate', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === '/api/classes'
+          ? { ok: true, status: 201, json: async () => ({ data: {} }) }
+          : { ok: true, json: async () => ({ data: [ROOM] }) },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await fillAndSubmit();
+
+    expect(
+      await screen.findByText('Class created — find it on your Schedule.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[class-new] created, but the response was unreadable',
+      expect.objectContaining({ err: expect.anything() }),
+    );
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /create class/i })).toBeDisabled();
   });
 
   it('shows network copy and logs when the create request itself fails', async () => {
@@ -342,25 +370,9 @@ describe('NewClassPage', () => {
   });
 
   /**
-   * #40, whole-branch review F1. This wizard was outside the branch's census,
-   * which was scoped to `src/components/` and `src/lib/` — but it is the same
-   * defect in the same shape: `router.push` on success with
-   * `finally { setSubmitting(false) }` behind it, so a push that never commits
-   * leaves a fully populated review step with "Create class" re-enabled.
-   *
-   * Nothing downstream catches the obvious second click. `POST /api/classes`
-   * writes a bare entry-plus-class pair with no dedupe, and the only unique
-   * key on the entry is `@@unique([scheduleRuleId, date])`, which a manually
-   * created row cannot trip: its `scheduleRuleId` is null, and Postgres treats
-   * NULLs as distinct.
-   *
-   * WHAT THE SECOND CLICK COSTS CHANGED IN #327, and the guard is still the
-   * fix. `CalendarEntry_teacher_slot_excl` refuses a second entry on the same
-   * span, so the duplicate is no longer created — the second request answers
-   * 409 `DUPLICATE_CLASS_SLOT` instead. The teacher gets an error for having
-   * clicked twice on a form that was working, where they used to get two
-   * bookable classes. Neither is an outcome to ship, and only this guard
-   * prevents the request being sent at all.
+   * #40, whole-branch review F1. A push that never commits must not leave a
+   * populated review step with "Create class" re-enabled — that invites a
+   * resend of the same create.
    *
    * The assertion is on the fetch count, not on rendered text: a partial fix
    * that only changed a label would satisfy a text assertion and still allow

@@ -81,6 +81,13 @@ export default function NewStudioClassPage() {
    * disagree.
    */
   const [createdId, setCreatedId] = useState<string | null>(null);
+  /**
+   * Set when the create POST answered 2xx but its body couldn't be read, so
+   * there is no id to settle `createdId` on. The studio class exists
+   * server-side either way, so this keeps "Log class" disabled the same way
+   * `createdId` does on the readable path, rather than inviting a resend.
+   */
+  const [createUnconfirmed, setCreateUnconfirmed] = useState(false);
 
   function updateField(setter: (val: string) => void) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -154,31 +161,36 @@ export default function NewStudioClassPage() {
       return;
     }
 
+    let id: string;
     try {
       const json: { data: { id: string } } = await res.json();
       if (typeof json?.data?.id !== 'string') {
         throw new Error('missing id');
       }
-      // #40. A second identical POST to /api/studio-classes now collides
-      // with `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH
-      // &&, WHERE "cancelledAt" IS NULL — #327) and comes back as a 409
-      // DUPLICATE_STUDIO_SLOT (`api/studio-classes/route.ts`) rather than a
-      // second row. That backstop is server-side and after the round trip,
-      // though — it does not stop the second request from being sent, or
-      // turn its failure into anything gentler than an error banner. The
-      // push below normally unmounts this page; when it does not commit,
-      // `createdId` is what stops a populated form with "Log class"
-      // re-enabled from inviting the click that resends the same log and now
-      // earns a 409 instead of silently double-counting the teacher's
-      // income.
-      setCreatedId(json.data.id);
-      router.push(studioClassPath(json.data.id));
+      id = json.data.id;
     } catch (err) {
       console.error('[studio-class-new] created, but the response was unreadable', { err });
-      setError('Studio class saved — reload to confirm before trying again.');
-    } finally {
+      setError('Studio class logged — find it on your Schedule.');
+      setCreateUnconfirmed(true);
       setSubmitting(false);
+      return;
     }
+
+    // #40. A second identical POST to /api/studio-classes now collides
+    // with `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH
+    // &&, WHERE "cancelledAt" IS NULL — #327) and comes back as a 409
+    // DUPLICATE_STUDIO_SLOT (`api/studio-classes/route.ts`) rather than a
+    // second row. That backstop is server-side and after the round trip,
+    // though — it does not stop the second request from being sent, or
+    // turn its failure into anything gentler than an error banner. The
+    // push below normally unmounts this page; when it does not commit,
+    // `createdId` is what stops a populated form with "Log class"
+    // re-enabled from inviting the click that resends the same log and now
+    // earns a 409 instead of silently double-counting the teacher's
+    // income.
+    setCreatedId(id);
+    router.push(studioClassPath(id));
+    setSubmitting(false);
   }
 
   return (
@@ -209,7 +221,7 @@ export default function NewStudioClassPage() {
             onAction={() => router.push(studioClassPath(createdId))}
           />
         ) : (
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || createUnconfirmed}>
             {submitting ? 'Creating...' : 'Log class'}
           </Button>
         )}
