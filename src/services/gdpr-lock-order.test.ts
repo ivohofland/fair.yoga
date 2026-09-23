@@ -2642,13 +2642,14 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       let stalled = false;
       const original = dbLocks.lockClassRow;
       const spy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, classId) => {
-        await original(tx, classId);
+        const lock = await original(tx, classId);
         if (classId === fx.classId && !stalled) {
           stalled = true;
           promoterPid = await ownPid(tx);
           holding();
           await released;
         }
+        return lock;
       });
       onTestFinished(() => spy.mockRestore());
 

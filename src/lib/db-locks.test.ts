@@ -14,6 +14,7 @@ import {
   statusesWhere,
   statusInList,
   StudentErasedError,
+  type ClassLock,
   type TransactionClientOnly,
 } from './db-locks';
 import { claimTemplateForGeneration } from '@/services/class-generator';
@@ -58,7 +59,7 @@ afterAll(async () => {
  * are invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> {
+async function _theBrandRejectsABareClient(client: PrismaClient, lock: ClassLock): Promise<void> {
   // @ts-expect-error A bare PrismaClient must never satisfy the brand: on it,
   // `SET LOCAL` and `FOR UPDATE` have no transaction to live in.
   await lockClassRow(client, 'never-called');
@@ -75,7 +76,7 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   await withdrawWaitingEntriesForTeacher(client, { teacherId: 'x', studentId: 'y' });
   // @ts-expect-error Read-only, but meaningless off a bare client: it would
   // count outside the caller's lock, which is the defect it exists to prevent.
-  await readSeatCount(client, 'never-called');
+  await readSeatCount(client, lock);
   // @ts-expect-error Takes NO lock of its own — the strongest case on this
   // list, not the weakest. It is a write that relies entirely on its caller
   // already holding the `Class` row lock, so off a bare client it would close
@@ -87,6 +88,25 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   await lockStudentForErasure(client, 'never-called');
   // @ts-expect-error `SET LOCAL` then `FOR SHARE` on `Student` (#183).
   await lockLiveStudent(client, 'never-called');
+}
+
+/**
+ * `readSeatCount` counts only a class some statement has locked (#219). The
+ * brand above proves the caller is inside a transaction; this proves the
+ * caller holds a `ClassLock`, which only `lockClassRow` mints, for the class
+ * being counted. Neither implies the other, so each has its own pins.
+ *
+ * One directive per way of reaching the count without a lock, because each
+ * one fails under a different weakening: widening the parameter to accept a
+ * string frees the first, and dropping the brand from `ClassLock` frees the
+ * second.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _readSeatCountRequiresALock(tx: TransactionClientOnly): Promise<void> {
+  // @ts-expect-error A raw id is a class nobody locked — #212's shape exactly.
+  await readSeatCount(tx, 'never-called');
+  // @ts-expect-error A hand-built token is the same thing with a costume on.
+  await readSeatCount(tx, { classId: 'never-called' });
 }
 
 describe('the shared lock timeout', () => {
@@ -711,6 +731,12 @@ describe('lockClassRowsOrdered', () => {
 
     expect(await modeOf(Prisma.sql`FOR UPDATE`)).toContain('RowShareLock');
     expect(await modeOf(Prisma.empty)).toEqual(['AccessShareLock']);
+  });
+
+  it('lockClassRow hands back a token naming the class it locked', async () => {
+    const { tx } = captureStatements();
+    const lock = await lockClassRow(tx, 'class-219');
+    expect(lock.classId).toBe('class-219');
   });
 });
 

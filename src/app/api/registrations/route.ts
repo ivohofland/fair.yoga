@@ -116,7 +116,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
       // Serialize concurrent registrations for this class: without the row
       // lock, two simultaneous requests both count below max and both insert.
-      await lockClassRow(tx, body.classId);
+      const lock = await lockClassRow(tx, body.classId);
 
       // Read the class UNDER that lock, and decide everything from this row.
       // #107: this read used to happen before the transaction, so `status`,
@@ -190,7 +190,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         isTeacher &&
         (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
 
-      const { isFull } = await readSeatCount(tx, body.classId);
+      const { isFull } = await readSeatCount(tx, lock);
 
       if (isFull && !isWalkIn) {
         throw new ClassFullError();
