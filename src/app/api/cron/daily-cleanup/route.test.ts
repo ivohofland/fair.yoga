@@ -17,19 +17,20 @@ import { NextRequest } from 'next/server';
  * on the grounds that no precedent existed under `src/app/api` and the
  * in-process scheduler — not this route — runs the sweeps in production. That
  * reasoning still stands and this file does not reopen it: nothing here asserts
- * which sweep was called or what it did. It asserts only the mapping from three
- * outcomes to one HTTP status.
+ * which sweep was called or what it did. It asserts only the mapping from every
+ * sweep's outcome to one HTTP status.
  *
  * Mocking is also the only SAFE instrument. An e2e or integration test would run
  * against the app's database — dev, locally — and `reapClosedWaitlistEntries` is
  * deliberately unscoped, so a Playwright spec POSTing this route would
  * permanently delete dev rows. The guard that refuses a non-`_test` database
  * lives in `waitlist-retention.test.ts`, not in the service, so it would not fire.
- * With all three services mocked this file touches no database at all.
+ * With every sweep mocked this file touches no database at all.
  */
 
 const cleanupExpiredAuth = vi.fn();
 const reapClosedWaitlistEntries = vi.fn();
+const reapExpiredNotifications = vi.fn();
 const auditTeacherTimezones = vi.fn();
 
 vi.mock('@/services/auth-cleanup', () => ({
@@ -37,6 +38,9 @@ vi.mock('@/services/auth-cleanup', () => ({
 }));
 vi.mock('@/services/waitlist-retention', () => ({
   reapClosedWaitlistEntries: (...args: unknown[]) => reapClosedWaitlistEntries(...args),
+}));
+vi.mock('@/services/notification-retention', () => ({
+  reapExpiredNotifications: (...args: unknown[]) => reapExpiredNotifications(...args),
 }));
 vi.mock('@/services/timezone-audit', () => ({
   auditTeacherTimezones: (...args: unknown[]) => auditTeacherTimezones(...args),
@@ -58,6 +62,7 @@ interface Body {
   data: {
     auth: { ok: boolean; error?: string };
     waitlistRetention: { ok: boolean; error?: string };
+    notificationRetention: { ok: boolean; error?: string };
     timezoneAudit: { ok: boolean; error?: string };
   };
 }
@@ -72,12 +77,15 @@ function transientError(): Error {
 beforeEach(() => {
   cleanupExpiredAuth.mockReset();
   reapClosedWaitlistEntries.mockReset();
+  reapExpiredNotifications.mockReset();
   auditTeacherTimezones.mockReset();
   // A clean audit by default. Without this an unmocked `vi.fn()` returns
   // `undefined`, which `settle` reports as a SUCCESS — so the audit would
   // appear to pass in every case here for the wrong reason, and the failure
   // case below would be the only one actually exercising it.
   auditTeacherTimezones.mockResolvedValue({ checked: 3, teachers: 0, invalid: [] });
+  // Same reason, for notification retention.
+  reapExpiredNotifications.mockResolvedValue({ deleted: 0, periods: [] });
 });
 
 describe('POST /api/cron/daily-cleanup — status contract', () => {
@@ -89,6 +97,22 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     const body = (await res.json()) as Body;
 
     expect(res.status).toBe(200);
+    expect(body.data.auth.ok).toBe(true);
+    expect(body.data.waitlistRetention.ok).toBe(true);
+    expect(body.data.notificationRetention.ok).toBe(true);
+    expect(body.data.timezoneAudit.ok).toBe(true);
+  });
+
+  it('answers non-2xx when notification retention fails, and the other sweeps still ran', async () => {
+    cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
+    reapClosedWaitlistEntries.mockResolvedValue({ deleted: 0, classes: 0 });
+    reapExpiredNotifications.mockRejectedValue(new Error('boom'));
+
+    const res = await POST(post());
+    const body = (await res.json()) as Body;
+
+    expect(res.status).toBe(500);
+    expect(body.data.notificationRetention.ok).toBe(false);
     expect(body.data.auth.ok).toBe(true);
     expect(body.data.waitlistRetention.ok).toBe(true);
     expect(body.data.timezoneAudit.ok).toBe(true);

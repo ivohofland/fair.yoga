@@ -55,6 +55,7 @@ export interface SchedulerSweeps {
    */
   runWaitlistReconciliationTick: (db: PrismaClient) => Promise<unknown>;
   reapClosedWaitlistEntries: (db: PrismaClient) => Promise<unknown>;
+  reapExpiredNotifications: (db: PrismaClient) => Promise<unknown>;
   auditTeacherTimezones: (db: PrismaClient) => Promise<unknown>;
 }
 
@@ -122,6 +123,7 @@ export async function startScheduler(): Promise<void> {
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
   const { runWaitlistReconciliationTick } = await import('@/services/waitlist-reconciliation');
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
+  const { reapExpiredNotifications } = await import('@/services/notification-retention');
   const { auditTeacherTimezones } = await import('@/services/timezone-audit');
 
   const jobs = buildJobs({
@@ -135,6 +137,7 @@ export async function startScheduler(): Promise<void> {
     cleanupExpiredAuth,
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
+    reapExpiredNotifications,
     auditTeacherTimezones,
   });
 
@@ -206,6 +209,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     cleanupExpiredAuth,
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
+    reapExpiredNotifications,
     auditTeacherTimezones,
   } = sweeps;
 
@@ -236,37 +240,38 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     },
     {
       // Renamed from `auth-cleanup` when waitlist retention joined it (#238):
-      // the job is the daily retention slot now, not the auth one. Three
-      // sweeps through `isolatedSweeps` (the timezone audit joined, #145)
-      // rather than a seventh job, so there is one daily timer and one obvious
-      // slot for the next retention policy (#223 poses the same question for
-      // `Notification`).
+      // the job is the daily retention slot now, not the auth one. Every
+      // sweep in this job runs through `isolatedSweeps` (the timezone audit
+      // joined, #145; notification retention joined, #223) rather than
+      // getting its own job, so there is one daily timer and one obvious slot
+      // for the next retention policy.
       //
       // The cost, recorded rather than glossed: `/api/health` reports one
-      // `lastRunAt` for all three sweeps instead of one each. Acceptable here
-      // and not for `waitlist-reconciliation`, which took its own job name
-      // deliberately — a 60-second correctness sweep needs its own health
-      // signal in a way a daily retention sweep does not.
+      // `lastRunAt` for every sweep in this job instead of one each.
+      // Acceptable here and not for `waitlist-reconciliation`, which took its
+      // own job name deliberately — a 60-second correctness sweep needs its
+      // own health signal in a way a daily retention sweep does not.
       name: 'daily-cleanup',
       intervalMs: 24 * 60 * MINUTE,
       run: isolatedSweeps('daily-cleanup', [
         cleanupExpiredAuth,
         reapClosedWaitlistEntries,
+        reapExpiredNotifications,
         // LAST, and the position is a default rather than a guarantee.
         // `isolatedSweeps` runs every sweep and rethrows the FIRST error, so a
         // standing bad timezone — which reports every run until a row is
-        // fixed — would otherwise mask a real failure in either sweep above.
+        // fixed — would otherwise mask a real failure in any sweep above.
         //
         // That protects `lastError`, which stays in server logs for whoever is
         // debugging. It does NOT protect `/api/health`'s `healthy` flag
         // (`healthy: j.lastError === null`, `health/route.ts`): that flag is
-        // shared across all three sweeps, and a standing timezone problem
-        // already holds it at `false`. A real failure in `cleanupExpiredAuth`
-        // or `reapClosedWaitlistEntries` while the timezone row stands produces
-        // no observable change there — the flag was false already. So the
-        // ordering keeps the two siblings' failures legible in logs, but
-        // `/api/health` stays uninformative about them until the bad row is
-        // fixed. Recorded as a tradeoff, not mitigated architecturally.
+        // shared across every sweep in this job, and a standing timezone
+        // problem already holds it at `false`. A real failure in a sweep
+        // above it while the timezone row stands produces no observable
+        // change there — the flag was false already. So the ordering keeps
+        // the other sweeps' failures legible in logs, but `/api/health` stays
+        // uninformative about them until the bad row is fixed. Recorded as a
+        // tradeoff, not mitigated architecturally.
         auditTeacherTimezones,
       ]),
     },
