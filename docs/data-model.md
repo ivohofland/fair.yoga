@@ -569,7 +569,7 @@ gate".
 | position | int | Queue order |
 | status | enum | waiting → promoted / claimed / expired / removed |
 | promoted_at | datetime, nullable | |
-| *registration_id* (FK) | → Registration, nullable | Created when student is promoted |
+| *registration_id* (FK) | → Registration, nullable | Created when student is promoted or claimed |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
