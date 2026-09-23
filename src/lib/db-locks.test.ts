@@ -421,10 +421,10 @@ describe('lockClassRowsOrdered', () => {
   it("binds a value from the join fragment in source order with the where fragment's", async () => {
     // studentB waits only on `lowClassId` (studentA waits on both), so the
     // join's `studentId` parameter is what narrows the two-class `where` down
-    // to one. Swapped merge order would bind `studentBId` against a class id
-    // instead and `lowClassId`/`highClassId` against `studentId`, so the join
-    // would match nothing and this would come back `[]` instead — that
-    // difference is what the assertion below is pinning.
+    // to one. Merged where-first, the join's placeholder would receive
+    // `lowClassId` (and `studentBId` would land on a `c.id` comparison), so
+    // the join would match nothing and this would come back `[]` instead —
+    // that difference is what the assertion below is pinning.
     const locked = await prisma.$transaction((tx) =>
       lockClassRowsOrdered(tx, {
         join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id AND w."studentId" = ${studentBId}`,
