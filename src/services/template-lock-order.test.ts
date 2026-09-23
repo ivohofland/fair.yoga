@@ -500,14 +500,15 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    the sync test's shape — would pass unconditionally for this
    *    fixture, fixed or not (see the transcript above).
    * 2. **Keep the `warn` spy this `it` sets up, with its assertion
-   *    flipped**: `expect(archiveLostRaceLog).toBeDefined()` becomes
-   *    `expect(archiveLostRaceLog).toBeUndefined()`. All three of `40P01`,
-   *    `55P03` and `P2028` still reach this same `catch` via
-   *    `transientDbFailure`, but only `55P03` and `P2028` log at `warn` —
-   *    `40P01` logs at `error` (`TRANSIENT_KIND_LEVEL`,
-   *    `src/lib/api-errors.ts`). That split does not weaken this `it`: point
-   *    3's `ok: true` assertion below is what actually proves none of the
-   *    three fired, regardless of which level they would have logged at.
+   *    flipped, and spy `error` too**: `expect(archiveLostRaceLog).toBeDefined()`
+   *    becomes `expect(archiveLostRaceLog).toBeUndefined()`, searched across
+   *    both spies' calls. All three of `40P01`, `55P03` and `P2028` still
+   *    reach this same `catch` via `transientDbFailure`, and `40P01` logs at
+   *    `error` while `55P03` and `P2028` log at `warn` (`TRANSIENT_KIND_LEVEL`,
+   *    `src/lib/api-errors.ts`) — a `warn`-only spy would miss a `40P01` fire
+   *    entirely, leaving this point's assertion true whether or not the catch
+   *    fired. Spying both levels makes it a real signal again, independent of
+   *    point 3's `ok: true` assertion below.
    * 3. **Assert a positive success shape**:
    *    `expect(aSettled.value).toMatchObject({ ok: true, action: 'archived' })`
    *    in place of the old `toEqual({ ok: false, reason: 'busy' })`. With
@@ -626,8 +627,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       // silently swallowed — see point 2 above. `mockImplementation` matches
       // `class-generator-lock-order.test.ts`'s own use of this spy on the same
       // log line, so the real warning is suppressed from the test's console
-      // output rather than merely observed.
+      // output rather than merely observed. Both levels are spied because
+      // `40P01` logs at `error` while `55P03` and `P2028` log at `warn`
+      // (`TRANSIENT_KIND_LEVEL`, `src/lib/api-errors.ts`) — a `warn`-only spy
+      // would miss a `40P01` fire.
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      const error = vi.spyOn(log, 'error').mockImplementation(() => log);
       try {
         const b = deleteStudentAccount(erasureDb, studentId);
 
@@ -653,7 +658,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
         const [aSettled, bSettled] = await Promise.allSettled([a, b]);
 
-        const archiveLostRaceLog = warn.mock.calls.find(
+        const archiveLostRaceLog = [...warn.mock.calls, ...error.mock.calls].find(
           (call) => call[1] === 'recurring class archive hit a transient database failure',
         );
 
@@ -685,6 +690,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         }
       } finally {
         warn.mockRestore();
+        error.mockRestore();
       }
     },
     30_000,
@@ -839,6 +845,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       }) as unknown as PrismaClient;
 
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      // Both levels are spied because `40P01` logs at `error` while `55P03`
+      // and `P2028` log at `warn` (`TRANSIENT_KIND_LEVEL`,
+      // `src/lib/api-errors.ts`) — a `warn`-only spy would miss a `40P01` fire.
+      const error = vi.spyOn(log, 'error').mockImplementation(() => log);
       try {
         const b = deleteStudentAccount(erasureDb, studentId);
         await lowLockedPromise;
@@ -846,7 +856,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
         const [aSettled, bSettled] = await Promise.allSettled([a, b]);
 
-        const archiveLostRaceLog = warn.mock.calls.find(
+        const archiveLostRaceLog = [...warn.mock.calls, ...error.mock.calls].find(
           (call) => call[1] === 'recurring class archive hit a transient database failure',
         );
 
@@ -875,6 +885,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         }
       } finally {
         warn.mockRestore();
+        error.mockRestore();
       }
     },
     30_000,
