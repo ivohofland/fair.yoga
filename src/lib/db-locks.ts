@@ -75,13 +75,15 @@ export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: 
 declare const classLockBrand: unique symbol;
 
 /**
- * Proof that this transaction holds the `Class` row lock for `classId`.
+ * Proof that a transaction took the `Class` row lock for `classId`; pass it
+ * only within that transaction.
  *
- * Minted only by `lockClassRow` below, which is the only `as ClassLock` in
- * `src/`. `readSeatCount` (`services/capacity.ts`) requires one, so counting a
- * class nobody locked, or a different class from the one locked, does not
- * compile (#219). It does not tie the token to a particular transaction
- * client; `TransactionClientOnly` narrows that but cannot close it.
+ * Minted by `lockClassRow` below; `eslint.config.mjs` refuses a cast to
+ * `ClassLock` anywhere else in non-test `src/`. `readSeatCount`
+ * (`services/capacity.ts`) requires one, so counting a class nobody locked,
+ * or a different class from the one locked, does not compile (#219). It does
+ * not tie the token to a particular transaction client; `TransactionClientOnly`
+ * narrows that but cannot close it.
  */
 export type ClassLock = { readonly classId: string; readonly [classLockBrand]: true };
 
@@ -286,8 +288,8 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * that counted could catch it; only re-deriving the names could. Grep for
  * `lockClassRow(` when you need them.
  *
- * Returns a `ClassLock` for the row it just locked. Callers that only need the
- * lock discard it; a caller that counts seats passes it to `readSeatCount`.
+ * Returns a `ClassLock` for the class it just locked. Callers that only need
+ * the lock discard it; a caller that counts seats passes it to `readSeatCount`.
  *
  * Must be given a transaction client for the lock to have anywhere to live —
  * see the brand paragraph above for what enforces that at compile time.
@@ -300,6 +302,10 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
     JOIN "Class" c ON c."calendarEntryId" = e.id
     WHERE c.id = ${classId}
     FOR UPDATE OF e`;
+  // The one mint site the ClassLock selector in eslint.config.mjs exists to
+  // be the sole exception to; a second disable anywhere else is the
+  // regression it guards against.
+  // eslint-disable-next-line no-restricted-syntax
   return { classId } as ClassLock;
 }
 

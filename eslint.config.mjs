@@ -3,6 +3,19 @@ import nextVitals from 'eslint-config-next/core-web-vitals';
 import nextTs from 'eslint-config-next/typescript';
 import prettier from 'eslint-config-prettier';
 
+// Shared by both `no-restricted-syntax` blocks below that police `ClassLock`
+// (src/lib/db-locks.ts, #219) — one object so the broad src/ block and its
+// override for src/services/roster-link.ts can't drift apart. Matches both
+// `x as ClassLock` and `<ClassLock>x`; `x as unknown as ClassLock` is already
+// an outer `TSAsExpression` whose own `typeAnnotation` is `ClassLock`, so it
+// needs no separate branch.
+const classLockCastSelector = {
+  selector:
+    "TSAsExpression[typeAnnotation.typeName.name='ClassLock'], TSTypeAssertion[typeAnnotation.typeName.name='ClassLock']",
+  message:
+    'Only lockClassRow (src/lib/db-locks.ts) mints a ClassLock — take the lock instead of casting one (#219).',
+};
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -13,16 +26,33 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  // Two unrelated `no-restricted-syntax` protections share this one block
+  // rather than each getting its own: in ESLint flat config, a later config
+  // object that sets `no-restricted-syntax` for a file already matched by an
+  // earlier one REPLACES that rule's options for that file rather than
+  // merging them — so a second `src/**` block here would have silently
+  // switched the other one off wherever the two overlapped.
+  //
   // `TeacherStudent` rows are created in exactly one place —
   // `linkTeacherStudent` (src/services/roster-link.ts) — and
   // `src/lib/student-visibility.ts` reasons about the set of callers that
-  // reach it. This rule is what keeps that true: a direct create/upsert
+  // reach it. This selector is what keeps that true: a direct create/upsert
   // outside that one function reopens the read-then-write race #181 closed.
-  // Tests are exempt: some write this table directly on purpose, whether for
-  // plain fixture setup or to pin Prisma's own locking behaviour.
+  //
+  // `ClassLock` is minted in exactly one place — `lockClassRow` — and
+  // `readSeatCount` (src/services/capacity.ts) trusts that to mean the caller
+  // holds the `Class` row lock. A cast forges that trust and would pass every
+  // type guard otherwise in its way, so `classLockCastSelector` above is the
+  // enforcement.
+  //
+  // Tests are exempt from both: some write `teacherStudent` directly on
+  // purpose (fixture setup, or pinning Prisma's own locking behaviour), and
+  // `db-locks.test.ts` builds a deliberately-wrong `ClassLock` shape as a
+  // plain object literal, never a cast, to pin the other half of #219's
+  // protection.
   {
     files: ['src/**/*.ts', 'src/**/*.tsx'],
-    ignores: ['src/services/roster-link.ts', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
+    ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     rules: {
       'no-restricted-syntax': [
         'error',
@@ -32,7 +62,20 @@ const eslintConfig = defineConfig([
           message:
             'Create the roster link with linkTeacherStudent (src/services/roster-link.ts) — a direct create/upsert here reopens the #181 race.',
         },
+        classLockCastSelector,
       ],
+    },
+  },
+  // `linkTeacherStudent` itself is the one place the create/upsert selector
+  // above must NOT apply — this narrower block, matched after the broad one,
+  // replaces its whole `no-restricted-syntax` entry for this one file, which
+  // is what makes only the `ClassLock` selector survive here. This file
+  // never mints or casts a `ClassLock` either, so the selector still
+  // protects it like any other non-test file.
+  {
+    files: ['src/services/roster-link.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', classLockCastSelector],
     },
   },
   // A hardcoded dev-server origin in a test file breaks against any server
