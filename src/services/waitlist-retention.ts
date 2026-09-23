@@ -463,11 +463,11 @@ export async function reapClosedWaitlistEntries(
       // (`waitlist-reconciliation.ts`) sets out at length: `TRANSIENT_KIND_LEVEL`
       // (`lib/api-errors.ts`) is the alerting contract, and a lock timeout on a
       // contended row is the system doing what it was configured to do —
-      // retried on the next run — while a `pool_exhausted` or `deadlock` is an
-      // operational fault and stays at `error` even though it is transient. That
-      // matters here specifically because this module's OWN isolation test
-      // provokes `55P03` and calls it "the realistic failure for this code", so
-      // the routine failure was logging at paging level before this split.
+      // retried on the next run — while some transient kinds log at `error`
+      // even though a retry can win them; `TRANSIENT_KIND_LEVEL` says which.
+      // That matters here specifically because this module's OWN isolation
+      // test provokes `55P03`, which is exactly the routine, `warn`-level
+      // case — "the realistic failure for this code".
       //
       // `failed` and `classes` ride along so a line reads as one of N rather
       // than as an isolated incident.
@@ -522,8 +522,7 @@ function report(summary: ReapSummary): void {
     // `error`, whatever each individual failure was classified as above.
     // Individually each may be a routine transient database failure; a run
     // that attempted N classes and failed all N is a different statement at
-    // any N, and the one
-    // that must not be swallowed.
+    // any N, and the one that must not be swallowed.
     log.error(summary, 'waitlist retention reaped nothing — every class it tried failed');
     throw new RetentionFailedError(summary.classes);
   }
