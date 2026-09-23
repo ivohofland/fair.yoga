@@ -13,7 +13,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  * Single-row operations pass through untouched: they are keyed by an id the
  * sweep took from a scoped read. `rowsRead` exists because a scoped
  * `toBe(0)` passes vacuously when the fixture has fallen out of the sweep's
- * own predicate; pair every zero assertion with it.
+ * own predicate; pair every zero assertion with a presence check.
  *
  * Prisma runs query extensions in attachment order: the earliest-attached
  * hook sees the caller's own args, and each later one only sees what the

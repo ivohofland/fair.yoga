@@ -134,10 +134,11 @@ expect(completed).toBe(0);
 
 - `scoped.db` is `prisma.$extends(...)` cast once to `PrismaClient`. Per named
   model, it `AND`s the given filter into the `where` of the bulk operations:
-  `findMany`, `findFirst`, `count`, `groupBy`, `aggregate`, `updateMany` and
-  `deleteMany`. Single-row operations (`findUnique`, `update`, `delete`) pass
-  through, because they are keyed by an id the sweep already chose from a
-  scoped read. Unnamed models pass through too.
+  `findMany`, `findFirst`, `findFirstOrThrow`, `count`, `groupBy`, `aggregate`,
+  `updateMany`, `updateManyAndReturn` and `deleteMany`. Single-row operations
+  (`findUnique`, `update`, `delete`) pass through, because they are keyed by
+  an id the sweep already chose from a scoped read. Unnamed models pass
+  through too.
 - `scoped.rowsRead(model)` returns the rows the scoped `findMany`/`findFirst`/
   `groupBy` reads returned, summed (`groupBy` because `timezone-audit.ts` and
   `waitlist-retention.ts` read their candidates through it). A `toBe(0)` assertion with no presence check stays
@@ -148,10 +149,11 @@ expect(completed).toBe(0);
   every sweep that claims rows inside a transaction. None of the ten sweep
   modules issues raw SQL (`grep -ln "queryRaw\|executeRaw\|Prisma.sql"` over
   them is empty), so no read escapes the extension. The per-unit helpers they
-  call that do use raw SQL (`entry-generation.ts`, `waitlist.ts`) are checked
-  during the build: each must be keyed by an id that came from a scoped read.
-- The four existing race hooks (`racing` ×3, `overlapping`) compose by being
-  the client handed IN: `scopeSweep(prisma.$extends(racing), scope)`. Prisma 6.19
+  call that do use raw SQL — retention's `lockClassRow` raw lock and the
+  studio generator's `claimRuleForGeneration` — are keyed by an id taken from
+  the scoped read (Tasks 6 and 7 checked this).
+- The existing race and fault hooks compose by being the client handed IN:
+  `scopeSweep(prisma.$extends(racing), scope)`. Prisma 6.19
   runs query extensions in attachment order, so the earliest-attached hook sees
   the sweep's own args and each later one sees what the earlier forwarded
   (measured in Task 1). A race hook attached first therefore still matches the
