@@ -6,18 +6,20 @@ import { Button } from '@/components/ui/button';
 import { readError } from '@/lib/client-errors';
 import { isPastCancelDeadline } from '@/lib/cancel-deadline';
 
-const DEADLINE_LABELS: Record<string, string> = {
-  HOURS_48: '48 hours',
-  HOURS_24: '24 hours',
-  HOURS_12: '12 hours',
-  HOURS_6: '6 hours',
-};
-
 interface CancelBookingButtonProps {
   registrationId: string;
-  cancelDeadline: string;
-  /** ISO instant — `cancelDeadlineInstant` (`@/services/waitlist`), run server-side. */
-  cancelDeadlineAt: string;
+  /**
+   * ISO instant — `freeCancelUntilFor` (`@/lib/cancel-deadline`), run
+   * server-side off the same fetch the DELETE route makes.
+   */
+  freeCancelUntilAt: string;
+  /**
+   * `freeCancelUntilAt` formatted in the teacher's timezone by
+   * `formatInstantInZone` (`@/lib/timezone`), also server-side — this
+   * component does no time formatting of its own, so it never risks
+   * rendering an instant in the server's zone instead of the teacher's.
+   */
+  freeCancelUntilLabel: string;
 }
 
 /**
@@ -32,8 +34,8 @@ interface Confirming {
 
 export function CancelBookingButton({
   registrationId,
-  cancelDeadline,
-  cancelDeadlineAt,
+  freeCancelUntilAt,
+  freeCancelUntilLabel,
 }: CancelBookingButtonProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState<Confirming | null>(null);
@@ -69,7 +71,7 @@ export function CancelBookingButton({
         type="button"
         onClick={() =>
           setConfirming({
-            pastDeadline: isPastCancelDeadline(new Date(cancelDeadlineAt), new Date()),
+            pastDeadline: isPastCancelDeadline(new Date(freeCancelUntilAt), new Date()),
           })
         }
         className="type-label text-danger"
@@ -84,7 +86,7 @@ export function CancelBookingButton({
       <p className="type-body">
         {confirming.pastDeadline
           ? "The cancellation deadline has passed, so you'll still pay your share of this class. Cancelling lets your teacher know you won't be there."
-          : `Cancel this booking? Free until ${DEADLINE_LABELS[cancelDeadline] ?? '24 hours'} before class — after that the class is still charged.`}
+          : `Cancel this booking? Free until ${freeCancelUntilLabel} — after that the class is still charged.`}
       </p>
       <div className="flex gap-3">
         <Button variant="destructive" onClick={handleCancel} disabled={cancelling}>

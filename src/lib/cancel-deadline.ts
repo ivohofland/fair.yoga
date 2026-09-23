@@ -1,3 +1,5 @@
+import type { WaitlistStatus } from '@prisma/client';
+
 /**
  * Whether `now` is strictly after the cancel deadline — the deadline instant
  * itself is still in time.
@@ -20,4 +22,23 @@ export function freeCancelUntil(deadline: Date, promotedAt: Date | null): Date {
   if (promotedAt === null) return deadline;
   const graceEnd = new Date(promotedAt.getTime() + FREE_CANCEL_GRACE_MINUTES * 60 * 1000);
   return graceEnd > deadline ? graceEnd : deadline;
+}
+
+/**
+ * `freeCancelUntil`, taking the linked `WaitlistEntry` projection a caller
+ * fetched rather than a bare `promotedAt` — so the DELETE route and
+ * `/bookings` share the one place that knows only `'promoted'` carries the
+ * grace. `'claimed'` (the student's own act) and `'waiting'`/`'expired'`
+ * (no linked promotion at all) all read as `null`, same as no entry.
+ *
+ * `WaitlistStatus` arrives via `import type` only, so this file stays free of
+ * a runtime `@prisma/client` import — the type is erased at compile time and
+ * takes nothing with it that a client component importing `isPastCancelDeadline`
+ * would otherwise pull in.
+ */
+export function freeCancelUntilFor(
+  deadline: Date,
+  promotion: { status: WaitlistStatus; promotedAt: Date | null } | null,
+): Date {
+  return freeCancelUntil(deadline, promotion?.status === 'promoted' ? promotion.promotedAt : null);
 }

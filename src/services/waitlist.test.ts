@@ -1063,6 +1063,12 @@ describe('claimSpot (DB)', () => {
     });
     expect(notifications).toHaveLength(1);
     expect(notifications[0]!.type).toBe('booking_confirmed');
+    // A claim carries no #236 grace (only a promotion does) — the
+    // confirmation says so, since the student is acting past the deadline
+    // themselves rather than being told about it in advance.
+    expect(notifications[0]!.body).toBe(
+      "You claimed the open spot in Claim Flow. It's past the cancellation deadline, so this class is charged even if you can't make it.",
+    );
   });
 
   /** Claims the freed spot for `waiterId`, and returns what the claim wrote. */
@@ -1831,6 +1837,15 @@ describe('handleSpotFreed (DB)', () => {
     const whenFree = await handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW);
     expect(whenFree).toEqual({ action: 'broadcast', notified: 2 });
     expect(await countBroadcasts()).toBe(2);
+
+    const broadcasts = await prisma.notification.findMany({
+      where: { relatedClassId: classId, type: 'spot_available' },
+    });
+    for (const notification of broadcasts) {
+      expect(notification.body).toBe(
+        'A spot opened in SpotFreed Flow. Claim it in the app to take it — the first claim gets it.',
+      );
+    }
   });
 
   /**

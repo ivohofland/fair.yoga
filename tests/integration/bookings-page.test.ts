@@ -4,6 +4,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
+import { formatInstantInZone } from '@/lib/timezone';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -349,6 +350,30 @@ describe('GET /bookings (page) — upcoming registration count', () => {
     // timezone), this literal stops appearing and the class-start instant
     // (2099-07-01T07:00:00.000Z) would appear in its place.
     expect(html).toContain('2099-06-30T07:00:00.000Z');
+  });
+
+  /**
+   * Step 4's server-render check, run at the page rather than the component:
+   * `CancelBookingButton`'s confirm copy sits behind a client `useState`
+   * that only a tap sets, so a `renderToStaticMarkup` of the component alone
+   * never reaches it (`cancel-booking-button.test.tsx` covers that gap and
+   * says why). What a page fetch CAN show is the prop the server handed the
+   * client component — Next.js serialises a Client Component's props into
+   * the page's own HTML response, the same mechanic the instant-literal
+   * assertion above already leans on. This student has no linked
+   * `WaitlistEntry`, so the label is `formatInstantInZone` of the bare
+   * deadline read in the teacher's zone — computed here the same way the
+   * page computes it, not hardcoded, so a format change to
+   * `formatInstantInZone` cannot silently desync the two.
+   */
+  it('hands the cancel button a label formatted server-side, in the teacher\'s zone', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
+    const html = await res.text();
+    const expectedLabel = formatInstantInZone(
+      new Date('2099-06-30T07:00:00.000Z'),
+      'Europe/Amsterdam',
+    );
+    expect(html).toContain(expectedLabel);
   });
 });
 

@@ -765,11 +765,12 @@ export async function claimSpot(
       where: { id: entry.id },
       // 'claimed', not 'promoted' — matching the direct-booking resolver
       // (`api/registrations/route.ts`). `promoted` means the system placed
-      // the student; `claimed` means the student took it themselves, and the
-      // DELETE route's student branch (`api/registrations/[id]/route.ts`)
-      // reads that distinction to give only a `promoted` entry the #236
-      // free-cancel grace — `freeCancelUntil` (`cancel-deadline.ts`) itself
-      // takes a bare `promotedAt` and knows nothing of `WaitlistEntry.status`.
+      // the student; `claimed` means the student took it themselves, and
+      // `freeCancelUntilFor` (`cancel-deadline.ts`) reads that distinction to
+      // give only a `promoted` entry the #236 free-cancel grace — the DELETE
+      // route's student branch (`api/registrations/[id]/route.ts`) and
+      // `/bookings` both call it rather than branching on `status` a second
+      // time each.
       data: { status: 'claimed', promotedAt: new Date(), registrationId: registration.id },
     });
 
@@ -779,7 +780,7 @@ export async function claimSpot(
         recipientId: studentId,
         type: 'booking_confirmed',
         title: 'Spot claimed',
-        body: `You claimed the open spot in ${cls.calendarEntry.classType}.`,
+        body: `You claimed the open spot in ${cls.calendarEntry.classType}. It's past the cancellation deadline, so this class is charged even if you can't make it.`,
         relatedClassId: classId,
       },
     ]);
@@ -987,7 +988,7 @@ export async function handleSpotFreed(
           recipientId: w.studentId,
           type: 'spot_available' as const,
           title: 'A spot opened up',
-          body: `A spot opened in ${cls.calendarEntry.classType}. The first to claim it gets it.`,
+          body: `A spot opened in ${cls.calendarEntry.classType}. Claim it in the app to take it — the first claim gets it.`,
           relatedClassId: classId,
         })),
       );

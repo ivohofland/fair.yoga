@@ -13,8 +13,10 @@ function reply(status: number, body: unknown) {
 }
 
 // Ahead of the real clock, so the request-flow tests (no fake timers) open
-// the before-deadline confirm.
-const FUTURE_DEADLINE = '2099-01-01T00:00:00.000Z';
+// the before-deadline confirm. The label is never read by those tests — only
+// the fetch flow is under test there.
+const FUTURE_INSTANT = '2099-01-01T00:00:00.000Z';
+const FUTURE_LABEL = 'Fri 1 Jan 00:00';
 
 describe('CancelBookingButton', () => {
   const fetchMock = vi.fn();
@@ -29,8 +31,8 @@ describe('CancelBookingButton', () => {
     render(
       <CancelBookingButton
         registrationId="reg-1"
-        cancelDeadline="HOURS_24"
-        cancelDeadlineAt={FUTURE_DEADLINE}
+        freeCancelUntilAt={FUTURE_INSTANT}
+        freeCancelUntilLabel={FUTURE_LABEL}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
@@ -99,13 +101,14 @@ describe('CancelBookingButton', () => {
 });
 
 /**
- * Whether the deadline has passed is decided once, at the first "Cancel
- * booking" tap, and held — never recomputed from the clock at render.
- * Scoped to this describe block so the fetch-flow tests above keep the real
- * clock.
+ * Whether the free-cancel instant has passed is decided once, at the first
+ * "Cancel booking" tap, and held — never recomputed from the clock at
+ * render. Scoped to this describe block so the fetch-flow tests above keep
+ * the real clock.
  */
-describe('CancelBookingButton deadline-aware copy', () => {
-  const DEADLINE = '2026-06-01T12:00:00.000Z';
+describe('CancelBookingButton free-cancel-aware copy', () => {
+  const FREE_UNTIL_AT = '2026-06-01T12:00:00.000Z';
+  const FREE_UNTIL_LABEL = 'Mon 1 Jun 12:00';
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -115,31 +118,31 @@ describe('CancelBookingButton deadline-aware copy', () => {
     vi.useRealTimers();
   });
 
-  it('shows the before-deadline copy while the deadline is still ahead', () => {
+  it('shows the free-until label verbatim while the instant is still ahead', () => {
     vi.setSystemTime(new Date('2026-06-01T10:00:00.000Z'));
     render(
       <CancelBookingButton
         registrationId="reg-1"
-        cancelDeadline="HOURS_24"
-        cancelDeadlineAt={DEADLINE}
+        freeCancelUntilAt={FREE_UNTIL_AT}
+        freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
 
     expect(
       screen.getByText(
-        'Cancel this booking? Free until 24 hours before class — after that the class is still charged.',
+        'Cancel this booking? Free until Mon 1 Jun 12:00 — after that the class is still charged.',
       ),
     ).toBeInTheDocument();
   });
 
-  it('shows the after-deadline copy once the deadline has passed', () => {
+  it('shows the after-instant copy once the free-cancel instant has passed', () => {
     vi.setSystemTime(new Date('2026-06-01T13:00:00.000Z'));
     render(
       <CancelBookingButton
         registrationId="reg-1"
-        cancelDeadline="HOURS_24"
-        cancelDeadlineAt={DEADLINE}
+        freeCancelUntilAt={FREE_UNTIL_AT}
+        freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
@@ -151,31 +154,31 @@ describe('CancelBookingButton deadline-aware copy', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows the before-deadline copy exactly at the deadline, matching the server\'s `>`', () => {
-    vi.setSystemTime(new Date(DEADLINE));
+  it('shows the before-instant copy exactly at the free-until instant, matching the server\'s `>`', () => {
+    vi.setSystemTime(new Date(FREE_UNTIL_AT));
     render(
       <CancelBookingButton
         registrationId="reg-1"
-        cancelDeadline="HOURS_24"
-        cancelDeadlineAt={DEADLINE}
+        freeCancelUntilAt={FREE_UNTIL_AT}
+        freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
 
     expect(
       screen.getByText(
-        'Cancel this booking? Free until 24 hours before class — after that the class is still charged.',
+        'Cancel this booking? Free until Mon 1 Jun 12:00 — after that the class is still charged.',
       ),
     ).toBeInTheDocument();
   });
 
-  it('decides at tap time, not at render — a clock that crosses the deadline while the page sits open shows the after copy', () => {
+  it('decides at tap time, not at render — a clock that crosses the instant while the page sits open shows the after copy', () => {
     vi.setSystemTime(new Date('2026-06-01T10:00:00.000Z'));
     render(
       <CancelBookingButton
         registrationId="reg-1"
-        cancelDeadline="HOURS_24"
-        cancelDeadlineAt={DEADLINE}
+        freeCancelUntilAt={FREE_UNTIL_AT}
+        freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
     );
 
@@ -189,13 +192,13 @@ describe('CancelBookingButton deadline-aware copy', () => {
     ).toBeInTheDocument();
   });
 
-  it('holds the before copy across a re-render, even once the clock has since crossed the deadline', () => {
+  it('holds the before copy across a re-render, even once the clock has since crossed the instant (#664)', () => {
     vi.setSystemTime(new Date('2026-06-01T10:00:00.000Z'));
     const { rerender } = render(
       <CancelBookingButton
         registrationId="reg-1"
-        cancelDeadline="HOURS_24"
-        cancelDeadlineAt={DEADLINE}
+        freeCancelUntilAt={FREE_UNTIL_AT}
+        freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
@@ -204,15 +207,43 @@ describe('CancelBookingButton deadline-aware copy', () => {
     rerender(
       <CancelBookingButton
         registrationId="reg-1"
-        cancelDeadline="HOURS_24"
-        cancelDeadlineAt={DEADLINE}
+        freeCancelUntilAt={FREE_UNTIL_AT}
+        freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
     );
 
     expect(
       screen.getByText(
-        'Cancel this booking? Free until 24 hours before class — after that the class is still charged.',
+        'Cancel this booking? Free until Mon 1 Jun 12:00 — after that the class is still charged.',
       ),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Step 4's server-render check. `renderToStaticMarkup` only ever sees the
+ * component's initial (unconfirmed) render — the confirm copy is behind
+ * `useState`, set from an `onClick` handler, and static rendering runs no
+ * event and commits no state update. So there is no way to reach the label
+ * text through `renderToStaticMarkup`; what it CAN show is that the initial
+ * markup carries no formatted time of its own (no weekday/hour digits) for
+ * this component to have derived — the label passed in never appears before
+ * a tap, because nothing is formatted until a tap asks for it via the prop.
+ * The prop-to-copy flow itself (the label appearing verbatim once tapped) is
+ * already covered by the fake-timer tests above; this test's job is only to
+ * back up that the component does no formatting of its own before that.
+ */
+describe('CancelBookingButton server-render', () => {
+  it('renders only the trigger button server-side, with no time formatting of its own', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const html = renderToStaticMarkup(
+      <CancelBookingButton
+        registrationId="reg-1"
+        freeCancelUntilAt={FUTURE_INSTANT}
+        freeCancelUntilLabel={FUTURE_LABEL}
+      />,
+    );
+    expect(html).toContain('Cancel booking');
+    expect(html).not.toContain(FUTURE_LABEL);
   });
 });
