@@ -131,7 +131,7 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 
 Two separate deadlines serve different purposes:
 
-**Student cancellation deadline** (48/24/12/6h before class): the cutoff for penalty-free cancellation. Students who cancel after this deadline or who don't show up are still included in the price calculation and charged their share.
+**Student cancellation deadline** (48/24/12/6h before class): the cutoff for penalty-free cancellation. Students who cancel after this deadline or who don't show up are still included in the price calculation and charged their share — except an auto-promoted student inside their 15-minute grace (see Waitlist above).
 
 **Auto-cancel check** (4/2/1h before class): the system checks if the minimum number of students is registered. If not, the class is automatically cancelled and all students are notified. No charges are applied. No teacher action is required.
 
