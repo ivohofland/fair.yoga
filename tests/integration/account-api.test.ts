@@ -1008,13 +1008,11 @@ describe('DELETE /api/account', () => {
   }, 40_000);
 
   /**
-   * #213: "unchanged" means this request attempted a half and every half it
-   * attempted had already been erased by someone else. A session cannot hold
-   * no live profile, though — `validateSession` (`lib/auth/session.ts`)
-   * resolves only live profiles and deletes a session whose account has none
-   * left, so this request 401s before the handler runs, the same as an
-   * unrecognised token. The route's `outcomes.length > 0 &&` guard exists for
-   * the case that would attempt nothing; no live session can reach it.
+   * #213: the pin that makes the route's `outcomes.every(...)` check safe.
+   * `validateSession` (`lib/auth/session.ts`) resolves only live profiles and
+   * deletes a session whose account holds none, so a request on such an
+   * account 401s here, before the handler runs, the same as an unrecognised
+   * token — `DELETE /api/account` never evaluates an empty `outcomes` list.
    */
   it('rejects a session on an account with no live profile', async () => {
     const mail = `accdel-noprofile-${suffix}@test.local`;

@@ -112,9 +112,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  // One entry per half this request attempts. `SessionUser` guarantees at
-  // least one of `teacherId`/`studentId` is set, so a session that reaches
-  // here always attempts at least one half — see the response below.
+  // One entry per half this request attempts.
   const outcomes: ErasureOutcome[] = [];
 
   // "Delete my account" erases every profile the account holds. The two
@@ -218,16 +216,14 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     outcomes.push(outcome);
   }
 
-  // Already done only when this request attempted something and every half
-  // it attempted had been erased by someone else first: then it wrote
-  // nothing. `outcomes` is never empty for a session that reached this line
-  // (see the declaration above), so this is the same as `outcomes.every(...)`
-  // for every request that gets here — the length check is what keeps that
-  // true if that guarantee ever loosens.
-  const response =
-    outcomes.length > 0 && outcomes.every((o) => !o.erased)
-      ? respondUnchanged<{ deleted: true }>({ deleted: true })
-      : respondOk({ deleted: true });
+  // Already done when every half this request attempted had been erased by
+  // someone else first: then it wrote nothing. `outcomes` is never empty —
+  // `requireSession` only admits a session with at least one live profile
+  // (`validateSession`), so every request that gets here attempts at least
+  // one half.
+  const response = outcomes.every((o) => !o.erased)
+    ? respondUnchanged<{ deleted: true }>({ deleted: true })
+    : respondOk({ deleted: true });
   // The winner already deleted the sessions on the unchanged path; the
   // caller's cookie now points at nothing either way.
   clearSessionCookie(response.headers);
