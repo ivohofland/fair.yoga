@@ -13,8 +13,8 @@ import {
 } from '@/lib/api-utils';
 import { updateRegistrationSchema } from '@/lib/schemas';
 import { transientDbFailure } from '@/lib/api-errors';
-import { DEADLINE_HOURS, handleSpotFreed, SpotFreedError, spotFreedLoss } from '@/services/waitlist';
-import { classStartInstant } from '@/lib/timezone';
+import { cancelDeadlineInstant, handleSpotFreed, SpotFreedError, spotFreedLoss } from '@/services/waitlist';
+import { isPastCancelDeadline } from '@/lib/cancel-deadline';
 import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { formatDayHeader } from '@/lib/format';
@@ -292,14 +292,13 @@ export const DELETE = withErrorHandler(async (
   // Enforce cancellation deadline for students (teachers can always cancel).
   // The deadline is computed from the class start in the teacher's timezone.
   if (isStudent) {
-    const hours = DEADLINE_HOURS[registration.class.cancelDeadline] ?? 24;
-    const classStart = classStartInstant(
+    const deadline = cancelDeadlineInstant(
       registration.class.calendarEntry,
+      registration.class.cancelDeadline,
       registration.class.calendarEntry.teacher.defaultTimezone,
     );
-    const deadline = new Date(classStart.getTime() - hours * 60 * 60 * 1000);
 
-    if (new Date() > deadline) {
+    if (isPastCancelDeadline(deadline, new Date())) {
       // Past deadline — mark as late_cancel (still charged).
       //
       // Status in the WHERE, not just the pre-check above: that pre-check is a
@@ -307,9 +306,10 @@ export const DELETE = withErrorHandler(async (
       // concurrent cancels both pass it.
       //
       // NOT for the doubled broadcast the full-cancel branch below guards
-      // against — this branch is reached only when `now > deadline`, and
-      // `getWaitlistWindow` returns `frozen` for exactly that, so
-      // `handleSpotFreed` sends nothing here. It is for money. `late_cancel`
+      // against — this branch is reached only when `isPastCancelDeadline`
+      // holds, and `getWaitlistWindow` returns `frozen` for exactly that
+      // instant (`cancelDeadlineInstant`), so `handleSpotFreed` sends nothing
+      // here. It is for money. `late_cancel`
       // is in `CHARGED_STATUSES` (`class-lifecycle.ts`) and `cancelled` is
       // not, so an unscoped write here can land *after* a teacher's free
       // cancel and silently rewrite `cancelled` → `late_cancel`, billing a

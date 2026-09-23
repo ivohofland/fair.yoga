@@ -166,16 +166,34 @@ export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
 // ---------------------------------------------------------------------------
 
 /**
+ * The cancel-deadline instant for a class: its start, minus the deadline
+ * enum's hours, as a real elapsed-time subtraction (not a wall-clock-preserved
+ * one — a class near a DST transition can have a different UTC offset at its
+ * deadline instant than at its own start).
+ *
+ * Server-side only — it goes through `classStartInstant`, which logs through
+ * pino (`@/lib/log`). `isPastCancelDeadline` (`@/lib/cancel-deadline`), pure
+ * and client-safe, is what compares this instant against `now`.
+ */
+export function cancelDeadlineInstant(
+  entry: { date: Date; startTime: Date },
+  cancelDeadline: CancelDeadline,
+  timeZone: string,
+): Date {
+  const classStart = classStartInstant(entry, timeZone);
+  return new Date(classStart.getTime() - DEADLINE_HOURS[cancelDeadline] * 60 * 60 * 1000);
+}
+
+/**
  * Determines which promotion window the waitlist is currently in.
  *
  * Given a class date, start time (`@db.Time`, teacher-local), the teacher's
  * timezone, and the cancel deadline enum:
- * 1. Resolve classDate + startTime in the teacher's timezone → class start
- * 2. Subtract deadline hours → deadline time
- * 3. Subtract 1 more hour → cutoff time
- * 4. If now >= deadline → 'frozen'
- * 5. If now >= cutoff → 'first_come_first_claimed'
- * 6. Otherwise → 'auto_promote'
+ * 1. Resolve the cancel-deadline instant (`cancelDeadlineInstant`)
+ * 2. Subtract 1 more hour → cutoff time
+ * 3. If now >= deadline → 'frozen'
+ * 4. If now >= cutoff → 'first_come_first_claimed'
+ * 5. Otherwise → 'auto_promote'
  */
 export function getWaitlistWindow(
   classDate: Date,
@@ -186,11 +204,7 @@ export function getWaitlistWindow(
 ): WaitlistWindow {
   const currentTime = now ?? new Date();
 
-  const classStart = classStartInstant({ date: classDate, startTime }, timeZone);
-
-  // Calculate deadline and cutoff
-  const deadlineHours = DEADLINE_HOURS[cancelDeadline];
-  const deadlineTime = new Date(classStart.getTime() - deadlineHours * 60 * 60 * 1000);
+  const deadlineTime = cancelDeadlineInstant({ date: classDate, startTime }, cancelDeadline, timeZone);
   const cutoffTime = new Date(deadlineTime.getTime() - 1 * 60 * 60 * 1000);
 
   if (currentTime >= deadlineTime) {

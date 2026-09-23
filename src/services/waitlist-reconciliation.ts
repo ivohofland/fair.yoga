@@ -53,9 +53,8 @@ import type { CancelDeadline, PrismaClient } from '@prisma/client';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
-import { classStartInstant } from '@/lib/timezone';
 import {
-  DEADLINE_HOURS,
+  cancelDeadlineInstant,
   getWaitlistWindow,
   handleSpotFreed,
   SpotFreedError,
@@ -709,13 +708,12 @@ async function reconcileOne(
 function broadcastStillStands(cls: CandidateClass): boolean {
   if (cls.spotBroadcastAt === null) return false;
 
-  const classStart = classStartInstant(
-      cls.calendarEntry,
-      cls.calendarEntry.teacher.defaultTimezone,
-    );
-  const claimWindowStart = new Date(
-    classStart.getTime() - (DEADLINE_HOURS[cls.cancelDeadline] + 1) * 60 * 60 * 1000,
+  const deadline = cancelDeadlineInstant(
+    cls.calendarEntry,
+    cls.cancelDeadline,
+    cls.calendarEntry.teacher.defaultTimezone,
   );
+  const claimWindowStart = new Date(deadline.getTime() - 60 * 60 * 1000);
   return cls.spotBroadcastAt >= claimWindowStart;
 }
 
