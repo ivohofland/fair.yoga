@@ -43,15 +43,26 @@ describe('NotificationList — where a teacher row goes (#172)', () => {
 describe('NotificationList — retention note (#223)', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it('shows the retention note under an empty list', () => {
+  it('places the retention note inside the empty state, as its last line', () => {
     render(<NotificationList notifications={[]} />);
 
-    expect(screen.getByText('Messages are kept for a year.')).toBeInTheDocument();
+    const note = screen.getByText('Messages are kept for a year.');
+    const emptyState = screen.getByText('No notifications.').parentElement;
+    expect(emptyState?.lastElementChild?.contains(note)).toBe(true);
+    // Not in the action slot: nothing in the empty state is interactive.
+    expect(emptyState?.querySelector('button, a')).toBeNull();
   });
 
-  it('shows the retention note under a non-empty list', () => {
-    render(<NotificationList notifications={[notification({})]} />);
+  it('places the retention note after the rows, outside every row', () => {
+    render(<NotificationList notifications={[
+      notification({ id: 'n-1', title: 'First' }),
+      notification({ id: 'n-2', title: 'Second' }),
+    ]} />);
 
-    expect(screen.getByText('Messages are kept for a year.')).toBeInTheDocument();
+    const note = screen.getByText('Messages are kept for a year.');
+    const lastRow = screen.getByRole('button', { name: /^Second/ }).parentElement;
+    expect(lastRow?.contains(note)).toBe(false);
+    expect(lastRow?.compareDocumentPosition(note)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.queryByText('No notifications.')).toBeNull();
   });
 });

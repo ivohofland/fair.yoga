@@ -47,7 +47,7 @@ export function NotificationList({ notifications, hrefById }: NotificationListPr
       <EmptyState
         title="No notifications."
         body="News about your classes appears here."
-        action={<RetentionNote align="center" />}
+        note={<RetentionNote />}
       />
     );
   }
@@ -103,7 +103,9 @@ export function NotificationList({ notifications, hrefById }: NotificationListPr
           </div>
         );
       })}
-      <RetentionNote />
+      <div className="pt-4">
+        <RetentionNote />
+      </div>
     </div>
   );
 }
