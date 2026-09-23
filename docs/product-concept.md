@@ -139,7 +139,7 @@ Two separate deadlines serve different purposes:
 
 **Early cancellations** (before the cancellation deadline): removed from the calculation, no charge.
 
-**Grace policies:** No system-level grace policy for cancellations or emergencies. If a student has a genuine emergency, they talk to their teacher. The teacher can manually mark someone as "not charged" if they choose to be lenient. This keeps the relationship human and teacher-centric.
+**Grace policies:** Beyond the auto-promoted student's 15-minute grace (see Waitlist above), no system-level grace policy for cancellations or emergencies. If a student has a genuine emergency, they talk to their teacher. The teacher can manually mark someone as "not charged" if they choose to be lenient. This keeps the relationship human and teacher-centric.
 
 ### 4. Room / Space Database
 
