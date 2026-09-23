@@ -148,15 +148,16 @@ export async function markAsRead(
 /**
  * Finds unread notifications eligible for email fallback.
  *
- * Returns unread, unsent notifications that are either older than the
- * threshold, or linked to a class starting within URGENT_WINDOW_MINUTES
- * (see notification-policy.ts — urgency changes when, never whether).
+ * Returns unread, unsent notifications that are either of an immediate-email
+ * type, older than the threshold, or linked to a class starting within
+ * URGENT_WINDOW_MINUTES (see notification-policy.ts — urgency changes when,
+ * never whether).
  *
  * Ordered by createdAt ASC (oldest first).
  *
  * @param thresholdMinutes — minutes a notification must remain unread before
  *   email fallback kicks in, unless the linked class starts within the
- *   urgent window. Defaults to 30.
+ *   urgent window or the type is immediate-email. Defaults to 30.
  */
 export async function getUnreadForEmailFallback(
   db: PrismaClient,
@@ -192,6 +193,7 @@ export async function getUnreadForEmailFallback(
   return candidates.filter((n) =>
     isEmailEligible(
       {
+        type: n.type,
         createdAt: n.createdAt,
         classStart: n.relatedClass
           ? classStartInstant(
