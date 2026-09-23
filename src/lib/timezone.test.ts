@@ -466,15 +466,36 @@ describe('mondayOf', () => {
 });
 
 describe('formatInstantInZone', () => {
-  it('formats weekday and 24h time in the given zone', () => {
-    // 2026-06-04 is a Thursday; 12:15 UTC = 14:15 CEST.
-    expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Europe/Amsterdam')).toBe('Thu 14:15');
+  it('formats weekday, date and 24h time in the given zone (CEST)', () => {
+    // 2026-06-04 is a Thursday; 12:15 UTC = 14:15 CEST (Europe/Amsterdam, summer offset).
+    expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Europe/Amsterdam')).toBe(
+      'Thu 4 Jun 14:15',
+    );
+  });
+
+  it('formats correctly across the winter offset too (CET)', () => {
+    // 2026-01-15 is a Thursday; 12:15 UTC = 13:15 CET (Europe/Amsterdam, winter offset).
+    expect(formatInstantInZone(new Date('2026-01-15T12:15:00Z'), 'Europe/Amsterdam')).toBe(
+      'Thu 15 Jan 13:15',
+    );
   });
 
   it('falls back to UTC on an unknown timezone rather than throwing', () => {
     const spy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
-    expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Not/AZone')).toBe('Thu 12:15');
+    expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Not/AZone')).toBe(
+      'Thu 4 Jun 12:15',
+    );
     expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('logs and returns a fixed string for an unreadable instant, without blaming the timezone', () => {
+    const spy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    expect(formatInstantInZone(new Date(NaN), 'Europe/Amsterdam')).toBe('Invalid Date');
+    expect(spy).toHaveBeenCalledWith(
+      { timeZone: 'Europe/Amsterdam' },
+      expect.stringContaining('unreadable instant'),
+    );
     spy.mockRestore();
   });
 });
