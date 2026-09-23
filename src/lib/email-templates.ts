@@ -54,7 +54,6 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   waitlist_promoted: 'Good news from the waitlist.',
   spot_available: 'A spot opened up.',
   reminder: 'A gentle reminder.',
-  missed_you: 'We missed you.',
   announcement: 'A message from your teacher.',
   teacher_invitation: 'A teacher would like to connect with you.',
 };

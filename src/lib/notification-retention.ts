@@ -29,7 +29,6 @@ export const NOTIFICATION_RETENTION_DAYS = {
   // Worthless once its claim window has closed.
   spot_available: SHORT_RETENTION_DAYS,
   reminder: STANDARD_RETENTION_DAYS,
-  missed_you: SHORT_RETENTION_DAYS,
   announcement: STANDARD_RETENTION_DAYS,
   teacher_invitation: STANDARD_RETENTION_DAYS,
 } as const satisfies Record<NotificationType, RetentionDays>;
