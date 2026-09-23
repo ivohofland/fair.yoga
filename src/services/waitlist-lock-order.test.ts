@@ -8,13 +8,17 @@
  * Split out of `waitlist.test.ts` (#459) for exactly that reason. The
  * guards below prove `addToWaitlist`, `promoteNext` and `claimSpot` each give
  * up on `lockClassRow`'s shared 2s `SET LOCAL lock_timeout` under contention,
- * and that `removeFromWaitlist` and `handleSpotFreed` genuinely wait on (and,
- * for the second, are bounded by) the same `Class` row lock — a lock outcome,
- * not a registration/promotion/removal outcome. One teacher, one room, one
- * `TeacherRoom` and a small pool of students are shared at module scope; each
- * test below builds the one class it locks.
+ * that `removeFromWaitlist` and `handleSpotFreed` genuinely wait on (and, for
+ * the second, are bounded by) the same `Class` row lock, and that
+ * `withdrawWaitingEntriesForTeacher` re-checks a promotion that committed
+ * during its own wait rather than trusting what its lock query saw before it
+ * blocked (#241, moved here from `waitlist.test.ts` for this same reason) —
+ * a lock outcome each time, not a registration/promotion/removal/withdrawal
+ * outcome. One teacher, one room, one `TeacherRoom` and a small pool of
+ * students are shared at module scope; each test below builds the one class
+ * it locks.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   addToWaitlist,
@@ -22,9 +26,11 @@ import {
   promoteNext,
   claimSpot,
   handleSpotFreed,
+  withdrawWaitingEntriesForTeacher,
 } from './waitlist';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
+import * as dbLocks from '@/lib/db-locks';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -648,4 +654,89 @@ describe('handleSpotFreed (DB)', () => {
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
   });
+});
+
+describe('withdrawWaitingEntriesForTeacher re-checks status against a promotion committed mid-wait (#241)', () => {
+  // Copied per file rather than shared, matching `waitlist.test.ts`'s #453
+  // describe — each site's fixture is independent.
+  const captureLockSets = (): string[][] => {
+    const original = dbLocks.lockClassRowsOrdered;
+    const lockSets: string[][] = [];
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      const ids = await original(tx, source);
+      lockSets.push(ids);
+      return ids;
+    });
+    onTestFinished(() => spy.mockRestore());
+    return lockSets;
+  };
+
+  /**
+   * Stages a promotion that commits WHILE the withdrawal's lock query is
+   * blocked on the same `Class` row, so the join inside that query is built
+   * from a snapshot the promotion has not yet touched. Postgres re-checks a
+   * blocked `FOR UPDATE OF c` only against the locked table itself once the
+   * wait ends; a joined table that was never part of the locking clause keeps
+   * whichever version was visible when the query started. The entry the
+   * holder promotes therefore still reads `waiting` inside that query, and
+   * its class still lands in the ids handed back — so the entry surviving as
+   * `promoted` here is entirely down to the subsequent `updateMany`
+   * re-reading `status` for itself under a fresh snapshot, not to the lock
+   * query having noticed the promotion.
+   */
+  it('leaves a promoted entry alone when the promotion committed while the withdrawal waited', async () => {
+    // Its own full class: max 1, one filler registered, studentIds[0]
+    // waiting at position 1.
+    const classId = await makeClass(1);
+    await prisma.registration.create({
+      data: {
+        classId,
+        studentId: fillerIds[0]!,
+        status: 'registered',
+        tierAtBooking: 3,
+      },
+    });
+    await addToWaitlist(prisma, classId, studentIds[0]!);
+
+    try {
+      const lockSets = captureLockSets();
+
+      let holderCommitting = false;
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+          await tx.waitlistEntry.update({
+            where: { classId_studentId: { classId, studentId: studentIds[0]! } },
+            data: { status: 'promoted' },
+          });
+          await new Promise((r) => setTimeout(r, 800));
+          holderCommitting = true;
+        },
+        { timeout: 20_000 },
+      );
+      await new Promise((r) => setTimeout(r, 150));
+
+      await prisma.$transaction((tx) =>
+        withdrawWaitingEntriesForTeacher(tx, { teacherId, studentId: studentIds[0]! }),
+      );
+      // The withdrawal only returns once the holder's `FOR UPDATE` is
+      // released, which happens after the flag above is set — so this being
+      // true is proof the withdrawal genuinely waited out the hold rather
+      // than racing past it.
+      expect(holderCommitting).toBe(true);
+
+      await holder;
+
+      expect(lockSets).toEqual([[classId]]);
+
+      const entry = await prisma.waitlistEntry.findFirstOrThrow({
+        where: { classId, studentId: studentIds[0]! },
+      });
+      expect(entry.status).toBe('promoted');
+    } finally {
+      await prisma.waitlistEntry.deleteMany({ where: { classId } });
+      await prisma.registration.deleteMany({ where: { classId } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
+    }
+  }, 20_000);
 });
