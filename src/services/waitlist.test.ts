@@ -3,6 +3,8 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
   getWaitlistWindow,
+  claimWindowStart,
+  CLAIM_WINDOW_MINUTES,
   cancelDeadlineInstant,
   DEADLINE_HOURS,
   addToWaitlist,
@@ -27,140 +29,53 @@ import { unlinkTeacher } from './invitations';
 // ===========================================================================
 
 describe('getWaitlistWindow', () => {
-  it('returns auto_promote when more than 1 hour before deadline', () => {
-    // classDate: 2026-04-10, startTime: "09:00", deadline: HOURS_24
-    // Class starts April 10 09:00 UTC
-    // Deadline = April 9 09:00 UTC, cutoff = April 9 08:00 UTC
-    // now = April 8 12:00 UTC → well before cutoff → 'auto_promote'
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_24',
-      'UTC',
-      new Date('2026-04-08T12:00:00Z'),
-    );
-    expect(result).toBe('auto_promote');
+  // Class starts 2026-04-10 09:00 UTC. Claim window opens 08:00.
+  const entry = { date: new Date('2026-04-10'), startTime: hhmmToTime('09:00') };
+
+  it('auto-promotes until one hour before start, whatever the cancel deadline', () => {
+    // 3 h before start: past every DEADLINE_HOURS value, still auto_promote.
+    expect(getWaitlistWindow(entry, 'UTC', new Date('2026-04-10T06:00:00Z'))).toBe('auto_promote');
+    expect(getWaitlistWindow(entry, 'UTC', new Date('2026-04-10T07:59:59Z'))).toBe('auto_promote');
   });
 
-  it('returns first_come_first_claimed in final hour before deadline', () => {
-    // Same setup: deadline = April 9 09:00 UTC, cutoff = April 9 08:00 UTC
-    // now = April 9 08:30 UTC → between cutoff and deadline → 'first_come_first_claimed'
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_24',
-      'UTC',
-      new Date('2026-04-09T08:30:00Z'),
+  it('is first_come_first_claimed from start − 1h up to start', () => {
+    expect(getWaitlistWindow(entry, 'UTC', new Date('2026-04-10T08:00:00Z'))).toBe(
+      'first_come_first_claimed',
     );
-    expect(result).toBe('first_come_first_claimed');
+    expect(getWaitlistWindow(entry, 'UTC', new Date('2026-04-10T08:59:59Z'))).toBe(
+      'first_come_first_claimed',
+    );
   });
 
-  it('returns frozen after deadline', () => {
-    // Same setup: deadline = April 9 09:00 UTC
-    // now = April 9 10:00 UTC → past deadline → 'frozen'
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_24',
-      'UTC',
-      new Date('2026-04-09T10:00:00Z'),
-    );
-    expect(result).toBe('frozen');
-  });
-
-  it('handles 6h deadline correctly', () => {
-    // classDate: 2026-04-10, startTime: "09:00", deadline: HOURS_6
-    // Class starts April 10 09:00 UTC
-    // Deadline = April 10 03:00 UTC, cutoff = April 10 02:00 UTC
-    // now = April 10 02:30 UTC → between cutoff and deadline → 'first_come_first_claimed'
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_6',
-      'UTC',
-      new Date('2026-04-10T02:30:00Z'),
-    );
-    expect(result).toBe('first_come_first_claimed');
-  });
-
-  it('returns frozen exactly at deadline time', () => {
-    // Deadline = April 9 09:00 UTC
-    // now = exactly April 9 09:00 UTC → frozen (>= deadline)
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_24',
-      'UTC',
-      new Date('2026-04-09T09:00:00Z'),
-    );
-    expect(result).toBe('frozen');
-  });
-
-  it('returns first_come_first_claimed exactly at cutoff time', () => {
-    // Cutoff = April 9 08:00 UTC
-    // now = exactly April 9 08:00 UTC → first_come_first_claimed (>= cutoff)
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_24',
-      'UTC',
-      new Date('2026-04-09T08:00:00Z'),
-    );
-    expect(result).toBe('first_come_first_claimed');
-  });
-
-  it('handles HOURS_48 deadline', () => {
-    // classDate: 2026-04-10, startTime: "09:00", deadline: HOURS_48
-    // Deadline = April 8 09:00 UTC, cutoff = April 8 08:00 UTC
-    // now = April 7 12:00 UTC → auto_promote
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_48',
-      'UTC',
-      new Date('2026-04-07T12:00:00Z'),
-    );
-    expect(result).toBe('auto_promote');
-  });
-
-  it('handles HOURS_12 deadline', () => {
-    // classDate: 2026-04-10, startTime: "09:00", deadline: HOURS_12
-    // Deadline = April 9 21:00 UTC, cutoff = April 9 20:00 UTC
-    // now = April 9 20:30 UTC → first_come_first_claimed
-    const result = getWaitlistWindow(
-      new Date('2026-04-10'),
-      hhmmToTime('09:00'),
-      'HOURS_12',
-      'UTC',
-      new Date('2026-04-09T20:30:00Z'),
-    );
-    expect(result).toBe('first_come_first_claimed');
+  it('is frozen from start itself', () => {
+    expect(getWaitlistWindow(entry, 'UTC', new Date('2026-04-10T09:00:00Z'))).toBe('frozen');
   });
 
   it('defaults to current time when now is not provided', () => {
     // Use a class far in the future to guarantee auto_promote
     const result = getWaitlistWindow(
-      new Date('2099-12-31'),
-      hhmmToTime('09:00'),
-      'HOURS_24',
+      { date: new Date('2099-12-31'), startTime: hhmmToTime('09:00') },
       'UTC',
     );
     expect(result).toBe('auto_promote');
   });
 
-  it('computes the window in the teacher timezone, not UTC', () => {
-    // Amsterdam summer (+2): class 2026-07-20 09:00 local = 07:00 UTC.
-    // HOURS_24 deadline = 2026-07-19 07:00 UTC.
-    // now = 2026-07-19 08:00 UTC — past the local deadline (frozen),
-    // but a UTC reading would still say first_come_first_claimed.
-    const result = getWaitlistWindow(
-      new Date('2026-07-20'),
-      hhmmToTime('09:00'),
-      'HOURS_24',
-      'Europe/Amsterdam',
-      new Date('2026-07-19T08:00:00Z'),
-    );
-    expect(result).toBe('frozen');
+  it('reads the start in the teacher timezone', () => {
+    // 09:00 Amsterdam (CEST, UTC+2) = 07:00 UTC; the window opens 06:00 UTC.
+    expect(
+      getWaitlistWindow(entry, 'Europe/Amsterdam', new Date('2026-04-10T06:00:00Z')),
+    ).toBe('first_come_first_claimed');
+    expect(
+      getWaitlistWindow(entry, 'Europe/Amsterdam', new Date('2026-04-10T05:59:59Z')),
+    ).toBe('auto_promote');
+  });
+});
+
+describe('claim window vs cancel deadline', () => {
+  // Every claim happens after the cancel deadline, which is why the claim
+  // warning is unconditional. A shorter deadline would make it false.
+  it('the shortest cancel deadline is longer than the claim window', () => {
+    expect(Math.min(...Object.values(DEADLINE_HOURS)) * 60).toBeGreaterThan(CLAIM_WINDOW_MINUTES);
   });
 });
 
@@ -811,6 +726,29 @@ describe('promoteNext (DB)', () => {
       await prisma.student.delete({ where: { id: extra.id } });
     }
   });
+
+  it('promotes after the cancel deadline while more than an hour remains (#236)', async () => {
+    // Class starts 2099-07-01 18:00 Europe/Amsterdam (16:00 UTC); its
+    // HOURS_24 cancel deadline falls the day before. `now` here is well past
+    // that deadline and still more than an hour before start — the window
+    // stays `auto_promote` because #236 anchors it on start, not the
+    // deadline. studentIds[3] rejoins the queue after test 6 above cancelled
+    // their registration; the class is full again from the previous test, so
+    // free a spot before promoting into it.
+    await addToWaitlist(prisma, classId, studentIds[3]!);
+    await cancelRegistration(studentIds[2]!);
+
+    const promoted = await promoteNext(prisma, classId, { now: new Date('2099-07-01T10:00:00Z') });
+    expect(promoted).not.toBeNull();
+    expect(promoted!.studentId).toBe(studentIds[3]);
+    expect(promoted!.status).toBe('promoted');
+  });
+
+  it('refuses in the final hour before class (#236)', async () => {
+    await expect(
+      promoteNext(prisma, classId, { now: new Date('2099-07-01T15:30:00Z') }),
+    ).rejects.toMatchObject({ reason: 'wrong_window' });
+  });
 });
 
 // ===========================================================================
@@ -825,14 +763,13 @@ describe('promoteNext (DB)', () => {
  */
 describe('claimSpot (DB)', () => {
   // One fixed class drives every instant, so nothing here reads the wall clock:
-  //   class starts       2026-06-01 09:00 UTC  (teacher default timezone UTC)
-  //   HOURS_24        →  deadline 2026-05-31 09:00 UTC
-  //   cutoff = deadline − 1h        2026-05-31 08:00 UTC
-  const BEFORE_CUTOFF = new Date('2026-05-30T12:00:00Z');
-  const IN_CLAIM_WINDOW = new Date('2026-05-31T08:30:00Z');
-  // Exactly the deadline: the comparison is `>=`, so this is the first frozen
+  //   class starts               2026-06-01 09:00 UTC  (teacher default timezone UTC)
+  //   claim window opens (start − 1h)   2026-06-01 08:00 UTC
+  const BEFORE_CLAIM_WINDOW = new Date('2026-06-01T07:00:00Z');
+  const IN_CLAIM_WINDOW = new Date('2026-06-01T08:30:00Z');
+  // Exactly class start: the comparison is `>=`, so this is the first frozen
   // instant, not the last claimable one.
-  const AT_DEADLINE = new Date('2026-05-31T09:00:00Z');
+  const AT_START = new Date('2026-06-01T09:00:00Z');
 
   let teacherId: string;
   let accountId: string;
@@ -853,13 +790,13 @@ describe('claimSpot (DB)', () => {
    * be full, which is what `addToWaitlist` requires before it will accept
    * anyone.
    *
-   * date/startTime are load-bearing for the deadline-window comment above
-   * (BEFORE_CUTOFF/IN_CLAIM_WINDOW/AT_DEADLINE are all computed against this
-   * exact 2026-06-01 09:00 UTC start) — moving either to dodge
+   * date/startTime are load-bearing for the claim-window comment above
+   * (BEFORE_CLAIM_WINDOW/IN_CLAIM_WINDOW/AT_START are all computed against
+   * this exact 2026-06-01 09:00 UTC start) — moving either to dodge
    * `CalendarEntry_teacher_slot_excl` across this describe's repeated calls
    * would shift every boundary those constants were pinned against. So every
    * call after the first gets its own teacher (defaultTimezone UTC, matching the
-   * fixture teacher below, since claimSpot reads the deadline off
+   * fixture teacher below, since claimSpot reads the window off
    * `cls.teacher.defaultTimezone`) instead — the constraint is scoped per
    * teacher, so a different owner keeps the same slot legal.
    * `teacherRoomId` is reused across those teachers deliberately: claimSpot
@@ -1003,7 +940,7 @@ describe('claimSpot (DB)', () => {
 
     // The spot is free and the student is waiting; only the clock is wrong.
     await expectRejection(
-      claimSpot(prisma, classId, waiterId, BEFORE_CUTOFF),
+      claimSpot(prisma, classId, waiterId, BEFORE_CLAIM_WINDOW),
       'wrong_window',
     );
     expect(
@@ -1011,12 +948,12 @@ describe('claimSpot (DB)', () => {
     ).toBe(0);
   });
 
-  it('refuses a claim once the cancellation deadline has passed', async () => {
+  it('refuses a claim once the class has started', async () => {
     const classId = await makeFullClass();
     await freeTheSpot(classId);
 
-    // Boundary case: exactly the deadline instant is already frozen.
-    await expectRejection(claimSpot(prisma, classId, waiterId, AT_DEADLINE), 'window_frozen');
+    // Boundary case: exactly the start instant is already frozen.
+    await expectRejection(claimSpot(prisma, classId, waiterId, AT_START), 'window_frozen');
   });
 
   it('refuses a claim when the spot has already been taken', async () => {
@@ -1117,11 +1054,11 @@ describe('claimSpot (DB)', () => {
     ).toBe(1);
   });
 
-  it('answers a claim retried after the deadline as already registered', async () => {
+  it('answers a claim retried once class start has passed as already registered', async () => {
     const classId = await makeFullClass();
     await claimOnce(classId);
 
-    expect(await claimSpot(prisma, classId, waiterId, AT_DEADLINE)).toEqual({
+    expect(await claimSpot(prisma, classId, waiterId, AT_START)).toEqual({
       outcome: 'already_registered',
     });
   });
@@ -1721,11 +1658,10 @@ describe('removeFromWaitlist when the entry vanishes mid-lock (DB)', () => {
 describe('handleSpotFreed (DB)', () => {
   // One fixed class drives every instant, so nothing here reads the wall
   // clock. Same derivation as the `claimSpot (DB)` block above:
-  //   class starts       2026-06-03 09:00 UTC  (teacher default timezone UTC)
-  //   HOURS_24        →  deadline 2026-06-02 09:00 UTC
-  //   cutoff = deadline − 1h        2026-06-02 08:00 UTC
-  const IN_CLAIM_WINDOW = new Date('2026-06-02T08:30:00Z');
-  /** Before the cutoff, so `getWaitlistWindow` answers `auto_promote`. */
+  //   class starts               2026-06-03 09:00 UTC  (teacher default timezone UTC)
+  //   claim window opens (start − 1h)   2026-06-03 08:00 UTC
+  const IN_CLAIM_WINDOW = new Date('2026-06-03T08:30:00Z');
+  /** Before the claim window opens, so `getWaitlistWindow` answers `auto_promote`. */
   const BEFORE_CLAIM_WINDOW = new Date('2026-06-01T09:00:00Z');
 
   let teacherId: string;
@@ -1930,6 +1866,30 @@ describe('handleSpotFreed (DB)', () => {
     const err = await handleSpotFreed(failing, classId, IN_CLAIM_WINDOW).catch((e) => e);
 
     expect(isTransientDbError(err)).toBe(true);
+  });
+
+  /**
+   * #236: the window is anchored on class start, not the cancel deadline.
+   * Both instants below sit more than 23 hours past this class's HOURS_24
+   * deadline, which the old deadline-anchored window would have read as
+   * `frozen` — the defect the issue is about. Reuses the state the tests
+   * above leave behind: the seat is still free and both waiters are still
+   * `waiting`.
+   */
+  it('broadcasts a seat freed under an hour before start, however far past the deadline (#236)', async () => {
+    const before = await countBroadcasts();
+
+    const result = await handleSpotFreed(prisma, classId, new Date('2026-06-03T08:30:00Z'));
+
+    expect(result).toEqual({ action: 'broadcast', notified: 2 });
+    expect(await countBroadcasts()).toBe(before + 2);
+  });
+
+  it('promotes a seat freed two hours before start, however far past the deadline (#236)', async () => {
+    const promoted = await handleSpotFreed(prisma, classId, new Date('2026-06-03T07:00:00Z'));
+
+    if (promoted.action !== 'promoted') throw new Error(`expected a promotion, got ${promoted.action}`);
+    expect(promoted.entry.studentId).toBe(waiterIds[0]);
   });
 });
 

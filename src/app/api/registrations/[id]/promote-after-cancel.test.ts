@@ -207,8 +207,8 @@ describe('DELETE /api/registrations/[id] — the loss its spot-freed hook record
   /**
    * The other branch and the other level in one case, because they move
    * together here: `getWaitlistWindow` returns `auto_promote` for everything up
-   * to (cancel deadline − 1h), and a failure that will not clear by retrying is
-   * the one this route logs at `error`.
+   * to (class start − 1h) (#236), and a failure that will not clear by
+   * retrying is the one this route logs at `error`.
    */
   it('names the auto-promote branch, at error level, for a failure that will not clear', async () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);

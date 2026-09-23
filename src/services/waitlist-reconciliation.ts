@@ -49,12 +49,12 @@
  * names a symbol instead: an earlier revision cited sixteen of them and eight
  * were already wrong three commits into the branch that wrote them.
  */
-import type { CancelDeadline, PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import {
-  cancelDeadlineInstant,
+  claimWindowStart,
   getWaitlistWindow,
   handleSpotFreed,
   SpotFreedError,
@@ -156,7 +156,6 @@ type ClassOutcome =
 /** The candidate shape the per-class body needs, and no more. */
 interface CandidateClass {
   id: string;
-  cancelDeadline: CancelDeadline;
   maxStudents: number;
   spotBroadcastAt: Date | null;
   /** `date`, `startTime` and the teacher all moved here in #327. */
@@ -449,7 +448,6 @@ export async function reconcileWaitlists(
     orderBy: { id: 'asc' },
     select: {
       id: true,
-      cancelDeadline: true,
       maxStudents: true,
       spotBroadcastAt: true,
       calendarEntry: {
@@ -551,13 +549,7 @@ async function reconcileOne(
   // body is what makes that unreachable by construction rather than by the
   // current body happening to be infallible.
   try {
-    const window = getWaitlistWindow(
-      cls.calendarEntry.date,
-      cls.calendarEntry.startTime,
-      cls.cancelDeadline,
-      cls.calendarEntry.teacher.defaultTimezone,
-      now,
-    );
+    const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now);
     if (window === 'frozen') return { kind: 'skipped', reason: 'frozen' };
 
     // A class ABSENT from the groupBy has zero active registrations, not zero
@@ -581,10 +573,10 @@ async function reconcileOne(
     // when full, the hook's locked count suppresses it, as designed.
     //
     // "Almost", because there is one seat this loses: a class read as full on
-    // the last tick before its cancel deadline is `frozen` on the next one and
-    // never reconciled. One minute wide, and the queue was already past
-    // saving by then — but it is not literally free, and the `full` skip
-    // reason above is what would make it visible if it ever mattered.
+    // the last tick before its start is `frozen` on the next one and never
+    // reconciled. One minute wide, and the queue was already past saving by
+    // then — but it is not literally free, and the `full` skip reason above
+    // is what would make it visible if it ever mattered.
     //
     // It is therefore an equivalent mutant and has no mutation test. Said out
     // loud so the next reader does not mutation-test it, find nothing, and
@@ -708,13 +700,7 @@ async function reconcileOne(
 function broadcastStillStands(cls: CandidateClass): boolean {
   if (cls.spotBroadcastAt === null) return false;
 
-  const deadline = cancelDeadlineInstant(
-    cls.calendarEntry,
-    cls.cancelDeadline,
-    cls.calendarEntry.teacher.defaultTimezone,
-  );
-  const claimWindowStart = new Date(deadline.getTime() - 60 * 60 * 1000);
-  return cls.spotBroadcastAt >= claimWindowStart;
+  return cls.spotBroadcastAt >= claimWindowStart(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone);
 }
 
 /** The single pass that turns per-class outcomes into the summary. */

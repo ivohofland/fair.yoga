@@ -1,10 +1,11 @@
 /**
  * Waitlist Service — Hybrid promotion for class overflow.
  *
- * Manages the waitlist when a class reaches max_students. Three time windows:
- * 1. auto_promote — before 1 hour before cancel deadline, first in queue is auto-promoted
- * 2. first_come_first_claimed — final hour before deadline, all waitlisted are notified
- * 3. frozen — after deadline passes, no more promotions
+ * Manages the waitlist when a class reaches max_students. Three time windows,
+ * anchored on class start rather than the cancel deadline (#236):
+ * 1. auto_promote — until 1 hour before start, first in queue is auto-promoted
+ * 2. first_come_first_claimed — final hour before start, all waitlisted are notified
+ * 3. frozen — from start itself, no more promotions
  */
 
 import { Prisma } from '@prisma/client';
@@ -180,35 +181,32 @@ export function cancelDeadlineInstant(
   return new Date(classStart.getTime() - DEADLINE_HOURS[cancelDeadline] * 60 * 60 * 1000);
 }
 
+/** Length of the first-come-first-claimed window that ends at class start. */
+export const CLAIM_WINDOW_MINUTES = 60;
+
+/** When the first-come-first-claimed window opens: class start − `CLAIM_WINDOW_MINUTES`. */
+export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZone: string): Date {
+  const start = classStartInstant(entry, timeZone);
+  return new Date(start.getTime() - CLAIM_WINDOW_MINUTES * 60 * 1000);
+}
+
 /**
- * Determines which promotion window the waitlist is currently in.
+ * Which promotion window the waitlist is in, anchored on class start (#236):
+ * - before `claimWindowStart` → 'auto_promote'
+ * - from `claimWindowStart` until start → 'first_come_first_claimed'
+ * - from start → 'frozen'
  *
- * Given a class date, start time (`@db.Time`, teacher-local), the teacher's
- * timezone, and the cancel deadline enum:
- * 1. Resolve the cancel-deadline instant (`cancelDeadlineInstant`)
- * 2. Subtract 1 more hour → cutoff time
- * 3. If now >= deadline → 'frozen'
- * 4. If now >= cutoff → 'first_come_first_claimed'
- * 5. Otherwise → 'auto_promote'
+ * The cancel deadline plays no part: it decides who pays, not who is asked.
  */
 export function getWaitlistWindow(
-  classDate: Date,
-  startTime: Date,
-  cancelDeadline: CancelDeadline,
+  entry: { date: Date; startTime: Date },
   timeZone: string,
   now?: Date,
 ): WaitlistWindow {
   const currentTime = now ?? new Date();
-
-  const deadlineTime = cancelDeadlineInstant({ date: classDate, startTime }, cancelDeadline, timeZone);
-  const cutoffTime = new Date(deadlineTime.getTime() - 1 * 60 * 60 * 1000);
-
-  if (currentTime >= deadlineTime) {
-    return 'frozen';
-  }
-  if (currentTime >= cutoffTime) {
-    return 'first_come_first_claimed';
-  }
+  const start = classStartInstant(entry, timeZone);
+  if (currentTime >= start) return 'frozen';
+  if (currentTime >= claimWindowStart(entry, timeZone)) return 'first_come_first_claimed';
   return 'auto_promote';
 }
 
@@ -498,7 +496,7 @@ export async function removeFromWaitlist(
  * Guards (all inside the transaction, serialized by `lockClassRow`'s bounded
  * `Class` row lock, shared with the registration route):
  * - the class must still be open
- * - the promotion window must not be frozen (past the cancel deadline)
+ * - the promotion window must be `auto_promote` (before the final hour before start)
  * - the class must have a free spot — promotions are not walk-ins
  *
  * `lockClassRow`'s bound now covers the rest of this transaction too, not
@@ -554,16 +552,17 @@ export async function promoteNext(
     }
 
     const window = getWaitlistWindow(
-      cls.calendarEntry.date,
-      cls.calendarEntry.startTime,
-      cls.cancelDeadline,
+      cls.calendarEntry,
       cls.calendarEntry.teacher.defaultTimezone,
       opts.now,
     );
     if (window === 'frozen') {
+      throw new WaitlistPromotionError('The waitlist is closed — the class has started', 'window_frozen');
+    }
+    if (window !== 'auto_promote') {
       throw new WaitlistPromotionError(
-        'The waitlist is frozen — the cancellation deadline has passed',
-        'window_frozen',
+        'In the final hour before class a freed spot is offered to everyone waiting, not promoted',
+        'wrong_window',
       );
     }
 
@@ -658,7 +657,7 @@ export async function promoteNext(
 
 /**
  * Claims an open spot from the waitlist during the first-come-first-claimed
- * window (final hour before the cancel deadline). The first student whose
+ * window (the final hour before class starts). The first student whose
  * claim lands gets the spot; everyone else keeps waiting.
  */
 export async function claimSpot(
@@ -698,22 +697,16 @@ export async function claimSpot(
       throw new WaitlistPromotionError("This class isn't taking bookings.", 'class_not_open');
     }
 
-    const window = getWaitlistWindow(
-      cls.calendarEntry.date,
-      cls.calendarEntry.startTime,
-      cls.cancelDeadline,
-      cls.calendarEntry.teacher.defaultTimezone,
-      now,
-    );
+    const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now);
     if (window === 'frozen') {
       throw new WaitlistPromotionError(
-        'The cancellation deadline has passed, so spots can no longer be claimed.',
+        'The class has started, so spots can no longer be claimed.',
         'window_frozen',
       );
     }
     if (window !== 'first_come_first_claimed') {
       throw new WaitlistPromotionError(
-        'Spots can only be claimed in the final hour before the deadline — before that the queue promotes automatically.',
+        'Spots can be claimed in the final hour before class — before that the queue promotes automatically.',
         'wrong_window',
       );
     }
@@ -839,13 +832,13 @@ export class SpotFreedError extends Error {
 /**
  * Called when a registration cancellation frees a spot in an open class.
  * Implements the documented hybrid promotion:
- * - before the final hour: auto-promote the queue head
- * - final hour before the deadline: **check capacity under the class row
+ * - before the final hour before class: auto-promote the queue head
+ * - final hour before class: **check capacity under the class row
  *   lock**, then broadcast to all waiting students (first to claim gets the
  *   spot). A class refilled between the cancel and this call is announced to
  *   nobody — `{ action: 'none' }` — which is #212; see the comment at that
  *   branch for why the lock is what makes the check mean anything.
- * - after the deadline: frozen — nothing happens
+ * - from class start: frozen — nothing happens
  *
  * Three callers. The two LIVE ones (`DELETE /api/registrations/[id]`,
  * `deleteStudentAccount`) invoke this OUTSIDE any transaction and discard the
@@ -881,13 +874,7 @@ export async function handleSpotFreed(
       return { action: 'none' };
     }
 
-    const window = getWaitlistWindow(
-      cls.calendarEntry.date,
-      cls.calendarEntry.startTime,
-      cls.cancelDeadline,
-      cls.calendarEntry.teacher.defaultTimezone,
-      now,
-    );
+    const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now);
 
     if (window === 'frozen') return { action: 'frozen' };
     branch = window;
@@ -942,12 +929,13 @@ export async function handleSpotFreed(
     // branch cannot run at all.
     //
     // Deliberately NOT argued from the clock. An earlier version reasoned that
-    // the two "never met in practice" because this branch runs at least 6 h
+    // the two "never met in practice" because this branch ran at least 6 h
     // before the start (minimum `DEADLINE_HOURS`) while attendance is written at
-    // class time. That spacer is a property of today's window boundaries, not of
-    // this code — #236 proposes broadcasting freed spots right up to class start,
-    // which would erase it. The structural argument above survives that change;
-    // the timing one would not.
+    // class time. That spacer was a property of the window's old
+    // deadline-anchored boundaries, not of this code — #236 anchors the window
+    // on class start instead, so this branch now runs right up to it and the
+    // spacer is gone. The structural argument above is what survives that; the
+    // timing one would not have.
     //
     // `lockClassRow` here is the same helper `addToWaitlist`, `promoteNext`
     // and `claimSpot` above now take too — all four share the bounded 2s
