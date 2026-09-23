@@ -752,8 +752,8 @@ describe('DELETE /api/account', () => {
   /**
    * The service reports the loser's half with `{ erased: false, reason:
    * 'already-erased' }` rather than throwing — nothing reaches the route to
-   * catch (`gdpr-lock-order.test.ts` owns the rejection-count assertion that
-   * pins the CAS itself). The route answers the loser as success, and — since
+   * catch (`gdpr-lock-order.test.ts` owns the already-erased-count assertion
+   * that pins the abort). The route answers the loser as success, and — since
    * every half it attempted was already erased — as `unchanged`; the winner
    * as an ordinary deletion. Neither falls into `erasureFailure`, which would
    * answer a 500 and tell a user their account could not be removed, about an

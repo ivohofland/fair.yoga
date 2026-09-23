@@ -322,9 +322,6 @@ export type ErasureOutcome = { erased: true } | { erased: false; reason: 'alread
  * committing at all. `gdpr-lock-order.test.ts` ("erases once when the same
  * student erasure runs twice concurrently") pins the abort through its
  * already-erased-count assertion.
- *
- * `DELETE /api/account` never catches this error — it reads the
- * `ErasureOutcome` `deleteStudentAccount`/`deleteTeacherAccount` return.
  */
 class AlreadyErasedError extends Error {
   constructor(readonly half: ErasureHalf) {
@@ -1116,8 +1113,7 @@ export async function deleteTeacherAccount(
       // for the expected outcome of a race this design chooses to lose
       // gracefully trains them to ignore the line. `observedStatus` is what
       // separates that benign case from a genuine refusal, and it is the
-      // same field
-      // `deleteTeacherAccount`'s own class CAS reports below.
+      // same field `deleteTeacherAccount`'s own class CAS reports below.
       // `.catch` because this read exists only to enrich a log line, and a
       // diagnostic must never be able to fail the operation it describes:
       // unguarded, a pool timeout here would throw out of a GDPR erasure that
@@ -1486,16 +1482,22 @@ export async function deleteTeacherAccount(
       // What this abort does NOT undo, stated so it is not mistaken for a
       // whole-function guard: the `completeClass` loop at the top of this
       // function runs BEFORE this transaction opens and commits per class.
-      // A loser that reaches this throw has already been through that loop.
-      // It writes nothing, which is the part that matters: `completeClass`
-      // takes the class row lock and `validateTransition` refuses
-      // `completed → completed`. But "writes nothing" is not "does nothing" —
-      // each refusal is logged by the loop above. It levels on
-      // `observedStatus`: `warn` when the class is already `completed`, which
-      // is exactly this case and pages nobody, and `error` for every other
-      // reason, which are real. So a routine concurrent duplicate is visible
-      // without being alarming, and a class that silently went unbilled still
-      // reaches whoever watches `error`.
+      // A loser that reaches this throw has already been through that
+      // loop — but which of the two concurrent calls for a given class
+      // wrote anything depends on which reached it first, not on which
+      // later loses this CAS. When the winner's call reaches a class
+      // first, the loser's own call for it is the one `validateTransition`
+      // refuses (`completed → completed`), and that call writes nothing.
+      // When the loser's call reaches it first instead, the loser's own
+      // call is what completes and bills the class, and it is the
+      // winner's later call for that same class that gets refused. Either
+      // way a refused call is logged by the loop above, not silently
+      // dropped. It levels on `observedStatus`: `warn` when the class is
+      // already `completed`, which is exactly the benign case and pages
+      // nobody, and `error` for every other reason, which are real. So a
+      // routine concurrent duplicate is visible without being alarming,
+      // and a class that silently went unbilled still reaches whoever
+      // watches `error`.
       // And `completeClass`'s 2s `lock_timeout` is
       // deliberately uncaught there, so a loser that waits too long throws
       // something that is NOT this sentinel and takes `erasureFailure`
