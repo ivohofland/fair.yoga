@@ -27,7 +27,20 @@ describe('PasskeySignIn', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
+
+  /**
+   * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+   * HTML error page takes, which the plain `{ ok, status, json }` stubs
+   * elsewhere in this file cannot express.
+   */
+  function htmlResponse(status = 502): Response {
+    return new Response('<html><body>502 Bad Gateway</body></html>', {
+      status,
+      headers: { 'Content-Type': 'text/html' },
+    });
+  }
 
   function stubHappyPath() {
     fetchMock
@@ -95,6 +108,31 @@ describe('PasskeySignIn', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Too many sign-in attempts. Try again in 42 minutes.',
+    );
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, the 429 branch shows the same
+   * `DEFAULT_ERROR_MESSAGE` text the outer catch's WebAuthn-failure branch
+   * shows — so the log is what discriminates that this ran through the
+   * helper rather than falling through unread.
+   */
+  it('shows the fallback message and logs when the 429 body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(htmlResponse(429));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText("Passkey sign-in didn't work here — use the email link instead."),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 429 }),
     );
     expect(routerPush).not.toHaveBeenCalled();
   });

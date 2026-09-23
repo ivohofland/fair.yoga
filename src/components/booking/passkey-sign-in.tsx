@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { startAuthentication } from '@simplewebauthn/browser';
+import { readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 
 const DEFAULT_ERROR_MESSAGE = "Passkey sign-in didn't work here — use the email link instead.";
@@ -24,10 +25,7 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
         method: 'POST',
       });
       if (optionsRes.status === 429) {
-        const body = (await optionsRes.json().catch(() => null)) as
-          | { error?: { message?: string } }
-          | null;
-        setErrorMessage(body?.error?.message ?? DEFAULT_ERROR_MESSAGE);
+        setErrorMessage(await readErrorMessage(optionsRes, DEFAULT_ERROR_MESSAGE));
         setState('error');
         return;
       }

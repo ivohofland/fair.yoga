@@ -32,7 +32,32 @@ describe('NewClassPage', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
+
+  /**
+   * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+   * HTML error page takes, which the plain `{ ok, status, json }` stubs
+   * elsewhere in this file cannot express.
+   */
+  function htmlResponse(status = 502): Response {
+    return new Response('<html><body>502 Bad Gateway</body></html>', {
+      status,
+      headers: { 'Content-Type': 'text/html' },
+    });
+  }
+
+  /**
+   * The room-list mount fetch answers normally; only the create POST answers
+   * with an unreadable body, so the wizard reaches step 4 and submits before
+   * hitting the refusal.
+   */
+  function stubFetchCreateRefusing() {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(url === '/api/classes' ? htmlResponse(502) : { ok: true, json: async () => ({ data: [ROOM] }) }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+  }
 
   function stubFetch() {
     fetchMock.mockResolvedValue({
@@ -432,6 +457,24 @@ describe('NewClassPage', () => {
    * room passes the filter whether or not the filter is there. These stubs set
    * the field explicitly.
    */
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the wizard's own fallback and
+   * leaves a console record instead of the outer catch's generic
+   * unreadable-network copy a `SyntaxError` landing there would produce.
+   */
+  it('shows the fallback and logs when the create refusal body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetchCreateRefusing();
+    await fillAndSubmit();
+
+    expect(await screen.findByText('Failed to create class')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
   describe('archived rooms (issue 76)', () => {
     const ARCHIVED = { ...ROOM, id: '22222222-2222-4222-8222-222222222222',
       room: { roomName: 'Attic', venueName: 'Shelved Venue' }, isArchived: true };

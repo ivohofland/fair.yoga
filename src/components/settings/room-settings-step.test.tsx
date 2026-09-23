@@ -20,12 +20,24 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+/**
+ * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+ * HTML error page takes, which `jsonResponse` above cannot express.
+ */
+function htmlResponse(status = 502): Response {
+  return new Response('<html><body>502 Bad Gateway</body></html>', {
+    status,
+    headers: { 'Content-Type': 'text/html' },
+  });
+}
+
 describe('RoomSettingsStep', () => {
   const fetchMock = vi.fn();
 
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   function submit(onSaved: () => void): void {
@@ -60,6 +72,44 @@ describe('RoomSettingsStep', () => {
     submit(onSaved);
 
     expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the step's own fallback and
+   * leaves a console record instead of the generic network copy a
+   * `SyntaxError` landing in the bare outer `catch` would produce.
+   */
+  it('shows the fallback and logs when the refusal body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(htmlResponse(502));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSaved = vi.fn();
+
+    submit(onSaved);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to link room');
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('shows network copy and logs when the request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSaved = vi.fn();
+
+    submit(onSaved);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Please try again.');
+    expect(consoleError).toHaveBeenCalledWith(
+      '[room-settings-step] request failed',
+      expect.any(TypeError),
+    );
     expect(onSaved).not.toHaveBeenCalled();
   });
 });
