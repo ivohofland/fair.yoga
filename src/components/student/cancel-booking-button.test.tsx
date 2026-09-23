@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CancelBookingButton } from './cancel-booking-button';
 import { routerRefresh } from '../../../tests/setup/components';
@@ -12,6 +12,10 @@ function reply(status: number, body: unknown) {
   };
 }
 
+// Far enough past every fixed system time this file sets that the
+// request-flow tests (real clock, no fake timers) never cross it.
+const FUTURE_DEADLINE = '2099-01-01T00:00:00.000Z';
+
 describe('CancelBookingButton', () => {
   const fetchMock = vi.fn();
 
@@ -22,7 +26,13 @@ describe('CancelBookingButton', () => {
 
   /** Opens the confirmation, then confirms. */
   function confirmCancel(): void {
-    render(<CancelBookingButton registrationId="reg-1" cancelDeadline="HOURS_24" />);
+    render(
+      <CancelBookingButton
+        registrationId="reg-1"
+        cancelDeadline="HOURS_24"
+        cancelDeadlineAt={FUTURE_DEADLINE}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
   }
@@ -85,5 +95,97 @@ describe('CancelBookingButton', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
     expect(routerRefresh).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The deadline is decided once, at the first "Cancel booking" tap, and
+ * stored — never recomputed from the clock at render. Fake-timer pattern
+ * from `src/components/schedule/class-list.test.tsx`; scoped to this
+ * describe block so the fetch-flow tests above keep the real clock.
+ */
+describe('CancelBookingButton deadline-aware copy', () => {
+  const DEADLINE = '2026-06-01T12:00:00.000Z';
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the before-deadline copy while the deadline is still ahead', () => {
+    vi.setSystemTime(new Date('2026-06-01T10:00:00.000Z'));
+    render(
+      <CancelBookingButton
+        registrationId="reg-1"
+        cancelDeadline="HOURS_24"
+        cancelDeadlineAt={DEADLINE}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
+
+    expect(
+      screen.getByText(
+        'Cancel this booking? Free until 24 hours before class — after that the class is still charged.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the after-deadline copy once the deadline has passed', () => {
+    vi.setSystemTime(new Date('2026-06-01T13:00:00.000Z'));
+    render(
+      <CancelBookingButton
+        registrationId="reg-1"
+        cancelDeadline="HOURS_24"
+        cancelDeadlineAt={DEADLINE}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
+
+    expect(
+      screen.getByText(
+        "The cancellation deadline has passed, so you'll still pay your share of this class. Cancelling lets your teacher know you won't be there.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the before-deadline copy exactly at the deadline, matching the server\'s `>`', () => {
+    vi.setSystemTime(new Date(DEADLINE));
+    render(
+      <CancelBookingButton
+        registrationId="reg-1"
+        cancelDeadline="HOURS_24"
+        cancelDeadlineAt={DEADLINE}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
+
+    expect(
+      screen.getByText(
+        'Cancel this booking? Free until 24 hours before class — after that the class is still charged.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('decides at tap time, not at render — a clock that crosses the deadline while the page sits open shows the after copy', () => {
+    vi.setSystemTime(new Date('2026-06-01T10:00:00.000Z'));
+    render(
+      <CancelBookingButton
+        registrationId="reg-1"
+        cancelDeadline="HOURS_24"
+        cancelDeadlineAt={DEADLINE}
+      />,
+    );
+
+    vi.setSystemTime(new Date('2026-06-01T13:00:00.000Z'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
+
+    expect(
+      screen.getByText(
+        "The cancellation deadline has passed, so you'll still pay your share of this class. Cancelling lets your teacher know you won't be there.",
+      ),
+    ).toBeInTheDocument();
   });
 });
