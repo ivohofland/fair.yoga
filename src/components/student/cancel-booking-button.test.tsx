@@ -187,4 +187,31 @@ describe('CancelBookingButton deadline-aware copy', () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it('holds the before copy across a re-render, even once the clock has since crossed the deadline', () => {
+    vi.setSystemTime(new Date('2026-06-01T10:00:00.000Z'));
+    const { rerender } = render(
+      <CancelBookingButton
+        registrationId="reg-1"
+        cancelDeadline="HOURS_24"
+        cancelDeadlineAt={DEADLINE}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
+
+    vi.setSystemTime(new Date('2026-06-01T13:00:00.000Z'));
+    rerender(
+      <CancelBookingButton
+        registrationId="reg-1"
+        cancelDeadline="HOURS_24"
+        cancelDeadlineAt={DEADLINE}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        'Cancel this booking? Free until 24 hours before class — after that the class is still charged.',
+      ),
+    ).toBeInTheDocument();
+  });
 });
