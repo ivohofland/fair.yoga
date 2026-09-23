@@ -19,8 +19,12 @@ describe('NOTIFICATION_RETENTION_DAYS', () => {
     expect(NOTIFICATION_RETENTION_DAYS.spot_available).toBe(SHORT_RETENTION_DAYS);
   });
 
-  it('keeps waitlist_promoted for the full period: it is the promoted student\'s only booking confirmation', () => {
+  it('keeps waitlist_promoted for the full period', () => {
     expect(NOTIFICATION_RETENTION_DAYS.waitlist_promoted).toBe(STANDARD_RETENTION_DAYS);
+  });
+
+  it('keeps missed_you briefly', () => {
+    expect(NOTIFICATION_RETENTION_DAYS.missed_you).toBe(SHORT_RETENTION_DAYS);
   });
 
   it('keeps reminder and payment_request for the full period', () => {
