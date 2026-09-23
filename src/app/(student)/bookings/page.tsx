@@ -12,7 +12,7 @@ import { PaymentQr } from '@/components/student/payment-qr';
 import { ClassPriceLine } from '@/components/booking/price-range';
 import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
-import { getWaitlistWindow } from '@/services/waitlist';
+import { getWaitlistWindow, cancelDeadlineInstant } from '@/services/waitlist';
 import { studentNotificationHref } from '@/lib/notification-links';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
@@ -330,6 +330,11 @@ export default async function StudentBookingsPage() {
                         <CancelBookingButton
                           registrationId={reg.id}
                           cancelDeadline={cls.cancelDeadline}
+                          cancelDeadlineAt={cancelDeadlineInstant(
+                            cls.calendarEntry,
+                            cls.cancelDeadline,
+                            cls.calendarEntry.teacher.defaultTimezone,
+                          ).toISOString()}
                         />
                       </div>
                     )

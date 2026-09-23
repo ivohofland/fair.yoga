@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { readError } from '@/lib/client-errors';
+import { isPastCancelDeadline } from '@/lib/cancel-deadline';
 
 const DEADLINE_LABELS: Record<string, string> = {
   HOURS_48: '48 hours',
@@ -15,11 +16,27 @@ const DEADLINE_LABELS: Record<string, string> = {
 interface CancelBookingButtonProps {
   registrationId: string;
   cancelDeadline: string;
+  /** ISO instant — `cancelDeadlineInstant` (`@/services/waitlist`), run server-side. */
+  cancelDeadlineAt: string;
 }
 
-export function CancelBookingButton({ registrationId, cancelDeadline }: CancelBookingButtonProps) {
+/**
+ * Whether the confirm step shows the past-deadline copy, decided once at the
+ * tap that opens it (`isPastCancelDeadline`, matching the DELETE route's own
+ * check) and held for as long as the confirm stays open — never recomputed
+ * from the clock at render, which would go stale while the student reads it.
+ */
+interface Confirming {
+  pastDeadline: boolean;
+}
+
+export function CancelBookingButton({
+  registrationId,
+  cancelDeadline,
+  cancelDeadlineAt,
+}: CancelBookingButtonProps) {
   const router = useRouter();
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<Confirming | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState('');
 
@@ -48,7 +65,15 @@ export function CancelBookingButton({ registrationId, cancelDeadline }: CancelBo
 
   if (!confirming) {
     return (
-      <button type="button" onClick={() => setConfirming(true)} className="type-label text-danger">
+      <button
+        type="button"
+        onClick={() =>
+          setConfirming({
+            pastDeadline: isPastCancelDeadline(new Date(cancelDeadlineAt), new Date()),
+          })
+        }
+        className="type-label text-danger"
+      >
         Cancel booking
       </button>
     );
@@ -57,14 +82,15 @@ export function CancelBookingButton({ registrationId, cancelDeadline }: CancelBo
   return (
     <div className="flex flex-col gap-3">
       <p className="type-body">
-        Cancel this booking? Free until {DEADLINE_LABELS[cancelDeadline] ?? '24 hours'} before
-        class — after that the class is still charged.
+        {confirming.pastDeadline
+          ? "The cancellation deadline has passed, so you'll still pay your share of this class. Cancelling lets your teacher know you won't be there."
+          : `Cancel this booking? Free until ${DEADLINE_LABELS[cancelDeadline] ?? '24 hours'} before class — after that the class is still charged.`}
       </p>
       <div className="flex gap-3">
         <Button variant="destructive" onClick={handleCancel} disabled={cancelling}>
           {cancelling ? 'Cancelling...' : 'Cancel booking'}
         </Button>
-        <Button variant="secondary" onClick={() => setConfirming(false)}>
+        <Button variant="secondary" onClick={() => setConfirming(null)}>
           Keep booking
         </Button>
       </div>
