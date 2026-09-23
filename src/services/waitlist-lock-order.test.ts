@@ -128,7 +128,7 @@ afterAll(async () => {
  * class's own schedule is, only that it exists and is `open`, so a distinct
  * minute per call (via `slotTime`) is all `CalendarEntry_teacher_slot_excl`
  * needs. `claimSpot`'s and `handleSpotFreed`'s guards build their own fixed-date
- * classes instead, because their deadline math is pinned against an exact
+ * classes instead, because their window math is pinned against an exact
  * instant.
  */
 let makeClassCounter = 0;
@@ -351,14 +351,13 @@ describe('promoteNext (DB)', () => {
 });
 
 describe('claimSpot (DB)', () => {
-  // One fixed class drives the deadline math, so nothing here reads the wall
+  // One fixed class drives the window math, so nothing here reads the wall
   // clock:
-  //   class starts       2026-06-01 09:00 UTC  (teacher default timezone UTC)
-  //   HOURS_24        →  deadline 2026-05-31 09:00 UTC
-  //   cutoff = deadline − 1h        2026-05-31 08:00 UTC
-  // IN_CLAIM_WINDOW sits inside the final hour, after the deadline's cutoff
-  // and before the deadline itself.
-  const IN_CLAIM_WINDOW = new Date('2026-05-31T08:30:00Z');
+  //   class starts             2026-06-01 09:00 UTC  (teacher default timezone UTC)
+  //   claim window opens       2026-06-01 08:00 UTC  (start − CLAIM_WINDOW_MINUTES)
+  // IN_CLAIM_WINDOW sits inside that final hour, before start itself — the
+  // window is anchored on start, not on the cancel deadline (#236).
+  const IN_CLAIM_WINDOW = new Date('2026-06-01T08:30:00Z');
 
   let classId: string;
 
@@ -530,12 +529,16 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
 
 describe('handleSpotFreed (DB)', () => {
   // Fixed class, so nothing here reads the wall clock. Same derivation as the
-  // `claimSpot (DB)` block above, one day later so the two don't overlap on
+  // `claimSpot (DB)` block above, two days later so the two don't overlap on
   // the shared teacher:
-  //   class starts       2026-06-03 09:00 UTC  (teacher default timezone UTC)
-  //   HOURS_24        →  deadline 2026-06-02 09:00 UTC
-  //   cutoff = deadline − 1h        2026-06-02 08:00 UTC
-  const IN_CLAIM_WINDOW = new Date('2026-06-02T08:30:00Z');
+  //   class starts             2026-06-03 09:00 UTC  (teacher default timezone UTC)
+  //   claim window opens       2026-06-03 08:00 UTC  (start − CLAIM_WINDOW_MINUTES)
+  // Must land inside that window: it is what drives `getWaitlistWindow` to
+  // `first_come_first_claimed`, the branch this test's `lockClassRow` guard
+  // is about (#212) — outside it, `handleSpotFreed` runs `promoteNext`
+  // instead, whose own `lockClassRow` call would produce the same 55P03 for
+  // the wrong reason.
+  const IN_CLAIM_WINDOW = new Date('2026-06-03T08:30:00Z');
 
   /**
    * #212. The capacity guard (`waitlist.test.ts`'s "stays silent when the
