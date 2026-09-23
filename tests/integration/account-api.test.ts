@@ -698,15 +698,20 @@ describe('DELETE /api/account', () => {
     // Held for 4s — comfortably past the erasure's own 2s bound, so what this
     // observes is the timeout and not merely a wait.
     let holderReleased = false;
+    let signalHeld!: () => void;
+    const held = new Promise<void>((r) => {
+      signalHeld = r;
+    });
     const holder = prisma.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        signalHeld();
         await new Promise((r) => setTimeout(r, 4_000));
         holderReleased = true;
       },
       { timeout: 20_000 },
     );
-    await new Promise((r) => setTimeout(r, 200));
+    await held;
 
     try {
       const res = await fetch(`${BASE_URL}/api/account`, {
@@ -725,6 +730,18 @@ describe('DELETE /api/account', () => {
     } finally {
       await holder;
     }
+
+    // The retry the message promises actually works once the contention is
+    // gone.
+    const second = await fetch(`${BASE_URL}/api/account`, {
+      method: 'DELETE',
+      headers: cookie(acc.token),
+    });
+    expect(second.status).toBe(200);
+    const teacherAfterRetry = await prisma.teacher.findUniqueOrThrow({
+      where: { id: acc.teacherId },
+    });
+    expect(teacherAfterRetry.deletedAt).not.toBeNull();
   }, 40_000);
 
   /**
