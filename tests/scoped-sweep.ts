@@ -12,7 +12,8 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *
  * What the scope does NOT reach: raw SQL (`$queryRaw`, `$executeRaw`),
  * related rows loaded through `include`/`select` or matched by a relation
- * filter, and single-row operations. Those pass through untouched, so the
+ * filter, nested writes, single-row operations and inserts. Those pass
+ * through untouched, so the
  * scope holds only for a sweep that picks its candidates with a top-level
  * bulk read on a scoped model and keys everything after it by the ids that
  * read returned. `rowsRead` exists because a scoped `toBe(0)` passes
@@ -49,7 +50,8 @@ export interface ScopedSweep {
 /**
  * `read`: scoped, and its results count toward `rowsRead`.
  * `scoped`: scoped, not counted — an aggregate or a write.
- * `pass`: single-row, keyed by an id; left alone.
+ * `pass`: not narrowed — a single-row operation keyed by a unique field, or
+ * an insert, which has no `where` to narrow.
  */
 type Handling = 'read' | 'scoped' | 'pass';
 type ModelOperation = Exclude<Prisma.PrismaAction, 'queryRaw' | 'executeRaw' | 'runCommandRaw' | 'findRaw'>;
@@ -81,13 +83,15 @@ function handlingOf(operation: string): Handling {
   return HANDLING[operation as ModelOperation];
 }
 
-/** A filter leaf left `undefined` is dropped by Prisma, silently widening the scope. */
+/**
+ * A filter leaf left `undefined` is dropped by Prisma, silently widening the
+ * scope. Nested `{}` is left alone: under a relation filter (`some: {}`) it
+ * is a real condition.
+ */
 function assertNoUndefined(value: unknown, path: string): void {
   if (value === undefined) throw new Error(`scopeSweep: ${path} is undefined`);
   if (value === null || typeof value !== 'object' || value instanceof Date) return;
-  const entries = Object.entries(value);
-  if (!Array.isArray(value) && entries.length === 0) throw new Error(`scopeSweep: ${path} is an empty filter`);
-  for (const [k, v] of entries) assertNoUndefined(v, `${path}.${k}`);
+  for (const [k, v] of Object.entries(value)) assertNoUndefined(v, `${path}.${k}`);
 }
 
 function validate(scope: SweepScope): void {
@@ -96,7 +100,12 @@ function validate(scope: SweepScope): void {
   const known = new Set<string>(Object.values(Prisma.ModelName));
   for (const model of models) {
     if (!known.has(model)) throw new Error(`scopeSweep: "${model}" is not a model`);
-    assertNoUndefined((scope as Record<string, unknown>)[model], model);
+    const filter = (scope as Record<string, unknown>)[model];
+    // An empty top-level filter matches every row: no narrowing at all.
+    if (filter !== null && typeof filter === 'object' && Object.keys(filter).length === 0) {
+      throw new Error(`scopeSweep: ${model} is an empty filter`);
+    }
+    assertNoUndefined(filter, model);
   }
 }
 

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { scopeSweep } from './scoped-sweep';
 
@@ -122,6 +122,11 @@ describe('scopeSweep', () => {
     expect(() => scopeSweep(prisma, { Teacher: { id: { in: [inId, undefined as unknown as string] } } })).toThrow(/Teacher\.id\.in\.1 is undefined/);
     const misspelt = { Teacher: { id: inId }, Teachr: { id: inId } };
     expect(() => scopeSweep(prisma, misspelt)).toThrow(/"Teachr" is not a model/);
+  });
+
+  it('accepts filters whose empty objects are real conditions', () => {
+    expect(() => scopeSweep(prisma, { Class: { registrations: { some: {} } } })).not.toThrow();
+    expect(() => scopeSweep(prisma, { Room: { equipment: { equals: Prisma.DbNull } } })).not.toThrow();
   });
 
   it('lets a hook on the client handed in see the args before the scope', async () => {

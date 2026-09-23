@@ -7,7 +7,6 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
-let teacherId: string;
 const liveSessionId = crypto.randomBytes(32).toString('hex');
 const deadSessionId = crypto.randomBytes(32).toString('hex');
 const liveTokenHash = crypto.randomBytes(32).toString('hex');
@@ -26,7 +25,6 @@ describe('cleanupExpiredAuth', () => {
         pageSlug: `cleanup-${uniqueSuffix}`,
       },
     });
-    teacherId = teacher.id;
     const teacherAccountId = teacher.accountId;
 
     await prisma.session.createMany({
@@ -60,10 +58,16 @@ describe('cleanupExpiredAuth', () => {
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { id: { in: [liveSessionId, deadSessionId] } } });
-    await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.$disconnect();
+    try {
+      await prisma.session.deleteMany({ where: { id: { in: [liveSessionId, deadSessionId] } } });
+      await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+      // By this run's email, not a captured id: an id left unset by a failed
+      // beforeAll would be dropped from the where, widening the delete.
+      await prisma.teacher.deleteMany({ where: { email: `cleanup-${uniqueSuffix}@test.local` } });
+      await prisma.account.deleteMany({ where: { email: `cleanup-${uniqueSuffix}@test.local` } });
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
   it('deletes expired sessions and tokens, keeps live ones', async () => {

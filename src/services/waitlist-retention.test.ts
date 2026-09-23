@@ -159,9 +159,16 @@ async function entryExists(entryId: string): Promise<boolean> {
  * ran unscoped would share the run's class cap with every stray eligible
  * class an earlier run left, and a fixture sorted past that cap would go
  * unreaped for a reason that has nothing to do with the rule under test.
+ *
+ * The presence check is here, not at each call site: a "keeps" test asserts
+ * the sweep left something alone, which a scope that missed the fixture
+ * would satisfy vacuously. A scoped `count()`, because the reap's own
+ * predicate drops the rows a "keeps" test builds, so `rowsRead` reads 0.
  */
 async function reapOnly(classId: string): Promise<void> {
-  await reapClosedWaitlistEntries(scopeSweep(prisma, { WaitlistEntry: { classId: { in: [classId] } } }).db, { now: NOW });
+  const scoped = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [classId] } } });
+  expect(await scoped.db.waitlistEntry.count()).toBeGreaterThan(0);
+  await reapClosedWaitlistEntries(scoped.db, { now: NOW });
 }
 
 /**
@@ -879,11 +886,10 @@ describe('reapClosedWaitlistEntries', () => {
    * STUBBED, unlike its all-failed sibling, and the difference is deliberate.
    * That test provokes a real `55P03` because the SHAPE of a realistic failure
    * is part of what it pins. This one pins an arithmetic threshold, and
-   * reaching a 2-of-3 split with real lock timing would mean planting three
-   * eligible classes in a shared database and depending on where they sort
-   * against every other fixture in this file — which is how a test acquires
-   * the power to break its neighbours. The sweep touches exactly three `db`
-   * surfaces, so the stub is small enough to be obviously faithful.
+   * reaching a 2-of-3 split with real lock timing would mean holding two
+   * class locks from a second connection against a wall clock, for a number
+   * the stub states outright. The sweep touches exactly three `db` surfaces,
+   * so the stub is small enough to be obviously faithful.
    *
    * Strictly-greater is what keeps this from being over-eager, and it is why
    * the three-class shape matters: at two classes with one failure the sample
