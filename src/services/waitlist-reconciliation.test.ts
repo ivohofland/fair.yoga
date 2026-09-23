@@ -911,24 +911,33 @@ describe('reconcileWaitlists (DB)', () => {
     expect(summary.transientFailedClassIds).not.toContain(broken.id);
   });
 
-  it('logs a transient per-class failure at warn level', async () => {
-    const contended = await makeFreedSeat('Transient');
-    const healthy = await makeFreedSeat('TransientOk');
+  /**
+   * Two kinds, two levels, one shared claim: `TRANSIENT_KIND_LEVEL`
+   * (`lib/api-errors.ts`) is the authority, not a blanket "transient ⇒ warn" —
+   * `pool_exhausted` (`P2024`) logs at `error` here despite being transient,
+   * which `summary.transientFailedClassIds` still records: `decideEscalation`'s
+   * tolerance reads that boolean, not the log level.
+   */
+  it.each([
+    { kind: 'tx_budget' as const, level: 'warn' as const, code: 'P2028' as const },
+    { kind: 'pool_exhausted' as const, level: 'error' as const, code: 'P2024' as const },
+  ])('logs a $kind per-class failure at $level, still returned transient', async ({ kind, level, code }) => {
+    const contended = await makeFreedSeat(`Transient-${kind}`);
+    const healthy = await makeFreedSeat(`TransientOk-${kind}`);
     const clocks = windowClocks(contended.startTime);
 
-    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    onTestFinished(() => warn.mockRestore());
+    const spy = vi.spyOn(log, level).mockImplementation(() => undefined);
+    onTestFinished(() => spy.mockRestore());
 
-    // `P2024` is a connection-pool timeout, which `api-errors.ts` classifies
-    // transient — a real code from the set the catch block reasons about,
-    // rather than a hand-rolled error shaped to pass.
+    // A real code from the set the catch block reasons about, rather than a
+    // hand-rolled error shaped to pass.
     const faulty = prisma.$extends({
       query: {
         class: {
           findUnique({ args, query }) {
             if (args.where?.id === contended.id) {
-              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-                code: 'P2024',
+              throw new Prisma.PrismaClientKnownRequestError('transient', {
+                code,
                 clientVersion: Prisma.prismaVersion.client,
               });
             }
@@ -945,11 +954,13 @@ describe('reconcileWaitlists (DB)', () => {
 
     expect(summary.failedClassIds).toContain(contended.id);
     expect(summary.reconciledClassIds).toContain(healthy.id);
-    const logged = warn.mock.calls.find(
+    const logged = spy.mock.calls.find(
       (c) => (c[0] as { classId?: string } | undefined)?.classId === contended.id,
     );
     expect(logged).toBeDefined();
-    expect(logged?.[0]).toMatchObject({ classId: contended.id, transient: true });
+    expect(logged?.[0]).toMatchObject({ classId: contended.id, transient: true, transientKind: kind });
+    // Still returned transient regardless of which level the kind logs at —
+    // this is what keeps `decideEscalation`'s tolerance unchanged by kind.
     expect(summary.transientFailedClassIds).toContain(contended.id);
     // A subset of `failedClassIds`, not a replacement for it — the same
     // relationship `repairedClassIds` has to `reconciledClassIds`.
@@ -1027,8 +1038,8 @@ describe('reconcileWaitlists (DB)', () => {
    * seat and a live queue at the same moment — and skips every other
    * candidate, so one invoked class per tick is the ordinary case however many
    * teachers share the deployment. "Every class it tried failed" is therefore
-   * reachable from one benign lock race that the next tick repairs. Throwing
-   * on that trains an operator to ignore
+   * reachable from one benign transient database failure that the next tick
+   * repairs. Throwing on that trains an operator to ignore
    * `/api/health`. But never throwing reproduces #354 here: a leaked `idle in
    * transaction` session holding a Class row makes every tick fail forever while
    * the job reports success.
@@ -1076,7 +1087,8 @@ describe('reconcileWaitlists (DB)', () => {
   /**
    * The streak is about UNBROKEN contention. A tick that reconciled something
    * proves the sweep is working, so the count starts again — otherwise five
-   * scattered lock races over an hour would report a wedged sweep.
+   * scattered transient database failures over an hour would report a wedged
+   * sweep.
    */
   it('resets the contention streak on a tick that reconciled a class', async () => {
     const contended = await makeFreedSeat('StreakReset');
@@ -1278,8 +1290,8 @@ describe('reconcileWaitlists (DB)', () => {
    * are the same question), or pairs a failing class with a healthy reconciling
    * one, which `decideEscalation` answers on its `allFailed` clause before
    * transience is ever consulted. So a tick carrying a genuine defect ALONGSIDE
-   * a lock race would have been swallowed for the whole tolerance, which is the
-   * defect the tolerance was added to avoid causing.
+   * a transient database failure would have been swallowed for the whole
+   * tolerance, which is the defect the tolerance was added to avoid causing.
    *
    * The streak is fresh, so nothing here is repetition: a mixed tick escalates
    * on the tick it happens.
@@ -1307,8 +1319,8 @@ describe('reconcileWaitlists (DB)', () => {
         class: {
           findUnique({ args }) {
             if (args.where?.id === contended.id) {
-              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-                code: 'P2024',
+              throw new Prisma.PrismaClientKnownRequestError('transaction timeout', {
+                code: 'P2028',
                 clientVersion: Prisma.prismaVersion.client,
               });
             }
@@ -1334,8 +1346,14 @@ describe('reconcileWaitlists (DB)', () => {
     const byClass = (calls: Array<[unknown, ...unknown[]]>, id: string) =>
       calls.map((c) => c[0] as { classId?: string; transient?: boolean })
         .filter((p) => p?.classId === id);
-    expect(byClass(warn.mock.calls, contended.id).at(-1)).toMatchObject({ transient: true });
-    expect(byClass(error.mock.calls, wedged.id).at(-1)).toMatchObject({ transient: false });
+    expect(byClass(warn.mock.calls, contended.id).at(-1)).toMatchObject({
+      transient: true,
+      transientKind: 'tx_budget',
+    });
+    expect(byClass(error.mock.calls, wedged.id).at(-1)).toMatchObject({
+      transient: false,
+      transientKind: null,
+    });
     // Escalated from a streak that never moved, not from repetition.
     expect(streaks.allTransientTicks).toBe(0);
   });
@@ -1398,6 +1416,14 @@ describe('reconcileWaitlists (DB)', () => {
    * today is a record in the server log and nothing more — `lib/log.ts` is
    * pino to stdout with no transport, so nothing pages anyone off either level
    * (#157); the level is the correct classification for when that is fixed.
+   *
+   * `P2028` (`tx_budget`), not `P2024`: this is the site the kind's own level
+   * would otherwise defeat the point of — `pool_exhausted` logs at `error`
+   * from tick 1, which would make the `stuck` override at tick 5 untestable by
+   * level. `tx_budget` logs at `warn` on its own, so ticks 1–4 at `warn` and
+   * only tick 5 — where `classStreak >= MAX_CONSECUTIVE_CONTENDED_TICKS`
+   * forces `error` regardless of kind — demonstrate the override rather than
+   * the kind's own level.
    */
   it('escalates a class contended for too many consecutive ticks, without reddening the job', async () => {
     const stuck = await makeFreedSeat('PerClassStuck');
@@ -1417,8 +1443,8 @@ describe('reconcileWaitlists (DB)', () => {
         class: {
           findUnique({ args, query }) {
             if (args.where?.id === stuck.id) {
-              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-                code: 'P2024',
+              throw new Prisma.PrismaClientKnownRequestError('transaction timeout', {
+                code: 'P2028',
                 clientVersion: Prisma.prismaVersion.client,
               });
             }
@@ -1430,16 +1456,19 @@ describe('reconcileWaitlists (DB)', () => {
 
     const forClass = (
       calls: Array<[unknown, ...unknown[]]>,
-    ): Array<{ classId?: string; classStreak?: number }> =>
+    ): Array<{ classId?: string; classStreak?: number; transientKind?: string | null }> =>
       calls
-        .map((c) => c[0] as { classId?: string; classStreak?: number })
+        .map((c) => c[0] as { classId?: string; classStreak?: number; transientKind?: string | null })
         .filter((p) => p?.classId === stuck.id);
 
     for (let tick = 1; tick < 5; tick += 1) {
       const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
       // `healthy` ITSELF is what resets the streak on tick 1, not merely some class.
       if (tick === 1) expect(summary.reconciledClassIds).toContain(healthy.id);
-      expect(forClass(warn.mock.calls).at(-1)).toMatchObject({ classStreak: tick });
+      expect(forClass(warn.mock.calls).at(-1)).toMatchObject({
+        classStreak: tick,
+        transientKind: 'tx_budget',
+      });
       expect(forClass(error.mock.calls)).toHaveLength(0);
     }
 
@@ -1455,7 +1484,12 @@ describe('reconcileWaitlists (DB)', () => {
     const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
     expect(summary.skipped).toContainEqual({ classId: healthy.id, reason: 'already_broadcast' });
     expect(streaks.allTransientTicks).toBeLessThan(5);
-    expect(forClass(error.mock.calls).at(-1)).toMatchObject({ classStreak: 5 });
+    // The `stuck` override: `tx_budget`'s own level is `warn`, so this `error`
+    // is attributable only to `classStreak >= MAX_CONSECUTIVE_CONTENDED_TICKS`.
+    expect(forClass(error.mock.calls).at(-1)).toMatchObject({
+      classStreak: 5,
+      transientKind: 'tx_budget',
+    });
   });
 
   /**

@@ -27,7 +27,7 @@ import {
   statusInList,
   statusesWhere,
 } from '@/lib/db-locks';
-import { isTransientDbError } from '@/lib/api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { startOfLocalDay } from '@/lib/timezone';
 import { withSlot as withClassSlot } from './class-template-lifecycle';
@@ -980,12 +980,13 @@ export async function deleteStudentAccount(
         const waiting = await db.waitlistEntry
           .count({ where: { classId, status: 'waiting' } })
           .catch(() => -1);
-        const transient = isTransientDbError(err);
+        const failure = transientDbFailure(err);
+        const transient = failure !== null;
         const window = err instanceof SpotFreedError ? err.window : null;
-        log[transient ? 'warn' : 'error'](
-          { err, classId, waiting, transient, branch: window ?? 'unknown' },
+        log[failure?.level ?? 'error'](
+          { err, classId, waiting, transient, transientKind: failure?.kind ?? null, branch: window ?? 'unknown' },
           transient
-            ? `gdpr: spot-freed hook lost a lock race after erasure — ${spotFreedLoss(window)}`
+            ? `gdpr: spot-freed hook hit a transient database failure after erasure — ${spotFreedLoss(window)}`
             : `gdpr: spot-freed hook failed after erasure — ${spotFreedLoss(window)}`,
         );
       } catch (loggingErr) {

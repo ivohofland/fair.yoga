@@ -10,7 +10,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { clearSessionCookie } from '@/lib/auth';
-import { isTransientDbError } from '@/lib/api-errors';
+import { isTransientDbError, transientDbFailure } from '@/lib/api-errors';
 import {
   deleteStudentAccount,
   deleteTeacherAccount,
@@ -121,10 +121,12 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   // is already irreversible. What kind of failure it was decides what the
   // caller is told to do about it; see `erasureFailure` above.
   //
-  // `level` follows the same split as the message: a lost lock race is not an
-  // outage and must not page anyone, which is the same reading
-  // `classifyApiError`'s transient branch takes. Anything else here is a real
-  // defect — an erasure that cannot complete is a legally time-bound
+  // `level` follows the same split as the message, per kind: `TRANSIENT_KIND_LEVEL`
+  // (`lib/api-errors.ts`) is the authority, and it does not put every transient
+  // failure at `warn` — a `pool_exhausted` or `deadlock` is an operational
+  // fault and stays at `error` even though it is retryable, the same reading
+  // `classifyApiError`'s transient branch takes. Anything non-transient here is
+  // a real defect — an erasure that cannot complete is a legally time-bound
   // operation failing — and stays at `error`. `ErasureLockSetError` has a
   // branch of its own below.
   if (session.studentId) {
@@ -143,9 +145,9 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
         );
         return erasureFailure(err, { half: 'student', partial: false });
       } else {
-        const transient = isTransientDbError(err);
-        log[transient ? 'warn' : 'error'](
-          { err, accountId: session.accountId, transient },
+        const failure = transientDbFailure(err);
+        log[failure?.level ?? 'error'](
+          { err, accountId: session.accountId, transient: failure !== null, transientKind: failure?.kind ?? null },
           'account erasure: student half failed',
         );
         return erasureFailure(err, { half: 'student', partial: false });
@@ -193,9 +195,15 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
       // likely to fail: `deleteTeacherAccount` now calls a `completeClass`
       // that opens with `lockClassRow`'s 2s bound.
       const partial = Boolean(session.studentId);
-      const transient = isTransientDbError(err);
-      log[transient ? 'warn' : 'error'](
-        { err, accountId: session.accountId, partial, transient },
+      const failure = transientDbFailure(err);
+      log[failure?.level ?? 'error'](
+        {
+          err,
+          accountId: session.accountId,
+          partial,
+          transient: failure !== null,
+          transientKind: failure?.kind ?? null,
+        },
         partial
           ? 'partial account erasure: student half committed, teacher half failed'
           : 'account erasure: teacher half failed',

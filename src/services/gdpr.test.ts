@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, onTestFinished, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
 import {
@@ -2483,9 +2483,12 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
         classId: fixture.classId,
         waiting: 1,
         transient: true,
+        transientKind: 'lock_timeout',
         branch: 'first_come_first_claimed',
       });
-      expect(logged?.[1]).toContain('the waiting students were not told the seat is free');
+      expect(logged?.[1]).toBe(
+        'gdpr: spot-freed hook hit a transient database failure after erasure — the waiting students were not told the seat is free',
+      );
     } finally {
       await cleanup(fixture);
     }
@@ -2560,8 +2563,61 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
         classId: fixture.classId,
         waiting: -1,
         transient: true,
+        transientKind: 'lock_timeout',
         branch: 'first_come_first_claimed',
       });
+    } finally {
+      await cleanup(fixture);
+    }
+  }, 15_000);
+
+  /**
+   * The other kind at this site: `pool_exhausted` is transient too, but its own
+   * level in `TRANSIENT_KIND_LEVEL` (`lib/api-errors.ts`) is `error`, not
+   * `warn`. Injected as a real `P2024` rather than a `55P03`-shaped message, so
+   * the classifier's own code path (not just its SQLSTATE-in-message path) is
+   * exercised at this site.
+   */
+  it('names the broadcast branch at error level for a pool_exhausted failure after erasure', async () => {
+    const fixture = await makeStudentWithFreedSpot();
+    try {
+      const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+      onTestFinished(() => error.mockRestore());
+
+      const failing = prisma.$extends({
+        query: {
+          notification: {
+            async createMany({ args, query }) {
+              const rows = args.data as Array<{ type?: string }> | undefined;
+              if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
+                return query(args);
+              }
+              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+                code: 'P2024',
+                clientVersion: Prisma.prismaVersion.client,
+              });
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toEqual({
+        erased: true,
+      });
+
+      const logged = error.mock.calls.find(
+        (c) => (c[0] as { classId?: string } | undefined)?.classId === fixture.classId,
+      );
+      expect(logged?.[0]).toMatchObject({
+        classId: fixture.classId,
+        waiting: 1,
+        transient: true,
+        transientKind: 'pool_exhausted',
+        branch: 'first_come_first_claimed',
+      });
+      expect(logged?.[1]).toBe(
+        'gdpr: spot-freed hook hit a transient database failure after erasure — the waiting students were not told the seat is free',
+      );
     } finally {
       await cleanup(fixture);
     }

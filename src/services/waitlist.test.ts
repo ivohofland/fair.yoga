@@ -1877,9 +1877,11 @@ describe('handleSpotFreed (DB)', () => {
 
   /**
    * The seam with `isTransientDbError` (`lib/api-errors.ts`), asserted here
-   * because this is where both halves exist. Wrapping moves the real failure out
-   * of `instanceof` range; if the matcher stopped seeing it, every routine pool
-   * timeout on these paths would log at `error` and — in the reconciliation
+   * because this is where both halves exist. Wrapping moves the real failure
+   * out of `instanceof` range; this guards that the wrapper does not hide it —
+   * a matcher that stopped seeing it would misclassify every transient
+   * failure on these paths as a defect, at `error`, whatever its own kind's
+   * level in `TRANSIENT_KIND_LEVEL` actually says, and — in the reconciliation
    * sweep — redden `/api/health` on the spot.
    */
   it('stays classifiable as transient through the wrapper', async () => {

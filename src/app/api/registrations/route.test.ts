@@ -509,10 +509,82 @@ describe('POST /api/registrations — a failed tier-marker write after the booki
         classId,
         registrationId: registration?.id,
         transient: false,
+        transientKind: null,
       },
       message,
     );
     expect(warn).not.toHaveBeenCalledWith(expect.anything(), message);
+  });
+
+  /**
+   * Two transient kinds, one message: `tx_budget` (`P2028`) logs at `warn` and
+   * `pool_exhausted` (`P2024`) at `error` — `TRANSIENT_KIND_LEVEL`
+   * (`lib/api-errors.ts`) is the authority, not a blanket "transient ⇒ warn".
+   * Each case books its own student, since the fixture above already
+   * consumed `studentId`'s one booking of `classId`.
+   */
+  it.each([
+    { kind: 'tx_budget' as const, level: 'warn' as const, code: 'P2028' as const },
+    { kind: 'pool_exhausted' as const, level: 'error' as const, code: 'P2024' as const },
+  ])('answers 201 and logs a $kind failure at $level', async ({ kind, level, code }) => {
+    const email = `reg-marker-${kind}-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Reg', lastName: kind,
+        email, incomeTier: 3, claimedAt: new Date(),
+        account: { create: { email } },
+      },
+      select: { id: true, accountId: true },
+    });
+    const accountId = student.accountId;
+    if (!accountId) throw new Error('fixture: the claimed student has no account');
+    const markerToken = await seedSession(prisma, accountId);
+
+    try {
+      const failure = new Prisma.PrismaClientKnownRequestError('transient', {
+        code,
+        clientVersion: Prisma.prismaVersion.client,
+      });
+      const markerWrite = vi.spyOn(appPrisma.student, 'updateMany').mockRejectedValueOnce(failure);
+      onTestFinished(() => markerWrite.mockRestore());
+      const spy = vi.spyOn(log, level).mockImplementation(() => undefined as unknown as void);
+      onTestFinished(() => spy.mockRestore());
+      const otherLevel = level === 'warn' ? 'error' : 'warn';
+      const other = vi.spyOn(log, otherLevel).mockImplementation(() => undefined as unknown as void);
+      onTestFinished(() => other.mockRestore());
+
+      const res = await POST(new NextRequest('http://localhost:3000/api/registrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(markerToken) },
+        body: JSON.stringify({ classId }),
+      }));
+
+      expect(markerWrite).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(201);
+      const registration = await prisma.registration.findUnique({
+        where: { classId_studentId: { classId, studentId: student.id } },
+        select: { id: true, status: true },
+      });
+      expect(registration?.status).toBe('registered');
+      const message = 'booking committed but its tierSelectedAt write failed';
+      expect(spy).toHaveBeenCalledWith(
+        {
+          err: failure,
+          studentId: student.id,
+          classId,
+          registrationId: registration?.id,
+          transient: true,
+          transientKind: kind,
+        },
+        message,
+      );
+      expect(other).not.toHaveBeenCalledWith(expect.anything(), message);
+    } finally {
+      await prisma.registration.deleteMany({ where: { classId, studentId: student.id } });
+      await prisma.session.deleteMany({ where: { accountId } });
+      await prisma.student.deleteMany({ where: { id: student.id } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
+    }
   });
 });
 

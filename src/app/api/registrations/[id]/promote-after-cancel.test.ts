@@ -86,8 +86,19 @@ const { DELETE } = await import('./route');
 
 const CLASS_ID = 'class-1';
 
-/** A `55P03`-class failure: what `isTransientDbError` calls a lost race. */
+/**
+ * A `tx_budget` failure (`P2028`): what `isTransientDbError` calls a lost
+ * race, and — per `TRANSIENT_KIND_LEVEL` — logs at `warn`.
+ */
 function transientCause(): Error {
+  return new Prisma.PrismaClientKnownRequestError('transaction timeout', {
+    code: 'P2028',
+    clientVersion: Prisma.prismaVersion.client,
+  });
+}
+
+/** A `pool_exhausted` failure (`P2024`), which logs at `error` despite being transient. */
+function poolExhaustedCause(): Error {
   return new Prisma.PrismaClientKnownRequestError('pool timeout', {
     code: 'P2024',
     clientVersion: Prisma.prismaVersion.client,
@@ -155,9 +166,42 @@ describe('DELETE /api/registrations/[id] — the loss its spot-freed hook record
       classId: CLASS_ID,
       waiting: 3,
       transient: true,
+      transientKind: 'tx_budget',
       branch: 'first_come_first_claimed',
     });
-    expect(warn.mock.calls[0]?.[1]).toContain('the waiting students were not told the seat is free');
+    expect(warn.mock.calls[0]?.[1]).toBe(
+      'waitlist spot-freed hook hit a transient database failure after cancel — the waiting students were not told the seat is free',
+    );
+  });
+
+  /**
+   * The same branch, a different kind: `pool_exhausted` is transient too —
+   * `waiting` gets counted, `transient` stays `true` — but its own level in
+   * `TRANSIENT_KIND_LEVEL` is `error`, not `warn`. This is what tells "was this
+   * retried" apart from "does this page someone" at the same call site.
+   */
+  it('names the broadcast branch at error level for a pool_exhausted failure', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+
+    handleSpotFreed.mockRejectedValue(
+      new SpotFreedError(CLASS_ID, 'first_come_first_claimed', poolExhaustedCause()),
+    );
+
+    const res = await cancel();
+
+    expect(res.status).toBe(200);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]?.[0]).toMatchObject({
+      classId: CLASS_ID,
+      waiting: 3,
+      transient: true,
+      transientKind: 'pool_exhausted',
+      branch: 'first_come_first_claimed',
+    });
+    expect(error.mock.calls[0]?.[1]).toBe(
+      'waitlist spot-freed hook hit a transient database failure after cancel — the waiting students were not told the seat is free',
+    );
   });
 
   /**
@@ -181,6 +225,7 @@ describe('DELETE /api/registrations/[id] — the loss its spot-freed hook record
     expect(error.mock.calls[0]?.[0]).toMatchObject({
       classId: CLASS_ID,
       transient: false,
+      transientKind: null,
       branch: 'auto_promote',
     });
     expect(error.mock.calls[0]?.[1]).toContain('the queue head was not promoted into the freed seat');

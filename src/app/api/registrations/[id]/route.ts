@@ -12,7 +12,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateRegistrationSchema } from '@/lib/schemas';
-import { isTransientDbError } from '@/lib/api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
 import { DEADLINE_HOURS, handleSpotFreed, SpotFreedError, spotFreedLoss } from '@/services/waitlist';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
@@ -573,12 +573,13 @@ async function promoteAfterCancel(classId: string): Promise<void> {
       const waiting = await prisma.waitlistEntry
         .count({ where: { classId, status: 'waiting' } })
         .catch(() => -1);
-      const transient = isTransientDbError(err);
+      const failure = transientDbFailure(err);
+      const transient = failure !== null;
       const window = err instanceof SpotFreedError ? err.window : null;
-      log[transient ? 'warn' : 'error'](
-        { err, classId, waiting, transient, branch: window ?? 'unknown' },
+      log[failure?.level ?? 'error'](
+        { err, classId, waiting, transient, transientKind: failure?.kind ?? null, branch: window ?? 'unknown' },
         transient
-          ? `waitlist spot-freed hook lost a lock race after cancel — ${spotFreedLoss(window)}`
+          ? `waitlist spot-freed hook hit a transient database failure after cancel — ${spotFreedLoss(window)}`
           : `waitlist spot-freed hook failed after cancel — ${spotFreedLoss(window)}`,
       );
     } catch (loggingErr) {
