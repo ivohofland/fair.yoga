@@ -229,23 +229,23 @@ export interface TransientDbFailure {
  *
  * - `lock_timeout` is `warn` — the system doing what `SET LOCAL lock_timeout`
  *   configures it to do.
- * - `deadlock` is **`error`** — since #229 every known cycle is closed but
- *   one, the `updateClass` × `updateClass` slot-key deadlock
- *   `docs/lock-order.md` ("The slot key is a wait edge") records. By
- *   decision, that known deadlock now logs at `error` when it fires: a
- *   deadlock anywhere else is a new cycle or a regressed one, and either way
- *   must page. `P2034` lands here, not in `serialization`, for the same
- *   reason `serialization` cannot fire: Prisma documents `P2034` as "write
- *   conflict or deadlock", and a write conflict needs a serializable or
- *   repeatable-read transaction, which this repo has none of.
+ * - `deadlock` is **`error`** — deliberately including the known
+ *   `updateClass` × `updateClass` slot-key cycle, kept live by decision
+ *   rather than fixed. `docs/lock-order.md` ("The slot key is a wait edge,
+ *   and the ascending-by-`id` rule cannot see it") owns which deadlock
+ *   cycles exist and their status; this file owns only the level. `P2034`
+ *   lands here, not in `serialization`, for the same reason `serialization`
+ *   cannot fire: Prisma documents `P2034` as "write conflict or deadlock",
+ *   and a write conflict needs a serializable or repeatable-read
+ *   transaction, which this repo has none of.
  * - `serialization` is `warn` — moot while it cannot fire; the level is
  *   chosen for the day a serializable transaction exists to trigger it, and
  *   that dependency lives here so it is met before the level is trusted.
  * - `pool_exhausted` is **`error`** — an operational fault, a leak or a
  *   drained pool. No retry wins it until the pool recovers, and the next
  *   request meets the same pool.
- * - `tx_budget` is `warn` — contention or a slow transaction; the 10s and 20s
- *   budgets are deliberate.
+ * - `tx_budget` is `warn` — the budget can expire under contention or on a
+ *   slow transaction, and neither is a fault on its own.
  */
 const TRANSIENT_KIND_LEVEL = {
   lock_timeout: 'warn',
