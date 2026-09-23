@@ -94,9 +94,14 @@ criterion is "writes rows it was never handed".
 
 Lower grade. None of these asserts a count:
 `studio-class-generator.test.ts`'s `await generateStudioClassInstances(...)`
-calls reject when any stray template anywhere fails non-transiently, because the
-sweep rethrows after the loop. Its `sweepSettled === false` after 300 ms is a
-timing premise that a sweep slowed by stray rows can also satisfy.
+calls would reject if any stray template anywhere failed non-transiently,
+because the sweep rethrows after the loop. **The build found no stray template
+that does** (Task 7). An invalid teacher timezone falls back softly (#145), and
+the entry insert's `ON CONFLICT DO NOTHING` absorbs slot and uniqueness
+conflicts. Review then checked the per-template path's CHECKs, insert triggers,
+raw lock and error classes, and found no state a stray row can reach that
+throws. So that file is left unscoped. Its `sweepSettled === false` after
+300 ms is a timing premise that a sweep slowed by stray rows can also satisfy.
 
 A finding the census surfaced beside the debris: **`autoCancelClasses`'s and
 `autoCompleteClasses`'s counters have no positive assertion anywhere.** Their
@@ -177,7 +182,7 @@ hand-written copies of one filter, each owing its own presence check.
 | 22 | replaced with an assertion that can fail, or deleted if nothing meaningful fits |
 | 24–27 | scoped `WaitlistEntry` by the fixtures' class ids for the reap's `groupBy` and delete; the cap and ordering then run over fixtures only. `Class` is not scoped: the reap issues no Prisma `class.*` statement (the `class.count` near its second `groupBy` is inside a comment about a rejected alternative) |
 | 28–30 | scoped `teacher` by fixture ids; exact counts; the "resolves" tests stop depending on every live teacher |
-| studio generator | scoped `scheduleRule` / `studioClassTemplate` read, so a stray broken template cannot reject the fixture's call; the 300 ms timing premise is left as is |
+| studio generator | none. No stray template state rejects the call (see "Lower grade" above), so there is no coupling to remove; the 300 ms timing premise is left as is |
 
 Hit 23 is unchanged: its bracket is the right shape already.
 
