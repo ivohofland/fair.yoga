@@ -312,8 +312,8 @@ export function runWaitlistReconciliationTick(db: PrismaClient): Promise<Reconci
  * one invoked class is the usual shape of a tick that invoked anything at
  * all — and with one invoked class, "a class hit a transient database
  * failure" and "every class failed" are the same tick, so a benign one would
- * report a degraded job. Hence `reason` — `non_transient` throws on the first such
- * tick, while `contended` waits for `MAX_CONSECUTIVE_CONTENDED_TICKS` of them
+ * report a degraded job. Hence `reason` — `non_transient` throws on the first
+ * such tick, while `contended` waits for `MAX_CONSECUTIVE_CONTENDED_TICKS` of them
  * unbroken. `decideEscalation` is where that split is made.
  */
 export class ReconciliationFailedError extends Error {
