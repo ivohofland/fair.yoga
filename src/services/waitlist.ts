@@ -171,9 +171,7 @@ export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
  * one — a class near a DST transition can have a different UTC offset at its
  * deadline instant than at its own start).
  *
- * Server-side only — it goes through `classStartInstant`, which logs through
- * pino (`@/lib/log`). `isPastCancelDeadline` (`@/lib/cancel-deadline`), pure
- * and client-safe, is what compares this instant against `now`.
+ * Server-side only, since it lives in `services/`.
  */
 export function cancelDeadlineInstant(
   entry: { date: Date; startTime: Date },

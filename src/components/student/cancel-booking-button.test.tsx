@@ -100,8 +100,7 @@ describe('CancelBookingButton', () => {
 
 /**
  * The deadline is decided once, at the first "Cancel booking" tap, and
- * stored — never recomputed from the clock at render. Fake-timer pattern
- * from `src/components/schedule/class-list.test.tsx`; scoped to this
+ * stored — never recomputed from the clock at render. Scoped to this
  * describe block so the fetch-flow tests above keep the real clock.
  */
 describe('CancelBookingButton deadline-aware copy', () => {
