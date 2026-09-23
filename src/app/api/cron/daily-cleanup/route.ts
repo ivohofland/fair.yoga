@@ -146,9 +146,8 @@ async function settle<T>(run: () => Promise<T>): Promise<SweepOutcome<T>> {
  * codebase answers contention. One permanent failure alongside it makes 500
  * the run's honest answer: a schema drift does not clear on the next tick,
  * and reporting "try again" for it would be the misleading half of the same
- * trade. A 409 cannot
- * come from these sweeps, and would mean nothing to a timer if it did, so
- * it folds into 500 rather than being forwarded.
+ * trade. A 409 cannot come from these sweeps, and would mean nothing to a
+ * timer if it did, so it folds into 500 rather than being forwarded.
  */
 function worstStatus(outcomes: ReadonlyArray<SweepOutcome<unknown>>): 200 | 500 | 503 {
   const failures = outcomes.filter((o) => !o.ok);
