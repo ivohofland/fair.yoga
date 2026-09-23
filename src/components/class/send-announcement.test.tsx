@@ -41,8 +41,20 @@ function stubFailure(status: number, message: string) {
   return fetchMock;
 }
 
+/**
+ * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+ * HTML error page takes, which `stubFailure`'s plain object cannot express.
+ */
+function htmlResponse(status = 502): Response {
+  return new Response('<html><body>502 Bad Gateway</body></html>', {
+    status,
+    headers: { 'Content-Type': 'text/html' },
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function send(message: string) {
@@ -148,5 +160,63 @@ describe('SendAnnouncement', () => {
     // And the composer is still open with the text in it, so the teacher can
     // retry without retyping.
     expect(screen.getByRole('textbox')).toHaveValue('Second try.');
+  });
+
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the component's own fallback and
+   * leaves a console record instead of the generic "Network error" copy a
+   * `SyntaxError` landing in the outer catch would produce.
+   */
+  it('shows the fallback and logs when the error body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(502)));
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+
+    send('Bring a blanket.');
+
+    expect(
+      await screen.findByText('Could not send the announcement. Try again.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
+  it('shows network copy and logs when the request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+
+    send('Bring a blanket.');
+
+    expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[send-announcement] request failed',
+      expect.objectContaining({ classId: 'c1' }),
+    );
+  });
+
+  /**
+   * Past a 2xx the server has already created (or suppressed) the
+   * announcement, so an unreadable success body must not read as a failure
+   * that invites a resend (#196's suppression window exists for exactly this
+   * kind of double-send).
+   */
+  it('asks for a reload, not a resend, when a successful response is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(201)));
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+
+    send('Bring a blanket.');
+
+    expect(
+      await screen.findByText('Announcement sent — reload to confirm before sending again.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[send-announcement] sent, but the response was unreadable',
+      expect.objectContaining({ classId: 'c1' }),
+    );
   });
 });

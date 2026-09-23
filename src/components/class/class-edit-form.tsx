@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
+import { readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -123,9 +124,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
         setSaved(true);
         router.refresh();
       } else {
-        const json = (await res.json()) as { error?: { message?: string } | string };
-        const message = typeof json.error === 'string' ? json.error : json.error?.message;
-        setError(message ?? 'Could not save the class. Try again.');
+        setError(await readErrorMessage(res, 'Could not save the class. Try again.'));
         // Refresh on refusal too, not only on success. A 409 here means the
         // server knows something this page does not — the class went terminal
         // while the form was open (the auto-complete sweep, or a cancel in
@@ -137,13 +136,11 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
         router.refresh();
       }
     } catch (err) {
-      // Bound and logged rather than swallowed. This block covers
-      // `res.json()` as well as `fetch`, so an Nginx HTML error page, a
-      // truncated body or a 502 with no JSON all land here — "Network error"
-      // is wrong advice for most of them, and without the log nothing records
-      // which one happened.
+      // Bound and logged so a network failure leaves a record. An unreadable
+      // refusal body is `readErrorMessage`'s case, not this one — this catch
+      // now only sees `fetch` itself failing.
       console.error('class edit save failed', err);
-      setError('Could not reach the server, or it sent something unreadable. Try again.');
+      setError('Could not reach the server. Try again.');
     } finally {
       setSaving(false);
     }

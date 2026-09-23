@@ -4,7 +4,20 @@ import { renderToStaticMarkup, renderToString } from 'react-dom/server';
 import { hydrateRoot } from 'react-dom/client';
 import { act } from 'react';
 import { todayLocal } from '@/lib/format';
+import { routerRefresh } from '../../../tests/setup/components';
 import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
+
+/**
+ * A real `Response` whose `json()` genuinely throws — the shape a proxy's
+ * HTML error page takes, which the plain `{ ok, status, json }` stubs below
+ * cannot express.
+ */
+function htmlResponse(status = 502): Response {
+  return new Response('<html><body>502 Bad Gateway</body></html>', {
+    status,
+    headers: { 'Content-Type': 'text/html' },
+  });
+}
 
 /**
  * #81. This form used to enumerate its field list twice — once as
@@ -24,6 +37,7 @@ describe('ClassEditForm', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   const initial: ClassEditInitial = {
@@ -237,5 +251,43 @@ describe('ClassEditForm', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the form's own fallback and leaves
+   * a console record instead of the generic catch-all copy a `SyntaxError`
+   * landing in the outer catch would produce — and #247's refresh-on-refusal
+   * still has to fire, since an unreadable body is still a refusal.
+   */
+  it('shows the fallback, logs, and still refreshes when the refusal body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(htmlResponse(502));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText('Could not save the class. Try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the network copy and logs when the request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText('Could not reach the server. Try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('class edit save failed', expect.any(TypeError));
+    // A fetch failure is not a refusal — nothing about it tells this page
+    // its data is stale, so there is nothing here for #247's refresh to do.
+    expect(routerRefresh).not.toHaveBeenCalled();
   });
 });
