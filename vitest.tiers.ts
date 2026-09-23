@@ -17,6 +17,7 @@ export const SWEEP_TESTS = [
   'src/services/class-transitions.test.ts',
   'src/services/waitlist-reconciliation.test.ts',
   'src/services/waitlist-retention.test.ts',
+  'src/services/notification-retention.test.ts',
   'src/services/auth-cleanup.test.ts',
   'src/services/email-fallback.test.ts',
   'src/services/email-fallback.consent.test.ts',

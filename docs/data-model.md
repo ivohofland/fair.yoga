@@ -686,7 +686,9 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 
 Notification types: booking_confirmed, booking_cancelled, booking_removed, class_cancelled, payment_received, payment_request, waitlist_promoted, spot_available, reminder, missed_you, announcement, teacher_invitation.
 
-Three-layer delivery: in-app notification (real-time) → in-app inbox (persistent) → email (fallback for unread).
+Rows are deleted by the daily `daily-cleanup` job once older than their type's retention period; the periods live in `NOTIFICATION_RETENTION_DAYS` (`src/lib/notification-retention.ts`) — `spot_available` and `missed_you` keep 30 days, every other type keeps 365, and read state has no bearing on when a row is reaped. Deleting is safe because a notification row is the message about an event, never that event's record: `Payment`, `Registration` and `Announcement` hold the record, and no code reads a notification once it has aged out. There is no index on `createdAt`: the sweep's batch read filters on `(type, createdAt)`, which no index covers, but old rows sit early in an append-mostly heap, so a sequential scan finds a batch's worth quickly — cheaper than maintaining an index on the app's highest-write table for a query that runs once a day.
+
+Three-layer delivery: in-app notification (real-time) → in-app inbox (retained per type) → email (fallback for unread).
 
 ### Announcement (teacher → students)
 

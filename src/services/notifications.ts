@@ -4,7 +4,7 @@
  *
  * Notifications are the first layer of the three-layer communication system:
  * 1. In-app notification (real-time via SSE)
- * 2. In-app inbox (persistent record — this service)
+ * 2. In-app inbox (kept per NOTIFICATION_RETENTION_DAYS — this service)
  * 3. Email fallback (unread past a threshold — sooner when the linked class starts soon)
  */
 

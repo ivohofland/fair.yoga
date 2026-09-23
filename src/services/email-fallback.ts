@@ -5,7 +5,7 @@
  *
  * Layer 3 of the communication system:
  * 1. In-app notification (real-time via SSE)
- * 2. In-app inbox (persistent record)
+ * 2. In-app inbox (kept per NOTIFICATION_RETENTION_DAYS)
  * 3. Email fallback (this service)
  */
 
