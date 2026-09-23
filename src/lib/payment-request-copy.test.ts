@@ -22,7 +22,7 @@ describe('studentPaymentRequestBody', () => {
 
   it('tells a late cancel it was after the deadline', () => {
     expect(studentPaymentRequestBody('late_cancel', cls, 12.4)).toBe(
-      `You cancelled ${when} after the cancellation deadline. Booked spots share the class cost, so your price is €12.40. ${TAIL}`,
+      `You cancelled your booking for ${when} after the cancellation deadline. Booked spots share the class cost, so your price is €12.40. ${TAIL}`,
     );
   });
 

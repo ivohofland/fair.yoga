@@ -1078,7 +1078,7 @@ describe('completeClass (DB)', () => {
         })).body;
       expect(await bodyFor(studentIds[1]!)).toMatch(/^Your price for /);
       expect(await bodyFor(studentIds[2]!)).toMatch(/^We missed you at /);
-      expect(await bodyFor(studentIds[3]!)).toMatch(/^You cancelled .* after the cancellation deadline\./);
+      expect(await bodyFor(studentIds[3]!)).toMatch(/^You cancelled your booking for .* after the cancellation deadline\./);
     } finally {
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     }
