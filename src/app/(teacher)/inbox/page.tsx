@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { NotificationList } from '@/components/layout/notification-list';
+import { RetentionNote } from '@/components/layout/retention-note';
 
 export default async function InboxPage() {
   const session = await requireTeacherSession();
@@ -21,6 +22,7 @@ export default async function InboxPage() {
     <>
       <PageHeader title="Inbox" backHref={null} variant="display" />
       <NotificationList notifications={notifications} />
+      <RetentionNote />
     </>
   );
 }
