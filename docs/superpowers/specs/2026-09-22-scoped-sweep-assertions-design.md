@@ -28,9 +28,11 @@ clears them (`grep -n "TRUNCATE\|deleteMany" tests/setup/*.ts` returns nothing).
 
 **Where the premise was incomplete: the scope.** The issue expected the pattern
 to recur "unlikely to be the only place". The census below lists hits in nine
-files; the build confirmed coupling in eight of them (the studio generator's
-turned out unreachable, see "Lower grade"). Re-derive the eight with
-`git diff --name-only origin/main...fix/251-scope-sweep-count-assertions -- 'src/**/*.test.ts'`.
+files; the build rewrote eight of them (the studio generator's turned out
+unreachable, see "Lower grade"). List the eight with
+`git diff --name-only origin/main...fix/251-scope-sweep-count-assertions -- 'src/**/*.test.ts'`;
+that command lists the files changed, not the coupling. Which hits had their
+coupling shown on the old code is in the plan's Results section, per hit.
 It runs in two directions. The #453 comment on the issue measured the second direction. It
 fails in four ways, not one:
 
@@ -149,12 +151,12 @@ expect(completed).toBe(0);
   scope then filters an empty set. Every zero assertion therefore pairs with it.
 - Measured before design: a query extension fires inside an interactive
   `$transaction`, inside a batch `$transaction` and outside both. That covers
-  every sweep that claims rows inside a transaction. None of the ten sweep
-  modules issues raw SQL (`grep -ln "queryRaw\|executeRaw\|Prisma.sql"` over
-  them is empty), so no read escapes the extension. The per-unit helpers they
-  call that do use raw SQL — retention's `lockClassRow` raw lock and the
-  studio generator's `claimRuleForGeneration` — are keyed by an id taken from
-  the scoped read (Tasks 6 and 7 checked this).
+  every sweep that claims rows inside a transaction. No swept service module
+  issues raw SQL of its own (`grep -ln "queryRaw\|executeRaw\|Prisma.sql"`
+  over them is empty), so no candidate read escapes the extension. The
+  per-unit helpers they call that do use raw SQL — `lockClassRow`, which
+  class-transitions and retention both take, and the studio generator's
+  `claimRuleForGeneration` — are keyed by an id taken from the scoped read.
 - The existing race and fault hooks compose by being the client handed IN:
   `scopeSweep(prisma.$extends(racing), scope)`. Prisma 6.19
   runs query extensions in attachment order, so the earliest-attached hook sees
@@ -202,7 +204,8 @@ owner.
 
 ## Proof, per file
 
-For every file touched, recorded in the plan with exact error text:
+For every file touched, summarised in the plan's Results section, with the
+exact error text where it was captured:
 
 1. **Coupling shown on the old code.** Plant a stray row that qualifies for the
    sweep, belonging to a teacher the file never created, and show the

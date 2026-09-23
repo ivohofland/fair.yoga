@@ -81,8 +81,15 @@ The interference runs both ways:
   database between runs. So a test asserting a sweep's return value, a
   one-shot mock inside a sweep, or a sweep's cap or ordering passes the sweep
   `scopeSweep(prisma, scope).db` (`tests/scoped-sweep.ts`) rather than
-  `prisma` itself. The scope keys on ids this test created — never on a pool
-  other suites also write to, such as a shared email domain. A hook that
+  `prisma` itself. The scope keys on values only this test's rows hold — ids,
+  or an email or hash carrying a per-run suffix — never on a pool other
+  suites also write to, such as a shared email domain. The scope narrows only
+  top-level bulk statements on a model it names: raw SQL, rows reached
+  through a relation (`include`, `select`, a relation filter) and single-row
+  operations pass through. So it fits a sweep that picks its candidates with
+  such a bulk statement and keys everything after it by the ids that read
+  returned; a sweep that picks candidates any other way needs a scope
+  parameter of its own. A hook that
   must see the sweep's own `where` shape goes on the client handed IN to
   `scopeSweep`, not on the `db` it returns — Prisma runs query extensions in
   attachment order, so a hook attached after the scope sees only the
@@ -97,15 +104,16 @@ The interference runs both ways:
     sweep is exact without a scope: a `before - after === deleted` bracket,
     or a count the test measures itself immediately before the run, like
     retention's `eligibleBefore`. Both work for the same reason — the sweep
-    tier is serial, so nothing else writes between the measurement and the
-    sweep, and whatever stray rows exist sit on both sides of the
+    tier is serial, so nothing else in this run writes between the
+    measurement and the sweep, and whatever stray rows exist sit on both sides of the
     measurement and cancel out.
 
   Everything else pairs a `toBe(0)` (or any assertion that a scoped sweep
   found nothing) with a presence check, so a mis-keyed scope goes red instead
   of passing vacuously: `rowsRead(model) > 0` for a read the scoped client
-  saw, a scoped `count()` taken before a statement `rowsRead` cannot see
-  (a bare `deleteMany`), or a throw or exact count that itself goes red
+  saw, a scoped `count()` where `rowsRead` cannot see the fixture (a bare
+  `deleteMany`, or a sweep whose own predicate drops it), an earlier non-zero
+  result through the same scope, or a throw or exact count that itself goes red
   against an empty scope. #251.
 
   `fileParallelism: false` on `unit-sweeps` is what isolates it, and it
