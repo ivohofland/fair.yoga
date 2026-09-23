@@ -161,6 +161,13 @@ export default function CreateClassPage() {
    * disagree.
    */
   const [createdId, setCreatedId] = useState<string | null>(null);
+  /**
+   * Set when the create POST answered 2xx but its body couldn't be read, so
+   * there is no id to settle `createdId` on. The class exists server-side
+   * either way, so this keeps "Create class" disabled the same way
+   * `createdId` does on the readable path, rather than inviting a resend.
+   */
+  const [createUnconfirmed, setCreateUnconfirmed] = useState(false);
 
   // Fetch teacher rooms on mount
   useEffect(() => {
@@ -313,30 +320,35 @@ export default function CreateClassPage() {
       return;
     }
 
+    let id: string;
     try {
       const json: { data: { id: string } } = await res.json();
       if (typeof json?.data?.id !== 'string') {
         throw new Error('missing id');
       }
-      // #40. A second identical POST to /api/classes now collides with
-      // `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH &&,
-      // WHERE cancelledAt IS NULL — #327) and comes back as a 409
-      // DUPLICATE_CLASS_SLOT (`api/classes/route.ts`) rather than a second
-      // row. That backstop is server-side and after the round trip, though —
-      // it does not stop the second request from being sent, or turn its
-      // failure into anything gentler than an error banner. The push below
-      // normally unmounts this wizard; when it does not commit, `createdId`
-      // is what stops a populated review step with "Create class" re-enabled
-      // from inviting the click that resends the same create and now earns a
-      // 409 instead of a silent duplicate.
-      setCreatedId(json.data.id);
-      router.push(classPath(json.data.id));
+      id = json.data.id;
     } catch (err) {
       console.error('[class-new] created, but the response was unreadable', { err });
-      setSubmitError('Class created — reload to confirm before trying again.');
-    } finally {
+      setSubmitError('Class created — find it on your Schedule.');
+      setCreateUnconfirmed(true);
       setSubmitting(false);
+      return;
     }
+
+    // #40. A second identical POST to /api/classes now collides with
+    // `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH &&,
+    // WHERE cancelledAt IS NULL — #327) and comes back as a 409
+    // DUPLICATE_CLASS_SLOT (`api/classes/route.ts`) rather than a second
+    // row. That backstop is server-side and after the round trip, though —
+    // it does not stop the second request from being sent, or turn its
+    // failure into anything gentler than an error banner. The push below
+    // normally unmounts this wizard; when it does not commit, `createdId`
+    // is what stops a populated review step with "Create class" re-enabled
+    // from inviting the click that resends the same create and now earns a
+    // 409 instead of a silent duplicate.
+    setCreatedId(id);
+    router.push(classPath(id));
+    setSubmitting(false);
   }
 
   // -------------------------------------------------------------------------
@@ -725,7 +737,7 @@ export default function CreateClassPage() {
             onAction={() => router.push(classPath(createdId))}
           />
         ) : (
-          <Button onClick={handleSubmit} disabled={submitting} type="button">
+          <Button onClick={handleSubmit} disabled={submitting || createUnconfirmed} type="button">
             {submitting ? 'Creating...' : 'Create class'}
           </Button>
         )}

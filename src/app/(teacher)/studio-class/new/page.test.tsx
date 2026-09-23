@@ -268,23 +268,9 @@ describe('NewStudioClassPage', () => {
   });
 
   /**
-   * #40, whole-branch review F1. This page was outside the branch's census,
-   * which was scoped to `src/components/` and `src/lib/` — but it carries the
-   * same defect in the same shape: `router.push` on success with
-   * `finally { setSubmitting(false) }` behind it, so a push that never commits
-   * leaves a populated form with "Log class" re-enabled.
-   *
-   * `POST /api/studio-classes` writes a bare entry-plus-class pair with no
-   * dedupe, and the entry's only unique key is
-   * `@@unique([scheduleRuleId, date])`, which a manually logged class cannot
-   * trip: its `scheduleRuleId` is null, and Postgres treats NULLs as distinct.
-   *
-   * WHAT THE SECOND CLICK COSTS CHANGED IN #327, and the guard is still the
-   * fix. `CalendarEntry_teacher_slot_excl` spans both families, so a second
-   * entry on the same span is refused and the double-count it used to produce
-   * is gone; the second request answers 409 instead. An error for clicking
-   * twice on a form that was working is still the wrong outcome, and only this
-   * guard stops the request going out.
+   * #40, whole-branch review F1. A push that never commits must not leave a
+   * populated form with "Log class" re-enabled — that invites a resend of
+   * the same create.
    *
    * Asserted on the fetch count, not on rendered text: a partial fix that only
    * changed a label would satisfy a text assertion and still allow the second
@@ -377,11 +363,11 @@ describe('NewStudioClassPage', () => {
   });
 
   /**
-   * Past a 2xx the studio class WAS logged — `POST /api/studio-classes`
-   * commits before answering — so an unreadable body must not read as a
-   * failure that invites a resend into the 409 `DUPLICATE_STUDIO_SLOT` guard
-   * (#327). The page has no id to settle on or push to, so it neither settles
-   * nor navigates.
+   * A 2xx means the server accepted the create, so an unreadable body must
+   * not read as a failure that invites a resend. The page has no id to
+   * settle on or push to, so it neither settles nor navigates; "Log class"
+   * is disabled instead of staying enabled for a click that would resend
+   * the same create.
    */
   it('shows the fallback and logs when the create success body is unreadable, and does not navigate', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -393,12 +379,38 @@ describe('NewStudioClassPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
 
     expect(
-      await screen.findByText('Studio class saved — reload to confirm before trying again.'),
+      await screen.findByText('Studio class logged — find it on your Schedule.'),
     ).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       '[studio-class-new] created, but the response was unreadable',
       expect.objectContaining({ err: expect.anything() }),
     );
     expect(routerPush).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /log class/i })).toBeDisabled();
+  });
+
+  /**
+   * H. Same outcome as the test above, reached through a readable body that
+   * lacks `data.id` rather than an unreadable one — the `typeof … !==
+   * 'string'` guard is what catches this shape.
+   */
+  it('shows the fallback and logs when the create success body has no id, and does not navigate', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(
+      await screen.findByText('Studio class logged — find it on your Schedule.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[studio-class-new] created, but the response was unreadable',
+      expect.objectContaining({ err: expect.anything() }),
+    );
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /log class/i })).toBeDisabled();
   });
 });

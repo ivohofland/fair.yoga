@@ -199,25 +199,26 @@ describe('SendAnnouncement', () => {
   });
 
   /**
-   * Past a 2xx the server has already created (or suppressed) the
-   * announcement, so an unreadable success body must not read as a failure
-   * that invites a resend (#196's suppression window exists for exactly this
-   * kind of double-send).
+   * A 2xx means the server accepted the send, so an unreadable body must be
+   * treated as sent, not shown as a failure that invites a resend. The
+   * composer closes and the caption reads success with no count, since none
+   * is known — and "Send another" is still offered rather than a dead end.
    */
-  it('asks for a reload, not a resend, when a successful response is unreadable', async () => {
+  it('treats the send as sent, with no count, when a successful response is unreadable', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(201)));
     render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
 
     send('Bring a blanket.');
 
-    expect(
-      await screen.findByText('Announcement sent — reload to confirm before sending again.'),
-    ).toBeInTheDocument();
+    const caption = await screen.findByText('Announcement sent.');
+    expect(caption.className).toMatch(/text-teal/);
     expect(consoleError).toHaveBeenCalledWith(
       '[send-announcement] sent, but the response was unreadable',
       expect.objectContaining({ classId: 'c1' }),
     );
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByText('Send another')).toBeInTheDocument();
   });
 
   /**
@@ -227,7 +228,7 @@ describe('SendAnnouncement', () => {
    * undefined students" — a claim about the send, made up out of a field that
    * was never there.
    */
-  it('asks for a reload, not a resend, when a successful body is missing recipientCount', async () => {
+  it('treats the send as sent, with no count, when a successful body is missing recipientCount', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal(
       'fetch',
@@ -237,12 +238,13 @@ describe('SendAnnouncement', () => {
 
     send('Bring a blanket.');
 
-    expect(
-      await screen.findByText('Announcement sent — reload to confirm before sending again.'),
-    ).toBeInTheDocument();
+    const caption = await screen.findByText('Announcement sent.');
+    expect(caption.className).toMatch(/text-teal/);
     expect(consoleError).toHaveBeenCalledWith(
       '[send-announcement] sent, but the response was unreadable',
       expect.objectContaining({ classId: 'c1' }),
     );
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByText('Send another')).toBeInTheDocument();
   });
 });

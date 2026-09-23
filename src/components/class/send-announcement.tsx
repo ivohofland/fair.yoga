@@ -12,14 +12,19 @@ interface SendAnnouncementProps {
   recipientHint: string;
 }
 
+interface SentState {
+  /** `null` when a 2xx body couldn't be read — the send still happened. */
+  count: number | null;
+  suppressed: boolean;
+}
+
 // One-to-many only, by design: an announcement creates one notification
 // per recipient (plus email fallback). There is no chat.
 export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementProps) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
-  const [sentCount, setSentCount] = useState<number | null>(null);
-  const [suppressed, setSuppressed] = useState(false);
+  const [sent, setSent] = useState<SentState | null>(null);
   const [error, setError] = useState('');
   const [showRecipients, setShowRecipients] = useState(false);
 
@@ -52,8 +57,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       return;
     }
 
-    // `res.ok` alone is not the whole answer, and reading it as though it
-    // were is the defect #196 fixed here: the route answers 201 when it
+    // `res.ok` alone is not the whole answer: the route answers 201 when it
     // created the announcement and 200 when it suppressed an identical one
     // sent moments ago, and only `duplicateSuppressed` distinguishes them
     // in a field a client has to read past rather than a status it can
@@ -65,36 +69,39 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       if (typeof json?.data?.recipientCount !== 'number') {
         throw new Error('missing recipientCount');
       }
-      setSentCount(json.data.recipientCount);
-      setSuppressed(json.data.duplicateSuppressed === true);
-      setMessage('');
-      setOpen(false);
+      setSent({ count: json.data.recipientCount, suppressed: json.data.duplicateSuppressed === true });
     } catch (err) {
+      // A 2xx here means the send already happened (or was suppressed) —
+      // an unreadable body is not a failure to report, and inviting a resend
+      // would risk a genuine duplicate. Settle on what IS known: it went out.
       console.error('[send-announcement] sent, but the response was unreadable', { classId, err });
-      setError('Announcement sent — reload to confirm before sending again.');
-    } finally {
-      setSending(false);
+      setSent({ count: null, suppressed: false });
     }
+    setMessage('');
+    setOpen(false);
+    setSending(false);
   }
 
-  if (sentCount !== null && !open) {
-    const students = `${sentCount} ${sentCount === 1 ? 'student' : 'students'}`;
+  if (sent !== null && !open) {
+    const students = sent.count !== null ? `${sent.count} ${sent.count === 1 ? 'student' : 'students'}` : null;
+    // Neutral for the suppressed outcome — not `text-teal`, because nothing
+    // new succeeded, and not `text-danger`, because nothing failed and danger
+    // is reserved for things that did. Every other outcome (a fresh send, or
+    // one whose body couldn't be read) uses the same teal as a plain confirm.
+    const neutral = sent.count !== null && sent.suppressed;
+    const label = sent.count === null
+      ? 'Announcement sent.'
+      : sent.suppressed
+        ? `Not sent again — the same message reached ${students} moments ago.`
+        : `Sent to ${students}`;
     return (
       <div className="flex items-center gap-3">
-        {/* Neutral for the suppressed outcome — not `text-teal`, because
-            nothing new succeeded, and not `text-danger`, because nothing
-            failed and danger is reserved for things that did. The caption
-            names what happened AND confirms the earlier send landed, so the
-            teacher learns their message went out without being told a second
-            one did. */}
-        <span className={suppressed ? 'type-caption' : 'type-caption text-teal'}>
-          {suppressed
-            ? `Not sent again — the same message reached ${students} moments ago.`
-            : `Sent to ${students}`}
+        <span className={neutral ? 'type-caption' : 'type-caption text-teal'}>
+          {label}
         </span>
         <button
           type="button"
-          onClick={() => { setSentCount(null); setSuppressed(false); setOpen(true); }}
+          onClick={() => { setSent(null); setOpen(true); }}
           className="type-label text-teal"
         >
           Send another

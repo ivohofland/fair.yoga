@@ -80,6 +80,13 @@ export function RoomCreateStep({
   // the teacher steps Back is correct.
   const [createError, setCreateError] = useState('');
   const [creating, setCreating] = useState(false);
+  /**
+   * Set when the create POST answered 2xx but its body couldn't be read, so
+   * there is no room to hand `onCreated`. The room exists server-side either
+   * way, so this keeps "Create room" disabled rather than inviting a retry
+   * of a create that already happened.
+   */
+  const [createUnconfirmed, setCreateUnconfirmed] = useState(false);
 
   async function handleCreateRoom(e: React.FormEvent) {
     e.preventDefault();
@@ -133,18 +140,22 @@ export function RoomCreateStep({
       return;
     }
 
+    let room: RoomResult;
     try {
       const json: { data: RoomResult } = await res.json();
       if (typeof json?.data?.id !== 'string') {
         throw new Error('missing id');
       }
-      onCreated(json.data);
+      room = json.data;
     } catch (err) {
       console.error('[room-create-step] created, but the response was unreadable', { err });
-      setCreateError('Room created — reload to confirm before trying again.');
-    } finally {
+      setCreateError('Room created, but its details did not come back. Search for it again to add it.');
+      setCreateUnconfirmed(true);
       setCreating(false);
+      return;
     }
+    onCreated(room);
+    setCreating(false);
   }
 
   return (
@@ -209,7 +220,7 @@ export function RoomCreateStep({
         <Button variant="secondary" type="button" onClick={onBack}>
           Back
         </Button>
-        <Button type="submit" disabled={creating}>
+        <Button type="submit" disabled={creating || createUnconfirmed}>
           {creating ? 'Creating...' : 'Create room'}
         </Button>
       </div>
