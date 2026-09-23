@@ -189,16 +189,9 @@ function isTerminalStatusViolation(error: unknown): error is Error {
  * - `deadlock` (`40P01`, `P2034`) — Postgres broke an AB-BA cycle by killing
  *   one side, or Prisma's own wrapper for "write conflict or deadlock,
  *   please retry" surfaced the same event as a known code instead of inside
- *   a driver string. Reachable today, not hypothetical: `docs/lock-order.md`,
- *   "The slot key is a wait edge", records a real reproduced deadlock between
- *   two `updateClass` writes — 32 of 100 runs, both sides plain autocommit
- *   `UPDATE`s. The section records a second reproduction beside it, the
- *   template sync against `updateClass`; #194 deleted that function, so that
- *   pairing is evidence about a past state and the `updateClass` pair is what
- *   keeps this branch live. It used to be reachable a second way too, via two
- *   live `Class`-row-ordering cycles against the template sites; those closed
- *   with an ordered pre-lock ahead of each site's multi-row write (issue 180,
- *   atomic-template-update).
+ *   a driver string. `docs/lock-order.md` ("The slot key is a wait edge, and
+ *   the ascending-by-`id` rule cannot see it") owns which cycles are
+ *   reachable and at what rate; this file owns only the kind.
  * - `serialization` (`40001`) — nothing here uses a serializable or
  *   repeatable-read transaction yet, so this cannot fire at present; it is
  *   listed because it belongs to the same family and adding it later would
@@ -215,7 +208,11 @@ export type TransientKind =
   | 'pool_exhausted'
   | 'tx_budget';
 
-/** What `transientDbFailure` returns for a matched failure — see its docblock. */
+/**
+ * What `transientDbFailure` returns for a matched failure — see its
+ * docblock. `transientDbFailure` is its only constructor, and `level` is
+ * always `TRANSIENT_KIND_LEVEL[kind]`.
+ */
 export interface TransientDbFailure {
   readonly kind: TransientKind;
   readonly level: 'warn' | 'error';
@@ -591,19 +588,17 @@ export function classifyApiError(error: unknown): ApiFailure {
     };
   }
 
-  // A transient failure a retry can eventually win, not a bad request. Before
-  // this branch these reached the user as "Internal server error" at
-  // `level: 'error'` — which was wrong twice over. Wrong for the user,
-  // because the one thing that helps is the one thing that message does not
-  // say: try again. And wrong for the operator, because `error` is the level
-  // that pages someone, while a `lock_timeout` on a contended row is the
-  // system doing what it was configured to do. Concretely: a student tapping
-  // "leave waitlist" while the 60-second transitions sweep holds their class
-  // row got a 500 for it, where before #174 bounded that wait they simply
-  // blocked and succeeded. That argument holds only PER KIND, not for the
-  // branch as a whole — a `pool_exhausted` or `deadlock` failure is not the
-  // system doing what it was configured to do, and `transientDbFailure`'s
-  // `TRANSIENT_KIND_LEVEL` is the authority for which kind gets which level.
+  // A transient failure a retry can eventually win, not a bad request — 503
+  // and "please try again" is the honest answer, and a 500 ("Internal server
+  // error") would be wrong twice over. Wrong for the user, because the one
+  // thing that helps is the one thing that message does not say: try again.
+  // And wrong for the operator: `error` is the level reserved for a fault,
+  // and a `lock_timeout` on a contended row is the system doing what it was
+  // configured to do, not a fault. That argument holds only PER KIND, not
+  // for the branch as a whole — a `pool_exhausted` or `deadlock` failure is
+  // not the system doing what it was configured to do, and
+  // `transientDbFailure`'s `TRANSIENT_KIND_LEVEL` is the authority for which
+  // kind gets which level.
   //
   // Checked BEFORE the P2002 branch below on purpose — a `P2024`/`P2028` is a
   // `PrismaClientKnownRequestError` too, and ordering these the other way
