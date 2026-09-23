@@ -333,8 +333,12 @@ class AlreadyErasedError extends Error {
 /**
  * `null` when `committing` aborted on `AlreadyErasedError`; the transaction
  * has rolled back whole. Every other rejection passes through unchanged.
+ *
+ * `T extends object` is what keeps `null` an unambiguous sentinel: it
+ * excludes a transaction result that could itself be `null`/`undefined`, so
+ * the `null` this function returns can only ever mean the abort.
  */
-async function unlessAlreadyErased<T>(committing: Promise<T>): Promise<T | null> {
+async function unlessAlreadyErased<T extends object>(committing: Promise<T>): Promise<T | null> {
   try {
     return await committing;
   } catch (err) {
