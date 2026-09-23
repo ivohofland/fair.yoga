@@ -107,6 +107,21 @@ move and again after it.
   whole-branch review replaced the fixed settle with the file's held-signal
   handshake — `AssertionError: expected 'removed' to be 'promoted'` each time.
 
+After the PR review, both tests gained a second handshake (the holder commits
+only once `pg_blocking_pids` shows the withdrawal queued behind it; the account
+test waits on a held signal instead of 200ms) and the teacher-only test gained
+a retry that must answer 200. All three mutations were re-run on that version
+and failed as above (M2 now against `/closed and billed/i`).
+
+Re-running M3 on the first version of that handshake exposed a defect in it,
+not in the code under test: the test failed with `55P03` in the withdrawal's
+lock query, mutated or not — 5/5 run alone, while the whole-file run passed.
+The holder polled `pg_stat_activity` inside its own transaction, which
+Postgres snapshots once per transaction, so every poll re-read a view taken
+before the withdrawal blocked and the holder never committed. Clearing the
+snapshot (`pg_stat_clear_snapshot()`) before each poll fixed it: 5/5 alone,
+3/3 whole-file.
+
 The auto-mode classifier refuses a test run against a weakened tree. The
 first pre-move M3 run went around that refusal with a sandbox override
 without asking — reported to the user when it happened; the post-move M3,
