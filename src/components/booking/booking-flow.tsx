@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { readErrorMessage } from '@/lib/client-errors';
 import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
+import { FREE_CANCEL_GRACE_MINUTES } from '@/lib/cancel-deadline';
 import { PricingExplainer } from './pricing-explainer';
 
 interface BookingFlowProps {
@@ -254,7 +255,7 @@ export function BookingFlow({
           <p className="type-caption mt-2">
             If a spot opens up until 1 hour before class, you&apos;re booked
             automatically. The usual cancellation deadline applies, with at
-            least 15 minutes to change your mind.
+            least {FREE_CANCEL_GRACE_MINUTES} minutes to change your mind.
           </p>
         )}
       </div>
