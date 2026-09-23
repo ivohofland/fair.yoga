@@ -8,10 +8,7 @@ import { isPastCancelDeadline } from '@/lib/cancel-deadline';
 
 interface CancelBookingButtonProps {
   registrationId: string;
-  /**
-   * ISO instant — `freeCancelUntilFor` (`@/lib/cancel-deadline`), run
-   * server-side off the same fetch the DELETE route makes.
-   */
+  /** ISO instant — `freeCancelUntilFor` (`@/lib/cancel-deadline`), computed server-side. */
   freeCancelUntilAt: string;
   /**
    * `freeCancelUntilAt` formatted in the teacher's timezone by

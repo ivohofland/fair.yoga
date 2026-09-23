@@ -281,10 +281,7 @@ export default async function StudentBookingsPage() {
                 cls.maxStudents,
               );
               const tz = cls.calendarEntry.teacher.defaultTimezone;
-              // The DELETE route reads this same instant off the same
-              // `waitlistEntry` shape, through the same `freeCancelUntilFor`
-              // (`cancel-deadline.ts`) — so the button's copy and the
-              // server's charge decision cannot read different clocks.
+              // #236's free-cancel instant (`freeCancelUntilFor`, `cancel-deadline.ts`).
               const freeCancelUntil = freeCancelUntilFor(
                 cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz),
                 reg.waitlistEntry,

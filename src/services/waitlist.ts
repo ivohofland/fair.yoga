@@ -767,10 +767,7 @@ export async function claimSpot(
       // (`api/registrations/route.ts`). `promoted` means the system placed
       // the student; `claimed` means the student took it themselves, and
       // `freeCancelUntilFor` (`cancel-deadline.ts`) reads that distinction to
-      // give only a `promoted` entry the #236 free-cancel grace — the DELETE
-      // route's student branch (`api/registrations/[id]/route.ts`) and
-      // `/bookings` both call it rather than branching on `status` a second
-      // time each.
+      // give only a `promoted` entry the #236 free-cancel grace.
       data: { status: 'claimed', promotedAt: new Date(), registrationId: registration.id },
     });
 
