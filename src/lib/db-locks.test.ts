@@ -93,8 +93,10 @@ async function _theBrandRejectsABareClient(client: PrismaClient, lock: ClassLock
 /**
  * `readSeatCount` counts only a class some statement has locked (#219). The
  * brand above proves the caller is inside a transaction; this proves the
- * caller holds a `ClassLock`, which only `lockClassRow` mints, for the class
- * being counted. Neither implies the other, so each has its own pins.
+ * caller holds a `ClassLock` — minted by `lockClassRow`, with
+ * `eslint.config.mjs` refusing a cast to one anywhere else in non-test
+ * `src/` — for the class being counted. Neither implies the other, so each
+ * has its own pins.
  *
  * One directive per way of reaching the count without a lock, because each
  * one fails under a different weakening: widening the parameter to accept a

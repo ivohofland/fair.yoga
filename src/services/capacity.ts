@@ -65,12 +65,13 @@ export interface SeatCount {
 /**
  * Counts the seats left in a class, under the caller's `Class` row lock.
  *
- * **It takes the lock as a `ClassLock`, not a class id.** Only `lockClassRow`
- * (`db-locks.ts`) mints one, so a count with no lock behind it does not
- * compile, and the class counted is the class locked — it has no other id to
- * read. Without the lock the answer would be a snapshot with no meaning: a
- * registration committing a millisecond later makes it wrong, which is the
- * defect this module exists to fix (#212).
+ * **It takes the lock as a `ClassLock`, not a class id.** `lockClassRow`
+ * (`db-locks.ts`) mints one, and `eslint.config.mjs` refuses a cast to
+ * `ClassLock` anywhere else in non-test `src/`, so a count with no lock
+ * behind it does not compile, and the class counted is the class locked — it
+ * has no other id to read. Without the lock the answer would be a snapshot
+ * with no meaning: a registration committing a millisecond later makes it
+ * wrong, which is the defect this module exists to fix (#212).
  *
  * It does not take the lock itself: `lockClassRow` also bounds the wait and
  * locks the class's `CalendarEntry` alongside it, and a second, bare
