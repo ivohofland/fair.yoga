@@ -9,6 +9,7 @@ import {
   claimSpot,
   handleSpotFreed,
   closeQueueOnStart,
+  withdrawWaitingEntriesForTeacher,
   WaitlistJoinError,
   WaitlistPromotionError,
   SpotFreedError,
@@ -2154,6 +2155,222 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
       where: { classId: classT3Id, studentId: studentS2Id },
     });
     expect(otherStudentsRequest.status).toBe('waiting');
+  });
+});
+
+describe('withdrawWaitingEntriesForTeacher withdraws only this teacher\'s waiting entries and compacts positions (#241)', () => {
+  // Own fixture and suffix, per the #453 describe's own comment above: a
+  // separate scope so that describe's lock-set assertions keep meaning what
+  // they mean.
+  const scopeSuffix = `wl-withdraw-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let teacherAccountId: string;
+  let otherTeacherId: string;
+  let otherTeacherAccountId: string;
+  let roomId: string;
+  let studentSId: string;
+  let studentSAccountId: string;
+  let studentOId: string;
+  let classC1Id: string;
+  let classC2Id: string;
+  let classC3Id: string;
+  let classDId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Withdraw',
+        lastName: 'Teacher',
+        email: `${scopeSuffix}-t@test.local`,
+        account: { create: { email: `${scopeSuffix}-t@test.local` } },
+        bio: 'Withdraw scope fixture',
+        pageSlug: `${scopeSuffix}-t`,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const otherTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Withdraw',
+        lastName: 'Other',
+        email: `${scopeSuffix}-t2@test.local`,
+        account: { create: { email: `${scopeSuffix}-t2@test.local` } },
+        bio: 'Withdraw scope decoy teacher',
+        pageSlug: `${scopeSuffix}-t2`,
+      },
+      select: { id: true, accountId: true },
+    });
+    otherTeacherId = otherTeacher.id;
+    otherTeacherAccountId = otherTeacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Withdraw Studio',
+        address: `${scopeSuffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234WD',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const otherTeacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: otherTeacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+
+    const base = {
+      classType: 'Withdraw scope class',
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open' as const,
+    };
+
+    // Three of T's own classes, one date apart each so their entries cannot
+    // trip `CalendarEntry_teacher_slot_excl` against each other.
+    const classC1 = await createClassFixture(prisma, {
+      ...base,
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      date: new Date('2099-08-01'),
+    });
+    classC1Id = classC1.id;
+
+    const classC2 = await createClassFixture(prisma, {
+      ...base,
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      date: new Date('2099-08-02'),
+    });
+    classC2Id = classC2.id;
+
+    const classC3 = await createClassFixture(prisma, {
+      ...base,
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      date: new Date('2099-08-03'),
+    });
+    classC3Id = classC3.id;
+
+    // A different teacher's class, same date as C1 — a different teacher so
+    // the slot exclusion above does not apply between the two.
+    const classD = await createClassFixture(prisma, {
+      ...base,
+      teacherId: otherTeacherId,
+      teacherRoomId: otherTeacherRoom.id,
+      date: new Date('2099-08-01'),
+    });
+    classDId = classD.id;
+
+    const studentSEmail = `${scopeSuffix}-s@test.local`;
+    const studentS = await prisma.student.create({
+      data: {
+        firstName: 'Withdraw',
+        lastName: 'Student',
+        email: studentSEmail,
+        incomeTier: 2,
+        claimedAt: new Date(),
+        account: { create: { email: studentSEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentSId = studentS.id;
+    studentSAccountId = studentS.accountId!;
+
+    const studentO = await prisma.student.create({
+      data: {
+        firstName: 'Withdraw',
+        lastName: 'Other',
+        email: `${scopeSuffix}-o@test.local`,
+        incomeTier: 2,
+      },
+      select: { id: true },
+    });
+    studentOId = studentO.id;
+
+    await prisma.teacherStudent.create({ data: { teacherId, studentId: studentSId } });
+
+    await prisma.waitlistEntry.createMany({
+      data: [
+        { classId: classC1Id, studentId: studentSId, position: 1, status: 'waiting' },
+        { classId: classC1Id, studentId: studentOId, position: 2, status: 'waiting' },
+        { classId: classC2Id, studentId: studentSId, position: 1, status: 'waiting' },
+        { classId: classC3Id, studentId: studentSId, position: 1, status: 'promoted' },
+        { classId: classDId, studentId: studentSId, position: 1, status: 'waiting' },
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    const studentIds = [studentSId, studentOId];
+    const teacherIds = [teacherId, otherTeacherId];
+    await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+    await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.studentPrivacy.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.teacherStudent.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacherAccountId, otherTeacherAccountId, studentSAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('withdraws S\'s waiting entries for T, leaves C3 and D alone, and compacts O to position 1', async () => {
+    await prisma.$transaction((tx) =>
+      withdrawWaitingEntriesForTeacher(tx, { teacherId, studentId: studentSId }),
+    );
+
+    const c1S = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classC1Id, studentId: studentSId },
+    });
+    expect(c1S.status).toBe('removed');
+
+    const c2S = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classC2Id, studentId: studentSId },
+    });
+    expect(c2S.status).toBe('removed');
+
+    // C3's entry was never 'waiting', so the pre-lock's own `w.status =
+    // 'waiting'` predicate should never have selected this class at all.
+    const c3S = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classC3Id, studentId: studentSId },
+    });
+    expect(c3S.status).toBe('promoted');
+
+    // D belongs to T2, not T — outside the join's `e."teacherId" = teacherId`
+    // predicate.
+    const dS = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classDId, studentId: studentSId },
+    });
+    expect(dS.status).toBe('waiting');
+
+    // O's own entry in C1 is untouched by status, and its position closes the
+    // gap S's removal left behind.
+    const c1O = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classC1Id, studentId: studentOId },
+    });
+    expect(c1O.status).toBe('waiting');
+    expect(c1O.position).toBe(1);
   });
 });
 
