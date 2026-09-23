@@ -39,7 +39,7 @@ const SWEEP_NAMES = [
 type StubbedName = (typeof SWEEP_NAMES)[number];
 
 /**
- * The stub list and `SchedulerSweeps` must name the same eleven.
+ * The stub list and `SchedulerSweeps` must name the same sweeps.
  *
  * `buildStubs` below ends in `as unknown as SchedulerSweeps`, and that cast is
  * not gratuitous — `Object.fromEntries` yields `{[k: string]: T}`, which a
