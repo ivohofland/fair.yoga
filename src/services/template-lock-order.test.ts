@@ -482,10 +482,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * against the still-unfixed code and PASSED green while a genuine `40P01
    * deadlock detected` fired underneath it (confirmed via
    * `rule-lifecycle.ts`'s own logged error) — because
-   * the shared archive's own `catch` maps `isTransientDbError`
+   * the shared archive's own `catch` maps `transientDbFailure`
    * matches, `40P01` among them, to a RESOLVED `{ ok: false, reason: 'busy'
-   * }` and logs the real error via `log.warn` (the "recurring class archive
-   * lost the template lock race" line) instead of letting it propagate. A
+   * }` and logs the real error at the level its kind carries
+   * (`TRANSIENT_KIND_LEVEL`, `src/lib/api-errors.ts`; the "recurring class
+   * archive hit a transient database failure" line) instead of letting it
+   * propagate. A
    * rejection-only negation never looks at that channel, so it can't tell a
    * real fix from no fix at all. The five requirements below are what a
    * negation on THIS pairing needs to actually mean something, in the order
@@ -497,11 +499,15 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    on a deadlock rather than rejecting, so a rejection-only negation —
    *    the sync test's shape — would pass unconditionally for this
    *    fixture, fixed or not (see the transcript above).
-   * 2. **Keep the `log.warn` spy this `it` sets up, with its assertion
+   * 2. **Keep the `warn` spy this `it` sets up, with its assertion
    *    flipped**: `expect(archiveLostRaceLog).toBeDefined()` becomes
-   *    `expect(archiveLostRaceLog).toBeUndefined()`. One assertion covers
-   *    `40P01`, `55P03` AND `P2028` at once, because all three reach this
-   *    same `catch` via `isTransientDbError`.
+   *    `expect(archiveLostRaceLog).toBeUndefined()`. All three of `40P01`,
+   *    `55P03` and `P2028` still reach this same `catch` via
+   *    `transientDbFailure`, but only `55P03` and `P2028` log at `warn` —
+   *    `40P01` logs at `error` (`TRANSIENT_KIND_LEVEL`,
+   *    `src/lib/api-errors.ts`). That split does not weaken this `it`: point
+   *    3's `ok: true` assertion below is what actually proves none of the
+   *    three fired, regardless of which level they would have logged at.
    * 3. **Assert a positive success shape**:
    *    `expect(aSettled.value).toMatchObject({ ok: true, action: 'archived' })`
    *    in place of the old `toEqual({ ok: false, reason: 'busy' })`. With
@@ -510,9 +516,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    `slot_conflict` are unreachable, so `ok: true` here can only mean the
    *    transient-error `catch` never fired. That also de-vacuums point 2:
    *    the spy's `.find()` is keyed on the exact log-message string
-   *    ("recurring class archive lost the template lock race",
-   *    `rule-lifecycle.ts`, the `log.warn` in `archiveOrUnarchiveRule`'s
-   *    `isTransientDbError` branch), so a
+   *    ("recurring class archive hit a transient database failure",
+   *    `rule-lifecycle.ts`, the level-appropriate `log[...]` call in
+   *    `archiveOrUnarchiveRule`'s `transientDbFailure` branch), so a
    *    rename there would make
    *    `toBeUndefined()` pass for the wrong reason — silently, since a
    *    renamed message just never matches the old string again. The
@@ -648,7 +654,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         const [aSettled, bSettled] = await Promise.allSettled([a, b]);
 
         const archiveLostRaceLog = warn.mock.calls.find(
-          (call) => call[1] === 'recurring class archive lost the template lock race',
+          (call) => call[1] === 'recurring class archive hit a transient database failure',
         );
 
         // Points 1, 3 & 4: never a rejection-based negation on the archive
@@ -841,7 +847,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         const [aSettled, bSettled] = await Promise.allSettled([a, b]);
 
         const archiveLostRaceLog = warn.mock.calls.find(
-          (call) => call[1] === 'recurring class archive lost the template lock race',
+          (call) => call[1] === 'recurring class archive hit a transient database failure',
         );
 
         expect(aSettled.status).toBe('fulfilled');

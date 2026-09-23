@@ -432,7 +432,7 @@ describe('generateStudioClassInstances (DB)', () => {
           // failure leaves.
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId, target: 'archived' }),
-            'studio class archive lost the template lock race',
+            'studio class archive hit a transient database failure',
           );
         } finally {
           release();
@@ -498,7 +498,7 @@ describe('generateStudioClassInstances (DB)', () => {
 
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId, target: 'paused' }),
-            'studio class pause/resume lost the template lock race',
+            'studio class pause/resume hit a transient database failure',
           );
         } finally {
           release();

@@ -35,7 +35,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
-import { isTransientDbError } from '@/lib/api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
 import {
   CLASS_TO_ENTRY_JOIN,
   lockClassRowsOrdered,
@@ -1040,7 +1040,7 @@ export async function createClassTemplate(
       return { ok: true as const, created: withSlot(bare, scheduleRule), generation };
     }, { timeout: 10_000 });
   } catch (err) {
-    // BEFORE any conflict check (`api-errors.ts`: `isTransientDbError` is
+    // BEFORE any conflict check (`api-errors.ts`: `transientDbFailure` is
     // checked ahead of every other branch precisely so a non-matching check
     // placed first cannot swallow a `P2028`/`P2024` — both are
     // `PrismaClientKnownRequestError`s too, and a conflict check that matches
@@ -1052,12 +1052,20 @@ export async function createClassTemplate(
     // (measured, this function's own mutation testing).
     //
     // Logs, like every sibling's own transient branch (#231: `classifyApiError`
-    // warns when this escapes uncaught, so catching it here must not be what
-    // removes that line).
-    if (isTransientDbError(err)) {
-      log.warn(
-        { err, teacherId, classType: input.classType, dayOfWeek: input.dayOfWeek, startTime: input.startTime },
-        'recurring class create lost a lock race — nothing committed',
+    // logs this the same way when it escapes uncaught, so catching it here
+    // must not be what removes that line).
+    const transient = transientDbFailure(err);
+    if (transient) {
+      log[transient.level](
+        {
+          err,
+          teacherId,
+          classType: input.classType,
+          dayOfWeek: input.dayOfWeek,
+          startTime: input.startTime,
+          transientKind: transient.kind,
+        },
+        'recurring class create hit a transient database failure — nothing committed',
       );
       return { ok: false, reason: 'busy' };
     }
