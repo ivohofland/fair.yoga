@@ -593,6 +593,11 @@ describe('reapClosedWaitlistEntries', () => {
       entryStatus: 'expired',
     });
 
+    // Scoped to HELD/FREE (#251): unscoped, any other terminal class in the
+    // shared test database whose own reap fails for an unrelated reason
+    // inflates `summary.failed` past 1.
+    const scope = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [HELD, FREE] } } });
+
     const holderDb = new PrismaClient();
     // `warn`, not `error`, and that is the assertion. A lock timeout is
     // `isTransientDbError`, and the sweep classifies its per-class failures on
@@ -618,7 +623,7 @@ describe('reapClosedWaitlistEntries', () => {
       // the sweep sails through and this test reports nothing.
       await new Promise((r) => setTimeout(r, 300));
 
-      const summary = await reapClosedWaitlistEntries(prisma, { now: NOW });
+      const summary = await reapClosedWaitlistEntries(scope.db, { now: NOW });
 
       expect(summary.failed).toBe(1);
       expect(await entryExists(held.entryId)).toBe(true);
@@ -735,13 +740,13 @@ describe('reapClosedWaitlistEntries', () => {
    * ORDER-INDEPENDENT BY CONSTRUCTION, which also retires the fragility an
    * earlier version of this docblock recorded at length. It no longer asserts
    * anything about how many classes the world contains — it asserts that the
-   * queue was DRAINED: sweep, then sweep again and find nothing left. Whatever
-   * else the shared test database holds is swept up by the first call and
-   * absent from the second, so a future author adding reapable fixtures to this
-   * file cannot break it. (The un-isolated version asserted `cappedOut === false`
-   * under `maxClasses: 50` and depended on the total staying under 50, with the
-   * previous test's stale held class filling its batch — an accident, and #177
-   * territory rather than a bug in the sweep.)
+   * queue was DRAINED: sweep, then sweep again and find nothing left. Scoped
+   * to this run's own two classes (see below), a future author adding
+   * reapable fixtures to this file cannot break it. (The un-isolated version
+   * asserted `cappedOut === false` under `maxClasses: 50` and depended on the
+   * total staying under 50, with the previous test's stale held class filling
+   * its batch — an accident, and #177 territory rather than a bug in the
+   * sweep.)
    *
    * The second sweep is also the only idempotency assertion in the file: a
    * permanent delete that finds work on a second pass over the same data would
@@ -805,8 +810,9 @@ describe('reapClosedWaitlistEntries', () => {
    *
    * The failure is provoked the same way the isolation test provokes it — a real
    * held lock — but with only ONE eligible class, so every class fails and the
-   * `failed === classes` branch is the one under test. `maxClasses: 1` keeps the
-   * batch to that class whatever else the database holds.
+   * `failed === classes` branch is the one under test. Scoped to HELD (see
+   * below), so `maxClasses: 1` bounds a candidate set that already holds
+   * nothing else.
    */
   it('throws when it attempted classes and every one failed', async () => {
     const HELD = `00000000-0000-4000-8000-${String(uniqueSuffix).slice(-11).padStart(11, '0')}9`;
