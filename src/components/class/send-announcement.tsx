@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -30,33 +31,44 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
     if (!message.trim()) return;
     setSending(true);
     setError('');
+
+    let res: Response;
     try {
-      const res = await fetch('/api/announcements', {
+      res = await fetch('/api/announcements', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: message.trim(), ...(classId ? { classId } : {}) }),
       });
-      if (res.ok) {
-        // `res.ok` alone is not the whole answer, and reading it as though it
-        // were is the defect #196 fixed here: the route answers 201 when it
-        // created the announcement and 200 when it suppressed an identical one
-        // sent moments ago, and only `duplicateSuppressed` distinguishes them
-        // in a field a client has to read past rather than a status it can
-        // ignore.
-        const json = (await res.json()) as {
-          data: { recipientCount: number; duplicateSuppressed?: boolean };
-        };
-        setSentCount(json.data.recipientCount);
-        setSuppressed(json.data.duplicateSuppressed === true);
-        setMessage('');
-        setOpen(false);
-      } else {
-        const json = (await res.json()) as { error?: { message?: string } | string };
-        const messageText = typeof json.error === 'string' ? json.error : json.error?.message;
-        setError(messageText ?? 'Could not send the announcement. Try again.');
-      }
-    } catch {
+    } catch (err) {
+      console.error('[send-announcement] request failed', { classId, err });
       setError('Network error. Try again.');
+      setSending(false);
+      return;
+    }
+
+    if (!res.ok) {
+      setError(await readErrorMessage(res, 'Could not send the announcement. Try again.'));
+      setSending(false);
+      return;
+    }
+
+    // `res.ok` alone is not the whole answer, and reading it as though it
+    // were is the defect #196 fixed here: the route answers 201 when it
+    // created the announcement and 200 when it suppressed an identical one
+    // sent moments ago, and only `duplicateSuppressed` distinguishes them
+    // in a field a client has to read past rather than a status it can
+    // ignore.
+    try {
+      const json = (await res.json()) as {
+        data: { recipientCount: number; duplicateSuppressed?: boolean };
+      };
+      setSentCount(json.data.recipientCount);
+      setSuppressed(json.data.duplicateSuppressed === true);
+      setMessage('');
+      setOpen(false);
+    } catch (err) {
+      console.error('[send-announcement] sent, but the response was unreadable', { classId, err });
+      setError('Announcement sent — reload to confirm before sending again.');
     } finally {
       setSending(false);
     }
