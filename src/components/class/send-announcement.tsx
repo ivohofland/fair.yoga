@@ -62,6 +62,9 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       const json = (await res.json()) as {
         data: { recipientCount: number; duplicateSuppressed?: boolean };
       };
+      if (typeof json?.data?.recipientCount !== 'number') {
+        throw new Error('missing recipientCount');
+      }
       setSentCount(json.data.recipientCount);
       setSuppressed(json.data.duplicateSuppressed === true);
       setMessage('');

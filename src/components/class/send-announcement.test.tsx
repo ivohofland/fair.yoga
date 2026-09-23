@@ -219,4 +219,30 @@ describe('SendAnnouncement', () => {
       expect.objectContaining({ classId: 'c1' }),
     );
   });
+
+  /**
+   * A parseable 2xx body that lacks `recipientCount` is a different shape of
+   * the same problem the test above covers: `json.data.recipientCount` would
+   * be `undefined`, and rendering it straight into the caption reads "Sent to
+   * undefined students" — a claim about the send, made up out of a field that
+   * was never there.
+   */
+  it('asks for a reload, not a resend, when a successful body is missing recipientCount', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({ data: {} }) }),
+    );
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+
+    send('Bring a blanket.');
+
+    expect(
+      await screen.findByText('Announcement sent — reload to confirm before sending again.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[send-announcement] sent, but the response was unreadable',
+      expect.objectContaining({ classId: 'c1' }),
+    );
+  });
 });
