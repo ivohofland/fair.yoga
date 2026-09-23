@@ -105,8 +105,8 @@ describe('email templates', () => {
     expect(html).toContain('href="https://example.test/account/privacy"');
   });
 
-  // The link is per-type, not a blanket addition: every other type is about
-  // a class, and the routes for those are teacher-only.
+  // The link is per-type, not a blanket addition: a class-scoped type such as
+  // `reminder` gets none, because the class routes are teacher-only.
   it('adds no link to a notification type that has nowhere to send a student', () => {
     const { html } = renderNotificationEmail(
       { type: 'reminder', title: 'Reminder', body: 'Class tomorrow.', recipientType: 'student' },
@@ -115,8 +115,8 @@ describe('email templates', () => {
     expect(html).not.toContain('href=');
   });
 
-  // #236 m5: the one email built to be read inside a 15-minute grace (or a
-  // 60-minute claim race) had nowhere to click.
+  // #236 m5: an email meant to be acted on within a short grace or claim
+  // window links to where the student acts on it.
   it('links a waitlist promotion to the student bookings page (#236)', () => {
     const { html } = renderNotificationEmail(
       {

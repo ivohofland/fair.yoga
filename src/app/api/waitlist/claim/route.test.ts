@@ -7,8 +7,7 @@ import { expectRefusal } from '../../../../../tests/api-assertions';
 /**
  * `POST /api/waitlist/claim`'s `window_frozen` branch. An HTTP fixture
  * cannot hold a class `open` past its start without racing the live
- * scheduler (`tests/integration/waitlist-api.test.ts` no longer tries), so
- * this mocks `claimSpot` to throw and asserts the route's own
+ * scheduler, so this mocks `claimSpot` to throw and asserts the route's own
  * reason-to-code mapping, in the style of
  * `api/registrations/[id]/promote-after-cancel.test.ts`.
  */

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   createNotification,
@@ -394,15 +394,25 @@ describe('getUnreadForEmailFallback', () => {
     expect(ours2[0]!.id).toBe(oldNotificationId);
   });
 
-  // #236 m6: the SQL prefilter used to admit a row only by age or by
-  // carrying a relatedClassId, so an immediate-email type with neither —
-  // brand new, no class link — would have been dropped before
-  // `isEmailEligible` ever saw it.
+  // #236 m6: an immediate-email type must pass the SQL prefilter with
+  // neither age nor a relatedClassId, or `isEmailEligible` never sees it.
   it('returns a brand-new, class-less notification of an immediate-email type', async () => {
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'EmailFallbackImmediate',
+        lastName: 'Student',
+        email: `email-fallback-immediate-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { recipientId: student.id } });
+      await prisma.student.delete({ where: { id: student.id } });
+    });
     const freshImmediate = await prisma.notification.create({
       data: {
-        recipientType: 'teacher',
-        recipientId: teacherId,
+        recipientType: 'student',
+        recipientId: student.id,
         type: 'waitlist_promoted',
         title: 'Immediate, no class link',
         body: 'Created just now, with no relatedClassId.',
@@ -416,7 +426,5 @@ describe('getUnreadForEmailFallback', () => {
     const ours = unread.filter((n) => n.id === freshImmediate.id);
 
     expect(ours).toHaveLength(1);
-
-    await prisma.notification.delete({ where: { id: freshImmediate.id } });
   });
 });
