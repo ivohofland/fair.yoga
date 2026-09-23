@@ -114,10 +114,10 @@ export type ClaimResult =
  * `waiting` is told the spot is gone — the broadcast said it was open, and
  * this fill is what closed it. A fill that leaves a seat open sends nothing:
  * the broadcast it would be answering is still true, and was not cleared
- * above. The caller's own student is excluded from the notified set — in
- * `claimSpot` their `WaitlistEntry` is still `waiting` at this point (it
- * flips to `claimed` only after this returns), and without the exclusion a
- * claimant would be told their own claim took their own spot.
+ * above. The caller's own student is excluded from the notified set — the
+ * booker's own `WaitlistEntry`, if any, is still `waiting` at this point,
+ * and without the exclusion a booker would be told their own booking took
+ * their own spot.
  *
  * `lock` must be the same class as `input.classId`, asserted at entry:
  * `readSeatCount` counts off `lock.classId`, while every other statement
@@ -821,12 +821,9 @@ export async function claimSpot(
 
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: entry.id },
-      // 'claimed', not 'promoted' — matching the direct-booking resolver
-      // (`api/registrations/route.ts`). `promoted` means the system placed
-      // the student; `claimed` means the student took it themselves, and
-      // `freeCancelUntilFor` (`cancel-deadline.ts`) reads that distinction to
-      // give only a `promoted` entry the #236 free-cancel grace.
-      data: { status: 'claimed', promotedAt: new Date(), registrationId: registration.id },
+      // 'claimed', not 'promoted': this write records that the student took
+      // the spot themselves, rather than the system placing them.
+      data: { status: 'claimed', promotedAt: now ?? new Date(), registrationId: registration.id },
     });
 
     await createBulkNotifications(tx, [
