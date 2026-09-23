@@ -2633,6 +2633,67 @@ describe('teacher erasure refuses to erase an already-erased profile (#196)', ()
 });
 
 /**
+ * `unlessAlreadyErased` (`gdpr.ts`) swallows only `AlreadyErasedError` —
+ * every other rejection out of the transaction passes through unchanged.
+ * The describe above is the only test in this file that pins
+ * `deleteTeacherAccount` against a rejection at all, and it never rejects —
+ * so this is what proves a genuine failure still does.
+ */
+describe('deleteTeacherAccount propagates a genuine transaction failure (#213)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-teacher-fail-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const email = `${suffix}@test.local`;
+  let teacherId: string;
+  let accountId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Fail',
+        lastName: 'Teacher',
+        email,
+        account: { create: { email } },
+        bio: 'Non-sentinel rejection fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+  });
+
+  afterAll(async () => {
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('rejects with the injected error rather than reporting already-erased', async () => {
+    const failing = prisma.$extends({
+      query: {
+        magicLinkToken: {
+          async deleteMany({ args, query }) {
+            const where = args.where as { email?: string } | undefined;
+            if (where?.email !== email) return query(args);
+            throw new Error('injected: magic link cleanup failed');
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await expect(deleteTeacherAccount(failing, teacherId)).rejects.toThrow(
+      'injected: magic link cleanup failed',
+    );
+
+    // The transaction rolled back whole rather than commit around the
+    // failure — a teacher CAS moving after a rejection would defeat the
+    // point of the guard this test exists for.
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(teacher.deletedAt).toBeNull();
+  });
+});
+
+/**
  * #280: deleteTeacherAccount cancels future studio classes on teacher erasure,
  * while sparing past and today's studio classes as income records.
  */
