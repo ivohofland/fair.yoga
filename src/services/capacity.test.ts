@@ -167,4 +167,32 @@ describe('readSeatCount (DB)', () => {
     const over = await prisma.$transaction(async (tx) => readSeatCount(tx, await lockClassRow(tx, overClassId)));
     expect(over).toEqual({ maxStudents: 2, activeCount: 3, freeSeats: -1, isFull: true });
   });
+
+  /**
+   * The most plausible honest mistake: `lock` really did come from
+   * `lockClassRow`, just in a transaction that has already ended by the time
+   * it is used.
+   */
+  it('rejects a ClassLock carried out of the transaction that minted it', async () => {
+    const lock = await prisma.$transaction((tx) => lockClassRow(tx, classId));
+    await expect(prisma.$transaction((tx) => readSeatCount(tx, lock))).rejects.toThrow(
+      /not minted by lockClassRow on this transaction/,
+    );
+  });
+
+  /**
+   * `{ ...lock, classId: overClassId }` copies the brand symbol along with
+   * every other property, so this compiles — the runtime check is what
+   * catches it. `overClassId` (a real fixture class, not a nonexistent one)
+   * is deliberate: a failure here can only come from `assertClassLockHeldBy`,
+   * never from `findUniqueOrThrow` failing to find a row.
+   */
+  it('rejects a spread copy of a real ClassLock even naming a class that exists', async () => {
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const lock = await lockClassRow(tx, classId);
+        return readSeatCount(tx, { ...lock, classId: overClassId });
+      }),
+    ).rejects.toThrow(/not minted by lockClassRow on this transaction/);
+  });
 });

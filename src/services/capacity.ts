@@ -18,7 +18,7 @@
  * read as "every capacity question in the repo comes through this module".
  */
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
-import type { ClassLock, TransactionClientOnly } from '@/lib/db-locks';
+import { assertClassLockHeldBy, type ClassLock, type TransactionClientOnly } from '@/lib/db-locks';
 
 /**
  * A class's seat position at one instant.
@@ -65,13 +65,15 @@ export interface SeatCount {
 /**
  * Counts the seats left in a class, under the caller's `Class` row lock.
  *
- * **It takes the lock as a `ClassLock`, not a class id.** `lockClassRow`
- * (`db-locks.ts`) mints one, and `eslint.config.mjs` refuses a cast to
- * `ClassLock` anywhere else in non-test `src/`, so a count with no lock
- * behind it does not compile, and the class counted is the class locked — it
- * has no other id to read. Without the lock the answer would be a snapshot
- * with no meaning: a registration committing a millisecond later makes it
- * wrong, which is the defect this module exists to fix (#212).
+ * **It takes the lock as a `ClassLock`, not a class id, and asserts, first,
+ * that `tx` is the transaction that minted it** (`assertClassLockHeldBy`,
+ * `db-locks.ts`). A raw id or a hand-built literal does not typecheck; a
+ * forged token, a copy of a real one, or one carried in from a different
+ * transaction typechecks but throws there, before any query runs. Either
+ * way the class counted is the class locked — it has no other id to read.
+ * Without the lock the answer would be a snapshot with no meaning: a
+ * registration committing a millisecond later makes it wrong, which is the
+ * defect this module exists to fix (#212).
  *
  * It does not take the lock itself: `lockClassRow` also bounds the wait and
  * locks the class's `CalendarEntry` alongside it, and a second, bare
@@ -84,14 +86,15 @@ export interface SeatCount {
  * the transaction already holds locked.
  *
  * The `TransactionClientOnly` brand rejects a bare `PrismaClient` at compile
- * time (see `db-locks.ts`). What neither it nor the token can check is that
- * `tx` is the same transaction that took the lock, so do not hand a token
- * across a transaction boundary.
+ * time (see `db-locks.ts`); `assertClassLockHeldBy` is the runtime half,
+ * rejecting a token forged outside `lockClassRow` or carried across a
+ * transaction boundary.
  */
 export async function readSeatCount(
   tx: TransactionClientOnly,
   lock: ClassLock,
 ): Promise<SeatCount> {
+  assertClassLockHeldBy(tx, lock);
   const { classId } = lock;
   const cls = await tx.class.findUniqueOrThrow({
     where: { id: classId },

@@ -75,17 +75,28 @@ export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: 
 declare const classLockBrand: unique symbol;
 
 /**
- * Proof that a transaction took the `Class` row lock for `classId`; pass it
- * only within that transaction.
+ * Proof that a transaction took the `Class` row lock for `classId`.
  *
- * Minted by `lockClassRow` below; `eslint.config.mjs` refuses a cast to
- * `ClassLock` anywhere else in non-test `src/`. `readSeatCount`
- * (`services/capacity.ts`) requires one, so counting a class nobody locked,
- * or a different class from the one locked, does not compile (#219). It does
- * not tie the token to a particular transaction client; `TransactionClientOnly`
- * narrows that but cannot close it.
+ * Minted by `lockClassRow` below and frozen. A raw id or a hand-built literal
+ * does not typecheck as one. It is bound at runtime to the transaction
+ * client that minted it — `assertClassLockHeldBy` below refuses anything
+ * else handed to it: a forged value, a copy or a spread of a real token, or
+ * a genuine token carried into a different transaction than the one that
+ * minted it.
+ *
+ * Not bound at compile time: a transaction-scoped wrapper type could do
+ * that, but it would mean moving every caller onto it, and the runtime
+ * check already covers the same ground.
  */
 export type ClassLock = { readonly classId: string; readonly [classLockBrand]: true };
+
+/**
+ * Maps each live `ClassLock` to the transaction client that minted it —
+ * `lockClassRow`'s runtime half of the binding `ClassLock`'s own docblock
+ * describes. `assertClassLockHeldBy` below is the only reader; `lockClassRow`
+ * is the only writer.
+ */
+const lockHolders = new WeakMap<ClassLock, TransactionClientOnly>();
 
 /**
  * How long any bounded wait in this project waits for a row lock before
@@ -306,7 +317,22 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
   // be the sole exception to; a second disable anywhere else is the
   // regression it guards against.
   // eslint-disable-next-line no-restricted-syntax
-  return { classId } as ClassLock;
+  const lock = Object.freeze({ classId }) as ClassLock;
+  lockHolders.set(lock, tx);
+  return lock;
+}
+
+/**
+ * Throws unless `tx` is the transaction client `lockClassRow` used to mint
+ * `lock`. A plain `Error`, not a custom class or code: this is a programmer
+ * error, not a condition anything should catch and handle.
+ */
+export function assertClassLockHeldBy(tx: TransactionClientOnly, lock: ClassLock): void {
+  if (lockHolders.get(lock) !== tx) {
+    throw new Error(
+      `ClassLock for class ${lock.classId} was not minted by lockClassRow on this transaction client — it is forged, or was carried across a transaction boundary.`,
+    );
+  }
 }
 
 /**
