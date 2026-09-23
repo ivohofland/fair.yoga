@@ -341,8 +341,8 @@ export type ArchiveRuleResult<TChild> =
    */
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   /**
-   * This transaction lost a contention race and rolled back whole, so nothing
-   * was applied and the identical request can win the next attempt.
+   * A transient database failure rolled this transaction back whole, so
+   * nothing was applied and the identical request can win the next attempt.
    *
    * Not only a `lock_timeout` expiry, though that is the case the copy is
    * written for. The arm is produced by `transientDbFailure`
@@ -1606,8 +1606,8 @@ export type UpdateRuleResult<TChild> =
    */
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   /**
-   * This transaction lost a contention race and rolled back whole, so nothing
-   * was applied and the identical request can win the next attempt.
+   * A transient database failure rolled this transaction back whole, so
+   * nothing was applied and the identical request can win the next attempt.
    */
   | { ok: false; reason: 'busy' };
 
