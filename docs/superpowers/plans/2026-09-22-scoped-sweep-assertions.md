@@ -491,3 +491,10 @@ Recorded from each task's report, which holds the full commands and text. Every 
 - Hit 20's deleted `size > 0` was the only premise of the test's final `size === 0`, because `failedClassIds` and the streak map fill on separate paths. `failuresByClass.has(contended.id)` restores it.
 
 **Task 7: studio generator and docs.** The one studio-generator hit **did not reproduce**. An invalid-timezone stray template left all five DB-backed calls green: #145's soft fallback, plus `ON CONFLICT DO NOTHING`. Review found no other state a stray row can reach that throws, so the test file is unmodified. The docs subsection, the AGENTS.md clause and the helper's docs pointer landed.
+
+**PR review round (2026-09-23).** Five review agents on PR #655; every finding was fixed.
+- Hit 22's deletion left a test with no assertion: a wrapper returning `undefined` passed. It now builds a freed seat, runs the tick scoped, and asserts `reconciledClassIds` equals the fixture and the waiter is registered. A wrapper resolving an empty summary reads `expected [] to deeply equal [ Array(1) ]`.
+- Four post-auto-cancel checks of `status 'open'` in class-transitions held whatever the sweep did, since #327 left cancellation off `status`. They assert `calendarEntry.cancelledAt` instead. With `inCancelWindow` widened to `at < start`, the pre-window test reads `expected 1 to be +0`.
+- `scopeSweep` now throws on an empty scope, a non-model key, an empty filter, an `undefined` leaf, an unlisted operation, and `rowsRead` for an unnamed model. Its operation table is tethered to `Prisma.PrismaAction`. Four helper mutations the old test survived now go red: replacing the caller's `where`, counting `updateMany` as a read, not accumulating, and counting a `findFirst` miss.
+- A review claim that batch `$transaction([...])` escapes the scope was measured false. `applies inside batch transactions` pins it.
+- The `void repeats` / `void reminded` lines became scoped `toBe(0)`s. Widening the reminder window reads `expected 1 to be +0`, and so does admitting `not_charged`.

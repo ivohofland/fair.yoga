@@ -95,6 +95,16 @@ describe('scopeSweep', () => {
     expect(rows.map((r) => r.id)).toEqual([inId]);
   });
 
+  it('applies inside batch transactions', async () => {
+    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
+    const [rows, count] = await s.db.$transaction([
+      s.db.teacher.findMany({ where: { id: { in: [inId, outId] } } }),
+      s.db.teacher.count({ where: { id: { in: [inId, outId] } } }),
+    ]);
+    expect(rows.map((r) => r.id)).toEqual([inId]);
+    expect(count).toBe(1);
+  });
+
   it('leaves unnamed models and single-row operations alone', async () => {
     const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
     expect(await s.db.teacher.findUnique({ where: { id: outId } })).not.toBeNull();
