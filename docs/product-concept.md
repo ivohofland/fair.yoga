@@ -135,7 +135,7 @@ Two separate deadlines serve different purposes:
 
 **Auto-cancel check** (4/2/1h before class): the system checks if the minimum number of students is registered. If not, the class is automatically cancelled and all students are notified. No charges are applied. No teacher action is required.
 
-**No-shows:** treated the same as late cancellations — included in the distribution and charged accordingly. There is no separate message: the payment request sent when the class completes tells a student marked as a no-show by then "We missed you" and explains that booked spots share the class cost, and tells a late canceller the same about their cancellation. A student the teacher never marked gets the ordinary payment request, and a mark changed after completion does not resend it.
+**No-shows:** treated the same as late cancellations — included in the distribution and charged accordingly. There is no separate message: the payment request sent when the class completes tells a student marked as a no-show by then "We missed you", and a late canceller that they cancelled their booking after the deadline; both are told that booked spots share the class cost. A student marked attended, or never marked, gets the ordinary payment request. The wording follows the mark as it stands at completion, and a mark changed afterwards does not resend it.
 
 **Early cancellations** (before the cancellation deadline): removed from the calculation, no charge.
 

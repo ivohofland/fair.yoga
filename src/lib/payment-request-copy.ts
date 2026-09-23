@@ -15,8 +15,10 @@ const PAY_OR_ASK = "Pay your teacher directly — if this isn't right, talk to y
  * The student's `payment_request` body. A student marked absent, or who
  * cancelled after the deadline, is told why they are still charged; an
  * unmarked `registered` row gets the neutral wording, because nobody has
- * recorded an absence. Exhaustive over `RegistrationStatus`, so a new status
- * does not compile until its wording is decided.
+ * recorded an absence. A `cancelled` row is not charged and throws, so
+ * callers pass only charged registrations. Exhaustive over
+ * `RegistrationStatus`, so a new status does not compile until its wording is
+ * decided.
  */
 export function studentPaymentRequestBody(
   status: RegistrationStatus,
