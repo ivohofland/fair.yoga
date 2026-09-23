@@ -717,7 +717,7 @@ describe('DELETE /api/account', () => {
       const body = (await res.json()) as { error: { message: string; code?: string } };
       expect(body.error.code).toBe('ERASURE_BUSY');
       expect(body.error.message).toMatch(/again/i);
-      expect(body.error.message).toMatch(/closed and billed/);
+      expect(body.error.message).toMatch(/closed and billed/i);
       expect(holderReleased).toBe(false);
 
       const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
