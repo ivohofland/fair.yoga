@@ -2634,10 +2634,9 @@ describe('teacher erasure refuses to erase an already-erased profile (#196)', ()
 
 /**
  * `unlessAlreadyErased` (`gdpr.ts`) swallows only `AlreadyErasedError` —
- * every other rejection out of the transaction passes through unchanged.
- * The describe above is the only test in this file that pins
- * `deleteTeacherAccount` against a rejection at all, and it never rejects —
- * so this is what proves a genuine failure still does.
+ * every other rejection out of the transaction passes through unchanged. No
+ * test above calls `deleteTeacherAccount` and asserts that it rejects; this
+ * is what pins that a genuine failure still does.
  */
 describe('deleteTeacherAccount propagates a genuine transaction failure (#213)', () => {
   const prisma = new PrismaClient();
