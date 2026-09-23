@@ -1,4 +1,5 @@
 import type { NotificationType, PrismaClient } from '@prisma/client';
+import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { NOTIFICATION_RETENTION_DAYS } from '@/lib/notification-retention';
 
@@ -14,7 +15,25 @@ export interface ReapNotificationOptions {
 
 export interface NotificationReapSummary {
   deleted: number;
-  periods: Array<{ days: number; cutoff: string; deleted: number; cappedOut: boolean }>;
+  periods: Array<{
+    days: number;
+    cutoff: string;
+    deleted: number;
+    cappedOut: boolean;
+    failed: boolean;
+  }>;
+}
+
+/**
+ * Thrown after a run in which at least one period failed, once every other
+ * period has run and the summary is logged, so the caller still sees the run
+ * as failed.
+ */
+export class NotificationRetentionFailedError extends Error {
+  constructor(readonly failedDays: readonly number[]) {
+    super(`notification retention failed for the ${failedDays.join(', ')}-day period(s)`);
+    this.name = 'NotificationRetentionFailedError';
+  }
 }
 
 /** Types grouped by retention period, derived from the map. */
@@ -39,8 +58,12 @@ function typesByPeriod(): Map<number, NotificationType[]> {
  *
  * Bounded per run so a never-swept backlog cannot hold the daily job for
  * long; what is left waits for the next run, and `cappedOut` says so.
- * Errors propagate to `isolatedSweeps`: every batch already committed stays
- * deleted, and the next run picks up the rest.
+ *
+ * Each period runs on its own: an error in one is logged and marks it
+ * `failed`, and the periods after it still run. Every batch already
+ * committed stays deleted and the next run picks up the rest. Once the
+ * summary is logged, a run with a failed period throws
+ * `NotificationRetentionFailedError`.
  */
 export async function reapExpiredNotifications(
   db: PrismaClient,
@@ -55,36 +78,51 @@ export async function reapExpiredNotifications(
     const cutoff = new Date(now.getTime() - days * DAY_MS);
     let deleted = 0;
     let cappedOut = false;
+    let failed = false;
 
-    for (let batch = 0; ; batch++) {
-      if (batch === maxBatches) {
-        cappedOut = true;
-        break;
+    try {
+      for (let batch = 0; ; batch++) {
+        if (batch === maxBatches) {
+          cappedOut = true;
+          break;
+        }
+        const rows = await db.notification.findMany({
+          where: { type: { in: types }, createdAt: { lt: cutoff } },
+          select: { id: true },
+          take: batchSize,
+        });
+        if (rows.length === 0) break;
+        const { count } = await db.notification.deleteMany({
+          where: { id: { in: rows.map((r) => r.id) } },
+        });
+        deleted += count;
+        if (rows.length < batchSize) break;
       }
-      const rows = await db.notification.findMany({
-        where: { type: { in: types }, createdAt: { lt: cutoff } },
-        select: { id: true },
-        take: batchSize,
-      });
-      if (rows.length === 0) break;
-      const { count } = await db.notification.deleteMany({
-        where: { id: { in: rows.map((r) => r.id) } },
-      });
-      deleted += count;
-      if (rows.length < batchSize) break;
+    } catch (err) {
+      failed = true;
+      const context = { err, days };
+      if (isTransientDbError(err)) {
+        log.warn(context, 'notification retention period failed on contention; the next run retries it');
+      } else {
+        log.error(context, 'notification retention period failed');
+      }
     }
 
-    periods.push({ days, cutoff: cutoff.toISOString(), deleted, cappedOut });
+    periods.push({ days, cutoff: cutoff.toISOString(), deleted, cappedOut, failed });
   }
 
   const summary: NotificationReapSummary = {
     deleted: periods.reduce((sum, p) => sum + p.deleted, 0),
     periods,
   };
-  if (periods.some((p) => p.cappedOut)) {
+  const failedDays = periods.filter((p) => p.failed).map((p) => p.days);
+  if (failedDays.length > 0) {
+    log.error(summary, 'notification retention finished with a failed period');
+  } else if (periods.some((p) => p.cappedOut)) {
     log.warn(summary, 'notification retention hit its per-run cap; the rest waits for the next run');
   } else {
     log.info(summary, 'notification retention swept');
   }
+  if (failedDays.length > 0) throw new NotificationRetentionFailedError(failedDays);
   return summary;
 }

@@ -39,7 +39,8 @@ vi.mock('@/services/auth-cleanup', () => ({
 vi.mock('@/services/waitlist-retention', () => ({
   reapClosedWaitlistEntries: (...args: unknown[]) => reapClosedWaitlistEntries(...args),
 }));
-vi.mock('@/services/notification-retention', () => ({
+vi.mock('@/services/notification-retention', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/notification-retention')>()),
   reapExpiredNotifications: (...args: unknown[]) => reapExpiredNotifications(...args),
 }));
 vi.mock('@/services/timezone-audit', () => ({
@@ -52,6 +53,7 @@ vi.mock('@/lib/db', () => ({ prisma: {} }));
 vi.mock('@/lib/cron-auth', () => ({ requireCronAuth: () => null }));
 
 const { POST } = await import('./route');
+const { NotificationRetentionFailedError } = await import('@/services/notification-retention');
 
 function post(): NextRequest {
   return new NextRequest('http://localhost:3000/api/cron/daily-cleanup', { method: 'POST' });
@@ -103,10 +105,12 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     expect(body.data.timezoneAudit.ok).toBe(true);
   });
 
-  it('answers non-2xx when notification retention fails, and the other sweeps still ran', async () => {
+  it('answers 500 when a notification retention period fails, and the other sweeps still ran', async () => {
     cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
     reapClosedWaitlistEntries.mockResolvedValue({ deleted: 0, classes: 0 });
-    reapExpiredNotifications.mockRejectedValue(new Error('boom'));
+    // What the sweep throws after a failed period, whatever that period's own
+    // error was: it carries no `cause`, so it classifies as permanent.
+    reapExpiredNotifications.mockRejectedValue(new NotificationRetentionFailedError([365]));
 
     const res = await POST(post());
     const body = (await res.json()) as Body;
