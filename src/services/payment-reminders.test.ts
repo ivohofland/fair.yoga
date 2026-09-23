@@ -150,16 +150,17 @@ describe('payment reminders (DB)', () => {
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(stamped.reminderSentAt).not.toBeNull();
 
-    // Second run one day later: within the 7-day window, no repeat.
+    // Second run one day later: within the 7-day window, no repeat. `first`
+    // above is the presence check for this zero — the same scope held the
+    // payment then.
     const oneDayLater = new Date(now.getTime() + 1 * DAY);
-    const repeats = await sendPaymentReminders(prisma, oneDayLater);
+    expect(await sendPaymentReminders(scoped.db, oneDayLater)).toBe(0);
     const after = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(after.reminderSentAt?.getTime()).toBe(stamped.reminderSentAt?.getTime());
-    void repeats; // other tests' payments may legitimately be reminded here
 
     // Eight days later the same payment is due for a repeat nudge.
     const eightDaysLater = new Date(now.getTime() + 8 * DAY);
-    await sendPaymentReminders(prisma, eightDaysLater);
+    expect(await sendPaymentReminders(scoped.db, eightDaysLater)).toBe(1);
     const reReminded = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(reReminded.reminderSentAt?.getTime()).toBe(eightDaysLater.getTime());
   });
@@ -219,8 +220,11 @@ describe('payment reminders (DB)', () => {
 
   it('never reminds on a not-charged payment', async () => {
     const payment = await makeAgedPayment('not_charged', 30);
-    const reminded = await sendPaymentReminders(prisma, now);
-    void reminded; // other tests' overdue payments may legitimately be reminded here
+    const scoped = scopeSweep(prisma, { Payment: { id: { in: [payment.id] } } });
+    // Presence check for the zero below: the sweep's own predicate drops a
+    // not-charged row, so `rowsRead` would read 0 either way.
+    expect(await scoped.db.payment.count()).toBe(1);
+    expect(await sendPaymentReminders(scoped.db, now)).toBe(0);
     const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(row.reminderSentAt).toBeNull();
   });

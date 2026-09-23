@@ -10,12 +10,16 @@ import { scopeSweep } from '../../../tests/scoped-sweep';
 
 const db = new PrismaClient();
 
-// The `cleanupExpiredTokens` tests below mint under this domain instead of
-// `@example.com`: that domain isn't unique to this file (other suites mint
-// under it too, in a different vitest project, on the same database), so a
-// scope built from it can read their rows in an isolated run of just this
-// block. This domain is unique to those two tests.
-const CLEANUP_TEST_DOMAIN = 'magic-link-cleanup.test.local';
+// Every address the `cleanupExpiredTokens` tests mint, so `afterEach` can
+// delete exactly those rows. Each carries a `Date.now()` suffix, which is
+// what makes the scopes built from them match this run's rows only.
+const cleanupEmails: string[] = [];
+
+function cleanupEmail(tag: string): string {
+  const email = `magic-link-cleanup-${tag}-${Date.now()}@test.local`;
+  cleanupEmails.push(email);
+  return email;
+}
 
 beforeAll(async () => {
   await db.$connect();
@@ -29,12 +33,12 @@ afterEach(async () => {
   // Scoped, not a truncate: sibling suites hold their own `magicLinkToken`
   // rows and assert those survive their own sweeps. This file mints
   // `*@example.com` everywhere except the `cleanupExpiredTokens` tests
-  // below, which use `CLEANUP_TEST_DOMAIN`; this filter clears both.
+  // below, which mint through `cleanupEmail`; this filter clears both.
   await db.magicLinkToken.deleteMany({
     where: {
       OR: [
         { email: { endsWith: '@example.com' } },
-        { email: { endsWith: `@${CLEANUP_TEST_DOMAIN}` } },
+        { email: { in: cleanupEmails } },
       ],
     },
   });
@@ -284,11 +288,8 @@ describe('purpose (#385)', () => {
 
 describe('cleanupExpiredTokens', () => {
   it('removes expired tokens and returns the count', async () => {
-    // Create two tokens, under CLEANUP_TEST_DOMAIN — see its own comment for
-    // why not `@example.com`.
-    const suffix = Date.now();
-    const emailA = `cleanup-a-${suffix}@${CLEANUP_TEST_DOMAIN}`;
-    const emailB = `cleanup-b-${suffix}@${CLEANUP_TEST_DOMAIN}`;
+    const emailA = cleanupEmail('a');
+    const emailB = cleanupEmail('b');
     await generateMagicLinkToken(db, emailA);
     await generateMagicLinkToken(db, emailB);
 
@@ -312,7 +313,7 @@ describe('cleanupExpiredTokens', () => {
   });
 
   it('returns 0 when no tokens are expired', async () => {
-    const email = `cleanup-fresh-${Date.now()}@${CLEANUP_TEST_DOMAIN}`;
+    const email = cleanupEmail('fresh');
     await generateMagicLinkToken(db, email);
 
     const scoped = scopeSweep(db, { MagicLinkToken: { email: { in: [email] } } });

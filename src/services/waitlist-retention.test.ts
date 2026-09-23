@@ -155,6 +155,16 @@ async function entryExists(entryId: string): Promise<boolean> {
 }
 
 /**
+ * One run of the reap that sees only `classId`'s entries. A per-id test that
+ * ran unscoped would share the run's class cap with every stray eligible
+ * class an earlier run left, and a fixture sorted past that cap would go
+ * unreaped for a reason that has nothing to do with the rule under test.
+ */
+async function reapOnly(classId: string): Promise<void> {
+  await reapClosedWaitlistEntries(scopeSweep(prisma, { WaitlistEntry: { classId: { in: [classId] } } }).db, { now: NOW });
+}
+
+/**
  * Adds a second entry to an EXISTING class, for a different student.
  *
  * `makeClassWithEntry` above puts exactly one entry on one class, so for
@@ -417,21 +427,21 @@ describe('reapClosedWaitlistEntries', () => {
       withRegistration: true,
     });
 
-    await reapClosedWaitlistEntries(prisma, { now: NOW });
+    await reapOnly(classId);
 
     expect(await entryExists(unfulfilledEntryId)).toBe(false);
     expect(await entryExists(fulfilledEntryId)).toBe(true);
   });
 
   it('keeps an entry that became a registration, however old the class', async () => {
-    const { entryId } = await makeClassWithEntry({
+    const { classId, entryId } = await makeClassWithEntry({
       classStatus: 'completed',
       date: daysBeforeCutoff(400),
       entryStatus: 'claimed',
       withRegistration: true,
     });
 
-    await reapClosedWaitlistEntries(prisma, { now: NOW });
+    await reapOnly(classId);
 
     expect(await entryExists(entryId)).toBe(true);
   });
@@ -467,13 +477,13 @@ describe('reapClosedWaitlistEntries', () => {
   it.each([...FULFILLED_WAITLIST_STATUSES])(
     'keeps a %s entry whose registrationId is somehow null',
     async (entryStatus) => {
-      const { entryId } = await makeClassWithEntry({
+      const { classId, entryId } = await makeClassWithEntry({
         classStatus: 'completed',
         date: daysBeforeCutoff(400),
         entryStatus,
       });
 
-      await reapClosedWaitlistEntries(prisma, { now: NOW });
+      await reapOnly(classId);
 
       expect(await entryExists(entryId)).toBe(true);
     },
@@ -482,13 +492,13 @@ describe('reapClosedWaitlistEntries', () => {
   it.each<ClassStatus>(['draft', 'open', 'in_progress'])(
     'keeps an entry on a %s class, which is not terminal',
     async (classStatus) => {
-      const { entryId } = await makeClassWithEntry({
+      const { classId, entryId } = await makeClassWithEntry({
         classStatus,
         date: daysBeforeCutoff(400),
         entryStatus: 'waiting',
       });
 
-      await reapClosedWaitlistEntries(prisma, { now: NOW });
+      await reapOnly(classId);
 
       expect(await entryExists(entryId)).toBe(true);
     },
@@ -503,38 +513,38 @@ describe('reapClosedWaitlistEntries', () => {
   it.each<WaitlistStatus>(['waiting', 'expired', 'removed'])(
     'deletes a %s entry on a terminal class past the window',
     async (entryStatus) => {
-      const { entryId } = await makeClassWithEntry({
+      const { classId, entryId } = await makeClassWithEntry({
         classStatus: 'cancelled',
         date: daysBeforeCutoff(1),
         entryStatus,
       });
 
-      await reapClosedWaitlistEntries(prisma, { now: NOW });
+      await reapOnly(classId);
 
       expect(await entryExists(entryId)).toBe(false);
     },
   );
 
   it('keeps an entry on a class dated exactly at the cutoff', async () => {
-    const { entryId } = await makeClassWithEntry({
+    const { classId, entryId } = await makeClassWithEntry({
       classStatus: 'completed',
       date: daysBeforeCutoff(0),
       entryStatus: 'expired',
     });
 
-    await reapClosedWaitlistEntries(prisma, { now: NOW });
+    await reapOnly(classId);
 
     expect(await entryExists(entryId)).toBe(true);
   });
 
   it('deletes an entry on a class dated one day before the cutoff', async () => {
-    const { entryId } = await makeClassWithEntry({
+    const { classId, entryId } = await makeClassWithEntry({
       classStatus: 'completed',
       date: daysBeforeCutoff(1),
       entryStatus: 'expired',
     });
 
-    await reapClosedWaitlistEntries(prisma, { now: NOW });
+    await reapOnly(classId);
 
     expect(await entryExists(entryId)).toBe(false);
   });
@@ -564,17 +574,15 @@ describe('reapClosedWaitlistEntries', () => {
    * would not: that mutation leaves the sweep returning normally, having reaped
    * nothing after the failure.
    *
-   * The ids are derived from `uniqueSuffix` rather than hard-coded. Scoped to
-   * HELD/FREE, HELD need only sort below FREE — hence the all-zero prefix —
-   * but `unit-db.ts` never truncates, so a fixed id left behind by an
-   * interrupted run would fail every later run with a P2002 until someone
-   * cleaned it out by hand.
+   * The ids are derived from `uniqueSuffix` rather than hard-coded:
+   * `unit-db.ts` never truncates, so a fixed id left behind by an interrupted
+   * run would fail every later run with a P2002 until someone cleaned it out
+   * by hand. Scoped to HELD/FREE, HELD need only sort below FREE.
    */
   it('skips a class whose lock it cannot take, and reaps the ones after it', async () => {
-    // The sort-first property lives in the leading groups — `00000000-0000-…`
-    // is below any random uuid at the first character that differs — so the
-    // final group is free to carry `uniqueSuffix` for uniqueness. `n` is the
-    // last character, which is what orders HELD before FREE.
+    // The fixed leading groups only make a well-formed uuid; the final group
+    // carries `uniqueSuffix` for uniqueness, and `n`, its last character, is
+    // what orders HELD before FREE.
     const lowId = (n: number): string =>
       `00000000-0000-4000-8000-${String(uniqueSuffix).slice(-11).padStart(11, '0')}${n}`;
     const HELD = lowId(1);
@@ -781,11 +789,9 @@ describe('reapClosedWaitlistEntries', () => {
     expect(await entryExists(first.entryId)).toBe(false);
     expect(await entryExists(second.entryId)).toBe(false);
 
-    // Presence check for the second run's `toBe(0)` below: the scope actually
-    // captured this run's own rows on the read above, rather than the zero
-    // being vacuous because nothing was ever in scope.
-    expect(scope.rowsRead('WaitlistEntry')).toBeGreaterThan(0);
-
+    // `summary.classes` of 2 above is the presence check for the second
+    // run's zeros below: the scope held this test's rows, so those zeros are
+    // about draining, not about an empty scope.
     // Drained, not merely "small". Nothing eligible remains, so a loop that
     // stopped after one class has nowhere to hide.
     const again = await reapClosedWaitlistEntries(scope.db, { now: NOW, maxClasses: 50 });
