@@ -4,11 +4,11 @@ import { EditRoomForm } from './edit-room-form';
 
 /**
  * #307. This form makes two sequential PUTs — the room, then the
- * teacher-room link — and used to parse each error branch inline with
- * `await res.json()`. Both now read through `readErrorMessage`, so an
- * unreadable body (a proxy's HTML 502) on either request shows that
- * request's own fallback and leaves a console record, instead of throwing a
- * `SyntaxError` into the bare outer `catch`.
+ * teacher-room link — and each reads its error branch through
+ * `readErrorMessage`. An unreadable body (a proxy's HTML 502) on either
+ * request shows that request's own fallback and leaves a console record,
+ * distinct from the outer `catch`'s own `'[edit-room-form] request failed'`
+ * log for a request that never lands at all.
  */
 describe('EditRoomForm', () => {
   const fetchMock = vi.fn();

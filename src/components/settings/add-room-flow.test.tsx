@@ -314,7 +314,7 @@ describe('AddRoomFlow', () => {
    * A proxy's HTML error page, not the route's own `{ error }` shape. Read
    * through `readErrorMessage`, this shows the create step's own fallback
    * and leaves a console record instead of the generic network copy a
-   * `SyntaxError` landing in its bare outer `catch` would produce.
+   * `SyntaxError` landing in its outer `catch` would produce.
    */
   it('shows the fallback and logs when the room create refusal body is unreadable', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
