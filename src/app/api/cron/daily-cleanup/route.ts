@@ -126,8 +126,12 @@ async function settle<T>(run: () => Promise<T>): Promise<SweepOutcome<T>> {
     const failure = classifyApiError(err);
     // Logged as well as returned: the response body reaches whoever called,
     // which under a systemd timer is a `curl` whose output may go nowhere.
+    // `...failure.detail` spreads FIRST so the literal keys below always win
+    // — the same order `withErrorHandler` uses (`src/lib/api-utils.ts`) — so
+    // a transient failure's `transientKind` reaches this line instead of
+    // being dropped.
     log[failure.level](
-      { err, status: failure.status },
+      { ...failure.detail, err, status: failure.status },
       'daily-cleanup: a sweep failed; the others still ran',
     );
     return {

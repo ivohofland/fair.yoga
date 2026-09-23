@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
+import { log } from '@/lib/log';
 
 /**
  * The STATUS CONTRACT for this route, and nothing else.
@@ -227,5 +229,63 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     expect(body.data.waitlistRetention.ok).toBe(true);
     expect(body.data.timezoneAudit.ok).toBe(false);
     expect(body.data.timezoneAudit.error).toContain('Invalid/Test_Zone_145');
+  });
+
+  /**
+   * `settle`'s catch logs `classifyApiError`'s `detail` alongside `err` and
+   * `status` — `withErrorHandler` spreads `...failure.detail` first so the
+   * literal keys win (`src/lib/api-utils.ts`), and this route's own log call
+   * follows the same order. Without it a transient sweep failure logs with no
+   * `transientKind`, which is what made this route invisible to the spec
+   * §8 acceptance 1 census of `classifyApiError` consumers.
+   */
+  it('logs a tx_budget sweep failure at warn with its transientKind', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as never);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as never);
+    try {
+      cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
+      reapClosedWaitlistEntries.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('tx budget exceeded', {
+          code: 'P2028',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+      );
+
+      await POST(post());
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ transientKind: 'tx_budget' }),
+        'daily-cleanup: a sweep failed; the others still ran',
+      );
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('logs a pool_exhausted sweep failure at error with its transientKind', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as never);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as never);
+    try {
+      cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
+      reapClosedWaitlistEntries.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('pool timeout', {
+          code: 'P2024',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+      );
+
+      await POST(post());
+
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ transientKind: 'pool_exhausted' }),
+        'daily-cleanup: a sweep failed; the others still ran',
+      );
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
   });
 });
