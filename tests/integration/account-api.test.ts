@@ -650,6 +650,86 @@ describe('DELETE /api/account', () => {
     expect(second.status).toBe(200);
   }, 40_000);
 
+  /**
+   * `PARTIAL_ERASURE_BUSY`: the same lock race as `ERASURE_BUSY` above, but
+   * on a dual account, where the student half commits before the teacher
+   * half reaches for the held class row. `erasureFailure` (`route.ts`) reads
+   * a committed student half as `partial`, which is what turns this into
+   * `PARTIAL_ERASURE_BUSY` rather than plain `ERASURE_BUSY`.
+   *
+   * The student profile carries no registrations or entries, so the student
+   * half's own pre-lock finds nothing the holder below holds — the timeout
+   * can only come from the teacher half's class lock.
+   */
+  it('reports PARTIAL_ERASURE_BUSY when the teacher half loses a lock race after the student half committed', async () => {
+    const acc = await seedDual('partialbusy');
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Partial Busy Venue',
+        address: `${suffix} Partial Busy St`,
+        city: 'Testville',
+        postcode: '1234PB',
+        floor: '1',
+        roomName: 'Hall',
+        maxCapacity: 10,
+        createdById: acc.teacherId,
+      },
+    });
+    seededRoomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: acc.teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
+    });
+    seededTeacherRoomIds.push(teacherRoom.id);
+    const cls = await createClassFixture(prisma, {
+        teacherId: acc.teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Partial Busy Flow',
+        date: new Date('2099-06-01'),
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'open',
+      });
+    seededClassIds.push(cls.id);
+
+    // Held for 4s — comfortably past the erasure's own 2s bound, so what this
+    // observes is the timeout and not merely a wait.
+    let holderReleased = false;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 4_000));
+        holderReleased = true;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/account`, {
+        method: 'DELETE',
+        headers: cookie(acc.token),
+      });
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.code).toBe('PARTIAL_ERASURE_BUSY');
+      expect(body.error.message).toMatch(/again/i);
+      expect(holderReleased).toBe(false);
+
+      const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+      expect(student.deletedAt).not.toBeNull();
+      const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
+      expect(teacher.deletedAt).toBeNull();
+    } finally {
+      await holder;
+    }
+  }, 40_000);
+
   it('reports ERASURE_BUSY when a waitlist entry appears outside the erasure lock set', async () => {
     const acc = await seedStudentOnly('lockset');
 
