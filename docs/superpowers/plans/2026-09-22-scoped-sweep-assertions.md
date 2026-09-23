@@ -458,4 +458,36 @@ Task 1 first: every other task imports it. Tasks 2–7 are independent of one an
 
 ## Results
 
-(Filled in per task by the controller from each task's report: the step-1 red text, step-2 green, step-3 mutations and red text, and any hit that did not reproduce.)
+Recorded from each task's report, which holds the full commands and text. Every rewritten hit was shown green in step 2 with the same stray row present.
+
+**Task 1: helper.** All four planned mutations turned their cases red. Two plan defects surfaced. First, the plan claimed the extension attached later runs first. Prisma 6.19 runs them in attachment order, so a race hook goes on the client handed in. Second, the `deleteMany` scoping named in a case title was never exercised; a scoped delete case was added, and removing `'deleteMany'` from the scoped set gives `.count` 2 instead of 1.
+
+**Task 2: class-transitions.**
+- Hit 5 was red in a full-file run: `expected 2 to be +0`.
+- Hits 1, 2 and 4 did not reproduce in a full-file run, because the file's first test consumes open stray rows. Run alone with `-t`, each was red: `expected 1 to be +0` at `:231`, `:315` and `:890`.
+- Hit 3's way-4 masking did **not** reproduce. Deleting the increment gives `expected 0 to be greater than or equal to 1` with or without a stray row, since a deleted counter zeroes stray rows too. The rewrite stands as strictly stronger, and it adds the class-status check the test lacked.
+- The new counters bite: `expected +0 to be 1` for each deleted increment. The presence checks bite under a scope to an unused id: `expected 0 to be greater than 0`.
+
+**Task 3: magic-link and auth-cleanup.**
+- The two magic-link hits were red on a stray expired token.
+- Auth-cleanup's `>= 1` pair was masked under a predicate that drops only the fixture. The planned field swap was invisible, because both fixture counts are 1.
+- Review found the `@example.com` scope was shared with `handoff.test.ts` and `link-delivery.test.ts`. The scope moved to exact, file-unique emails. With a planted `@example.com` token, the old scope read `expected 2 to be 1` and the new one was green.
+- A scoped `count()` presence check guards the `toBe(0)`. Scoped to a domain nothing matches, it reads `expected 0 to be greater than 0`.
+
+**Task 4: email-fallback.**
+- Hits 10–14 were red on older stray notifications.
+- The planned `markOne` mutation for hit 10 is inert, because the fixture takes `claimOne`. The `claimOne` substitute turns `outerSent` red.
+- Hits 11–14 carry presence through their `rejects.toThrow`: an empty scope returns before the throw.
+
+**Task 5: payment-reminders and timezone-audit.**
+- The exact counts bite under deleted increments. The `void repeats` / `void reminded` lines were left as they are, since the spec lists them as safe.
+- timezone-audit's `checked >= 1` never goes red without a stray row. About 21 live teachers with valid zones always exist in the shared test database, which is itself the masking.
+- Review found the two expect-throw tests unscoped, and scoped them. With a valid fixture zone plus a stray bad-zone teacher, the old test was green and the scoped one red.
+
+**Task 6: waitlist reconciliation and retention.**
+- Reconciliation hits 18–21 now assert id membership, and the membership mutations turn them red. Hit 22's `>= 0` was deleted: it holds for any value, and the test builds no fixture.
+- Retention's `Class` key was dropped. The `class.count` the plan cited is inside a comment.
+- Review found hit 24, the held-lock test, missed: the implementer had no census and guessed the mapping. Scoped, it went from `RetentionFailedError … 3 class(es) and every one failed` with a held stray row to green.
+- Hit 20's deleted `size > 0` was the only premise of the test's final `size === 0`, because `failedClassIds` and the streak map fill on separate paths. `failuresByClass.has(contended.id)` restores it.
+
+**Task 7: studio generator and docs.** The one studio-generator hit **did not reproduce**. An invalid-timezone stray template left all five DB-backed calls green: #145's soft fallback, plus `ON CONFLICT DO NOTHING`. Review found no other state a stray row can reach that throws, so the test file is unmodified. The docs subsection, the AGENTS.md clause and the helper's docs pointer landed.
