@@ -32,7 +32,7 @@ export function studentPaymentRequestBody(
     case 'no_show':
       return `We missed you at ${when}. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
     case 'late_cancel':
-      return `You cancelled ${when} after the cancellation deadline. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
+      return `You cancelled your booking for ${when} after the cancellation deadline. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
     case 'cancelled':
       throw new Error('A cancelled registration is not charged and gets no payment request.');
     default: {

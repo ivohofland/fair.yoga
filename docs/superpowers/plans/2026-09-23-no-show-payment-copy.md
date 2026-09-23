@@ -20,7 +20,7 @@
 - Copy, verbatim (`{when}` = `{classType} class on {formatDayHeader(date)} at {timeToHHmm(startTime)}`, `{price}` = `formatEuro(price)`):
   - `registered`, `attended`: `Your price for {when} is {price}. Pay your teacher directly.` (unchanged)
   - `no_show`: `We missed you at {when}. Booked spots share the class cost, so your price is {price}. Pay your teacher directly — if this isn't right, talk to your teacher.`
-  - `late_cancel`: `You cancelled {when} after the cancellation deadline. Booked spots share the class cost, so your price is {price}. Pay your teacher directly — if this isn't right, talk to your teacher.`
+  - `late_cancel`: `You cancelled your booking for {when} after the cancellation deadline. Booked spots share the class cost, so your price is {price}. Pay your teacher directly — if this isn't right, talk to your teacher.`
 - The title stays `Payment requested` for every status. The teacher's summary notification is unchanged.
 - Never edit an applied migration. Create with `--create-only`, hand-edit, then apply.
 - Stage exact paths; never `git add -A`.
@@ -75,7 +75,7 @@ describe('studentPaymentRequestBody', () => {
 
   it('tells a late cancel it was after the deadline', () => {
     expect(studentPaymentRequestBody('late_cancel', cls, 12.4)).toBe(
-      `You cancelled ${when} after the cancellation deadline. Booked spots share the class cost, so your price is €12.40. ${TAIL}`,
+      `You cancelled your booking for ${when} after the cancellation deadline. Booked spots share the class cost, so your price is €12.40. ${TAIL}`,
     );
   });
 
@@ -127,7 +127,7 @@ export function studentPaymentRequestBody(
     case 'no_show':
       return `We missed you at ${when}. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
     case 'late_cancel':
-      return `You cancelled ${when} after the cancellation deadline. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
+      return `You cancelled your booking for ${when} after the cancellation deadline. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
     case 'cancelled':
       throw new Error('A cancelled registration is not charged and gets no payment request.');
     default: {
