@@ -2321,6 +2321,64 @@ describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-p
 
     expect(await expectApplied(res)).toEqual({ id: registrationId, status: 'late_cancel' });
   });
+
+  // Accepted behaviour, per the #236 spec's "Known edge, accepted".
+  it('cancels free again after a grace cancel and a direct rebook inside the grace', async () => {
+    const classId = await makeLateCancelClass(5, 180, 'HOURS_6');
+    const promotedAt = new Date(Date.now() - 5 * 60 * 1000);
+    const registrationId = await bookAndPromote(classId, 'promoted', promotedAt);
+
+    expect(await expectApplied(await cancel(studentTokens[0]!, registrationId))).toEqual({
+      id: registrationId,
+      status: 'cancelled',
+    });
+
+    const rebooked = (await expectApplied(await post(studentTokens[0]!, { classId }), 201)) as {
+      id: string;
+    };
+    expect(rebooked.id).toBe(registrationId);
+
+    expect(await expectApplied(await cancel(studentTokens[0]!, registrationId))).toEqual({
+      id: registrationId,
+      status: 'cancelled',
+    });
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { registrationId } });
+    expect(entry.status).toBe('promoted');
+  });
+});
+
+/**
+ * #236: a direct booking that takes the last free seat under a standing
+ * broadcast tells every student still waiting that the spot is gone.
+ */
+describe('POST /api/registrations — the last seat taken under a standing broadcast (#236)', () => {
+  it('sends spot_taken to each waiting student and none to the booker', async () => {
+    const classId = await makeClass(1);
+    await prisma.class.update({ where: { id: classId }, data: { spotBroadcastAt: new Date() } });
+    const waiters = [studentIds[1]!, unlinkedStudentId];
+    for (const [i, studentId] of waiters.entries()) {
+      await prisma.waitlistEntry.create({
+        data: { classId, studentId, position: i + 1, status: 'waiting' },
+      });
+    }
+
+    await expectApplied(await post(studentTokens[0]!, { classId }), 201);
+
+    for (const studentId of waiters) {
+      expect(
+        await prisma.notification.count({
+          where: { relatedClassId: classId, recipientId: studentId, type: 'spot_taken' },
+        }),
+      ).toBe(1);
+    }
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: classId, recipientId: studentIds[0]!, type: 'spot_taken' },
+      }),
+    ).toBe(0);
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(cls.spotBroadcastAt).toBeNull();
+  });
 });
 
 /**
