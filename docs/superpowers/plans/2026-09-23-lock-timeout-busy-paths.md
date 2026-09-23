@@ -47,7 +47,8 @@ The issue was filed at #241; the tracker is past #650. Each claim re-derived:
    compacted.
 4. **`join` bound-value order — still a gap, and no call site exercises it.**
    Every `join:` passed in `src` is a static constant (`CLASS_TO_ENTRY_JOIN`,
-   `CLASS_TO_WAITLIST_JOIN`, or both composed). The docblock on
+   `CLASS_TO_WAITLIST_JOIN`, or both composed) —
+   `grep -rn 'join:' src --include='*.ts' | grep -v '\.test\.'`. The docblock on
    `ClassLockSource.where` claims "merge … in source order, verified against
    Postgres"; the one composition test asserts `values` is `[]`.
 
@@ -233,21 +234,21 @@ plan predicted M7 would give a Postgres bind-count/parameter error; it gave a
   already keeps C3 out of `classIds` before the `updateMany` runs.
 - **M1'** (drop `status: 'waiting'` from both `lockClassRowsOrdered`'s `where`
   and the `updateMany`'s `where`, together): failed —
-  `AssertionError: expected 'removed' to be 'promoted'` at
-  `waitlist.test.ts:2358` (`expect(c3S.status).toBe('promoted')`).
+  `AssertionError: expected 'removed' to be 'promoted'`
+  (`expect(c3S.status).toBe('promoted')`).
 - **M2** (drop `classId: { in: classIds }` from the `updateMany` `where`):
-  failed — `AssertionError: expected 'removed' to be 'waiting'` at
-  `waitlist.test.ts:2365` (`expect(dS.status).toBe('waiting')`).
+  failed — `AssertionError: expected 'removed' to be 'waiting'`
+  (`expect(dS.status).toBe('waiting')`).
 - **M3** (drop the `reorderWaitingEntries` loop): failed —
-  `AssertionError: expected 2 to be 1` at `waitlist.test.ts:2373`
+  `AssertionError: expected 2 to be 1`
   (`expect(c1O.position).toBe(1)`).
 - **M4** (`setLockTimeout` returns before issuing its statement): failed —
-  `AssertionError: expected 'returned' not to be 'returned'` at
-  `gdpr-lock-order.test.ts:1435` (`expect(outcome).not.toBe('returned')`).
+  `AssertionError: expected 'returned' not to be 'returned'`
+  (`expect(outcome).not.toBe('returned')`).
 - **M5** (`erasureFailure`'s `transient` forced to `false`): failed —
-  `AssertionError: expected 500 to be 503` at `account-api.test.ts:718`.
+  `AssertionError: expected 500 to be 503` (`account-api.test.ts`).
 - **M6** (`setLockTimeout` made a no-op): failed —
-  `AssertionError: expected 200 to be 503` at `invitations-api.test.ts:3780`.
+  `AssertionError: expected 200 to be 503` (`invitations-api.test.ts`).
 - **M7** (join spliced via `Prisma.raw(source.join?.sql ?? '')`, dropping its
   bound value): failed with a Postgres syntax error, not a bind-count error —
   `PrismaClientKnownRequestError: Raw query failed. Code: 42601. Message:
@@ -255,4 +256,4 @@ plan predicted M7 would give a Postgres bind-count/parameter error; it gave a
 - **M7'** (join spliced via `Prisma.raw(source.join?.text ?? '')` instead,
   requested after M7 to isolate a binding-order failure): failed with a
   wrong result — `AssertionError: expected [] to deeply equal [ Array(1) ]`
-  at `db-locks.test.ts:434` (`expect(locked).toEqual([lowClassId])`).
+  (`expect(locked).toEqual([lowClassId])`).
