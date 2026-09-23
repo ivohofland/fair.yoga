@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
-import { expectUnchanged } from '../api-assertions';
+import { expectUnchanged, expectApplied } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -828,15 +828,14 @@ describe('DELETE /api/account', () => {
   }, 40_000);
 
   /**
-   * #196 branch 2, Task 3, route half. The service aborts a redundant
-   * erasure with `AlreadyErasedError` so a second, redundant transaction
-   * cannot commit at all (what that abort does and does not prevent:
-   * `AlreadyErasedError`'s docblock, `gdpr.ts`), and `DELETE /api/account`
-   * maps the abort to 200 (`gdpr-lock-order.test.ts` owns the
-   * rejection-count assertion that pins the abort). This pins the route's
-   * half: the loser's abort is a SUCCESS, and must not fall into
-   * `erasureFailure` — which would answer a 500 and tell a user their account
-   * could not be removed, about an account that is gone.
+   * The service reports the loser's half with `{ erased: false, reason:
+   * 'already-erased' }` rather than throwing — nothing reaches the route to
+   * catch (`gdpr-lock-order.test.ts` owns the rejection-count assertion that
+   * pins the CAS itself). The route answers the loser as success, and — since
+   * every half it attempted was already erased — as `unchanged`; the winner
+   * as an ordinary deletion. Neither falls into `erasureFailure`, which would
+   * answer a 500 and tell a user their account could not be removed, about an
+   * account that is gone.
    *
    * The lever is the one Tasks 1 and 2 established, for the reason they
    * recorded: two plain fetches serialise, and a serialised second request
@@ -897,6 +896,12 @@ describe('DELETE /api/account', () => {
     // told it failed. A 500 here is the defect — a successful outcome
     // reported as an error — and this is the assertion that names it.
     expect([a.status, b.status]).toEqual([200, 200]);
+    // The loser's erasure had nothing left to do — the winner did it — so it
+    // is answered as already done; the winner as an ordinary deletion. Order
+    // of the two responses is not fixed, so compare as a sorted pair.
+    const bodies = (await Promise.all([a.json(), b.json()])) as { data: unknown; outcome?: string }[];
+    expect(bodies.map((body) => body.outcome ?? 'applied').sort()).toEqual(['applied', 'unchanged']);
+    expect(bodies.map((body) => body.data)).toEqual([{ deleted: true }, { deleted: true }]);
 
     const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
     expect(student.deletedAt).not.toBeNull();
@@ -907,30 +912,31 @@ describe('DELETE /api/account', () => {
 
   /**
    * The DUAL-role shape of the same race, and the one the route's own comment
-   * asserts in prose ("Caught per half so a dual-role account whose student
+   * asserts in prose ("Checked per half so a dual-role account whose student
    * half is already erased still goes on to erase its teacher half below")
    * with nothing holding it to it. The student-only case above cannot reach
    * it: with no teacher profile there is no second half to go on to.
    *
    * It is also the one shape where the `partial` flag can produce a
-   * materially false message. The loser's student half throws
-   * `AlreadyErasedError` and rolls back whole, yet `session.studentId` stays
-   * truthy — so `partial = Boolean(session.studentId)` is true for it. If the
-   * teacher half's sentinel were not caught, that loser would be answered
-   * with a 500 reading "Your student data was removed … Removing the rest of
-   * your teaching data failed. Pressing Delete again will not fix it —
-   * please contact support," about an account both halves of which are gone.
-   * A teacher sent to support over a completed deletion.
+   * materially false message. The loser's student half reports `{ erased:
+   * false, reason: 'already-erased' }` and rolled back whole, yet
+   * `session.studentId` stays truthy — so `partial = Boolean(session.studentId)`
+   * is true for it. If the route did not check that outcome and go on, this
+   * request would be answered with a 500 reading "Your student data was
+   * removed … Removing the rest of your teaching data failed. Pressing Delete
+   * again will not fix it — please contact support," about an account both
+   * halves of which are gone. A teacher sent to support over a completed
+   * deletion.
    *
    * ONE request, not two, and that is the whole design of this test. An
    * earlier version raced two deletes and asserted the teacher was erased —
-   * which the WINNER does, so a `return` on the loser's student-half sentinel
-   * changed nothing observable and the test could not fail against the
-   * mutation its own comment named. Here the holder erases the student half
-   * itself and never touches the `Teacher`, so the single request under test
-   * is the only thing in the world that can set `teacher.deletedAt`. If its
-   * student half stops falling through, the teacher stays live and the first
-   * assertion says so.
+   * which the WINNER does, so a route that stopped at the student half's
+   * outcome changed nothing observable and the test could not fail against
+   * the mutation its own comment named. Here the holder erases the student
+   * half itself and never touches the `Teacher`, so the single request under
+   * test is the only thing in the world that can set `teacher.deletedAt`. If
+   * its student half stops the route from going on, the teacher stays live
+   * and the first assertion says so.
    *
    * The session is resolved before the holder commits, so `session.studentId`
    * is truthy for a profile the holder erases while this request's own
@@ -977,22 +983,22 @@ describe('DELETE /api/account', () => {
     await holding;
     const res = await deleting;
 
-    // Asserted first, and it is the assertion the fall-through owns: nothing
-    // but this request has written `Teacher`, so a `return` on the student
-    // half's sentinel leaves a live teacher profile on an account whose owner
-    // was told it was deleted.
+    // Asserted first, and it is the assertion this request's own continuation
+    // owns: nothing but this request has written `Teacher`, so a route that
+    // stopped at the student half's outcome leaves a live teacher profile on
+    // an account whose owner was told it was deleted.
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
     expect(teacher.deletedAt).not.toBeNull();
     const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
     expect(student.deletedAt).not.toBeNull();
 
-    // And it is not told its deletion failed. Without the student half's
-    // catch this is a 500 PARTIAL_ERASURE — "Your student data was removed …
-    // Removing the rest of your teaching data failed … please contact
-    // support" — about an account both halves of which are gone. `partial` is
-    // `Boolean(session.studentId)`, which stays truthy for a half that rolled
-    // back, so that message is reachable precisely here.
-    expect(res.status).toBe(200);
+    // And it is not told its deletion failed — a 500 PARTIAL_ERASURE reading
+    // "Your student data was removed … Removing the rest of your teaching
+    // data failed … please contact support," about an account both halves of
+    // which are gone. The student half was already erased; the teacher half
+    // was erased by THIS request — so the request did work, and is not
+    // "unchanged".
+    expect(await expectApplied(res)).toEqual({ deleted: true });
 
     // Last live profile erased, so the account email is scrubbed and the
     // session is gone — the state the false message would have denied.
@@ -1000,6 +1006,26 @@ describe('DELETE /api/account', () => {
     expect(account.email).toBe(`deleted-${acc.accountId}@deleted.invalid`);
     expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(0);
   }, 40_000);
+
+  /**
+   * #213: "unchanged" means this request attempted a half and every half it
+   * attempted had already been erased by someone else. A session cannot hold
+   * no live profile, though — `validateSession` (`lib/auth/session.ts`)
+   * resolves only live profiles and deletes a session whose account has none
+   * left, so this request 401s before the handler runs, the same as an
+   * unrecognised token. The route's `outcomes.length > 0 &&` guard exists for
+   * the case that would attempt nothing; no live session can reach it.
+   */
+  it('rejects a session on an account with no live profile', async () => {
+    const mail = `accdel-noprofile-${suffix}@test.local`;
+    const account = await prisma.account.create({ data: { email: mail } });
+    seededAccountIds.push(account.id);
+    const token = await seedSession(prisma, account.id);
+
+    const res = await fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(token) });
+
+    expect(res.status).toBe(401);
+  });
 });
 
 /**
