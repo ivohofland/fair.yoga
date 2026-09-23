@@ -196,7 +196,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         throw new ClassFullError();
       }
 
-      const reg = await activateRegistration(tx, {
+      const reg = await activateRegistration(tx, lock, {
         classId: body.classId,
         studentId,
         tierAtBooking: student.incomeTier,

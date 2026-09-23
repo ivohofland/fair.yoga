@@ -24,6 +24,7 @@ export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new S
   'booking_removed',
   'waitlist_promoted',
   'spot_available',
+  'spot_taken',
   'payment_request',
 ]);
 
