@@ -1002,12 +1002,6 @@ describe('reconcileWaitlists (DB)', () => {
    * quietly forgets.
    */
   it('runs the sweep through the production entry point', async () => {
-    // No assertion on `summary.candidates` here (#251 task-6 hit 22): this
-    // test builds no fixture, so there is no number the fixture determines
-    // to check it against, and `candidates` is a non-negative count by
-    // construction (`classes.length`) — `>= 0` held for every possible
-    // return value it could ever take. The docblock above states what this
-    // test actually verifies.
     await runWaitlistReconciliationTick(prisma);
   });
 
@@ -1095,9 +1089,7 @@ describe('reconcileWaitlists (DB)', () => {
     expect(streaks.allTransientTicks).toBe(1);
 
     // The class ITSELF reconciled, not merely some class — `allTransientTicks`
-    // resetting is satisfied by any tick that reconciles anything, so without
-    // this the assertion below would hold even for a tick that reset the
-    // streak on the strength of a class this test never built.
+    // resetting is satisfied by any tick that reconciles anything.
     const second = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow, streaks });
     expect(second.reconciledClassIds).toContain(contended.id);
     expect(streaks.allTransientTicks).toBe(0);
@@ -1213,6 +1205,12 @@ describe('reconcileWaitlists (DB)', () => {
     // rather than the first.
     expect(contendedTick.failedClassIds).toContain(contended.id);
     expect(streaks.allTransientTicks).toBeGreaterThan(0);
+    // The premise the final `size).toBe(0)` below depends on: `failedClassIds`
+    // and `failuresByClass` fill on separate code paths
+    // (`waitlist-reconciliation.ts`'s `failedClassIds.push` vs
+    // `failures.next.set`), so pinning the former alone does not establish
+    // that the latter ever held this class either.
+    expect(streaks.failuresByClass.has(contended.id)).toBe(true);
 
     const noOpenClass = prisma.$extends({
       query: {
@@ -1426,11 +1424,7 @@ describe('reconcileWaitlists (DB)', () => {
 
     for (let tick = 1; tick < 5; tick += 1) {
       const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
-      // `healthy` ITSELF is what resets the streak on tick 1 — without this,
-      // `allTransientTicks < 5` below would hold the same way for a tick
-      // that reset on the strength of some other class entirely, which
-      // would not be evidence that a healthy sibling keeps the job from
-      // reddening at all.
+      // `healthy` ITSELF is what resets the streak on tick 1, not merely some class.
       if (tick === 1) expect(summary.reconciledClassIds).toContain(healthy.id);
       expect(forClass(warn.mock.calls).at(-1)).toMatchObject({ classStreak: tick });
       expect(forClass(error.mock.calls)).toHaveLength(0);
