@@ -345,10 +345,9 @@ describe('processEmailFallback (DB)', () => {
       sendMock.mockResolvedValue({ error: null });
     });
 
-    // Three of these tests deliberately leave their row unsent, which makes it
-    // a candidate again in the next test's sweep and would inflate that test's
-    // send count. Deleted rather than marked, so no test here depends on the
-    // residue of the one before it.
+    // Hygiene: some tests here deliberately leave their row unsent. Every sweep
+    // in this block is scoped to its own notification, so the residue cannot
+    // reach the next test; it is deleted so it does not accumulate.
     afterEach(async () => {
       await prisma.notification.deleteMany({
         where: { id: { in: perTestNotificationIds.splice(0) } },

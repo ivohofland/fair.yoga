@@ -10,15 +10,13 @@ import { scopeSweep } from '../../../tests/scoped-sweep';
 
 const db = new PrismaClient();
 
-// Every address the `cleanupExpiredTokens` tests mint, so `afterEach` can
-// delete exactly those rows. Each carries a `Date.now()` suffix, which is
-// what makes the scopes built from them match this run's rows only.
-const cleanupEmails: string[] = [];
+// The `cleanupExpiredTokens` tests mint through this. The `Date.now()`
+// suffix is what makes a scope built from an address match this run's rows
+// only; the prefix is what lets `afterEach` clear a killed run's rows too.
+const CLEANUP_PREFIX = 'magic-link-cleanup-';
 
 function cleanupEmail(tag: string): string {
-  const email = `magic-link-cleanup-${tag}-${Date.now()}@test.local`;
-  cleanupEmails.push(email);
-  return email;
+  return `${CLEANUP_PREFIX}${tag}-${Date.now()}@test.local`;
 }
 
 beforeAll(async () => {
@@ -38,7 +36,7 @@ afterEach(async () => {
     where: {
       OR: [
         { email: { endsWith: '@example.com' } },
-        { email: { in: cleanupEmails } },
+        { email: { startsWith: CLEANUP_PREFIX, endsWith: '@test.local' } },
       ],
     },
   });

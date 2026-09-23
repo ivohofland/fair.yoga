@@ -84,9 +84,9 @@ The interference runs both ways:
   `prisma` itself. The scope keys on values only this test's rows hold — ids,
   or an email or hash carrying a per-run suffix — never on a pool other
   suites also write to, such as a shared email domain. The scope narrows only
-  top-level bulk statements on a model it names: raw SQL, rows reached
-  through a relation (`include`, `select`, a relation filter) and single-row
-  operations pass through. So it fits a sweep that picks its candidates with
+  top-level bulk reads, counts, updates and deletes on a model it names: raw
+  SQL, rows reached through a relation (`include`, `select`, a relation
+  filter), nested writes, single-row operations and inserts pass through. So it fits a sweep that picks its candidates with
   such a bulk statement and keys everything after it by the ids that read
   returned; a sweep that picks candidates any other way needs a scope
   parameter of its own. A hook that

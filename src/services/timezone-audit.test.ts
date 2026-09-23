@@ -31,8 +31,8 @@ const SENTINEL = 'Invalid/Test_Zone_145';
  * unscoped, which is why every call here passes a scoped client instead.
  */
 beforeAll(async () => {
-  // Defence against a previous crashed run leaving a sentinel teacher behind:
-  // one would make every later run of this file's clean case throw.
+  // Hygiene: removes sentinel teachers a crashed run left behind. The scoped
+  // calls below cannot see them, so nothing here depends on this.
   const stale = await prisma.teacher.findMany({
     where: { defaultTimezone: SENTINEL },
     select: { id: true, accountId: true },

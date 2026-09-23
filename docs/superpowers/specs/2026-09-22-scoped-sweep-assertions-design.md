@@ -119,7 +119,8 @@ eligibility and cap checks that the test measures itself. All of
 `notifications.test.ts`, which filters to `recipientId` first. All of
 `email-fallback.consent.test.ts`, whose failure injection is routed by
 recipient rather than `Once` and is the pattern hits 11–12 lacked. The
-payment-reminders `void repeats`, a deliberate non-assertion. The
+payment-reminders `void repeats`, a deliberate non-assertion (the PR review
+round later made it and `void reminded` scoped `toBe(0)`s; see the plan). The
 class-generator tests, which pass `teacherId`.
 
 ## Design
