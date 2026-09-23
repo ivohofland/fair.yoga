@@ -236,10 +236,8 @@ describe('class transitions (DB, timezone-aware)', () => {
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.status).toBe('open');
 
-      // Filtered to THIS class. `autoTransitionToInProgress` sweeps every open
-      // class in the shared unit database, so a bare call count asserts
-      // something about the whole database rather than about this fixture — one
-      // leaked class from a sibling would fail this for an unrelated reason.
+      // Filtered to THIS class: `warn` is a module-level spy, so a bare call
+      // count would also catch any other class the run logs against.
       expect(
         warn.mock.calls.filter((c) => (c[0] as { classId?: string })?.classId === cls.id),
       ).toHaveLength(1);
@@ -863,57 +861,61 @@ describe('class transitions (DB, timezone-aware)', () => {
    */
   it('does not cancel a class rescheduled out of its window after the sweep read it', async () => {
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 2 });
-    await prisma.registration.create({
-      data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
-    });
+    // `finally`, the convention this file records at its own `#174` fixture:
+    // a failing assertion must not skip the cleanup below it.
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
+      });
 
-    let hookCalls = 0;
-    const racing = prisma.$extends({
-      query: {
-        class: {
-          async findMany({ args, query }) {
-            // Shape-keyed, per the house rule for every hook in this file:
-            // `autoCancelClasses`'s own sweep read is the one filtering on a
-            // bare `status: 'open'`.
-            const where = args.where as { status?: unknown } | undefined;
-            if (where?.status !== 'open') return query(args);
+      let hookCalls = 0;
+      const racing = prisma.$extends({
+        query: {
+          class: {
+            async findMany({ args, query }) {
+              // Shape-keyed, per the house rule for every hook in this file:
+              // `autoCancelClasses`'s own sweep read is the one filtering on a
+              // bare `status: 'open'`.
+              const where = args.where as { status?: unknown } | undefined;
+              if (where?.status !== 'open') return query(args);
 
-            hookCalls += 1;
-            const rows = await query(args);
-            // A week later, so 15:00Z on July 20 is nowhere near the new
-            // 14:00Z–16:00Z window on July 27. Committed before the sweep's
-            // per-class transaction opens, so the snapshot it is walking is
-            // stale by exactly one reschedule.
-            await prisma.calendarEntry.update({
-      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, select: { calendarEntryId: true } })).calendarEntryId },
-      data: { date: new Date('2026-07-27') },
-    });
-            return rows;
+              hookCalls += 1;
+              const rows = await query(args);
+              // A week later, so 15:00Z on July 20 is nowhere near the new
+              // 14:00Z–16:00Z window on July 27. Committed before the sweep's
+              // per-class transaction opens, so the snapshot it is walking is
+              // stale by exactly one reschedule.
+              await prisma.calendarEntry.update({
+        where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, select: { calendarEntryId: true } })).calendarEntryId },
+        data: { date: new Date('2026-07-27') },
+      });
+              return rows;
+            },
           },
         },
-      },
-      // Same cast rationale as the tests above.
-    }) as unknown as PrismaClient;
-    const scoped = scopeSweep(racing, { Class: { id: { in: [cls.id] } } });
+        // Same cast rationale as the tests above.
+      }) as unknown as PrismaClient;
+      const scoped = scopeSweep(racing, { Class: { id: { in: [cls.id] } } });
 
-    const cancelledCount = await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'));
+      const cancelledCount = await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'));
 
-    expect(hookCalls).toBe(1);
-    expect(scoped.rowsRead('Class')).toBeGreaterThan(0);
-    expect(cancelledCount).toBe(0);
+      expect(hookCalls).toBe(1);
+      expect(scoped.rowsRead('Class')).toBeGreaterThan(0);
+      expect(cancelledCount).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(updated.status).toBe('open');
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(updated.status).toBe('open');
 
-    // Nobody was told a class was cancelled that wasn't. Pre-fix this is 2 —
-    // one for the student, one for the teacher.
-    expect(
-      await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'class_cancelled' } }),
-    ).toBe(0);
-
-    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
-    await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      // Nobody was told a class was cancelled that wasn't. Pre-fix this is 2 —
+      // one for the student, one for the teacher.
+      expect(
+        await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'class_cancelled' } }),
+      ).toBe(0);
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
   });
 
   /**

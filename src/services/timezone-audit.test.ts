@@ -109,6 +109,7 @@ describe('auditTeacherTimezones', () => {
     const id = await seedTeacher('erased', SENTINEL);
     await prisma.teacher.update({ where: { id }, data: { deletedAt: new Date() } });
     const scoped = scopeSweep(prisma, { Teacher: { id: { in: [id] } } });
+    expect(await scoped.db.teacher.count()).toBe(1);
     const summary = await auditTeacherTimezones(scoped.db);
     expect(summary.invalid).not.toContain(SENTINEL);
   });
