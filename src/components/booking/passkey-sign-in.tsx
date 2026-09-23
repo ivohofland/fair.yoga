@@ -29,7 +29,10 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
         setState('error');
         return;
       }
-      if (!optionsRes.ok) throw new Error('options');
+      if (!optionsRes.ok) {
+        console.error('[passkey-sign-in] options request refused', { status: optionsRes.status });
+        throw new Error('options');
+      }
       const json = (await optionsRes.json()) as {
         data: { options: Parameters<typeof startAuthentication>[0]['optionsJSON']; challengeId: string };
       };
@@ -45,7 +48,10 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
           ...(redirect ? { redirect } : {}),
         }),
       });
-      if (!verifyRes.ok) throw new Error('verify');
+      if (!verifyRes.ok) {
+        console.error('[passkey-sign-in] verify request refused', { status: verifyRes.status });
+        throw new Error('verify');
+      }
 
       const verified = (await verifyRes.json()) as { data: { redirectTo: string } };
       router.push(verified.data.redirectTo);
