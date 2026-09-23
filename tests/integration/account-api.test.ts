@@ -651,6 +651,83 @@ describe('DELETE /api/account', () => {
   }, 40_000);
 
   /**
+   * The teacher-only side of the same lock race: `deleteTeacherAccount`'s
+   * ordered pre-lock takes the `Class` row itself, so holding it produces
+   * the same `55P03` timeout the student-only test above provokes. What
+   * distinguishes this response is the `stateNote` — the teacher half is not
+   * a single transaction (see `erasureFailure`'s docblock in the route), so
+   * its busy message has to name the billing exposure that the student-only
+   * sibling's message cannot show.
+   */
+  it('reports ERASURE_BUSY with the teacher stateNote when a teacher-only erasure loses a lock race', async () => {
+    const acc = await seedTeacherOnly('teacherbusy');
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Teacher Busy Venue',
+        address: `${suffix} Teacher Busy St`,
+        city: 'Testville',
+        postcode: '1234TB',
+        floor: '1',
+        roomName: 'Hall',
+        maxCapacity: 10,
+        createdById: acc.teacherId,
+      },
+    });
+    seededRoomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: acc.teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
+    });
+    seededTeacherRoomIds.push(teacherRoom.id);
+    const cls = await createClassFixture(prisma, {
+        teacherId: acc.teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Teacher Busy Flow',
+        date: new Date('2099-06-01'),
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'open',
+      });
+    seededClassIds.push(cls.id);
+
+    // Held for 4s — comfortably past the erasure's own 2s bound, so what this
+    // observes is the timeout and not merely a wait.
+    let holderReleased = false;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 4_000));
+        holderReleased = true;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/account`, {
+        method: 'DELETE',
+        headers: cookie(acc.token),
+      });
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.code).toBe('ERASURE_BUSY');
+      expect(body.error.message).toMatch(/again/i);
+      expect(body.error.message).toMatch(/closed and billed/);
+      expect(holderReleased).toBe(false);
+
+      const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
+      expect(teacher.deletedAt).toBeNull();
+    } finally {
+      await holder;
+    }
+  }, 40_000);
+
+  /**
    * `PARTIAL_ERASURE_BUSY`: the same lock race as `ERASURE_BUSY` above, but
    * on a dual account, where the student half commits before the teacher
    * half reaches for the held class row.
