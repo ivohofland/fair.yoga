@@ -2322,3 +2322,62 @@ describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-p
     expect(await expectApplied(res)).toEqual({ id: registrationId, status: 'late_cancel' });
   });
 });
+
+/**
+ * The #236 headline behaviour end to end: a late cancel — past the deadline,
+ * but more than an hour before class start, so `getWaitlistWindow` still
+ * reads `auto_promote` — frees a full class's only seat and the DELETE route
+ * (`promoteAfterCancel` → `handleSpotFreed` → `promoteNext`) promotes the
+ * queue head into it before the response is sent. The service layer already
+ * covers `promoteNext`/`handleSpotFreed` in isolation
+ * (`services/waitlist.test.ts`); this is the one link nothing else in this
+ * file's late-cancel coverage exercises: a real DELETE landing on a real
+ * waiting entry.
+ */
+describe('DELETE /api/registrations/[id] — a late cancel promotes the queue head (#236)', () => {
+  function cancel(token: string, id: string): Promise<Response> {
+    return fetch(`${BASE_URL}/api/registrations/${id}`, {
+      method: 'DELETE',
+      headers: cookie(token),
+    });
+  }
+
+  it('promotes the waiting student into the freed seat', async () => {
+    // maxStudents: 1, minStudents: 0 — one seat, filled by the canceller
+    // below, and 0 so the live scheduler's auto-cancel sweep (the class
+    // starts ~3h out, inside its window) never finds this class below
+    // minimum once the cancel runs.
+    const classId = await makeLateCancelClass(1, 160);
+
+    const booked = await post(studentTokens[0]!, { classId });
+    const { data: registration } = (await booked.json()) as { data: { id: string } };
+
+    // The class is full now, so the second student can only wait.
+    const waitlistEntry = await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[1]!, position: 1, status: 'waiting' },
+    });
+
+    const res = await cancel(studentTokens[0]!, registration.id);
+
+    expect(await expectApplied(res)).toEqual({ id: registration.id, status: 'late_cancel' });
+
+    const cancelled = await prisma.registration.findUniqueOrThrow({ where: { id: registration.id } });
+    expect(cancelled.status).toBe('late_cancel');
+
+    const promoted = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: waitlistEntry.id } });
+    expect(promoted.status).toBe('promoted');
+    expect(promoted.registrationId).not.toBeNull();
+
+    const newRegistration = await prisma.registration.findUniqueOrThrow({
+      where: { id: promoted.registrationId! },
+    });
+    expect(newRegistration.studentId).toBe(studentIds[1]);
+    expect(newRegistration.status).toBe('registered');
+
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: classId, recipientId: studentIds[1]!, type: 'waitlist_promoted' },
+      }),
+    ).toBe(1);
+  });
+});
