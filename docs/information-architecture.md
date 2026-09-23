@@ -50,7 +50,7 @@ The teacher's world. This is the default tab, the first thing a signed-in teache
 Their community. The people who come to their classes.
 
 ### Tab 3: Inbox
-What the system has told them. Everything from the past year; waitlist spot alerts for 30 days.
+What the system has told them. Everything from the past year.
 
 ### Tab 4: Settings
 Profile, rooms, payments, preferences. Things you set up once and rarely change.
