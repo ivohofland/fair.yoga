@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek, mondayOf, type WeekKey } from './timezone';
+import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek, mondayOf, formatInstantInZone, type WeekKey } from './timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -462,6 +462,20 @@ describe('mondayOf', () => {
     // And the Monday of the previous week is genuinely seven days earlier,
     // proving the function is not silently shifting by an offset.
     expect(iso(mondayOf(new Date('2026-09-14T00:00:00.000Z')))).toBe('2026-09-14T00:00:00.000Z');
+  });
+});
+
+describe('formatInstantInZone', () => {
+  it('formats weekday and 24h time in the given zone', () => {
+    // 2026-06-04 is a Thursday; 12:15 UTC = 14:15 CEST.
+    expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Europe/Amsterdam')).toBe('Thu 14:15');
+  });
+
+  it('falls back to UTC on an unknown timezone rather than throwing', () => {
+    const spy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Not/AZone')).toBe('Thu 12:15');
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 
