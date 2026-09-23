@@ -542,7 +542,7 @@ describe('reconcileWaitlists (DB)', () => {
     const cls = await makeFreedSeat('OldFlag');
     const clocks = windowClocks(cls.startTime);
 
-    // Six hours before `claimWindowStart`, which sits at classStart − 25h.
+    // Thirty hours before `claimWindowStart`, which sits at classStart − 1h.
     await prisma.class.update({
       where: { id: cls.id },
       data: { spotBroadcastAt: new Date(clocks.classStart.getTime() - 31 * H) },
