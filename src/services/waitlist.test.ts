@@ -3,6 +3,8 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
   getWaitlistWindow,
+  cancelDeadlineInstant,
+  DEADLINE_HOURS,
   addToWaitlist,
   removeFromWaitlist,
   promoteNext,
@@ -159,6 +161,38 @@ describe('getWaitlistWindow', () => {
       new Date('2026-07-19T08:00:00Z'),
     );
     expect(result).toBe('frozen');
+  });
+});
+
+// ===========================================================================
+// Pure logic tests — cancelDeadlineInstant
+// ===========================================================================
+
+describe('cancelDeadlineInstant', () => {
+  const classDate = new Date('2026-04-10');
+  const startTime = hhmmToTime('09:00');
+  const classStartUtcMs = new Date('2026-04-10T09:00:00Z').getTime();
+
+  it.each(Object.keys(DEADLINE_HOURS) as (keyof typeof DEADLINE_HOURS)[])(
+    'subtracts %s hours from the class start in UTC',
+    (deadline) => {
+      const result = cancelDeadlineInstant({ date: classDate, startTime }, deadline, 'UTC');
+      expect(result.getTime()).toBe(classStartUtcMs - DEADLINE_HOURS[deadline] * 60 * 60 * 1000);
+    },
+  );
+
+  it('subtracts real elapsed hours across a DST boundary, not wall-clock-preserved ones', () => {
+    // Amsterdam's 2026 fall-back is 2026-10-25 03:00 CEST -> 02:00 CET, so
+    // 2026-10-26 09:00 local is already CET (+1): class start = 2026-10-26T08:00:00Z.
+    // HOURS_48 subtracts a fixed 48h of real time, landing on 2026-10-24T08:00:00Z.
+    // Re-deriving "09:00 local, two days earlier" would instead read Oct 24 in
+    // CEST (+2) and land an hour off, at 2026-10-24T07:00:00Z.
+    const result = cancelDeadlineInstant(
+      { date: new Date('2026-10-26'), startTime: hhmmToTime('09:00') },
+      'HOURS_48',
+      'Europe/Amsterdam',
+    );
+    expect(result.toISOString()).toBe('2026-10-24T08:00:00.000Z');
   });
 });
 
