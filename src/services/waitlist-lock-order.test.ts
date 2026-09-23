@@ -263,12 +263,14 @@ describe('promoteNext (DB)', () => {
    * no longer does on the live path.
    *
    * That band is not invisible. `reconcileWaitlists` catches per class and
-   * logs the loss at `warn` (`waitlist-reconciliation.ts`) on every tick, and
-   * escalates to `error` if the same class stays stuck for
-   * `MAX_CONSECUTIVE_CONTENDED_TICKS` in a row. Neither level delivers
-   * anywhere on its own today — `lib/log.ts` is pino to stdout with no
-   * transport, so nothing pages anyone off either one (#157); the lines sit in
-   * the server log for whoever reads it. What surfaces is `report`'s
+   * logs the loss at its kind's level on every tick — `TRANSIENT_KIND_LEVEL`
+   * (`lib/api-errors.ts`) owns which, and the `55P03`/`lock_timeout` this test
+   * provokes is `warn` there — and raises that to `error` regardless of kind
+   * if the same class stays stuck for `MAX_CONSECUTIVE_CONTENDED_TICKS` in a
+   * row. Neither level delivers anywhere on its own today — `lib/log.ts` is
+   * pino to stdout with no transport, so nothing pages anyone off either one
+   * (#157); the lines sit in the server log for whoever reads it. What
+   * surfaces is `report`'s
    * `ReconciliationFailedError`, which `scheduler.ts` stores as the
    * job's `lastError` and `/api/health` surfaces as `degraded`, only under
    * `decideEscalation`'s two conditions: immediately for a tick with any

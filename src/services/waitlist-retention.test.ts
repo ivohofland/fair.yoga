@@ -652,8 +652,10 @@ describe('reapClosedWaitlistEntries', () => {
         expect.objectContaining({ classId: HELD, transient: true, transientKind: 'lock_timeout' }),
         'waitlist retention hit a transient database failure for one class — retrying next run',
       );
-      // A transient failure must NOT page: `error` is the all-failed branch's
-      // level, and this run had a success in it.
+      // This fixture's `lock_timeout` does not page: `TRANSIENT_KIND_LEVEL`
+      // (`lib/api-errors.ts`) owns which kinds do, and `lock_timeout` isn't
+      // one. `error` here would also be the all-failed branch's level, and
+      // this run had a success in it.
       expect(error).not.toHaveBeenCalled();
 
       await holder;
@@ -856,8 +858,10 @@ describe('reapClosedWaitlistEntries', () => {
       ).rejects.toBeInstanceOf(RetentionFailedError);
 
       // The run-level line, at `error` — distinct from the per-class line,
-      // which is at `warn` because a lock timeout is transient. A run that
-      // accomplished nothing is a different statement at any N.
+      // which is at `warn` because `lock_timeout`'s own level in
+      // `TRANSIENT_KIND_LEVEL` (`lib/api-errors.ts`) is `warn`, not because
+      // transience alone is. A run that accomplished nothing is a different
+      // statement at any N.
       expect(error).toHaveBeenCalledWith(
         expect.objectContaining({ classes: 1, failed: 1, deleted: 0 }),
         expect.stringContaining('every class it tried failed'),
