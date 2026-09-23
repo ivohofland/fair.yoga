@@ -22,6 +22,7 @@ let freedSpotClassId: string;
 let rivalId: string;
 let rivalToken: string;
 let frozenClassId: string;
+let soonClaimClassId: string;
 let cancelledClassId: string;
 let draftClassId: string;
 
@@ -95,10 +96,10 @@ beforeAll(async () => {
   // --- 409 fixture -----------------------------------------------------
   // A class far in the future. getWaitlistWindow resolves this to
   // 'auto_promote' no matter when the suite runs (it's nowhere near the
-  // cancel deadline), so claimSpot deterministically throws
-  // WaitlistPromotionError('wrong_window') — the "outside the claim
-  // window" 409 branch. The window/state guard itself lives in
-  // claimSpot/getWaitlistWindow (service); only the exception → 409
+  // claim window, which opens one hour before start), so claimSpot
+  // deterministically throws WaitlistPromotionError('wrong_window') — the
+  // "outside the claim window" 409 branch. The window/state guard itself
+  // lives in claimSpot/getWaitlistWindow (service); only the exception → 409
   // mapping is route-level.
   const farFutureClass = await createClassFixture(prisma, {
       teacherId,
@@ -120,19 +121,18 @@ beforeAll(async () => {
   });
 
   // --- 201 fixture -------------------------------------------------------
-  // The claim window is exactly one hour wide (cutoff = deadline − 1h), and
-  // the route calls claimSpot with no injected clock, so an HTTP test of the
-  // success path has to place the class relative to real time. The only
+  // The claim window is exactly one hour wide (#236: `[start − 1h, start)`),
+  // and the route calls claimSpot with no injected clock, so an HTTP test of
+  // the success path has to place the class relative to real time. The only
   // freedom is how that hour is split between "budget for the suite to reach
   // this test" and "slack against clock skew".
   //
-  // classStart = baseNow + 6h50m with a HOURS_6 deadline gives deadline
-  // baseNow+50m, cutoff baseNow−10m: a 50-minute budget and 10 minutes of
-  // skew slack. It was 15/45, which is the wrong way round — the test
-  // process and the server are the same machine on localhost, so skew is
-  // effectively zero, while the budget is the thing that actually fails (the
-  // window flips to `frozen` past it). The suite runs in ~20s locally and
-  // ~3m in CI.
+  // classStart = baseNow + 50m gives a window that opened at baseNow−10m and
+  // closes at baseNow+50m: a 50-minute budget and 10 minutes of skew slack.
+  // It was 15/45, which is the wrong way round — the test process and the
+  // server are the same machine on localhost, so skew is effectively zero,
+  // while the budget is the thing that actually fails (the window flips to
+  // `frozen` past it). The suite runs in ~20s locally and ~3m in CI.
   //
   // baseNow (module scope) rather than a locally-scoped `now`: claimClassId
   // in the nested describe below derives from this same instant, at a fixed
@@ -146,7 +146,7 @@ beforeAll(async () => {
   // reach. Teacher timezone is UTC (see above), so classStartInstant is plain
   // Date.UTC arithmetic.
   baseNow = new Date();
-  const classStart = new Date(baseNow.getTime() + (6 * 60 + 50) * 60 * 1000);
+  const classStart = new Date(baseNow.getTime() + 50 * 60 * 1000);
   const freedSpotDate = new Date(
     Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
   );
@@ -170,7 +170,14 @@ beforeAll(async () => {
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
-      minStudents: 1,
+      // #236 shrank this fixture's offset from ~7h to under an hour, which
+      // puts it inside every `CANCEL_CHECK_HOURS` window (`class-transitions.ts`
+      // tops out at 4h) rather than safely outside all of them — the live
+      // scheduler on this worktree's server (`instrumentation.ts`) runs
+      // `autoCancelClasses` on a real tick and would cancel a class it reads
+      // as below minimum. `minStudents: 0` makes zero active registrations
+      // never below minimum, so the fixture stays open regardless of timing.
+      minStudents: 0,
       maxStudents: 1, // no active registrations below → the one spot reads as freed
       cancelDeadline: 'HOURS_6',
       status: 'open',
@@ -196,10 +203,12 @@ beforeAll(async () => {
   rivalId = rival.id;
   rivalToken = await seedSession(prisma, rival.accountId!);
 
-  // Past its cancellation deadline from the start: five hours out against a
-  // six-hour deadline. `HOURS_1` keeps the auto-cancel sweep off it for four
-  // hours, and it starts long after the suite ends. One minute long, for the
-  // reason the freed-spot fixture above gives.
+  // #236: five hours out is well outside the one-hour claim window, so this
+  // class reads `auto_promote` — under the old deadline-anchored window a
+  // six-hour deadline would have made it `frozen` already. `HOURS_1` keeps
+  // the auto-cancel sweep off it for four hours, and it starts long after the
+  // suite ends. One minute long, for the reason the freed-spot fixture above
+  // gives.
   const frozenStart = new Date(baseNow.getTime() + 5 * 60 * 60 * 1000);
   const frozenClass = await createClassFixture(prisma, {
     teacherId,
@@ -224,6 +233,32 @@ beforeAll(async () => {
     status: 'open',
   });
   frozenClassId = frozenClass.id;
+
+  // #236 acceptance: a genuinely free seat inside the claim window can be
+  // claimed on its own — a claim does not need a late cancel to have run
+  // through the live hook first. 30 minutes out, distinct from every other
+  // baseNow-derived slot above by at least 18 minutes.
+  const soonStart = new Date(baseNow.getTime() + 30 * 60 * 1000);
+  const soonClaimClass = await createClassFixture(prisma, {
+    teacherId,
+    teacherRoomId,
+    classType: 'Waitlist API Soon',
+    date: new Date(Date.UTC(soonStart.getUTCFullYear(), soonStart.getUTCMonth(), soonStart.getUTCDate())),
+    startTime: hhmmToTime(
+      `${String(soonStart.getUTCHours()).padStart(2, '0')}:${String(soonStart.getUTCMinutes()).padStart(2, '0')}`,
+    ),
+    durationMinutes: 1,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 0, // stays open under the live scheduler's auto-cancel sweep — see freedSpotClassId's comment
+    maxStudents: 1,
+    status: 'open',
+  });
+  soonClaimClassId = soonClaimClass.id;
+  await prisma.waitlistEntry.create({
+    data: { classId: soonClaimClassId, studentId: rivalId, position: 1, status: 'waiting' },
+  });
 
   // Cancelled, with the claimant holding a seat in it.
   const cancelledClass = await createClassFixture(prisma, {
@@ -268,7 +303,14 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const classIds = [farFutureClassId, freedSpotClassId, frozenClassId, cancelledClassId, draftClassId];
+  const classIds = [
+    farFutureClassId,
+    freedSpotClassId,
+    frozenClassId,
+    soonClaimClassId,
+    cancelledClassId,
+    draftClassId,
+  ];
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
@@ -421,8 +463,19 @@ describe('POST /api/waitlist/claim', () => {
     ).toBe(0);
   });
 
-  it('refuses a claim once the cancellation deadline has passed', async () => {
-    await expectRefusal(await claim(studentToken, { classId: frozenClassId }), 'WAITLIST_FROZEN');
+  it('refuses a claim five hours before start, though the old deadline-anchored window would have frozen it (#236)', async () => {
+    await expectRefusal(await claim(studentToken, { classId: frozenClassId }), 'CLAIM_NOT_OPEN');
+  });
+
+  it('claims a spot on a class starting in 30 minutes, inside the claim window (#236)', async () => {
+    const res = await claim(rivalToken, { classId: soonClaimClassId });
+    expect(res.status).toBe(201);
+
+    const json = (await res.json()) as {
+      data: { status: string; registrationId: string | null };
+    };
+    expect(json.data.status).toBe('promoted');
+    expect(json.data.registrationId).not.toBeNull();
   });
 
   /**
@@ -500,10 +553,11 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
 
     // auto_promote window — same "far in the future" trick as
     // farFutureClassId above, so promoteNext's own window check never
-    // trips: nowhere near the cancel deadline. Distinct date from
-    // farFutureClassId: same teacher, and `CalendarEntry_teacher_slot_excl`
-    // excludes overlapping spans per teacher — reusing farFutureClassId's slot
-    // would collide with that still-live class.
+    // trips: nowhere near the claim window (class start − 1h). Distinct date
+    // from farFutureClassId: same teacher, and
+    // `CalendarEntry_teacher_slot_excl` excludes overlapping spans per
+    // teacher — reusing farFutureClassId's slot would collide with that
+    // still-live class.
     const promoteClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
@@ -523,31 +577,31 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
       data: { classId: promoteClassId, studentId: waitlistStudentId, position: 1, status: 'waiting' },
     });
 
-    // first_come_first_claimed window — same style as freedSpotClassId above
-    // (HOURS_6 deadline), derived from that same `baseNow` (module scope)
-    // rather than a fresh `new Date()` here. Both classes share `teacherId`,
-    // so a fresh read would only be *probably* distinct from
-    // freedSpotClassId's — floored to the minute, two independent reads
-    // this close together (this beforeAll runs right after the
-    // describe-block-1 tests that consume freedSpotClassId) could land in
-    // the same minute and collide on `CalendarEntry_teacher_slot_excl`; that
-    // this never fired in practice was luck, not a guarantee. Anchoring both to
-    // one instant makes it a guarantee instead: 6h49m here vs
-    // freedSpotClassId's 6h50m is a fixed one-minute difference from a
-    // shared clock read, so the two floored minutes are exactly one apart
-    // regardless of any real delay — deadline baseNow+49m, cutoff
-    // baseNow−11m. That is NOT budget parity with freedSpotClassId's 50/10,
-    // though it reads that way at a glance: this describe block's own
-    // beforeAll runs only after describe-block-1's entire suite has already
-    // executed against the same `baseNow`, so part of these 49 minutes is
-    // already spent by the time this code runs — where freedSpotClassId's 50
-    // only had to survive describe-block-1's own runtime before that
-    // fixture's one test ran. The one-minute gap from baseNow is exact; the
-    // budget actually left for describe-block-2's tests is smaller than 49 by
-    // however long describe-block-1 took (~20s locally, ~3m in CI, per the
-    // comment above) — comfortably inside the window either way, just not the
-    // like-for-like split "essentially matching" implies.
-    const classStart = new Date(baseNow.getTime() + (6 * 60 + 49) * 60 * 1000);
+    // first_come_first_claimed window — same style as freedSpotClassId
+    // above, derived from that same `baseNow` (module scope) rather than a
+    // fresh `new Date()` here. Both classes share `teacherId`, so a fresh
+    // read would only be *probably* distinct from freedSpotClassId's —
+    // floored to the minute, two independent reads this close together
+    // (this beforeAll runs right after the describe-block-1 tests that
+    // consume freedSpotClassId) could land in the same minute and collide on
+    // `CalendarEntry_teacher_slot_excl`; that this never fired in practice
+    // was luck, not a guarantee. Anchoring both to one instant makes it a
+    // guarantee instead: 49m here vs freedSpotClassId's 50m is a fixed
+    // one-minute difference from a shared clock read, so the two floored
+    // minutes are exactly one apart regardless of any real delay — window
+    // opens baseNow−11m, closes baseNow+49m. That is NOT budget parity with
+    // freedSpotClassId's 50/10, though it reads that way at a glance: this
+    // describe block's own beforeAll runs only after describe-block-1's
+    // entire suite has already executed against the same `baseNow`, so part
+    // of these 49 minutes is already spent by the time this code runs —
+    // where freedSpotClassId's 50 only had to survive describe-block-1's own
+    // runtime before that fixture's one test ran. The one-minute gap from
+    // baseNow is exact; the budget actually left for describe-block-2's
+    // tests is smaller than 49 by however long describe-block-1 took (~20s
+    // locally, ~3m in CI, per the comment above) — comfortably inside the
+    // window either way, just not the like-for-like split "essentially
+    // matching" implies.
+    const classStart = new Date(baseNow.getTime() + 49 * 60 * 1000);
     const claimDate = new Date(
       Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
     );
@@ -571,7 +625,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         roomCost: 20,
         minRate: 15,
         targetRate: 25,
-        minStudents: 1,
+        minStudents: 0, // stays open under the live scheduler's auto-cancel sweep — see freedSpotClassId's comment
         maxStudents: 1,
         cancelDeadline: 'HOURS_6',
         status: 'open',
@@ -787,14 +841,14 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
 
     // Same shape as freedSpotClassId, derived from the same module-scope
     // `baseNow` for the same reason: one shared clock read makes the minute
-    // offsets exactly distinct instead of probably distinct. 6h48m here,
-    // against freedSpotClassId's 6h50m and claimClassId's 6h49m.
+    // offsets exactly distinct instead of probably distinct. 48m here,
+    // against freedSpotClassId's 50m and claimClassId's 49m.
     //
     // The window has to resolve to `first_come_first_claimed` for the
     // UNCONTENDED answer to be 201, which is what makes the 503 below mean
     // "the lock refused" rather than "the window did". Under the hold nothing
     // gets that far: `claimSpot` calls `lockClassRow` as its first statement.
-    const claimStart = new Date(baseNow.getTime() + (6 * 60 + 48) * 60 * 1000);
+    const claimStart = new Date(baseNow.getTime() + 48 * 60 * 1000);
     const lockClaimDate = new Date(
       Date.UTC(claimStart.getUTCFullYear(), claimStart.getUTCMonth(), claimStart.getUTCDate()),
     );
@@ -818,7 +872,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         roomCost: 20,
         minRate: 15,
         targetRate: 25,
-        minStudents: 1,
+        minStudents: 0, // stays open under the live scheduler's auto-cancel sweep — see freedSpotClassId's comment
         maxStudents: 1, // no active registrations → the one spot reads as freed
         cancelDeadline: 'HOURS_6',
         status: 'open',

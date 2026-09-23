@@ -27,17 +27,17 @@ const TZ = 'Europe/Amsterdam';
 const H = 60 * 60 * 1000;
 
 /**
- * Every window boundary is DERIVED, never hard-coded — see derailer 2. With
- * `cancelDeadline: 'HOURS_24'` the deadline is `classStart - 24h` and the claim
- * window is `[classStart - 25h, classStart - 24h)`.
+ * Every window boundary is DERIVED, never hard-coded — see derailer 2. The
+ * windows are anchored on class start (#236): the claim window is
+ * `[classStart - 1h, classStart)` and frozen begins at `classStart` itself.
  */
 function windowClocks(startTime: string) {
   const classStart = classStartInstant({ date: CLASS_DATE, startTime: hhmmToTime(startTime) }, TZ);
   return {
     classStart,
     autoPromote: new Date(classStart.getTime() - 48 * H),
-    inClaimWindow: new Date(classStart.getTime() - 24.5 * H),
-    frozen: new Date(classStart.getTime() - 12 * H),
+    inClaimWindow: new Date(classStart.getTime() - 0.5 * H),
+    frozen: classStart,
   };
 }
 
@@ -97,8 +97,7 @@ describe('reconcileWaitlists (DB)', () => {
         // ONE MINUTE (#327): `nextSlot` spaces fixtures a minute apart, and
         // the slot constraint is a range overlap now — so a 60-minute fixture
         // collides with the one before it. Nothing here reads the duration;
-        // the cancel-deadline window these tests turn on is computed from the
-        // START.
+        // the claim window these tests turn on is computed from the START.
         durationMinutes: 1,
         roomCost: 35,
         minRate: 15,
@@ -754,7 +753,7 @@ describe('reconcileWaitlists (DB)', () => {
    * of a mysteriously quiet sweep.
    */
   it('broadcasts once, then gates itself, on the real clock with no injected now', async () => {
-    const target = new Date(Date.now() + 24.5 * H);
+    const target = new Date(Date.now() + 0.5 * H);
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: TZ,
       year: 'numeric',
@@ -777,8 +776,7 @@ describe('reconcileWaitlists (DB)', () => {
         // ONE MINUTE (#327): `nextSlot` spaces fixtures a minute apart, and
         // the slot constraint is a range overlap now — so a 60-minute fixture
         // collides with the one before it. Nothing here reads the duration;
-        // the cancel-deadline window these tests turn on is computed from the
-        // START.
+        // the claim window these tests turn on is computed from the START.
         durationMinutes: 1,
         roomCost: 35,
         minRate: 15,
@@ -792,11 +790,13 @@ describe('reconcileWaitlists (DB)', () => {
     classIds.push(cls.id);
 
     // Precondition, asserted rather than assumed — and it caught the offset
-    // being wrong the first time. With a 24h deadline the claim window is
-    // `[start − 25h, start − 24h)`, so `now` must sit inside it: the class
-    // starts 24.5h out, not 25.5h, which is half an hour the wrong side of the
-    // opening edge. Resolved with no `now`, like the sweep.
-    expect(getWaitlistWindow(date, hhmmToTime(startTime), 'HOURS_24', TZ)).toBe('first_come_first_claimed');
+    // being wrong the first time. The claim window is `[start − 1h, start)`
+    // (#236), so `now` must sit inside it: the class starts 30 minutes out,
+    // not 90, which is half an hour the wrong side of the opening edge.
+    // Resolved with no `now`, like the sweep.
+    expect(getWaitlistWindow({ date, startTime: hhmmToTime(startTime) }, TZ)).toBe(
+      'first_come_first_claimed',
+    );
 
     const staying = await makeStudent('RealStaying');
     const filler = await makeStudent('RealFiller');
@@ -826,7 +826,7 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
-   * Past the cancel deadline the queue is frozen and no promotion may happen —
+   * From class start the queue is frozen and no promotion may happen —
    * the sweep must not become a way around that. `handleSpotFreed` would return
    * `{ action: 'frozen' }` anyway, so this pins the sweep's OWN filter: without
    * it the hook is invoked and `reconciled` counts a class that was never

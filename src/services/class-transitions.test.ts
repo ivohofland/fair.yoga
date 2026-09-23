@@ -451,17 +451,20 @@ describe('class transitions (DB, timezone-aware)', () => {
    * A waitlist only forms at `maxStudents`, and `handleSpotFreed` refills the
    * seat it just lost — so a class carrying a queue normally has its count
    * PINNED at max, and the queue drains to empty before the count can fall far
-   * enough to auto-cancel. The one thing that suspends that drain is the
-   * freeze, and auto-cancel can only ever run inside it: `DEADLINE_HOURS`
-   * (`waitlist.ts`) bottoms out at 6 and `CANCEL_CHECK_HOURS`
-   * (`class-transitions.ts`) tops out at 4, so across all 12 configurations the sweep runs
-   * strictly after the freeze, with two hours to spare.
+   * enough to auto-cancel. The one thing that suspends that drain is the final
+   * hour before start: `handleSpotFreed` broadcasts there instead of
+   * auto-promoting (#236), so a seat a late-cancel frees goes unfilled.
+   * `CANCEL_CHECK_HOURS`'s smallest configured value (`HOURS_1`) still opens
+   * its check window a full hour before start, so that window always reaches
+   * into the final hour whatever `autoCancelCheck` this fixture picks — the
+   * explicit window assertion below pins the instant this test chose inside
+   * both, rather than trusting the arithmetic.
    *
    * Constructing a below-minimum class with a waiting entry at some arbitrary
    * `now` would therefore pin a state production cannot reach, and would pass
    * without exercising the mechanism at all. Hence the explicit window
    * assertion below — it fails loudly if a later edit moves the clock out of
-   * the frozen window and quietly turns this into that weaker test.
+   * the claim window and quietly turns this into that weaker test.
    *
    * What makes the count fall is the status asymmetry: `late_cancel` is in
    * `CHARGED_STATUSES` (`class-lifecycle.ts`) but not in
@@ -482,7 +485,8 @@ describe('class transitions (DB, timezone-aware)', () => {
     // class on the shared fixture teacher.
     try {
       // Full at 2/2 when the queue formed; one seat later released by a
-      // late-cancel, which nothing promoted into because the window is frozen.
+      // late-cancel, which nothing promoted into because the window only
+      // allows a claim, not an auto-promotion.
       await prisma.registration.create({
         data: { classId: cls.id, studentId, tierAtBooking: 3, status: 'registered' },
       });
@@ -504,21 +508,21 @@ describe('class transitions (DB, timezone-aware)', () => {
         data: { classId: cls.id, studentId: secondStudentId, position: 2, status: 'removed' },
       });
 
-      // 15:00Z is inside the HOURS_2 check window (14:00Z–16:00Z) AND past the
-      // HOURS_24 deadline (2026-07-19T16:00Z). Assert the second half rather
-      // than trusting the arithmetic.
+      // 15:30Z is inside the HOURS_2 check window (14:00Z–16:00Z) AND inside
+      // the final hour before start (15:00Z–16:00Z). Assert the second half
+      // rather than trusting the arithmetic.
       //
       // The zone comes from the teacher row, not a literal: production derives
       // the window from `teacher.defaultTimezone`, so a literal here would keep
       // asserting about a zone the code had stopped using.
-      const at = new Date('2026-07-20T15:00:00Z');
+      const at = new Date('2026-07-20T15:30:00Z');
       const { defaultTimezone } = await prisma.teacher.findUniqueOrThrow({
         where: { id: teacherId },
         select: { defaultTimezone: true },
       });
       expect(
-        getWaitlistWindow(cls.calendarEntry.date, cls.calendarEntry.startTime, cls.cancelDeadline, defaultTimezone, at),
-      ).toBe('frozen');
+        getWaitlistWindow(cls.calendarEntry, defaultTimezone, at),
+      ).toBe('first_come_first_claimed');
 
       await autoCancelClasses(prisma, at);
 

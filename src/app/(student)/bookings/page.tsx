@@ -209,18 +209,14 @@ export default async function StudentBookingsPage() {
             const activeCount = cls.registrations.filter((r) =>
               ACTIVE_REGISTRATION_STATUSES.includes(r.status),
             ).length;
-            // In the final hour before the deadline a freed spot goes to
-            // whoever claims it first — show the claim button then.
+            // In the final hour before class a freed spot goes to whoever
+            // claims it first — show the claim button then.
             const canClaim =
               cls.status === 'open' &&
               cls.calendarEntry.cancelledAt === null &&
               activeCount < cls.maxStudents &&
-              getWaitlistWindow(
-                cls.calendarEntry.date,
-                cls.calendarEntry.startTime,
-                cls.cancelDeadline,
-                cls.calendarEntry.teacher.defaultTimezone,
-              ) === 'first_come_first_claimed';
+              getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone) ===
+                'first_come_first_claimed';
             return (
               <div key={entry.id} className="min-h-14 py-2 border-b border-border last:border-b-0">
                 <p className="text-base text-ink">{cls.calendarEntry.classType}</p>

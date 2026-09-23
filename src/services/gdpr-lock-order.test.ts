@@ -1852,12 +1852,12 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
    * A student holding the only seat in an open class, with one other student
    * waiting on it, and `now` half an hour inside the broadcast window.
    *
-   * `target` = now + 48h30m against a HOURS_48 deadline puts `deadline` at
-   * now + 30m and `cutoff` at now − 30m, so `now` falls inside
-   * `first_come_first_claimed`. Computed from the clock rather than
-   * hard-coded, because the window is relative to it. The teacher is `UTC` so
-   * `date` + `startTime` map to the instant this arithmetic assumes — the
-   * suite itself runs under `TZ=America/New_York` (vitest.config.ts).
+   * `target` = now + 30m puts class start half an hour out, inside the
+   * claim window `[start − 1h, start)` (#236) — the deadline plays no part.
+   * Computed from the clock rather than hard-coded, because the window is
+   * relative to it. The teacher is `UTC` so `date` + `startTime` map to the
+   * instant this arithmetic assumes — the suite itself runs under
+   * `TZ=America/New_York` (vitest.config.ts).
    *
    * Its own teacher, room, class and students — this file shares no fixture
    * across describes, so there is nothing to reach for instead.
@@ -1894,7 +1894,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       select: { id: true },
     });
 
-    const target = new Date(Date.now() + 48 * 60 * 60 * 1000 + 30 * 60 * 1000);
+    const target = new Date(Date.now() + 30 * 60 * 1000);
     const cls = await createClassFixture(prisma, {
         teacherId: teacher.id,
         teacherRoomId: teacherRoom.id,

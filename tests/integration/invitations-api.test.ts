@@ -2725,10 +2725,15 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     promoteClassId = promoteClass.id;
 
     // first_come_first_claimed window: same derivation as
-    // waitlist-api.test.ts's `freedSpotClassId` — 6h50m out with a HOURS_6
-    // deadline puts cutoff at now−10m and deadline at now+50m.
+    // waitlist-api.test.ts's `freedSpotClassId` — 50m out puts `now` inside
+    // the claim window `[start − 1h, start)` (#236), with a 50-minute budget
+    // for the suite to reach the claim test and 10 minutes of skew slack.
+    // `minStudents: 0`: the live scheduler on this worktree's server
+    // (`instrumentation.ts`) runs `autoCancelClasses` on a real tick, and
+    // this class holds no registration until a later test creates one —
+    // zero active registrations must never read as below minimum.
     const now = new Date();
-    const classStart = new Date(now.getTime() + (6 * 60 + 50) * 60 * 1000);
+    const classStart = new Date(now.getTime() + 50 * 60 * 1000);
     const claimDate = new Date(
       Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
     );
@@ -2738,7 +2743,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     const claimClass = await createClassFixture(prisma, {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Claim',
         date: claimDate, startTime: hhmmToTime(claimStartTime), durationMinutes: 60,
-        roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
+        roomCost: 20, minRate: 15, targetRate: 25, minStudents: 0, maxStudents: 1,
         cancelDeadline: 'HOURS_6', status: 'open',
       });
     claimClassId = claimClass.id;

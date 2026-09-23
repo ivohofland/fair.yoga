@@ -1693,11 +1693,11 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
    * A class with `now` half an hour inside the final-hour broadcast window,
    * a registration for the canceller, and a waitlist entry for the waiter.
    *
-   * `target` = now + 48h30m with a HOURS_48 deadline puts `deadline` at
-   * now + 30m and `cutoff` at now − 30m, so `now` sits inside
-   * `first_come_first_claimed`, where `handleSpotFreed` broadcasts instead
-   * of auto-promoting. Computed from the clock rather than hard-coded: the
-   * window is relative, so a fixed date would drift out of it.
+   * `target` = now + 30m puts class start half an hour out, inside the claim
+   * window `[start − 1h, start)` (#236), where `handleSpotFreed` broadcasts
+   * instead of auto-promoting — the deadline plays no part. Computed from
+   * the clock rather than hard-coded: the window is relative, so a fixed
+   * date would drift out of it.
    *
    * `minuteOffset` is required, with no default, because every caller needs a
    * DIFFERENT one: `CalendarEntry_teacher_slot_excl` (#327, which replaced
@@ -1710,11 +1710,18 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
    * offset is enough. Nothing here reads it.
    *
    * Valid offsets are `(−30, +30]` minutes: the window holds while
-   * `cutoff ≤ now < deadline`, which works out to `offset ≤ 30` on one side
+   * `start − 1h ≤ now < start`, which works out to `offset ≤ 30` on one side
    * and `offset > −30` on the other.
+   *
+   * `minStudents: 0`, not `1`: the live scheduler on this worktree's server
+   * (`instrumentation.ts`) runs `autoCancelClasses` on a real tick, and a
+   * class this close to start sits inside every `CANCEL_CHECK_HOURS` window
+   * (`class-transitions.ts` tops out at 4h) rather than safely outside all of
+   * them. Once the canceller's registration is cancelled, zero active
+   * registrations must never read as below minimum.
    */
   async function makeBroadcastFixture(minuteOffset: number) {
-    const target = new Date(Date.now() + 48 * 60 * 60 * 1000 + (30 + minuteOffset) * 60 * 1000);
+    const target = new Date(Date.now() + (30 + minuteOffset) * 60 * 1000);
     const date = target.toISOString().slice(0, 10);
     const startTime = target.toISOString().slice(11, 16);
 
@@ -1722,7 +1729,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
         teacherId: raceTeacherId, teacherRoomId: raceTeacherRoomId,
         classType: 'Race Cancel', date: new Date(`${date}T00:00:00Z`), startTime: hhmmToTime(startTime),
         durationMinutes: 1, roomCost: 20, minRate: 30, targetRate: 60,
-        minStudents: 1, maxStudents: 1, cancelDeadline: 'HOURS_48',
+        minStudents: 0, maxStudents: 1, cancelDeadline: 'HOURS_48',
         autoCancelCheck: 'HOURS_2', status: 'open',
       });
     raceClassIds.push(cls.id);
