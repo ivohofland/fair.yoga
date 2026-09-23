@@ -567,14 +567,14 @@ gate".
 | *class_id* (FK) | → Class | |
 | *student_id* (FK) | → Student | |
 | position | int | Queue order |
-| status | enum | waiting → promoted → claimed → expired → removed |
+| status | enum | waiting → promoted / claimed / expired / removed |
 | promoted_at | datetime, nullable | |
 | *registration_id* (FK) | → Registration, nullable | Created when student is promoted |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Hybrid waitlist promotion, anchored on class start (#236): until 1 hour before start, students are auto-promoted in queue order; in the final hour before start, it switches to first-come-first-claimed for any remaining spots; from start, the queue is frozen. An auto-promoted student can cancel free until the later of the cancel deadline and 15 minutes after promotion (`freeCancelUntil`, `src/lib/cancel-deadline.ts`) — a claimed spot gets no grace, since every claim lands past the cancel deadline.
+Hybrid waitlist promotion, anchored on class start (#236): until 1 hour before start, students are auto-promoted in queue order; in the final hour before start, it switches to first-come-first-claimed for any remaining spots; from start, the queue is frozen. An auto-promoted student can cancel free until the later of the cancel deadline and 15 minutes after promotion (`freeCancelUntil`, `src/lib/cancel-deadline.ts`) — a claimed spot gets no grace: the claim is the student's own act, and it always lands past the cancel deadline, so it is charged.
 
 **Retention (#238):** an entry that never became a registration is deleted once
 its class is terminal (`completed`/`cancelled`) and more than 365 days past its

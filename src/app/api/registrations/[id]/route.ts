@@ -556,8 +556,8 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  *
  * One case the sweep still cannot reach, stated because "repaired within a
  * tick" would otherwise read as unconditional: a drop in the last tick before
- * class start. The class is `frozen` by the next tick and the sweep will not
- * promote past start, so for that final tick this line is still the only
+ * class start. The class is `frozen` by the next tick and the sweep does
+ * nothing from start on, so for that final tick this line is still the only
  * record. It is not the multi-cancel case — a broadcast dropped
  * after an earlier one succeeded IS repaired, because `Class.spotBroadcastAt`
  * is cleared by the claim that consumed the earlier seat.

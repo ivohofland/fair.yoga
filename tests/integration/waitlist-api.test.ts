@@ -170,8 +170,9 @@ beforeAll(async () => {
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
-      // minStudents: 0 — the fixture starts inside the auto-cancel check
-      // window, so zero active registrations must not read as below minimum.
+      // minStudents: 0 — the server's scheduler runs auto-cancel on a real
+      // tick, and the fixture starts inside its check window, so zero active
+      // registrations must not read as below minimum.
       minStudents: 0,
       maxStudents: 1, // no active registrations below → the one spot reads as freed
       cancelDeadline: 'HOURS_6',

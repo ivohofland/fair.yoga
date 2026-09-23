@@ -2728,8 +2728,9 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     // waitlist-api.test.ts's `freedSpotClassId` — 50m out puts `now` inside
     // the claim window `[start − 1h, start)` (#236), with a 50-minute budget
     // for the suite to reach the claim test and 10 minutes of skew slack.
-    // minStudents: 0 — the fixture starts inside the auto-cancel check
-    // window, so zero active registrations must not read as below minimum.
+    // minStudents: 0 — the server's scheduler runs auto-cancel on a real
+    // tick, and the fixture starts inside its check window, so zero active
+    // registrations must not read as below minimum.
     const now = new Date();
     const classStart = new Date(now.getTime() + 50 * 60 * 1000);
     const claimDate = new Date(
