@@ -17,6 +17,7 @@ import {
   runWaitlistReconciliationTick,
 } from './waitlist-reconciliation';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { scopeSweep } from '../../tests/scoped-sweep';
 
 const prisma = new PrismaClient();
 const suffix = `recon-${Date.now()}`;
@@ -996,13 +997,26 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
-   * The production entry point runs the sweep and, unlike every other caller in
-   * this file, carries memory between ticks. This pins that
-   * `runWaitlistReconciliationTick` resolves against the real database — the
-   * wiring `scheduler.ts` depends on.
+   * `runWaitlistReconciliationTick` is what `scheduler.ts` calls. This pins
+   * that it runs the real sweep on the real clock and hands back that sweep's
+   * summary — a wrapper that resolved without reconciling would leave the
+   * class out of `reconciledClassIds` and the waiter unpromoted.
+   *
+   * Scoped, because the tick is database-wide and throws when every class it
+   * invoked failed non-transiently: an unscoped call would let a stray row
+   * from an earlier run decide whether this test passes.
    */
   it('runs the sweep through the production entry point', async () => {
-    await runWaitlistReconciliationTick(prisma);
+    const cls = await makeFreedSeat('Tick');
+    const scoped = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [cls.id] } } });
+
+    const summary = await runWaitlistReconciliationTick(scoped.db);
+
+    expect(summary.reconciledClassIds).toEqual([cls.id]);
+    const promoted = await prisma.registration.findUnique({
+      where: { classId_studentId: { classId: cls.id, studentId: cls.waiter } },
+    });
+    expect(promoted?.status).toBe('registered');
   });
 
   /**
@@ -1132,9 +1146,9 @@ describe('reconcileWaitlists (DB)', () => {
 
     await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
     expect(streaks.allTransientTicks).toBeGreaterThan(0);
-    // The class ITSELF failed, not merely some class — see this test's twin
-    // below (`resets the streak when no candidate resolves to an open class`)
-    // for the other half of that argument.
+    // The class ITSELF failed, not merely some class: `faulty` fails every
+    // class this unscoped tick reaches, so a stray row from an earlier run
+    // would satisfy a bare `size > 0` on its own.
     expect(streaks.failuresByClass.has(contended.id)).toBe(true);
 
     const noCandidates = prisma.$extends({
@@ -1205,11 +1219,10 @@ describe('reconcileWaitlists (DB)', () => {
     // rather than the first.
     expect(contendedTick.failedClassIds).toContain(contended.id);
     expect(streaks.allTransientTicks).toBeGreaterThan(0);
-    // The premise the final `size).toBe(0)` below depends on: `failedClassIds`
-    // and `failuresByClass` fill on separate code paths
-    // (`waitlist-reconciliation.ts`'s `failedClassIds.push` vs
-    // `failures.next.set`), so pinning the former alone does not establish
-    // that the latter ever held this class either.
+    // The premise the final `size).toBe(0)` below depends on: the summary's
+    // `failedClassIds` and the streak's `failuresByClass` are separate
+    // outputs, so pinning the former does not establish that the latter ever
+    // held this class.
     expect(streaks.failuresByClass.has(contended.id)).toBe(true);
 
     const noOpenClass = prisma.$extends({
