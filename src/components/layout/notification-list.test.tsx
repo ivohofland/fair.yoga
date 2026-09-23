@@ -39,3 +39,19 @@ describe('NotificationList — where a teacher row goes (#172)', () => {
     await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith('/class/class-9'));
   });
 });
+
+describe('NotificationList — retention note (#223)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('shows the retention note under an empty list', () => {
+    render(<NotificationList notifications={[]} />);
+
+    expect(screen.getByText('Messages are kept for a year.')).toBeInTheDocument();
+  });
+
+  it('shows the retention note under a non-empty list', () => {
+    render(<NotificationList notifications={[notification({})]} />);
+
+    expect(screen.getByText('Messages are kept for a year.')).toBeInTheDocument();
+  });
+});

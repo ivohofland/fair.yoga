@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Notification } from '@prisma/client';
 import { EmptyState } from '@/components/ui/empty-state';
+import { RetentionNote } from './retention-note';
 import { timeAgo } from '@/lib/format';
 import { teacherNotificationHref } from '@/lib/notification-links';
 
@@ -42,7 +43,13 @@ export function NotificationList({ notifications, hrefById }: NotificationListPr
   }
 
   if (notifications.length === 0) {
-    return <EmptyState title="No notifications." body="News about your classes appears here." />;
+    return (
+      <EmptyState
+        title="No notifications."
+        body="News about your classes appears here."
+        action={<RetentionNote align="center" />}
+      />
+    );
   }
 
   return (
@@ -96,6 +103,7 @@ export function NotificationList({ notifications, hrefById }: NotificationListPr
           </div>
         );
       })}
+      <RetentionNote />
     </div>
   );
 }

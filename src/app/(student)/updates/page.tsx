@@ -4,12 +4,11 @@ import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { NotificationList } from '@/components/layout/notification-list';
-import { RetentionNote } from '@/components/layout/retention-note';
 import { studentNotificationHref } from '@/lib/notification-links';
 
 export const dynamic = 'force-dynamic';
 
-// Lists the student's notifications — the newest 50 — for the retention
+// Lists the student's notifications — the newest page of — for the retention
 // period; the strip on /bookings previews unread (communication layer 2).
 export default async function StudentUpdatesPage() {
   const session = await getSession();
@@ -50,7 +49,6 @@ export default async function StudentUpdatesPage() {
       </Link>
       <h1 className="type-title mb-6">All updates</h1>
       <NotificationList notifications={notifications} hrefById={hrefById} />
-      <RetentionNote />
     </div>
   );
 }
