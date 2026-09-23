@@ -23,10 +23,6 @@ describe('NOTIFICATION_RETENTION_DAYS', () => {
     expect(NOTIFICATION_RETENTION_DAYS.waitlist_promoted).toBe(STANDARD_RETENTION_DAYS);
   });
 
-  it('keeps missed_you briefly', () => {
-    expect(NOTIFICATION_RETENTION_DAYS.missed_you).toBe(SHORT_RETENTION_DAYS);
-  });
-
   it('keeps reminder and payment_request for the full period', () => {
     expect(NOTIFICATION_RETENTION_DAYS.reminder).toBe(STANDARD_RETENTION_DAYS);
     expect(NOTIFICATION_RETENTION_DAYS.payment_request).toBe(STANDARD_RETENTION_DAYS);

@@ -92,7 +92,6 @@ enum NotificationType {
   waitlist_promoted
   spot_available
   reminder
-  missed_you
   announcement
   teacher_invitation
 }
