@@ -276,10 +276,10 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     },
     {
       // 1 minute, and the cadence is load-bearing rather than conventional: the
-      // claim window is only 60 minutes wide (the final hour before class
-      // starts), so this bounds a dropped broadcast's cost to roughly 1 of
-      // the student's 60 claim minutes. At email-fallback's 5 minutes it
-      // would be 8% of the window. That is why `scheduler.test.ts` pins this
+      // claim window is only `CLAIM_WINDOW_MINUTES` (`lib/claim-window.ts`)
+      // wide, ending at class start, so this bounds a dropped broadcast's cost
+      // to roughly one of the student's claim minutes. At email-fallback's 5
+      // minutes it would be five. That is why `scheduler.test.ts` pins this
       // number rather than trusting it.
       //
       // A floor, not a bound, and not a guarantee either. This tick calls

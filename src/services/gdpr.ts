@@ -959,9 +959,9 @@ export async function deleteStudentAccount(
   // broadcast branch behind `lockClassRow` and #104 put the auto-promote
   // branch there too, so `55P03` is reachable here on EITHER branch — and the
   // auto-promote one is much the larger surface, since `getWaitlistWindow`
-  // returns it for everything up to (class start − 1h) against one hour of
-  // `first_come_first_claimed`. `api-errors.ts` reserves `error` for things
-  // that should page someone. This loop is the likelier of the two call sites
+  // returns it for everything up to (class start − `CLAIM_WINDOW_MINUTES`)
+  // against `CLAIM_WINDOW_MINUTES` of `first_come_first_claimed`.
+  // `api-errors.ts` reserves `error` for things that should page someone. This loop is the likelier of the two call sites
   // to hit it — an erasure holds every class row it locks until its own
   // transaction commits, so a concurrent cancel on a shared class is exactly
   // the contention that times out.

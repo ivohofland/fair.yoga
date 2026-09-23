@@ -681,11 +681,11 @@ async function reconcileOne(
  *
  * This replaced a gate that asked whether a `spot_available` notification
  * existed anywhere in the current claim window, and the difference is the
- * whole point: a claim window is sixty minutes wide and can hold more than one
- * seat-freeing event. Seat frees, live broadcast succeeds, a waiter claims,
+ * whole point: a claim window is `CLAIM_WINDOW_MINUTES` wide and can hold more
+ * than one seat-freeing event. Seat frees, live broadcast succeeds, a waiter claims,
  * the seat frees AGAIN, and the live hook drops the second broadcast — the old
  * gate found the first notification still inside the window and suppressed the
- * sweep for the rest of the hour, so the remaining waiters were never told.
+ * sweep for the rest of the window, so the remaining waiters were never told.
  * That is precisely the loss this module exists to repair, in a state the
  * module could not repair. A flag cleared by the claim cannot make that
  * mistake. It also costs no query: this is a column on a row the sweep has
