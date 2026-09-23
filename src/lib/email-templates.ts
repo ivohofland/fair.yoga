@@ -7,7 +7,14 @@
  */
 
 import type { NotificationType } from '@prisma/client';
-import { STUDENT_INVITATION_LABEL, STUDENT_INVITATION_PATH, TEACHER_INVITATION_LABEL, TEACHER_INVITATION_PATH } from './notification-links';
+import {
+  STUDENT_INVITATION_LABEL,
+  STUDENT_INVITATION_PATH,
+  STUDENT_BOOKINGS_LABEL,
+  STUDENT_BOOKINGS_PATH,
+  TEACHER_INVITATION_LABEL,
+  TEACHER_INVITATION_PATH,
+} from './notification-links';
 
 export function escapeHtml(text: string): string {
   return text
@@ -70,18 +77,20 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
 /**
  * Types whose fallback email needs somewhere to go, keyed by the reader.
  *
- * Most notifications are about a class, and this template has never carried
- * a link because the class routes it would point at are teacher-only. An
- * invitation is different: the message exists to ask someone for a decision,
- * and the mail that arrives when they miss the in-app one has to reach the
- * place that decision is made — otherwise the recipient is told a teacher
- * wants to connect and given nothing to do about it.
+ * Most notifications are about a class, and the class routes they would
+ * point at are teacher-only, so those stay linkless below. An invitation
+ * exists to ask someone for a decision, and the mail that arrives when they
+ * miss the in-app one has to reach the place that decision is made. A
+ * waitlist promotion or a freed-spot broadcast (#236) is likewise meant to
+ * be acted on quickly, and `/bookings` is a student route.
  *
  * Path only. The base URL is the caller's, so this stays renderable without
  * an environment.
  */
 const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
   teacher_invitation: { label: STUDENT_INVITATION_LABEL, path: STUDENT_INVITATION_PATH },
+  waitlist_promoted: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
+  spot_available: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
 };
 
 /** The teacher reader's counterpart to `STUDENT_ACTION_LINKS` (#172). */
