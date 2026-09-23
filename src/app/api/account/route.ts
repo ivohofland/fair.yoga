@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import {
   respondOk,
+  respondUnchanged,
   respondError,
   requireSession,
   isErrorResponse,
@@ -111,6 +112,11 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
+  // One entry per half this request attempts. `SessionUser` guarantees at
+  // least one of `teacherId`/`studentId` is set, so a session that reaches
+  // here always attempts at least one half — see the response below.
+  const outcomes: ErasureOutcome[] = [];
+
   // "Delete my account" erases every profile the account holds. The two
   // erasures are separate transactions: if the second fails after the first
   // committed, say exactly that — a bare 500 would hide that half the erasure
@@ -164,6 +170,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
         'account erasure: half already erased',
       );
     }
+    outcomes.push(outcome);
   }
   if (session.teacherId) {
     let outcome: ErasureOutcome;
@@ -208,9 +215,21 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
         'account erasure: half already erased',
       );
     }
+    outcomes.push(outcome);
   }
 
-  const response = respondOk({ deleted: true });
+  // Already done only when this request attempted something and every half
+  // it attempted had been erased by someone else first: then it wrote
+  // nothing. `outcomes` is never empty for a session that reached this line
+  // (see the declaration above), so this is the same as `outcomes.every(...)`
+  // for every request that gets here — the length check is what keeps that
+  // true if that guarantee ever loosens.
+  const response =
+    outcomes.length > 0 && outcomes.every((o) => !o.erased)
+      ? respondUnchanged<{ deleted: true }>({ deleted: true })
+      : respondOk({ deleted: true });
+  // The winner already deleted the sessions on the unchanged path; the
+  // caller's cookie now points at nothing either way.
   clearSessionCookie(response.headers);
   return response;
 });
