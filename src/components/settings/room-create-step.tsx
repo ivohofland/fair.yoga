@@ -96,40 +96,52 @@ export function RoomCreateStep({
     setCreating(true);
     setCreateError('');
 
+    const equipmentArray = Object.entries(equipmentChecks)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+
+    const newRoom: NewRoomValues = {
+      venueName: venueName.trim(),
+      address: street.trim(),
+      city: city.trim(),
+      postcode: postcode.trim(),
+      floor: floor.trim(),
+      roomName: roomName.trim(),
+      maxCapacity: cap,
+      equipment: equipmentArray,
+      notes: notes.trim() || null,
+      isPublic,
+    };
+
+    let res: Response;
     try {
-      const equipmentArray = Object.entries(equipmentChecks)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-
-      const newRoom: NewRoomValues = {
-        venueName: venueName.trim(),
-        address: street.trim(),
-        city: city.trim(),
-        postcode: postcode.trim(),
-        floor: floor.trim(),
-        roomName: roomName.trim(),
-        maxCapacity: cap,
-        equipment: equipmentArray,
-        notes: notes.trim() || null,
-        isPublic,
-      };
-
-      const res = await fetch('/api/rooms', {
+      res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newRoom),
       });
+    } catch (err) {
+      console.error('[room-create-step] request failed', { err });
+      setCreateError('Network error. Please try again.');
+      setCreating(false);
+      return;
+    }
 
-      if (!res.ok) {
-        setCreateError(await readErrorMessage(res, 'Failed to create room'));
-        return;
-      }
+    if (!res.ok) {
+      setCreateError(await readErrorMessage(res, 'Failed to create room'));
+      setCreating(false);
+      return;
+    }
 
+    try {
       const json: { data: RoomResult } = await res.json();
+      if (typeof json?.data?.id !== 'string') {
+        throw new Error('missing id');
+      }
       onCreated(json.data);
     } catch (err) {
-      console.error('[room-create-step] request failed', err);
-      setCreateError('Network error. Please try again.');
+      console.error('[room-create-step] created, but the response was unreadable', { err });
+      setCreateError('Room created — reload to confirm before trying again.');
     } finally {
       setCreating(false);
     }

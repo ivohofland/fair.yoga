@@ -288,24 +288,36 @@ export default function CreateClassPage() {
     setSubmitting(true);
     setSubmitError('');
 
-    try {
-      const payload = {
-        ...form,
-        description: normalizeDescription(form.description),
-      };
+    const payload = {
+      ...form,
+      description: normalizeDescription(form.description),
+    };
 
-      const res = await fetch('/api/classes', {
+    let res: Response;
+    try {
+      res = await fetch('/api/classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+    } catch (err) {
+      console.error('[class-new] request failed', { err });
+      setSubmitError('Could not reach the server. Try again.');
+      setSubmitting(false);
+      return;
+    }
 
-      if (!res.ok) {
-        setSubmitError(await readErrorMessage(res, 'Failed to create class'));
-        return;
-      }
+    if (!res.ok) {
+      setSubmitError(await readErrorMessage(res, 'Failed to create class'));
+      setSubmitting(false);
+      return;
+    }
 
+    try {
       const json: { data: { id: string } } = await res.json();
+      if (typeof json?.data?.id !== 'string') {
+        throw new Error('missing id');
+      }
       // #40. A second identical POST to /api/classes now collides with
       // `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH &&,
       // WHERE cancelledAt IS NULL — #327) and comes back as a 409
@@ -320,8 +332,8 @@ export default function CreateClassPage() {
       setCreatedId(json.data.id);
       router.push(classPath(json.data.id));
     } catch (err) {
-      console.error('class create failed', err);
-      setSubmitError('Could not reach the server, or it sent something unreadable. Try again.');
+      console.error('[class-new] created, but the response was unreadable', { err });
+      setSubmitError('Class created — reload to confirm before trying again.');
     } finally {
       setSubmitting(false);
     }

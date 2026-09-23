@@ -138,7 +138,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
     } catch (err) {
       // Bound and logged so a network failure leaves a record. An unreadable
       // refusal body is `readErrorMessage`'s case, not this one — this catch
-      // now only sees `fetch` itself failing.
+      // only sees `fetch` itself failing.
       console.error('class edit save failed', err);
       setError('Could not reach the server. Try again.');
     } finally {

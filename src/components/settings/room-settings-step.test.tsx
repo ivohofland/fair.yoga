@@ -108,7 +108,7 @@ describe('RoomSettingsStep', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Please try again.');
     expect(consoleError).toHaveBeenCalledWith(
       '[room-settings-step] request failed',
-      expect.any(TypeError),
+      expect.objectContaining({ roomId: 'room-1', err: expect.any(TypeError) }),
     );
     expect(onSaved).not.toHaveBeenCalled();
   });

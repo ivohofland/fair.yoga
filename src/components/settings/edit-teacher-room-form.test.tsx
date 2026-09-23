@@ -121,7 +121,7 @@ describe('EditTeacherRoomForm', () => {
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       '[edit-teacher-room-form] request failed',
-      expect.any(TypeError),
+      expect.objectContaining({ teacherRoomId: 'tr-1', err: expect.any(TypeError) }),
     );
   });
 });

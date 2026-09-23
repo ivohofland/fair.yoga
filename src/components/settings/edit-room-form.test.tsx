@@ -90,6 +90,9 @@ describe('EditRoomForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
-    expect(consoleError).toHaveBeenCalledWith('[edit-room-form] request failed', expect.any(TypeError));
+    expect(consoleError).toHaveBeenCalledWith(
+      '[edit-room-form] request failed',
+      expect.objectContaining({ roomId: 'room-1', teacherRoomId: 'tr-1', err: expect.any(TypeError) }),
+    );
   });
 });
