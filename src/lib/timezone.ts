@@ -174,8 +174,8 @@ export function mondayOf(date: Date): WeekKey {
  * Renders an instant as `"<weekday short> <day> <month short> <HH:mm>"` in
  * the given zone — e.g. `"Thu 4 Jun 14:15"` — for copy shown to a student,
  * such as a free-cancel deadline. The date is load-bearing, not decorative:
- * `auto_promote` runs until start − 1h, so the instant this formats can land
- * a week or more out, and a bare weekday misreads as this week.
+ * a free-cancel instant can land a week or more out, and a bare weekday
+ * misreads as this week.
  *
  * Checked for an unreadable instant BEFORE either formatting attempt, the
  * same ordering `classStartInstant` and `startOfLocalDay` use and for the
@@ -186,7 +186,8 @@ export function mondayOf(date: Date): WeekKey {
  * Falls back to UTC on an unreadable timezone rather than throwing, the same
  * fallback `classStartInstant` and `startOfLocalDay` use (#145), and logs at
  * `error` for the same reason: a wrong-but-bounded answer beats a crashed
- * notification.
+ * notification. The fallback is suffixed " (UTC)", so a student reading it
+ * can see which clock it is on.
  */
 export function formatInstantInZone(instant: Date, timeZone: string): string {
   if (Number.isNaN(instant.getTime())) {
@@ -216,7 +217,7 @@ export function formatInstantInZone(instant: Date, timeZone: string): string {
     return fmt(timeZone);
   } catch {
     log.error({ timeZone }, 'invalid timezone, falling back to UTC formatting');
-    return fmt('UTC');
+    return `${fmt('UTC')} (UTC)`;
   }
 }
 
