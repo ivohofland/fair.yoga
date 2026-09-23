@@ -12,6 +12,7 @@ import {
 } from './waitlist-retention';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
+import { scopeSweep } from '../../tests/scoped-sweep';
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
@@ -758,10 +759,16 @@ describe('reapClosedWaitlistEntries', () => {
       entryStatus: 'expired',
     });
 
-    const summary = await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 50 });
+    // Scoped to this run's own two classes (#251): unscoped, `classes` and the
+    // second run's `classes: 0` are both claims about every terminal class in
+    // the shared test database past the cutoff, not about these two.
+    const scope = scopeSweep(prisma, {
+      WaitlistEntry: { classId: { in: [first.classId, second.classId] } },
+    });
+    const summary = await reapClosedWaitlistEntries(scope.db, { now: NOW, maxClasses: 50 });
 
     expect(summary.cappedOut).toBe(false);
-    expect(summary.classes).toBeGreaterThanOrEqual(2);
+    expect(summary.classes).toBe(2);
     expect(summary.failed).toBe(0);
     // The two summary fields nothing else pins. Both survived mutation before
     // this: `cutoff: 'MUTANT'` and an `eligible` initialised to `-999` left the
@@ -774,9 +781,14 @@ describe('reapClosedWaitlistEntries', () => {
     expect(await entryExists(first.entryId)).toBe(false);
     expect(await entryExists(second.entryId)).toBe(false);
 
+    // Presence check for the second run's `toBe(0)` below: the scope actually
+    // captured this run's own rows on the read above, rather than the zero
+    // being vacuous because nothing was ever in scope.
+    expect(scope.rowsRead('WaitlistEntry')).toBeGreaterThan(0);
+
     // Drained, not merely "small". Nothing eligible remains, so a loop that
     // stopped after one class has nowhere to hide.
-    const again = await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 50 });
+    const again = await reapClosedWaitlistEntries(scope.db, { now: NOW, maxClasses: 50 });
     expect(again.classes).toBe(0);
     expect(again.deleted).toBe(0);
     expect(again.cappedOut).toBe(false);
@@ -805,6 +817,13 @@ describe('reapClosedWaitlistEntries', () => {
       entryStatus: 'expired',
     });
 
+    // Scoped to HELD (#251): `maxClasses: 1` unscoped means whichever class
+    // sorts first in the whole database takes the run's only slot, and an
+    // unlocked one earlier than HELD would be reaped instead — the sweep
+    // would never even attempt HELD, so nothing would fail and this test's
+    // premise would not hold.
+    const scope = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [HELD] } } });
+
     const holderDb = new PrismaClient();
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
@@ -819,7 +838,7 @@ describe('reapClosedWaitlistEntries', () => {
       await new Promise((r) => setTimeout(r, 300));
 
       await expect(
-        reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 1 }),
+        reapClosedWaitlistEntries(scope.db, { now: NOW, maxClasses: 1 }),
       ).rejects.toBeInstanceOf(RetentionFailedError);
 
       // The run-level line, at `error` — distinct from the per-class line,
@@ -940,9 +959,16 @@ describe('reapClosedWaitlistEntries', () => {
       entryStatus: 'expired',
     });
 
+    // Scoped to `low`/`high` (#251): `maxClasses: 1` unscoped means whichever
+    // class sorts first in the whole database takes the run's only slot, not
+    // necessarily `low` — the property under test would then depend on every
+    // other terminal class in the shared test database, not on the direction
+    // `orderBy` actually takes.
+    const scope = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [lowId, highId] } } });
+
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     try {
-      await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 1 });
+      await reapClosedWaitlistEntries(scope.db, { now: NOW, maxClasses: 1 });
     } finally {
       warn.mockRestore();
     }
