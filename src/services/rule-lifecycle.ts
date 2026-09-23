@@ -349,7 +349,7 @@ export type ArchiveRuleResult<TChild> =
    * (`src/lib/api-errors.ts`), and every log line this arm writes carries the
    * `transientKind` that function returns alongside it — so a `busy` in the
    * logs is never read as a lost lock race on faith; the field says which
-   * kind actually fired. Which kinds page rather than merely warn is
+   * kind actually fired. Which kinds log at `error` rather than `warn` is
    * `transientDbFailure`'s `TRANSIENT_KIND_LEVEL` to answer, not this arm's —
    * the log call here takes its level from the same place.
    *

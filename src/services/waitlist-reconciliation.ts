@@ -620,18 +620,16 @@ async function reconcileOne(
     // any case, so nothing outside this loop protects the classes behind a
     // contended one.
     //
-    // Classified by kind, not blanket-`warn`: `TRANSIENT_KIND_LEVEL`
-    // (`lib/api-errors.ts`) is the alerting contract, and it does not put every
-    // transient failure at `warn` — some transient kinds log at `error` even
-    // though a retry can win them, and `TRANSIENT_KIND_LEVEL` says which. A
-    // schema drift, a dangling FK, a `P2002` regression inside `promoteNext`
-    // — none of those clear on retry either, and the trigger condition is
-    // not consumed by the failure, so the class fails again on every tick,
-    // forever. Blanket `warn` for every transient kind would make a
-    // permanently broken promotion path indistinguishable from routine
-    // contention, which is the shape of the defect this whole module exists
-    // to remove. Both live callers split on exactly this classification —
-    // see `promoteAfterCancel` in the registrations route and
+    // Two decisions, not one. `transient` (`failure !== null`) decides
+    // whether a retry can win at all: a non-transient failure — a schema
+    // drift, a dangling FK, a `P2002` regression inside `promoteNext` — never
+    // clears on its own, so it always logs at `error`, the same reading
+    // `stuck` gives a transient failure that has stood too long. Given a
+    // transient failure, `TRANSIENT_KIND_LEVEL` (`lib/api-errors.ts`) decides
+    // its level per kind, not blanket `warn` — some transient kinds log at
+    // `error` even though a retry can win them, and that table says which.
+    // Both live callers split on the first decision — see
+    // `promoteAfterCancel` in the registrations route and
     // `deleteStudentAccount`'s post-commit loop.
     //
     // What `error` does NOT currently buy: `lib/log.ts` is pino to stdout with
@@ -808,10 +806,10 @@ function report(
   if (summary.failedClassIds.length > 0 && summary.reconciledClassIds.length === 0) {
     // Every class hit a transient database failure and the streak is still
     // short. The next tick retries; the job stays healthy. This is the false
-    // alarm #269 was filed about, and this tick-level line is what keeps it
-    // visible without paging anyone — the per-class lines earlier in the same
-    // tick may already have logged at `error`, when their kind's own level
-    // calls for it.
+    // alarm #269 was filed about, and this tick-level line stays at `warn` —
+    // the level for routine contention, not a fault — regardless of what the
+    // per-class lines earlier in the same tick logged at, which follows each
+    // failure's own kind.
     log.warn(
       payload,
       'waitlist reconciliation lost every class to a transient database failure — retrying next tick',

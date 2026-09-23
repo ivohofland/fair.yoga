@@ -1148,9 +1148,9 @@ does, at the rates measured above (32/100, 1/120).
 (`src/lib/api-errors.ts`) is the authority, and the reason is general to the
 kind, not specific to this cycle. What follows from that here: the
 `updateClass` × `updateClass` slot-key trade this section keeps recording
-rather than fixing will page every time it fires. Which other slot-key
-cycles are still live is argued where each is recorded in this section, not
-restated here.
+rather than fixing will log at `error` every time it fires. Which other
+slot-key cycles are still live is argued where each is recorded in this
+section, not restated here.
 
 ## The `Student` row is the erasure's gate (#183)
 
