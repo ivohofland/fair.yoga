@@ -6,11 +6,11 @@ const prisma = new PrismaClient();
 const suffix = Date.now();
 let inId = '';
 let outId = '';
-// A second pair, scoped-deleted by the deleteMany case itself rather than
-// surviving to the end of the file — afterAll cleans both ids and both
-// accounts by their known (not re-queried) emails either way.
-let throwInId = '';
-let throwOutId = '';
+// The deleteMany case's own pair: the scoped delete removes `delInId` and
+// must leave `delOutId`. afterAll deletes every teacher id here, and every
+// account by the emails `teacherData` recorded.
+let delInId = '';
+let delOutId = '';
 const emails: string[] = [];
 
 function teacherData(tag: string) {
@@ -22,20 +22,25 @@ function teacherData(tag: string) {
 beforeAll(async () => {
   inId = (await prisma.teacher.create({ data: teacherData('in') })).id;
   outId = (await prisma.teacher.create({ data: teacherData('out') })).id;
-  throwInId = (await prisma.teacher.create({ data: teacherData('throw-in') })).id;
-  throwOutId = (await prisma.teacher.create({ data: teacherData('throw-out') })).id;
+  delInId = (await prisma.teacher.create({ data: teacherData('del-in') })).id;
+  delOutId = (await prisma.teacher.create({ data: teacherData('del-out') })).id;
 });
 
 afterAll(async () => {
-  await prisma.teacher.deleteMany({ where: { id: { in: [inId, outId, throwInId, throwOutId] } } });
-  await prisma.account.deleteMany({ where: { email: { in: emails } } });
-  await prisma.$disconnect();
+  try {
+    await prisma.teacher.deleteMany({ where: { id: { in: [inId, outId, delInId, delOutId] } } });
+  } finally {
+    await prisma.account.deleteMany({ where: { email: { in: emails } } });
+    await prisma.$disconnect();
+  }
 });
 
 describe('scopeSweep', () => {
-  it('ANDs the scope into findMany and counts what it returned', async () => {
-    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
-    const rows = await s.db.teacher.findMany({ where: { id: { in: [inId, outId] } } });
+  it('ANDs the scope into findMany rather than replacing the caller’s where', async () => {
+    // The scope admits `outId`, which the caller's own where excludes: a
+    // scope that replaced the where would return it.
+    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId, outId] } } });
+    const rows = await s.db.teacher.findMany({ where: { id: { in: [inId, delInId] } } });
     expect(rows.map((r) => r.id)).toEqual([inId]);
     expect(s.rowsRead('Teacher')).toBe(1);
   });
@@ -45,18 +50,43 @@ describe('scopeSweep', () => {
     expect((await s.db.teacher.findMany()).map((r) => r.id)).toEqual([inId]);
   });
 
-  it('scopes count, groupBy, updateMany and deleteMany', async () => {
-    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId, throwInId] } } });
+  it('scopes findFirst and findFirstOrThrow, counting a miss as no row', async () => {
+    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
+    expect(await s.db.teacher.findFirst({ where: { id: outId } })).toBeNull();
+    expect(s.rowsRead('Teacher')).toBe(0);
+    await expect(s.db.teacher.findFirstOrThrow({ where: { id: outId } })).rejects.toThrow();
+    expect((await s.db.teacher.findFirstOrThrow({ where: { id: { in: [inId, outId] } } })).id).toBe(inId);
+    expect(s.rowsRead('Teacher')).toBe(1);
+  });
+
+  it('scopes count, aggregate and groupBy; only groupBy counts as a read', async () => {
+    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId, delInId] } } });
     const both = { id: { in: [inId, outId] } };
     expect(await s.db.teacher.count({ where: both })).toBe(1);
+    expect((await s.db.teacher.aggregate({ where: both, _count: { _all: true } }))._count._all).toBe(1);
+    expect(s.rowsRead('Teacher')).toBe(0);
     const groups = await s.db.teacher.groupBy({ by: ['id'], where: both });
     expect(groups.map((g) => g.id)).toEqual([inId]);
-    expect(s.rowsRead('Teacher')).toBe(1); // groupBy counted; count() is not a row read
+    expect(s.rowsRead('Teacher')).toBe(1);
+  });
+
+  it('scopes updateMany, updateManyAndReturn and deleteMany without counting them as reads', async () => {
+    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId, delInId] } } });
+    const both = { id: { in: [inId, outId] } };
     expect((await s.db.teacher.updateMany({ where: both, data: { bio: 'x' } })).count).toBe(1);
-    const out = await prisma.teacher.findUniqueOrThrow({ where: { id: outId } });
-    expect(out.bio).toBe('');
-    expect((await s.db.teacher.deleteMany({ where: { id: { in: [throwInId, throwOutId] } } })).count).toBe(1);
-    expect(await prisma.teacher.findUnique({ where: { id: throwOutId } })).not.toBeNull();
+    const returned = await s.db.teacher.updateManyAndReturn({ where: both, data: { bio: 'y' } });
+    expect(returned.map((t) => t.id)).toEqual([inId]);
+    expect((await prisma.teacher.findUniqueOrThrow({ where: { id: outId } })).bio).toBe('');
+    expect((await s.db.teacher.deleteMany({ where: { id: { in: [delInId, delOutId] } } })).count).toBe(1);
+    expect(await prisma.teacher.findUnique({ where: { id: delOutId } })).not.toBeNull();
+    expect(s.rowsRead('Teacher')).toBe(0);
+  });
+
+  it('sums rowsRead across calls', async () => {
+    const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
+    await s.db.teacher.findMany();
+    await s.db.teacher.findMany();
+    expect(s.rowsRead('Teacher')).toBe(2);
   });
 
   it('applies inside interactive transactions', async () => {
@@ -69,10 +99,19 @@ describe('scopeSweep', () => {
     const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
     expect(await s.db.teacher.findUnique({ where: { id: outId } })).not.toBeNull();
     // Account is not named in the scope, so an unscoped read reaches every
-    // account this file has created so far, by email.
+    // account this file has created, by email.
     const accounts = await s.db.account.findMany({ where: { email: { contains: `-${suffix}@` } } });
     expect(accounts.map((a) => a.email).sort()).toEqual([...emails].sort());
-    expect(s.rowsRead('Account')).toBe(0);
+    expect(() => s.rowsRead('Account')).toThrow(/does not name Account/);
+  });
+
+  it('refuses a scope that would silently narrow nothing', () => {
+    expect(() => scopeSweep(prisma, {})).toThrow(/names no model/);
+    expect(() => scopeSweep(prisma, { Teacher: {} })).toThrow(/Teacher is an empty filter/);
+    expect(() => scopeSweep(prisma, { Teacher: { id: undefined } })).toThrow(/Teacher\.id is undefined/);
+    expect(() => scopeSweep(prisma, { Teacher: { id: { in: [inId, undefined as unknown as string] } } })).toThrow(/Teacher\.id\.in\.1 is undefined/);
+    const misspelt = { Teacher: { id: inId }, Teachr: { id: inId } };
+    expect(() => scopeSweep(prisma, misspelt)).toThrow(/"Teachr" is not a model/);
   });
 
   it('lets a hook on the client handed in see the args before the scope', async () => {
