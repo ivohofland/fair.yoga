@@ -716,9 +716,12 @@ describe('withdrawWaitingEntriesForTeacher re-checks status against a promotion 
         // A second handshake, not a fixed sleep: poll until Postgres reports
         // this backend blocking another one — the withdrawal's own
         // `FOR UPDATE` request landing on this same row — instead of
-        // guessing how long that takes to arrive.
+        // guessing how long that takes to arrive. Postgres holds one
+        // `pg_stat_activity` snapshot per transaction, so each poll clears it
+        // first — otherwise every poll re-reads the first one.
         const deadline = Date.now() + 5_000;
         for (;;) {
+          await tx.$executeRaw`SELECT pg_stat_clear_snapshot()`;
           const [row] = await tx.$queryRaw<Array<{ n: number }>>`
             SELECT count(*)::int AS n FROM pg_stat_activity
              WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))`;
