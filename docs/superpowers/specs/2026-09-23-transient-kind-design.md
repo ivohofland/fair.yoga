@@ -72,7 +72,7 @@ export function isTransientDbError(error: unknown): boolean; // transientDbFailu
 | Kind | Matched on | Level | Why this level |
 |---|---|---|---|
 | `lock_timeout` | `55P03` | warn | The system doing what `SET LOCAL lock_timeout` configures it to do |
-| `deadlock` | `40P01`, `P2034` | **error** | Since #229 every known cycle is closed but one — the `updateClass` × `updateClass` slot-key deadlock `docs/lock-order.md` records. A deadlock anywhere else is a new cycle or a regressed one, and must be seen |
+| `deadlock` | `40P01`, `P2034` | **error** | A deadlock is two lock orders disagreeing, never the system doing what it was configured to do. `docs/lock-order.md` records which cycles are still live — at least the `updateClass` × `updateClass` slot-key cycle and the pre-existing two-room archive shape (#340) — and any other is new or regressed. Each must be seen |
 | `serialization` | `40001` | warn | Cannot fire: nothing runs a serializable or repeatable-read transaction |
 | `pool_exhausted` | `P2024` | **error** | An operational fault — a leak or a drained pool. No retry wins it until the pool recovers, and the next request meets the same pool |
 | `tx_budget` | `P2028` | warn | Contention or a slow transaction; the 10 s and 20 s budgets are deliberate |
@@ -91,8 +91,12 @@ reason. The docblock states that dependency where a future serializable
 transaction must meet it.
 
 **Accepted consequence of the `deadlock` row**, stated in the docblock: the known
-`updateClass` slot-key deadlock now logs at `error` when it fires. It needs two
-concurrent `updateClass` writes by one teacher; that it pages is the point of
+`updateClass` slot-key deadlock — and the two-room archive shape, which
+`docs/lock-order.md` records as pre-existing and unresolved — now log at `error`
+when they fire. (An earlier draft of this spec said every known cycle but the
+`updateClass` one was closed; Task 1's implementer found the two-room shape in
+the same doc, and the spec is corrected here, not in the code.) The first needs
+two concurrent `updateClass` writes by one teacher; that it pages is the point of
 recording it rather than special-casing it.
 
 Unchanged behaviour the classifier must keep:
