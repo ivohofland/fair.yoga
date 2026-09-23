@@ -140,7 +140,7 @@ expect(completed).toBe(0);
   an id the sweep already chose from a scoped read. Unnamed models pass
   through too.
 - `scoped.rowsRead(model)` returns the rows the scoped `findMany`/`findFirst`/
-  `groupBy` reads returned, summed (`groupBy` because `timezone-audit.ts` and
+  `findFirstOrThrow`/`groupBy` reads returned, summed (`groupBy` because `timezone-audit.ts` and
   `waitlist-retention.ts` read their candidates through it). A `toBe(0)` assertion with no presence check stays
   green when the fixture falls out of the sweep's own predicate, because the
   scope then filters an empty set. Every zero assertion therefore pairs with it.
