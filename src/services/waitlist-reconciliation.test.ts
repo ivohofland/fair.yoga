@@ -997,9 +997,9 @@ describe('reconcileWaitlists (DB)', () => {
 
   /**
    * The production entry point runs the sweep and, unlike every other caller in
-   * this file, carries memory between ticks. Asserting it delegates at all is
-   * what stops the wiring in `scheduler.ts` from pointing at a function that
-   * quietly forgets.
+   * this file, carries memory between ticks. This pins that
+   * `runWaitlistReconciliationTick` resolves against the real database — the
+   * wiring `scheduler.ts` depends on.
    */
   it('runs the sweep through the production entry point', async () => {
     await runWaitlistReconciliationTick(prisma);

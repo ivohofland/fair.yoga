@@ -564,8 +564,8 @@ describe('reapClosedWaitlistEntries', () => {
    * would not: that mutation leaves the sweep returning normally, having reaped
    * nothing after the failure.
    *
-   * The ids are derived from `uniqueSuffix` rather than hard-coded. They must
-   * still sort below every `@default(uuid())` id — hence the all-zero prefix —
+   * The ids are derived from `uniqueSuffix` rather than hard-coded. Scoped to
+   * HELD/FREE, HELD need only sort below FREE — hence the all-zero prefix —
    * but `unit-db.ts` never truncates, so a fixed id left behind by an
    * interrupted run would fail every later run with a P2002 until someone
    * cleaned it out by hand.
@@ -737,16 +737,11 @@ describe('reapClosedWaitlistEntries', () => {
    * classes, but its first one FAILS, so it constrains the catch rather than the
    * loop's continuation after a success.
    *
-   * ORDER-INDEPENDENT BY CONSTRUCTION, which also retires the fragility an
-   * earlier version of this docblock recorded at length. It no longer asserts
-   * anything about how many classes the world contains — it asserts that the
-   * queue was DRAINED: sweep, then sweep again and find nothing left. Scoped
-   * to this run's own two classes (see below), a future author adding
-   * reapable fixtures to this file cannot break it. (The un-isolated version
-   * asserted `cappedOut === false` under `maxClasses: 50` and depended on the
-   * total staying under 50, with the previous test's stale held class filling
-   * its batch — an accident, and #177 territory rather than a bug in the
-   * sweep.)
+   * ORDER-INDEPENDENT BY CONSTRUCTION. It asserts nothing about how many
+   * classes the world contains — it asserts that the queue was DRAINED:
+   * sweep, then sweep again and find nothing left. Scoped to this run's own
+   * two classes (see below), a future author adding reapable fixtures to
+   * this file cannot break it.
    *
    * The second sweep is also the only idempotency assertion in the file: a
    * permanent delete that finds work on a second pass over the same data would

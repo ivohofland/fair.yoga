@@ -396,8 +396,8 @@ describe('processEmailFallback (DB)', () => {
       // the same fallback email twice.
       expect(sendsTo(teacherEmail)).toBe(1);
       expect(interposed).toBe(1);
-      // The interposed sweep won the claim; this one found it taken and skipped.
       expect(scoped.rowsRead('Notification')).toBeGreaterThan(0);
+      // The interposed sweep won the claim; this one found it taken and skipped.
       expect(outerSent).toBe(0);
       const after = await prisma.notification.findUniqueOrThrow({
         where: { id: notification.id },
