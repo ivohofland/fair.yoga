@@ -22,6 +22,10 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  * `scopeSweep` ever runs: `scopeSweep(prisma.$extends(racing) as unknown as PrismaClient, scope)`.
  * Calling `.$extends(...)` on the returned `db` instead places the new hook
  * after the scope, where it only sees the AND-wrapped `where`.
+ *
+ * The rule this module exists to satisfy is written out in full in
+ * `docs/test-database.md` §2, under "Sweep tests assert through a scoped
+ * client".
  */
 export type SweepScope = {
   [M in Prisma.ModelName]?: Prisma.TypeMap['model'][M]['operations']['findMany']['args']['where'];
