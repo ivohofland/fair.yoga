@@ -904,7 +904,7 @@ describe('reconcileWaitlists (DB)', () => {
       (c) => (c[0] as { classId?: string } | undefined)?.classId === broken.id,
     );
     expect(logged).toBeDefined();
-    expect(logged?.[0]).toMatchObject({ classId: broken.id, transient: false });
+    expect(logged?.[0]).toMatchObject({ classId: broken.id, transient: false, transientKind: null });
     // The classification now leaves the function that computed it. Before this it
     // picked a log level and was discarded, so nothing downstream could tell a
     // lost race from a defect that will never clear.
