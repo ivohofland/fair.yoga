@@ -158,9 +158,9 @@ describe('buildJobs', () => {
       // The ORDER here is pinned without being load-bearing. `isolatedSweeps`
       // order is meaningful for `class-transitions` — a class must transition
       // to in-progress before it can be completed — and this assertion is a
-      // whole-map equality, so it pins order everywhere. Nothing couples auth
-      // cleanup, waitlist retention, notification retention, or the timezone
-      // audit to one another; do not read a dependency into this line.
+      // whole-map equality, so it pins order everywhere. Nothing couples the
+      // sweeps in this job to one another; do not read a dependency into this
+      // line.
       'daily-cleanup': [
         'cleanupExpiredAuth',
         'reapClosedWaitlistEntries',
