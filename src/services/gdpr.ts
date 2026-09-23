@@ -323,7 +323,7 @@ export type ErasureOutcome = { erased: true } | { erased: false; reason: 'alread
  * student erasure runs twice concurrently") pins the abort through its
  * already-erased-count assertion.
  *
- * `DELETE /api/account` no longer catches this error — it reads the
+ * `DELETE /api/account` never catches this error — it reads the
  * `ErasureOutcome` `deleteStudentAccount`/`deleteTeacherAccount` return.
  */
 class AlreadyErasedError extends Error {

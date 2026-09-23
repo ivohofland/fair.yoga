@@ -1902,10 +1902,11 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
 
       // 700ms: `deleteStudentAccount` opens with `setLockTimeout`, so a
       // statement parked past 2s on one lock is cancelled with `55P03` and the
-      // loser rejects with a Postgres error instead of the sentinel. The loser
-      // waits at its `Student` lock twice — behind this hold, then behind the
-      // winner's transaction — and `lock_timeout` bounds each of those
-      // acquisitions separately, so each wait has to end inside 2s.
+      // loser rejects with a Postgres error rather than resolving
+      // already-erased. The loser waits at its `Student` lock twice — behind
+      // this hold, then behind the winner's transaction — and `lock_timeout`
+      // bounds each of those acquisitions separately, so each wait has to end
+      // inside 2s.
       let settled = false;
       void running.then(() => { settled = true; });
       await new Promise((r) => setTimeout(r, 700));
