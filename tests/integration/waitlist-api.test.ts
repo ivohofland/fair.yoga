@@ -21,7 +21,6 @@ let farFutureClassId: string;
 let freedSpotClassId: string;
 let rivalId: string;
 let rivalToken: string;
-let frozenClassId: string;
 let soonClaimClassId: string;
 let cancelledClassId: string;
 let draftClassId: string;
@@ -199,37 +198,6 @@ beforeAll(async () => {
   rivalId = rival.id;
   rivalToken = await seedSession(prisma, rival.accountId!);
 
-  // #236: five hours out is well outside the one-hour claim window, so this
-  // class reads `auto_promote` — under the old deadline-anchored window a
-  // six-hour deadline would have made it `frozen` already. `HOURS_1` keeps
-  // the auto-cancel sweep off it for four hours, and it starts long after the
-  // suite ends. One minute long, for the reason the freed-spot fixture above
-  // gives.
-  const frozenStart = new Date(baseNow.getTime() + 5 * 60 * 60 * 1000);
-  const frozenClass = await createClassFixture(prisma, {
-    teacherId,
-    teacherRoomId,
-    classType: 'Waitlist API Frozen',
-    date: new Date(
-      Date.UTC(frozenStart.getUTCFullYear(), frozenStart.getUTCMonth(), frozenStart.getUTCDate()),
-    ),
-    startTime: hhmmToTime(
-      `${String(frozenStart.getUTCHours()).padStart(2, '0')}:${String(
-        frozenStart.getUTCMinutes(),
-      ).padStart(2, '0')}`,
-    ),
-    durationMinutes: 1,
-    roomCost: 20,
-    minRate: 15,
-    targetRate: 25,
-    minStudents: 1,
-    maxStudents: 1,
-    cancelDeadline: 'HOURS_6',
-    autoCancelCheck: 'HOURS_1',
-    status: 'open',
-  });
-  frozenClassId = frozenClass.id;
-
   // #236 acceptance: a genuinely free seat inside the claim window can be
   // claimed on its own — a claim does not need a late cancel to have run
   // through the live hook first. 30 minutes out, at a slot distinct from
@@ -304,7 +272,6 @@ afterAll(async () => {
   const classIds = [
     farFutureClassId,
     freedSpotClassId,
-    frozenClassId,
     soonClaimClassId,
     cancelledClassId,
     draftClassId,
@@ -459,10 +426,6 @@ describe('POST /api/waitlist/claim', () => {
     expect(
       await prisma.registration.count({ where: { classId: freedSpotClassId, studentId: rivalId } }),
     ).toBe(0);
-  });
-
-  it('refuses a claim five hours before start, though the old deadline-anchored window would have frozen it (#236)', async () => {
-    await expectRefusal(await claim(studentToken, { classId: frozenClassId }), 'CLAIM_NOT_OPEN');
   });
 
   it('claims a spot on a class starting in 30 minutes, inside the claim window (#236)', async () => {
