@@ -5,18 +5,13 @@
  * return is what would turn one of these assertions into a false positive
  * from the wrong cause.
  *
- * Split out of `waitlist.test.ts` (#459) for exactly that reason. The
- * guards below prove `addToWaitlist`, `promoteNext` and `claimSpot` each give
- * up on `lockClassRow`'s shared 2s `SET LOCAL lock_timeout` under contention,
- * that `removeFromWaitlist` and `handleSpotFreed` genuinely wait on (and, for
- * the second, are bounded by) the same `Class` row lock, and that
- * `withdrawWaitingEntriesForTeacher` re-checks a promotion that committed
- * during its own wait rather than trusting what its lock query saw before it
- * blocked (#241, moved here from `waitlist.test.ts` for this same reason) —
- * a lock outcome each time, not a registration/promotion/removal/withdrawal
- * outcome. One teacher, one room, one `TeacherRoom` and a small pool of
- * students are shared at module scope; each test below builds the one class
- * it locks.
+ * Split out of `waitlist.test.ts` (#459) for exactly that reason. Each test
+ * names the waitlist function it drives and what that function does when it
+ * meets a held `Class` row — give up at the shared 2s `lock_timeout`, wait,
+ * or re-check what changed while it waited — a lock outcome each time, not
+ * a registration/promotion/removal outcome. One teacher, one room, one
+ * `TeacherRoom` and a small pool of students are shared at module scope; each
+ * test below builds the one class it locks.
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
