@@ -14,6 +14,7 @@ import { deleteStudentAccount } from './gdpr';
 import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { expectErased } from '../../tests/erasure-assertions';
 
 /**
  * Concurrency invariants for the table pairs the describes below name, each
@@ -1925,7 +1926,7 @@ describe('acceptInvitation and unlinkTeacher take the Student gate (#626)', () =
       });
 
       const erasure = pauseErasureAtGate(fx.studentId);
-      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+      const erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
         () => 'erased' as const,
         (err: unknown) => ({ error: err }),
       );
@@ -1984,7 +1985,7 @@ describe('acceptInvitation and unlinkTeacher take the Student gate (#626)', () =
       });
 
       const erasure = pauseErasureAtGate(fx.studentId);
-      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+      const erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
         () => 'erased' as const,
         (err: unknown) => ({ error: err }),
       );

@@ -16,6 +16,7 @@ import crypto from 'crypto';
 import * as dbLocks from '@/lib/db-locks';
 import { deleteStudentAccount } from '@/services/gdpr';
 import { cookie, seedSession } from '../../../../../../tests/helpers';
+import { expectErased } from '../../../../../../tests/erasure-assertions';
 import { PUT } from './route';
 
 const prisma = new PrismaClient();
@@ -190,7 +191,7 @@ describe('PUT /api/students/[id]/privacy takes the Student gate (#626)', () => {
     const fx = await makeFixture();
     try {
       const erasure = pauseErasureAtGate(fx.studentId);
-      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+      const erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
         () => 'erased' as const,
         (err: unknown) => ({ error: err }),
       );
