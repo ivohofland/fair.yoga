@@ -307,8 +307,8 @@ export const DELETE = withErrorHandler(async (
       //
       // NOT for the doubled broadcast the full-cancel branch below guards
       // against — this branch is reached only when `isPastCancelDeadline`
-      // holds, and `getWaitlistWindow` returns `frozen` for exactly that
-      // instant (`cancelDeadlineInstant`), so `handleSpotFreed` sends nothing
+      // holds, and `getWaitlistWindow` is `frozen` from that same
+      // `cancelDeadlineInstant` onward, so `handleSpotFreed` sends nothing
       // here. It is for money. `late_cancel`
       // is in `CHARGED_STATUSES` (`class-lifecycle.ts`) and `cancelled` is
       // not, so an unscoped write here can land *after* a teacher's free
