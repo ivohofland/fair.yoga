@@ -176,9 +176,9 @@ function isTerminalStatusViolation(error: unknown): error is Error {
 }
 
 /**
- * The five ways a database failure is a lost contention race rather than a
- * bad request — a retry can win, so `isTransientDbError` answers `true` for
- * every one. `kind` decides only the log level and the log field
+ * Transient failures a retry can eventually win, not a bad request —
+ * `isTransientDbError` answers `true` for every kind. `kind` decides only the
+ * log level and the log field
  * `classifyApiError` attaches (`detail.transientKind`); it never touches
  * `transient` itself, which keeps driving every 503, every `busy` arm and
  * every sweep escalation exactly as it does for any member.
@@ -256,9 +256,9 @@ const TRANSIENT_KIND_LEVEL = {
 } as const satisfies Record<TransientKind, 'warn' | 'error'>;
 
 /**
- * Postgres SQLSTATEs that mean "this transaction lost a contention race", not
- * "this request was wrong". All three abort the whole transaction, so nothing
- * is half-applied, and the identical request can win the next attempt. Typed
+ * Postgres SQLSTATEs for a transient failure a retry can eventually win, not
+ * a request that was wrong. Each aborts the whole transaction, so nothing is
+ * half-applied, and the identical request can win the next attempt. Typed
  * against `TransientKind` so an unknown kind cannot appear here.
  */
 const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
@@ -268,9 +268,9 @@ const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
 ]);
 
 /**
- * Prisma's own codes for the same class of failure — contention, not a bad
- * request. Typed against `TransientKind` so an unknown kind cannot appear
- * here.
+ * Prisma's own codes for the same class of failure — a retry can eventually
+ * win, not a bad request. Typed against `TransientKind` so an unknown kind
+ * cannot appear here.
  */
 const TRANSIENT_PRISMA_CODE_KIND: ReadonlyMap<string, TransientKind> = new Map([
   ['P2024', 'pool_exhausted'],
@@ -308,7 +308,7 @@ function transientKindShallow(error: unknown): TransientKind | null {
 }
 
 /**
- * The kind and level for a lost contention race that a retry can win, or
+ * The kind and level for a transient failure a retry can eventually win, or
  * `null` when the error is not one.
  *
  * Two different error shapes carry the same SQLSTATE, and both were measured
@@ -355,7 +355,7 @@ export function transientDbFailure(error: unknown): TransientDbFailure | null {
 }
 
 /**
- * True when the failure is a lost contention race that a retry can win — the
+ * True when the failure is transient — a retry can eventually win it — the
  * retry axis, never the severity. `transientDbFailure(error) !== null`; see
  * its docblock for the matching rules.
  */
@@ -591,19 +591,19 @@ export function classifyApiError(error: unknown): ApiFailure {
     };
   }
 
-  // A lost contention race, not a bad request. Before this branch these
-  // reached the user as "Internal server error" at `level: 'error'` — which
-  // was wrong twice over. Wrong for the user, because the one thing that
-  // helps is the one thing that message does not say: try again. And wrong
-  // for the operator, because `error` is the level that pages someone, while
-  // a `lock_timeout` on a contended row is the system doing what it was
-  // configured to do. Concretely: a student tapping "leave waitlist" while
-  // the 60-second transitions sweep holds their class row got a 500 for it,
-  // where before #174 bounded that wait they simply blocked and succeeded.
-  // That argument holds only PER KIND, not for the branch as a whole — a
-  // `pool_exhausted` or `deadlock` failure is not the system doing what it
-  // was configured to do, and `transientDbFailure`'s `TRANSIENT_KIND_LEVEL`
-  // is the authority for which kind gets which level.
+  // A transient failure a retry can eventually win, not a bad request. Before
+  // this branch these reached the user as "Internal server error" at
+  // `level: 'error'` — which was wrong twice over. Wrong for the user,
+  // because the one thing that helps is the one thing that message does not
+  // say: try again. And wrong for the operator, because `error` is the level
+  // that pages someone, while a `lock_timeout` on a contended row is the
+  // system doing what it was configured to do. Concretely: a student tapping
+  // "leave waitlist" while the 60-second transitions sweep holds their class
+  // row got a 500 for it, where before #174 bounded that wait they simply
+  // blocked and succeeded. That argument holds only PER KIND, not for the
+  // branch as a whole — a `pool_exhausted` or `deadlock` failure is not the
+  // system doing what it was configured to do, and `transientDbFailure`'s
+  // `TRANSIENT_KIND_LEVEL` is the authority for which kind gets which level.
   //
   // Checked BEFORE the P2002 branch below on purpose — a `P2024`/`P2028` is a
   // `PrismaClientKnownRequestError` too, and ordering these the other way
