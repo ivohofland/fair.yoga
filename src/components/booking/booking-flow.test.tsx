@@ -227,4 +227,27 @@ describe('BookingFlow', () => {
       expect(screen.getByRole('button', { name: /join the waitlist/i })).toBeInTheDocument();
     });
   });
+
+  // #236. Joining a waitlist is a conscious commitment — the promotion window
+  // and the free-cancel grace it comes with belong beside the act, not only
+  // in the notification that follows it.
+  describe('join-waitlist commitment copy', () => {
+    it('states the promotion window and the free-cancel grace beside the join-waitlist button', () => {
+      stubFetch();
+      renderFlow({ isFull: true });
+      expect(
+        screen.getByText(
+          "If a spot opens up until 1 hour before class, you're booked automatically. The usual cancellation deadline applies, with at least 15 minutes to change your mind.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('says nothing about it when the class is not full', () => {
+      stubFetch();
+      renderFlow({ isFull: false });
+      expect(
+        screen.queryByText(/If a spot opens up until 1 hour before class/),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

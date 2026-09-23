@@ -177,9 +177,9 @@ Classes move through states: `draft → open → in_progress → completed` (eve
 
 ### Waitlist (Hybrid Promotion)
 
-- Before cancel deadline: auto-promote next in queue
-- Final hour before the *cancel deadline* (not before the class): switch to first-come-first-claimed broadcast
-- Frozen after deadline — no more promotions
+- Until 1 hour before class: auto-promote the next in queue. An auto-promoted student can cancel free until the later of the cancel deadline and 15 minutes after promotion.
+- Final hour before class: broadcast to everyone waiting, first to claim gets the seat. A claim is past the cancel deadline and charged.
+- From class start: frozen.
 - Retention: an entry that never became a registration is reaped once its class
   is terminal and *more than* 365 days past its date — a daily sweep, no migration of its own (the `date` half of that predicate is held by `entry_frozen_schedule_guard`, see Class Lifecycle)
 

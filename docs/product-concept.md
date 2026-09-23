@@ -121,11 +121,11 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 
 **Recurring classes:** Run indefinitely until the teacher stops them — no end date needed. Instances are auto-generated on a rolling 4-week basis, at most one per week per template. A template is a stamp, not a live link (#194): each instance takes a copy of the template's fields when it is generated, and editing the template afterwards changes none of them. A teacher who moves their Tuesday class to Thursday keeps every Tuesday already on the schedule and cancels the ones they do not want; the Thursdays appear from the first week that holds no class from that template.
 
-**Waitlist:** When a class reaches maximum capacity, additional students join a waitlist. Waitlist promotion follows two rules depending on timing:
+**Waitlist:** When a class reaches maximum capacity, additional students join a waitlist. Waitlist promotion is anchored on class start, not on the cancellation deadline (#236):
 
-- **Before the cutoff** (1 hour before cancellation deadline): the first person on the waitlist is automatically promoted and notified. They have until the cancellation deadline to cancel if needed.
-- **In the final hour before the deadline**: everyone remaining on the waitlist gets a notification that a spot opened. First to claim it gets in — they accept knowing they can't cancel anymore.
-- **After the cancellation deadline**: the waitlist is frozen. No more movement. The registration list is final.
+- **Until 1 hour before class**: the first person on the waitlist is automatically promoted and notified. They can cancel free until the later of the cancellation deadline and 15 minutes after being promoted.
+- **In the final hour before class**: everyone remaining on the waitlist gets a notification that a spot opened. First to claim it gets in — a claim always lands past the cancellation deadline, so it's charged even if they can't make it.
+- **From class start**: the waitlist is frozen. No more movement. The registration list is final.
 
 ### 3. Cancellation Policy & No-Shows
 

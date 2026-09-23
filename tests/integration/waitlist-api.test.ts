@@ -170,13 +170,8 @@ beforeAll(async () => {
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
-      // #236 shrank this fixture's offset from ~7h to under an hour, which
-      // puts it inside every `CANCEL_CHECK_HOURS` window (`class-transitions.ts`
-      // tops out at 4h) rather than safely outside all of them — the live
-      // scheduler on this worktree's server (`instrumentation.ts`) runs
-      // `autoCancelClasses` on a real tick and would cancel a class it reads
-      // as below minimum. `minStudents: 0` makes zero active registrations
-      // never below minimum, so the fixture stays open regardless of timing.
+      // minStudents: 0 — the fixture starts inside the auto-cancel check
+      // window, so zero active registrations must not read as below minimum.
       minStudents: 0,
       maxStudents: 1, // no active registrations below → the one spot reads as freed
       cancelDeadline: 'HOURS_6',
@@ -236,8 +231,10 @@ beforeAll(async () => {
 
   // #236 acceptance: a genuinely free seat inside the claim window can be
   // claimed on its own — a claim does not need a late cancel to have run
-  // through the live hook first. 30 minutes out, distinct from every other
-  // baseNow-derived slot above by at least 18 minutes.
+  // through the live hook first. 30 minutes out, at a slot distinct from
+  // every other baseNow-derived fixture above — the shared teacher's
+  // overlapping-window constraint (`CalendarEntry_teacher_slot_excl`) would
+  // otherwise refuse it.
   const soonStart = new Date(baseNow.getTime() + 30 * 60 * 1000);
   const soonClaimClass = await createClassFixture(prisma, {
     teacherId,

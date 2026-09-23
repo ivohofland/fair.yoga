@@ -30,8 +30,8 @@ const CLAIM_REFUSAL_CODE = {
 type UnchangedClaim = { classId: string };
 
 /**
- * First-come-first-claimed: in the final hour before the cancel deadline a
- * freed spot is broadcast to everyone waiting; the first claim lands it.
+ * First-come-first-claimed: in the final hour before class start a freed
+ * spot is broadcast to everyone waiting; the first claim lands it.
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);

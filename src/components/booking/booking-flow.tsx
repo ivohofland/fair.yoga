@@ -250,6 +250,13 @@ export function BookingFlow({
                 ? 'Book'
                 : `Book — around €${tierPrices[tier - 1]!.toFixed(2)}`}
         </Button>
+        {isFull && (
+          <p className="type-caption mt-2">
+            If a spot opens up until 1 hour before class, you&apos;re booked
+            automatically. The usual cancellation deadline applies, with at
+            least 15 minutes to change your mind.
+          </p>
+        )}
       </div>
       {error && <p role="alert" className="text-sm text-danger mt-3">{error}</p>}
     </div>

@@ -67,7 +67,7 @@ import {
  * legitimately idle tick from a gate that has jammed shut.
  */
 export type SkipReason =
-  /** Past the cancel deadline: the queue is frozen and no promotion may happen. */
+  /** The class has started: the queue is frozen and no promotion may happen. */
   | 'frozen'
   /** No free seat by the unlocked pre-count, so there is nothing to ask about. */
   | 'full'
@@ -539,8 +539,9 @@ async function reconcileOne(
 ): Promise<ClassOutcome> {
   // The whole body is inside the `try`, not just the `handleSpotFreed` call —
   // and today nothing before that call can actually throw. `getWaitlistWindow`
-  // is arithmetic over a total `DEADLINE_HOURS` lookup, and `classStartInstant`
-  // catches an invalid stored timezone and degrades to UTC (#145) rather than
+  // is arithmetic over `classStartInstant` and a fixed offset
+  // (`CLAIM_WINDOW_MINUTES`), and `classStartInstant` itself catches an
+  // invalid stored timezone and degrades to UTC (#145) rather than
   // raising. So this is a scope kept deliberately wider than its current need,
   // not a live catch, and the reason is history: the gate used to be a database
   // round-trip sitting ABOVE the `try`, where a `P2024` pool timeout escaped

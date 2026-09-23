@@ -42,9 +42,9 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
   - Transition side effects (pricing calculation on completion, notification triggers)
 
 2.3 — Implement waitlist service (`services/waitlist.ts`)
-  - Auto-promote (before deadline)
-  - First-come-first-claimed (final hour)
-  - Frozen after deadline
+  - Auto-promote (until 1h before class start)
+  - First-come-first-claimed (final hour before start)
+  - Frozen (from class start)
   - Position management (reorder on removal)
 
 2.4 — Implement notification dispatcher (`services/notifications.ts`)

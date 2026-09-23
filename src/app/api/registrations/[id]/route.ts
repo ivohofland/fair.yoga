@@ -358,7 +358,7 @@ export const DELETE = withErrorHandler(async (
   }
 
   // Hybrid waitlist promotion: auto-promote, broadcast, or stay frozen
-  // depending on how close to the deadline we are.
+  // depending on how close to class start we are.
   await promoteAfterCancel(registration.classId);
 
   // Layer 1+2 of the comms model, the pair booking sends inverted — except
@@ -521,7 +521,7 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  * old bare-client body could barely fail at all. #104 then put the
  * AUTO-PROMOTE branch behind the same helper, and that is the far larger
  * surface of the two: `getWaitlistWindow` returns `auto_promote` for
- * everything up to (cancel deadline − 1h), against exactly one hour of
+ * everything up to (class start − 1h), against exactly one hour of
  * `first_come_first_claimed`. Read this paragraph as being about both
  * branches. `api-errors.ts` states the
  * rule this obeys, with this exact scenario as its example: "`error` is the
@@ -536,7 +536,7 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  * into the phrase this catch logs. On the broadcast branch
  * (`first_come_first_claimed`) every student queued on this class was silently
  * not told a seat opened. On the auto-promote branch, which covers everything
- * up to (cancel deadline − 1h) and is therefore the commoner of the two by a
+ * up to (class start − 1h) and is therefore the commoner of the two by a
  * wide margin, the loss is narrower and sharper: ONE specific student who
  * should now hold that seat does not. Either way `waiting` sizes it — 0 is a
  * non-event, 12 is a seat that now goes unsold and reprices the class for
@@ -556,9 +556,9 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  *
  * One case the sweep still cannot reach, stated because "repaired within a
  * tick" would otherwise read as unconditional: a drop in the last tick before
- * the cancel deadline. The class is `frozen` by the next tick and the sweep
- * will not promote past a deadline, so for that final tick this line is
- * still the only record. It is not the multi-cancel case — a broadcast dropped
+ * class start. The class is `frozen` by the next tick and the sweep will not
+ * promote past start, so for that final tick this line is still the only
+ * record. It is not the multi-cancel case — a broadcast dropped
  * after an earlier one succeeded IS repaired, because `Class.spotBroadcastAt`
  * is cleared by the claim that consumed the earlier seat.
  */
