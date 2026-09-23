@@ -340,7 +340,7 @@ describe('DELETE /api/account', () => {
       method: 'DELETE',
       headers: cookie(acc.token),
     });
-    expect(res.status).toBe(200);
+    expect(await expectApplied(res)).toEqual({ deleted: true });
 
     // The service tests assert the composed order; this asserts the ROUTE
     // composes it — both profiles gone in one request, not just the first.
@@ -849,7 +849,7 @@ describe('DELETE /api/account', () => {
    * `lock_timeout`: once the holder releases, one request erases, and the
    * other, reading after that commit, meets the CAS and not `55P03`.
    */
-  it('answers both halves of a concurrent erasure with success', async () => {
+  it('answers a concurrent duplicate erasure with success', async () => {
     const acc = await seedStudentOnly('concurrent');
 
     let release!: () => void;
@@ -896,6 +896,13 @@ describe('DELETE /api/account', () => {
     // told it failed. A 500 here is the defect — a successful outcome
     // reported as an error — and this is the assertion that names it.
     expect([a.status, b.status]).toEqual([200, 200]);
+    // Both clear the cookie — the caller's session points at nothing either
+    // way, winner or loser.
+    for (const res of [a, b]) {
+      const setCookie = res.headers.get('set-cookie');
+      expect(setCookie).toContain('fair_yoga_session=;');
+      expect(setCookie).toContain('Max-Age=0');
+    }
     // The loser's erasure had nothing left to do — the winner did it — so it
     // is answered as already done; the winner as an ordinary deletion. Order
     // of the two responses is not fixed, so compare as a sorted pair.
