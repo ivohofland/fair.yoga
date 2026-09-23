@@ -6,6 +6,7 @@ import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { cleanupExpiredAuth } from '@/services/auth-cleanup';
 import { reapClosedWaitlistEntries } from '@/services/waitlist-retention';
+import { reapExpiredNotifications } from '@/services/notification-retention';
 import { auditTeacherTimezones } from '@/services/timezone-audit';
 
 /**
@@ -23,10 +24,11 @@ import { auditTeacherTimezones } from '@/services/timezone-audit';
  * the already-filled window'` test drives `/api/cron/generate-classes` from
  * a Playwright spec, so a precedent for testing a cron route exists. The
  * services below are each covered (`auth-cleanup.test.ts`,
- * `waitlist-retention.test.ts`) and `requireCronAuth` is covered
- * (`lib/cron-auth.test.ts`); what remains uncovered is the WIRING — that this
- * route calls the sweeps it NAMES. `route.test.ts` mocks all three, so it
- * cannot see that. That is the same exposure `scheduler.test.ts`'s job-to-sweep map
+ * `waitlist-retention.test.ts`, `notification-retention.test.ts`) and
+ * `requireCronAuth` is covered (`lib/cron-auth.test.ts`); what remains
+ * uncovered is the WIRING — that this route calls the sweeps it NAMES.
+ * `route.test.ts` mocks every sweep, so it cannot see that. That is the same
+ * exposure `scheduler.test.ts`'s job-to-sweep map
  * was built to close on the scheduler side ("a job could carry the right name
  * and interval while running the wrong sweep"), and the route side still has no
  * equivalent — a decision, not an oversight.
@@ -60,7 +62,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // (one vCPU), and none is urgent.
   //
   // ISOLATED FROM EACH OTHER, matching the scheduler's `daily-cleanup` job,
-  // which runs all three through `isolatedSweeps`. An earlier revision awaited
+  // which runs every sweep through `isolatedSweeps`. An earlier revision awaited
   // both plainly (before this route ran a third sweep), so a thrown
   // `cleanupExpiredAuth` skipped retention entirely.
   // `DEPLOYMENT.md` documents `CRON_SCHEDULER=off` + systemd timers as a
@@ -73,8 +75,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   //
   // THE STATUS IS THE VERDICT, AND A 2xx FROM THIS ROUTE MEANS EVERY SWEEP RAN.
   // If any failed the answer is non-2xx and the body still carries every
-  // outcome — read `data.auth.ok`, `data.waitlistRetention.ok`, and
-  // `data.timezoneAudit.ok` to see which one did not. Partial failure counts:
+  // outcome — read `data.auth.ok`, `data.waitlistRetention.ok`,
+  // `data.notificationRetention.ok`, and `data.timezoneAudit.ok` to see which
+  // one did not. Partial failure counts:
   // one sweep succeeding does not make the request as a whole a success,
   // because for an HTTP caller a 2xx means "what you asked for happened", and
   // if a sweep did not run, it did not.
@@ -92,7 +95,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `--fail`.
   const auth = await settle(() => cleanupExpiredAuth(prisma));
   const waitlistRetention = await settle(() => reapClosedWaitlistEntries(prisma));
-  // Third, matching the scheduler job this route mirrors — and reaching this
+  const notificationRetention = await settle(() => reapExpiredNotifications(prisma));
+  // Last, matching the scheduler job this route mirrors — and reaching this
   // route at all matters: under the `CRON_SCHEDULER=off` + systemd mode
   // `DEPLOYMENT.md` documents, this is the ONLY trigger for these sweeps, so a
   // check wired to the scheduler alone would be dead there.
@@ -103,8 +107,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // whose status is the verdict (it answers 503 with a full `degraded` body
   // rather than trading one for the other).
   return respondOk(
-    { auth, waitlistRetention, timezoneAudit },
-    worstStatus([auth, waitlistRetention, timezoneAudit]),
+    { auth, waitlistRetention, notificationRetention, timezoneAudit },
+    worstStatus([auth, waitlistRetention, notificationRetention, timezoneAudit]),
   );
 });
 

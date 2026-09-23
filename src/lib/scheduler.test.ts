@@ -15,7 +15,7 @@ const MINUTE = 60 * 1000;
 const db = {} as unknown as PrismaClient;
 
 /**
- * The eleven sweeps, written once.
+ * The sweeps `SchedulerSweeps` names, written once.
  *
  * Hoisted because both tests below used to carry their own verbatim copy, so
  * the list existed three times (here and in each test) and nothing made the
@@ -32,6 +32,7 @@ const SWEEP_NAMES = [
   'cleanupExpiredAuth',
   'runWaitlistReconciliationTick',
   'reapClosedWaitlistEntries',
+  'reapExpiredNotifications',
   'auditTeacherTimezones',
 ] as const;
 
@@ -154,16 +155,17 @@ describe('buildJobs', () => {
       'email-fallback': ['processEmailFallback'],
       'class-generation': ['generateClassInstances', 'generateStudioClassInstances'],
       'payment-reminders': ['processPaymentReminders'],
-      // Three sweeps, and the ORDER here is pinned without being load-bearing.
-      // `isolatedSweeps` order is meaningful for `class-transitions` — a class
-      // must transition to in-progress before it can be completed — and this
-      // assertion is a whole-map equality, so it pins order everywhere. Nothing
-      // couples auth cleanup, waitlist retention, or the timezone audit to one
-      // another; do not read a dependency into this line.
+      // The ORDER here is pinned without being load-bearing. `isolatedSweeps`
+      // order is meaningful for `class-transitions` — a class must transition
+      // to in-progress before it can be completed — and this assertion is a
+      // whole-map equality, so it pins order everywhere. Nothing couples auth
+      // cleanup, waitlist retention, notification retention, or the timezone
+      // audit to one another; do not read a dependency into this line.
       'daily-cleanup': [
         'cleanupExpiredAuth',
         'reapClosedWaitlistEntries',
-        // Last, so a real failure in either sweep above still surfaces as the
+        'reapExpiredNotifications',
+        // Last, so a real failure in any sweep above still surfaces as the
         // job's `lastError` rather than being masked by a standing data
         // problem this one reports every run until someone fixes the row.
         'auditTeacherTimezones',
