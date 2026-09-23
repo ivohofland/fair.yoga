@@ -1144,19 +1144,13 @@ under any ordering discipline this document could add. The branch above
 answers "what does the client see", not "does this still happen" — it still
 does, at the rates measured above (32/100, 1/120).
 
-**Since #232, this is the one cycle in this family `classifyApiError` logs at
-`error` rather than `warn`.** Of the slot-key cycles this section records,
-`updateClass` × `updateClass` is the only one still live: the sync side
-closed when #194 deleted it, and the generator-vs-template-create pairing is
-structurally blocked by the second new index two sections up ("The pairing
-that looks worst is unreachable"). `classifyApiError`'s `deadlock` kind
-(`src/lib/api-errors.ts`) logs at `error` for exactly this reason — a fire
-here is the one known trade this section keeps recording rather than fixing,
-and it is meant to page every time rather than being bucketed with an
-ordinary lock-timeout `warn`. This is a claim about the slot-key family only;
-it says nothing about deadlock cycles this document records elsewhere (the
-room-archive and RESTRICT-trigger sections each argue their own cycle's
-status independently).
+**Since #232, every `deadlock` kind logs at `error`** — `TRANSIENT_KIND_LEVEL`
+(`src/lib/api-errors.ts`) is the authority, and the reason is general to the
+kind, not specific to this cycle. What follows from that here: the
+`updateClass` × `updateClass` slot-key trade this section keeps recording
+rather than fixing will page every time it fires. Which other slot-key
+cycles are still live is argued where each is recorded in this section, not
+restated here.
 
 ## The `Student` row is the erasure's gate (#183)
 
@@ -1655,7 +1649,7 @@ envelope (`class-generator.ts:408`): Postgres's `deadlock_timeout` breaks the
 cycle at its 1 s default, which this repo does not override, and the sweep's
 own `LOCK_TIMEOUT_SQL` is `SET LOCAL lock_timeout = '2s'` (`db-locks.ts:94`).
 Both outcomes are legible — `40P01` is in `TRANSIENT_SQLSTATE_KIND`
-(`api-errors.ts:174`) and answers 503 retryable, and the far likelier `P2003`
+(`api-errors.ts`) and answers 503 retryable, and the far likelier `P2003`
 is answered 409 by the catch, which logs at `warn` because reaching it means
 the pre-check did not stop the delete. A
 `lock_timeout` on the delete was considered and rejected: it would add a
