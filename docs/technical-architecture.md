@@ -304,9 +304,9 @@ interface ClassTransition {
 Implements the hybrid promotion model:
 
 ```typescript
-// More than 1h before cancel_deadline: auto-promote the queue head
-// Final hour BEFORE the deadline: first-come-first-claimed broadcast
-// At or after the deadline: frozen — nothing happens
+// More than 1h before class start: auto-promote the queue head
+// Final hour before start: first-come-first-claimed broadcast
+// At or after start: frozen — nothing happens
 async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
   const cls = await db.class.findUnique({
     where: { id: classId }, include: { calendarEntry: true }, ...
@@ -316,9 +316,9 @@ async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
     return { action: 'none' };
   }
 
-  const window = getWaitlistWindow(
-    cls.calendarEntry.date, cls.calendarEntry.startTime, cls.cancelDeadline, tz, now,
-  );
+  // Reads only the entry's date/startTime and a timezone — the cancel
+  // deadline plays no part in the window (#236).
+  const window = getWaitlistWindow(cls.calendarEntry, tz, now);
   if (window === 'frozen') return { action: 'frozen' };
 
   if (window === 'auto_promote') {
@@ -708,7 +708,7 @@ Six idempotent jobs run in-process on `setInterval`, started once when the Node 
 | Class generation | Every hour | Extends recurring class and studio-class instances on the rolling 4-week window |
 | Payment reminders | Every hour | Flips pending payments to overdue after 7 days, then reminds on overdue payments not reminded in the last 7 days |
 | Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable |
-| Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before the cancel deadline |
+| Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before class start |
 
 ---
 

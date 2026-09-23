@@ -1001,16 +1001,8 @@ export async function handleSpotFreed(
     // `PUT /api/registrations/[id]` scopes its write so `late_cancel → attended`
     // is refused while the class is `open`, and this branch only ever runs on an
     // `open` class. Once a class starts the move is allowed, and by then this
-    // branch cannot run at all.
-    //
-    // Deliberately NOT argued from the clock. An earlier version reasoned that
-    // the two "never met in practice" because this branch ran at least 6 h
-    // before the start (minimum `DEADLINE_HOURS`) while attendance is written at
-    // class time. That spacer was a property of the window's old
-    // deadline-anchored boundaries, not of this code — #236 anchors the window
-    // on class start instead, so this branch now runs right up to it and the
-    // spacer is gone. The structural argument above is what survives that; the
-    // timing one would not have.
+    // branch cannot run at all — including right up against start itself,
+    // since this branch runs in the final hour before it (#236).
     //
     // `lockClassRow` here is the same helper `addToWaitlist`, `promoteNext`
     // and `claimSpot` above now take too — all four share the bounded 2s

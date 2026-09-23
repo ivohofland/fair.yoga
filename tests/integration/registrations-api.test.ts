@@ -1726,12 +1726,9 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
    * `start − 1h ≤ now < start`, which works out to `offset ≤ 30` on one side
    * and `offset > −30` on the other.
    *
-   * `minStudents: 0`, not `1`: the live scheduler on this worktree's server
-   * (`instrumentation.ts`) runs `autoCancelClasses` on a real tick, and a
-   * class this close to start sits inside every `CANCEL_CHECK_HOURS` window
-   * (`class-transitions.ts` tops out at 4h) rather than safely outside all of
-   * them. Once the canceller's registration is cancelled, zero active
-   * registrations must never read as below minimum.
+   * `minStudents: 0`, not `1` — the fixture starts inside the auto-cancel
+   * check window, so zero active registrations must not read as below
+   * minimum once the canceller's registration is cancelled.
    */
   async function makeBroadcastFixture(minuteOffset: number) {
     const target = new Date(Date.now() + (30 + minuteOffset) * 60 * 1000);
