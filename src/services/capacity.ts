@@ -86,9 +86,8 @@ export interface SeatCount {
  * the transaction already holds locked.
  *
  * The `TransactionClientOnly` brand rejects a bare `PrismaClient` at compile
- * time (see `db-locks.ts`); `assertClassLockHeldBy` is the runtime half,
- * rejecting a token forged outside `lockClassRow` or carried across a
- * transaction boundary.
+ * time (see `db-locks.ts`) — a different property from the one
+ * `assertClassLockHeldBy` above checks.
  */
 export async function readSeatCount(
   tx: TransactionClientOnly,

@@ -7,19 +7,20 @@ import prettier from 'eslint-config-prettier';
 // qualified-name cast to `ClassLock` (src/lib/db-locks.ts, #219) in non-test
 // `src/` — one object so the broad src/ block and its override for
 // src/services/roster-link.ts can't drift apart. Matches `x as ClassLock`,
-// `<ClassLock>x`, and the qualified-name form of each (`x as
-// dbLocks.ClassLock`, the house idiom for `import * as dbLocks from
-// '@/lib/db-locks'`, and the likeliest form to get copied into `src/`);
-// `x as unknown as ClassLock` is already an outer `TSAsExpression` whose own
-// `typeAnnotation` is `ClassLock`, so it needs no separate branch.
+// `<ClassLock>x`, and the qualified-name form of each — `x as
+// dbLocks.ClassLock`, since a namespace import (`import * as dbLocks from
+// '@/lib/db-locks'`) puts the name behind a qualifier — and the likeliest
+// such form to get copied into `src/`; `x as unknown as ClassLock` is
+// already an outer `TSAsExpression` whose own `typeAnnotation` is
+// `ClassLock`, so it needs no separate branch.
 //
 // An early signal, not the guarantee: it matches by the literal name
 // `ClassLock`, so an aliased import, a wrapper type (`as
-// Readonly<ClassLock>`), or a generic escapes it silently. The runtime check
-// — `assertClassLockHeldBy` in db-locks.ts, which `readSeatCount` calls
-// before it counts anything — is what actually enforces this; it catches
-// every one of those, plus a genuine token forged some other way or carried
-// across a transaction boundary, none of which any lint selector can see.
+// Readonly<ClassLock>`), or a generic escapes it silently.
+// `assertClassLockHeldBy` in db-locks.ts is the runtime check that actually
+// enforces this; it catches every one of those, plus a token forged some
+// other way or carried across a transaction boundary, none of which any
+// lint selector can see.
 const classLockCastSelector = {
   selector: [
     "TSAsExpression[typeAnnotation.typeName.name='ClassLock']",
