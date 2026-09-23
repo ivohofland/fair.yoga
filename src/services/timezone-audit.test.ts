@@ -20,8 +20,8 @@ const SENTINEL = 'Invalid/Test_Zone_145';
  * THIS FILE RUNS IN THE PARALLEL `unit` TIER, so a test that calls
  * `auditTeacherTimezones` passes it a client scoped (`scopeSweep`) to the
  * teacher ids this file itself created — a concurrent file creates teachers
- * freely, and `auditTeacherTimezones`'s own `groupBy` reads every live one
- * regardless of which file made it. Scoping is what makes an exact `checked`
+ * freely, earlier runs leave live ones behind, and `auditTeacherTimezones`'s
+ * own `groupBy` reads every live one regardless of where it came from. Scoping is what makes an exact `checked`
  * or `teachers` count safe, and what keeps a test whose call is not wrapped
  * in `.rejects` from throwing over a concurrent file's own bad zone.
  *
@@ -79,15 +79,16 @@ describe('auditTeacherTimezones', () => {
   it('names an unresolvable stored zone and throws', async () => {
     const teacherId = await seedTeacher('bad', SENTINEL);
     const scoped = scopeSweep(prisma, { Teacher: { id: { in: [teacherId] } } });
-    await vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => vi.restoreAllMocks());
     await expect(auditTeacherTimezones(scoped.db)).rejects.toThrow(InvalidTimezoneError);
-    vi.restoreAllMocks();
   });
 
   it('carries the offending zone on the error, so the log line names it', async () => {
     const teacherId = await seedTeacher('named', SENTINEL);
     const scoped = scopeSweep(prisma, { Teacher: { id: { in: [teacherId] } } });
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
     await expect(auditTeacherTimezones(scoped.db)).rejects.toMatchObject({
       zones: expect.arrayContaining([SENTINEL]),
     });
@@ -95,7 +96,6 @@ describe('auditTeacherTimezones', () => {
       expect.objectContaining({ invalid: expect.arrayContaining([SENTINEL]) }),
       expect.stringContaining('unresolvable'),
     );
-    vi.restoreAllMocks();
   });
 
   /**
@@ -112,6 +112,7 @@ describe('auditTeacherTimezones', () => {
     expect(await scoped.db.teacher.count()).toBe(1);
     const summary = await auditTeacherTimezones(scoped.db);
     expect(summary.invalid).not.toContain(SENTINEL);
+    expect(summary.checked).toBe(0);
   });
 
   it('counts every live teacher holding a bad zone, not just the distinct zones', async () => {
@@ -119,6 +120,7 @@ describe('auditTeacherTimezones', () => {
     const idB = await seedTeacher('dup-b', SENTINEL);
     const scoped = scopeSweep(prisma, { Teacher: { id: { in: [idA, idB] } } });
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
     await expect(auditTeacherTimezones(scoped.db)).rejects.toThrow(InvalidTimezoneError);
 
     // Scoped to idA/idB: the audit reads only these two teachers regardless
@@ -130,6 +132,5 @@ describe('auditTeacherTimezones', () => {
     });
     expect(summary.teachers).toBe(2);
     expect(message).toContain('unresolvable');
-    vi.restoreAllMocks();
   });
 });

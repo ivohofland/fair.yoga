@@ -372,12 +372,14 @@ describe('processEmailFallback (DB)', () => {
               if (where?.isRead !== false || where?.emailSent !== false) return rows;
               if (interposed > 0) return rows;
               interposed += 1;
-              // A whole second sweep — on the plain client, so it never
-              // re-enters this hook — landing between this sweep's candidate
-              // read and its first claim. That is exactly the interleaving the
-              // 5-minute scheduler and a cron request produce; two sweeps in a
-              // `Promise.all` only reach it by luck.
-              await processEmailFallback(prisma);
+              // A whole second sweep — on a client built from the plain one,
+              // so it never re-enters this hook, and scoped like the outer one
+              // so it claims only this test's notification — landing between
+              // this sweep's candidate read and its first claim. That is
+              // exactly the interleaving the 5-minute scheduler and a cron
+              // request produce; two sweeps in a `Promise.all` only reach it by
+              // luck.
+              await processEmailFallback(scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } }).db);
               return rows;
             },
           },
@@ -410,7 +412,7 @@ describe('processEmailFallback (DB)', () => {
       sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
 
       const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
-      await expect(processEmailFallback(scoped.db)).rejects.toThrow(/failed/);
+      await expect(processEmailFallback(scoped.db)).rejects.toThrow(/1 of 1 sends failed$/);
 
       expect(sendsTo(teacherEmail)).toBe(1);
       // Claimed, then released — a claim left standing would silently retire a
@@ -426,7 +428,7 @@ describe('processEmailFallback (DB)', () => {
       sendMock.mockRejectedValueOnce(new Error('socket hang up'));
 
       const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
-      await expect(processEmailFallback(scoped.db)).rejects.toThrow(/failed/);
+      await expect(processEmailFallback(scoped.db)).rejects.toThrow(/1 of 1 sends failed$/);
 
       const after = await prisma.notification.findUniqueOrThrow({
         where: { id: notification.id },
