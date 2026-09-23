@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import type { ClassStatus, WaitlistStatus } from '@prisma/client';
 import { log } from '@/lib/log';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
@@ -649,8 +649,8 @@ describe('reapClosedWaitlistEntries', () => {
       // run — the cap warning, for instance — so it would survive the per-class
       // line being deleted outright.
       expect(warn).toHaveBeenCalledWith(
-        expect.objectContaining({ classId: HELD, transient: true }),
-        expect.stringContaining('lost a lock race'),
+        expect.objectContaining({ classId: HELD, transient: true, transientKind: 'lock_timeout' }),
+        'waitlist retention hit a transient database failure for one class — retrying next run',
       );
       // A transient failure must NOT page: `error` is the all-failed branch's
       // level, and this run had a success in it.
@@ -935,6 +935,70 @@ describe('reapClosedWaitlistEntries', () => {
       expect(error).toHaveBeenCalledWith(
         expect.objectContaining({ classes: 3, failed: 2, deleted: 1 }),
         expect.stringContaining('most of the classes it tried'),
+      );
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  /**
+   * The other kind at the per-class site: `pool_exhausted` is transient too,
+   * but its own level in `TRANSIENT_KIND_LEVEL` (`lib/api-errors.ts`) is
+   * `error`, not `warn` — unlike the real `55P03`/`lock_timeout` the
+   * isolation test above provokes. Stubbed for the same reason the majority
+   * test above is: a specific Prisma code is an input to pin, not a timing
+   * outcome to reproduce.
+   *
+   * Two classes, one failing, so the run-level branch taken is `warn`
+   * ("swept, but some classes could not be reaped") rather than the
+   * all-failed `error` — which is what makes the per-class `error` call
+   * below attributable to the kind and not to `report()`'s own all-failed
+   * branch.
+   */
+  it('logs a pool_exhausted per-class failure at error, while the run itself only warns', async () => {
+    const classIds = ['class-a', 'class-b'];
+    let calls = 0;
+    const db = {
+      waitlistEntry: {
+        groupBy: async () => classIds.map((classId) => ({ classId })),
+      },
+      $transaction: async (fn: (tx: unknown) => Promise<number>) => {
+        const classId = classIds[calls++];
+        if (classId === 'class-a') {
+          throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+            code: 'P2024',
+            clientVersion: Prisma.prismaVersion.client,
+          });
+        }
+        return fn({
+          $executeRawUnsafe: async () => 0,
+          $queryRaw: async () => [{ id: classId }],
+          waitlistEntry: { deleteMany: async () => ({ count: 1 }) },
+        });
+      },
+    } as unknown as PrismaClient;
+
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      const summary = await reapClosedWaitlistEntries(db, { now: NOW, maxClasses: 50 });
+
+      expect(summary).toMatchObject({ classes: 2, failed: 1, deleted: 1 });
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          classId: 'class-a',
+          transient: true,
+          transientKind: 'pool_exhausted',
+        }),
+        'waitlist retention hit a transient database failure for one class — retrying next run',
+      );
+      // The run-level line, distinct from the per-class one above: the run
+      // reaped one of two, so `report()` takes the partial-failure `warn`
+      // branch, not the all-failed `error` one.
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ classes: 2, failed: 1 }),
+        'waitlist retention swept, but some classes could not be reaped',
       );
     } finally {
       error.mockRestore();

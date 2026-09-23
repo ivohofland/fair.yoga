@@ -21,7 +21,7 @@ import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { readSeatCount } from '@/services/capacity';
 import { lockClassRow, lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
-import { isTransientDbError } from '@/lib/api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
@@ -307,8 +307,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // booking has committed. What a lost write costs: `tierSelectedAt` stays
     // null, so the student keeps the first-booking tier prompt and the
     // anonymous price line until a later write sets it — their next
-    // self-booking or join, or a tier change. `error` unless the failure is
-    // a lost race.
+    // self-booking or join, or a tier change. `error` unless the failure's
+    // kind logs at `warn` — `TRANSIENT_KIND_LEVEL` (`lib/api-errors.ts`) is
+    // the authority.
     if (!rosterStudentId) {
       try {
         await prisma.student.updateMany({
@@ -316,9 +317,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           data: { tierSelectedAt: new Date() },
         });
       } catch (err) {
-        const transient = isTransientDbError(err);
-        log[transient ? 'warn' : 'error'](
-          { err, studentId, classId: body.classId, registrationId: registration.id, transient },
+        const failure = transientDbFailure(err);
+        log[failure?.level ?? 'error'](
+          {
+            err,
+            studentId,
+            classId: body.classId,
+            registrationId: registration.id,
+            transient: failure !== null,
+            transientKind: failure?.kind ?? null,
+          },
           'booking committed but its tierSelectedAt write failed',
         );
       }

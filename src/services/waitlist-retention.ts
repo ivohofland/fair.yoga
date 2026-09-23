@@ -181,7 +181,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { lockClassRow } from '@/lib/db-locks';
-import { isTransientDbError } from '@/lib/api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
 /**
@@ -302,8 +302,9 @@ export interface ReapOptions {
  * `ReconciliationFailedError` tolerates a bounded run of all-transient ticks,
  * because that sweep only INVOKES a class in the rare state it exists for — a
  * free seat and a live queue at the same moment — and skips every other
- * candidate, so one invoked class losing a benign lock race is the ordinary
- * all-failed tick there, not the edge case. This sweep does not — it
+ * candidate, so one invoked class hitting a benign transient database failure
+ * is the ordinary all-failed tick there, not the edge case. This sweep does
+ * not — it
  * throws unconditionally, transience-blind, the moment every class it
  * attempted fails. It runs once daily over a batch of up to
  * `MAX_CLASSES_PER_RUN` terminal classes that essentially nothing else is
@@ -459,22 +460,25 @@ export async function reapClosedWaitlistEntries(
       });
       deleted += count;
     } catch (err) {
-      // Classified, not blanket-`error`, for the reason `reconcileOne` sets out
-      // at length: `api-errors.ts` reserves `error` for what should page
-      // someone, and a lock timeout on a contended row is the system doing what
-      // it was configured to do — retried on the next run. That matters here
-      // specifically because this module's OWN isolation test provokes `55P03`
-      // and calls it "the realistic failure for this code", so the routine
-      // failure was logging at paging level.
+      // Classified by kind, not blanket-`error`, for the reason `reconcileOne`
+      // (`waitlist-reconciliation.ts`) sets out at length: `TRANSIENT_KIND_LEVEL`
+      // (`lib/api-errors.ts`) is the alerting contract, and a lock timeout on a
+      // contended row is the system doing what it was configured to do —
+      // retried on the next run — while a `pool_exhausted` or `deadlock` is an
+      // operational fault and stays at `error` even though it is transient. That
+      // matters here specifically because this module's OWN isolation test
+      // provokes `55P03` and calls it "the realistic failure for this code", so
+      // the routine failure was logging at paging level before this split.
       //
       // `failed` and `classes` ride along so a line reads as one of N rather
       // than as an isolated incident.
-      const transient = isTransientDbError(err);
+      const failure = transientDbFailure(err);
+      const transient = failure !== null;
       failed += 1;
-      log[transient ? 'warn' : 'error'](
-        { err, classId, transient, failed, classes: batch.length },
+      log[failure?.level ?? 'error'](
+        { err, classId, transient, transientKind: failure?.kind ?? null, failed, classes: batch.length },
         transient
-          ? 'waitlist retention lost a lock race for one class — retrying next run'
+          ? 'waitlist retention hit a transient database failure for one class — retrying next run'
           : 'waitlist retention failed for one class and will not recover by retrying',
       );
     }
@@ -517,8 +521,9 @@ export async function reapClosedWaitlistEntries(
 function report(summary: ReapSummary): void {
   if (summary.classes > 0 && summary.failed === summary.classes) {
     // `error`, whatever each individual failure was classified as above.
-    // Individually each may be a routine lock race; a run that attempted N
-    // classes and failed all N is a different statement at any N, and the one
+    // Individually each may be a routine transient database failure; a run
+    // that attempted N classes and failed all N is a different statement at
+    // any N, and the one
     // that must not be swallowed.
     log.error(summary, 'waitlist retention reaped nothing — every class it tried failed');
     throw new RetentionFailedError(summary.classes);

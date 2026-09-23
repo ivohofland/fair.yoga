@@ -37,7 +37,7 @@
  * half covered without a line addressing it, and it is why re-running the hook
  * is the whole action.
  *
- * What it detects is not bounded by one tick. A lock race the next tick
+ * What it detects is not bounded by one tick. A transient failure the next tick
  * wins and a wedged row lock no tick will ever win are the SAME observation
  * inside a single pass — only repetition separates them — so the escalation
  * here reads a count that outlives the call. The sweep itself stays stateless:
@@ -50,7 +50,7 @@
  * were already wrong three commits into the branch that wrote them.
  */
 import type { CancelDeadline, PrismaClient } from '@prisma/client';
-import { isTransientDbError } from '@/lib/api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { classStartInstant } from '@/lib/timezone';
@@ -188,10 +188,10 @@ const MAX_CONSECUTIVE_CONTENDED_TICKS = 5;
 /**
  * What one caller remembers between ticks.
  *
- * The sweep cannot tell a lock race that the next tick repairs from a wedged
- * row lock that no tick will ever repair, because both look identical inside
- * one tick. Only repetition separates them, and only a caller that persists
- * across ticks can see repetition.
+ * The sweep cannot tell a transient failure that the next tick repairs from a
+ * wedged row lock that no tick will ever repair, because both look identical
+ * inside one tick. Only repetition separates them, and only a caller that
+ * persists across ticks can see repetition.
  */
 export interface ReconciliationStreaks {
   /** Consecutive ticks in which every invoked class failed, all transiently. */
@@ -310,9 +310,9 @@ export function runWaitlistReconciliationTick(db: PrismaClient): Promise<Reconci
  * candidate is skipped as `full`, `already_broadcast` or `frozen` and enters
  * neither list. Nothing makes two classes hit that state on the same tick, so
  * one invoked class is the usual shape of a tick that invoked anything at
- * all — and with one invoked class, "a class lost a lock race" and "every
- * class failed" are the same tick, so a benign race would report a degraded
- * job. Hence `reason` — `non_transient` throws on the first such
+ * all — and with one invoked class, "a class hit a transient database
+ * failure" and "every class failed" are the same tick, so a benign one would
+ * report a degraded job. Hence `reason` — `non_transient` throws on the first such
  * tick, while `contended` waits for `MAX_CONSECUTIVE_CONTENDED_TICKS` of them
  * unbroken. `decideEscalation` is where that split is made.
  */
@@ -620,16 +620,17 @@ async function reconcileOne(
     // any case, so nothing outside this loop protects the classes behind a
     // contended one.
     //
-    // Classified, not blanket-`warn`: `api-errors.ts` reserves `error` for what
-    // should page someone, and a lock timeout on a contended row is the system
-    // doing what it was configured to do — retried on the next tick, which is
-    // what makes a separate retry unnecessary. That reasoning covers lock races
-    // and nothing else. A schema drift, a dangling FK, a `P2002` regression
-    // inside `promoteNext` — none of those clear on retry, and the trigger
-    // condition is not consumed by the failure, so the class fails again on
-    // every tick, forever. Blanket `warn` would make a permanently broken
-    // promotion path invisible, which is the shape of the defect this whole
-    // module exists to remove. Both live callers split on exactly this call —
+    // Classified by kind, not blanket-`warn`: `TRANSIENT_KIND_LEVEL`
+    // (`lib/api-errors.ts`) is the alerting contract, and it does not put every
+    // transient failure at `warn` — a `pool_exhausted` or `deadlock` is `error`
+    // there too, an operational fault rather than the system doing what it was
+    // configured to do. A schema drift, a dangling FK, a `P2002` regression
+    // inside `promoteNext` — none of those clear on retry either, and the
+    // trigger condition is not consumed by the failure, so the class fails
+    // again on every tick, forever. Blanket `warn` for every transient kind
+    // would make a permanently broken promotion path indistinguishable from
+    // routine contention, which is the shape of the defect this whole module
+    // exists to remove. Both live callers split on exactly this classification —
     // see `promoteAfterCancel` in the registrations route and
     // `deleteStudentAccount`'s post-commit loop.
     //
@@ -639,30 +640,35 @@ async function reconcileOne(
     // that actually surfaces a broken sweep NOW is `ReconciliationFailedError`,
     // which reaches `/api/health` through the scheduler.
     //
-    // Which is why `transient` is RETURNED and not merely logged. It reaches
-    // that error through `transientFailedClassIds`, and `decideEscalation`
-    // spends it on WHEN: a tick that lost every class non-transiently reports
-    // the job degraded at once, while an all-transient one is tolerated for
-    // `MAX_CONSECUTIVE_CONTENDED_TICKS`. Misclassifying one failure therefore
-    // moves an escalation by that whole tolerance in one direction or hides it
-    // in the other — a larger consequence than the log level this line picks.
-    const transient = isTransientDbError(err);
+    // Which is why `transient` is RETURNED and not merely logged, and why it
+    // stays a plain boolean rather than following the log line's level: it
+    // reaches `ReconciliationFailedError` through `transientFailedClassIds`, and
+    // `decideEscalation` spends it on WHEN, not on how loud this line is — a
+    // tick that lost every class non-transiently reports the job degraded at
+    // once, while an all-transient one is tolerated for
+    // `MAX_CONSECUTIVE_CONTENDED_TICKS` regardless of which kind each failure
+    // was. Misclassifying one failure's TRANSIENCE therefore moves an
+    // escalation by that whole tolerance in one direction or hides it in the
+    // other — a larger consequence than the log level this line picks.
+    const failure = transientDbFailure(err);
+    const transient = failure !== null;
     // Consecutive failures for THIS class, read from the tick before and
     // written for the tick after — see `TickFailures`'s docblock for why the
     // write lands in `.next` rather than mutating `.prior` in place.
     const classStreak = (failures.prior.get(cls.id) ?? 0) + 1;
     failures.next.set(cls.id, classStreak);
     const window = err instanceof SpotFreedError ? err.window : null;
-    // `error` for a failure that will not clear by retrying (as before) OR for a
-    // transient one that has now stood for the whole threshold. The second is the
-    // only signal a class wedged behind a healthy sibling ever produces: the
+    // `error` for a failure that will not clear by retrying (as before), for a
+    // kind whose own level in `TRANSIENT_KIND_LEVEL` is already `error`, OR for
+    // a transient one that has now stood for the whole threshold. The third is
+    // the only signal a class wedged behind a healthy sibling ever produces: the
     // tick-level escalation requires that nothing reconciled, so it cannot see
     // this class at all.
     const stuck = transient && classStreak >= MAX_CONSECUTIVE_CONTENDED_TICKS;
-    log[transient && !stuck ? 'warn' : 'error'](
-      { err, classId: cls.id, transient, classStreak, branch: window ?? 'unknown' },
+    log[failure === null || stuck ? 'error' : failure.level](
+      { err, classId: cls.id, transient, transientKind: failure?.kind ?? null, classStreak, branch: window ?? 'unknown' },
       transient
-        ? `waitlist reconciliation lost a lock race for one class — ${spotFreedLoss(window)}, retrying next tick`
+        ? `waitlist reconciliation hit a transient database failure for one class — ${spotFreedLoss(window)}, retrying next tick`
         : `waitlist reconciliation failed for one class and will not recover by retrying — ${spotFreedLoss(window)}`,
     );
     return { kind: 'failed', transient };
@@ -800,9 +806,10 @@ function report(
   }
 
   if (summary.failedClassIds.length > 0 && summary.reconciledClassIds.length === 0) {
-    // Every class lost a lock race and the streak is still short. The next
-    // tick retries; the job stays healthy. This is the false alarm #269 was
-    // filed about, and the line that keeps it visible without paging anyone.
+    // Every class hit a transient database failure and the streak is still
+    // short. The next tick retries; the job stays healthy. This is the false
+    // alarm #269 was filed about, and the line that keeps it visible without
+    // paging anyone.
     log.warn(payload, 'waitlist reconciliation lost every class to contention — retrying next tick');
     return;
   }
