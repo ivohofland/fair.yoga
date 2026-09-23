@@ -217,7 +217,7 @@ export const PUT = withErrorHandler(async (
     // trigger reaches the child, so both acquire entry then `StudioClass` and
     // neither has anywhere else to put its locks. Ordering this statement the
     // class family's way made it the one writer going against them: a straight
-    // AB-BA, degrading to a retryable 503 through `TRANSIENT_SQLSTATES`.
+    // AB-BA, degrading to a retryable 503 through `TRANSIENT_SQLSTATE_KIND`.
     // The class family resolves the same cascade the other way instead, by
     // pre-locking every `Class` row (`lockClassRowsOrdered({ entries: true })`)
     // before its archive's delete; there is no equivalent here because there

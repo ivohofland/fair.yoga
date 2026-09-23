@@ -1482,7 +1482,7 @@ where the erasure's own lock bound was added: *"That timeout cannot roll back a
 statement already blocked inside Postgres, only decline to begin another one."*
 
 So: the wait is unbounded, the advisory lock is held for all of it, and the
-`P2028` that eventually surfaces is a 503 via `TRANSIENT_PRISMA_CODES`
+`P2028` that eventually surfaces is a 503 via `TRANSIENT_PRISMA_CODE_KIND`
 (`src/lib/api-errors.ts`) rather than a bound. Still left unchanged — a bound
 here turns a slow send into a failed one, which is the original reasoning and
 survives — but the cost is now stated honestly instead of being talked down to
@@ -1640,7 +1640,7 @@ independent cycle.
 envelope (`class-generator.ts:408`): Postgres's `deadlock_timeout` breaks the
 cycle at its 1 s default, which this repo does not override, and the sweep's
 own `LOCK_TIMEOUT_SQL` is `SET LOCAL lock_timeout = '2s'` (`db-locks.ts:94`).
-Both outcomes are legible — `40P01` is in `TRANSIENT_SQLSTATES`
+Both outcomes are legible — `40P01` is in `TRANSIENT_SQLSTATE_KIND`
 (`api-errors.ts:174`) and answers 503 retryable, and the far likelier `P2003`
 is answered 409 by the catch, which logs at `warn` because reaching it means
 the pre-check did not stop the delete. A
@@ -2254,8 +2254,8 @@ stages the same behaviour as a test fixture; re-derive it with:
 git log -S'Every later statement raises' --oneline -- src/services/rule-lifecycle.test.ts
 ```
 
-**Why the guard is worse than no guard.** `TRANSIENT_SQLSTATES` and
-`TRANSIENT_PRISMA_CODES` (`src/lib/api-errors.ts`) list neither `25P02` nor
+**Why the guard is worse than no guard.** `TRANSIENT_SQLSTATE_KIND` and
+`TRANSIENT_PRISMA_CODE_KIND` (`src/lib/api-errors.ts`) list neither `25P02` nor
 anything it arrives as, so `isTransientDbError` answers `false` for it while it
 answers `true` for the `55P03` the guarded statement would have thrown.
 `erasureFailure` (`src/app/api/account/route.ts`) reads that boolean: a

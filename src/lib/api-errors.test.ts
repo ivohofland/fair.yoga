@@ -5,8 +5,10 @@ import {
   isLockTimeout,
   isRestrictViolationOn,
   isTransientDbError,
+  transientDbFailure,
   TERMINAL_TRIGGER_TAILS,
   type ApiFailure,
+  type TransientKind,
 } from './api-errors';
 import {
   liveFunctions,
@@ -649,13 +651,15 @@ describe('classifyApiError', () => {
    * same helper (the raw `FOR UPDATE`, then every model write after it in the
    * transaction it bounded).
    */
-  it.each<[string, Error]>([
+  it.each<[string, Error, TransientKind, 'warn' | 'error']>([
     [
       'a model write (PrismaClientUnknownRequestError, code: "55P03")',
       new Prisma.PrismaClientUnknownRequestError(
         `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
         { clientVersion: 'test' },
       ),
+      'lock_timeout',
+      'warn',
     ],
     [
       'a raw FOR UPDATE (PrismaClientKnownRequestError P2010, Code: `55P03`)',
@@ -663,6 +667,8 @@ describe('classifyApiError', () => {
         'Invalid `prisma.$queryRaw()` invocation:\n\n\nRaw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`',
         { code: 'P2010', clientVersion: 'test' },
       ),
+      'lock_timeout',
+      'warn',
     ],
     [
       'a deadlock victim (PrismaClientUnknownRequestError, code: "40P01")',
@@ -670,15 +676,18 @@ describe('classifyApiError', () => {
         `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected", severity: "ERROR", detail: Some("Process 1 waits for ShareLock on transaction 2; blocked by process 3."), column: None, hint: Some("See server log for query details.") }), transient: false })`,
         { clientVersion: 'test' },
       ),
+      'deadlock',
+      'error',
     ],
-  ])('maps %s to a 503 at warn, telling the caller to try again', (_label, thrown) => {
+  ])('maps %s to a 503 at its kind\'s level, telling the caller to try again', (_label, thrown, kind, level) => {
     expect(isTransientDbError(thrown)).toBe(true);
 
     const failure = classifyApiError(thrown);
 
     expect(failure.status).toBe(503);
-    expect(failure.level).toBe('warn');
+    expect(failure.level).toBe(level);
     expect(failure.message).toMatch(/try again/i);
+    expect(failure.detail).toEqual({ transientKind: kind });
   });
 
   /**
@@ -716,19 +725,21 @@ describe('classifyApiError', () => {
 
     expect(failure.status).toBe(503);
     expect(failure.status).not.toBe(500);
-    expect(failure.level).toBe('warn');
+    expect(failure.level).toBe('error');
     expect(failure.message).toMatch(/try again/i);
+    expect(failure.detail).toEqual({ transientKind: 'deadlock' });
   });
 
-  it.each<[string, string]>([
-    ['P2028 (interactive transaction budget expired)', 'P2028'],
-    ['P2024 (connection pool timeout)', 'P2024'],
-    ['P2034 (write conflict or deadlock)', 'P2034'],
-  ])('maps %s to a 503 at warn', (_label, code) => {
+  it.each<[string, string, TransientKind, 'warn' | 'error']>([
+    ['P2028 (interactive transaction budget expired)', 'P2028', 'tx_budget', 'warn'],
+    ['P2024 (connection pool timeout)', 'P2024', 'pool_exhausted', 'error'],
+    ['P2034 (write conflict or deadlock)', 'P2034', 'deadlock', 'error'],
+  ])('maps %s to a 503 at its kind\'s level', (_label, code, kind, level) => {
     const failure = classifyApiError(prismaError(code));
 
     expect(failure.status).toBe(503);
-    expect(failure.level).toBe('warn');
+    expect(failure.level).toBe(level);
+    expect(failure.detail).toEqual({ transientKind: kind });
   });
 
   /**
@@ -978,6 +989,47 @@ describe('isTransientDbError', () => {
    */
   it('ends the walk at a non-Error cause', () => {
     expect(isTransientDbError(new Error('outer', { cause: 'code: "55P03"' }))).toBe(false);
+  });
+});
+
+describe('transientDbFailure', () => {
+  const modelWrite = (state: string) =>
+    new Prisma.PrismaClientUnknownRequestError(
+      `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${state}", message: "m", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+      { clientVersion: Prisma.prismaVersion.client },
+    );
+  const rawQuery = (state: string) =>
+    new Prisma.PrismaClientKnownRequestError(
+      `Invalid \`prisma.$queryRaw()\` invocation:\n\n\nRaw query failed. Code: \`${state}\`. Message: \`ERROR: m\``,
+      { code: 'P2010', clientVersion: Prisma.prismaVersion.client },
+    );
+
+  it.each<[string, unknown, TransientKind, 'warn' | 'error']>([
+    ['55P03 model write', modelWrite('55P03'), 'lock_timeout', 'warn'],
+    ['55P03 raw query (P2010)', rawQuery('55P03'), 'lock_timeout', 'warn'],
+    ['40P01 model write', modelWrite('40P01'), 'deadlock', 'error'],
+    ['40P01 raw query (P2010)', rawQuery('40P01'), 'deadlock', 'error'],
+    ['40001 model write', modelWrite('40001'), 'serialization', 'warn'],
+    ['P2024', prismaError('P2024'), 'pool_exhausted', 'error'],
+    ['P2028', prismaError('P2028'), 'tx_budget', 'warn'],
+    ['P2034', prismaError('P2034'), 'deadlock', 'error'],
+  ])('classifies %s', (_label, error, kind, level) => {
+    expect(transientDbFailure(error)).toEqual({ kind, level });
+    expect(isTransientDbError(error)).toBe(true);
+  });
+
+  it('finds the kind through a cause chain', () => {
+    const wrapped = new Error('spot-freed hook failed', { cause: prismaError('P2024') });
+    expect(transientDbFailure(wrapped)).toEqual({ kind: 'pool_exhausted', level: 'error' });
+  });
+
+  it.each<[string, unknown]>([
+    ['a bare digit string with no framing', new Error('postcode 40P01 and 55P03 Lock Street')],
+    ['a non-transient Prisma code', prismaError('P2002')],
+    ['a non-error', 'code: "55P03"'],
+  ])('returns null for %s', (_label, error) => {
+    expect(transientDbFailure(error)).toBeNull();
+    expect(isTransientDbError(error)).toBe(false);
   });
 });
 
