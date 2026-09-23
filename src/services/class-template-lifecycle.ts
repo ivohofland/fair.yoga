@@ -955,8 +955,9 @@ export function pauseOrResumeTemplate(
 export type CreateClassTemplateInput = z.infer<typeof createClassTemplateSchema>;
 
 /**
- * A create either lands, loses the slot, or loses a contention race. The
- * `slot_conflict` arm carries `heldBy` for the same reason
+ * A create either lands, loses the slot, or hits a transient database
+ * failure a retry can eventually win. The `slot_conflict` arm carries
+ * `heldBy` for the same reason
  * `ArchiveTemplateResult`'s does: one exclusion constraint spans both
  * families (issue 298) and cannot say which raised it, so a fresh probe
  * answers.

@@ -322,8 +322,9 @@ export const PUT = withErrorHandler(async (
     const [message, code] = SLOT_TAKEN[result.heldBy];
     return respondError(message, 409, code);
   }
-  // This transaction lost a contention race (#100/#209) on the `ClassTemplate`
-  // row itself — a generation claim, an archive, or a pause/resume holding it.
+  // This transaction hit a transient database failure (#100/#209) on the
+  // `ClassTemplate` row itself — a generation claim, an archive, or a
+  // pause/resume holding it.
   // It can no longer be lost on a `Class` row: #194 deleted the sync, so this
   // transaction takes no `Class` locks at all and the edit path has left the
   // deadlock graph. Distinct copy from the PATCH pause/resume branch below
