@@ -176,45 +176,109 @@ function isTerminalStatusViolation(error: unknown): error is Error {
 }
 
 /**
- * Postgres SQLSTATEs that mean "this transaction lost a contention race", not
- * "this request was wrong". All three abort the whole transaction, so nothing
- * is half-applied, and the identical request can win the next attempt:
+ * The five ways a database failure is a lost contention race rather than a
+ * bad request — a retry can win, so `isTransientDbError` answers `true` for
+ * every one. `kind` decides only the log level and the log field
+ * `classifyApiError` attaches (`detail.transientKind`); it never touches
+ * `transient` itself, which keeps driving every 503, every `busy` arm and
+ * every sweep escalation exactly as it does for any member.
  *
- * - `55P03` lock_not_available — a `SET LOCAL lock_timeout` expired. This
+ * - `lock_timeout` (`55P03`) — a `SET LOCAL lock_timeout` expired. This
  *   project sets one at every `lockClassRow` call and at the two template
  *   claims, so it is the one a user is most likely to meet.
- * - `40P01` deadlock_detected — Postgres broke an AB-BA cycle by killing one
- *   side. Reachable today, not hypothetical: `docs/lock-order.md`, "The slot
- *   key is a wait edge", records a real reproduced deadlock between two
- *   `updateClass` writes — 32 of 100 runs, both sides plain autocommit
+ * - `deadlock` (`40P01`, `P2034`) — Postgres broke an AB-BA cycle by killing
+ *   one side, or Prisma's own wrapper for "write conflict or deadlock,
+ *   please retry" surfaced the same event as a known code instead of inside
+ *   a driver string. Reachable today, not hypothetical: `docs/lock-order.md`,
+ *   "The slot key is a wait edge", records a real reproduced deadlock between
+ *   two `updateClass` writes — 32 of 100 runs, both sides plain autocommit
  *   `UPDATE`s. The section records a second reproduction beside it, the
  *   template sync against `updateClass`; #194 deleted that function, so that
  *   pairing is evidence about a past state and the `updateClass` pair is what
- *   keeps this branch live. It used to be reachable a second way too, via two live
- *   `Class`-row-ordering cycles against the template sites; those closed
- *   with an ordered pre-lock ahead of each site's multi-row write (issue
- *   180, atomic-template-update).
- * - `40001` serialization_failure — nothing here uses a serializable or
+ *   keeps this branch live. It used to be reachable a second way too, via two
+ *   live `Class`-row-ordering cycles against the template sites; those closed
+ *   with an ordered pre-lock ahead of each site's multi-row write (issue 180,
+ *   atomic-template-update).
+ * - `serialization` (`40001`) — nothing here uses a serializable or
  *   repeatable-read transaction yet, so this cannot fire at present; it is
  *   listed because it belongs to the same family and adding it later would
  *   otherwise be a second edit at a second moment.
+ * - `pool_exhausted` (`P2024`) — the connection pool handing out nothing in
+ *   time.
+ * - `tx_budget` (`P2028`) — the interactive-transaction budget expiring,
+ *   which `deleteStudentAccount`'s flat 20s `timeout` can hit under load.
+ *
+ * The alerting contract, per CLAUDE.md *Comment Discipline* — why each level
+ * is what it is, tethered to the compiler by `TRANSIENT_KIND_LEVEL`'s
+ * `satisfies Record<TransientKind, ...>` so a new kind cannot compile without
+ * one:
+ *
+ * - `lock_timeout` is `warn` — the system doing what `SET LOCAL lock_timeout`
+ *   configures it to do.
+ * - `deadlock` is **`error`** — since #229 every known cycle is closed but
+ *   one, the `updateClass` × `updateClass` slot-key deadlock
+ *   `docs/lock-order.md` ("The slot key is a wait edge") records. By
+ *   decision, that known deadlock now logs at `error` when it fires: a
+ *   deadlock anywhere else is a new cycle or a regressed one, and either way
+ *   must page. `P2034` lands here, not in `serialization`, for the same
+ *   reason `serialization` cannot fire: Prisma documents `P2034` as "write
+ *   conflict or deadlock", and a write conflict needs a serializable or
+ *   repeatable-read transaction, which this repo has none of.
+ * - `serialization` is `warn` — moot while it cannot fire; the level is
+ *   chosen for the day a serializable transaction exists to trigger it, and
+ *   that dependency lives here so it is met before the level is trusted.
+ * - `pool_exhausted` is **`error`** — an operational fault, a leak or a
+ *   drained pool. No retry wins it until the pool recovers, and the next
+ *   request meets the same pool.
+ * - `tx_budget` is `warn` — contention or a slow transaction; the 10s and 20s
+ *   budgets are deliberate.
  */
-const TRANSIENT_SQLSTATES = ['40001', '40P01', '55P03'] as const;
+export type TransientKind =
+  | 'lock_timeout'
+  | 'deadlock'
+  | 'serialization'
+  | 'pool_exhausted'
+  | 'tx_budget';
+
+/** What `transientDbFailure` returns for a matched failure — see its docblock. */
+export interface TransientDbFailure {
+  readonly kind: TransientKind;
+  readonly level: 'warn' | 'error';
+}
+
+const TRANSIENT_KIND_LEVEL = {
+  lock_timeout: 'warn',
+  deadlock: 'error',
+  serialization: 'warn',
+  pool_exhausted: 'error',
+  tx_budget: 'warn',
+} as const satisfies Record<TransientKind, 'warn' | 'error'>;
+
+/**
+ * Postgres SQLSTATEs that mean "this transaction lost a contention race", not
+ * "this request was wrong". All three abort the whole transaction, so nothing
+ * is half-applied, and the identical request can win the next attempt. Typed
+ * against `TransientKind` so an unknown kind cannot appear here.
+ */
+const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
+  ['55P03', 'lock_timeout'],
+  ['40P01', 'deadlock'],
+  ['40001', 'serialization'],
+]);
 
 /**
  * Prisma's own codes for the same class of failure — contention, not a bad
- * request. `P2028` is the interactive-transaction budget expiring (which
- * `deleteStudentAccount`'s flat 20s `timeout` can hit under load), `P2024` is
- * the connection pool handing out nothing in time, and `P2034` is Prisma's
- * own wrapper for "write conflict or deadlock, please retry" — the same
- * events as `40P01`/`40001` below, surfaced as a known code rather than
- * inside a driver string, which is how they arrive when the engine
- * recognises them instead of falling back to Unknown.
+ * request. Typed against `TransientKind` so an unknown kind cannot appear
+ * here.
  */
-const TRANSIENT_PRISMA_CODES = new Set(['P2024', 'P2028', 'P2034']);
+const TRANSIENT_PRISMA_CODE_KIND: ReadonlyMap<string, TransientKind> = new Map([
+  ['P2024', 'pool_exhausted'],
+  ['P2028', 'tx_budget'],
+  ['P2034', 'deadlock'],
+]);
 
 /**
- * How far `isTransientDbError` follows `Error.cause`.
+ * How far `transientDbFailure` follows `Error.cause`.
  *
  * A bound rather than a full traversal: the chain is attacker-independent but
  * not guaranteed acyclic, and a classifier that can hang is worse than one
@@ -223,20 +287,28 @@ const TRANSIENT_PRISMA_CODES = new Set(['P2024', 'P2028', 'P2034']);
  */
 const MAX_CAUSE_DEPTH = 4;
 
-/** The classification for one error, ignoring any `cause` it carries. */
-function isTransientDbErrorShallow(error: unknown): boolean {
+/**
+ * The kind for one error, ignoring any `cause` it carries. `Map`s rather than
+ * object-literal lookups, so an arbitrary `error.code` such as `'constructor'`
+ * cannot hit a prototype key.
+ */
+function transientKindShallow(error: unknown): TransientKind | null {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (TRANSIENT_PRISMA_CODES.has(error.code)) return true;
+    const kind = TRANSIENT_PRISMA_CODE_KIND.get(error.code);
+    if (kind) return kind;
   }
-  if (!(error instanceof Error)) return false;
-  return TRANSIENT_SQLSTATES.some(
-    (state) =>
-      error.message.includes(`code: "${state}"`) || error.message.includes(`Code: \`${state}\``),
-  );
+  if (!(error instanceof Error)) return null;
+  for (const [state, kind] of TRANSIENT_SQLSTATE_KIND) {
+    if (error.message.includes(`code: "${state}"`) || error.message.includes(`Code: \`${state}\``)) {
+      return kind;
+    }
+  }
+  return null;
 }
 
 /**
- * True when the failure is a lost contention race that a retry can win.
+ * The kind and level for a lost contention race that a retry can win, or
+ * `null` when the error is not one.
  *
  * Two different error shapes carry the same SQLSTATE, and both were measured
  * against this project's own database rather than assumed — a matcher built
@@ -255,27 +327,39 @@ function isTransientDbErrorShallow(error: unknown): boolean {
  * every model write after it in the same transaction issues the first, so
  * both reach routes from the same helper.
  *
- * Matched on the SQLSTATE inside its Postgres framing (`code: "55P03"` /
- * `Code: \`55P03\``) rather than as a bare substring. A bare
- * `message.includes('40001')` would relabel any error whose text happens to
- * quote that as a digit string — a postcode, an amount, an id fragment — as
- * "the database is busy, try again", which is exactly the wrong advice and
- * exactly the trap `isTerminalStatusViolation` above documents for `23514`.
+ * Prisma codes are checked before SQLSTATEs, and a SQLSTATE is matched inside
+ * its Postgres framing (`code: "55P03"` / `Code: \`55P03\``) rather than as a
+ * bare substring. A bare `message.includes('40001')` would relabel any error
+ * whose text happens to quote that as a digit string — a postcode, an amount,
+ * an id fragment — as "the database is busy, try again", which is exactly the
+ * wrong advice and exactly the trap `isTerminalStatusViolation` above
+ * documents for `23514`.
  *
  * Walks the `Error.cause` chain up to a fixed depth, so a wrapper like
  * `SpotFreedError` that carries the real failure as `cause` does not silently
  * reclassify a transient error. The bound prevents the chain from hanging on
  * cyclic or pathological cases; an error buried past the depth is reported
- * non-transient, which escalates rather than quieting.
+ * non-transient, which escalates rather than quieting. The first transient
+ * error found on the chain supplies the kind.
  */
-export function isTransientDbError(error: unknown): boolean {
+export function transientDbFailure(error: unknown): TransientDbFailure | null {
   let current = error;
   for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth += 1) {
-    if (isTransientDbErrorShallow(current)) return true;
-    if (!(current instanceof Error)) return false;
+    const kind = transientKindShallow(current);
+    if (kind) return { kind, level: TRANSIENT_KIND_LEVEL[kind] };
+    if (!(current instanceof Error)) return null;
     current = current.cause;
   }
-  return false;
+  return null;
+}
+
+/**
+ * True when the failure is a lost contention race that a retry can win — the
+ * retry axis, never the severity. `transientDbFailure(error) !== null`; see
+ * its docblock for the matching rules.
+ */
+export function isTransientDbError(error: unknown): boolean {
+  return transientDbFailure(error) !== null;
 }
 
 /**
@@ -508,25 +592,31 @@ export function classifyApiError(error: unknown): ApiFailure {
 
   // A lost contention race, not a bad request. Before this branch these
   // reached the user as "Internal server error" at `level: 'error'` — which
-  // is wrong twice over. Wrong for the user, because the one thing that helps
-  // is the one thing that message does not say: try again. And wrong for the
-  // operator, because `error` is the level that pages someone, while a
-  // `lock_timeout` on a contended row is the system doing what it was
+  // was wrong twice over. Wrong for the user, because the one thing that
+  // helps is the one thing that message does not say: try again. And wrong
+  // for the operator, because `error` is the level that pages someone, while
+  // a `lock_timeout` on a contended row is the system doing what it was
   // configured to do. Concretely: a student tapping "leave waitlist" while
   // the 60-second transitions sweep holds their class row got a 500 for it,
   // where before #174 bounded that wait they simply blocked and succeeded.
+  // That argument holds only PER KIND, not for the branch as a whole — a
+  // `pool_exhausted` or `deadlock` failure is not the system doing what it
+  // was configured to do, and `transientDbFailure`'s `TRANSIENT_KIND_LEVEL`
+  // is the authority for which kind gets which level.
   //
   // Checked BEFORE the P2002 branch below on purpose — a `P2024`/`P2028` is a
   // `PrismaClientKnownRequestError` too, and ordering these the other way
   // round would leave the transient codes to fall past a branch that does not
   // match them into the generic 500, i.e. exactly the behaviour this branch
   // exists to remove.
-  if (isTransientDbError(error)) {
+  const transient = transientDbFailure(error);
+  if (transient) {
     return {
       status: 503,
       message: 'The system was busy and could not finish that. Please try again.',
-      logMessage: 'transient database contention surfaced to a client',
-      level: 'warn',
+      logMessage: 'transient database failure surfaced to a client',
+      level: transient.level,
+      detail: { transientKind: transient.kind },
     };
   }
 

@@ -752,7 +752,7 @@ describe('POST /api/registrations', () => {
    *
    * `waited > 1_000` is the second half and is not decoration. The 503 body is
    * a fixed generic string, so the SQLSTATE is genuinely not observable over
-   * HTTP — and `P2024` (pool timeout) is also in `TRANSIENT_PRISMA_CODES` and
+   * HTTP — and `P2024` (pool timeout) is also in `TRANSIENT_PRISMA_CODE_KIND` and
    * also classifies 503, so without a lower bound any fast transient 503 would
    * satisfy this test.
    *

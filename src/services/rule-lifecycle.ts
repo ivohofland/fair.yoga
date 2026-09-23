@@ -346,7 +346,7 @@ export type ArchiveRuleResult<TChild> =
    *
    * Not only a `lock_timeout` expiry, though that is the case the copy is
    * written for. The arm is produced by `isTransientDbError`, whose whole
-   * matcher — `TRANSIENT_SQLSTATES` and `TRANSIENT_PRISMA_CODES`
+   * matcher — `TRANSIENT_SQLSTATE_KIND` and `TRANSIENT_PRISMA_CODE_KIND`
    * (`src/lib/api-errors.ts`) — reaches here, and each member carries its own
    * calibration where it is declared, including which of them cannot fire in
    * this repo at all. Reading a `busy` in the logs and hunting for a 2s lock
