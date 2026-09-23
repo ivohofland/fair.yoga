@@ -24,7 +24,7 @@ export const NOTIFICATION_RETENTION_DAYS = {
   payment_received: STANDARD_RETENTION_DAYS,
   payment_request: STANDARD_RETENTION_DAYS,
   // A booking confirmation for an auto-promoted student, not a transient
-  // alert: it is the only message that booking produces.
+  // alert.
   waitlist_promoted: STANDARD_RETENTION_DAYS,
   // Worthless once its claim window has closed.
   spot_available: SHORT_RETENTION_DAYS,

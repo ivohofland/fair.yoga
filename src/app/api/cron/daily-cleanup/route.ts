@@ -22,11 +22,10 @@ import { auditTeacherTimezones } from '@/services/timezone-audit';
  * there, though:
  * `tests/e2e/recurring.spec.ts`'s `'the generation cron is idempotent over
  * the already-filled window'` test drives `/api/cron/generate-classes` from
- * a Playwright spec, so a precedent for testing a cron route exists. The
- * services below are each covered (`auth-cleanup.test.ts`,
- * `waitlist-retention.test.ts`, `notification-retention.test.ts`) and
- * `requireCronAuth` is covered (`lib/cron-auth.test.ts`); what remains
- * uncovered is the WIRING — that this route calls the sweeps it NAMES.
+ * a Playwright spec, so a precedent for testing a cron route exists. Each
+ * service below has its own test file beside it, and `requireCronAuth` is
+ * covered (`lib/cron-auth.test.ts`); what remains uncovered is the WIRING —
+ * that this route calls the sweeps it NAMES.
  * `route.test.ts` mocks every sweep, so it cannot see that. That is the same
  * exposure `scheduler.test.ts`'s job-to-sweep map
  * was built to close on the scheduler side ("a job could carry the right name
