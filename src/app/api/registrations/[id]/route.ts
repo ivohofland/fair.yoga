@@ -290,7 +290,6 @@ export const DELETE = withErrorHandler(async (
   }
 
   // Enforce cancellation deadline for students (teachers can always cancel).
-  // The deadline is computed from the class start in the teacher's timezone.
   if (isStudent) {
     const deadline = cancelDeadlineInstant(
       registration.class.calendarEntry,
@@ -306,10 +305,8 @@ export const DELETE = withErrorHandler(async (
       // concurrent cancels both pass it.
       //
       // NOT for the doubled broadcast the full-cancel branch below guards
-      // against — this branch is reached only when `isPastCancelDeadline`
-      // holds, and `getWaitlistWindow` is `frozen` from that same
-      // `cancelDeadlineInstant` onward, so `handleSpotFreed` sends nothing
-      // here. It is for money. `late_cancel`
+      // against: past the cancel deadline the waitlist is frozen, so
+      // `handleSpotFreed` sends nothing here. It is for money. `late_cancel`
       // is in `CHARGED_STATUSES` (`class-lifecycle.ts`) and `cancelled` is
       // not, so an unscoped write here can land *after* a teacher's free
       // cancel and silently rewrite `cancelled` → `late_cancel`, billing a

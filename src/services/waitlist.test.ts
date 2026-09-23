@@ -174,7 +174,7 @@ describe('cancelDeadlineInstant', () => {
   const classStartUtcMs = new Date('2026-04-10T09:00:00Z').getTime();
 
   it.each(Object.keys(DEADLINE_HOURS) as (keyof typeof DEADLINE_HOURS)[])(
-    'subtracts %s hours from the class start in UTC',
+    '%s: class start minus its hours, in UTC',
     (deadline) => {
       const result = cancelDeadlineInstant({ date: classDate, startTime }, deadline, 'UTC');
       expect(result.getTime()).toBe(classStartUtcMs - DEADLINE_HOURS[deadline] * 60 * 60 * 1000);

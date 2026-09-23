@@ -22,9 +22,9 @@ interface CancelBookingButtonProps {
 
 /**
  * Whether the confirm step shows the past-deadline copy, decided once at the
- * tap that opens it (`isPastCancelDeadline`) and held for as long as the
- * confirm stays open — never recomputed from the clock at render, which
- * would go stale while the student reads it.
+ * tap that opens it (`isPastCancelDeadline`) and held while the confirm stays
+ * open, so a re-render after the deadline passes does not swap the text
+ * under the student mid-read.
  */
 interface Confirming {
   pastDeadline: boolean;
