@@ -17,6 +17,7 @@ import {
   UpdateClassInvariantError,
   type EconomicField,
 } from './class-lifecycle';
+import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtures';
 
 // We use string literals matching the Prisma ClassStatus enum values.
@@ -1031,6 +1032,55 @@ describe('completeClass (DB)', () => {
       expect(studentNote.body).toMatch(/Your price for Subsidized Flow class .* is €\d+\.\d{2}\. Pay your teacher directly\./);
     } finally {
       await prisma.notification.deleteMany({ where: { relatedClassId: negClass.id } });
+    }
+  });
+
+  it('explains the charge to no-shows and late cancels, in the one payment message each student gets', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    const statuses = ['attended', 'registered', 'no_show', 'late_cancel'] as const;
+    try {
+      for (const [i, status] of statuses.entries()) {
+        await prisma.registration.create({
+          data: {
+            classId: cls.id,
+            studentId: studentIds[i]!,
+            status,
+            tierAtBooking: i + 1,
+            ...(status === 'late_cancel' ? { cancelledAt: new Date() } : {}),
+          },
+        });
+      }
+
+      const result = await completeClass(prisma, cls.id, { finishedEarly: true });
+      expect(result.ok).toBe(true);
+
+      for (const [i, status] of statuses.entries()) {
+        const reg = await prisma.registration.findFirstOrThrow({
+          where: { classId: cls.id, studentId: studentIds[i]! },
+        });
+        // Every notification this student got about this class: exactly one,
+        // the payment request.
+        const notes = await prisma.notification.findMany({
+          where: { relatedClassId: cls.id, recipientType: 'student', recipientId: studentIds[i]! },
+        });
+        expect(notes).toHaveLength(1);
+        expect(notes[0]!.type).toBe('payment_request');
+        expect(notes[0]!.title).toBe('Payment requested');
+        expect(notes[0]!.body).toBe(
+          studentPaymentRequestBody(status, cls.calendarEntry, Number(reg.price)),
+        );
+      }
+
+      // Literal anchors, so the test does not only compare the builder with itself.
+      const bodyFor = async (studentId: string) =>
+        (await prisma.notification.findFirstOrThrow({
+          where: { relatedClassId: cls.id, recipientType: 'student', recipientId: studentId },
+        })).body;
+      expect(await bodyFor(studentIds[1]!)).toMatch(/^Your price for /);
+      expect(await bodyFor(studentIds[2]!)).toMatch(/^We missed you at /);
+      expect(await bodyFor(studentIds[3]!)).toMatch(/^You cancelled .* after the cancellation deadline\./);
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     }
   });
 
