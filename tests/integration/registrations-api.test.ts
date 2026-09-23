@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { randomUUID } from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type CancelDeadline } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../class-fixtures';
@@ -87,8 +87,17 @@ async function makeClass(maxStudents: number): Promise<string> {
  * deadline is hours behind either way — but the DURATION below has to be no
  * wider than the smallest gap between two callers, which is why it is one
  * minute rather than a plausible class length. Nothing here reads it.
+ *
+ * `cancelDeadline` defaults to the schema default (`HOURS_24`), matching every
+ * pre-existing caller. A caller wanting a deadline that has passed by a known
+ * margin (the free-cancel grace tests) passes `HOURS_6` — the class starts
+ * ~3h out, so a 6h deadline already sits ~3h in the past.
  */
-async function makeLateCancelClass(maxStudents: number, minuteOffset: number): Promise<string> {
+async function makeLateCancelClass(
+  maxStudents: number,
+  minuteOffset: number,
+  cancelDeadline: CancelDeadline = 'HOURS_24',
+): Promise<string> {
   const target = new Date(Date.now() + 3 * 60 * 60 * 1000 + minuteOffset * 60 * 1000);
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Europe/Amsterdam',
@@ -115,8 +124,12 @@ async function makeLateCancelClass(maxStudents: number, minuteOffset: number): P
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
-      minStudents: 1,
+      // 0, not 1: this class starts ~3h out, inside the live scheduler's
+      // auto-cancel window, so an active count that dips to 0 mid-test must
+      // never read as below minimum.
+      minStudents: 0,
       maxStudents,
+      cancelDeadline,
       status: 'open',
     });
   classIds.push(cls.id);
@@ -2245,5 +2258,69 @@ describe('DELETE /api/registrations/[id] — a booking already cancelled (#197)'
 
   it('answers a booking that does not exist with its code', async () => {
     await expectRefusal(await cancel(studentTokens[0]!, randomUUID()), 'NOT_FOUND');
+  });
+});
+
+describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-promoted student (#236)', () => {
+  function cancel(token: string, id: string): Promise<Response> {
+    return fetch(`${BASE_URL}/api/registrations/${id}`, {
+      method: 'DELETE',
+      headers: cookie(token),
+    });
+  }
+
+  /**
+   * Simulates what `promoteNext`/`claimSpot` would have left behind, without
+   * running either: a registration linked to a `WaitlistEntry` carrying the
+   * given status and `promotedAt`. `HOURS_6` on a class starting ~3h out
+   * (`makeLateCancelClass`) puts the bare cancel deadline ~3h in the past, so
+   * every case here reaches the DELETE route's student branch already past
+   * it — the grace is what decides whether it reads as free or charged.
+   */
+  async function bookAndPromote(
+    classId: string,
+    status: 'promoted' | 'claimed',
+    promotedAt: Date,
+  ): Promise<string> {
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[0]!, position: 1, status, promotedAt, registrationId: data.id },
+    });
+    return data.id;
+  }
+
+  it('cancels free when auto-promoted inside the 15-minute grace, though the cancel deadline has passed', async () => {
+    const classId = await makeLateCancelClass(5, 100, 'HOURS_6');
+    const promotedAt = new Date(Date.now() - 5 * 60 * 1000);
+    const registrationId = await bookAndPromote(classId, 'promoted', promotedAt);
+
+    const res = await cancel(studentTokens[0]!, registrationId);
+
+    expect(await expectApplied(res)).toEqual({ id: registrationId, status: 'cancelled' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: registrationId } });
+    expect(after.status).toBe('cancelled');
+  });
+
+  it('charges a late cancel once the promotion is more than 15 minutes old', async () => {
+    const classId = await makeLateCancelClass(5, 120, 'HOURS_6');
+    const promotedAt = new Date(Date.now() - 16 * 60 * 1000);
+    const registrationId = await bookAndPromote(classId, 'promoted', promotedAt);
+
+    const res = await cancel(studentTokens[0]!, registrationId);
+
+    expect(await expectApplied(res)).toEqual({ id: registrationId, status: 'late_cancel' });
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: registrationId } });
+    expect(after.status).toBe('late_cancel');
+  });
+
+  it('gives no grace to a claim — only an auto-promotion carries one (Review Focus 3)', async () => {
+    const classId = await makeLateCancelClass(5, 140, 'HOURS_6');
+    const promotedAt = new Date(Date.now() - 1 * 60 * 1000);
+    const registrationId = await bookAndPromote(classId, 'claimed', promotedAt);
+
+    const res = await cancel(studentTokens[0]!, registrationId);
+
+    expect(await expectApplied(res)).toEqual({ id: registrationId, status: 'late_cancel' });
   });
 });

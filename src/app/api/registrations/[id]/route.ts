@@ -14,7 +14,7 @@ import {
 import { updateRegistrationSchema } from '@/lib/schemas';
 import { transientDbFailure } from '@/lib/api-errors';
 import { cancelDeadlineInstant, handleSpotFreed, SpotFreedError, spotFreedLoss } from '@/services/waitlist';
-import { isPastCancelDeadline } from '@/lib/cancel-deadline';
+import { isPastCancelDeadline, freeCancelUntil } from '@/lib/cancel-deadline';
 import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { formatDayHeader } from '@/lib/format';
@@ -297,22 +297,34 @@ export const DELETE = withErrorHandler(async (
       registration.class.calendarEntry.teacher.defaultTimezone,
     );
 
-    if (isPastCancelDeadline(deadline, new Date())) {
-      // Past deadline — mark as late_cancel (still charged).
+    // An auto-promoted student's free-cancel window extends past the bare
+    // deadline for #236's grace (`freeCancelUntil`) — only `promoted` carries
+    // it, not `claimed`: the system placed them, so the clock the deadline
+    // copy promised them wasn't the one they got to act on.
+    const promotion = await prisma.waitlistEntry.findUnique({
+      where: { registrationId: id },
+      select: { status: true, promotedAt: true },
+    });
+    const until = freeCancelUntil(
+      deadline,
+      promotion?.status === 'promoted' ? promotion.promotedAt : null,
+    );
+
+    if (isPastCancelDeadline(until, new Date())) {
+      // Past the free-cancel instant — mark as late_cancel (still charged).
       //
       // Status in the WHERE, not just the pre-check above: that pre-check is a
       // read-then-write and this handler opens no transaction, so two
       // concurrent cancels both pass it.
       //
-      // NOT for the doubled broadcast the full-cancel branch below guards
-      // against: past the cancel deadline the waitlist is frozen, so
-      // `handleSpotFreed` sends nothing here. It is for money. `late_cancel`
-      // is in `CHARGED_STATUSES` (`class-lifecycle.ts`) and `cancelled` is
-      // not, so an unscoped write here can land *after* a teacher's free
-      // cancel and silently rewrite `cancelled` → `late_cancel`, billing a
-      // student for a class the teacher had let them out of. The scope also
-      // keeps the loser of two concurrent late cancels from writing twice: it
-      // re-reads and is answered as unchanged, as the sibling branch's is.
+      // The scope is for money, not to guard against a doubled waitlist
+      // broadcast: `late_cancel` is in `CHARGED_STATUSES` (`class-lifecycle.ts`)
+      // and `cancelled` is not, so an unscoped write here can land *after* a
+      // teacher's free cancel and silently rewrite `cancelled` → `late_cancel`,
+      // billing a student for a class the teacher had let them out of. The
+      // scope also keeps the loser of two concurrent late cancels from writing
+      // twice: it re-reads and is answered as unchanged, as the sibling
+      // branch's is.
       const updated = await prisma.registration.updateMany({
         where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
         data: { status: 'late_cancel', cancelledAt: new Date() },

@@ -10,7 +10,8 @@
 
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, CancelDeadline, WaitlistEntry, WaitlistStatus } from '@prisma/client';
-import { classStartInstant } from '@/lib/timezone';
+import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
+import { freeCancelUntil } from '@/lib/cancel-deadline';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
 import { linkTeacherStudent } from './roster-link';
@@ -628,14 +629,24 @@ export async function promoteNext(
     // answered.
 
     // Update the waitlist entry: promoted status, promotedAt, link to registration
+    //
+    // `opts.now ?? new Date()` — the same instant `getWaitlistWindow` above
+    // reasoned about — rather than a fresh `new Date()`, so `promotedAt` and
+    // the notification's free-cancel time (below) agree with each other and
+    // with a test that injected `opts.now`.
+    const promotedAt = opts.now ?? new Date();
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: nextEntry.id },
       data: {
         status: 'promoted',
-        promotedAt: new Date(),
+        promotedAt,
         registrationId: registration.id,
       },
     });
+
+    const tz = cls.calendarEntry.teacher.defaultTimezone;
+    const deadline = cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz);
+    const freeUntil = freeCancelUntil(deadline, promotedAt);
 
     await createBulkNotifications(tx, [
       {
@@ -643,7 +654,7 @@ export async function promoteNext(
         recipientId: nextEntry.studentId,
         type: 'waitlist_promoted',
         title: 'You are in',
-        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist.`,
+        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist. You can cancel for free until ${formatInstantInZone(freeUntil, tz)}.`,
         relatedClassId: classId,
       },
     ]);
@@ -751,7 +762,11 @@ export async function claimSpot(
 
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: entry.id },
-      data: { status: 'promoted', promotedAt: new Date(), registrationId: registration.id },
+      // 'claimed', not 'promoted' — matching the direct-booking resolver
+      // (`api/registrations/route.ts`). `promoted` means the system placed
+      // the student; `claimed` means the student took it themselves, and only
+      // a `promoted` entry carries the free-cancel grace (`cancel-deadline.ts`).
+      data: { status: 'claimed', promotedAt: new Date(), registrationId: registration.id },
     });
 
     await createBulkNotifications(tx, [

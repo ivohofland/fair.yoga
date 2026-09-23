@@ -171,6 +171,32 @@ export function mondayOf(date: Date): WeekKey {
 }
 
 /**
+ * Renders an instant as `"<weekday> <HH:mm>"` in the given zone — e.g.
+ * `"Thu 14:15"` — for copy shown to a student, such as a free-cancel deadline.
+ *
+ * Falls back to UTC on an unreadable timezone rather than throwing, the same
+ * fallback `classStartInstant` and `startOfLocalDay` use (#145), and logs at
+ * `error` for the same reason: a wrong-but-bounded answer beats a crashed
+ * notification.
+ */
+export function formatInstantInZone(instant: Date, timeZone: string): string {
+  const fmt = (zone: string) =>
+    new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZone: zone,
+    }).format(instant);
+  try {
+    return fmt(timeZone);
+  } catch {
+    log.error({ timeZone }, 'invalid timezone, falling back to UTC formatting');
+    return fmt('UTC');
+  }
+}
+
+/**
  * The UTC instant at which a class starts: the stored calendar date's
  * wall-clock startTime interpreted in the given IANA timezone.
  *

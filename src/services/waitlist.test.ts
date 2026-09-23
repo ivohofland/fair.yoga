@@ -19,6 +19,8 @@ import {
   SpotFreedError,
 } from './waitlist';
 import { isTransientDbError } from '@/lib/api-errors';
+import { freeCancelUntil } from '@/lib/cancel-deadline';
+import { formatInstantInZone } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import * as dbLocks from '@/lib/db-locks';
@@ -749,6 +751,46 @@ describe('promoteNext (DB)', () => {
       promoteNext(prisma, classId, { now: new Date('2099-07-01T15:30:00Z') }),
     ).rejects.toMatchObject({ reason: 'wrong_window' });
   });
+
+  it('names the free-cancel time in the notification, anchored on the injected promotedAt (#236)', async () => {
+    const now = new Date('2099-07-01T12:00:00Z'); // after the HOURS_24 deadline, still > 1h before start
+    const extra = await prisma.student.create({
+      data: {
+        firstName: 'PromoteNotify',
+        lastName: 'Test',
+        email: `promote-notify-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    try {
+      await addToWaitlist(prisma, classId, extra.id);
+      await cancelRegistration(studentIds[1]!); // free a spot
+
+      const promoted = await promoteNext(prisma, classId, { now });
+      expect(promoted).not.toBeNull();
+      expect(promoted!.studentId).toBe(extra.id);
+      // Ruling B: `promotedAt` is the injected clock, not a fresh wall-clock read.
+      expect(promoted!.promotedAt).toEqual(now);
+
+      const cls = await prisma.class.findUniqueOrThrow({
+        where: { id: classId },
+        include: { calendarEntry: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      });
+      const tz = cls.calendarEntry.teacher.defaultTimezone;
+      const deadline = cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz);
+      const expectedTime = formatInstantInZone(freeCancelUntil(deadline, now), tz);
+
+      const notification = await prisma.notification.findFirstOrThrow({
+        where: { relatedClassId: classId, recipientId: extra.id, type: 'waitlist_promoted' },
+      });
+      expect(notification.body).toContain(`You can cancel for free until ${expectedTime}.`);
+    } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: extra.id } });
+      await prisma.waitlistEntry.deleteMany({ where: { classId, studentId: extra.id } });
+      await prisma.registration.deleteMany({ where: { classId, studentId: extra.id } });
+      await prisma.student.delete({ where: { id: extra.id } });
+    }
+  });
 });
 
 // ===========================================================================
@@ -994,15 +1036,16 @@ describe('claimSpot (DB)', () => {
     );
   });
 
-  it('claims the spot: registration created at the student’s tier, entry promoted, student notified', async () => {
+  it('claims the spot: registration created at the student’s tier, entry claimed, student notified', async () => {
     const classId = await makeFullClass();
     await freeTheSpot(classId);
 
     const result = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+    expect(result.outcome).toBe('claimed');
     if (result.outcome !== 'claimed') throw new Error(`expected a claim, got ${result.outcome}`);
     const { entry } = result;
 
-    expect(entry.status).toBe('promoted');
+    expect(entry.status).toBe('claimed');
     expect(entry.promotedAt).not.toBeNull();
     expect(entry.registrationId).not.toBeNull();
 

@@ -405,7 +405,7 @@ describe('POST /api/waitlist/claim', () => {
     const json = (await res.json()) as {
       data: { id: string; status: string; registrationId: string | null };
     };
-    expect(json.data.status).toBe('promoted');
+    expect(json.data.status).toBe('claimed');
     expect(json.data.registrationId).not.toBeNull();
 
     const registration = await prisma.registration.findUniqueOrThrow({
@@ -474,7 +474,7 @@ describe('POST /api/waitlist/claim', () => {
     const json = (await res.json()) as {
       data: { status: string; registrationId: string | null };
     };
-    expect(json.data.status).toBe('promoted');
+    expect(json.data.status).toBe('claimed');
     expect(json.data.registrationId).not.toBeNull();
   });
 
