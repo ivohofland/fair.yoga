@@ -665,7 +665,7 @@ describe('updateStudioClassTemplate — queued behind a held template row (DB)',
 
         expect(warn).toHaveBeenCalledWith(
           expect.objectContaining({ templateId: t.id, teacherId }),
-          'studio template edit lost a lock race — nothing committed',
+          'studio template edit hit a transient database failure — nothing committed',
         );
       } finally {
         warn.mockRestore();

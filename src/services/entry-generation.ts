@@ -950,7 +950,7 @@ function logSkippedEntries(
  * read "studio class edit …" instead and be the odd one out beside its own
  * siblings. Re-derive the sibling lines rather than trust a count here:
  *
- *   grep -rhn "edit refused\|edit lost a lock race\|edit saved" src/services/*.ts
+ *   grep -rhn "edit refused\|edit hit a transient database failure\|edit saved" src/services/*.ts
  *
  * (spec `docs/superpowers/specs/2026-08-29-studio-week-keyed-generation-design.md`
  * §3.7, which also names the third, teacher-facing vocabulary this module

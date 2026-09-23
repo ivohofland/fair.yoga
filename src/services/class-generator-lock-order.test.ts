@@ -367,7 +367,7 @@ describe('the class generator under staged lock contention (DB)', () => {
           // assertion existed, deleting it left every test green.
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId, target: 'archived' }),
-            'recurring class archive lost the template lock race',
+            'recurring class archive hit a transient database failure',
           );
         } finally {
           // In a `finally`, so a failure above fails this test alone. Without
@@ -450,7 +450,7 @@ describe('the class generator under staged lock contention (DB)', () => {
           // with the same method and path.
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId, target: 'paused' }),
-            'recurring class pause/resume lost the template lock race',
+            'recurring class pause/resume hit a transient database failure',
           );
         } finally {
           release();
@@ -532,7 +532,7 @@ describe('the class generator under staged lock contention (DB)', () => {
           // silent.
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId }),
-            'recurring class edit lost a lock race — nothing committed',
+            'recurring class edit hit a transient database failure — nothing committed',
           );
         } finally {
           // In a `finally`, matching the archive/pause busy tests above: a

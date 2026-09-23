@@ -14,7 +14,7 @@ import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
-import { isRecordNotFound, isTransientDbError, isRestrictViolationOn } from '@/lib/api-errors';
+import { isRecordNotFound, transientDbFailure, isRestrictViolationOn } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import type { NoneOf } from '@/lib/type-pins';
 import {
@@ -345,12 +345,13 @@ export type ArchiveRuleResult<TChild> =
    * was applied and the identical request can win the next attempt.
    *
    * Not only a `lock_timeout` expiry, though that is the case the copy is
-   * written for. The arm is produced by `isTransientDbError`, whose whole
-   * matcher — `TRANSIENT_SQLSTATE_KIND` and `TRANSIENT_PRISMA_CODE_KIND`
-   * (`src/lib/api-errors.ts`) — reaches here, and each member carries its own
-   * calibration where it is declared, including which of them cannot fire in
-   * this repo at all. Reading a `busy` in the logs and hunting for a 2s lock
-   * wait that never happened is the mistake this paragraph exists to prevent.
+   * written for. The arm is produced by `transientDbFailure`
+   * (`src/lib/api-errors.ts`), and every log line this arm writes carries the
+   * `transientKind` that function returns alongside it — so a `busy` in the
+   * logs is never read as a lost lock race on faith; the field says which
+   * kind actually fired. Which kinds page rather than merely warn is
+   * `transientDbFailure`'s `TRANSIENT_KIND_LEVEL` to answer, not this arm's —
+   * the log call here takes its level from the same place.
    *
    * What a deadlock here means is a per-family question, not a property of
    * this arm: the lock a family takes on top of the shared ones is its
@@ -842,7 +843,7 @@ export async function archiveOrUnarchiveRule<TChild>(
     );
   } catch (err) {
     // Transient first. Reordering these two branches would be behaviour-neutral
-    // today — `isTransientDbError` and `isExclusionConflictOn` below match
+    // today — `transientDbFailure` and `isExclusionConflictOn` below match
     // disjoint SQLSTATEs, so a code that misses one falls to the NEXT branch
     // rather than to the rethrow, and no mutation could show otherwise. The
     // order is kept explicit anyway, because it is safe ONLY because those two
@@ -856,13 +857,14 @@ export async function archiveOrUnarchiveRule<TChild>(
     // cannot — an archive and a resume reach the same route with the same
     // method and the same path, and the query parameter that separates them is
     // deliberately excluded from request logs.
-    if (isTransientDbError(err)) {
+    const transient = transientDbFailure(err);
+    if (transient) {
       // `target` because this function serves both directions and the message
       // cannot name which: the wrapper's own line could not tell an archive
       // from an un-archive either, and the route's copy does distinguish them.
-      log.warn(
-        { err, templateId, teacherId, target },
-        `${family.logNoun} archive lost the template lock race`,
+      log[transient.level](
+        { err, templateId, teacherId, target, transientKind: transient.kind },
+        `${family.logNoun} archive hit a transient database failure`,
       );
       return { ok: false, reason: 'busy' };
     }
@@ -1427,13 +1429,14 @@ export async function pauseOrResumeRule<TChild>(
     // pause and an archive reach the same route with the same method and the
     // same path, and the query parameter that separates them is deliberately
     // excluded from request logs.
-    if (isTransientDbError(err)) {
+    const transient = transientDbFailure(err);
+    if (transient) {
       // `target` because the message names the verb and stops there: it reads
       // "pause/resume", so this field is the only thing telling a pause from a
       // resume. The route's copy does distinguish the two.
-      log.warn(
-        { err, templateId, teacherId, target },
-        `${family.logNoun} pause/resume lost the template lock race`,
+      log[transient.level](
+        { err, templateId, teacherId, target, transientKind: transient.kind },
+        `${family.logNoun} pause/resume hit a transient database failure`,
       );
       return { ok: false, reason: 'busy' };
     }
@@ -1726,10 +1729,11 @@ export async function updateRule<TChild>(
     );
     updatedRule = written.newRule;
   } catch (err) {
-    if (isTransientDbError(err)) {
-      log.warn(
-        { err, templateId, teacherId },
-        `${family.editNoun} edit lost a lock race — nothing committed`,
+    const transient = transientDbFailure(err);
+    if (transient) {
+      log[transient.level](
+        { err, templateId, teacherId, transientKind: transient.kind },
+        `${family.editNoun} edit hit a transient database failure — nothing committed`,
       );
       return { ok: false, reason: 'busy' };
     }

@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
 import {
   updateClassTemplate,
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
+  createClassTemplate,
   CLASS_TEMPLATE_ROOM_FK,
   type ClassTemplateUpdateData,
+  type CreateClassTemplateInput,
 } from './class-template-lifecycle';
-import { isRestrictViolationOn } from '@/lib/api-errors';
+import { isRestrictViolationOn, type TransientKind } from '@/lib/api-errors';
 import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './entry-generation';
 import { formatDayHeader } from '@/lib/format';
@@ -1238,7 +1240,6 @@ describe('updateClassTemplate (DB)', () => {
       await prisma.room.deleteMany({ where: { id: room.id } });
     }
   });
-
 });
 
 describe('archiveOrUnarchiveTemplate (DB)', () => {
@@ -2642,6 +2643,51 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(await prisma.class.count({ where: { id: classTodayEast.id } })).toBe(1);
     expect(resultEast.deleted).toBe(1);
   });
+
+  /**
+   * The transient branch, by kind rather than by a bare boolean (#232): a
+   * `P2028` (tx-budget contention) logs at `warn`, a `P2024` (a drained
+   * pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
+   * assigns each kind its level. `scheduleRule.updateMany` is the CAS this
+   * transaction issues, the statement the fixture throws from.
+   */
+  it.each<[string, 'warn' | 'error', TransientKind]>([
+    ['P2028', 'warn', 'tx_budget'],
+    ['P2024', 'error', 'pool_exhausted'],
+  ])('a %s during archive answers busy and logs at %s with its kind', async (code, level, kind) => {
+    const template = await makeTemplate(`Transient Archive ${code}`);
+    const failing = prisma.$extends({
+      query: {
+        scheduleRule: {
+          updateMany() {
+            throw new Prisma.PrismaClientKnownRequestError('injected', {
+              code,
+              clientVersion: Prisma.prismaVersion.client,
+            });
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const result = await archiveOrUnarchiveTemplate(failing, template.id, teacherId, 'archived');
+      expect(result).toEqual({ ok: false, reason: 'busy' });
+      const message = 'recurring class archive hit a transient database failure';
+      const hit = (level === 'warn' ? warn : error).mock.calls.find((c) => c[1] === message);
+      expect(hit?.[0]).toMatchObject({
+        templateId: template.id,
+        teacherId,
+        target: 'archived',
+        transientKind: kind,
+      });
+      const miss = (level === 'warn' ? error : warn).mock.calls.find((c) => c[1] === message);
+      expect(miss).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
 });
 
 describe('pauseOrResumeTemplate (DB)', () => {
@@ -3197,5 +3243,204 @@ describe('pauseOrResumeTemplate (DB)', () => {
     // would pass on a response that lost the rule's columns altogether.
     expect(result.template.dayOfWeek).toBe(t.scheduleRule.dayOfWeek);
     expect(result.template.startTime).toBe(timeToHHmm(t.scheduleRule.startTime));
+  });
+});
+
+describe('createClassTemplate (DB)', () => {
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  beforeAll(async () => {
+    await prisma.$connect();
+    const mine = await seedTeacher('create-transient');
+    teacherId = mine.teacherId;
+    accountId = mine.accountId;
+    roomId = mine.roomId;
+    teacherRoomId = mine.teacherRoomId;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
+    // so deleting the rule removes the template with it — moot here, since
+    // every case below throws before the rule row itself is created, but
+    // matching the sibling blocks' teardown all the same.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.session.deleteMany({ where: { accountId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.account.delete({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  /**
+   * The transient branch, by kind rather than by a bare boolean (#232): a
+   * `P2028` (tx-budget contention) logs at `warn`, a `P2024` (a drained
+   * pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
+   * assigns each kind its level. `scheduleRule.createManyAndReturn` is the
+   * first statement this transaction issues (after `setLockTimeout`), so
+   * throwing from it leaves nothing downstream to have run — the two
+   * fixture cases below can reuse the same slot without colliding.
+   */
+  it.each<[string, 'warn' | 'error', TransientKind]>([
+    ['P2028', 'warn', 'tx_budget'],
+    ['P2024', 'error', 'pool_exhausted'],
+  ])('a %s during create answers busy and logs at %s with its kind', async (code, level, kind) => {
+    const input: CreateClassTemplateInput = {
+      teacherRoomId,
+      classType: `Transient Create ${code}`,
+      dayOfWeek: 4,
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 2,
+      maxStudents: 8,
+    };
+    const failing = prisma.$extends({
+      query: {
+        scheduleRule: {
+          createManyAndReturn() {
+            throw new Prisma.PrismaClientKnownRequestError('injected', {
+              code,
+              clientVersion: Prisma.prismaVersion.client,
+            });
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const result = await createClassTemplate(failing, teacherId, input);
+      expect(result).toEqual({ ok: false, reason: 'busy' });
+      const message = 'recurring class create hit a transient database failure — nothing committed';
+      const hit = (level === 'warn' ? warn : error).mock.calls.find((c) => c[1] === message);
+      expect(hit?.[0]).toMatchObject({
+        teacherId,
+        classType: input.classType,
+        dayOfWeek: input.dayOfWeek,
+        startTime: input.startTime,
+        transientKind: kind,
+      });
+      const miss = (level === 'warn' ? error : warn).mock.calls.find((c) => c[1] === message);
+      expect(miss).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+});
+
+describe('updateClassTemplate (DB) — transient failures', () => {
+  // Its own teacher, not `updateClassTemplate (DB)`'s shared one: that
+  // block's `makeTemplate` counter is sized for the tests already in it, and
+  // two more calls run it out of `slotTime`'s range (measured — adding these
+  // cases there failed with exactly that error). Isolation costs one more
+  // teacher/room pair; sharing costs a slot-budget renumbering every time
+  // that block grows.
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  // Counter-derived startTime, one slot per call: each fixture case's own
+  // template stays live (only the edit inside it is intercepted, not the
+  // create), so a second call at the same slot would collide with the
+  // first under `ScheduleRule_teacher_slot_excl` (issue 298).
+  let makeTemplateCounter = 0;
+  const makeTemplate = (classType: string) => {
+    makeTemplateCounter += 1;
+    return prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType,
+            dayOfWeek: 3,
+            startTime: hhmmToTime(slotTime(makeTemplateCounter * 60)),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      include: { scheduleRule: true },
+    });
+  };
+
+  beforeAll(async () => {
+    await prisma.$connect();
+    const mine = await seedTeacher('edit-transient');
+    teacherId = mine.teacherId;
+    accountId = mine.accountId;
+    roomId = mine.roomId;
+    teacherRoomId = mine.teacherRoomId;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.session.deleteMany({ where: { accountId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.account.delete({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  /**
+   * The transient branch, by kind rather than by a bare boolean (#232): a
+   * `P2028` (tx-budget contention) logs at `warn`, a `P2024` (a drained
+   * pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
+   * assigns each kind its level, not a hard-coded `log.warn` here.
+   * `classTemplate.update` is the statement `updateRule`'s transaction
+   * issues that this fixture can throw from — `updateChild` runs it
+   * unconditionally, whatever fields the edit touches. Only the edit itself
+   * is intercepted; each case's own `makeTemplate` create is a real, kept
+   * row, which is why it takes its own counter-derived slot.
+   */
+  it.each<[string, 'warn' | 'error', TransientKind]>([
+    ['P2028', 'warn', 'tx_budget'],
+    ['P2024', 'error', 'pool_exhausted'],
+  ])('a %s during edit answers busy and logs at %s with its kind', async (code, level, kind) => {
+    const template = await makeTemplate(`Transient Edit ${code}`);
+    const failing = prisma.$extends({
+      query: {
+        classTemplate: {
+          update() {
+            throw new Prisma.PrismaClientKnownRequestError('injected', {
+              code,
+              clientVersion: Prisma.prismaVersion.client,
+            });
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const result = await updateClassTemplate(failing, template.id, teacherId, {
+        classType: 'Edited Transient',
+      });
+      expect(result).toEqual({ ok: false, reason: 'busy' });
+      const message = 'recurring class edit hit a transient database failure — nothing committed';
+      const hit = (level === 'warn' ? warn : error).mock.calls.find((c) => c[1] === message);
+      expect(hit?.[0]).toMatchObject({ templateId: template.id, teacherId, transientKind: kind });
+      const miss = (level === 'warn' ? error : warn).mock.calls.find((c) => c[1] === message);
+      expect(miss).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
   });
 });
