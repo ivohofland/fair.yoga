@@ -121,14 +121,13 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   // is already irreversible. What kind of failure it was decides what the
   // caller is told to do about it; see `erasureFailure` above.
   //
-  // `level` follows the same split as the message, per kind: `TRANSIENT_KIND_LEVEL`
-  // (`lib/api-errors.ts`) is the authority, and it does not put every transient
-  // failure at `warn` — a `pool_exhausted` or `deadlock` is an operational
-  // fault and stays at `error` even though it is retryable, the same reading
-  // `classifyApiError`'s transient branch takes. Anything non-transient here is
-  // a real defect — an erasure that cannot complete is a legally time-bound
-  // operation failing — and stays at `error`. `ErasureLockSetError` has a
-  // branch of its own below.
+  // `level` is chosen per kind, unlike the message below, which splits only
+  // on retryable-or-not: some transient kinds log at `error` even though a
+  // retry can win them — `TRANSIENT_KIND_LEVEL` (`lib/api-errors.ts`) is the
+  // authority for which, the same one `classifyApiError`'s transient branch
+  // reads. Anything non-transient here is a real defect — an erasure that
+  // cannot complete is a legally time-bound operation failing — and stays at
+  // `error`. `ErasureLockSetError` has a branch of its own below.
   if (session.studentId) {
     let outcome: ErasureOutcome;
     try {
