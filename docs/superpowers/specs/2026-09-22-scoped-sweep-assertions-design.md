@@ -40,7 +40,11 @@ fails in four ways, not one:
    are supposed to sort first. Stray rows fill the batch or sort ahead of the
    fixture.
 4. **`>= 1` / `> 0` counters.** Stray rows make the test pass when it should
-   fail, and supply the count a mutated counter no longer produces.
+   fail. They mask a regression that drops *the fixture* while other rows
+   still count, such as a swapped summary field or a predicate the fixture
+   alone falls out of. They cannot mask a deleted counter, which zeroes the
+   stray rows' contribution too. That was measured on hit 3 (Task 2): with the
+   increment deleted, `>= 1` went red with and without a stray row.
 
 ## Census
 
@@ -70,7 +74,7 @@ criterion is "writes rows it was never handed".
 |---|---|---|---|---|
 | 1 | `class-transitions.test.ts` 'does not transition … rescheduled' | autoTransitionToInProgress | `transitioned` `toBe(0)` | 1 |
 | 2 | `class-transitions.test.ts` lock-race test | autoTransitionToInProgress | `await sweeping` `toBe(0)` | 1 |
-| 3 | `class-transitions.test.ts` 'closes the waitlist when it starts a class' | autoTransitionToInProgress | `transitioned` `>= 1` | 4 |
+| 3 | `class-transitions.test.ts` 'closes the waitlist when it starts a class' | autoTransitionToInProgress | `transitioned` `>= 1`; a stray row cannot mask a deleted counter (measured), and the test never checked the class's own status | 4 |
 | 4 | `class-transitions.test.ts` autoCancel race | autoCancelClasses | `cancelledCount` `toBe(0)` | 1 |
 | 5 | `class-transitions.test.ts` 'does not complete … rescheduled' | autoCompleteClasses | `completed` `toBe(0)` | 1 |
 | 6 | `magic-link.test.ts` cleanup | cleanupExpiredTokens | `deleted` `toBe(1)` | 1 |
@@ -171,7 +175,7 @@ hand-written copies of one filter, each owing its own presence check.
 | 15–17 | scoped `payment`; exact counts |
 | 18–21 | id membership on the summary's own fields (`failuresByClass.has(contended.id)`, `reconciledClassIds` containing the fixture) rather than scoping, because the summary already carries ids |
 | 22 | replaced with an assertion that can fail, or deleted if nothing meaningful fits |
-| 24–27 | scoped `class` / `waitlistEntry` for the reap's `groupBy` and delete; the cap and ordering then run over fixtures only |
+| 24–27 | scoped `WaitlistEntry` by the fixtures' class ids for the reap's `groupBy` and delete; the cap and ordering then run over fixtures only. `Class` is not scoped: the reap issues no Prisma `class.*` statement (the `class.count` near its second `groupBy` is inside a comment about a rejected alternative) |
 | 28–30 | scoped `teacher` by fixture ids; exact counts; the "resolves" tests stop depending on every live teacher |
 | studio generator | scoped `scheduleRule` / `studioClassTemplate` read, so a stray broken template cannot reject the fixture's call; the 300 ms timing premise is left as is |
 
@@ -192,8 +196,9 @@ For every file touched, recorded in the plan with exact error text:
 
 1. **Coupling shown on the old code.** Plant a stray row that qualifies for the
    sweep, belonging to a teacher the file never created, and show the
-   unmodified assertion goes red (way 1–3) or stays green under a counter
-   mutation (way 4).
+   unmodified assertion goes red (way 1–3), or stays green under a mutation
+   that drops only the fixture (way 4). Each is run alone (`-t`), because a
+   file's earlier test can consume the stray row first.
 2. **Decoupled on the new code.** Same stray row; the new assertion is green.
 3. **Still bites.** With no stray row, mutate the counter or the service's own
    predicate and show the new assertion goes red. Then drop the scope and show
