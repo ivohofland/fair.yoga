@@ -6,6 +6,7 @@ import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../class-fixtures';
 import { formatDayHeader } from '@/lib/format';
 import { isEssential } from '@/services/notification-policy';
+import { cancelDeadlineInstant } from '@/services/waitlist';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
@@ -2324,7 +2325,15 @@ describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-p
 
   // Accepted behaviour, per the #236 spec's "Known edge, accepted".
   it('cancels free again after a grace cancel and a direct rebook inside the grace', async () => {
-    const classId = await makeLateCancelClass(5, 180, 'HOURS_6');
+    const classId = await makeLateCancelClass(5, 110, 'HOURS_6');
+    const cls = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      include: { calendarEntry: true },
+    });
+    // The bare deadline has passed, so only the grace can make these cancels free.
+    expect(
+      cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, 'Europe/Amsterdam').getTime(),
+    ).toBeLessThan(Date.now() - 60 * 60 * 1000);
     const promotedAt = new Date(Date.now() - 5 * 60 * 1000);
     const registrationId = await bookAndPromote(classId, 'promoted', promotedAt);
 
@@ -2354,6 +2363,9 @@ describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-p
 describe('POST /api/registrations — the last seat taken under a standing broadcast (#236)', () => {
   it('sends spot_taken to each waiting student and none to the booker', async () => {
     const classId = await makeClass(1);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
     await prisma.class.update({ where: { id: classId }, data: { spotBroadcastAt: new Date() } });
     const waiters = [studentIds[1]!, unlinkedStudentId];
     for (const [i, studentId] of waiters.entries()) {

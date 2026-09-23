@@ -679,18 +679,17 @@ async function reconcileOne(
  * not time passing but every seat it announced being taken, so that is where
  * the clear belongs.
  *
- * This replaced a gate that asked whether a `spot_available` notification
- * existed anywhere in the current claim window, and the difference is the
- * whole point: a claim window is `CLAIM_WINDOW_MINUTES` wide and can hold more
- * than one seat-freeing event. Seat frees, live broadcast succeeds, a waiter claims,
- * the seat frees AGAIN, and the live hook drops the second broadcast — the old
- * gate found the first notification still inside the window and suppressed the
- * sweep for the rest of the window, so the remaining waiters were never told.
- * That is precisely the loss this module exists to repair, in a state the
- * module could not repair. A flag cleared by the claim cannot make that
- * mistake. It also costs no query: this is a column on a row the sweep has
- * already loaded, where the old gate was a round-trip per gated class per tick
- * and needed an index on the app's highest-volume table to be affordable.
+ * The gate is this flag, not "does a `spot_available` notification exist in
+ * the current claim window", because a claim window is `CLAIM_WINDOW_MINUTES`
+ * wide and can hold more than one seat-freeing event. Seat frees, live
+ * broadcast succeeds, a waiter claims, the seat frees AGAIN, and the live hook
+ * drops the second broadcast: a notification gate would find the first
+ * notification still inside the window and suppress the sweep for the rest of
+ * it, so the remaining waiters would never be told — precisely the loss this
+ * module exists to repair. A flag cleared by the fill that takes the last seat
+ * cannot make that mistake. It also costs no query: this is a column on a row
+ * the sweep has already loaded, where a notification gate would be a
+ * round-trip per gated class per tick.
  *
  * The claim-window lower bound survives as a secondary check, in memory and
  * for free. `date` and `startTime` are absent from `ECONOMIC_FIELDS`
