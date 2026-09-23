@@ -2159,9 +2159,8 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
 });
 
 describe('withdrawWaitingEntriesForTeacher withdraws only this teacher\'s waiting entries and compacts positions (#241)', () => {
-  // Own fixture and suffix, per the #453 describe's own comment above: a
-  // separate scope so that describe's lock-set assertions keep meaning what
-  // they mean.
+  // Own fixture and suffix, so the #453 describe's lock-set assertions above
+  // see none of these rows.
   const scopeSuffix = `wl-withdraw-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let teacherAccountId: string;
@@ -2350,15 +2349,15 @@ describe('withdrawWaitingEntriesForTeacher withdraws only this teacher\'s waitin
     });
     expect(c2S.status).toBe('removed');
 
-    // C3's entry was never 'waiting', so the pre-lock's own `w.status =
-    // 'waiting'` predicate should never have selected this class at all.
+    // C3's entry is promoted, not waiting — the withdrawal takes waiting
+    // entries only.
     const c3S = await prisma.waitlistEntry.findFirstOrThrow({
       where: { classId: classC3Id, studentId: studentSId },
     });
     expect(c3S.status).toBe('promoted');
 
-    // D belongs to T2, not T — outside the join's `e."teacherId" = teacherId`
-    // predicate.
+    // D belongs to T2 — another teacher's request is not this unlink's to
+    // withdraw.
     const dS = await prisma.waitlistEntry.findFirstOrThrow({
       where: { classId: classDId, studentId: studentSId },
     });

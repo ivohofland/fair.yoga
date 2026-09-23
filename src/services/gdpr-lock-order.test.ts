@@ -1357,7 +1357,7 @@ it('bounds its wait even when the student is waiting in no classes at all', asyn
 /**
  * The `deleteTeacherAccount` twin of the guard above. Its transaction takes
  * no template locks in this fixture (no `ClassTemplate`/`StudioClassTemplate`
- * rows for this teacher), then `lockClassRowsOrdered` (`gdpr.ts`) takes the
+ * rows for this teacher), then `lockClassRowsOrdered` takes the
  * teacher's one upcoming `Class` row `FOR UPDATE` — the row held open here.
  * Same shape as the test above: a hold well past the 2s `lock_timeout`
  * proves the timeout fires rather than the erasure waiting it out, and the

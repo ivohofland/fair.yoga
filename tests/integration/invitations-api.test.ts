@@ -3751,6 +3751,7 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
     await prisma.invitation.deleteMany({ where: { teacherId: lockTeacherId } });
     await prisma.teacherBlock.deleteMany({ where: { teacherId: lockTeacherId } });
     await prisma.student.deleteMany({ where: { id: lockStudentId } });
+    await prisma.session.deleteMany({ where: { accountId: lockStudentAccountId } });
     await prisma.account.deleteMany({ where: { id: lockStudentAccountId } });
     await prisma.teacher.deleteMany({ where: { id: lockTeacherId } });
     await prisma.account.deleteMany({ where: { id: lockTeacherAccountId } });
