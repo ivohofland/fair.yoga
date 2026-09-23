@@ -72,6 +72,19 @@ import { ClassStatus, Prisma } from '@prisma/client';
  */
 export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: never };
 
+declare const classLockBrand: unique symbol;
+
+/**
+ * Proof that this transaction holds the `Class` row lock for `classId`.
+ *
+ * Minted only by `lockClassRow` below, which is the only `as ClassLock` in
+ * `src/`. `readSeatCount` (`services/capacity.ts`) requires one, so counting a
+ * class nobody locked, or a different class from the one locked, does not
+ * compile (#219). It does not tie the token to a particular transaction
+ * client; `TransactionClientOnly` narrows that but cannot close it.
+ */
+export type ClassLock = { readonly classId: string; readonly [classLockBrand]: true };
+
 /**
  * How long any bounded wait in this project waits for a row lock before
  * giving up.
@@ -273,10 +286,13 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * that counted could catch it; only re-deriving the names could. Grep for
  * `lockClassRow(` when you need them.
  *
+ * Returns a `ClassLock` for the row it just locked. Callers that only need the
+ * lock discard it; a caller that counts seats passes it to `readSeatCount`.
+ *
  * Must be given a transaction client for the lock to have anywhere to live —
  * see the brand paragraph above for what enforces that at compile time.
  */
-export async function lockClassRow(tx: TransactionClientOnly, classId: string): Promise<void> {
+export async function lockClassRow(tx: TransactionClientOnly, classId: string): Promise<ClassLock> {
   await setLockTimeout(tx);
   await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
   await tx.$queryRaw`
@@ -284,6 +300,7 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
     JOIN "Class" c ON c."calendarEntryId" = e.id
     WHERE c.id = ${classId}
     FOR UPDATE OF e`;
+  return { classId } as ClassLock;
 }
 
 /**

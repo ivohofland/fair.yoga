@@ -248,7 +248,7 @@ export async function addToWaitlist(
       throw err;
     }
 
-    await lockClassRow(tx, classId);
+    const lock = await lockClassRow(tx, classId);
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
@@ -266,7 +266,7 @@ export async function addToWaitlist(
       throw new WaitlistJoinError("This class isn't taking waitlist sign-ups.", 'class_not_open');
     }
 
-    const { isFull } = await readSeatCount(tx, classId);
+    const { isFull } = await readSeatCount(tx, lock);
     if (!isFull) {
       throw new WaitlistJoinError(
         'The class still has open spots — book directly instead.',
@@ -522,7 +522,7 @@ export async function promoteNext(
   opts: { now?: Date } = {},
 ): Promise<WaitlistEntry | null> {
   return db.$transaction(async (tx) => {
-    await lockClassRow(tx, classId);
+    const lock = await lockClassRow(tx, classId);
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
@@ -557,7 +557,7 @@ export async function promoteNext(
       );
     }
 
-    const { isFull } = await readSeatCount(tx, classId);
+    const { isFull } = await readSeatCount(tx, lock);
     if (isFull) {
       throw new WaitlistPromotionError('Class is full', 'class_full');
     }
@@ -658,7 +658,7 @@ export async function claimSpot(
   now?: Date,
 ): Promise<ClaimResult> {
   return db.$transaction(async (tx): Promise<ClaimResult> => {
-    await lockClassRow(tx, classId);
+    const lock = await lockClassRow(tx, classId);
 
     // `findUnique`: the id comes from the request, and archiving a recurring
     // class deletes its future classes, so a claim can arrive for one that is
@@ -710,7 +710,7 @@ export async function claimSpot(
 
     // The claimant holds no seat (checked above), so a full class means
     // someone else took it.
-    const { isFull } = await readSeatCount(tx, classId);
+    const { isFull } = await readSeatCount(tx, lock);
     if (isFull) {
       throw new WaitlistPromotionError('Someone else just took the spot.', 'class_full');
     }
@@ -946,9 +946,9 @@ export async function handleSpotFreed(
     // conservative outcome: a writer holding this row that long is probably
     // filling the seat.
     const outcome = await db.$transaction(async (tx) => {
-      await lockClassRow(tx, classId);
+      const lock = await lockClassRow(tx, classId);
 
-      const seats = await readSeatCount(tx, classId);
+      const seats = await readSeatCount(tx, lock);
       if (seats.isFull) {
         const waiting = await tx.waitlistEntry.count({ where: { classId, status: 'waiting' } });
         return { kind: 'suppressed' as const, seats, waiting };

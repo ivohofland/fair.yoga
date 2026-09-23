@@ -108,13 +108,14 @@ function pauseCompletionAtLock(classId: string): {
   let paused = false;
   const original = dbLocks.lockClassRow;
   const spy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, id) => {
-    await original(tx, id);
+    const lock = await original(tx, id);
     if (id === classId && !paused) {
       paused = true;
       pid = await ownPid(tx);
       reached.open();
       await held.promise;
     }
+    return lock;
   });
   onTestFinished(() => spy.mockRestore());
   return { reached: reached.promise, pid: () => pid, release: held.open };

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { readSeatCount } from './capacity';
+import { lockClassRow } from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 
@@ -117,14 +118,14 @@ describe('readSeatCount (DB)', () => {
   /** Three phases against one class, each adding to the last. */
   it('counts only seat-occupying registrations', async () => {
     // Phase 1 — empty class: every seat free.
-    const empty = await prisma.$transaction((tx) => readSeatCount(tx, classId));
+    const empty = await prisma.$transaction(async (tx) => readSeatCount(tx, await lockClassRow(tx, classId)));
     expect(empty).toEqual({ maxStudents: 2, activeCount: 0, freeSeats: 2, isFull: false });
 
     // Phase 2 — one registered: one seat left.
     await prisma.registration.create({
       data: { classId, studentId: studentIds[0]!, tierAtBooking: 3 },
     });
-    const partial = await prisma.$transaction((tx) => readSeatCount(tx, classId));
+    const partial = await prisma.$transaction(async (tx) => readSeatCount(tx, await lockClassRow(tx, classId)));
     expect(partial).toEqual({ maxStudents: 2, activeCount: 1, freeSeats: 1, isFull: false });
 
     // Phase 3 — the two statuses that freed their seat must not count. A
@@ -137,7 +138,7 @@ describe('readSeatCount (DB)', () => {
     await prisma.registration.create({
       data: { classId, studentId: studentIds[2]!, tierAtBooking: 3, status: 'late_cancel' },
     });
-    const withFreed = await prisma.$transaction((tx) => readSeatCount(tx, classId));
+    const withFreed = await prisma.$transaction(async (tx) => readSeatCount(tx, await lockClassRow(tx, classId)));
     expect(withFreed).toEqual({ maxStudents: 2, activeCount: 1, freeSeats: 1, isFull: false });
   });
 
@@ -163,7 +164,7 @@ describe('readSeatCount (DB)', () => {
         data: { classId: overClassId, studentId, tierAtBooking: 3 },
       });
     }
-    const over = await prisma.$transaction((tx) => readSeatCount(tx, overClassId));
+    const over = await prisma.$transaction(async (tx) => readSeatCount(tx, await lockClassRow(tx, overClassId)));
     expect(over).toEqual({ maxStudents: 2, activeCount: 3, freeSeats: -1, isFull: true });
   });
 });

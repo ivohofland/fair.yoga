@@ -18,7 +18,7 @@
  * read as "every capacity question in the repo comes through this module".
  */
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
-import type { TransactionClientOnly } from '@/lib/db-locks';
+import type { ClassLock, TransactionClientOnly } from '@/lib/db-locks';
 
 /**
  * A class's seat position at one instant.
@@ -63,19 +63,18 @@ export interface SeatCount {
 }
 
 /**
- * Counts the seats left in a class, from the caller's transaction.
+ * Counts the seats left in a class, under the caller's `Class` row lock.
  *
- * **Precondition: the caller must already hold the `Class` row lock.** Without
- * it this is a snapshot with no meaning — a registration committing a
- * millisecond later makes the answer wrong, which is exactly the defect this
- * module exists to fix. Every caller takes that lock first: all five write
- * paths named above now go through `lockClassRow` (`db-locks.ts`).
+ * **It takes the lock as a `ClassLock`, not a class id.** Only `lockClassRow`
+ * (`db-locks.ts`) mints one, so a count with no lock behind it does not
+ * compile, and the class counted is the class locked — it has no other id to
+ * read. Without the lock the answer would be a snapshot with no meaning: a
+ * registration committing a millisecond later makes it wrong, which is the
+ * defect this module exists to fix (#212).
  *
- * This function deliberately does NOT take the lock itself, and the reason is
- * SCOPE, not efficacy: every caller already holds the lock before calling in,
- * so acquiring one here would change what those callers expect this helper to
- * do. Whether `readSeatCount` should take it too — closing the gap the
- * precondition above names — is #219's decision to make.
+ * It does not take the lock itself: `lockClassRow` also bounds the wait and
+ * locks the class's `CalendarEntry` alongside it, and a second, bare
+ * `FOR UPDATE` here would do neither.
  *
  * It reads the class rather than accepting one, so a caller cannot compare a
  * freshly-locked count against a `maxStudents` it read BEFORE taking the lock.
@@ -84,16 +83,15 @@ export interface SeatCount {
  * the transaction already holds locked.
  *
  * The `TransactionClientOnly` brand rejects a bare `PrismaClient` at compile
- * time (see `db-locks.ts` for how the brand works). It cannot check that the
- * caller actually took the lock — nothing in TypeScript or Postgres can — so
- * the precondition above is a review obligation, not a guarantee. **#219** is
- * the filed decision on making it structural (a `ClassLock` token, or taking
- * the lock in the read here); until it lands, this docblock is the enforcement.
+ * time (see `db-locks.ts`). What neither it nor the token can check is that
+ * `tx` is the same transaction that took the lock, so do not hand a token
+ * across a transaction boundary.
  */
 export async function readSeatCount(
   tx: TransactionClientOnly,
-  classId: string,
+  lock: ClassLock,
 ): Promise<SeatCount> {
+  const { classId } = lock;
   const cls = await tx.class.findUniqueOrThrow({
     where: { id: classId },
     select: { maxStudents: true },
