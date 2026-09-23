@@ -10,6 +10,7 @@ import {
   removeFromWaitlist,
   promoteNext,
   claimSpot,
+  activateRegistration,
   handleSpotFreed,
   closeQueueOnStart,
   withdrawWaitingEntriesForTeacher,
@@ -23,6 +24,7 @@ import { formatInstantInZone } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import * as dbLocks from '@/lib/db-locks';
+import { lockClassRow } from '@/lib/db-locks';
 import { unlinkTeacher } from './invitations';
 
 // ===========================================================================
@@ -495,6 +497,63 @@ describe('promoteNext (DB)', () => {
     });
   }
 
+  /**
+   * A class of the calling test's own: one seat, free, and one student
+   * waiting for it — so the window is the only thing that decides whether
+   * `promoteNext` promotes. Starts 18:00 Europe/Amsterdam (the teacher's
+   * default zone) on `date`, which is 16:00 UTC on a summer date. `date` must
+   * differ per caller: `CalendarEntry_teacher_slot_excl` refuses two
+   * overlapping entries for one teacher.
+   */
+  async function seedPromotable(date: string, label: string) {
+    const mk = async (role: string) =>
+      (
+        await prisma.student.create({
+          data: {
+            firstName: `Promote${label}`,
+            lastName: role,
+            email: `promote-${label}-${role}-${uniqueSuffix}@test.local`.toLowerCase(),
+            incomeTier: 3,
+          },
+        })
+      ).id;
+    const fillerId = await mk('filler');
+    const waiterId = await mk('waiter');
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Yin',
+      date: new Date(date),
+      startTime: hhmmToTime('18:00'),
+      durationMinutes: 75,
+      roomCost: 40,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 0,
+      maxStudents: 1,
+      status: 'open',
+      settingsLocked: true,
+    });
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      await prisma.student.deleteMany({ where: { id: { in: [fillerId, waiterId] } } });
+    });
+    // Full first, because `addToWaitlist` accepts only a full class; then the
+    // filler cancels and the seat is free.
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: fillerId, status: 'registered', tierAtBooking: 3 },
+    });
+    await addToWaitlist(prisma, cls.id, waiterId);
+    await prisma.registration.update({
+      where: { classId_studentId: { classId: cls.id, studentId: fillerId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+    return { classId: cls.id, waiterId };
+  }
+
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
       data: {
@@ -729,26 +788,61 @@ describe('promoteNext (DB)', () => {
   });
 
   it('promotes after the cancel deadline while more than an hour remains (#236)', async () => {
-    // Class starts 2099-07-01 18:00 Europe/Amsterdam (16:00 UTC); its
-    // HOURS_24 cancel deadline falls the day before. `now` here is well past
-    // that deadline and still more than an hour before start — the window
-    // stays `auto_promote` because #236 anchors it on start, not the
-    // deadline. studentIds[3] rejoins the queue after test 6 above cancelled
-    // their registration; the class is full again from the previous test, so
-    // free a spot before promoting into it.
-    await addToWaitlist(prisma, classId, studentIds[3]!);
-    await cancelRegistration(studentIds[2]!);
+    // Starts 2099-07-10 16:00 UTC; its HOURS_24 cancel deadline falls the day
+    // before. `now` is well past that deadline and still more than an hour
+    // before start — the window stays `auto_promote` because #236 anchors it
+    // on start, not the deadline.
+    const seeded = await seedPromotable('2099-07-10', 'AfterDeadline');
 
-    const promoted = await promoteNext(prisma, classId, { now: new Date('2099-07-01T10:00:00Z') });
+    const promoted = await promoteNext(prisma, seeded.classId, { now: new Date('2099-07-10T10:00:00Z') });
     expect(promoted).not.toBeNull();
-    expect(promoted!.studentId).toBe(studentIds[3]);
+    expect(promoted!.studentId).toBe(seeded.waiterId);
     expect(promoted!.status).toBe('promoted');
   });
 
   it('refuses in the final hour before class (#236)', async () => {
+    const seeded = await seedPromotable('2099-07-11', 'FinalHour');
+
     await expect(
-      promoteNext(prisma, classId, { now: new Date('2099-07-01T15:30:00Z') }),
+      promoteNext(prisma, seeded.classId, { now: new Date('2099-07-11T15:30:00Z') }),
     ).rejects.toMatchObject({ reason: 'wrong_window' });
+    expect(await prisma.registration.count({ where: { classId: seeded.classId, status: 'registered' } })).toBe(0);
+  });
+
+  it.each([
+    ['at class start', '2099-07-12T16:00:00Z'],
+    ['an hour after class start', '2099-07-12T17:00:00Z'],
+  ])('refuses once the class has started — %s (#236)', async (_label, instant) => {
+    const seeded = await seedPromotable('2099-07-12', 'Frozen');
+    const before = await prisma.registration.count({ where: { classId: seeded.classId } });
+
+    await expect(
+      promoteNext(prisma, seeded.classId, { now: new Date(instant) }),
+    ).rejects.toMatchObject({ reason: 'window_frozen' });
+    expect(await prisma.registration.count({ where: { classId: seeded.classId } })).toBe(before);
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId: seeded.classId, studentId: seeded.waiterId } },
+    });
+    expect(entry.status).toBe('waiting');
+  });
+
+  it('refuses a lock taken for another class, and writes no registration', async () => {
+    const target = await seedPromotable('2099-07-13', 'LockTarget');
+    const other = await seedPromotable('2099-07-14', 'LockOther');
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const otherLock = await lockClassRow(tx, other.classId);
+        return activateRegistration(tx, otherLock, {
+          classId: target.classId,
+          studentId: target.waiterId,
+          tierAtBooking: 3,
+        });
+      }),
+    ).rejects.toThrow(/lock is for class/);
+    expect(
+      await prisma.registration.count({ where: { studentId: target.waiterId } }),
+    ).toBe(0);
   });
 
   it('names the free-cancel time in the notification, anchored on the injected promotedAt (#236)', async () => {
@@ -1982,6 +2076,50 @@ describe('handleSpotFreed (DB)', () => {
     prisma.notification.count({ where: { relatedClassId: classId, type: 'spot_available' } });
 
   /**
+   * A class of the calling test's own, starting 09:00 UTC on `date`: one
+   * seat, free, and both waiters `waiting` for it. `date` must differ per
+   * caller: `CalendarEntry_teacher_slot_excl` refuses two overlapping entries
+   * for one teacher.
+   */
+  async function seedFreeSeat(date: string) {
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'SpotFreed Flow',
+      date: new Date(date),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 0,
+      maxStudents: 1,
+      cancelDeadline: 'HOURS_24',
+      status: 'open',
+    });
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    });
+    // Full first, because `addToWaitlist` accepts only a full class; then the
+    // filler cancels and the seat is free.
+    await prisma.registration.create({ data: { classId: cls.id, studentId: fillerId, tierAtBooking: 3 } });
+    for (const waiterId of waiterIds) {
+      await addToWaitlist(prisma, cls.id, waiterId);
+    }
+    await prisma.registration.update({
+      where: { classId_studentId: { classId: cls.id, studentId: fillerId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+    return cls.id;
+  }
+
+  const broadcastsFor = (id: string) =>
+    prisma.notification.count({ where: { relatedClassId: id, type: 'spot_available' } });
+
+  /**
    * #212. Both halves are one test on purpose: the second is the control that
    * makes the first mean something. Asserting only "no notifications on a full
    * class" would pass against a `handleSpotFreed` that had been broken to do
@@ -2097,26 +2235,36 @@ describe('handleSpotFreed (DB)', () => {
 
   /**
    * #236: the window is anchored on class start, not the cancel deadline.
-   * Both instants below sit more than 23 hours past this class's HOURS_24
-   * deadline, which the old deadline-anchored window would have read as
-   * `frozen` — the defect the issue is about. Reuses the state the tests
-   * above leave behind: the seat is still free and both waiters are still
-   * `waiting`.
+   * The first two instants below sit more than 23 hours past the class's
+   * HOURS_24 deadline, which a deadline-anchored window would read as
+   * `frozen`.
    */
   it('broadcasts a seat freed under an hour before start, however far past the deadline (#236)', async () => {
-    const before = await countBroadcasts();
+    const id = await seedFreeSeat('2099-06-10');
 
-    const result = await handleSpotFreed(prisma, classId, new Date('2026-06-03T08:30:00Z'));
+    const result = await handleSpotFreed(prisma, id, new Date('2099-06-10T08:30:00Z'));
 
     expect(result).toEqual({ action: 'broadcast', notified: 2 });
-    expect(await countBroadcasts()).toBe(before + 2);
+    expect(await broadcastsFor(id)).toBe(2);
   });
 
   it('promotes a seat freed two hours before start, however far past the deadline (#236)', async () => {
-    const promoted = await handleSpotFreed(prisma, classId, new Date('2026-06-03T07:00:00Z'));
+    const id = await seedFreeSeat('2099-06-11');
+
+    const promoted = await handleSpotFreed(prisma, id, new Date('2099-06-11T07:00:00Z'));
 
     if (promoted.action !== 'promoted') throw new Error(`expected a promotion, got ${promoted.action}`);
     expect(promoted.entry.studentId).toBe(waiterIds[0]);
+  });
+
+  it('does nothing once the class has started, though a seat is free and students wait (#236)', async () => {
+    const id = await seedFreeSeat('2099-06-12');
+
+    const result = await handleSpotFreed(prisma, id, new Date('2099-06-12T09:00:00Z'));
+
+    expect(result).toEqual({ action: 'frozen' });
+    expect(await broadcastsFor(id)).toBe(0);
+    expect(await prisma.waitlistEntry.count({ where: { classId: id, status: 'waiting' } })).toBe(2);
   });
 });
 
