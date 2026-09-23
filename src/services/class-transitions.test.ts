@@ -236,8 +236,8 @@ describe('class transitions (DB, timezone-aware)', () => {
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.status).toBe('open');
 
-      // Filtered to THIS class: `warn` is a module-level spy, so a bare call
-      // count would also catch any other class the run logs against.
+      // Filtered to THIS class: `log.warn` is process-wide, so the filter keeps
+      // the count about this fixture whatever else logs while the spy is on.
       expect(
         warn.mock.calls.filter((c) => (c[0] as { classId?: string })?.classId === cls.id),
       ).toHaveLength(1);
@@ -385,12 +385,11 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     // `finally`, the convention this file records at its own `#174` fixture
     // and cites from `gdpr.test.ts`'s `cleanupStudentWaitingInClass` docblock.
-    // #200 added four assertions ahead of the cleanup, so there are now five
-    // ways to skip it — and this project's
-    // protocol guarantees repeated deliberately-failing runs of exactly this
-    // test. The leak is inert (the class is already `cancelled`, so no sweep
-    // matches it, and `afterAll` reaps both rows), but inert-by-luck is not
-    // the reason to leave it out.
+    // Every assertion ahead of the cleanup is a way to skip it, and this
+    // project's protocol guarantees repeated deliberately-failing runs of
+    // exactly this test. The leak is inert (the class's entry is already
+    // cancelled, so no sweep matches it, and `afterAll` reaps both rows), but
+    // inert-by-luck is not the reason to leave it out.
     try {
       const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
       const cancelledCount = await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'));
@@ -432,12 +431,18 @@ describe('class transitions (DB, timezone-aware)', () => {
   it('does not auto-cancel before the local check window opens', async () => {
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2' });
 
-    // 13:00Z is before the 14:00Z window opening.
-    await autoCancelClasses(prisma, new Date('2026-07-20T13:00:00Z'));
+    try {
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      // 13:00Z is before the 14:00Z window opening.
+      const cancelledCount = await autoCancelClasses(scoped.db, new Date('2026-07-20T13:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(updated.status).toBe('open');
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      expect(scoped.rowsRead('Class')).toBe(1);
+      expect(cancelledCount).toBe(0);
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(updated.calendarEntry.cancelledAt).toBeNull();
+    } finally {
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
   });
 
   /**
@@ -666,18 +671,20 @@ describe('class transitions (DB, timezone-aware)', () => {
       // takes.
     }) as unknown as PrismaClient;
 
-    await autoCancelClasses(racing, new Date('2026-07-20T15:00:00Z'));
+    try {
+      await autoCancelClasses(racing, new Date('2026-07-20T15:00:00Z'));
 
-    expect(calls).toBe(1);
+      expect(calls).toBe(1);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(updated.status).toBe('open');
-    expect(
-      await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'class_cancelled' } }),
-    ).toBe(0);
-
-    await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(updated.calendarEntry.cancelledAt).toBeNull();
+      expect(
+        await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'class_cancelled' } }),
+      ).toBe(0);
+    } finally {
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
   });
 
   // #174 task 6, round 1 review, Important 1. Moving the count inside the
@@ -904,7 +911,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       expect(cancelledCount).toBe(0);
 
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-      expect(updated.status).toBe('open');
+      expect(updated.calendarEntry.cancelledAt).toBeNull();
 
       // Nobody was told a class was cancelled that wasn't. Pre-fix this is 2 —
       // one for the student, one for the teacher.
@@ -966,17 +973,22 @@ describe('class transitions (DB, timezone-aware)', () => {
       // Same cast rationale as the tests above.
     }) as unknown as PrismaClient;
 
-    // 15:00Z is inside the 14:00Z–16:00Z window, so the window is not what
-    // skips this class — the pre-filter is.
-    await autoCancelClasses(watched, new Date('2026-07-20T15:00:00Z'));
+    try {
+      const scoped = scopeSweep(watched, { Class: { id: { in: [cls.id] } } });
+      // 15:00Z is inside the 14:00Z–16:00Z window, so the window is not what
+      // skips this class — the pre-filter is.
+      await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'));
 
-    expect(decisionCounts).toBe(0);
+      // The sweep read the class, so the zero below is the pre-filter's.
+      expect(scoped.rowsRead('Class')).toBe(1);
+      expect(decisionCounts).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(updated.status).toBe('open');
-
-    await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(updated.calendarEntry.cancelledAt).toBeNull();
+    } finally {
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
   });
 
   /**
@@ -1001,14 +1013,16 @@ describe('class transitions (DB, timezone-aware)', () => {
       data: { classId: cls.id, studentId: secondStudentId, status: 'late_cancel', tierAtBooking: 3 },
     });
 
-    await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
+    try {
+      await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(updated.calendarEntry.cancelledAt).not.toBeNull();
-
-    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
-    await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(updated.calendarEntry.cancelledAt).not.toBeNull();
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
   });
 
   // Ordered before 'auto-completes an in-progress class after its local end
