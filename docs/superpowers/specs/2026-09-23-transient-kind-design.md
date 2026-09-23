@@ -123,9 +123,11 @@ Every site that logs:
   kept so a query can facet on it);
 - keeps `transient` in the fields where it is there today;
 - drops the mechanism from the message: "…lost a lock race…" and
-  "…lost the template lock race…" become "…rolled back on a transient database
-  failure…", with the rest of each message unchanged. Messages stay static
-  strings so they group.
+  "…lost the template lock race…" become "…hit a transient database
+  failure…", with the rest of each message unchanged — so the template sites
+  keep their "— nothing committed", which is what states the rollback. Not
+  "rolled back": the spot-freed hooks run after a commit, and that word would
+  name a mechanism there too. Messages stay static strings so they group.
 
 Site-specific rules:
 
