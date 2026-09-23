@@ -23,7 +23,7 @@ import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'v
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import {
-  AlreadyErasedError,
+  type ErasureOutcome,
   deleteStudentAccount,
   deleteTeacherAccount,
   ErasureLockSetError,
@@ -1969,8 +1969,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       // The notification assertion passes EVEN WITH THE ABORT REMOVED, and
       // passes with the `Student` lock removed too; it fails only if both go
       // (why: `AlreadyErasedError`'s docblock, `gdpr.ts`). The
-      // rejection-count and `AlreadyErasedError` assertions are what pin the
-      // abort.
+      // already-erased-count assertion is what pins the abort.
       //
       // The lever (the pattern in `registrations-api.test.ts`'s cancel race):
       // a third transaction takes the `Student` row `FOR UPDATE` before either
@@ -2021,9 +2020,9 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       // Asserted before the outcomes, deliberately: the doubled broadcast is
       // the defect — every waiting student told twice about one freed seat —
       // and this is the assertion whose failure message names it when the
-      // `Student` lock and the abort are both gone. With the rejection count
-      // first, that run would fail on "expected 1, received 0", which says
-      // nothing about what it cost anyone.
+      // `Student` lock and the abort are both gone. With the already-erased
+      // count first, that run would fail on "expected 1, received 0", which
+      // says nothing about what it cost anyone.
       const notifications = await prisma.notification.findMany({
         where: {
           relatedClassId: fixture.classId,
@@ -2033,10 +2032,13 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       });
       expect(notifications).toHaveLength(1);
 
-      // One erases; the other finds the row already erased and aborts whole.
-      const rejected = results.filter((r) => r.status === 'rejected');
-      expect(rejected).toHaveLength(1);
-      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(AlreadyErasedError);
+      // One erases; the other finds the row already erased, rolls back whole,
+      // and reports it rather than rejecting.
+      expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+      const outcomes = results.map((r) => (r as PromiseFulfilledResult<ErasureOutcome>).value);
+      expect(outcomes.filter((o) => !o.erased)).toEqual([
+        { erased: false, reason: 'already-erased' },
+      ]);
 
       const student = await prisma.student.findUniqueOrThrow({ where: { id: fixture.studentId } });
       expect(student.deletedAt).not.toBeNull();

@@ -298,11 +298,20 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
 export type ErasureHalf = 'student' | 'teacher';
 
 /**
- * Thrown when an erasure finds the profile already erased.
- *
- * Not a failure: the caller's goal is satisfied, by the request that won. It
- * exists so the transaction ABORTS rather than committing a second, redundant
- * erasure.
+ * What an erasure did. `erased: false` is not a failure: the profile was
+ * already erased, by a concurrent request that won, and this call's own
+ * transaction rolled back whole rather than commit a redundant second pass.
+ * A caller that ignores the value is still correct — the goal holds either
+ * way. Every genuine failure rejects.
+ */
+export type ErasureOutcome = { erased: true } | { erased: false; reason: 'already-erased' };
+
+/**
+ * Thrown inside each erasure's own transaction when it finds its profile
+ * already erased, solely so the transaction ABORTS rather than committing a
+ * second, redundant erasure. Private to this file: caught by the same
+ * function around its own `db.$transaction` and turned into `{ erased:
+ * false, reason: 'already-erased' }` — it never escapes this module.
  *
  * In `deleteStudentAccount` the throw is not what prevents a doubled
  * `spot_available` broadcast. A second concurrent erasure of the same student
@@ -311,16 +320,29 @@ export type ErasureHalf = 'student' | 'teacher';
  * class to hand `handleSpotFreed`: the `Student` lock prevents the doubled
  * broadcast. The throw is what stops that second, redundant transaction
  * committing at all. `gdpr-lock-order.test.ts` ("erases once when the same
- * student erasure runs twice concurrently") pins the throw through its
- * rejection-count assertion.
+ * student erasure runs twice concurrently") pins the abort through its
+ * already-erased-count assertion.
  *
- * `DELETE /api/account` maps this to the same 200 a first erasure returns —
- * see that route for why it must not reach `erasureFailure`.
+ * `DELETE /api/account` no longer catches this error — it reads the
+ * `ErasureOutcome` `deleteStudentAccount`/`deleteTeacherAccount` return.
  */
-export class AlreadyErasedError extends Error {
+class AlreadyErasedError extends Error {
   constructor(readonly half: ErasureHalf) {
     super(`${half} profile is already erased`);
     this.name = 'AlreadyErasedError';
+  }
+}
+
+/**
+ * `null` when `committing` aborted on `AlreadyErasedError`; the transaction
+ * has rolled back whole. Every other rejection passes through unchanged.
+ */
+async function unlessAlreadyErased<T>(committing: Promise<T>): Promise<T | null> {
+  try {
+    return await committing;
+  } catch (err) {
+    if (err instanceof AlreadyErasedError) return null;
+    throw err;
   }
 }
 
@@ -368,13 +390,16 @@ export class ErasureLockSetError extends Error {
  *   charged/past registrations and payments remain, attributed to
  *   "Deleted Student"
  */
-export async function deleteStudentAccount(db: PrismaClient, studentId: string): Promise<void> {
+export async function deleteStudentAccount(
+  db: PrismaClient,
+  studentId: string,
+): Promise<ErasureOutcome> {
   const student = await db.student.findUniqueOrThrow({
     where: { id: studentId },
     select: { email: true, firstName: true, accountId: true },
   });
 
-  const freedClassIds = await db.$transaction(async (tx) => {
+  const freedClassIds = await unlessAlreadyErased(db.$transaction(async (tx) => {
     // FIRST statement, unconditionally — not left to a lock helper further down.
     //
     // The bound used to arrive only as a side effect of the old `lockClassRow`
@@ -744,8 +769,9 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `AlreadyErasedError`'s docblock.
     //
     // Not an error condition, which is why the sentinel is typed rather than
-    // generic: the caller wanted this profile erased and it is,
-    // `api/account/route.ts` maps it to the same 200 a first erasure gets.
+    // generic: the caller wanted this profile erased and it is —
+    // `unlessAlreadyErased` turns this into `{ erased: false, reason:
+    // 'already-erased' }` for the caller.
     const erased = await tx.student.updateMany({
       where: { id: studentId, deletedAt: null },
       data: {
@@ -921,7 +947,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // relies on exactly that to tell the caller "Nothing was changed", and says
     // why the teacher erasure cannot claim the same.
     timeout: 20_000,
-  });
+  }));
+  if (freedClassIds === null) return { erased: false, reason: 'already-erased' };
 
   // The seats are freed and the erasure is committed — a promotion failure
   // must not undo either, so errors are logged and swallowed.
@@ -976,6 +1003,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       }
     }
   }
+  return { erased: true };
 }
 
 /**
@@ -1040,7 +1068,10 @@ const CANCELLABLE_STATUSES_SQL = statusInList(CANCELLABLE_STATUSES);
  * follows it, so parking them in that gap silently reassigned this summary to
  * `CANCELLABLE_STATUSES` and left this function undocumented on hover.
  */
-export async function deleteTeacherAccount(db: PrismaClient, teacherId: string): Promise<void> {
+export async function deleteTeacherAccount(
+  db: PrismaClient,
+  teacherId: string,
+): Promise<ErasureOutcome> {
   const teacher = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
     select: { email: true, accountId: true, defaultTimezone: true },
@@ -1080,11 +1111,12 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // `warn`, not `error`, and with the status this class was actually
       // found in. The commonest way to land here is `completeClass` refusing
       // `completed → completed` — which is precisely what the LOSER of two
-      // concurrent erasures of the same teacher hits, and that loser now ends
-      // in a 200 (`AlreadyErasedError`). Paging someone for the expected
-      // outcome of a race this design chooses to lose gracefully trains them
-      // to ignore the line. `observedStatus` is what separates that benign
-      // case from a genuine refusal, and it is the same field
+      // concurrent erasures of the same teacher hits, and that loser's own
+      // erasure reports already-erased rather than a failure. Paging someone
+      // for the expected outcome of a race this design chooses to lose
+      // gracefully trains them to ignore the line. `observedStatus` is what
+      // separates that benign case from a genuine refusal, and it is the
+      // same field
       // `deleteTeacherAccount`'s own class CAS reports below.
       // `.catch` because this read exists only to enrich a log line, and a
       // diagnostic must never be able to fail the operation it describes:
@@ -1113,7 +1145,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     }
   }
 
-  const skippedClassIds = await db.$transaction(
+  const skippedClassIds = await unlessAlreadyErased(db.$transaction(
     async (tx) => {
       // Collected, not logged, inside this transaction — see the loop below
       // this call for why the diagnostic that explains each id cannot run
@@ -1446,9 +1478,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // transaction has committed, so this abort is what keeps a losing
       // duplicate from logging a residual warn for a skip it never
       // actually made. Done anyway so the two halves answer a repeated
-      // request the same way: the route
-      // catches this sentinel per half, and a teacher half that silently
-      // re-erased while the student half refused would make that catch look
+      // request the same way: the route reads each half's outcome
+      // separately, and a teacher half that silently re-erased while the
+      // student half reported already-erased would make that asymmetry look
       // arbitrary to the next reader.
       //
       // What this abort does NOT undo, stated so it is not mistaken for a
@@ -1513,7 +1545,8 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     // rows, so it has less headroom against Prisma's 5s default than the
     // archive/pause sites did even before a lock wait enters the picture.
     { timeout: 10_000 },
-  );
+  ));
+  if (skippedClassIds === null) return { erased: false, reason: 'already-erased' };
 
   // The cause of each skipped cancel, read AFTER the commit.
   //
@@ -1613,4 +1646,5 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       );
     }
   }
+  return { erased: true };
 }

@@ -11,11 +11,11 @@ import {
 import { clearSessionCookie } from '@/lib/auth';
 import { isTransientDbError } from '@/lib/api-errors';
 import {
-  AlreadyErasedError,
   deleteStudentAccount,
   deleteTeacherAccount,
   ErasureLockSetError,
   type ErasureHalf,
+  type ErasureOutcome,
 } from '@/services/gdpr';
 
 /**
@@ -124,31 +124,11 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   // operation failing — and stays at `error`. `ErasureLockSetError` has a
   // branch of its own below.
   if (session.studentId) {
+    let outcome: ErasureOutcome;
     try {
-      await deleteStudentAccount(prisma, session.studentId);
+      outcome = await deleteStudentAccount(prisma, session.studentId);
     } catch (err) {
-      // The erasure this request wanted has already happened — a concurrent
-      // duplicate, whose transaction aborted whole rather than commit a
-      // redundant second pass. The caller's question is "is this account
-      // gone?" and the honest answer is yes, so this must NOT reach
-      // `erasureFailure`, which would report a 500 for an outcome that
-      // succeeded. Caught per half so a dual-role account whose student half
-      // is already erased still goes on to erase its teacher half below.
-      //
-      // Only reachable concurrently: a sequential retry never gets here,
-      // because `validateSession` (`lib/auth/session.ts`) resolves only LIVE
-      // profiles, so `session.studentId` is already null by then.
-      //
-      // `err` in the payload, not just `half`: this line is the ONLY record
-      // that the sentinel fired, and without the error object it carries no
-      // stack — so an `AlreadyErasedError` thrown from somewhere nobody
-      // expects looks identical here to the one this branch was written for.
-      if (err instanceof AlreadyErasedError) {
-        log.info(
-          { err, accountId: session.accountId, half: err.half },
-          'account erasure: half already erased',
-        );
-      } else if (err instanceof ErasureLockSetError) {
+      if (err instanceof ErasureLockSetError) {
         // Its own message, so the line can be found without filtering on
         // `err.type`, and at `error` although `erasureFailure` answers it as
         // busy: `ErasureLockSetError`'s docblock (`gdpr.ts`) says why nothing
@@ -167,51 +147,66 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
         return erasureFailure(err, { half: 'student', partial: false });
       }
     }
+    // The erasure this request wanted has already happened — a concurrent
+    // duplicate, whose transaction aborted whole rather than commit a
+    // redundant second pass. The caller's question is "is this account
+    // gone?" and the honest answer is yes, so this is a success, not
+    // `erasureFailure`'s territory. Checked per half so a dual-role account
+    // whose student half is already erased still goes on to erase its
+    // teacher half below.
+    //
+    // Only reachable concurrently: a sequential retry never gets here,
+    // because `validateSession` (`lib/auth/session.ts`) resolves only LIVE
+    // profiles, so `session.studentId` is already null by then.
+    if (!outcome.erased) {
+      log.info(
+        { accountId: session.accountId, half: 'student' },
+        'account erasure: half already erased',
+      );
+    }
   }
   if (session.teacherId) {
+    let outcome: ErasureOutcome;
     try {
-      await deleteTeacherAccount(prisma, session.teacherId);
+      outcome = await deleteTeacherAccount(prisma, session.teacherId);
     } catch (err) {
-      // Already erased by a concurrent duplicate — see the student half
-      // above for why that is a success. Emphatically NOT `partial`: this
-      // half's transaction rolled back whole, so nothing is half-applied,
-      // and routing it through `erasureFailure` would tell a caller their
-      // teaching data survived when the winning request had removed it.
-      if (err instanceof AlreadyErasedError) {
-        // `err` for the same reason as the student half above: a sentinel
-        // logged without its stack cannot be told from a lookalike.
-        log.info(
-          { err, accountId: session.accountId, half: err.half },
-          'account erasure: half already erased',
-        );
-      } else {
-        // `partial` is `Boolean(session.studentId)`, which reads as "the
-        // student half ran and committed" and no longer always means that:
-        // since #196 the student half can throw `AlreadyErasedError`, roll
-        // back whole, and still leave `session.studentId` truthy. The account
-        // state the message describes is still true — the winning request
-        // erased that half — but it is true about the other request, not this
-        // one. Left as is because the caller-facing sentence stays accurate;
-        // noted because the variable's name no longer explains itself.
-        // Without a student profile this is a teacher-only erasure — which is
-        // NOT the same as "nothing is half-applied": `deleteTeacherAccount`
-        // commits a `completeClass` per in-progress class before its own
-        // transaction opens, so a failure here can leave real billing behind.
-        // `erasureFailure`'s `half` is what keeps the message honest about
-        // that. This path used to bare-`throw` into `withErrorHandler`'s
-        // generic 500 with no code at all, and it is the path #174 made MORE
-        // likely to fail: `deleteTeacherAccount` now calls a `completeClass`
-        // that opens with `lockClassRow`'s 2s bound.
-        const partial = Boolean(session.studentId);
-        const transient = isTransientDbError(err);
-        log[transient ? 'warn' : 'error'](
-          { err, accountId: session.accountId, partial, transient },
-          partial
-            ? 'partial account erasure: student half committed, teacher half failed'
-            : 'account erasure: teacher half failed',
-        );
-        return erasureFailure(err, { half: 'teacher', partial });
-      }
+      // `partial` is `Boolean(session.studentId)`, which reads as "the
+      // student half ran and committed" and no longer always means that:
+      // since #196 the student half can report already-erased, having rolled
+      // back whole, and still leave `session.studentId` truthy. The account
+      // state the message describes is still true — the winning request
+      // erased that half — but it is true about the other request, not this
+      // one. Left as is because the caller-facing sentence stays accurate;
+      // noted because the variable's name no longer explains itself.
+      // Without a student profile this is a teacher-only erasure — which is
+      // NOT the same as "nothing is half-applied": `deleteTeacherAccount`
+      // commits a `completeClass` per in-progress class before its own
+      // transaction opens, so a failure here can leave real billing behind.
+      // `erasureFailure`'s `half` is what keeps the message honest about
+      // that. This path used to bare-`throw` into `withErrorHandler`'s
+      // generic 500 with no code at all, and it is the path #174 made MORE
+      // likely to fail: `deleteTeacherAccount` now calls a `completeClass`
+      // that opens with `lockClassRow`'s 2s bound.
+      const partial = Boolean(session.studentId);
+      const transient = isTransientDbError(err);
+      log[transient ? 'warn' : 'error'](
+        { err, accountId: session.accountId, partial, transient },
+        partial
+          ? 'partial account erasure: student half committed, teacher half failed'
+          : 'account erasure: teacher half failed',
+      );
+      return erasureFailure(err, { half: 'teacher', partial });
+    }
+    // Already erased by a concurrent duplicate — see the student half above
+    // for why that is a success. Emphatically NOT `partial`: this half's
+    // transaction rolled back whole, so nothing is half-applied, and routing
+    // it through `erasureFailure` would tell a caller their teaching data
+    // survived when the winning request had removed it.
+    if (!outcome.erased) {
+      log.info(
+        { accountId: session.accountId, half: 'teacher' },
+        'account erasure: half already erased',
+      );
     }
   }
 

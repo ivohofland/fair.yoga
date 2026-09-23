@@ -3,7 +3,6 @@ import { PrismaClient } from '@prisma/client';
 import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
 import {
-  AlreadyErasedError,
   exportStudentData,
   deleteStudentAccount,
   deleteTeacherAccount,
@@ -983,11 +982,12 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 
   it('two erasures anonymise Invitation rows to different tokens', async () => {
     // Self-contained: the shared `studentId`/`inviterId` fixtures above are
-    // already erased by this point, and `deleteStudentAccount` refuses a
-    // second erasure of the same student (`AlreadyErasedError`). Proving the
-    // token isn't a second deterministic derivation (e.g. accidentally
-    // hashing something else student-identifying, which would just move the
-    // oracle rather than close it) needs two genuinely independent erasures.
+    // already erased by this point, and a second `deleteStudentAccount` call
+    // on the same student reports already-erased rather than performing it.
+    // Proving the token isn't a second deterministic derivation (e.g.
+    // accidentally hashing something else student-identifying, which would
+    // just move the oracle rather than close it) needs two genuinely
+    // independent erasures.
     const pairSuffix = `${suffix}-pair`;
     const teacher = await mkTeacher('pair');
     const makeErasedSubject = async (label: string) => {
@@ -1203,9 +1203,9 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   beforeEach(async () => {
     // The first test in this block already runs `deleteTeacherAccount` to
     // completion on this same shared `teacherId` (`beforeAll`), which sets
-    // `deletedAt`. A second erasure of an already-erased teacher is refused
-    // by design (`AlreadyErasedError`, see this function's tail) — a
-    // different, unrelated outcome from the one a later test in this block
+    // `deletedAt`. A second erasure of an already-erased teacher reports
+    // already-erased rather than performing it (see this function's tail) —
+    // a different, unrelated outcome from the one a later test in this block
     // exercises — so this restores the row to live before erasing it again.
     // Restoring `email` off its `@deleted.invalid` value is load-bearing
     // too, and for a different reason: the `teacherEmailWhenDiagnosticRan`
@@ -1380,7 +1380,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       },
     }) as unknown as PrismaClient;
 
-    await expect(deleteTeacherAccount(rowDeleting, teacherId)).resolves.toBeUndefined();
+    await expect(deleteTeacherAccount(rowDeleting, teacherId)).resolves.toEqual({ erased: true });
 
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(teacher.email).toMatch(/@deleted\.invalid$/);
@@ -1492,7 +1492,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     expect(before.email).not.toMatch(/@deleted\.invalid$/);
 
     // Resolves. A diagnostic that can reject the erasure is the defect.
-    await expect(deleteTeacherAccount(failing, teacherId)).resolves.toBeUndefined();
+    await expect(deleteTeacherAccount(failing, teacherId)).resolves.toEqual({ erased: true });
 
     // The erasure committed.
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
@@ -1574,7 +1574,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       },
     }) as unknown as PrismaClient;
 
-    await expect(deleteTeacherAccount(halfFailing, teacherId)).resolves.toBeUndefined();
+    await expect(deleteTeacherAccount(halfFailing, teacherId)).resolves.toEqual({ erased: true });
 
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1624,7 +1624,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     onTestFinished(() => error.mockRestore());
 
-    await expect(deleteTeacherAccount(prisma, teacherId)).resolves.toBeUndefined();
+    await expect(deleteTeacherAccount(prisma, teacherId)).resolves.toEqual({ erased: true });
 
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(teacher.email).toMatch(/@deleted\.invalid$/);
@@ -1679,9 +1679,8 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     onTestFinished(() => warn.mockRestore());
 
-    const err = await deleteTeacherAccount(prisma, teacherId).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(AlreadyErasedError);
-    expect((err as AlreadyErasedError).half).toBe('teacher');
+    const outcome = await deleteTeacherAccount(prisma, teacherId);
+    expect(outcome).toEqual({ erased: false, reason: 'already-erased' });
 
     // A genuine rollback observation, not an inference: no live student
     // profile shares this account, so the transaction's own
@@ -1819,7 +1818,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
  *
  * Its own fixtures, not the describe above's: `deleteTeacherAccount`
  * soft-deletes the teacher it erases, so a second erasure of the same one
- * throws `AlreadyErasedError`.
+ * reports already-erased rather than erasing again.
  */
 describe('deleteTeacherAccount cancel CAS loses to a concurrent cancellation (#367)', () => {
   const prisma = new PrismaClient();
@@ -2407,7 +2406,9 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
       onTestFinished(() => error.mockRestore());
 
-      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toBeUndefined();
+      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toEqual({
+        erased: true,
+      });
 
       const student = await prisma.student.findUniqueOrThrow({ where: { id: fixture.studentId } });
       expect(student.deletedAt).not.toBeNull();
@@ -2460,7 +2461,9 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
         },
       }) as unknown as PrismaClient;
 
-      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toBeUndefined();
+      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toEqual({
+        erased: true,
+      });
 
       const logged = warn.mock.calls.find(
         (c) => (c[0] as { classId?: string } | undefined)?.classId === fixture.classId,
@@ -2546,7 +2549,9 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
         },
       }) as unknown as PrismaClient;
 
-      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toBeUndefined();
+      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toEqual({
+        erased: true,
+      });
 
       const logged = warn.mock.calls.find(
         (c) => (c[0] as { classId?: string } | undefined)?.classId === fixture.classId,
@@ -2568,7 +2573,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
  * test at all — `deleteStudentAccount`'s abort was pinned by
  * `gdpr-lock-order.test.ts`'s "erases once when the same student erasure runs
  * twice concurrently" (#459) and `deleteTeacherAccount`'s identical
- * `AlreadyErasedError` by nothing.
+ * already-erased guard by nothing.
  *
  * Sequential, and that is not a weaker version of that race: what this guard
  * protects is the write itself, and a second call reaches that write with or
@@ -2610,24 +2615,20 @@ describe('teacher erasure refuses to erase an already-erased profile (#196)', ()
     await prisma.$disconnect();
   });
 
-  it('throws AlreadyErasedError and leaves the first erasure untouched', async () => {
+  it('reports already-erased and leaves the first erasure untouched', async () => {
     await deleteTeacherAccount(prisma, teacherId);
     const first = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
 
-    const err = await deleteTeacherAccount(prisma, teacherId).catch((e: unknown) => e);
+    const outcome = await deleteTeacherAccount(prisma, teacherId);
 
     // The erasure timestamp is what a second, unguarded pass would rewrite,
-    // so it is asserted before the error's type: dropping the guard fails on
-    // "the record of when this account was erased moved", not on "something
-    // did not throw".
+    // so it is asserted before the outcome's shape: dropping the guard fails
+    // on "the record of when this account was erased moved", not on "the
+    // outcome differed".
     const after = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(after.deletedAt).toEqual(first.deletedAt);
 
-    expect(err).toBeInstanceOf(AlreadyErasedError);
-    // The half, not just the class: `api/account/route.ts` logs it, and a
-    // teacher-half abort mislabelled `student` would send an operator reading
-    // that line to the wrong transaction.
-    expect((err as AlreadyErasedError).half).toBe('teacher');
+    expect(outcome).toEqual({ erased: false, reason: 'already-erased' });
   }, 20_000);
 });
 
