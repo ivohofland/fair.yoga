@@ -120,7 +120,7 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
       setSuccess('Saved');
       router.refresh();
     } catch (err) {
-      console.error('[edit-room-form] request failed', err);
+      console.error('[edit-room-form] request failed', { roomId, teacherRoomId, err });
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

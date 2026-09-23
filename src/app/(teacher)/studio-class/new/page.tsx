@@ -125,28 +125,40 @@ export default function NewStudioClassPage() {
     setSubmitting(true);
     setError('');
 
-    try {
-      const values: StudioClassFormValues = {
-        classType: classType.trim(),
-        location: location.trim(),
-        date,
-        startTime,
-        durationMinutes: duration,
-        hourlyRate: rate,
-      };
+    const values: StudioClassFormValues = {
+      classType: classType.trim(),
+      location: location.trim(),
+      date,
+      startTime,
+      durationMinutes: duration,
+      hourlyRate: rate,
+    };
 
-      const res = await fetch('/api/studio-classes', {
+    let res: Response;
+    try {
+      res = await fetch('/api/studio-classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
       });
+    } catch (err) {
+      console.error('[studio-class-new] request failed', { err });
+      setError('Network error. Please try again.');
+      setSubmitting(false);
+      return;
+    }
 
-      if (!res.ok) {
-        setError(await readErrorMessage(res, 'Failed to create studio class'));
-        return;
-      }
+    if (!res.ok) {
+      setError(await readErrorMessage(res, 'Failed to create studio class'));
+      setSubmitting(false);
+      return;
+    }
 
+    try {
       const json: { data: { id: string } } = await res.json();
+      if (typeof json?.data?.id !== 'string') {
+        throw new Error('missing id');
+      }
       // #40. A second identical POST to /api/studio-classes now collides
       // with `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH
       // &&, WHERE "cancelledAt" IS NULL — #327) and comes back as a 409
@@ -162,8 +174,8 @@ export default function NewStudioClassPage() {
       setCreatedId(json.data.id);
       router.push(studioClassPath(json.data.id));
     } catch (err) {
-      console.error('[studio-class-new] request failed', err);
-      setError('Network error. Please try again.');
+      console.error('[studio-class-new] created, but the response was unreadable', { err });
+      setError('Studio class saved — reload to confirm before trying again.');
     } finally {
       setSubmitting(false);
     }

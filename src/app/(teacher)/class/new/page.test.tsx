@@ -279,6 +279,69 @@ describe('NewClassPage', () => {
   });
 
   /**
+   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
+   * through `readErrorMessage`, this shows the wizard's own fallback and
+   * leaves a console record instead of the outer catch's generic
+   * unreadable-network copy a `SyntaxError` landing there would produce.
+   */
+  it('shows the fallback and logs when the create refusal body is unreadable', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetchCreateRefusing();
+    await fillAndSubmit();
+
+    expect(await screen.findByText('Failed to create class')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
+  /**
+   * Past a 2xx the class WAS created — `POST /api/classes` commits before
+   * answering — so an unreadable body must not read as a failure that
+   * invites a resend into the 409 `DUPLICATE_CLASS_SLOT` guard (#327). The
+   * wizard has no id to settle on or push to, so it neither settles nor
+   * navigates; it stays on step 4 with "Create class" enabled and the
+   * reload copy shown.
+   */
+  it('shows the fallback and logs when the create success body is unreadable, and does not navigate', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === '/api/classes' ? htmlResponse(201) : { ok: true, json: async () => ({ data: [ROOM] }) },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await fillAndSubmit();
+
+    expect(
+      await screen.findByText('Class created — reload to confirm before trying again.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[class-new] created, but the response was unreadable',
+      expect.objectContaining({ err: expect.anything() }),
+    );
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it('shows network copy and logs when the create request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation((url: string) =>
+      url === '/api/classes'
+        ? Promise.reject(new TypeError('Failed to fetch'))
+        : Promise.resolve({ ok: true, json: async () => ({ data: [ROOM] }) }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await fillAndSubmit();
+
+    expect(await screen.findByText('Could not reach the server. Try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[class-new] request failed',
+      expect.objectContaining({ err: expect.any(TypeError) }),
+    );
+  });
+
+  /**
    * #40, whole-branch review F1. This wizard was outside the branch's census,
    * which was scoped to `src/components/` and `src/lib/` — but it is the same
    * defect in the same shape: `router.push` on success with
@@ -457,24 +520,6 @@ describe('NewClassPage', () => {
    * room passes the filter whether or not the filter is there. These stubs set
    * the field explicitly.
    */
-  /**
-   * A proxy's HTML error page, not the route's own `{ error }` shape. Read
-   * through `readErrorMessage`, this shows the wizard's own fallback and
-   * leaves a console record instead of the outer catch's generic
-   * unreadable-network copy a `SyntaxError` landing there would produce.
-   */
-  it('shows the fallback and logs when the create refusal body is unreadable', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    stubFetchCreateRefusing();
-    await fillAndSubmit();
-
-    expect(await screen.findByText('Failed to create class')).toBeInTheDocument();
-    expect(consoleError).toHaveBeenCalledWith(
-      'API error response body could not be read',
-      expect.objectContaining({ status: 502 }),
-    );
-  });
-
   describe('archived rooms (issue 76)', () => {
     const ARCHIVED = { ...ROOM, id: '22222222-2222-4222-8222-222222222222',
       room: { roomName: 'Attic', venueName: 'Shelved Venue' }, isArchived: true };

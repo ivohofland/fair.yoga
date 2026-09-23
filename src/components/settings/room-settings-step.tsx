@@ -94,7 +94,7 @@ export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettings
 
       onSaved();
     } catch (err) {
-      console.error('[room-settings-step] request failed', err);
+      console.error('[room-settings-step] request failed', { roomId: selectedRoom.id, err });
       setSettingsError('Network error. Please try again.');
     } finally {
       setSaving(false);

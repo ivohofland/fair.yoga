@@ -370,6 +370,35 @@ describe('NewStudioClassPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
-    expect(consoleError).toHaveBeenCalledWith('[studio-class-new] request failed', expect.any(TypeError));
+    expect(consoleError).toHaveBeenCalledWith(
+      '[studio-class-new] request failed',
+      expect.objectContaining({ err: expect.any(TypeError) }),
+    );
+  });
+
+  /**
+   * Past a 2xx the studio class WAS logged — `POST /api/studio-classes`
+   * commits before answering — so an unreadable body must not read as a
+   * failure that invites a resend into the 409 `DUPLICATE_STUDIO_SLOT` guard
+   * (#327). The page has no id to settle on or push to, so it neither settles
+   * nor navigates.
+   */
+  it('shows the fallback and logs when the create success body is unreadable, and does not navigate', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(htmlResponse(201));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(
+      await screen.findByText('Studio class saved — reload to confirm before trying again.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[studio-class-new] created, but the response was unreadable',
+      expect.objectContaining({ err: expect.anything() }),
+    );
+    expect(routerPush).not.toHaveBeenCalled();
   });
 });

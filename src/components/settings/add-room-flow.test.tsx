@@ -370,6 +370,48 @@ describe('AddRoomFlow', () => {
     fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
-    expect(consoleError).toHaveBeenCalledWith('[room-create-step] request failed', expect.any(TypeError));
+    expect(consoleError).toHaveBeenCalledWith(
+      '[room-create-step] request failed',
+      expect.objectContaining({ err: expect.any(TypeError) }),
+    );
+  });
+
+  /**
+   * Past a 2xx the room WAS created — `POST /api/rooms` commits before
+   * answering — so an unreadable body must not read as a failure that
+   * invites a resend. The step has no room to hand `onCreated`, so it stays
+   * on the create form rather than advancing to step 3.
+   */
+  it('shows the fallback and logs when the room create success body is unreadable, and does not advance', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: [] }) };
+      if (url === '/api/rooms' && init?.method === 'POST') return htmlResponse(201);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no rooms found/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
+
+    expect(
+      await screen.findByText('Room created — reload to confirm before trying again.'),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[room-create-step] created, but the response was unreadable',
+      expect.objectContaining({ err: expect.anything() }),
+    );
+    expect(screen.queryByRole('button', { name: 'Add room' })).not.toBeInTheDocument();
   });
 });
