@@ -3756,6 +3756,54 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
     await prisma.account.deleteMany({ where: { id: lockTeacherAccountId } });
   });
 
+  // Must run before the sibling below: that test drives the withdrawal to
+  // completion, which deletes the link and writes a TeacherBlock, so this
+  // one needs the fixture's starting state — the link still live and no
+  // block yet.
+  it('answers 503 through DELETE /api/teacher-links when the route hits the class lock, leaving the link standing', async () => {
+    let holderReleased = false;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockClassId} FOR UPDATE`;
+        await sleep(4_000);
+        holderReleased = true;
+      },
+      { timeout: 20_000 },
+    );
+    await sleep(SETTLE_MS);
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/teacher-links/${lockTeacherId}`, {
+        method: 'DELETE',
+        headers: cookie(await seedSession(prisma, lockStudentAccountId)),
+      });
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toMatch(/try again/i);
+      expect(holderReleased).toBe(false);
+
+      expect(
+        await prisma.teacherStudent.findUnique({
+          where: { teacherId_studentId: { teacherId: lockTeacherId, studentId: lockStudentId } },
+        }),
+      ).not.toBeNull();
+      expect(
+        (
+          await prisma.waitlistEntry.findUniqueOrThrow({
+            where: { classId_studentId: { classId: lockClassId, studentId: lockStudentId } },
+          })
+        ).status,
+      ).toBe('waiting');
+      expect(
+        await prisma.teacherBlock.findUnique({
+          where: { teacherId_email: { teacherId: lockTeacherId, email: lockStudentEmail } },
+        }),
+      ).toBeNull();
+    } finally {
+      await holder;
+    }
+  }, 20_000);
+
   // A lock cannot be observed by looking at the rows afterwards — the
   // withdrawal produces the same final state either way. What CAN be
   // observed is that it waits: hold the class row in another transaction,
