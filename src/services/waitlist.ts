@@ -170,8 +170,6 @@ export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
  * enum's hours, as a real elapsed-time subtraction (not a wall-clock-preserved
  * one — a class near a DST transition can have a different UTC offset at its
  * deadline instant than at its own start).
- *
- * Server-side only, since it lives in `services/`.
  */
 export function cancelDeadlineInstant(
   entry: { date: Date; startTime: Date },
