@@ -217,7 +217,12 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   }
 
   // Already done when every half this request attempted had been erased by
-  // someone else first: then it wrote nothing. `outcomes` is never empty —
+  // someone else first: then every half's own erasure transaction committed
+  // nothing. The teacher half's pre-transaction `completeClass` loop
+  // (`gdpr.ts`) may still have completed a class before that half's own
+  // closing CAS lost the race — the winning request would otherwise have
+  // completed that same class identically, so which request's loop did it
+  // does not change what got billed. `outcomes` is never empty —
   // `requireSession` only admits a session with at least one live profile
   // (`validateSession`), so every request that gets here attempts at least
   // one half.

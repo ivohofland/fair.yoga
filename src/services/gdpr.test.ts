@@ -2634,9 +2634,8 @@ describe('teacher erasure refuses to erase an already-erased profile (#196)', ()
 
 /**
  * `unlessAlreadyErased` (`gdpr.ts`) swallows only `AlreadyErasedError` —
- * every other rejection out of the transaction passes through unchanged. No
- * test above calls `deleteTeacherAccount` and asserts that it rejects; this
- * is what pins that a genuine failure still does.
+ * every other rejection out of the transaction passes through unchanged.
+ * This pins that a genuine failure still does.
  */
 describe('deleteTeacherAccount propagates a genuine transaction failure (#213)', () => {
   const prisma = new PrismaClient();
@@ -2684,11 +2683,16 @@ describe('deleteTeacherAccount propagates a genuine transaction failure (#213)',
       'injected: magic link cleanup failed',
     );
 
-    // The transaction rolled back whole rather than commit around the
-    // failure — a teacher CAS moving after a rejection would defeat the
-    // point of the guard this test exists for.
-    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
-    expect(teacher.deletedAt).toBeNull();
+    // A genuine rollback observation, not an inference: no live student
+    // profile shares this account, so the transaction's own
+    // `tx.account.update` anonymizing the email runs — and succeeds —
+    // before the injected `magicLinkToken.deleteMany` failure. A live email
+    // here means that write was undone, not merely that it never ran. (The
+    // teacher CAS itself runs after the injection point, so it never fires
+    // either way — asserting `teacher.deletedAt` here would pass with or
+    // without the rollback.)
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+    expect(account.email).toBe(email);
   });
 });
 
