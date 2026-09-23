@@ -3,15 +3,30 @@ import nextVitals from 'eslint-config-next/core-web-vitals';
 import nextTs from 'eslint-config-next/typescript';
 import prettier from 'eslint-config-prettier';
 
-// Shared by both `no-restricted-syntax` blocks below that police `ClassLock`
-// (src/lib/db-locks.ts, #219) — one object so the broad src/ block and its
-// override for src/services/roster-link.ts can't drift apart. Matches both
-// `x as ClassLock` and `<ClassLock>x`; `x as unknown as ClassLock` is already
-// an outer `TSAsExpression` whose own `typeAnnotation` is `ClassLock`, so it
-// needs no separate branch.
+// Shared by both `no-restricted-syntax` blocks below that refuse a direct or
+// qualified-name cast to `ClassLock` (src/lib/db-locks.ts, #219) in non-test
+// `src/` — one object so the broad src/ block and its override for
+// src/services/roster-link.ts can't drift apart. Matches `x as ClassLock`,
+// `<ClassLock>x`, and the qualified-name form of each (`x as
+// dbLocks.ClassLock`, the house idiom for `import * as dbLocks from
+// '@/lib/db-locks'`, and the likeliest form to get copied into `src/`);
+// `x as unknown as ClassLock` is already an outer `TSAsExpression` whose own
+// `typeAnnotation` is `ClassLock`, so it needs no separate branch.
+//
+// An early signal, not the guarantee: it matches by the literal name
+// `ClassLock`, so an aliased import, a wrapper type (`as
+// Readonly<ClassLock>`), or a generic escapes it silently. The runtime check
+// — `assertClassLockHeldBy` in db-locks.ts, which `readSeatCount` calls
+// before it counts anything — is what actually enforces this; it catches
+// every one of those, plus a genuine token forged some other way or carried
+// across a transaction boundary, none of which any lint selector can see.
 const classLockCastSelector = {
-  selector:
-    "TSAsExpression[typeAnnotation.typeName.name='ClassLock'], TSTypeAssertion[typeAnnotation.typeName.name='ClassLock']",
+  selector: [
+    "TSAsExpression[typeAnnotation.typeName.name='ClassLock']",
+    "TSTypeAssertion[typeAnnotation.typeName.name='ClassLock']",
+    "TSAsExpression[typeAnnotation.typeName.right.name='ClassLock']",
+    "TSTypeAssertion[typeAnnotation.typeName.right.name='ClassLock']",
+  ].join(', '),
   message:
     'Only lockClassRow (src/lib/db-locks.ts) mints a ClassLock — take the lock instead of casting one (#219).',
 };
@@ -41,15 +56,13 @@ const eslintConfig = defineConfig([
   //
   // `ClassLock` is minted in exactly one place — `lockClassRow` — and
   // `readSeatCount` (src/services/capacity.ts) trusts that to mean the caller
-  // holds the `Class` row lock. A cast forges that trust and would pass every
-  // type guard otherwise in its way, so `classLockCastSelector` above is the
-  // enforcement.
+  // holds the `Class` row lock, checking it at runtime via
+  // `assertClassLockHeldBy` (src/lib/db-locks.ts). `classLockCastSelector`
+  // above is an early signal against a cast that names `ClassLock` literally,
+  // not the enforcement — see its own comment for what it misses.
   //
   // Tests are exempt from both: some write `teacherStudent` directly on
-  // purpose (fixture setup, or pinning Prisma's own locking behaviour), and
-  // `db-locks.test.ts` builds a deliberately-wrong `ClassLock` shape as a
-  // plain object literal, never a cast, to pin the other half of #219's
-  // protection.
+  // purpose, for fixture setup or to pin Prisma's own locking behaviour.
   {
     files: ['src/**/*.ts', 'src/**/*.tsx'],
     ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
