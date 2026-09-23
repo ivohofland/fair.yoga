@@ -552,11 +552,13 @@ export async function promoteNext(
       );
     }
 
-    const window = getWaitlistWindow(
-      cls.calendarEntry,
-      cls.calendarEntry.teacher.defaultTimezone,
-      opts.now,
-    );
+    // Hoisted so the window check, the entry's `promotedAt` write and the
+    // notification's free-cancel time all reason about the SAME instant —
+    // `getWaitlistWindow` takes a clock rather than reading one of its own,
+    // but a `new Date()` at each call site would still be two separate reads
+    // a few ms apart if this weren't shared.
+    const now = opts.now ?? new Date();
+    const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now);
     if (window === 'frozen') {
       throw new WaitlistPromotionError('The waitlist is closed — the class has started', 'window_frozen');
     }
@@ -628,25 +630,24 @@ export async function promoteNext(
     // is what let a teacher time the acceptance of a row the student had not
     // answered.
 
-    // Update the waitlist entry: promoted status, promotedAt, link to registration
-    //
-    // `opts.now ?? new Date()` — the same instant `getWaitlistWindow` above
-    // reasoned about — rather than a fresh `new Date()`, so `promotedAt` and
-    // the notification's free-cancel time (below) agree with each other and
-    // with a test that injected `opts.now`.
-    const promotedAt = opts.now ?? new Date();
+    // Update the waitlist entry: promoted status, promotedAt, link to
+    // registration. `promotedAt: now` — the same instant `getWaitlistWindow`
+    // above reasoned about, hoisted at the top of this transaction — not a
+    // fresh `new Date()`, so this write and the notification's free-cancel
+    // time (below) agree with each other and with a test that injected
+    // `opts.now`.
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: nextEntry.id },
       data: {
         status: 'promoted',
-        promotedAt,
+        promotedAt: now,
         registrationId: registration.id,
       },
     });
 
     const tz = cls.calendarEntry.teacher.defaultTimezone;
     const deadline = cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz);
-    const freeUntil = freeCancelUntil(deadline, promotedAt);
+    const freeUntil = freeCancelUntil(deadline, now);
 
     await createBulkNotifications(tx, [
       {
@@ -764,8 +765,11 @@ export async function claimSpot(
       where: { id: entry.id },
       // 'claimed', not 'promoted' — matching the direct-booking resolver
       // (`api/registrations/route.ts`). `promoted` means the system placed
-      // the student; `claimed` means the student took it themselves, and only
-      // a `promoted` entry carries the free-cancel grace (`cancel-deadline.ts`).
+      // the student; `claimed` means the student took it themselves, and the
+      // DELETE route's student branch (`api/registrations/[id]/route.ts`)
+      // reads that distinction to give only a `promoted` entry the #236
+      // free-cancel grace — `freeCancelUntil` (`cancel-deadline.ts`) itself
+      // takes a bare `promotedAt` and knows nothing of `WaitlistEntry.status`.
       data: { status: 'claimed', promotedAt: new Date(), registrationId: registration.id },
     });
 

@@ -347,7 +347,9 @@ export const DELETE = withErrorHandler(async (
     }
   }
 
-  // Before deadline or teacher cancelling — full cancel (not charged).
+  // Before the free-cancel instant, or a teacher cancelling — full cancel
+  // (not charged). "Before the free-cancel instant" covers both a student
+  // ahead of the bare deadline and one still inside #236's grace.
   // Status in the WHERE for the same reason as the late-cancel branch above:
   // two concurrent cancels must not both reach the waitlist hook.
   const updated = await prisma.registration.updateMany({

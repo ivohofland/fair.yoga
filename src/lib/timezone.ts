@@ -171,8 +171,17 @@ export function mondayOf(date: Date): WeekKey {
 }
 
 /**
- * Renders an instant as `"<weekday> <HH:mm>"` in the given zone — e.g.
- * `"Thu 14:15"` — for copy shown to a student, such as a free-cancel deadline.
+ * Renders an instant as `"<weekday short> <day> <month short> <HH:mm>"` in
+ * the given zone — e.g. `"Thu 4 Jun 14:15"` — for copy shown to a student,
+ * such as a free-cancel deadline. The date is load-bearing, not decorative:
+ * `auto_promote` runs until start − 1h, so the instant this formats can land
+ * a week or more out, and a bare weekday misreads as this week.
+ *
+ * Checked for an unreadable instant BEFORE either formatting attempt, the
+ * same ordering `classStartInstant` and `startOfLocalDay` use and for the
+ * same reason: `formatToParts` throws a RangeError on an Invalid Date
+ * regardless of the timezone, so without this check the `catch` below would
+ * log it as an invalid timezone, naming a zone that was never the problem.
  *
  * Falls back to UTC on an unreadable timezone rather than throwing, the same
  * fallback `classStartInstant` and `startOfLocalDay` use (#145), and logs at
@@ -180,14 +189,29 @@ export function mondayOf(date: Date): WeekKey {
  * notification.
  */
 export function formatInstantInZone(instant: Date, timeZone: string): string {
-  const fmt = (zone: string) =>
-    new Intl.DateTimeFormat('en-GB', {
+  if (Number.isNaN(instant.getTime())) {
+    log.error({ timeZone }, 'unreadable instant, cannot format it in a timezone');
+    return 'Invalid Date';
+  }
+
+  const fmt = (zone: string) => {
+    const parts = new Intl.DateTimeFormat('en-GB', {
       weekday: 'short',
+      day: 'numeric',
+      month: 'short',
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
       timeZone: zone,
-    }).format(instant);
+    }).formatToParts(instant);
+    // Built from named parts rather than the formatter's own joined output:
+    // en-GB's weekday+date+time layout inserts a comma before the time
+    // ("Thu 4 Jun, 14:15") that the copy this feeds does not want.
+    const get = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((p) => p.type === type)?.value ?? '';
+    return `${get('weekday')} ${get('day')} ${get('month')} ${get('hour')}:${get('minute')}`;
+  };
+
   try {
     return fmt(timeZone);
   } catch {
