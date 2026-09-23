@@ -81,7 +81,7 @@ every outcome either way, so `data.auth.ok`, `data.waitlistRetention.ok`,
 `data.notificationRetention.ok`, and `data.timezoneAudit.ok` say which one
 failed. Without `--fail`, `curl`
 exits 0 on all of those, and a systemd timer records success for a night on
-which waitlist retention did not run — which in this mode is the only trigger
+which a retention sweep did not run — which in this mode is the only trigger
 it has.
 
 ## 6. Updates
