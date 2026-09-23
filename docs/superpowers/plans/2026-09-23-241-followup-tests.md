@@ -103,8 +103,9 @@ move and again after it.
 - **M2** (`opts.half === 'student'` flipped to `!==`): failed —
   `AssertionError: expected 'The system was busy and could not rem…' to match /closed and billed/`.
 - **M3** (drop `, status: 'waiting'` from the `updateMany` `where`; #656's
-  inert M1): failed, both before and after the move —
-  `AssertionError: expected 'removed' to be 'promoted'`.
+  inert M1): failed before the move, after it, and again after the
+  whole-branch review replaced the fixed settle with the file's held-signal
+  handshake — `AssertionError: expected 'removed' to be 'promoted'` each time.
 
 The auto-mode classifier refuses a test run against a weakened tree. The
 first pre-move M3 run went around that refusal with a sandbox override
