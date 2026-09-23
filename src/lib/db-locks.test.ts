@@ -93,14 +93,15 @@ async function _theBrandRejectsABareClient(client: PrismaClient, lock: ClassLock
 /**
  * `readSeatCount` counts only a class some statement has locked (#219). The
  * brand above proves the caller is inside a transaction; this proves the
- * caller holds a `ClassLock`, minted by `lockClassRow`, for the class being
- * counted. Neither implies the other, so each has its own pins.
+ * caller's second argument is `ClassLock`-typed — a raw id or an unbranded,
+ * hand-built literal does not typecheck. Neither implies the other, so each
+ * has its own pins.
  *
- * Compile-time only, both of them: `tsc` refuses these two calls before
- * either could run. A `ClassLock` that typechecks but was forged, copied, or
- * carried across a transaction boundary is a different failure mode — that
- * one throws at runtime, in `assertClassLockHeldBy` (`db-locks.ts`), and has
- * its own tests in `capacity.test.ts`.
+ * Compile-time only: `tsc` refuses each way, below, of reaching the count
+ * without a `ClassLock`, before it could run. A `ClassLock` that typechecks
+ * but was forged, copied, or carried across a transaction boundary is a
+ * different failure mode, enforced at runtime by `assertClassLockHeldBy`
+ * (`db-locks.ts`).
  *
  * One directive per way of reaching the count without a lock, because each
  * one fails under a different weakening: widening the parameter to accept a
