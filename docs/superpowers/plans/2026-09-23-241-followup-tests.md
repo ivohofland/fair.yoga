@@ -24,13 +24,16 @@ protocol, Comment Discipline, full cleanup).
   billed" sentence) inside the retry wording.
 - **The `updateMany` re-check.** #656's M1 (drop `status: 'waiting'` from the
   `updateMany`) was inert because the single-transaction test never lets the
-  entry's status change between the lock query and the update. In READ
-  COMMITTED, a `FOR UPDATE OF c` that waited re-checks only the locked `Class`
-  row (EvalPlanQual); the joined `WaitlistEntry` row is taken from the
-  statement's original snapshot, so an entry promoted by the transaction it
-  waited on still reads `waiting` and its class still lands in `classIds`. The
-  `updateMany` is a new statement with a fresh snapshot — its filter is the
-  only thing standing between that promoted entry and `removed`.
+  entry's status change between the lock query and the update. The lock
+  query's join and `WHERE` are evaluated once, under the snapshot taken when
+  the statement started; the wait on `c` does not refresh them. The holder
+  here only locks `Class` and never updates it, so no EvalPlanQual re-check
+  runs — and even when one does, it re-fetches only the tables named in
+  `FOR UPDATE OF`, never a joined table like `WaitlistEntry`. An entry
+  promoted by the transaction it waited on therefore still reads `waiting`
+  and its class still lands in `classIds`. The `updateMany` is a new
+  statement with a fresh snapshot — its filter is the only thing standing
+  between that promoted entry and `removed`.
 
 ---
 
@@ -81,11 +84,11 @@ ERASURE_BUSY with retry advice when the erasure loses a lock race".
   (`src/services/waitlist.ts`) → expect `expected 'removed' to be 'promoted'`.
   This is #656's inert M1; it must bite here. Record; restore; clean.
   If the captured lock set comes back `[[]]` instead, stop and report — the
-  EvalPlanQual premise above would be wrong.
+  pre-wait-snapshot premise above would be wrong.
 
 ## Measured results
 
-The EvalPlanQual premise held: the captured lock set was `[[C]]`, so the
+The pre-wait-snapshot premise held: the captured lock set was `[[C]]`, so the
 withdrawal's lock query waited on C and still selected it after the promotion
 committed.
 
