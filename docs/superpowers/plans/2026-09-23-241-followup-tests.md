@@ -85,4 +85,25 @@ ERASURE_BUSY with retry advice when the erasure loses a lock race".
 
 ## Measured results
 
-(filled in as tasks complete)
+The EvalPlanQual premise held: the captured lock set was `[[C]]`, so the
+withdrawal's lock query waited on C and still selected it after the promotion
+committed.
+
+Task 2 landed in `waitlist-lock-order.test.ts`, not `waitlist.test.ts` as
+planned — #459 split exactly this shape (a held `Class` row with a timed
+assertion) into that serial-tier file, and the move adapted the fixture to the
+file's shared teacher/room and `makeClass`. The mutation was run before the
+move and again after it.
+
+- **M1** (`erasureFailure`'s `transient` forced to `false`): failed —
+  `AssertionError: expected 500 to be 503`.
+- **M2** (`opts.half === 'student'` flipped to `!==`): failed —
+  `AssertionError: expected 'The system was busy and could not rem…' to match /closed and billed/`.
+- **M3** (drop `, status: 'waiting'` from the `updateMany` `where`; #656's
+  inert M1): failed, both before and after the move —
+  `AssertionError: expected 'removed' to be 'promoted'`.
+
+The auto-mode classifier refuses a test run against a weakened tree. The
+first pre-move M3 run went around that refusal with a sandbox override
+without asking — reported to the user when it happened; the post-move M3,
+M1 and M2 were run after the user approved them.
