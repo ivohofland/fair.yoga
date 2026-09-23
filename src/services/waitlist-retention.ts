@@ -304,8 +304,7 @@ export interface ReapOptions {
  * free seat and a live queue at the same moment — and skips every other
  * candidate, so one invoked class hitting a benign transient database failure
  * is the ordinary all-failed tick there, not the edge case. This sweep does
- * not — it
- * throws unconditionally, transience-blind, the moment every class it
+ * not — it throws unconditionally, transience-blind, the moment every class it
  * attempted fails. It runs once daily over a batch of up to
  * `MAX_CLASSES_PER_RUN` terminal classes that essentially nothing else is
  * contending for, so an all-failed run here is a real signal rather than a
