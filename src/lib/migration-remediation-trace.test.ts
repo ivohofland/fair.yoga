@@ -21,10 +21,9 @@ const CUTOFF = '20260903195051_student_signup_purposes';
 const UNBOUNDED = '';
 
 /**
- * The `DELETE` half of the rule, which no live migration exercises on its own:
- * the one migration in the tree holding a `DELETE FROM "…"` also holds an
- * `UPDATE "…"`, so deleting that whole alternative from the pattern left every
- * test green. These two rows are the only thing standing behind it.
+ * The `DELETE` half of the rule. No live migration is relied on to pin it —
+ * one that holds a `DELETE` may also hold an `UPDATE`, or carry a notice that
+ * exempts it — so these two rows are the only thing standing behind it.
  */
 const UNTRACED_DELETE_SQL = `
 DELETE FROM "Registration" r
