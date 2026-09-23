@@ -207,11 +207,25 @@ function isTerminalStatusViolation(error: unknown): error is Error {
  *   time.
  * - `tx_budget` (`P2028`) — the interactive-transaction budget expiring,
  *   which `deleteStudentAccount`'s flat 20s `timeout` can hit under load.
- *
- * The alerting contract, per CLAUDE.md *Comment Discipline* — why each level
- * is what it is, tethered to the compiler by `TRANSIENT_KIND_LEVEL`'s
- * `satisfies Record<TransientKind, ...>` so a new kind cannot compile without
- * one:
+ */
+export type TransientKind =
+  | 'lock_timeout'
+  | 'deadlock'
+  | 'serialization'
+  | 'pool_exhausted'
+  | 'tx_budget';
+
+/** What `transientDbFailure` returns for a matched failure — see its docblock. */
+export interface TransientDbFailure {
+  readonly kind: TransientKind;
+  readonly level: 'warn' | 'error';
+}
+
+/**
+ * The alerting contract, per CLAUDE.md *Comment Discipline* — why each kind
+ * gets the level it gets. Tethered to the compiler by this object's own
+ * `satisfies Record<TransientKind, ...>`, so a new `TransientKind` member
+ * cannot compile without a level here.
  *
  * - `lock_timeout` is `warn` — the system doing what `SET LOCAL lock_timeout`
  *   configures it to do.
@@ -233,19 +247,6 @@ function isTerminalStatusViolation(error: unknown): error is Error {
  * - `tx_budget` is `warn` — contention or a slow transaction; the 10s and 20s
  *   budgets are deliberate.
  */
-export type TransientKind =
-  | 'lock_timeout'
-  | 'deadlock'
-  | 'serialization'
-  | 'pool_exhausted'
-  | 'tx_budget';
-
-/** What `transientDbFailure` returns for a matched failure — see its docblock. */
-export interface TransientDbFailure {
-  readonly kind: TransientKind;
-  readonly level: 'warn' | 'error';
-}
-
 const TRANSIENT_KIND_LEVEL = {
   lock_timeout: 'warn',
   deadlock: 'error',
