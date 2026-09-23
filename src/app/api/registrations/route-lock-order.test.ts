@@ -46,7 +46,7 @@ const HANDSHAKE_MS = 2_000;
 const BUSY_HOLD_MS = 4_000;
 
 type Settled = { status: number; code: string | null; rejection?: string };
-type ErasureOutcome = 'erased' | { error: string };
+type SettledErasure = 'erased' | { error: string };
 type Tracked<T> = { racer: Promise<T>; settled: () => boolean };
 
 function book(token: string, body: { classId: string; studentId?: string }): Promise<Response> {
@@ -76,7 +76,7 @@ function settle(response: Promise<Response>): Promise<Settled> {
   );
 }
 
-function settleErasure(erasure: Promise<void>): Promise<ErasureOutcome> {
+function settleErasure(erasure: Promise<unknown>): Promise<SettledErasure> {
   return erasure.then(
     () => 'erased' as const,
     (err: unknown) => ({ error: String(err) }),
@@ -519,7 +519,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       onTestFinished(() => preLockSpy.mockRestore());
 
       const booking = track(settle(book(fx.studentToken, { classId: fx.outsideClassId })));
-      let erasing: Tracked<ErasureOutcome> | undefined;
+      let erasing: Tracked<SettledErasure> | undefined;
       let erasureWaited = false;
       try {
         await handshake(bookingPause.reached, 'booking class lock', booking.racer);
