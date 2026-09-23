@@ -9,8 +9,8 @@ import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
 
 /**
  * A real `Response` whose `json()` genuinely throws — the shape a proxy's
- * HTML error page takes, which the plain `{ ok, status, json }` stubs below
- * cannot express.
+ * HTML error page takes, which the plain `{ ok, json }` stubs below cannot
+ * express.
  */
 function htmlResponse(status = 502): Response {
   return new Response('<html><body>502 Bad Gateway</body></html>', {

@@ -99,51 +99,56 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
     setSaving(true);
     setSaved(false);
     setError('');
+
+    // Derived from `form`, not restated. The old builder listed all ten
+    // fields a second time; keeping one list is the point of #81, and the
+    // pins above are what keep that list honest.
+    //
+    // Spreading cannot flag an extra field — TypeScript's excess-property
+    // check does not survive a spread, which `ClassUpdateData`'s docblock
+    // (`class-lifecycle.ts`) records for the route's own payload. The
+    // reverse pin covers that instead, but only against
+    // `ClassEditInitial`'s statically declared keys — it can't
+    // see an own-enumerable property `form` happens to carry at runtime that
+    // isn't declared on the type.
+    const payload: UpdateClassWire = { ...form, description: form.description.trim() || null };
+    if (settingsLocked) {
+      for (const f of ECONOMIC_FIELDS) delete payload[f];
+    }
+
+    let res: Response;
     try {
-      // Derived from `form`, not restated. The old builder listed all ten
-      // fields a second time; keeping one list is the point of #81, and the
-      // pins above are what keep that list honest.
-      //
-      // Spreading cannot flag an extra field — TypeScript's excess-property
-      // check does not survive a spread, which `ClassUpdateData`'s docblock
-      // (`class-lifecycle.ts`) records for the route's own payload. The
-      // reverse pin covers that instead, but only against
-      // `ClassEditInitial`'s statically declared keys — it can't
-      // see an own-enumerable property `form` happens to carry at runtime that
-      // isn't declared on the type.
-      const payload: UpdateClassWire = { ...form, description: form.description.trim() || null };
-      if (settingsLocked) {
-        for (const f of ECONOMIC_FIELDS) delete payload[f];
-      }
-      const res = await fetch(`/api/classes/${classId}`, {
+      res = await fetch(`/api/classes/${classId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        setSaved(true);
-        router.refresh();
-      } else {
-        setError(await readErrorMessage(res, 'Could not save the class. Try again.'));
-        // Refresh on refusal too, not only on success. A 409 here means the
-        // server knows something this page does not — the class went terminal
-        // while the form was open (the auto-complete sweep, or a cancel in
-        // another tab), which is the only way #247's freeze is reachable at
-        // all, since the edit page redirects any class that is not
-        // draft/open. Without this the teacher is left holding an editable
-        // form for a class that can never be edited, and every subsequent
-        // Save fails identically. Let the server refuse, then re-read.
-        router.refresh();
-      }
     } catch (err) {
-      // Bound and logged so a network failure leaves a record. An unreadable
-      // refusal body is `readErrorMessage`'s case, not this one — this catch
-      // only sees `fetch` itself failing.
+      // Bound and logged so a network failure leaves a record. This catch
+      // sees only `fetch` itself failing — an unreadable refusal body is
+      // `readErrorMessage`'s case, in the branch below.
       console.error('class edit save failed', err);
       setError('Could not reach the server. Try again.');
-    } finally {
       setSaving(false);
+      return;
     }
+
+    if (res.ok) {
+      setSaved(true);
+      router.refresh();
+    } else {
+      setError(await readErrorMessage(res, 'Could not save the class. Try again.'));
+      // Refresh on refusal too, not only on success. A 409 here means the
+      // server knows something this page does not — the class went terminal
+      // while the form was open (the auto-complete sweep, or a cancel in
+      // another tab), which is the only way #247's freeze is reachable at
+      // all, since the edit page redirects any class that is not
+      // draft/open. Without this the teacher is left holding an editable
+      // form for a class that can never be edited, and every subsequent
+      // Save fails identically. Let the server refuse, then re-read.
+      router.refresh();
+    }
+    setSaving(false);
   }
 
   return (
