@@ -8,8 +8,9 @@ import { studentNotificationHref } from '@/lib/notification-links';
 
 export const dynamic = 'force-dynamic';
 
-// Lists the student's notifications — the newest page of — for the retention
-// period; the strip on /bookings previews unread (communication layer 2).
+// Lists the student's newest notifications (one page, not the whole retention
+// window; see #663); the strip on /bookings previews unread (communication
+// layer 2).
 export default async function StudentUpdatesPage() {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);

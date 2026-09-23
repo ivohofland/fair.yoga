@@ -582,23 +582,6 @@ archive notification a `relatedClassId` and it becomes a transaction taking
 whatever the query planner returned — not the ascending order the rest of this
 document depends on.
 
-**A considered interaction that is not a `Class` edge at all: two writers
-contending on `Notification` rows directly (#223).** The daily retention sweep
-(`reapExpiredNotifications`) deletes expired rows in batches, each batch its
-own `DELETE … WHERE id IN (…)`; GDPR erasure (`deleteStudentAccount`,
-`deleteTeacherAccount`) deletes or reassigns a subject's notifications with a
-`deleteMany`/`updateMany` scoped by `recipientId`. Both can lock the same
-`Notification` rows — a subject with several expired rows, erased while the
-daily run is mid-sweep — and can take them in different orders, so a `40P01`
-between the two is possible. Both sides already classify `40P01` as transient:
-erasure runs behind `withErrorHandler`, so `classifyApiError`'s
-`isTransientDbError` branch answers it a retryable 503; the sweep's batches
-that already committed stay deleted, and `isolatedSweeps` logs the failing
-sweep and rethrows so the job's `lastError` surfaces it while the next daily
-run picks up the rest. The sweep takes no `Class` lock: deleting a row that
-references `Class` (via `relatedClassId`) takes no lock on the row it
-references, only on the row itself.
-
 Three things about that table are easy to get wrong and are the reason it exists:
 
 **The lock order of a loop is the order of the read it walks — unless something
@@ -869,6 +852,43 @@ and `archiveOrUnarchiveTemplate` take theirs as a pre-lock ahead of their
 (#237). The template edit was a third until #194 deleted its propagation.
 A per-row `lockClassRow` loop over a sorted read also works and is what `deleteStudentAccount` used before
 #216/#182; it costs 2N round trips, which is why it was replaced.
+
+### `Notification` rows: the retention sweep against erasure (#223)
+
+Not a `Class` edge at all: two writers contending on `Notification` rows
+directly. The daily retention sweep (`reapExpiredNotifications`) deletes
+expired rows in batches, each batch its own `DELETE … WHERE id IN (…)`. GDPR
+erasure writes `Notification` rows inside its transaction in two ways:
+`deleteStudentAccount` and `deleteTeacherAccount` each `deleteMany` the
+subject's own rows by `recipientType`/`recipientId`, and `deleteStudentAccount`
+also `updateMany`s the TEACHER's `booking_confirmed` rows that name the
+student, matched by `relatedClassId`, `type` and a body prefix rather than by
+`recipientId`. Either write can lock rows a sweep batch also locks — expired
+rows of an account being erased while the daily run is mid-sweep — in a
+different order, so a `40P01` between the two is possible.
+
+Each side handles it:
+
+- **Erasure.** `DELETE /api/account` catches the failure itself and answers
+  through its own `erasureFailure()`, which calls `isTransientDbError` and
+  answers a retryable 503 (`ERASURE_BUSY`, or `PARTIAL_ERASURE_BUSY` when a
+  dual-role account's student half already committed). It never reaches
+  `withErrorHandler`/`classifyApiError`.
+- **Sweep.** The failing retention period is logged at `warn` (the error is
+  transient), marked `failed` in the run's summary, and the other period
+  still runs; batches already committed stay deleted and the next daily run
+  picks up the rest. The run then throws `NotificationRetentionFailedError`.
+  Under the scheduler, `isolatedSweeps` rethrows it, which sets the
+  `daily-cleanup` job's `lastError`, so `/api/health` reports the job
+  unhealthy and its body reads `degraded` until the next successful daily
+  run clears it. Through `POST /api/cron/daily-cleanup`, `settle` classifies
+  it with `classifyApiError`: the error is not a raw `40P01` and carries no
+  `cause`, so it classifies as permanent and the route answers 500 (pinned in
+  that route's `route.test.ts`).
+
+The sweep takes no `Class` lock: deleting a row that references `Class` (via
+`relatedClassId`) takes no lock on the row it references, only on the row
+itself.
 
 ### Every site that bounds a lock wait
 

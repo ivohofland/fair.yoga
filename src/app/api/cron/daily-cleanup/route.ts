@@ -61,9 +61,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // (one vCPU), and none is urgent.
   //
   // ISOLATED FROM EACH OTHER, matching the scheduler's `daily-cleanup` job,
-  // which runs every sweep through `isolatedSweeps`. An earlier revision awaited
-  // both plainly (before this route ran a third sweep), so a thrown
-  // `cleanupExpiredAuth` skipped retention entirely.
+  // which runs every sweep through `isolatedSweeps`, so a thrown sweep cannot
+  // skip the ones after it.
   // `DEPLOYMENT.md` documents `CRON_SCHEDULER=off` + systemd timers as a
   // supported mode, and in that mode this route is the ONLY trigger for
   // retention — an intermittently failing auth cleanup would silently stop

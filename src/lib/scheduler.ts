@@ -241,10 +241,9 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     {
       // Renamed from `auth-cleanup` when waitlist retention joined it (#238):
       // the job is the daily retention slot now, not the auth one. Every
-      // sweep in this job runs through `isolatedSweeps` (the timezone audit
-      // joined, #145; notification retention joined, #223) rather than
-      // getting its own job, so there is one daily timer and one obvious slot
-      // for the next retention policy.
+      // sweep in this job runs through `isolatedSweeps` rather than getting
+      // its own job, so there is one daily timer and one obvious slot for the
+      // next retention policy.
       //
       // The cost, recorded rather than glossed: `/api/health` reports one
       // `lastRunAt` for every sweep in this job instead of one each.

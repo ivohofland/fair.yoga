@@ -5,7 +5,7 @@ import type { NotificationType } from '@prisma/client';
  * safe, and why there is no index for it: `docs/data-model.md`
  * (`### Notification (inbox item)`).
  *
- * Keep this module free of server-only imports; UI code imports it.
+ * Keep this module free of server-only imports, so client code can import it.
  */
 export const SHORT_RETENTION_DAYS = 30;
 export const STANDARD_RETENTION_DAYS = 365;
