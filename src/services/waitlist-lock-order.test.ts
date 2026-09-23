@@ -22,6 +22,7 @@ import {
   promoteNext,
   claimSpot,
   handleSpotFreed,
+  SpotFreedError,
   withdrawWaitingEntriesForTeacher,
 } from './waitlist';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -633,17 +634,26 @@ describe('handleSpotFreed (DB)', () => {
       (result) => ({ ok: true as const, result }),
       // `handleSpotFreed` now wraps every throw in `SpotFreedError` — the
       // Postgres error this guard is about (see the docblock above) lives on
-      // `.cause`, not the wrapper's own message.
+      // `.cause`, not the wrapper's own message. `.window` is set before the
+      // broadcast transaction runs, so asserting it is what tells this
+      // failure apart from the auto-promote branch's own `lockClassRow` call
+      // inside `promoteNext` — that one would raise the identical 55P03 cause
+      // with a different (or, before the window resolves, null) `.window`.
       (err: unknown) => ({
         ok: false as const,
         err: err instanceof Error ? String(err.cause) : String(err),
+        window: err instanceof SpotFreedError ? err.window : null,
       }),
     );
 
     // Without `lockClassRow` the hook never asks for the row, counts a full
     // class, and returns `{ action: 'none' }` — `ok: true`, and this fails.
     expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.err).toMatch(/55P03|lock timeout/i);
+    if (!outcome.ok) {
+      expect(outcome.err).toMatch(/55P03|lock timeout/i);
+      // Pins the BROADCAST branch specifically — see the comment above.
+      expect(outcome.window).toBe('first_come_first_claimed');
+    }
     expect(released).toBe(false);
 
     await holder;
