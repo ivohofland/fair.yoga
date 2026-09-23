@@ -902,11 +902,12 @@ describe('claimSpot (DB)', () => {
   };
 
   /**
-   * A class with two free seats and `studentId` queued as its only waiter —
-   * built directly rather than through `addToWaitlist`, which refuses to
-   * queue anyone against a class that still has spare capacity. Exists for
-   * the #236 `spot_taken` case where a claim fills a seat but the class is
-   * still not full afterward.
+   * A class with two free seats: `studentId` and `secondWaiterId` both queued
+   * as waiters — built directly rather than through `addToWaitlist`, which
+   * refuses to queue anyone against a class that still has spare capacity.
+   * Exists for the #236 `spot_taken` case where a claim fills a seat but the
+   * class is still not full afterward — `secondWaiterId` is the bystander who
+   * must hear nothing.
    */
   const makeSpareCapacityClassWithWaiter = async (studentId: string): Promise<string> => {
     const classTeacherId = await nextClassTeacherId();
@@ -932,6 +933,9 @@ describe('claimSpot (DB)', () => {
     });
     await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId, status: 'waiting', position: 1 },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: secondWaiterId, status: 'waiting', position: 2 },
     });
     return cls.id;
   };
@@ -1230,7 +1234,8 @@ describe('claimSpot (DB)', () => {
 
   it('sends nothing while a seat is still free (#236)', async () => {
     // Two free seats before the claim: after it, one remains — the class is
-    // never full, so the `.isFull` gate stays shut.
+    // never full, so the `.isFull` gate stays shut. secondWaiterId is still
+    // waiting and would be told wrongly if that gate were missing.
     const classId = await makeSpareCapacityClassWithWaiter(waiterId);
     await prisma.class.update({
       where: { id: classId },
