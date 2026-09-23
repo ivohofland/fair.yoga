@@ -219,31 +219,3 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
     ).toBeInTheDocument();
   });
 });
-
-/**
- * Step 4's server-render check. `renderToStaticMarkup` only ever sees the
- * component's initial (unconfirmed) render — the confirm copy is behind
- * `useState`, set from an `onClick` handler, and static rendering runs no
- * event and commits no state update. So there is no way to reach the label
- * text through `renderToStaticMarkup`; what it CAN show is that the initial
- * markup carries no formatted time of its own (no weekday/hour digits) for
- * this component to have derived — the label passed in never appears before
- * a tap, because nothing is formatted until a tap asks for it via the prop.
- * The prop-to-copy flow itself (the label appearing verbatim once tapped) is
- * already covered by the fake-timer tests above; this test's job is only to
- * back up that the component does no formatting of its own before that.
- */
-describe('CancelBookingButton server-render', () => {
-  it('renders only the trigger button server-side, with no time formatting of its own', async () => {
-    const { renderToStaticMarkup } = await import('react-dom/server');
-    const html = renderToStaticMarkup(
-      <CancelBookingButton
-        registrationId="reg-1"
-        freeCancelUntilAt={FUTURE_INSTANT}
-        freeCancelUntilLabel={FUTURE_LABEL}
-      />,
-    );
-    expect(html).toContain('Cancel booking');
-    expect(html).not.toContain(FUTURE_LABEL);
-  });
-});

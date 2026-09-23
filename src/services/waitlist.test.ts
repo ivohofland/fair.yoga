@@ -3,7 +3,6 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
   getWaitlistWindow,
-  claimWindowStart,
   CLAIM_WINDOW_MINUTES,
   cancelDeadlineInstant,
   DEADLINE_HOURS,

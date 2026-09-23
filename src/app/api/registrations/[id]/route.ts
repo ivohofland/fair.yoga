@@ -298,11 +298,9 @@ export const DELETE = withErrorHandler(async (
     );
 
     // An auto-promoted student's free-cancel window extends past the bare
-    // deadline for #236's grace. `freeCancelUntilFor` (`cancel-deadline.ts`)
-    // is the one place that knows only `promoted` carries it, not `claimed`:
+    // deadline for #236's grace (`freeCancelUntilFor`, `cancel-deadline.ts`):
     // the system placed them, so the clock the deadline copy promised them
-    // wasn't the one they got to act on. `/bookings` reads the same instant
-    // through the same helper, off its own fetch of this entry.
+    // wasn't the one they got to act on.
     const promotion = await prisma.waitlistEntry.findUnique({
       where: { registrationId: id },
       select: { status: true, promotedAt: true },

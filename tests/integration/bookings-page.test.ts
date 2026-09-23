@@ -378,6 +378,190 @@ describe('GET /bookings (page) — upcoming registration count', () => {
 });
 
 /**
+ * `/bookings` — the #236 grace is the one case where the DELETE route's
+ * charge decision and this page's copy could read different instants:
+ * `freeCancelUntilFor` branches on the linked `WaitlistEntry.status`, and the
+ * describe block above never seeds one. A `promoted` entry must carry
+ * `promotedAt + 15 min`, not the bare deadline; a `claimed` one must carry the
+ * bare deadline, not an extension. Both students book the SAME class, so a
+ * regression that always read the class's bare deadline (dropping the
+ * `waitlistEntry` argument, or passing `null`) would still pass the claimed
+ * student's assertions but fail the promoted student's.
+ */
+describe('GET /bookings (page) — the #236 free-cancel grace', () => {
+  const suffix2b = uniqueSuffix();
+  let teacherId = '';
+  let teacherAccountId = '';
+  let roomId = '';
+  let classId = '';
+  let promotedStudentId = '';
+  let promotedAccountId = '';
+  let promotedToken = '';
+  let claimedStudentId = '';
+  let claimedAccountId = '';
+  let claimedToken = '';
+
+  // Class starts 2099-08-12 09:37 Europe/Amsterdam (CEST, UTC+2) =
+  // 2099-08-12T07:37:00Z; the default HOURS_24 deadline is 24h before that.
+  // `:37` is deliberately off the `:00` every other fixture in this file
+  // uses, so neither instant below can coincide with a class-start or
+  // deadline literal printed elsewhere on the same page.
+  const deadline = new Date('2099-08-11T07:37:00.000Z');
+  // A late auto-promotion — after the bare deadline has already passed, the
+  // exact case the #236 grace exists for — so the grace (promotedAt + 15
+  // min) lands clearly past it, not merely equal to it.
+  const promotedAt = new Date(deadline.getTime() + 5 * 60 * 1000);
+  const graceUntil = new Date(promotedAt.getTime() + 15 * 60 * 1000);
+  // A `claimed` entry gets no grace, so its own `promotedAt` is irrelevant to
+  // what the page should show — set far enough from `promotedAt` above that
+  // the two students' fixtures cannot be confused for one another.
+  const claimedPromotedAt = new Date(deadline.getTime() + 40 * 60 * 1000);
+
+  beforeAll(async () => {
+    await prisma.$connect();
+
+    const teacherEmail = `bookings-grace-teacher-${suffix2b}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Grace', lastName: 'Teacher', email: teacherEmail,
+        bio: 'Grace fixture teacher',
+        pageSlug: `bookings-grace-teacher-${suffix2b}`,
+        account: { create: { email: teacherEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Grace Studio',
+        address: `${suffix2b} Grace St`,
+        city: 'Amsterdam',
+        postcode: '1000AA',
+        roomName: 'Hall',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 10, rentalRate: 15 },
+    });
+
+    // Far-future date: the live scheduler's auto-cancel sweep only acts
+    // within a class's own configured lead time before its start
+    // (`autoCancelClasses`, `class-transitions.ts`), which a 2099 class never
+    // reaches — so this fixture needs no `minStudents: 0` workaround.
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Grace Test Class',
+      date: new Date('2099-08-12'),
+      startTime: hhmmToTime('09:37'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 10,
+      targetRate: 40,
+      minStudents: 1,
+      maxStudents: 6,
+      cancelDeadline: 'HOURS_24',
+      status: 'open',
+    });
+    classId = cls.id;
+
+    const mkStudent = async (lastName: string) => {
+      const email = `bookings-grace-${lastName.toLowerCase()}-${suffix2b}@test.local`;
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Grace', lastName, email,
+          claimedAt: new Date(),
+          account: { create: { email } },
+        },
+        select: { id: true, accountId: true },
+      });
+      const token = await seedSession(prisma, student.accountId as string);
+      return { id: student.id, accountId: student.accountId as string, token };
+    };
+
+    const promoted = await mkStudent('Promoted');
+    promotedStudentId = promoted.id;
+    promotedAccountId = promoted.accountId;
+    promotedToken = promoted.token;
+
+    const claimed = await mkStudent('Claimed');
+    claimedStudentId = claimed.id;
+    claimedAccountId = claimed.accountId;
+    claimedToken = claimed.token;
+
+    // Simulates what `promoteNext`/`claimSpot` leave behind, without running
+    // either — the same fixture shape `registrations-api.test.ts`'s
+    // `bookAndPromote` uses for the route-level grace tests.
+    const promotedReg = await prisma.registration.create({
+      data: { classId, studentId: promotedStudentId, tierAtBooking: 3, status: 'registered' },
+    });
+    await prisma.waitlistEntry.create({
+      data: {
+        classId, studentId: promotedStudentId, position: 1, status: 'promoted',
+        promotedAt, registrationId: promotedReg.id,
+      },
+    });
+
+    const claimedReg = await prisma.registration.create({
+      data: { classId, studentId: claimedStudentId, tierAtBooking: 3, status: 'registered' },
+    });
+    await prisma.waitlistEntry.create({
+      data: {
+        classId, studentId: claimedStudentId, position: 2, status: 'claimed',
+        promotedAt: claimedPromotedAt, registrationId: claimedReg.id,
+      },
+    });
+
+    // Warm both routes (next dev compiles a page lazily on its first hit).
+    await fetch(`${BASE_URL}/bookings`, { headers: cookie(promotedToken) }).catch(() => {});
+    await fetch(`${BASE_URL}/bookings`, { headers: cookie(claimedToken) }).catch(() => {});
+  }, 20_000);
+
+  afterAll(async () => {
+    await prisma.waitlistEntry.deleteMany({ where: { classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({
+      where: { accountId: { in: [teacherAccountId, promotedAccountId, claimedAccountId] } },
+    });
+    await prisma.student.deleteMany({ where: { email: { contains: suffix2b } } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacherAccountId, promotedAccountId, claimedAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('carries promotedAt + 15 min, not the bare deadline, for a promoted student', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(promotedToken) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    expect(html).toContain(graceUntil.toISOString());
+    expect(html).toContain(formatInstantInZone(graceUntil, 'Europe/Amsterdam'));
+    expect(html).not.toContain(deadline.toISOString());
+  });
+
+  it('carries the bare deadline, not a grace extension, for a claimed student', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(claimedToken) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    const wouldBeGrace = new Date(claimedPromotedAt.getTime() + 15 * 60 * 1000);
+    expect(html).toContain(deadline.toISOString());
+    expect(html).toContain(formatInstantInZone(deadline, 'Europe/Amsterdam'));
+    expect(html).not.toContain(wouldBeGrace.toISOString());
+  });
+});
+
+/**
  * `/bookings` — the Upcoming section must not quote a price or link to the
  * booking page for a class the student can no longer actually book: a
  * cancelled one, or one that has already gone `in_progress`. The booking
