@@ -1355,6 +1355,105 @@ it('bounds its wait even when the student is waiting in no classes at all', asyn
 }, 30_000);
 
 /**
+ * The `deleteTeacherAccount` twin of the guard above. Its transaction takes
+ * no template locks in this fixture (no `ClassTemplate`/`StudioClassTemplate`
+ * rows for this teacher), then `lockClassRowsOrdered` (`gdpr.ts`) takes the
+ * teacher's one upcoming `Class` row `FOR UPDATE` — the row held open here.
+ * Same shape as the test above: a hold well past the 2s `lock_timeout`
+ * proves the timeout fires rather than the erasure waiting it out, and the
+ * abort is atomic on the write that same lock guards — the class's
+ * `CalendarEntry.cancelledAt`.
+ */
+it('aborts atomically when a Class row it must lock is held past the timeout', async () => {
+  const suffix = `gdpr-teacher-locktimeout-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const teacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Lock',
+      lastName: 'Teacher',
+      email: `${suffix}@test.local`,
+      account: { create: { email: `${suffix}@test.local` } },
+      bio: 'Teacher-half lock-timeout fixture',
+      pageSlug: suffix,
+    },
+    select: { id: true, accountId: true },
+  });
+  const teacherId = teacher.id;
+
+  const room = await prisma.room.create({
+    data: {
+      venueName: 'Lock Studio',
+      address: `${suffix} St`,
+      city: 'Amsterdam',
+      postcode: '1234LK',
+      floor: '1',
+      roomName: 'Main',
+      maxCapacity: 20,
+      createdById: teacherId,
+    },
+    select: { id: true },
+  });
+
+  const teacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+    select: { id: true },
+  });
+
+  const cls = await createClassFixture(prisma, {
+    teacherId,
+    teacherRoomId: teacherRoom.id,
+    classType: 'Lock timeout class',
+    date: new Date('2099-06-01'),
+    startTime: hhmmToTime('09:00'),
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 1,
+    maxStudents: 10,
+    status: 'open',
+  });
+
+  try {
+    let holderReleased = false;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 4_000));
+        holderReleased = true;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const outcome = await deleteTeacherAccount(prisma, teacherId)
+      .then(() => 'returned' as const)
+      .catch((err: unknown) => ({ error: String(err), holderReleased }) as const);
+    await holder;
+
+    // Unbounded, this is `'returned'`: the erasure waits out the full 4s
+    // hold and succeeds.
+    expect(outcome).not.toBe('returned');
+    expect(typeof outcome === 'object' ? outcome.error : '').toMatch(/55P03|lock timeout/);
+    expect(typeof outcome === 'object' ? outcome.holderReleased : true).toBe(false);
+
+    // And the abort is atomic — nothing half-applied.
+    const erasedTeacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(erasedTeacher.deletedAt).toBeNull();
+
+    const entry = await prisma.calendarEntry.findUniqueOrThrow({
+      where: { id: cls.calendarEntry.id },
+    });
+    expect(entry.cancelledAt).toBeNull();
+  } finally {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: room.id } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: teacher.accountId } });
+  }
+}, 30_000);
+
+/**
  * #240 regression guard: `deleteStudentAccount` carries a flat
  * `{ timeout: 20_000 }` budget rather than one sized from a count of
  * `waiting` entries (`Math.min(5_000 + waitingCount * 2_000, 20_000)`).
