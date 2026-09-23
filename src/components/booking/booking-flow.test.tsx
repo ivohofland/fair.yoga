@@ -237,7 +237,7 @@ describe('BookingFlow', () => {
       renderFlow({ isFull: true });
       expect(
         screen.getByText(
-          "If a spot opens up until 1 hour before class, you're booked automatically. The usual cancellation deadline applies, with at least 15 minutes to change your mind.",
+          'If a spot opens up until 1 hour before class, the next person in line is booked automatically. The usual cancellation deadline applies, with at least 15 minutes to change your mind.',
         ),
       ).toBeInTheDocument();
     });
