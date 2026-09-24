@@ -163,9 +163,10 @@ export async function autoTransitionToInProgress(
         // NOT in `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so `settingsLocked`
         // does not freeze them and a teacher can reschedule an `open` class
         // with registrations at any time, including while this sweep is
-        // mid-flight. Deciding from the outer `findMany` started a class
-        // against a time it no longer had — and `in_progress` can only go to
-        // `completed`, so the teacher cannot undo it in the app.
+        // mid-flight. Deciding from the paged snapshot (`readStartCandidatePage`)
+        // would start a class against a time it no longer had — and
+        // `in_progress` can only go to `completed`, so the teacher cannot undo
+        // it in the app.
         const fresh = await tx.class.findUnique({
           where: { id: cls.id },
           select: {
@@ -491,7 +492,7 @@ export async function autoCancelClasses(
         // the snapshot the loop is walking. Round 1 review moved the count
         // in and stopped there, which left the WINDOW itself still decided
         // from the pre-lock read: `date`, `startTime`, `autoCancelCheck`
-        // and `minStudents` all still came from the outer `findMany`. Only
+        // and `minStudents` all still came from the snapshot. Only
         // `minStudents` is economic; `date` and `startTime` are NOT, so a
         // teacher can reschedule an `open` class with registrations at any
         // time, including while this sweep is mid-flight. The result was a
@@ -544,11 +545,11 @@ export async function autoCancelClasses(
           return false;
         }
 
-        // Counted HERE, not from the sweep's outer `findMany` at the top of
-        // this function. That read is a snapshot taken before this
-        // transaction began, so a registration committing in between is
-        // invisible to it — and cancelling a class that has just reached
-        // its minimum tells every student it is off when it is not.
+        // Counted HERE, not from the paged snapshot (`readCancelCandidatePage`)
+        // the loop is walking. That snapshot was read before this transaction
+        // began, so a registration committing in between is invisible to it —
+        // and cancelling a class that has just reached its minimum tells every
+        // student it is off when it is not.
         const activeCount = await tx.registration.count({
           where: { classId: cls.id, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
         });

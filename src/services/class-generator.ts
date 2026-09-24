@@ -136,11 +136,11 @@ export const claimTemplateForGeneration = (
  * recomputes `ruleLive` and the CHECK refuses the write.
  * See `lib/template-selection.ts`.
  *
- * Narrowed to `id` and `scheduleRule.teacherId` — the two fields the sweep's
- * loop reads, both for logging; the loop never uses the teacher-timezone hop,
- * so the selection excludes it. Everything else about the template is
- * re-read fresh under `claimTemplateForGeneration`, inside its own
- * transaction.
+ * Narrowed to `id` and `scheduleRule.teacherId`: `id` is what the sweep's
+ * loop re-claims the row by and names it by in logs, and `teacherId` is for
+ * logs only. The loop never uses the teacher-timezone hop, so the selection
+ * excludes it. Everything else about the template is re-read fresh under
+ * `claimTemplateForGeneration`, inside its own transaction.
  */
 function readTemplateCandidatePage(
   db: PrismaClient,
@@ -202,10 +202,11 @@ export async function generateClassInstances(
     try {
       // One transaction per template: the claim's row lock has to still be
       // held when the instances are created, or the archive it is protecting
-      // against can commit in between. The `findMany` above is only a
-      // pre-filter — by the time the loop reaches this template its row may
-      // be minutes stale: #95 closed that for `isActive`/`isArchived`, #102
-      // for every other value the generator reads.
+      // against can commit in between. The snapshot read above
+      // (`readGenerationCandidates`) is only a pre-filter — by the time the
+      // loop reaches this template its row may be minutes stale: #95 closed
+      // that for `isActive`/`isArchived`, #102 for every other value the
+      // generator reads.
       totalCreated += await db.$transaction(
         async (tx) => {
           const fresh = await claimTemplateForGeneration(tx, template.id);

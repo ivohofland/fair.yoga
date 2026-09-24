@@ -251,16 +251,17 @@ the verdict below.
 makes a session-level `SET` reach every later query on it). The harness
 asserts that an unpaged `CEILING_ROWS` load fails with `54001`
 (`isStackDepthError`) and that a `SWEEP_PAGE_SIZE` page passes. Each per-site
-test then seeds a `CEILING_ROWS` parent set and asserts only the paged read
-completes on the lowered stack; `expectLowered` confirms the session is
+test then seeds a `CEILING_ROWS` parent set and asserts the paged read
+completes on the lowered stack without returning a row twice; `expectLowered` confirms the session is
 actually running under it, so a test cannot pass by silently running on a
 default-stack connection. Un-paging a site's read turns its test red with
 `54001`, which is how each was verified. The per-site tests live in
 `src/services/sweep-page-ceiling.test.ts`.
 
-**Per-tenant verdict.** Bounded by one teacher's or one student's own
-history — the GDPR export, `/schedule/past`, reporting, and the unfiltered
-`GET /api/classes` / `GET /api/studio-classes` — is left unpaged. At 6
+**Per-tenant verdict.** A read bounded by one teacher's or one student's own
+history is left unpaged — including the GDPR export, `/schedule/past`,
+reporting, and the unfiltered `GET /api/classes` / `GET /api/studio-classes`,
+among other per-tenant reads. At 6
 classes a week, one teacher reaches 7,500 calendar entries only after about
 24 years (7,500 ÷ 6 ÷ 52 ≈ 24), and a student's bookings or GDPR export is
 smaller again. Not a defect anyone will hit.
@@ -275,7 +276,7 @@ Load sites (excluding tests — read each hit to separate a load from a
 filter):
 
 ```bash
-grep -rnE "\b(calendarEntry|classes|studioClasses|teacherRoom|classTemplates|studioClassTemplates|scheduleRule)\s*:\s*(\{|true)" src
+grep -rnE "\b(calendarEntry|classes|studioClasses|teacherRoom|classTemplates|studioClassTemplates|scheduleRule)\s*:\s*(\{|true)" src | grep -v '\.test\.ts'
 ```
 
 Cross-tenant sites — each a background sweep whose parent set grows with the
