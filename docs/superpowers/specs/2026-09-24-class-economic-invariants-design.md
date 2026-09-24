@@ -139,25 +139,31 @@ export type ClassEconomics = {
   roomCost: number; minRate: number; targetRate: number;
   minStudents: number; maxStudents: number;
 };
-export type EconomicsViolation = { path: keyof ClassEconomics; message: string };
-export function economicsViolation(e: ClassEconomics): EconomicsViolation | null;
+export type EconomicsRule = 'students_order' | 'rate_order' | 'room_subsidy';
+export type EconomicsViolation = { rule: EconomicsRule; path: keyof ClassEconomics; message: string };
+export function economicsViolations(e: ClassEconomics): readonly EconomicsViolation[];
 ```
 
 It checks the three cross-field invariants in the order the create refines use today
-(5, 6, 7) and returns the first one broken. The paths and messages are exactly
-today's:
+(5, 6, 7) and returns **every** one broken, in that order, or an empty array. It returns
+all of them, not the first, because Zod runs every refine and `parseBody` joins the
+issues with `, `. First-only would change what a create's 400 says when two rules
+break at once. The paths and messages are exactly today's:
 
-| Invariant | `path` | `message` |
-|---|---|---|
-| 5 | `minStudents` | `minStudents cannot exceed maxStudents` |
-| 6 | `minRate` | `minRate cannot exceed targetRate` |
-| 7 | `minRate` | `minRate cannot subsidize more than the room cost — prices would go negative` |
+| Invariant | `rule` | `path` | `message` |
+|---|---|---|---|
+| 5 | `students_order` | `minStudents` | `minStudents cannot exceed maxStudents` |
+| 6 | `rate_order` | `minRate` | `minRate cannot exceed targetRate` |
+| 7 | `room_subsidy` | `minRate` | `minRate cannot subsidize more than the room cost — prices would go negative` |
+
+`rule` exists because two rules share `path: 'minRate'`. It lets a form map a violation to
+its own copy through a `Record<EconomicsRule, string>`, which the compiler keeps complete.
 
 The module imports nothing, so a client component can use it.
 
 - **Create schemas:** `createClassSchema` and `createClassTemplateSchema` replace their
-  three `.refine`s with one `.superRefine` that calls `economicsViolation` and adds the
-  issue at its `path`. Existing message assertions keep holding.
+  three `.refine`s with one `.superRefine` that calls `economicsViolations` and adds one
+  issue per violation at its `path`. Existing message assertions keep holding.
 - **Update schemas:** `updateClassSchema` and `updateClassTemplateSchema` drop their two
   partial pairwise refines. A partial body cannot be checked without the stored row, so
   the check moves to where the stored row is (§3.2). Single-field bounds (`positive()`,
@@ -170,8 +176,8 @@ so it cannot be raced, and only when the request sends at least one economic fie
 
 - **`updateClass`:** after `lockClassRow`, and only if `sentEconomic !== null`, read the
   row's five economic columns through `tx`, overlay the sent fields, and run
-  `economicsViolation`. On a violation, throw
-  `UpdateClassRefusal({ ok: false, reason: 'invalid_economics', violation })`, which
+  `economicsViolations`. On a violation, throw
+  `UpdateClassRefusal({ ok: false, reason: 'invalid_economics', violations })`, which
   rolls back the transaction.
 
   **Ordering, and why it is tight.** The check must run **before** the class write:
@@ -187,16 +193,21 @@ so it cannot be raced, and only when the request sends at least one economic fie
   answers `locked`, and an invalid edit on an unlocked class answers 400, not 500.
 - **`updateClassTemplate`:** `CLASS_FAMILY.updateChild` runs inside `updateRule`'s
   transaction after its `FOR UPDATE` on the template row. There it reads the stored
-  economics through `tx`, overlays `childData`, runs `economicsViolation`, and throws a
+  economics through `tx`, overlays `childData`, runs `economicsViolations`, and throws a
   refusal that rolls back the rule edit too. The check sits before
   `tx.classTemplate.update` for the same reason as above: the constraint fires on the
-  write. Templates have no settings lock, so there is no refusal it could pre-empt. `updateClassTemplate` turns the refusal
-  into a returned `{ ok: false, reason: 'invalid_economics', violation }` arm. The
-  plan checks that `updateRule`'s error handling passes this throw through unchanged
-  rather than classifying it as `busy` or a 500.
+  write. Templates have no settings lock, so there is no refusal it could pre-empt.
+  `updateClassTemplate` turns the refusal into a returned
+  `{ ok: false, reason: 'invalid_economics', violations }` arm. The arm is added to
+  `UpdateClassTemplateResult` only, not to the generic `UpdateRuleResult`, which the
+  studio family shares. The throw reaches `updateClassTemplate` untouched: `updateRule`'s
+  catch matches transient, not-found, slot and room-FK errors and rethrows everything
+  else (`rule-lifecycle.ts`, the final `throw err`).
 - **Routes:** `PUT /api/classes/[id]` and `PUT /api/class-templates/[id]` map the new
-  reason to `respondError(\`${violation.path}: ${violation.message}\`, 400)`, the same
-  shape `parseBody` uses.
+  reason to a 400 whose message is
+  `violations.map((v) => \`${v.path}: ${v.message}\`).join(', ')`, the same shape
+  `parseBody` builds from Zod issues. Both routes end in a `never` exhaustiveness
+  check, so a missing branch fails to compile.
 
 `StudioClass` and `StudioClassTemplate` have no such economics and are unaffected.
 
@@ -207,10 +218,12 @@ so it cannot be raced, and only when the request sends at least one economic fie
   leniency flips to assert that edit mode refuses before any request.
 - `class-edit-form.tsx`: gains the third check, in the same unlocked-only branch as the
   other two.
-- Where practical, both forms call `economicsViolation` instead of restating the
-  predicates. The plan decides whether the forms' existing sentence-case copy stays
-  (the forms' own wording) or moves to the shared messages. Either way the copy is
-  pinned by the forms' tests.
+- Both forms call `economicsViolations` instead of restating the predicates, and show
+  the first violation's copy from their own
+  `Record<EconomicsRule, string> satisfies`-tethered map. The copy stays the forms'
+  sentence-case wording ("Min students cannot exceed max students"; the existing
+  subsidy sentence), which the forms' tests already pin. The server's camelCase messages
+  are for API clients, the form's are for teachers.
 
 ### 3.4 The migration
 
@@ -254,7 +267,7 @@ Test-first. Each of these fails before the change it covers:
   `minStudents: 0` is accepted.
 - **Mutation proof** (§3 of the skill), recorded in the PR body:
   - Delete the service check in each update path; the service tests go red.
-  - Change one comparison inside `economicsViolation`; the unit and create-schema tests
+  - Change one comparison inside `economicsViolations`; the unit and create-schema tests
     go red.
   - Drop one `ADD CONSTRAINT`; its bite test goes red.
 
