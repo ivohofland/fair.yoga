@@ -4,7 +4,7 @@
 
 **Goal:** A failed `POST /api/notifications/[id]/read` is no longer ignored: `NotificationList` rolls back its optimistic read state, both components say so inline, and a 401 refreshes the page so the server guard redirects to sign-in (#670).
 
-**Architecture:** One client-safe helper, `postMarkRead(id)`, owns the fetch and classifies the outcome (`'marked' | 'session-expired' | 'failed'`), so the two components cannot drift on what counts as a failure or on the 401 rule. Each component keeps its own per-row `failed` state and renders a `role="alert"` line under the row's body. `NotificationList` additionally rolls back `readState[id]`; `UpdatesStrip` has no optimistic state (the row leaves only when the server re-renders), so for it the change is the message, the 401 refresh and a caught rejection.
+**Architecture:** One client-safe helper, `postMarkRead(id)`, owns the fetch and classifies the outcome (`'marked' | 'unauthorized' | 'failed'`), so the two components cannot drift on what counts as a failure or on the 401 rule. Each component keeps its own per-row `failed` state and renders a `role="alert"` line under the row's body. `NotificationList` additionally rolls back `readState[id]`; `UpdatesStrip` has no optimistic state (the row leaves only when the server re-renders), so for it the change is the message, the 401 refresh and a caught rejection.
 
 **Tech Stack:** React 19 client components, Vitest (`unit` for the helper, `components` project for the two components), Testing Library.
 
@@ -25,7 +25,7 @@
 - A retry after a failure: the second click must go optimistic again, clear the message, and succeed. (Task 1 test.)
 - A rejected `fetch` (network down): must roll back and show the message, not throw out of an un-awaited call from `handleNavigate`. (Task 1 and 2 tests.)
 - Clicking the row itself (not "Mark read") on a failed mark: navigation must still happen — the failure is not a reason to strand the reader. (Task 1 test.)
-- A non-401 failure must not refresh the page (the message would vanish with the re-render only if the server state changed; refreshing on every failure would also mask a persistent 500). (Task 1 and 2 tests.)
+- A non-401 failure must not refresh the page: a refresh would mask a persistent 500, and it would not clear the message anyway, because the alert lives in client state, which `router.refresh()` preserves. (Task 1 and 2 tests.)
 - Rows loaded by "Show older messages" take the same path as first-page rows. (Existing #663 test keeps covering success; Task 1 adds a failed one on a loaded row.)
 
 Not in scope (from the issue): whether the tab-bar dot should be optimistic. Not done here and named in the PR: a 404 (row removed by the retention sweep) shows the same message and a retry answers 404 again.
@@ -41,7 +41,7 @@ Not in scope (from the issue): whether the tab-bar dot should be optimistic. Not
 - Modify: `src/components/layout/notification-list.test.tsx` (new `describe` at the end)
 
 **Interfaces:**
-- Produces: `export type MarkReadOutcome = 'marked' | 'session-expired' | 'failed'` and `export async function postMarkRead(id: string): Promise<MarkReadOutcome>` in `@/lib/mark-notification-read`. Never rejects. Task 2 imports both.
+- Produces: `export type MarkReadOutcome = 'marked' | 'unauthorized' | 'failed'` and `export async function postMarkRead(id: string): Promise<MarkReadOutcome>` in `@/lib/mark-notification-read`. Never rejects. Task 2 imports both.
 
 - [ ] **Step 1: Write the failing helper test** (`src/lib/mark-notification-read.test.ts`)
 
@@ -59,9 +59,9 @@ describe('postMarkRead (#670)', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/notifications/n-1/read', { method: 'POST' });
   });
 
-  it('answers session-expired on 401 and only on 401', async () => {
+  it('answers unauthorized on 401 and only on 401', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
-    await expect(postMarkRead('n-1')).resolves.toBe('session-expired');
+    await expect(postMarkRead('n-1')).resolves.toBe('unauthorized');
     for (const status of [403, 404, 500]) {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status }));
       await expect(postMarkRead('n-1')).resolves.toBe('failed');
@@ -83,14 +83,17 @@ Expected: FAIL — cannot resolve `./mark-notification-read`.
 - [ ] **Step 3: Implement the helper**
 
 ```ts
-export type MarkReadOutcome = 'marked' | 'session-expired' | 'failed';
+export type MarkReadOutcome = 'marked' | 'unauthorized' | 'failed';
 
 export async function postMarkRead(id: string): Promise<MarkReadOutcome> {
   try {
     const res = await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
     if (res.ok) return 'marked';
-    return res.status === 401 ? 'session-expired' : 'failed';
-  } catch {
+    if (res.status === 401) return 'unauthorized';
+    console.error('[mark-read] refused', { id, status: res.status });
+    return 'failed';
+  } catch (err) {
+    console.error('[mark-read] request failed', { id, err });
     return 'failed';
   }
 }
@@ -128,38 +131,41 @@ Expected: the new tests FAIL (no alert; button stays `invisible`), the existing 
 - Replace `markRead`:
 
 ```ts
-  async function markRead(id: string) {
-    if (readState[id]) return;
-    setReadState((prev) => ({ ...prev, [id]: true }));
-    setReadFailed((prev) => ({ ...prev, [id]: false }));
-    const outcome = await postMarkRead(id);
+  async function markRead(n: Notification) {
+    if (readState[n.id] ?? n.isRead) return;
+    setReadState((prev) => ({ ...prev, [n.id]: true }));
+    setReadFailed((prev) => ({ ...prev, [n.id]: false }));
+    const outcome = await postMarkRead(n.id);
     if (outcome === 'marked') {
       // Re-runs the layout server component so the tab bar's unread dot updates.
       router.refresh();
       return;
     }
-    setReadState((prev) => ({ ...prev, [id]: false }));
-    setReadFailed((prev) => ({ ...prev, [id]: true }));
-    // An expired session cannot be retried into success; the page's own
-    // server guard sends the reader to sign in.
-    if (outcome === 'session-expired') router.refresh();
+    setReadState((prev) => {
+      const next = { ...prev };
+      delete next[n.id];
+      return next;
+    });
+    setReadFailed((prev) => ({ ...prev, [n.id]: true }));
+    // 401: refresh so the page's server guard can send the reader to sign in.
+    if (outcome === 'unauthorized') router.refresh();
   }
 ```
 
 - Row markup: wrap the row's left `<button id={rowButtonId(...)}>` in `<div className="flex flex-col min-w-0 flex-1">` (move `flex-1` off the button to the wrapper; keep `text-left flex items-start min-w-0` on the button) and render, after the button, `{readFailed[notification.id] && (<p role="alert" className="type-caption text-danger">Couldn&apos;t mark this message read.</p>)}`. The alert must sit outside the button.
-- Keep `handleNavigate` as is: `markRead(notification.id)` is un-awaited, which is now safe because `postMarkRead` never rejects.
+- `handleNavigate` and the "Mark read" button's `onClick` both call `markRead(notification)`, passing the notification: the guard reads the row's effective state, `readState[n.id] ?? n.isRead`, which for a row the component has not touched is the prop's `isRead`. The rollback deletes the row's key instead of pinning `false`, so a row that later arrives through a refreshed `notifications` prop follows that prop again. The call in `handleNavigate` is un-awaited, which is safe because `postMarkRead` never rejects.
 
 - [ ] **Step 8: Run, see them pass; typecheck and lint**
 
 Run: `pnpm exec vitest run --project components src/components/layout/notification-list.test.tsx && pnpm exec tsc --noEmit && pnpm exec eslint src/lib/mark-notification-read.ts src/lib/mark-notification-read.test.ts src/components/layout/notification-list.tsx src/components/layout/notification-list.test.tsx`
-Expected: all green, including the pre-existing retention-note tests that read `parentElement` of the row button.
+Expected: all green. The pre-existing retention-note tests climb to the row with `.closest('div.border-b')`, because the row button's `parentElement` is now the wrapper that also holds the alert.
 
 - [ ] **Step 9: Prove every guard bites** — apply each mutation, record the failing test names, restore by re-applying the exact original text (commit first; never `git checkout` a file holding other uncommitted work). Warm nothing needed (unit/components only).
   - Delete the `setReadState(... [id]: false)` rollback → tests 1–3, 8 fail.
   - Delete the `setReadFailed(... true)` line → tests 1–4, 6, 8 fail.
-  - Delete `if (outcome === 'session-expired') router.refresh();` → test 3 fails.
+  - Delete `if (outcome === 'unauthorized') router.refresh();` → test 3 fails.
   - Change it to refresh on every non-`marked` outcome → test 4 fails.
-  - In the helper, return `'session-expired'` for every non-ok → helper test 2 and component test 4 fail.
+  - In the helper, return `'unauthorized'` for every non-ok → helper test 2 and component test 4 fail.
   - In the helper, remove the `try/catch` → helper test 3 and component test 2 fail.
   - Delete the `setReadFailed(... false)` line at the top of `markRead` → test 5 fails.
   Run `git status` after the sweep and assert it is clean of mutations.
@@ -180,7 +186,7 @@ git commit -m "fix(inbox): roll back and say so when marking a message read fail
 - Create: `src/components/student/updates-strip.test.tsx`
 
 **Interfaces:**
-- Consumes: `postMarkRead(id: string): Promise<'marked' | 'session-expired' | 'failed'>` from `@/lib/mark-notification-read` (Task 1). Never rejects.
+- Consumes: `postMarkRead(id: string): Promise<'marked' | 'unauthorized' | 'failed'>` from `@/lib/mark-notification-read` (Task 1). Never rejects.
 
 - [ ] **Step 1: Write the failing tests** (`src/components/student/updates-strip.test.tsx`)
 
@@ -214,9 +220,8 @@ Expected: tests 2–5 FAIL (no alert / refresh always called); test 1 passes.
       return;
     }
     setFailed((prev) => ({ ...prev, [id]: true }));
-    // An expired session cannot be retried into success; the page's own
-    // server guard sends the reader to sign in.
-    if (outcome === 'session-expired') router.refresh();
+    // 401: refresh so the page's server guard can send the reader to sign in.
+    if (outcome === 'unauthorized') router.refresh();
   }
 ```
 
@@ -229,7 +234,7 @@ Expected: green.
 
 - [ ] **Step 5: Prove every guard bites** — commit first, then:
   - Delete `setFailed(... true)` → tests 2–4 fail.
-  - Delete `if (outcome === 'session-expired') router.refresh();` → test 4 fails.
+  - Delete `if (outcome === 'unauthorized') router.refresh();` → test 4 fails.
   - Refresh on every outcome → test 2 fails.
   - Delete `setFailed(... false)` at the top → test 5 fails.
   Assert `git status` clean of mutations afterwards.
