@@ -36,4 +36,21 @@ describe('isValidTimeZone', () => {
   it('rejects the reserved test sentinel, which no tzdata release can make valid', () => {
     expect(isValidTimeZone('Invalid/Test_Zone_145')).toBe(false);
   });
+
+  /**
+   * `cancelCandidateDates` assumes every stored zone's offset lies within
+   * UTC−12..UTC+14. ECMA-402 offset identifiers resolve in Intl but can sit
+   * outside that range, so the probe refuses the whole shape.
+   */
+  it('rejects offset identifiers, which Intl resolves but no IANA zone is', () => {
+    for (const offset of ['+18:00', '-23:59', '+14:00', '+2359', '+18']) {
+      expect(isValidTimeZone(offset)).toBe(false);
+    }
+  });
+
+  it('accepts the IANA zones at both ends of the offset range', () => {
+    for (const zone of ['Etc/GMT+12', 'Etc/GMT-14', 'Pacific/Kiritimati', 'Europe/Amsterdam', 'UTC']) {
+      expect(isValidTimeZone(zone)).toBe(true);
+    }
+  });
 });
