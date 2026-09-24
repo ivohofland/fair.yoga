@@ -784,11 +784,12 @@ describe('completeClass (DB)', () => {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
-        // A DAY per call, not a minute (#327) — see `slotDate`. The two tests
-        // below that pass a literal `requireEndedBy` are written to hold for
-        // any offset: one needs an instant before every fixture's end (a date
-        // at or before the base does that), the other moves its own fixture a
-        // week earlier first.
+        // A DAY per call, not a minute (#327) — see `slotDate`. The test below
+        // that passes a literal completion instant ('completes a class
+        // rescheduled EARLIER', `sweepAt: new Date('2026-06-01T16:30:00Z')`)
+        // holds for any counter offset because it moves its own fixture to a
+        // fixed date a week earlier first, ahead of every date `slotDate` can
+        // produce.
         date: slotDate('2026-06-01', makeClassCounter),
         startTime: hhmmToTime(slotTime(540)),
         durationMinutes: 75,
@@ -1310,10 +1311,8 @@ describe('completeClass (DB)', () => {
   });
 
   it("erasure's finishedEarly checks no clock", async () => {
-    // The option exists for `deleteTeacherAccount`, which closes in-flight
-    // classes during erasure regardless of the clock; omitting it here must
-    // NOT become strict by default, or a teacher can no longer finish a class
-    // early either.
+    // `finishedEarly` exists for `deleteTeacherAccount`, which closes
+    // in-flight classes during erasure whatever the clock says.
     const cls = await makeClass({ status: 'in_progress' });
     const result = await completeClass(prisma, cls.id, { finishedEarly: true });
     expect(result.ok).toBe(true);
@@ -1813,10 +1812,10 @@ describe('updateClass (DB)', () => {
     async (status) => {
       // `in_progress` is here deliberately. The teacher edit page redirects
       // away from it, but the API allows it and should: the retention sweep
-      // reads only terminal classes, and completeClass's `requireEndedBy`
-      // already handles a class rescheduled out from under a completion.
-      // Without this case a mutation that froze `in_progress` too would pass
-      // every other test in this file.
+      // reads only terminal classes, and completeClass's clock check
+      // (`sweepAt`/`teacherAt`) already handles a class rescheduled out from
+      // under a completion. Without this case a mutation that froze
+      // `in_progress` too would pass every other test in this file.
       const cls = await makeClass(false, status);
 
       const result = await updateClass(prisma, cls.id, { description: `Edited while ${status}` });

@@ -123,7 +123,7 @@ describe('updateClass against a completion that already holds the class', () => 
     });
 
     // Dated far in the future, and completed with `finishedEarly` rather than
-    // `requireEndedBy`. The property under test is the reschedule's
+    // a clock (`sweepAt`/`teacherAt`). The property under test is the reschedule's
     // SERIALISATION against a held completion, and `lockClassRow` is
     // `completeClass`'s first statement either way — so the timing branch adds
     // nothing here and a class near "now" would make the reschedule's own
