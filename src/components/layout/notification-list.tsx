@@ -45,7 +45,7 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
     Object.fromEntries(notifications.map((n) => [n.id, n.isRead])),
   );
   const [readFailed, setReadFailed] = useState<Record<string, boolean>>({});
-  const [loaded, setLoaded]= useState<Loaded | null>(null);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'failed'>('idle');
   const inFlight = useRef(false);
   const pendingFocus = useRef<string | null>(null);
@@ -93,18 +93,18 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
     }
   }
 
-  async function markRead(id: string) {
-    if (readState[id]) return;
-    setReadState((prev) => ({ ...prev, [id]: true }));
-    setReadFailed((prev) => ({ ...prev, [id]: false }));
-    const outcome = await postMarkRead(id);
+  async function markRead(n: Notification) {
+    if (readState[n.id] ?? n.isRead) return;
+    setReadState((prev) => ({ ...prev, [n.id]: true }));
+    setReadFailed((prev) => ({ ...prev, [n.id]: false }));
+    const outcome = await postMarkRead(n.id);
     if (outcome === 'marked') {
       // Re-runs the layout server component so the tab bar's unread dot updates.
       router.refresh();
       return;
     }
-    setReadState((prev) => ({ ...prev, [id]: false }));
-    setReadFailed((prev) => ({ ...prev, [id]: true }));
+    setReadState((prev) => ({ ...prev, [n.id]: false }));
+    setReadFailed((prev) => ({ ...prev, [n.id]: true }));
     // An expired session cannot be retried into success; the page's own
     // server guard sends the reader to sign in.
     if (outcome === 'session-expired') router.refresh();
@@ -116,7 +116,7 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
   }
 
   function handleNavigate(notification: Notification) {
-    markRead(notification.id);
+    markRead(notification);
     const href = resolveHref(notification);
     if (href) {
       router.push(href);
@@ -167,7 +167,7 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
                 </div>
               </button>
               {readFailed[notification.id] && (
-                <p role="alert" className="type-caption text-danger">
+                <p role="alert" className="type-caption text-danger mt-0.5">
                   Couldn&apos;t mark this message read.
                 </p>
               )}
@@ -181,7 +181,7 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
                   doesn't shift when the state changes. */}
               <button
                 type="button"
-                onClick={() => markRead(notification.id)}
+                onClick={() => markRead(notification)}
                 aria-label={`Mark "${notification.title}" read`}
                 className={`type-caption text-teal min-h-[44px] px-1 ${isRead ? 'invisible' : ''}`}
               >
