@@ -316,12 +316,16 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * `createClassTemplateSchema`'s and `updateClassTemplateSchema`'s
-   * minRate/targetRate refine (schemas.ts) is checked here through
-   * `economicsViolations` (class-economics.ts), the same function the server
-   * calls. The pins in the source file cannot guard that the copy still
-   * matches the rule — they compare key sets, not predicates — so this test
-   * is the only thing that would notice it drifting from the schema.
+   * `createClassTemplateSchema` has a minRate/targetRate refine (schemas.ts);
+   * `updateClassTemplateSchema` does not — it accepts each economic field
+   * independently, and `updateClassTemplate` (class-template-lifecycle.ts) →
+   * `CLASS_FAMILY.updateChild` checks this rule on the merged row instead,
+   * through `economicsViolations` (class-economics.ts). This test runs in
+   * edit mode, so it is that service-side check the form's own
+   * `economicsViolations` call mirrors. The pins in the source file cannot
+   * guard that the copy still matches the rule — they compare key sets, not
+   * predicates — so this test is the only thing that would notice it
+   * drifting from the schema/service.
    *
    * The room fetch fires on mount, so the fetch-not-called assertion checks
    * the call count did not increase across the click rather than that fetch
@@ -399,10 +403,15 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * #221. The server now refuses this rule on edit too — `updateClassTemplateSchema`
-   * gained the same room-subsidy refine `createClassTemplateSchema` already had —
-   * so this form's own check is no longer create-only either. Both modes run
-   * the same `economicsViolations` function and share one `ECONOMICS_COPY` map.
+   * #221. The server now refuses this rule on edit too: `updateClassTemplate`
+   * (class-template-lifecycle.ts) → `CLASS_FAMILY.updateChild` checks all
+   * three rules, including room subsidy, on the stored row with the edit
+   * applied, through `economicsViolations`. `updateClassTemplateSchema`
+   * itself gained no refine — it has none, on this rule or any other; only
+   * `createClassTemplateSchema` has one, since create has the full row at
+   * parse time. This form's own check is no longer create-only either: both
+   * modes run the same `economicsViolations` function and share one
+   * `ECONOMICS_COPY` map.
    */
   it('rejects min rate subsidizing more than room cost on edit before any request is sent', async () => {
     stubFetch();
