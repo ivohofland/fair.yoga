@@ -116,6 +116,20 @@ read and refuses `NOT_ENDED_YET` when the caller's instant is before that
 caller's edge. The `Invalid Date` → `TypeError` guard applies to both clock
 variants.
 
+**The status is checked before the clock, and nothing is written before
+either passes.** Today the clock comes first, which was harmless while the
+teacher route skipped it. Under `teacherAt`, a double-tap on a class that is
+already `completed` but dated after "now" would answer `NOT_ENDED_YET`, a red
+error for a goal that already holds. CLAUDE.md's rule is that "already done"
+answers 200 once past any refusal that makes the goal moot, and a clock refusal
+does not. A future-dated `draft` would likewise answer `NOT_ENDED_YET`
+instead of `ILLEGAL_TRANSITION`. The order under the lock is therefore:
+
+1. cancelled
+2. status validation (no writes)
+3. clock
+4. writes
+
 - **Sweep.** `autoCompleteClasses` passes `{ sweepAt: currentTime }`. Its
   `warn`-level handling of `NOT_ENDED_YET` is unchanged: a reschedule that
   moved `autoFinishAt` later between the snapshot and the lock just defers to
