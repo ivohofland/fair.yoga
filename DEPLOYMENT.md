@@ -63,15 +63,19 @@ Restore: `gunzip -c backup.sql.gz | docker compose -f docker-compose.prod.yml ex
 
 ## 5. Scheduled jobs
 
-Lifecycle automation (class transitions, generation, email fallback,
-payment reminders) runs **inside the app process** — nothing to configure.
-To drive it externally instead (e.g. from systemd timers), set
-`CRON_SCHEDULER=off` in `.env` and hit the endpoints with the secret:
+The scheduled jobs (roster in `src/lib/scheduler.ts`, also
+`docs/technical-architecture.md` § Cron Jobs) run **inside the app process** —
+nothing to configure. To drive them externally instead (e.g. from systemd
+timers), set `CRON_SCHEDULER=off` in `.env` and hit the endpoints with the
+secret:
 
 ```bash
 curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/transition-classes
 # also: /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/daily-cleanup
 ```
+
+Waitlist reconciliation has no endpoint yet (#678), so with
+`CRON_SCHEDULER=off` it does not run.
 
 `--fail` is not optional here, and `/api/cron/daily-cleanup` is why. That route
 runs several sweeps and its **status is the verdict**: 200 only when every sweep

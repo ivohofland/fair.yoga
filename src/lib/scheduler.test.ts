@@ -19,11 +19,8 @@ const MINUTE = 60 * 1000;
 const db = {} as unknown as PrismaClient;
 
 /**
- * The sweeps `SchedulerSweeps` names, written once.
- *
- * Hoisted because both tests below used to carry their own verbatim copy, so
- * the list existed three times (here and in each test) and nothing made the
- * copies agree.
+ * The sweeps `SchedulerSweeps` names, written once; every stub set in this
+ * file is built from it through `buildStubs`.
  */
 const SWEEP_NAMES = [
   'autoTransitionToInProgress',
@@ -188,13 +185,8 @@ describe('makeTick', () => {
   }
 
   /**
-   * The re-entrancy guard, whose deletion used to fail nothing.
-   *
-   * It is load-bearing by another module's argument:
-   * `waitlist-reconciliation.ts` accepts a duplicate-notification race
-   * specifically on the grounds that "the sweep cannot race ITSELF — the
-   * `job.running` guard refuses a tick while one is running". A premise a
-   * documented trade-off rests on should not be the one line nothing covers.
+   * The re-entrancy guard: a tick landing while the previous run is still in
+   * flight is refused, and the guard is released afterwards.
    */
   it('refuses a tick while one is already running', async () => {
     let runs = 0;
@@ -285,8 +277,9 @@ describe('scheduleJobs', () => {
   /**
    * The real job table with each `run` replaced by a recorder, so a registered
    * function can be traced back to the job it runs. Name and interval come from
-   * `buildJobs`, whose own test pins them as literals — together the two tests
-   * cover the table and its use.
+   * `buildJobs`, whose own test pins them as literals — together with
+   * `buildJobs`' interval test, the registration test below covers the table
+   * and its use.
    */
   function tracedJobs(): { jobs: Job[]; ran: string[]; dbs: PrismaClient[] } {
     const ran: string[] = [];
@@ -302,16 +295,17 @@ describe('scheduleJobs', () => {
     return { jobs, ran, dbs };
   }
 
-  it("registers each job's first run 15 seconds after boot and its repeat at its own interval", async () => {
+  it("registers each job's first run 15 seconds after registration and its repeat at its own interval", async () => {
     const { jobs, ran, dbs } = tracedJobs();
     const { timers, registrations } = recordingTimers();
 
     scheduleJobs(jobs, db, {}, timers);
 
     // Identify each registration by the job its function actually runs, not
-    // by position. What this multiset cannot see is two registrations of the
-    // same kind and delay trading jobs — any two boot ticks, or two
-    // same-interval repeats; the health test below catches that.
+    // by position. What this multiset cannot see is a tick that runs one job
+    // while writing another's health entry, when a registration of the same
+    // kind and delay makes the mirror-image mistake — any two boot ticks, or
+    // two same-interval repeats; the health test below catches that.
     // Snapshot before iterating: a boot tick that lazily registers its own
     // interval would otherwise get visited mid-loop, which this test must
     // not silently absorb.
@@ -347,8 +341,9 @@ describe('scheduleJobs', () => {
   });
 
   /**
-   * `/api/health` reads the entry registered here; if the tick wrote to any
-   * other object, the job would run and its health would read null forever.
+   * In production `health` is the registry `/api/health` reads; if the tick
+   * wrote to any other object, the job would run and its health would read
+   * null forever.
    */
   it("registers a health entry per job that the job's own tick writes to", async () => {
     const { jobs, ran } = tracedJobs();

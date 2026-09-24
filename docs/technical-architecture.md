@@ -355,7 +355,7 @@ async function dispatch(notification: CreateNotification): Promise<void> {
 
 ### Entry Generator (`services/entry-generation.ts`)
 
-Runs hourly as part of the in-process scheduler (see Background Jobs below). For each template whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one entry per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
+Runs hourly as part of the in-process scheduler (see Cron Jobs below). For each template whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one entry per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
 
 ```typescript
 // generateEntriesForRule — one template, one window, either family.
@@ -700,7 +700,7 @@ export async function GET(request: Request) {
 
 ## Cron Jobs
 
-The jobs below run in-process, each first 15 seconds after the Node server boots and then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). Not every job is guarded against an overlapping trigger — the module header says which are. The `/api/cron/*` endpoints remain for manual runs and external schedulers.
+Every job skips a tick while its own previous run is still in flight; whether a job is also safe when an `/api/cron/*` call overlaps a scheduled tick is recorded per job in the `src/lib/scheduler.ts` module header, which also says which were not examined. Each job's first run happens shortly after the Node server boots (15 seconds after the scheduler registers it), then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs and external schedulers — every job except waitlist reconciliation, which has no HTTP trigger yet (#678).
 
 | Job | Schedule | What it does |
 |---|---|---|

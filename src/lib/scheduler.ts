@@ -153,11 +153,12 @@ export interface SchedulerTimers {
 }
 
 /**
- * Registers each job's tick: once 15 seconds after registration, then on the
- * job's own interval, with its health entry under the job's name. Separated from
- * `startScheduler` for the reason `buildJobs` and `makeTick` were — this is
- * where the table's intervals are used rather than merely stated, and a test
- * can record what was registered without starting a clock.
+ * Registers each job's tick: once 15 seconds after registration, then every
+ * `intervalMs` from that same registration (not from the first run), with
+ * its health entry under the job's name. Separated from `startScheduler`
+ * because this is where the table's intervals are used rather than merely
+ * stated, and a test can record what was registered without starting a
+ * clock.
  */
 export function scheduleJobs(
   jobs: Job[],
@@ -170,8 +171,7 @@ export function scheduleJobs(
     health[job.name] = jobHealth;
     const tick = makeTick(job, jobHealth, db);
 
-    // First run 15 seconds after registration, then on the interval. unref()
-    // so the timers never keep a shutting-down process alive.
+    // unref() so the timers never keep a shutting-down process alive.
     timers.setTimeout(tick, 15 * 1000).unref();
     timers.setInterval(tick, job.intervalMs).unref();
   }
@@ -182,12 +182,10 @@ export function scheduleJobs(
  * from the timer registration in `scheduleJobs` so both can be asserted
  * without starting timers.
  *
- * Worth separating for the same reason `buildJobs` was. The `running` guard is
- * load-bearing by another module's argument — `waitlist-reconciliation.ts`
- * accepts a duplicate-notification race specifically because this refuses a
- * tick while one is running — and until it was extracted, deleting it failed
- * nothing in the suite. A premise of a documented trade-off should not be the
- * one line nothing covers.
+ * The `running` guard is what drops a tick that lands while the job's
+ * previous run is still in flight — the `waitlist-reconciliation` entry in
+ * `buildJobs` below relies on that — which is why it is separated and
+ * asserted here.
  */
 export function makeTick(
   job: Job,
@@ -283,8 +281,9 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         // standing bad timezone — which reports every run until a row is
         // fixed — would otherwise mask a real failure in any sweep above.
         //
-        // That protects `lastError`, which stays in server logs for whoever is
-        // debugging. It does NOT protect `/api/health`'s `healthy` flag
+        // That protects `lastError` here (in-memory; the full error already
+        // reached the server log through `isolatedSweeps`' `log.error`). It
+        // does NOT protect `/api/health`'s `healthy` flag
         // (`healthy: j.lastError === null`, `health/route.ts`): that flag is
         // shared across every sweep in this job, and a standing timezone
         // problem already holds it at `false`. A real failure in a sweep
@@ -330,7 +329,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // `ReconciliationFailedError` when a tick failed every class it invoked
       // AND that is worth waking someone for — immediately when the failures
       // will not clear by retrying, after a streak when they are all lock
-      // races. Without that throw the tick below would record `lastSuccessAt`
+      // races. Without that throw, `makeTick` would record `lastSuccessAt`
       // and null `lastError` on every pass, so a sweep repairing nothing at
       // all would report `healthy: true` with a fresh timestamp — an
       // affirmative false statement rather than a missing one.
