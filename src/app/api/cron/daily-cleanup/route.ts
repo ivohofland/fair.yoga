@@ -129,12 +129,12 @@ async function settle<T>(run: () => Promise<T>): Promise<SweepOutcome<T>> {
  * 200 when every sweep ran; otherwise the failures' own classification.
  *
  * 503 only when EVERY failure is transient — a transient database failure is
- * worth a retry and a timer that backs off, and this is how the rest of the
+ * worth a retry and a caller that backs off, and this is how the rest of the
  * codebase answers contention. One permanent failure alongside it makes 500
  * the run's honest answer: a schema drift does not clear on the next tick,
  * and reporting "try again" for it would be the misleading half of the same
  * trade. A 409 cannot come from these sweeps, and would mean nothing to a
- * timer if it did, so it folds into 500 rather than being forwarded.
+ * caller if it did, so it folds into 500 rather than being forwarded.
  */
 function worstStatus(outcomes: ReadonlyArray<SweepOutcome<unknown>>): 200 | 500 | 503 {
   const failures = outcomes.filter((o) => !o.ok);

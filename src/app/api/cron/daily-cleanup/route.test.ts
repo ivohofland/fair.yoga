@@ -125,12 +125,11 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
   });
 
   /**
-   * The isolation property O5 was about, now visible in the status.
+   * The isolation property, visible in the status.
    *
-   * Auth cleanup throwing must NOT stop retention — a manual call to this
-   * route must still run it — and the caller must still be told something
-   * went wrong. Both halves are asserted here, because the first without the
-   * second is what the earlier revision shipped.
+   * Auth cleanup throwing must NOT stop retention, and the caller must still
+   * be told something went wrong — both halves asserted, because isolation
+   * alone would let a failing sweep go unreported.
    */
   it('runs retention even when auth cleanup throws, and still answers non-2xx', async () => {
     cleanupExpiredAuth.mockRejectedValue(new Error('auth cleanup exploded'));
@@ -149,8 +148,8 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
   });
 
   /**
-   * Partial failure the other way round, which is the case that matters most:
-   * retention is the sweep this route is the sole trigger for.
+   * Partial failure the other way round: retention failing alone must still
+   * reach the status, with the body naming it.
    */
   it('answers non-2xx when only retention fails, naming it in the body', async () => {
     cleanupExpiredAuth.mockResolvedValue({ sessions: 3 });
@@ -182,7 +181,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
   /**
    * 503 rather than 500 when every failure is a lost contention race, matching
    * how the rest of the codebase answers contention (`classifyApiError`). A
-   * timer reading this should back off and retry, not page someone.
+   * caller reading this should back off and retry, not page someone.
    */
   it('answers 503 when every failure is transient', async () => {
     cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });

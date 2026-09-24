@@ -69,10 +69,13 @@ and in production they must — nothing to configure.
 
 `CRON_SCHEDULER=off` is a CI setting: tests drive the same services with their
 own clocks, so CI does not need the in-process scheduler running. It is not a
-production mode. With it set, nothing runs waitlist reconciliation — it has no
-endpoint — so a seat freed by a cancellation whose spot-freed hook was dropped
-(§7) is never offered to the queue. The app logs a warning at boot when the
-scheduler is off.
+production mode. With it set, no scheduled job runs in the app: classes don't
+start, auto-cancel, or complete; recurring classes aren't generated; fallback
+emails and payment reminders don't send; retention doesn't run. Waitlist
+reconciliation is worse off than the rest — it has no endpoint, so it cannot
+be run any other way — and a seat freed by a cancellation whose spot-freed
+hook was dropped (§7) is never offered to the queue. The app logs a warning
+at boot when the scheduler is off.
 
 The `/api/cron/*` endpoints are for running a job by hand — after an outage,
 say — alongside the scheduler, not instead of it:
