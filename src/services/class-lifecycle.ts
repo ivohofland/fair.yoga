@@ -24,6 +24,7 @@ import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
+import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-window';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatEuro } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
@@ -669,22 +670,24 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
  * registration prices, payment creation) succeed or fail atomically.
  */
 /**
- * Whether this completion has to prove the class has actually ended.
+ * Who is finishing the class, which decides which clock edge applies.
  *
  * REQUIRED, and a union rather than an optional field, because the dangerous
- * mode is the one you get by saying nothing. `completeClass(db, id)` used to
- * read as "complete it" while silently meaning "and skip the clock" — and the
- * two callers that legitimately want that were indistinguishable from a third
- * that forgot. #182 was exactly the forgetting: `autoCompleteClasses` decided
- * from its own pre-transaction snapshot, so a class rescheduled in the gap was
- * completed against a time it no longer had, and completion runs the pricing
- * engine and writes `Payment` rows.
+ * mode is the one you get by saying nothing (#182): a caller that forgot to
+ * pass a clock must not silently skip it.
  *
- * `finishedEarly` is not decoration either. A teacher ending a class early
- * (`POST /api/classes/[id]/complete`) and `deleteTeacherAccount` closing
- * in-flight classes during erasure both mean it, and now have to say so.
+ * - `sweepAt`: `autoCompleteClasses`. Refused before `autoFinishAt`.
+ * - `teacherAt`: `POST /api/classes/[id]/complete`. Refused before
+ *   `finishOpensAt`.
+ * - `finishedEarly`: `deleteTeacherAccount` closing in-flight classes during
+ *   erasure. No clock.
+ *
+ * Both edges come from `@/lib/finish-window`.
  */
-export type CompletionTiming = { requireEndedBy: Date } | { finishedEarly: true };
+export type CompletionTiming =
+  | { sweepAt: Date }
+  | { teacherAt: Date }
+  | { finishedEarly: true };
 
 export async function completeClass(
   db: PrismaClient,
@@ -732,54 +735,40 @@ export async function completeClass(
       return { ok: false, reason: 'CANCELLED', error: `Class ${classId} is cancelled` };
     }
 
-    // #182. The TIMING decision lives here, under the lock this function
-    // already holds, rather than in the caller's pre-transaction snapshot.
-    // `autoCompleteClasses` used to compute the end time from its outer
-    // `findMany` and pass only the id, so a class rescheduled between that
-    // read and this transaction was completed against a time it no longer
-    // had — and completion runs the pricing engine and creates `Payment`
-    // rows, so students were billed for a class whose start had moved.
-    //
-    // Two callers legitimately skip the check — a teacher finishing early
-    // (`POST /api/classes/[id]/complete`) and `deleteTeacherAccount`
-    // (`gdpr.ts`) closing in-flight classes during erasure — which is why
-    // `finishedEarly` exists rather than the check being unconditional. They
-    // have to SAY so: see `CompletionTiming` for why skipping cannot be the
-    // silent default.
-    if ('requireEndedBy' in timing) {
-      // Not a truthiness test. An `Invalid Date` is truthy, and every
-      // comparison against it is false, so the old shape let a broken clock
-      // through the guard silently. `in` narrows on the KEY, and the explicit
-      // NaN check turns a caller bug into a loud one rather than a completed
-      // class.
-      if (Number.isNaN(timing.requireEndedBy.getTime())) {
-        throw new TypeError('completeClass: requireEndedBy is not a valid Date');
+    // Status before clock: a class that is already `completed` is a goal that
+    // holds, and must reach the route as ILLEGAL_TRANSITION(completed →
+    // completed) — its "unchanged" answer — not as NOT_ENDED_YET. Validation
+    // only; nothing is written until the clock has passed.
+    const validation =
+      cls.status === 'open'
+        ? validateTransition('open', 'in_progress')
+        : validateTransition(cls.status, 'completed');
+    if (!validation.ok) return validation;
+
+    // The clock, decided from THIS locked row (#182): a caller's snapshot can
+    // predate a reschedule, and completion runs the pricing engine and writes
+    // `Payment` rows.
+    const at = 'sweepAt' in timing ? timing.sweepAt : 'teacherAt' in timing ? timing.teacherAt : null;
+    if (at !== null) {
+      // Not a truthiness test: an `Invalid Date` is truthy and compares false
+      // against everything, so it would slip past the edge below.
+      if (Number.isNaN(at.getTime())) {
+        throw new TypeError('completeClass: the completion instant is not a valid Date');
       }
-      const entry = cls.calendarEntry;
-      const start = classStartInstant(entry, entry.teacher.defaultTimezone);
-      const end = new Date(start.getTime() + entry.durationMinutes * 60 * 1000);
-      if (timing.requireEndedBy < end) {
-        return {
-          ok: false,
-          reason: 'NOT_ENDED_YET',
-          error: `Class ${classId} has not ended yet`,
-        };
+      const end = classEndInstant(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone);
+      const edge = 'sweepAt' in timing ? autoFinishAt(end) : finishOpensAt(end);
+      if (at < edge) {
+        return { ok: false, reason: 'NOT_ENDED_YET', error: `Class ${classId} is not finishable yet` };
       }
     }
 
-    // If open, transition to in_progress first (teacher completing directly)
     if (cls.status === 'open') {
-      const toInProgress = validateTransition('open', 'in_progress');
-      if (!toInProgress.ok) return toInProgress;
       await tx.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
       // #216, third of the three `open -> in_progress` exits. The other two go
       // through `transitionClass` and `autoTransitionToInProgress`; this one
       // does not, so it needs its own call. Inside the lock this function
       // already holds, so it is atomic with the status flip above.
       await closeQueueOnStart(tx, classId);
-    } else {
-      const validation = validateTransition(cls.status, 'completed');
-      if (!validation.ok) return validation;
     }
 
     const chargedRegistrations = cls.registrations.filter((r) =>

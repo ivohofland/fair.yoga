@@ -2564,11 +2564,12 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   older of the two reasons to take it, which since #327 no longer
   distinguishes them from `transitionClass` itself. Since
   #216/#182 this is also where `autoCompleteClasses`' timing decision lives:
-  `autoCompleteClasses` itself takes no lock of its own — its optional
-  `requireEndedBy` is compared against the fresh, locked row's recomputed end
-  time inside this function, under the same `lockClassRow` that already
-  guards the status re-read, rather than in a second lock the sweep would
-  otherwise need to take.
+  `autoCompleteClasses` itself takes no lock of its own — its `sweepAt` (and
+  the teacher route's `teacherAt`) is compared against `autoFinishAt`/
+  `finishOpensAt` of the fresh, locked row's recomputed end time inside this
+  function, under the same `lockClassRow` that already guards the status
+  re-read, rather than in a second lock the sweep would otherwise need to
+  take.
 - **`autoCancelClasses`** (`src/services/class-transitions.ts`) — `Class` via
   `lockClassRow` (#174 task 6), then a `Registration` count read, then the
   CAS `class.updateMany`. Matches `transitionClass`'s docblock.

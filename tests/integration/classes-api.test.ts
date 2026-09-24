@@ -4,7 +4,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { economicsViolations, formatEconomicsViolations } from '@/lib/class-economics';
-import { createClassFixture } from '../class-fixtures';
+import { createClassFixture, wallSlotAt } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
@@ -70,13 +70,19 @@ async function makeTeacher(tag: string): Promise<{ id: string; token: string }> 
  * date no other fixture in this file uses, so a run that fails before its
  * cleanup cannot block another test's slot.
  */
-function isolatedClass(classType: string, date: string, status: ClassStatus, cancelled = false) {
+function isolatedClass(
+  classType: string,
+  date: string,
+  status: ClassStatus,
+  cancelled = false,
+  slot?: { date: Date; startTime: Date },
+) {
   return createClassFixture(prisma, {
     teacherId: ownerId,
     teacherRoomId,
     classType,
-    date: new Date(date),
-    startTime: hhmmToTime('09:00'),
+    date: slot?.date ?? new Date(date),
+    startTime: slot?.startTime ?? hhmmToTime('09:00'),
     durationMinutes: 60,
     roomCost: 30,
     minRate: 15,
@@ -406,7 +412,15 @@ describe('POST /api/classes/[id]/complete', () => {
   });
 
   it('answers a repeat completion unchanged, and bills nobody twice', async () => {
-    const cls = await isolatedClass('Complete Twice', '2099-10-04', 'open');
+    // Inside the teacher's window: started 50 minutes ago and runs 60, so
+    // `finishOpensAt` was 5 minutes ago and `autoFinishAt` is 25 minutes away.
+    // A locally running scheduler (worktree dev servers run it; CI sets
+    // `CRON_SCHEDULER=off`) can move it to `in_progress` within a minute —
+    // this test tolerates that, because the route completes either status.
+    const cls = await isolatedClass(
+      'Complete Twice', '', 'open', false,
+      wallSlotAt(new Date(Date.now() - 50 * 60_000), 'Europe/Amsterdam'),
+    );
     try {
       await prisma.registration.create({
         data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
@@ -452,6 +466,25 @@ describe('POST /api/classes/[id]/complete', () => {
   it("403s another teacher's class even when it is already completed", async () => {
     const res = await complete(otherTeacherToken, completedClassId);
     expect(res.status).toBe(403);
+  });
+
+  // Review Focus 3, at the door: a crafted POST on a class weeks ahead.
+  it('refuses finishing before the window opens with CLASS_NOT_ENDED_YET, and bills nobody', async () => {
+    const cls = await isolatedClass('Complete Too Early', '2099-10-09', 'open');
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
+      });
+
+      await expectRefusal(await complete(ownerToken, cls.id), 'CLASS_NOT_ENDED_YET');
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.status).toBe('open');
+      expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
+      expect(await prisma.notification.count({ where: { relatedClassId: cls.id } })).toBe(0);
+    } finally {
+      await removeIsolatedClass(cls);
+    }
   });
 });
 

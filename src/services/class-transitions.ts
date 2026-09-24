@@ -4,13 +4,15 @@
  * Three jobs run periodically:
  * 1. Auto-transition: open → in_progress when start time is reached
  * 2. Auto-cancel: cancel open classes below min_students at auto_cancel_check time
- * 3. Auto-complete: in_progress → completed when class duration has elapsed
+ * 3. Auto-complete: in_progress → completed once `autoFinishAt` (end +
+ *    `FINISH_GRACE_MINUTES`) has passed
  */
 
 import type { AutoCancelCheck, PrismaClient } from '@prisma/client';
 import { completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
+import { classEndInstant, autoFinishAt } from '@/lib/finish-window';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
@@ -507,8 +509,8 @@ export async function autoCancelClasses(
         // start instant, the same shape as this function. `autoCompleteClasses`
         // below takes no lock of its own; the equivalent decision moved into
         // `completeClass` (`class-lifecycle.ts`), which already held the lock
-        // and now also compares its caller's `requireEndedBy` against the
-        // fresh row's recomputed end time before completing.
+        // and now also compares its caller's `sweepAt` against the fresh
+        // row's recomputed end time before completing.
         const fresh = await tx.class.findUnique({
           where: { id: cls.id },
           select: {
@@ -690,8 +692,9 @@ function readCompleteCandidatePage(db: PrismaClient, afterId: string | undefined
 type CompleteCandidate = Awaited<ReturnType<typeof readCompleteCandidatePage>>[number];
 
 /**
- * Finds in_progress classes whose duration has elapsed and completes them.
- * Triggers pricing calculation and payment creation via completeClass().
+ * Finds in_progress classes past `autoFinishAt` (their end plus
+ * `FINISH_GRACE_MINUTES`) and completes them. Triggers pricing calculation
+ * and payment creation via completeClass().
  */
 export async function autoCompleteClasses(
   db: PrismaClient,
@@ -714,20 +717,18 @@ export async function autoCompleteClasses(
       // already takes. A stale pre-filter can only DELAY a completion to the
       // next 60-second tick, never cause a wrong one.
       const entry = cls.calendarEntry;
-      const start = classStartInstant(entry, entry.teacher.defaultTimezone);
-      const endTime = new Date(start.getTime() + entry.durationMinutes * 60 * 1000);
+      const end = classEndInstant(entry, entry.teacher.defaultTimezone);
 
-      if (currentTime >= endTime) {
-        // `requireEndedBy` is what makes the decision the locked row's, not
-        // this snapshot's. Without it this sweep completes a class
-        // rescheduled after the read above — creating `Payment` rows for a
-        // class that has not happened.
-        const result = await completeClass(db, cls.id, { requireEndedBy: currentTime });
+      if (currentTime >= autoFinishAt(end)) {
+        // `sweepAt` is what makes the decision the locked row's, not this
+        // snapshot's: a class rescheduled after the read above is judged
+        // against its new end under the lock.
+        const result = await completeClass(db, cls.id, { sweepAt: currentTime });
         if (result.ok) {
           completed++;
         } else if (result.reason === 'NOT_ENDED_YET' || result.reason === 'CANCELLED') {
-          // The race `requireEndedBy` exists to catch: this class was
-          // rescheduled to a later time between the snapshot read above and
+          // The race `sweepAt` exists to catch: this class was rescheduled to
+          // a later time between the snapshot read above and
           // `completeClass`'s locked re-read. Not a failure — the
           // lock did its job and deferred to the next tick, which will
           // re-evaluate the class's now-current end time. `warn`, not

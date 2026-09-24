@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, ClassStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
+import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-window';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import {
@@ -1173,69 +1174,113 @@ describe('completeClass (DB)', () => {
     expect(after.status).toBe('expired');
   });
 
-  it('refuses to complete a class that has not ended when requireEndedBy is given', async () => {
+  /** The row's own end, so a counter-derived fixture time never goes stale. */
+  async function endOf(cls: { calendarEntryId: string }): Promise<Date> {
+    const row = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: cls.calendarEntryId } });
+    return classEndInstant(row, 'Europe/Amsterdam');
+  }
+
+  /**
+   * The sweep's edge. `autoFinishAt` is end + grace; one millisecond before it
+   * the class is still inside the teacher's attendance window and must stay
+   * `in_progress`. Exactly at it, the class completes, because the sweep's
+   * 60-second tick can land on that instant.
+   */
+  it('keeps a class in progress until autoFinishAt under sweepAt', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    // This block's `makeClass` plants the class at 18:00 local (teacher
-    // timezone Europe/Amsterdam, the schema default) on 2026-06-01 PLUS one
-    // day per call, for 75 minutes. June is CEST, so the earliest possible
-    // fixture starts at 16:00Z and ends at 17:15Z. This instant is before
-    // every one of them, for ANY counter value, rather than derived from a
-    // specific start.
-    const result = await completeClass(prisma, cls.id, {
-      requireEndedBy: new Date('2026-06-01T16:30:00Z'),
+    const edge = autoFinishAt(await endOf(cls));
+
+    const early = await completeClass(prisma, cls.id, { sweepAt: new Date(edge.getTime() - 1) });
+    expect(early.ok).toBe(false);
+    // The REASON: `autoCompleteClasses` branches on it to log at `warn`.
+    if (!early.ok) expect(early.reason).toBe('NOT_ENDED_YET');
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).status).toBe('in_progress');
+
+    const onTime = await completeClass(prisma, cls.id, { sweepAt: edge });
+    expect(onTime.ok).toBe(true);
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).status).toBe('completed');
+  });
+
+  /** The teacher's edge: finishOpensAt, end − grace. */
+  it('lets a teacher finish from finishOpensAt and not a millisecond before', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    const edge = finishOpensAt(await endOf(cls));
+
+    const early = await completeClass(prisma, cls.id, { teacherAt: new Date(edge.getTime() - 1) });
+    expect(early.ok).toBe(false);
+    if (!early.ok) expect(early.reason).toBe('NOT_ENDED_YET');
+
+    const onTime = await completeClass(prisma, cls.id, { teacherAt: edge });
+    expect(onTime.ok).toBe(true);
+  });
+
+  /**
+   * Review Focus 3: the pre-start billing hole. An `open` class completed by a
+   * teacher outside the window writes nothing — no status flip, no queue
+   * close, no Payment, no notification — because the clock is checked before
+   * the first write.
+   */
+  it('refuses a teacher finish on an open class outside the window and writes nothing', async () => {
+    const cls = await makeClass({ status: 'open' });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
     });
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: studentIds[1]!, position: 1, status: 'waiting' },
+    });
+    // An hour before the window opens: before the class has even started.
+    const tooEarly = new Date(finishOpensAt(await endOf(cls)).getTime() - 60 * 60_000);
+
+    const result = await completeClass(prisma, cls.id, { teacherAt: tooEarly });
+
     expect(result.ok).toBe(false);
-    // The REASON, not the message. `autoCompleteClasses` branches on this value
-    // to downgrade exactly this refusal to `log.warn`; `error` beside it is free
-    // text for humans and nothing may branch on it. The previous version of this
-    // assertion checked the message with `toContain` while the sweep matched it
-    // with `endsWith`, so appending anything to the producer's message kept this
-    // green and silently desynced the sweep.
     if (!result.ok) expect(result.reason).toBe('NOT_ENDED_YET');
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(updated.status).toBe('in_progress');
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).status).toBe('open');
+    expect((await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } })).status).toBe('waiting');
+    expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
+    expect(await prisma.notification.count({ where: { relatedClassId: cls.id } })).toBe(0);
   });
 
-  /**
-   * The boundary itself. `requireEndedBy < end` refuses; `=== end` must
-   * complete, because a class that has just reached its end time HAS ended and
-   * the sweep runs on a 60-second tick that will land on that instant.
-   * Flipping the comparison to `<=` survived the suite before this existed.
-   *
-   * The instant is computed from the row rather than written as a literal, for
-   * the reason the sibling test above spells out: this block's `makeClass`
-   * derives `startTime` from a counter, so a hardcoded time would pin the wrong
-   * minute as soon as another test is added ahead of it.
-   */
-  /**
-   * The `Number.isNaN` guard. An `Invalid Date` is truthy and every comparison
-   * against it is false, so without this check a broken clock passes straight
-   * through the timing guard and completes the class — writing `Payment` rows.
-   * Deleting the check is otherwise green.
-   */
-  it('throws rather than completing when requireEndedBy is not a real date', async () => {
-    const cls = await makeClass({ status: 'in_progress' });
-    await expect(
-      completeClass(prisma, cls.id, { requireEndedBy: new Date('not-a-date') }),
-    ).rejects.toThrow(TypeError);
-
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(unchanged.status).toBe('in_progress');
-  });
-
-  it('completes a class at exactly its end instant, not one tick later', async () => {
-    const cls = await makeClass({ status: 'in_progress' });
-    const row = await prisma.calendarEntry.findUniqueOrThrow({
-      where: { id: cls.calendarEntryId },
+  /** Review Focus 2: an `open` class the start sweep never reached, inside the window. */
+  it('finishes an open class inside the window and closes its queue', async () => {
+    const cls = await makeClass({ status: 'open' });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
     });
-    const start = classStartInstant(row, 'Europe/Amsterdam');
-    const end = new Date(start.getTime() + row.durationMinutes * 60 * 1000);
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: studentIds[1]!, position: 1, status: 'waiting' },
+    });
+    try {
+      const result = await completeClass(prisma, cls.id, { teacherAt: finishOpensAt(await endOf(cls)) });
+      expect(result.ok).toBe(true);
+      expect((await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } })).status).toBe('expired');
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    }
+  });
 
-    const result = await completeClass(prisma, cls.id, { requireEndedBy: end });
-    expect(result.ok).toBe(true);
+  /**
+   * Review Focus 1: status before clock. A class already completed and dated
+   * after `teacherAt` answers `ILLEGAL_TRANSITION` from `completed` to
+   * `completed` — which the route turns into 200 unchanged — never
+   * `NOT_ENDED_YET`, a red error for a goal that already holds.
+   */
+  it('answers an already-completed class by its status, not by the clock', async () => {
+    const cls = await makeClass({ status: 'completed' });
+    const before = new Date((await endOf(cls)).getTime() - 24 * 60 * 60_000);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(updated.status).toBe('completed');
+    const result = await completeClass(prisma, cls.id, { teacherAt: before });
+
+    expect(result).toMatchObject({ ok: false, reason: 'ILLEGAL_TRANSITION', from: 'completed', to: 'completed' });
+  });
+
+  it.each([
+    ['sweepAt', (d: Date) => ({ sweepAt: d })],
+    ['teacherAt', (d: Date) => ({ teacherAt: d })],
+  ] as const)('throws rather than completing when %s is not a real date', async (_name, timing) => {
+    const cls = await makeClass({ status: 'in_progress' });
+    await expect(completeClass(prisma, cls.id, timing(new Date('not-a-date')))).rejects.toThrow(TypeError);
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).status).toBe('in_progress');
   });
 
   /**
@@ -1256,7 +1301,7 @@ describe('completeClass (DB)', () => {
     });
 
     const result = await completeClass(prisma, cls.id, {
-      requireEndedBy: new Date('2026-06-01T16:30:00Z'),
+      sweepAt: new Date('2026-06-01T16:30:00Z'),
     });
     expect(result.ok).toBe(true);
 
@@ -1264,9 +1309,11 @@ describe('completeClass (DB)', () => {
     expect(updated.status).toBe('completed');
   });
 
-  it('still completes early for a teacher, who passes no requireEndedBy', async () => {
-    // The option is what makes the sweep strict; omitting it must NOT become
-    // strict by default, or a teacher can no longer finish a class early.
+  it("erasure's finishedEarly checks no clock", async () => {
+    // The option exists for `deleteTeacherAccount`, which closes in-flight
+    // classes during erasure regardless of the clock; omitting it here must
+    // NOT become strict by default, or a teacher can no longer finish a class
+    // early either.
     const cls = await makeClass({ status: 'in_progress' });
     const result = await completeClass(prisma, cls.id, { finishedEarly: true });
     expect(result.ok).toBe(true);
