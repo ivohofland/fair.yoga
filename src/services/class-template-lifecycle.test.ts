@@ -1243,9 +1243,8 @@ describe('updateClassTemplate economics (DB) (#221)', () => {
   let teacherRoomId: string;
 
   // Own counter and own `dayOfWeek` (4), separate from `updateClassTemplate
-  // (DB)`'s `makeTemplate` above: that block's counter is already used by
-  // exactly as many calls as it has slots, and one more makes `slotTime`
-  // throw.
+  // (DB)`'s `makeTemplate` above, so this block's templates cannot collide
+  // with that block's.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
