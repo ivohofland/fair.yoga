@@ -220,6 +220,88 @@ test asserts it with `expectRefusal`. A reason → response map types its
 values `CodedRefusal`, so each entry's status is checked against its own code.
 `classifyApiError`'s fallbacks (`src/lib/api-errors.ts`) carry codes too.
 
+### Relation loads over platform-wide sets
+
+**The mechanism.** Prisma loads a relation (`include` / nested `select`) with
+a second statement, one parent key per row. For a **composite** relation —
+one keyed on more than one column, such as `Class.calendarEntry` — that key
+is a row value, and the statement Prisma sends is a row-value `IN` list:
+`WHERE ("id","kind","live") IN (($1, $2, $3), ...)`. Postgres parses that
+list into a nested expression tree and fails with `54001 stack depth limit
+exceeded` at about 7,500 tuples on the default `max_stack_depth` (2 MB). A
+**single-column** `IN` list is flat — Postgres compiles it to
+`= ANY(array)` — and stays safe at any size tested (32,000 values). Relation
+**filters** (`where: { calendarEntry: { cancelledAt: null } }`) compile to a
+`JOIN`, not an `IN` list, and are unaffected. Only relation *loads* over a
+composite key are exposed.
+
+**The rule.** A sweep whose parent set grows with the whole platform never
+loads a relation over that set in one statement — it reads its snapshot in
+keyset pages through `readInPages` (`src/lib/read-in-pages.ts`), which pages
+at `SWEEP_PAGE_SIZE` (500) and leaves the keyset — the `where` and matching
+`orderBy` — to the caller, so every site keeps Prisma's nested result type.
+Per-tenant reads (a teacher's or a student's own history) are left alone: see
+the verdict below.
+
+**How the ceiling tests reproduce it.** `tests/stack-ceiling.ts`'s
+`lowStackClient` opens a `connection_limit=1` Prisma client and lowers
+`max_stack_depth` for that session (a `connection_limit=1` client is what
+makes a session-level `SET` reach every later query on it), so a per-site
+test can seed a parent set that overflows the lowered threshold and assert
+RED — the unpaged read fails with `54001` (`isStackDepthError`) — before
+GREEN — the paged read returns. `expectLowered` asserts the session is
+actually running under the lowered stack, so a test cannot pass by silently
+running on a default-stack connection. The per-site tests live in
+`src/services/sweep-page-ceiling.test.ts`.
+
+**Per-tenant verdict.** Bounded by one teacher's or one student's own
+history — the GDPR export, `/schedule/past`, reporting, and the unfiltered
+`GET /api/classes` / `GET /api/studio-classes` — is left unpaged. At 6
+classes a week, one teacher reaches 7,500 calendar entries only after about
+24 years (7,500 ÷ 6 ÷ 52 ≈ 24), and a student's bookings or GDPR export is
+smaller again. Not a defect anyone will hit.
+
+**Re-deriving the census.** Composite relations:
+
+```bash
+grep -n "fields: \[[^]]*,[^]]*\]" prisma/schema.prisma
+```
+
+Load sites (excluding tests — read each hit to separate a load from a
+filter):
+
+```bash
+grep -rnE "\b(calendarEntry|classes|studioClasses|teacherRoom|classTemplates|studioClassTemplates|scheduleRule)\s*:\s*(\{|true)" src
+```
+
+Cross-tenant sites — each a background sweep whose parent set grows with the
+whole platform — paged through `readInPages`:
+
+| Function | File | Note |
+|---|---|---|
+| `autoCancelClasses` | `class-transitions.ts` | windowed (`cancelCandidateDates`) and the registration count moved to a separate per-page `groupBy` |
+| `autoTransitionToInProgress` | `class-transitions.ts` | |
+| `autoCompleteClasses` | `class-transitions.ts` | |
+| `reconcileWaitlists` | `waitlist-reconciliation.ts` | |
+| `readGenerationCandidates` | `class-generator.ts` | |
+| `readStudioGenerationCandidates` | `studio-class-generator.ts` | |
+| `getUnreadForEmailFallback` | `notifications.ts` | keyset on `(createdAt, id)`, not `id` alone |
+| `readDuePayments` | `payment-reminders.ts` | |
+
+**Three pitfalls the next paged read will meet:**
+
+- TypeScript infers `T = unknown` from an inline callback passed to
+  `readInPages` — pass the type argument explicitly, derived from the page
+  function's own return type (`Awaited<ReturnType<typeof readXPage>>[number]`).
+- Spreading a cursor into a `where` that already uses that key — an `id: { in
+  }`, or a top-level `OR` — replaces the existing filter instead of narrowing
+  it. Merge the cursor into the existing key, or combine both under a
+  top-level `AND: [...]`.
+- A keyset `orderBy` and its cursor comparison must describe the same strict
+  total order. A column that is not itself unique (`createdAt`) needs a
+  tie-break on `id` in both the `orderBy` and the cursor, or a page boundary
+  landing inside a tie skips or repeats rows.
+
 ### Pricing Engine (`services/pricing.ts`)
 
 The most critical piece of logic. Takes a class's economic settings and its registrations, returns the price each student pays.
