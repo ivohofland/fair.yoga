@@ -214,7 +214,9 @@ describe('NotificationList — show older (#663)', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('keeps focus on the button through a failed fetch', async () => {
+  // Documents that focus stays put; it does not guard it (jsdom does not blur a
+  // focused element that becomes disabled). The aria-disabled test below is the pin.
+  it('leaves focus on the button through a failed fetch', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) }));
     render(<NotificationList notifications={[notification({ id: 'a', createdAt: at(1) })]} paging={{ audience: 'teacher', nextCursor: 'c1' }} />);
 
