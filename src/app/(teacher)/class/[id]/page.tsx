@@ -12,10 +12,10 @@ import { PaymentChecklist } from '@/components/class/payment-checklist';
 import { PublishClassButton } from '@/components/class/publish-class-button';
 import { CompleteClassButton } from '@/components/class/complete-class-button';
 import { RefreshAt } from '@/components/class/refresh-at';
-import type { AttendanceItem } from '@/components/class/attendance-list';
+import type { AttendanceItem, AttendanceStatus } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 import { classStartInstant } from '@/lib/timezone';
-import { classEndInstant, finishOpensAt, autoFinishAt, formatClockInZone } from '@/lib/finish-window';
+import { classEndInstant, classPageClock, formatClockInZone } from '@/lib/finish-window';
 import { CancelClassButton } from '@/components/class/cancel-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { AddWalkIn } from '@/components/class/add-walk-in';
@@ -103,7 +103,9 @@ export default async function ClassDetailPage({
         })
       : cls._count.waitlistEntries;
 
-  const activeRegistrations = cls.registrations.filter((r) => r.status !== 'cancelled');
+  const activeRegistrations = cls.registrations.filter(
+    (r): r is typeof r & { status: AttendanceStatus } => r.status !== 'cancelled',
+  );
 
   // Seat occupancy excludes late_cancel: those students are still charged
   // (they stay in activeRegistrations for attendance/payments) but their
@@ -112,7 +114,7 @@ export default async function ClassDetailPage({
     ACTIVE_REGISTRATION_STATUSES.includes(r.status),
   ).length;
 
-  // Who completion would bill, by the set `completeClass` bills from.
+  // The charged count: registrations in `CHARGED_STATUSES`.
   const chargedCount = cls.registrations.filter((r) =>
     CHARGED_STATUSES.includes(r.status),
   ).length;
@@ -144,28 +146,16 @@ export default async function ClassDetailPage({
       price: Number(r.price),
     }));
 
-  // Check-in: `in_progress`, or `open` within 15 minutes of the start. A class
-  // stays `in_progress` until `autoFinishAt` (end + FINISH_GRACE_MINUTES), so
-  // the list stays up through the grace after the end.
+  // Check-in, the finish button, its caption and the instants at which any of
+  // them can change, all read from this render's `now`.
   const tz = cls.calendarEntry.teacher.defaultTimezone;
-  const classStart = classStartInstant(cls.calendarEntry, tz);
-  const minutesToStart = (classStart.getTime() - now) / 60_000;
-  const showCheckin = !cancelled
-    && (cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15));
-
-  // The finish button follows the window `completeClass` enforces under its
-  // lock; both read `@/lib/finish-window`.
-  const classEnd = classEndInstant(cls.calendarEntry, tz);
-  const opensAt = finishOpensAt({ start: classStart, end: classEnd });
-  const autoAt = autoFinishAt(classEnd);
-  const live = !cancelled && (cls.status === 'in_progress' || cls.status === 'open');
-  const canFinish = live && now >= opensAt.getTime();
-  // Re-render when the finish button is due and when the sweep should have
-  // finished the class. The sweep lands at its first run at or after
-  // `autoFinishAt`, so a render that finds the class still live past that
-  // instant asks again a minute later, until it is not.
-  const refreshInstants = [opensAt, autoAt, ...(now >= autoAt.getTime() ? [new Date(now + 60_000)] : [])]
-    .map((d) => d.toISOString());
+  const { live, showCheckin, canFinish, autoFinishing, autoAt, refreshInstants } = classPageClock({
+    now: new Date(now),
+    start: classStartInstant(cls.calendarEntry, tz),
+    end: classEndInstant(cls.calendarEntry, tz),
+    status: cls.status,
+    cancelled,
+  });
 
   return (
     <>
@@ -180,7 +170,7 @@ export default async function ClassDetailPage({
               : undefined
         }
       />
-      {live && <RefreshAt instants={refreshInstants} />}
+      {live && <RefreshAt instants={refreshInstants.map((d) => d.toISOString())} serverNow={now} />}
       <ClassInfo
         cls={cls}
         registrationCount={seatCount}
@@ -189,9 +179,11 @@ export default async function ClassDetailPage({
 
       {canFinish && (
         <p className="type-caption py-2">
-          {chargedCount > 0
-            ? `Payment requests go out automatically at ${formatClockInZone(autoAt, tz)}.`
-            : `This class finishes automatically at ${formatClockInZone(autoAt, tz)}.`}
+          {autoFinishing
+            ? 'This class is finishing automatically.'
+            : chargedCount > 0
+              ? `Payment requests go out automatically at ${formatClockInZone(autoAt, tz)}.`
+              : `This class finishes automatically at ${formatClockInZone(autoAt, tz)}.`}
         </p>
       )}
 
