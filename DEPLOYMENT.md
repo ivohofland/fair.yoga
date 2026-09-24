@@ -64,18 +64,23 @@ Restore: `gunzip -c backup.sql.gz | docker compose -f docker-compose.prod.yml ex
 ## 5. Scheduled jobs
 
 The scheduled jobs (roster in `src/lib/scheduler.ts`, also
-`docs/technical-architecture.md` § Cron Jobs) run **inside the app process** —
-nothing to configure. To drive them externally instead (e.g. from systemd
-timers), set `CRON_SCHEDULER=off` in `.env` and hit the endpoints with the
-secret:
+`docs/technical-architecture.md` § Cron Jobs) run **inside the app process**,
+and in production they must — nothing to configure.
+
+`CRON_SCHEDULER=off` is a CI setting: tests drive the same services with their
+own clocks, so CI does not need the in-process scheduler running. It is not a
+production mode. With it set, nothing runs waitlist reconciliation — it has no
+endpoint — so a seat freed by a cancellation whose spot-freed hook was dropped
+(§7) is never offered to the queue. The app logs a warning at boot when the
+scheduler is off.
+
+The `/api/cron/*` endpoints are for running a job by hand — after an outage,
+say — alongside the scheduler, not instead of it:
 
 ```bash
 curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/transition-classes
 # also: /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/daily-cleanup
 ```
-
-Waitlist reconciliation has no endpoint yet (#678), so with
-`CRON_SCHEDULER=off` it does not run.
 
 `--fail` is not optional here, and `/api/cron/daily-cleanup` is why. That route
 runs several sweeps and its **status is the verdict**: 200 only when every sweep
@@ -83,10 +88,9 @@ ran, 503 when every failure was a lost lock race (retry, and back off), 500
 otherwise (a permanent fault — retrying will not clear it). The body carries
 every outcome either way, so `data.auth.ok`, `data.waitlistRetention.ok`,
 `data.notificationRetention.ok`, and `data.timezoneAudit.ok` say which one
-failed. Without `--fail`, `curl`
-exits 0 on all of those, and a systemd timer records success for a night on
-which a retention sweep did not run — which in this mode is the only trigger
-it has.
+failed. Without `--fail`, `curl` exits 0 on all of those, so a script or a
+manual call that skips the flag reports success for a run in which a sweep did
+not run.
 
 ## 6. Updates
 

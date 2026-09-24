@@ -787,7 +787,7 @@ export async function GET(request: Request) {
 
 ## Cron Jobs
 
-Every job skips a tick while its own previous run is still in flight; whether a job is also safe when an `/api/cron/*` call overlaps a scheduled tick is recorded per job in the `src/lib/scheduler.ts` module header, which also says which were not examined. Each job's first run happens shortly after the Node server boots (15 seconds after the scheduler registers it), then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs and external schedulers — every job except waitlist reconciliation, which has no HTTP trigger yet (#678).
+Every job skips a tick while its own previous run is still in flight; whether a job is also safe when an `/api/cron/*` call overlaps a scheduled tick is recorded per job in the `src/lib/scheduler.ts` module header, which also says which were not examined. Each job's first run happens shortly after the Node server boots (15 seconds after the scheduler registers it), then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs alongside the scheduler — every job except waitlist reconciliation has one — and `CRON_SCHEDULER=off` is a CI setting, not a production mode (`DEPLOYMENT.md` §5).
 
 | Job | Schedule | What it does |
 |---|---|---|

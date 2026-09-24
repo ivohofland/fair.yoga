@@ -48,7 +48,7 @@ import { auditTeacherTimezones } from '@/services/timezone-audit';
  * Recorded here rather than filed, deliberately: the stakes are low, because
  * the in-process scheduler — not this route — is what actually runs these
  * sweeps in production (`scheduler.ts`'s header: the `/api/cron/*` endpoints
- * "remain for manual runs and external schedulers"). If you change WHICH sweeps
+ * "remain for manual runs"). If you change WHICH sweeps
  * this route runs, verify it by hand against the running app — a green suite
  * says nothing about that. If you change the status mapping, `route.test.ts`
  * will tell you.
@@ -61,12 +61,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // (one vCPU), and none is urgent.
   //
   // ISOLATED FROM EACH OTHER, matching the scheduler's `daily-cleanup` job,
-  // which runs every sweep through `isolatedSweeps`, so a thrown sweep cannot
-  // skip the ones after it.
-  // `DEPLOYMENT.md` documents `CRON_SCHEDULER=off` + systemd timers as a
-  // supported mode, and in that mode this route is the ONLY trigger for
-  // retention — an intermittently failing auth cleanup would silently stop
-  // retention every night, and a `curl` without `--fail` exits 0 on the 500.
+  // which runs every sweep through `isolatedSweeps`: a thrown sweep must not
+  // skip the ones after it on this route either — an intermittently failing
+  // auth cleanup must not silently stop retention from running on a manual
+  // call here.
   //
   // Reported per sweep in the body, so a caller reading the response learns
   // WHICH one ran.
@@ -79,25 +77,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // one sweep succeeding does not make the request as a whole a success,
   // because for an HTTP caller a 2xx means "what you asked for happened", and
   // if a sweep did not run, it did not.
-  //
-  // An earlier revision answered 200 unconditionally, arguing that this is a
-  // report of two independent outcomes rather than one half-succeeded
-  // operation (the route ran two sweeps at the time). That is a fair
-  // description of the BODY and the wrong one for the STATUS, and it
-  // reintroduced on this path exactly the defect
-  // `RetentionFailedError` had just fixed on the scheduler path: under
-  // `CRON_SCHEDULER=off` this route is the ONLY trigger for retention, so
-  // retention could throw every night while the systemd timer recorded success
-  // and nobody learned. It also made `curl --fail` useless — the same
-  // instrument the paragraph above complains about being useless WITHOUT
-  // `--fail`.
   const auth = await settle(() => cleanupExpiredAuth(prisma));
   const waitlistRetention = await settle(() => reapClosedWaitlistEntries(prisma));
   const notificationRetention = await settle(() => reapExpiredNotifications(prisma));
-  // Last, matching the scheduler job this route mirrors — and reaching this
-  // route at all matters: under the `CRON_SCHEDULER=off` + systemd mode
-  // `DEPLOYMENT.md` documents, this is the ONLY trigger for these sweeps, so a
-  // check wired to the scheduler alone would be dead there.
+  // Last, matching the scheduler job this route mirrors.
   const timezoneAudit = await settle(() => auditTeacherTimezones(prisma));
 
   // The composite body at whichever status the outcomes earn — the shape
@@ -125,7 +108,7 @@ async function settle<T>(run: () => Promise<T>): Promise<SweepOutcome<T>> {
     // and duplicating that judgement would be a second place to keep in sync.
     const failure = classifyApiError(err);
     // Logged as well as returned: the response body reaches whoever called,
-    // which under a systemd timer is a `curl` whose output may go nowhere.
+    // and a scripted `curl`'s output may go nowhere.
     // `...failure.detail` spreads FIRST so the literal keys below always win
     // — the same order `withErrorHandler` uses (`src/lib/api-utils.ts`) — so
     // a transient failure's `transientKind` reaches this line instead of

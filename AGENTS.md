@@ -91,7 +91,7 @@ Business logic lives in `src/services/` — pure functions, no HTTP/framework im
 
 ## Cron scheduler
 
-In-process job scheduler starts with the server. Set `CRON_SCHEDULER="off"` to disable (useful when an external cron hits `/api/cron/*`). CI always sets it off.
+The in-process scheduler starts with the server and is how scheduled jobs run in production. `CRON_SCHEDULER="off"` disables it — CI sets it, production must not (`DEPLOYMENT.md` §5). The `/api/cron/*` endpoints are for manual runs.
 
 ## Design system
 

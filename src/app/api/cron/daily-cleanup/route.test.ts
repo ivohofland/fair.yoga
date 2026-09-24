@@ -127,10 +127,10 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
   /**
    * The isolation property O5 was about, now visible in the status.
    *
-   * Auth cleanup throwing must NOT stop retention — under `CRON_SCHEDULER=off`
-   * this route is the only trigger for retention — and the caller must still be
-   * told something went wrong. Both halves are asserted here, because the first
-   * without the second is what the earlier revision shipped.
+   * Auth cleanup throwing must NOT stop retention — a manual call to this
+   * route must still run it — and the caller must still be told something
+   * went wrong. Both halves are asserted here, because the first without the
+   * second is what the earlier revision shipped.
    */
   it('runs retention even when auth cleanup throws, and still answers non-2xx', async () => {
     cleanupExpiredAuth.mockRejectedValue(new Error('auth cleanup exploded'));
@@ -211,7 +211,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
    * The audit is the third sweep, and a failing one must reach the status.
    * 500 and not 503: `InvalidTimezoneError` matches no branch in
    * `classifyApiError`, so it falls to the generic 500 — which is the right
-   * answer, because 503 tells a systemd timer to back off and retry, and a
+   * answer, because 503 tells a caller to back off and retry, and a
    * stored zone that will not resolve does not clear on the next tick.
    */
   it('answers 500 when only the timezone audit fails', async () => {
