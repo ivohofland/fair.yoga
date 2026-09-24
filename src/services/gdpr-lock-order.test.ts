@@ -471,13 +471,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // change to that fragment moves this statement with it. `FOR UPDATE OF c`
     // comes from the same call site; its row locks here are uncontended,
     // because this transaction runs and commits before either holder
-    // transaction below starts. The status list stays a literal because
-    // `CANCELLABLE_STATUSES_SQL` is module-private to `gdpr.ts`, and it is a
-    // filter on `c` under every plan shape observed, so it is not the part
-    // that decides order.
+    // transaction below starts.
     //
-    // WHY THIS IS NOT A MODEL OF THE PRODUCTION STATEMENT, and cannot be. Two
-    // of that statement's clauses are absent, each for a measured reason:
+    // WHY THIS IS NOT A MODEL OF THE PRODUCTION STATEMENT, and cannot be.
+    // Clauses of that statement are absent from this probe, each for a reason:
     //
     //   `ORDER BY c.id` — the probe exists to read the UNORDERED order, so it
     //   can never carry the clause whose absence it is characterising. That
@@ -505,6 +502,14 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //   which index it is, and how many the schema has, belong to the
     //   migrations that created them — `docs/lock-order.md` owns that account
     //   and ships the query that re-derives it.
+    //
+    //   The status list (`CANCELLABLE_STATUSES_SQL` in `gdpr.ts`) — it makes
+    //   `Class_status_idx` eligible to drive the scan, and both fixture classes
+    //   are `open`, so they TIE on that key and come back in heap order through
+    //   a btree `Index Scan` (`docs/lock-order.md`, equal keys). Measured under
+    //   `FORCED_PLAN_SETTINGS`: with a status list the planner estimates as
+    //   selective, it drives from that index. Dropping it drops no row here,
+    //   since every fixture class is `open`.
     //
     // THE RESIDUAL THAT EXPOSES, and the only one — spec §4.2 is this
     // paragraph. The
@@ -535,7 +540,6 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       SELECT c.id FROM "Class" c
       ${CLASS_TO_ENTRY_JOIN}
       WHERE e."teacherId" = ${teacherId}
-        AND c.status IN ('draft', 'open', 'in_progress')
       FOR UPDATE OF c
     `);
     expect(scanOrder.ids, scanOrder.plan).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
