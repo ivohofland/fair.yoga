@@ -1253,8 +1253,8 @@ export type UpdateClassResult =
   | { ok: false; reason: 'past_start' };
 
 /**
- * Apply a partial update to a class, enforcing two independent freezes and one
- * scheduling rule.
+ * Apply a partial update to a class, enforcing two independent freezes, one
+ * scheduling rule and the cross-field economics.
  *
  * The FREEZES gate on different events and cover different things. The
  * ECONOMIC freeze (`settingsLocked`) starts at the first registration and
@@ -1285,21 +1285,22 @@ export type UpdateClassResult =
  * out altogether leaves the function's inventory one refusal short of what it
  * enforces.
  *
- * NEITHER LIFTS. They differ in SCOPE, not in permanence. An earlier revision
- * of this docblock said a teacher could undo the economic freeze by removing
- * the registration; that was never true. `settingsLocked` is only ever written
- * `true`, from one site (`POST /api/registrations`), and nothing anywhere
- * writes it back to `false` — checked by grep rather than by memory.
- * `settingsLocked:` in `src/`, minus the tests and minus prose (this sentence
- * and the two comments beside the CAS below), is four sites: ONE `data:`
- * payload, `registrations/route.ts`'s `{ settingsLocked: true }`; ONE `where:`
- * filter, the conditional conjunct in `updateClass`'s own CAS below, which
- * reads the column and writes nothing; and TWO type annotations,
- * `isEconomicFieldLocked`'s parameter and `class-edit-form.tsx`'s prop. The
- * version of this parenthesis before it was re-derived said "one `data:`
- * payload and two `where:` filters" — a filter that does not exist, and no
- * annotations at all. The conclusion held on a tally that did not, which is
- * the failure a grep is there to prevent.
+ * THE CROSS-FIELD ECONOMICS (#221) are a property of the ROW THE WRITE WOULD
+ * LEAVE: the sent economic fields laid over the stored ones, checked against
+ * `economicsViolations`' rules inside the transaction, under the row lock.
+ * They are checked only when that row still passes the `Class` CAS, so a
+ * class that locked or froze since the opening read keeps its `locked` or
+ * `terminal` answer, and a breach answers `invalid_economics` with every
+ * violated rule.
+ *
+ * NEITHER FREEZE LIFTS. They differ in SCOPE, not in permanence. Removing the
+ * registration does not undo the economic freeze: `settingsLocked` is written
+ * only `true`, by `POST /api/registrations`'s `data: { settingsLocked: true }`,
+ * and every other non-test occurrence in `src/` is a read, a filter or a
+ * type. Re-derived by listing every non-comment line that names it:
+ *
+ *   grep -rn 'settingsLocked' src --exclude='*.test.ts' --exclude='*.test.tsx' \
+ *     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)'
  *
  * A terminal status, in turn, has no outgoing transition.
  *

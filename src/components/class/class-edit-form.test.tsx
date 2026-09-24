@@ -148,9 +148,9 @@ describe('ClassEditForm', () => {
 
   /**
    * #221. `updateClass` (class-lifecycle.ts) refuses a `minRate` that
-   * subsidizes more than the room cost on every edit, not only on create,
-   * checked on the merged row through the same `economicsViolations`
-   * function this form now calls.
+   * subsidizes more than the room cost on any economic edit to an unlocked,
+   * live class, checked on the merged row through the same
+   * `economicsViolations` function this form calls.
    */
   it('rejects min rate subsidizing more than room cost before any request is sent', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
