@@ -221,8 +221,7 @@ describe('updateClass against a completion that already holds the class', () => 
       },
       // `$extends` returns a client missing `$on`, so it is not assignable to
       // `completeClass`'s `PrismaClient`-typed parameter even though every
-      // method it calls here is the real one against the real database — the
-      // same cast `template-lock-order.test.ts` uses for its hooked clients.
+      // method it calls here is the real one against the real database.
     }) as unknown as PrismaClient;
 
     const completion = completeClass(hookedCompletionDb, classId, { finishedEarly: true });

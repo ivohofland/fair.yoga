@@ -33,9 +33,9 @@ export const SWEEP_TESTS = [
 //   - files that hold a real row lock for seconds at a time
 //     (`room-archive-lock-order.test.ts`), and
 //   - files whose assertion is destroyed by that noise
-//     (`template-lock-order.test.ts`, which asserts its race ends in neither
-//     `40P01` nor `55P03` — so any lock noise in the tier is a false failure
-//     it cannot tell from the defect it watches for).
+//     (`db-locks-lock-order.test.ts`, which asserts a staged race ends in
+//     neither `40P01` nor `55P03` — so any lock noise in the tier is a false
+//     failure it cannot tell from the defect it watches for).
 //
 // The trigger is the tier's contention budget rather than any one call site:
 // removing issue 272's new `setLockTimeout` and skipping the new cases still
@@ -86,7 +86,6 @@ export const LOCK_CONTENTION_TESTS = [
   // it true, and the membership test keeps the two from parting company. Only
   // what is NOT visible from a single file is recorded here.
   'src/services/room-archive-lock-order.test.ts',
-  'src/services/template-lock-order.test.ts',
   'src/services/class-lifecycle-tier-guard.test.ts',
   'src/lib/db-locks-lock-order.test.ts',
   'src/services/invitations-lock-order.test.ts',
