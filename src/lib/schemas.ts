@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { OnboardingStep } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
 import { isValidTimeZone } from '@/lib/iana-timezone';
+import { economicsViolations } from '@/lib/class-economics';
 
 // ---------------------------------------------------------------------------
 // Shared field validators
@@ -428,17 +429,10 @@ export const createClassSchema = z.object({
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
 })
-  .refine((d) => d.minStudents <= d.maxStudents, {
-    message: 'minStudents cannot exceed maxStudents',
-    path: ['minStudents'],
-  })
-  .refine((d) => d.minRate <= d.targetRate, {
-    message: 'minRate cannot exceed targetRate',
-    path: ['minRate'],
-  })
-  .refine((d) => d.minRate >= -d.roomCost, {
-    message: 'minRate cannot subsidize more than the room cost — prices would go negative',
-    path: ['minRate'],
+  .superRefine((d, ctx) => {
+    for (const v of economicsViolations(d)) {
+      ctx.addIssue({ code: 'custom', message: v.message, path: [v.path] });
+    }
   });
 
 export const updateClassSchema = z.object({
@@ -454,15 +448,8 @@ export const updateClassSchema = z.object({
   targetRate: z.number().optional(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
-}).strict()
-  .refine((d) => d.minStudents === undefined || d.maxStudents === undefined || d.minStudents <= d.maxStudents, {
-    message: 'minStudents cannot exceed maxStudents',
-    path: ['minStudents'],
-  })
-  .refine((d) => d.minRate === undefined || d.targetRate === undefined || d.minRate <= d.targetRate, {
-    message: 'minRate cannot exceed targetRate',
-    path: ['minRate'],
-  });
+}).strict();
+// Cross-field economics are checked on the merged row by the update service (economicsViolations).
 
 // 'completed' is deliberately absent: completion must go through
 // POST /api/classes/[id]/complete so the pricing engine runs and
@@ -497,17 +484,10 @@ export const createClassTemplateSchema = z.object({
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
 })
-  .refine((d) => d.minStudents <= d.maxStudents, {
-    message: 'minStudents cannot exceed maxStudents',
-    path: ['minStudents'],
-  })
-  .refine((d) => d.minRate <= d.targetRate, {
-    message: 'minRate cannot exceed targetRate',
-    path: ['minRate'],
-  })
-  .refine((d) => d.minRate >= -d.roomCost, {
-    message: 'minRate cannot subsidize more than the room cost — prices would go negative',
-    path: ['minRate'],
+  .superRefine((d, ctx) => {
+    for (const v of economicsViolations(d)) {
+      ctx.addIssue({ code: 'custom', message: v.message, path: [v.path] });
+    }
   });
 
 export const updateClassTemplateSchema = z.object({
@@ -524,15 +504,8 @@ export const updateClassTemplateSchema = z.object({
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
-}).strict()
-  .refine((d) => d.minStudents === undefined || d.maxStudents === undefined || d.minStudents <= d.maxStudents, {
-    message: 'minStudents cannot exceed maxStudents',
-    path: ['minStudents'],
-  })
-  .refine((d) => d.minRate === undefined || d.targetRate === undefined || d.minRate <= d.targetRate, {
-    message: 'minRate cannot exceed targetRate',
-    path: ['minRate'],
-  });
+}).strict();
+// Cross-field economics are checked on the merged row by the update service (economicsViolations).
 
 // ============================================================================
 // STUDIO CLASS TEMPLATES
