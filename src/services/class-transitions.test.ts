@@ -4,7 +4,11 @@ import {
   autoTransitionToInProgress,
   autoCancelClasses,
   autoCompleteClasses,
+  cancelCandidateDates,
+  DEFAULT_CANCEL_CHECK_HOURS,
+  MAX_CANCEL_CHECK_HOURS,
 } from './class-transitions';
+import { classStartInstant } from '@/lib/timezone';
 import { lockClassRow } from '@/lib/db-locks';
 import { getWaitlistWindow } from './waitlist';
 import { formatDayHeader } from '@/lib/format';
@@ -20,6 +24,80 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 // ===========================================================================
 
 const prisma = new PrismaClient();
+
+// ===========================================================================
+// The auto-cancel date window (pure). A zone's offset moves a class's start
+// instant away from its stored `date`; the window must still contain every
+// date a start in `(now, now + MAX_CANCEL_CHECK_HOURS]` can be stored under.
+// ===========================================================================
+
+describe('cancelCandidateDates', () => {
+  const HOUR_MS = 60 * 60 * 1000;
+  const utcDay = (iso: string) => new Date(`${iso}T00:00:00Z`);
+
+  /** The stored `(date, startTime)` of a class starting at `instant` in `zone`. */
+  function storedAs(instant: Date, zone: string): { date: Date; startTime: Date } {
+    const parts: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {};
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    for (const { type, value } of dtf.formatToParts(instant)) {
+      if (type !== 'literal') parts[type] = Number(value);
+    }
+    return {
+      date: new Date(Date.UTC(parts.year!, parts.month! - 1, parts.day!)),
+      startTime: new Date(Date.UTC(1970, 0, 1, parts.hour!, parts.minute!)),
+    };
+  }
+
+  function expectInWindow(now: Date, start: Date, zone: string): void {
+    const entry = storedAs(start, zone);
+    // The stored row really is the class that starts at `start`.
+    expect(classStartInstant(entry, zone).getTime()).toBe(start.getTime());
+    const { from, to } = cancelCandidateDates(now);
+    const label = `${zone} start ${start.toISOString()} now ${now.toISOString()} date ${entry.date.toISOString()}`;
+    expect(entry.date.getTime(), label).toBeGreaterThanOrEqual(from.getTime());
+    expect(entry.date.getTime(), label).toBeLessThanOrEqual(to.getTime());
+  }
+
+  const ZONES = ['Pacific/Kiritimati', 'Etc/GMT+12'];
+  const starts = (now: Date) => [
+    new Date(now.getTime() + 60 * 1000),
+    new Date(now.getTime() + MAX_CANCEL_CHECK_HOURS * HOUR_MS),
+  ];
+
+  it('bounds 2026-07-20T12:00Z by 2026-07-20 and 2026-07-21 at UTC midnight', () => {
+    const { from, to } = cancelCandidateDates(new Date('2026-07-20T12:00:00Z'));
+    expect(from).toEqual(utcDay('2026-07-20'));
+    expect(to).toEqual(utcDay('2026-07-21'));
+  });
+
+  it.each(['00:30', '12:00', '23:30'])(
+    'contains the extreme zones\' starts just after now and at the widest check, now %sZ',
+    (hhmm) => {
+      const now = new Date(`2026-07-20T${hhmm}:00Z`);
+      for (const zone of ZONES) for (const start of starts(now)) expectInWindow(now, start, zone);
+    },
+  );
+
+  // Every hour of one day: the lower bound is tight for a UTC−12 class at
+  // local 23:xx just after now ≈ 11:00Z, the upper for a UTC+14 class just
+  // past local midnight at now + MAX_CANCEL_CHECK_HOURS, now ≈ 06:00Z.
+  it.each(Array.from({ length: 24 }, (_, h) => h))('contains them for now = %i:00Z', (hour) => {
+    const now = new Date(Date.UTC(2026, 6, 20, hour));
+    for (const zone of ZONES) for (const start of starts(now)) expectInWindow(now, start, zone);
+  });
+
+  it('keeps the unknown-check fallback inside the window', () => {
+    expect(DEFAULT_CANCEL_CHECK_HOURS).toBeLessThanOrEqual(MAX_CANCEL_CHECK_HOURS);
+  });
+});
 const uniqueSuffix = `${Date.now()}-tz`;
 
 describe('class transitions (DB, timezone-aware)', () => {
@@ -187,11 +265,9 @@ describe('class transitions (DB, timezone-aware)', () => {
       query: {
         class: {
           async findMany({ args, query }) {
-            // Shape-keyed, per this file's house rule. THIS sweep's read carries
-            // a `date` filter; `autoCancelClasses`' carries a bare `status`.
-            // The `date` bound moved onto `calendarEntry` in #327, so the
-            // shape that tells the two sweeps apart is a nested `date` rather
-            // than a top-level one.
+            // Shape-keyed, per this file's house rule: this sweep's read
+            // filters on `status: 'open'` and a `date` bound under
+            // `calendarEntry`.
             const where = args.where as
               | { status?: unknown; calendarEntry?: { date?: unknown } }
               | undefined;
@@ -602,24 +678,17 @@ describe('class transitions (DB, timezone-aware)', () => {
   // racing for it.
   //
   // The hook is keyed on `args` shape, not call order: a hook keyed on order
-  // silently stops testing anything once an unrelated `findMany` is added or
+  // silently stops testing anything once an unrelated read is added or
   // reordered — it fires on the wrong call, the interleaving it exists to
   // construct never happens, and the test then passes on fixed and unfixed
   // code alike. `calls` is asserted so a structural change here fails
   // loudly instead of quietly no-op'ing.
   //
-  // The actual shape check, below: `where.status === 'open'` and the
-  // absence of a `date` key — what distinguishes this function's own read
-  // from `autoTransitionToInProgress`'s (also `status: 'open'`, but bounded
-  // by a `date` filter). Round 1 review, Important 3: an earlier version of
-  // this paragraph instead described keying on a `where: { status: 'open' }`
-  // + `include.registrations` combination — but the code never inspected
-  // `include`, and this same change deletes `registrations` from
-  // `autoCancelClasses`'s outer `include` entirely (`class-transitions.ts`,
-  // now dead weight once the count and recipient list both move inside the
-  // transaction), so that combination didn't exist even at the point this
-  // hook runs. The inline comment at the hook itself, below, was and is the
-  // accurate one; this paragraph now matches it.
+  // The hook sits on the snapshot's registration `groupBy`, the last read of
+  // the snapshot, so the insert lands after the snapshot's count and before
+  // the transaction's. A hook on the class read would land the insert before
+  // the `groupBy`, the snapshot would count 2, and the pre-filter would skip
+  // the class without ever reaching the locked count.
   it('does not cancel a class a registration brought up to minimum after the sweep read it', async () => {
     // minStudents 2, one registration up front — below minimum at the
     // moment the sweep's outer read runs. Same HOURS_2 window as the tests
@@ -633,25 +702,15 @@ describe('class transitions (DB, timezone-aware)', () => {
     let calls = 0;
     const racing = prisma.$extends({
       query: {
-        class: {
-          async findMany({ args, query }) {
-            // This is the only `class.findMany` this test's call to
-            // `autoCancelClasses` makes, but shape — not order — is what
-            // decides whether this hook fires, so an unrelated `findMany`
-            // added elsewhere can't silently steal its one shot.
-            // `autoCancelClasses`'s own read filters on `status: 'open'`
-            // alone; `autoTransitionToInProgress`'s also filters `status:
-            // 'open'` but adds a `date` bound, so checking for `date`'s
-            // absence is what tells the two apart by shape. Since #327 that
-            // bound sits under `calendarEntry`, alongside the `cancelledAt`
-            // conjunct BOTH sweeps carry — so the nested `date` is what
-            // discriminates, not the presence of `calendarEntry`.
-            const where = args.where as
-              | { status?: unknown; calendarEntry?: { date?: unknown } }
-              | undefined;
-            const isSweepRead =
-              where?.status === 'open' && where.calendarEntry?.date === undefined;
-            if (!isSweepRead) return query(args);
+        registration: {
+          async groupBy({ args, query }) {
+            // Shape, not order: a count grouped by class over an id list
+            // holding this test's class.
+            const where = args.where as { classId?: { in?: unknown } } | undefined;
+            const ids = where?.classId?.in;
+            const isSnapshotCount =
+              Array.isArray(args.by) && args.by.includes('classId') && Array.isArray(ids) && ids.includes(cls.id);
+            if (!isSnapshotCount) return query(args);
 
             calls += 1;
             const rows = await query(args);
@@ -882,8 +941,8 @@ describe('class transitions (DB, timezone-aware)', () => {
           class: {
             async findMany({ args, query }) {
               // Shape-keyed, per the house rule for every hook in this file:
-              // `autoCancelClasses`'s own sweep read is the one filtering on a
-              // bare `status: 'open'`.
+              // `autoCancelClasses`'s own sweep read filters on
+              // `status: 'open'`.
               const where = args.where as { status?: unknown } | undefined;
               if (where?.status !== 'open') return query(args);
 

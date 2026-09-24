@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { expect } from 'vitest';
 
 /**
  * Fixtures for the relation-load ceiling tests (#674): a client whose session
@@ -33,6 +34,16 @@ export async function lowStackClient(): Promise<PrismaClient> {
     );
   }
   return client;
+}
+
+/**
+ * Asserts that `db` itself runs under `CEILING_STACK`. Pass the exact client
+ * the sweep was handed — a `scopeSweep` client's raw queries reach its base —
+ * so a ceiling test cannot pass by running on a default-stack client.
+ */
+export async function expectLowered(db: PrismaClient): Promise<void> {
+  const [row] = await db.$queryRawUnsafe<{ max_stack_depth: string }[]>('SHOW max_stack_depth');
+  expect(row?.max_stack_depth).toBe(CEILING_STACK);
 }
 
 /**

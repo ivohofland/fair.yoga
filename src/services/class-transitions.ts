@@ -17,6 +17,7 @@ import { log } from '@/lib/log';
 import { lockClassRow } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { closeQueueOnStart } from './waitlist';
+import { readInPages } from '@/lib/read-in-pages';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,6 +28,34 @@ const CANCEL_CHECK_HOURS: Record<string, number> = {
   HOURS_2: 2,
   HOURS_1: 1,
 };
+
+/** The check hours `inCancelWindow` uses for an `autoCancelCheck` the record
+ * does not name. */
+export const DEFAULT_CANCEL_CHECK_HOURS = 2;
+
+/** The widest check window: the furthest ahead of `now` a start can be and
+ * still be cancelled. */
+export const MAX_CANCEL_CHECK_HOURS = Math.max(...Object.values(CANCEL_CHECK_HOURS));
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/** The stored `date`s a class inside its check window at `now` can have, as
+ * UTC-midnight bounds, both inclusive. Zone offsets span UTC−12..UTC+14, and a
+ * stored `date` is the teacher's local day, so a start instant lies in
+ * [date − 14 h, date + 36 h). */
+export function cancelCandidateDates(now: Date): { from: Date; to: Date } {
+  const utcMidnight = (t: number) => {
+    const d = new Date(t);
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+  };
+  return {
+    // The first midnight strictly after now − 36 h: a start after `now`
+    // cannot sit on a local date at or before that instant.
+    from: utcMidnight(now.getTime() - 36 * HOUR_MS + 24 * HOUR_MS),
+    to: utcMidnight(now.getTime() + (MAX_CANCEL_CHECK_HOURS + 14) * HOUR_MS),
+  };
+}
 
 /** Whether `at` falls inside a class's auto-cancel window: past the check
  * time, before the start. Shared by the sweep's pre-filter and the decision
@@ -45,7 +74,7 @@ function inCancelWindow(
   at: Date,
 ): boolean {
   const start = classStartInstant(entry, timezone);
-  const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? 2;
+  const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? DEFAULT_CANCEL_CHECK_HOURS;
   const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
   return at >= checkTime && at < start;
 }
@@ -212,6 +241,69 @@ export async function autoTransitionToInProgress(
 // ---------------------------------------------------------------------------
 
 /**
+ * One page of `autoCancelClasses`'s snapshot: open, live classes stored on a
+ * date in `[from, to]`, after `afterId` in id order, each with its count of
+ * active registrations.
+ *
+ * Windowed by `cancelCandidateDates` because only a class starting within
+ * `MAX_CANCEL_CHECK_HOURS` can be cancelled, and paged because the
+ * `calendarEntry` relation load grows with the parent set — see
+ * `docs/technical-architecture.md` ("Relation loads over platform-wide sets").
+ */
+async function readCancelCandidatePage(
+  db: PrismaClient,
+  from: Date,
+  to: Date,
+  afterId: string | undefined,
+  take: number,
+) {
+  // `cancelledAt: null` beside the status (#327): a cancelled class keeps its
+  // `open` status, so without it this sweep would re-cancel — and re-notify —
+  // classes a teacher has already called off.
+  const page = await db.class.findMany({
+    where: {
+      status: 'open',
+      calendarEntry: { cancelledAt: null, date: { gte: from, lte: to } },
+      ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
+    },
+    orderBy: { id: 'asc' },
+    take,
+    include: {
+      calendarEntry: {
+        select: { date: true, startTime: true, teacher: { select: { defaultTimezone: true } } },
+      },
+    },
+  });
+  // A per-page `groupBy` over the page's ids, and it feeds a PRE-FILTER and
+  // nothing else — see the `continue` in `autoCancelClasses`. A count rather
+  // than loaded registration rows: the recipient list is read inside the
+  // transaction under the lock, and having no `studentId`s here at all is what
+  // stops a future reader rebuilding it from the snapshot without noticing.
+  //
+  // The status filter is load-bearing, not tidiness. An UNfiltered count would
+  // be wrong rather than merely coarse: a class whose registrations are all
+  // cancelled would count above its minimum and never be swept again. The
+  // filter is `ACTIVE_REGISTRATION_STATUSES`, the constant the authoritative
+  // count under the lock also uses. The two must answer the same question, or
+  // the pre-filter skips classes the locked check would have cancelled.
+  const counts =
+    page.length === 0
+      ? []
+      : await db.registration.groupBy({
+          by: ['classId'],
+          where: {
+            classId: { in: page.map((c) => c.id) },
+            status: { in: [...ACTIVE_REGISTRATION_STATUSES] },
+          },
+          _count: { _all: true },
+        });
+  const active = new Map(counts.map((c) => [c.classId, c._count._all]));
+  return page.map((c) => ({ ...c, activeRegistrations: active.get(c.id) ?? 0 }));
+}
+
+type CancelCandidate = Awaited<ReturnType<typeof readCancelCandidatePage>>[number];
+
+/**
  * Finds open classes within their auto-cancel check window and cancels
  * them if registered students are below min_students.
  * Creates notifications for affected students.
@@ -237,35 +329,10 @@ export async function autoCancelClasses(
 ): Promise<number> {
   const currentTime = now ?? new Date();
 
-  // A filtered `_count`, and it is a PRE-FILTER and nothing else — see the
-  // `continue` below. A count rather than the eager-loaded rows this used to
-  // carry: the recipient list is read inside the transaction under the lock
-  // now, and having no `studentId`s here at all is what stops a future reader
-  // rebuilding it from the snapshot without noticing.
-  //
-  // The filter is load-bearing, not tidiness. An UNfiltered `_count` would be
-  // wrong rather than merely coarse: a class whose registrations are all
-  // cancelled would count above its minimum and never be swept again. This is
-  // the same filtered shape, with the same status set, that
-  // `(student)/bookings/page.tsx` already uses — now literally the same
-  // constant (`@/lib/registration-status`), not just the same spelling. The
-  // pre-filter and the authoritative count under the lock must answer the
-  // same question, or the pre-filter skips classes the locked check would
-  // have cancelled.
-  // `cancelledAt: null` beside the status (#327): a cancelled class keeps its
-  // `open` status, so without it this sweep would re-cancel — and re-notify —
-  // classes a teacher has already called off.
-  const openClasses = await db.class.findMany({
-    where: { status: 'open', calendarEntry: { cancelledAt: null } },
-    include: {
-      calendarEntry: {
-        select: { date: true, startTime: true, teacher: { select: { defaultTimezone: true } } },
-      },
-      _count: {
-        select: { registrations: { where: { status: { in: [...ACTIVE_REGISTRATION_STATUSES] } } } },
-      },
-    },
-  });
+  const { from, to } = cancelCandidateDates(currentTime);
+  const openClasses = await readInPages<CancelCandidate>((after, take) =>
+    readCancelCandidatePage(db, from, to, after?.id, take),
+  );
 
   let cancelled = 0;
 
@@ -291,7 +358,7 @@ export async function autoCancelClasses(
       // instead of this one. A pre-filter can only ever DELAY a cancellation,
       // never cause a wrong one, because nothing here cancels: it only
       // decides whether to look properly.
-      if (cls._count.registrations >= cls.minStudents) continue;
+      if (cls.activeRegistrations >= cls.minStudents) continue;
       if (
         !inCancelWindow(
           cls.calendarEntry,
