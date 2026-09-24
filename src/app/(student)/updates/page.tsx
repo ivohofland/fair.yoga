@@ -4,39 +4,20 @@ import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { NotificationList } from '@/components/layout/notification-list';
-import { studentNotificationHref } from '@/lib/notification-links';
+import { listNotificationPage } from '@/services/notifications';
+import { NOTIFICATION_PAGE_SIZE } from '@/lib/notification-paging';
 
 export const dynamic = 'force-dynamic';
 
-// Lists the student's newest notifications (one page, not the whole retention
-// window; see #663); the strip on /bookings previews unread (communication
-// layer 2).
+// The student's notifications, newest first; older ones load on request. The strip on /bookings previews unread (communication layer 2).
 export default async function StudentUpdatesPage() {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);
 
-  const notifications = await prisma.notification.findMany({
-    where: { recipientType: 'student', recipientId: session.studentId },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: 50,
-    include: {
-      relatedClass: {
-        select: {
-          id: true,
-          status: true,
-          calendarEntry: {
-            select: { cancelledAt: true, teacher: { select: { pageSlug: true } } },
-          },
-        },
-      },
-    },
-  });
-
-  // Student-side link targets — shared with the strip on /bookings, so the
-  // two cannot disagree about where an invitation goes. The default
-  // (`NotificationList`'s own) would point at teacher-only class routes.
-  const hrefById = Object.fromEntries(
-    notifications.map((n) => [n.id, studentNotificationHref(n)]),
+  const { notifications, hrefById, nextCursor } = await listNotificationPage(
+    prisma,
+    [{ recipientType: 'student', recipientId: session.studentId }],
+    { limit: NOTIFICATION_PAGE_SIZE },
   );
 
   return (
@@ -49,7 +30,11 @@ export default async function StudentUpdatesPage() {
         Your bookings
       </Link>
       <h1 className="type-title mb-6">All updates</h1>
-      <NotificationList notifications={notifications} hrefById={hrefById} />
+      <NotificationList
+        notifications={notifications}
+        hrefById={hrefById}
+        paging={{ audience: 'student', nextCursor }}
+      />
     </div>
   );
 }
