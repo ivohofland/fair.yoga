@@ -918,16 +918,11 @@ describe('updateClassTemplate (DB)', () => {
     const t = await makeTemplate('P2025 Write');
 
     let deleted = false;
-    // Cast for the same reason `template-lock-order.test.ts`'s hooked clients
-    // need one: the extended client is missing `$on`, so it is not assignable
-    // to `updateClassTemplate`'s `PrismaClient`-typed `db` parameter, and
-    // reusing the existing stub-client cast is the only accepted way past that
-    // without loosening the parameter's type. (Not `template-sync.test.ts`,
-    // which this once pointed at: its casts existed for a DIFFERENT reason —
-    // the extended `$transaction` callback's `tx` was not assignable to
-    // `TransactionClientOnly` — and nothing to do with `$on`. That file went
-    // with its function in #194; the distinction is kept because the same
-    // wrong cross-reference is easy to write again.)
+    // Cast for the same reason this file's other hooked clients need one:
+    // the extended client is missing `$on`, so it is not assignable to
+    // `updateClassTemplate`'s `PrismaClient`-typed `db` parameter, and
+    // reusing the existing stub-client cast is the only accepted way past
+    // that without loosening the parameter's type.
     const interposing = prisma.$extends({
       query: {
         classTemplate: {

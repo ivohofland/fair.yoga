@@ -644,24 +644,21 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // statement runs. Narrowing this set to only the deletable rows would
       // leave a candidate the delete's re-evaluation pulls into scope
       // unlocked, and the cycle returns — measured, not just reasoned.
-      // `template-lock-order.test.ts`'s deadlock fixtures cannot show this
-      // (they hold no `Registration` row at all, so a narrower clause would
-      // be vacuously true for both their candidate classes and coincide with
-      // this wide one). The fixture that can is in that same file, under
-      // "does not deadlock when the archive pre-lock must cover a class that
-      // only becomes deletable mid-transaction": one
-      // class carries a charged `Registration` at pre-lock time — a narrow
-      // pre-lock would skip locking it, since it is not yet a delete
-      // candidate — and that registration is cancelled from OUTSIDE the
-      // transaction during the candidate read, via `registration.
-      // updateMany`, the same write `DELETE /api/registrations/[id]` makes
-      // and, like it, one that takes no `Class` row lock. Under a narrowed
-      // pre-lock this reproduces `40P01` at the `deleteMany`; under this
-      // wide one it produces `{ ok: true, deleted: 2, remaining: 0 }` (full
-      // recipe and both transcripts in the atomic-template-update spec,
-      // §4 — inlined there rather than left in a task report, because
-      // `.superpowers/sdd/` is gitignored and this is the only evidence
-      // that the wide set is required rather than merely conservative).
+      // The test that pins this is `class-template-lifecycle.test.ts`'s
+      // "locks every class the delete takes, including one that became
+      // deletable mid-transaction": one class carries a charged
+      // `Registration` at pre-lock time — a narrow pre-lock would skip
+      // locking it, since it is not yet a delete candidate — and that
+      // registration is cancelled from OUTSIDE the transaction during the
+      // candidate read, a write that, like `DELETE /api/registrations/[id]`'s
+      // own `registration.updateMany`, takes no `Class` row lock. It pins the
+      // wide row set by its lock set — spying on `lockClassRowsOrdered` and
+      // asserting the pre-lock already held that class before the delete ran
+      // — rather than by staging a deadlock. The `40P01` a narrowed pre-lock
+      // reproduces here is recorded in the atomic-template-update spec, §4 —
+      // inlined there rather than left in a task report, because
+      // `.superpowers/sdd/` is gitignored and this is the only evidence that
+      // the wide set is required rather than merely conservative.
       // `setLockTimeout(tx)` is already in effect from this
       // transaction's own call above; issuing it again here would be
       // redundant, not wrong.

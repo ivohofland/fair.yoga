@@ -7,14 +7,9 @@
  *
  * SEPARATE FROM `room-archive.test.ts` FOR A REASON THE FILENAME CANNOT CARRY.
  * The races below are staged with real row locks held for seconds at a time,
- * and the `unit` tier those cases came from runs its files in parallel.
- * `template-lock-order.test.ts` asserts its own race ends in neither `40P01`
- * nor `55P03`, and a concurrent multi-second hold pushes it into the second —
- * measured: it passes alone, passes run beside this file alone, and fails in
- * the full tier. That is why this file is on `LOCK_CONTENTION_TESTS` in
- * `vitest.tiers.ts`. Both files are on it, so both left the parallel tier;
- * what protects the assertion is `unit-sweeps` running its files one at a
- * time, not the two being separated.
+ * which is noise any other file in a parallel tier would have to survive —
+ * why this file is on `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`) rather than
+ * sharing the `unit` tier with `room-archive.test.ts`.
  *
  * WHAT THE RESUME-RACE CASE DOES NOT COVER, AND WHY IT IS HERE ANYWAY.
  * "answers busy when the archive already holds the child row" holds the child

@@ -146,10 +146,9 @@ async function probeUnderForcedPlan(
 /**
  * The guard `lockClassRowsOrdered`'s `ORDER BY c.id` exists to be, and the
  * one this project owed after #216/#182: with both sides of a pairing taking
- * every lock in a single ordered statement, the per-pairing reproductions in
- * `template-lock-order.test.ts` can no longer CONSTRUCT an AB-BA cycle, so
- * they no longer detect a missing `ORDER BY` on the erasure side (verified:
- * deleting it leaves them green). Testing the shared primitive once
+ * every lock in a single ordered statement, a per-pairing reproduction can no
+ * longer CONSTRUCT an AB-BA cycle, so it can no longer detect a missing
+ * `ORDER BY` on the erasure side. Testing the shared primitive once here
  * repays that for every call site at the same time.
  *
  * WHY TWO DIFFERENT PLANS, and not two calls with the same predicate. Two
