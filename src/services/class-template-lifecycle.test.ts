@@ -1580,6 +1580,74 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(await prisma.class.count({ where: { id: decoyClass.id } })).toBe(1);
   });
 
+  /**
+   * The pre-lock's ROW SET, from the other side of the scope decoy above: that
+   * test proves the pre-lock takes nothing outside its rule, this one that it
+   * takes everything the delete does. The delete re-evaluates its predicate
+   * when it runs, so a class it takes that the pre-lock did not is locked late,
+   * out of the ascending order the pre-lock exists to impose.
+   *
+   * One class per narrowing that would drop it from the pre-lock:
+   *   - a `draft` class — a status list narrowed to `open` skips it;
+   *   - a class whose charged registration is cancelled after the candidate
+   *     read — a pre-lock narrowed to what is deletable when it runs skips
+   *     it, and the delete takes it anyway.
+   *
+   * Asserted on the lock set rather than by staging a deadlock: the set is
+   * what a narrowing changes, and reading it needs no second transaction.
+   */
+  it('locks every class the delete takes, including one that became deletable mid-transaction', async () => {
+    const t = await makeTemplate('Pre-lock Covers Delete');
+    const draft = await makeClass(t.scheduleRuleId, { date: futureOn(5), status: 'draft' });
+    const booked = await makeClass(t.scheduleRuleId, { date: futureOn(6) });
+    const reg = await register(booked.id, studentId, 'registered'); // charged — not deletable yet
+
+    const original = dbLocks.lockClassRowsOrdered;
+    const lockSets: string[][] = [];
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      const ids = await original(tx, source);
+      lockSets.push(ids);
+      return ids;
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    let calls = 0;
+    const interposing = prisma.$extends({
+      query: {
+        waitlistEntry: {
+          async findMany({ args, query }) {
+            calls++;
+            const rows = await query(args);
+            if (calls === 1) {
+              // Committed from OUTSIDE the archive transaction, after the
+              // pre-lock ran: `cancelled` is not in `CHARGED_STATUSES`, so the
+              // delete's predicate now matches this class.
+              await prisma.registration.update({
+                where: { id: reg.id },
+                data: { status: 'cancelled', cancelledAt: new Date() },
+              });
+            }
+            return rows;
+          },
+        },
+      },
+    }) as unknown as typeof prisma;
+
+    const result = expectArchived(
+      await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived'),
+    );
+
+    // The cancel landed between the pre-lock and the delete, and the delete
+    // took both classes — without these the lock-set assertion is about an
+    // archive that withdrew less than this test staged.
+    expect(calls).toBe(1);
+    expect(result.deleted).toBe(2);
+    expect(await prisma.class.count({ where: { id: { in: [draft.id, booked.id] } } })).toBe(0);
+
+    expect(lockSets).toHaveLength(1);
+    expect([...lockSets[0]].sort()).toEqual([draft.id, booked.id].sort());
+  });
+
   it('deletes a future class whose only registration is cancelled', async () => {
     const t = await makeTemplate('Del Cancelled');
     const c = await makeClass(t.scheduleRuleId, { date: future() });
