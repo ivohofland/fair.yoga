@@ -700,7 +700,7 @@ export async function GET(request: Request) {
 
 ## Cron Jobs
 
-Six idempotent jobs run in-process on `setInterval`, started once when the Node server boots (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs and external schedulers.
+The jobs below run in-process, each first 15 seconds after the Node server boots and then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). Not every job is guarded against an overlapping trigger — the module header says which are. The `/api/cron/*` endpoints remain for manual runs and external schedulers.
 
 | Job | Schedule | What it does |
 |---|---|---|
