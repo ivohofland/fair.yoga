@@ -11,6 +11,7 @@ import {
 } from '@/lib/api-utils';
 import { updateClassSchema } from '@/lib/schemas';
 import { updateClass, type ClassUpdateData } from '@/services/class-lifecycle';
+import { formatEconomicsViolations } from '@/lib/class-economics';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { frozenClassMessage } from '@/lib/transition-refusal';
@@ -234,6 +235,12 @@ export const PUT = withErrorHandler(async (
       409,
       'CLASS_STARTS_IN_PAST',
     );
+  }
+  // A partial economic edit that, merged with the stored row, breaks a
+  // cross-field rule (#221). Same status and message shape as the create
+  // schema's refusal of the same rule.
+  if (result.reason === 'invalid_economics') {
+    return respondError(formatEconomicsViolations(result.violations), 400);
   }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.

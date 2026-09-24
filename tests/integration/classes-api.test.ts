@@ -1094,6 +1094,37 @@ describe('PUT /api/classes/[id]', () => {
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
   });
 
+  // A fresh unlocked class, isolated from the shared economics fixtures
+  // above: this needs a specific stored minStudents/maxStudents pair no
+  // shared fixture holds, and cleans itself up rather than reusing
+  // `economicsClassId`, whose values other tests assert against.
+  it('partial economic edit that breaks a stored invariant -> 400 with the schema-shaped message (#221)', async () => {
+    const cls = await createClassFixture(prisma, {
+      teacherId: ownerId,
+      teacherRoomId,
+      classType: 'Classes API Economics Invariant (#221)',
+      date: new Date('2099-09-01'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 35,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+      status: 'open',
+    });
+
+    try {
+      const res = await put(ownerToken, cls.id, { maxStudents: 2 });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.message).toBe('minStudents: minStudents cannot exceed maxStudents');
+      expect(body.error.code).toBeUndefined();
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
   it('answers an unknown class with NOT_FOUND', async () => {
     await expectRefusal(await put(ownerToken, UNKNOWN_CLASS_ID, { description: 'x' }), 'NOT_FOUND');
   });
