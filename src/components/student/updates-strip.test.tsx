@@ -1,0 +1,99 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { routerRefresh } from '../../../tests/setup/components';
+import { UpdatesStrip, type StudentUpdate } from './updates-strip';
+
+function update(over: Partial<StudentUpdate>): StudentUpdate {
+  return {
+    id: 'u-1',
+    title: 'Spot opened',
+    body: 'Body',
+    createdAt: '2026-09-15T10:00:00.000Z',
+    href: null,
+    ...over,
+  };
+}
+
+const ALERT_TEXT = "Couldn't mark this message read.";
+
+function markReadButton() {
+  return screen.getByRole('button', { name: 'Mark "Spot opened" read' });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('UpdatesStrip mark read', () => {
+  it('marks read through the read route and refreshes the page', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<UpdatesStrip updates={[update({})]} hasHistory />);
+
+    fireEvent.click(markReadButton());
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/notifications/u-1/read', { method: 'POST' });
+    await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('says so, keeps the row and does not refresh on a 500', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    render(<UpdatesStrip updates={[update({})]} hasHistory />);
+
+    fireEvent.click(markReadButton());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(ALERT_TEXT);
+    expect(markReadButton()).toBeTruthy();
+    expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('says so when fetch rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    render(<UpdatesStrip updates={[update({})]} hasHistory />);
+
+    fireEvent.click(markReadButton());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(ALERT_TEXT);
+  });
+
+  it('refreshes on a 401 and still says so', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+    render(<UpdatesStrip updates={[update({})]} hasHistory />);
+
+    fireEvent.click(markReadButton());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(ALERT_TEXT);
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('a retry clears the message', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 500 })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<UpdatesStrip updates={[update({})]} hasHistory />);
+
+    fireEvent.click(markReadButton());
+    await screen.findByRole('alert');
+
+    fireEvent.click(markReadButton());
+
+    await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('still follows the link when the mark fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    render(<UpdatesStrip updates={[update({ href: '/book/c-1' })]} hasHistory />);
+
+    fireEvent.click(screen.getByRole('link', { name: /^Spot opened/ }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(ALERT_TEXT);
+  });
+});
