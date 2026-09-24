@@ -4,7 +4,7 @@
  * The same rules are `CHECK` constraints on `Class` and `ClassTemplate`;
  * see `docs/data-model.md`.
  *
- * Imports nothing: client components import it.
+ * Keep this module import-free: it is meant to be importable from client code.
  */
 export type ClassEconomics = {
   roomCost: number;
