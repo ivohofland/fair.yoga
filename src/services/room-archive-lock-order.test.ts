@@ -6,10 +6,9 @@
  * pre-lock, and the order that pre-lock exists to impose.
  *
  * SEPARATE FROM `room-archive.test.ts` FOR A REASON THE FILENAME CANNOT CARRY.
- * The races below are staged with real row locks held for seconds at a time,
- * which is noise any other file in a parallel tier would have to survive —
- * why this file is on `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`) rather than
- * sharing the `unit` tier with `room-archive.test.ts`.
+ * This file is on `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`) rather than
+ * sharing the `unit` tier with `room-archive.test.ts` — the `@serial-tier`
+ * marker above says why.
  *
  * WHAT THE RESUME-RACE CASE DOES NOT COVER, AND WHY IT IS HERE ANYWAY.
  * "answers busy when the archive already holds the child row" holds the child

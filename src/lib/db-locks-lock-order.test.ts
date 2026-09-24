@@ -144,12 +144,12 @@ async function probeUnderForcedPlan(
 }
 
 /**
- * The guard `lockClassRowsOrdered`'s `ORDER BY c.id` exists to be, and the
- * one this project owed after #216/#182: with both sides of a pairing taking
- * every lock in a single ordered statement, a per-pairing reproduction can no
- * longer CONSTRUCT an AB-BA cycle, so it can no longer detect a missing
- * `ORDER BY` on the erasure side. Testing the shared primitive once here
- * repays that for every call site at the same time.
+ * The guard `lockClassRowsOrdered`'s `ORDER BY c.id` exists to be tested
+ * directly, here, rather than through a per-pairing reproduction: each
+ * caller takes its `Class` locks in one statement, so two real callers leave
+ * no application-level window to interleave, and a test that races them
+ * cannot be relied on to build an AB-BA cycle. Testing the shared primitive
+ * once here covers every call site at the same time.
  *
  * WHY TWO DIFFERENT PLANS, and not two calls with the same predicate. Two
  * identical statements produce one plan, visit one physical order, and
@@ -177,7 +177,8 @@ async function probeUnderForcedPlan(
  *
  * WHY A THIRD TRANSACTION. Both callers take their locks inside one statement
  * each, so there is no application-level window to interleave — the same
- * property that makes a per-pairing reproduction unconstructible (above). Holding
+ * property that keeps a per-pairing reproduction from reliably building an
+ * AB-BA cycle (above). Holding
  * both rows from a third transaction and releasing them parks BOTH callers
  * before either can start, which is what a bare `Promise.all` cannot
  * guarantee. It does not decide what happens next — see the catch rates

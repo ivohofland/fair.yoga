@@ -259,9 +259,9 @@ describe('lockClassRowsOrdered', () => {
   let studentBId: string;
 
   beforeAll(async () => {
-    // Ids chosen so ascending-by-id is knowable in advance. FIVE of them,
-    // spread across the uuid range: see the ordering test below for what the
-    // extra three buy.
+    // Ids chosen so ascending-by-id is knowable in advance, spread across the
+    // uuid range: see the ordering test below for what the ones beyond
+    // `low`/`high` buy.
     // Only `low` and `high` get waitlist entries, so the three joined tests in
     // this block still see exactly the two rows they were written against.
     lowClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
