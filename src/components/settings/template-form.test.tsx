@@ -316,8 +316,9 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * `createClassTemplateSchema` has a minRate/targetRate refine (schemas.ts);
-   * `updateClassTemplateSchema` does not — it accepts each economic field
+   * `createClassTemplateSchema` has one `.superRefine` running
+   * `economicsViolations` (schemas.ts); `updateClassTemplateSchema` does not
+   * — it accepts each economic field
    * independently, and `updateClassTemplate` (class-template-lifecycle.ts) →
    * `CLASS_FAMILY.updateChild` checks this rule on the merged row instead,
    * through `economicsViolations` (class-economics.ts). This test runs in
