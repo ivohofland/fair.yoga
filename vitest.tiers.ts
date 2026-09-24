@@ -33,9 +33,8 @@ export const SWEEP_TESTS = [
 //   - files that hold a real row lock for seconds at a time
 //     (`room-archive-lock-order.test.ts`), and
 //   - files whose assertion is destroyed by that noise
-//     (`db-locks-lock-order.test.ts`, which asserts a staged race ends in
-//     neither `40P01` nor `55P03` — so any lock noise in the tier is a false
-//     failure it cannot tell from the defect it watches for).
+//     (`db-locks-lock-order.test.ts`; its `@serial-tier` header names the
+//     assertion).
 //
 // The trigger is the tier's contention budget rather than any one call site:
 // removing issue 272's new `setLockTimeout` and skipping the new cases still
