@@ -5,7 +5,7 @@
  * Design decisions:
  * - Jobs call the services directly (no HTTP round-trip, no CRON_SECRET
  *   needed for the in-process path). The /api/cron/* endpoints remain for
- *   manual runs and external schedulers.
+ *   manual runs.
  * - Two of these jobs have had their send guarded against an overlapping
  *   trigger at the DB layer, and were measured: `payment-reminders` stamps
  *   `reminderSentAt` with a conditional `updateMany` and abandons the
@@ -22,8 +22,9 @@
  *   claimed every job was idempotent; the correction is to claim less, not to
  *   redraw the set and claim it exhaustively.
  * - A per-job `running` flag prevents a slow tick from stacking on itself.
- * - CRON_SCHEDULER=off disables it (CI runs the built app while tests
- *   drive the same services with explicit clocks).
+ * - CRON_SCHEDULER=off disables the scheduler entirely and is a CI setting,
+ *   not a production mode: CI runs the built app while tests drive the same
+ *   services with explicit clocks. `startScheduler` warns when it is set.
  */
 
 import type { PrismaClient } from '@prisma/client';
@@ -105,7 +106,9 @@ export function getJobHealth(): Record<string, JobHealth> {
 
 export async function startScheduler(): Promise<void> {
   if (process.env.CRON_SCHEDULER === 'off') {
-    log.info('scheduler disabled via CRON_SCHEDULER=off');
+    log.warn(
+      'scheduler disabled via CRON_SCHEDULER=off — no scheduled job runs in this process; a CI setting, not a production mode (DEPLOYMENT.md §5)',
+    );
     return;
   }
   if (globalThis.__fairYogaSchedulerStarted) return;
