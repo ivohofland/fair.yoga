@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import type { Notification } from '@prisma/client';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
@@ -294,7 +294,12 @@ describe('NotificationList — show older (#663)', () => {
 });
 
 describe('NotificationList — a failed mark-read (#670)', () => {
-  afterEach(() => { vi.unstubAllGlobals(); });
+  let errorSpy: { mockRestore: () => void };
+  beforeEach(() => { errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    errorSpy.mockRestore();
+  });
 
   const markButton = () => screen.getByRole('button', { name: 'Mark "Booked" read' });
   const renderBooked = () =>
@@ -349,9 +354,11 @@ describe('NotificationList — a failed mark-read (#670)', () => {
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 
-  it('a retry after a failure goes optimistic again, clears the message and marks read', async () => {
+  it('a retry goes optimistic and clears the message when clicked, not when it succeeds', async () => {
+    let release: (v: unknown) => void = () => {};
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 500 })
+      .mockReturnValueOnce(new Promise((resolve) => { release = resolve; }))
       .mockResolvedValue({ ok: true, status: 200 }));
     renderBooked();
 
@@ -360,12 +367,22 @@ describe('NotificationList — a failed mark-read (#670)', () => {
 
     fireEvent.click(markButton());
 
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(markButton()).toHaveClass('invisible');
+
+    release({ ok: false, status: 500 });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't mark this message read.");
+    expect(markButton()).not.toHaveClass('invisible');
+
+    fireEvent.click(markButton());
+
     await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(markButton()).toHaveClass('invisible');
     await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
   });
 
-  it('still opens the row when the mark fails', async () => {
+  it('still navigates when the mark fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     render(<NotificationList notifications={[
       notification({ id: 'a', type: 'booking_confirmed', title: 'Anna booked', relatedClassId: 'class-9' }),
@@ -374,7 +391,63 @@ describe('NotificationList — a failed mark-read (#670)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Anna booked/ }));
 
     await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith('/class/class-9'));
-    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't mark this message read.");
+  });
+
+  it('a rollback leaves another row that was marked read in the meantime read', async () => {
+    let releaseBeta: (v: unknown) => void = () => {};
+    vi.stubGlobal('fetch', vi.fn((url: string) =>
+      url.includes('/b/')
+        ? new Promise((resolve) => { releaseBeta = resolve; })
+        : Promise.resolve({ ok: true, status: 200 })));
+    render(<NotificationList notifications={[
+      notification({ id: 'a', title: 'Alpha' }),
+      notification({ id: 'b', title: 'Beta' }),
+    ]} />);
+    const markAlpha = () => screen.getByRole('button', { name: 'Mark "Alpha" read' });
+    const markBeta = () => screen.getByRole('button', { name: 'Mark "Beta" read' });
+    const rowOf = (name: RegExp) => screen.getByRole('button', { name }).closest('div.border-b') as HTMLElement;
+
+    fireEvent.click(markBeta());
+    fireEvent.click(markAlpha());
+    await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+
+    releaseBeta({ ok: false, status: 500 });
+
+    await within(rowOf(/^Beta/)).findByRole('alert');
+    expect(markBeta()).not.toHaveClass('invisible');
+    expect(markAlpha()).toHaveClass('invisible');
+    expect(within(rowOf(/^Alpha/)).queryByRole('alert')).toBeNull();
+  });
+
+  it('shows a message under every row whose mark failed', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    render(<NotificationList notifications={[
+      notification({ id: 'a', title: 'Alpha' }),
+      notification({ id: 'b', title: 'Beta' }),
+    ]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark "Alpha" read' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark "Beta" read' }));
+
+    await vi.waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+    for (const name of [/^Alpha/, /^Beta/]) {
+      const row = screen.getByRole('button', { name }).closest('div.border-b') as HTMLElement;
+      expect(within(row).getByRole('alert')).toBeInTheDocument();
+    }
+  });
+
+  it('follows a refreshed prop again once a failed mark has rolled back', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    const a = notification({ id: 'a', title: 'Alpha', isRead: true });
+    const { rerender } = render(<NotificationList notifications={[a]} />);
+    rerender(<NotificationList notifications={[notification({ id: 'z', title: 'Zed' }), a]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark "Zed" read' }));
+    await screen.findByRole('alert');
+
+    rerender(<NotificationList notifications={[notification({ id: 'z', title: 'Zed', isRead: true }), a]} />);
+
+    expect(screen.getByRole('button', { name: 'Mark "Zed" read' })).toHaveClass('invisible');
   });
 
   it('shows no alert when the mark succeeds', async () => {
@@ -387,7 +460,7 @@ describe('NotificationList — a failed mark-read (#670)', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('treats a row loaded by Show older like a first-page row', async () => {
+  it('rolls back and says so when the mark of a row loaded by Show older fails', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(olderResponse([notification({ id: 'b', title: 'Old unread', createdAt: at(5) })], null))
       .mockResolvedValueOnce({ ok: false, status: 500 }));

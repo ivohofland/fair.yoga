@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
 import { UpdatesStrip, type StudentUpdate } from './updates-strip';
@@ -20,11 +20,18 @@ function markReadButton() {
   return screen.getByRole('button', { name: 'Mark "Spot opened" read' });
 }
 
-afterEach(() => {
-  vi.unstubAllGlobals();
+let errorSpy: { mockRestore: () => void };
+
+beforeEach(() => {
+  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
-describe('UpdatesStrip mark read', () => {
+afterEach(() => {
+  vi.unstubAllGlobals();
+  errorSpy.mockRestore();
+});
+
+describe('UpdatesStrip mark read (#670)', () => {
   it('marks read through the read route and refreshes the page', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
@@ -69,11 +76,13 @@ describe('UpdatesStrip mark read', () => {
     expect(routerRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('a retry clears the message', async () => {
+  it('a retry clears the message when clicked, not when it succeeds', async () => {
+    let release: (v: unknown) => void = () => {};
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: false, status: 500 })
-      .mockResolvedValueOnce({ ok: true, status: 200 });
+      .mockReturnValueOnce(new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
     render(<UpdatesStrip updates={[update({})]} hasHistory />);
 
@@ -82,16 +91,42 @@ describe('UpdatesStrip mark read', () => {
 
     fireEvent.click(markReadButton());
 
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    release({ ok: false, status: 500 });
+
+    expect((await screen.findByRole('alert')).textContent).toBe(ALERT_TEXT);
+
+    fireEvent.click(markReadButton());
+
     await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
   });
 
-  it('marks read from the title link and reports a failure', async () => {
+  it('shows a message under every update whose mark failed', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    render(
+      <UpdatesStrip
+        updates={[update({}), update({ id: 'u-2', title: 'Second spot' })]}
+        hasHistory
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark "Spot opened" read' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark "Second spot" read' }));
+
+    await vi.waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+  });
+
+  it('posts the mark from the title link when clicked, and sets the failed state on a failure', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
     render(<UpdatesStrip updates={[update({ href: '/book/c-1' })]} hasHistory />);
 
-    fireEvent.click(screen.getByRole('link', { name: /^Spot opened/ }));
+    const link = screen.getByRole('link', { name: /^Spot opened/ });
+    // jsdom cannot navigate; refusing the default keeps its warning out of the output.
+    link.addEventListener('click', (e) => e.preventDefault());
+    fireEvent.click(link);
 
     expect(fetchMock).toHaveBeenCalledWith('/api/notifications/u-1/read', { method: 'POST' });
     const alert = await screen.findByRole('alert');

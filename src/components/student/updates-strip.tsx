@@ -41,9 +41,8 @@ export function UpdatesStrip({ updates, hasHistory }: UpdatesStripProps) {
       return;
     }
     setFailed((prev) => ({ ...prev, [id]: true }));
-    // An expired session cannot be retried into success; the page's own
-    // server guard sends the reader to sign in.
-    if (outcome === 'session-expired') router.refresh();
+    // 401: refresh so the page's server guard can send the reader to sign in.
+    if (outcome === 'unauthorized') router.refresh();
   }
 
   if (updates.length === 0 && !hasHistory) return null;

@@ -103,11 +103,14 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
       router.refresh();
       return;
     }
-    setReadState((prev) => ({ ...prev, [n.id]: false }));
+    setReadState((prev) => {
+      const next = { ...prev };
+      delete next[n.id];
+      return next;
+    });
     setReadFailed((prev) => ({ ...prev, [n.id]: true }));
-    // An expired session cannot be retried into success; the page's own
-    // server guard sends the reader to sign in.
-    if (outcome === 'session-expired') router.refresh();
+    // 401: refresh so the page's server guard can send the reader to sign in.
+    if (outcome === 'unauthorized') router.refresh();
   }
 
   function resolveHref(notification: Notification): string | null {
