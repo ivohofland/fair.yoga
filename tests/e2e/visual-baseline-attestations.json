@@ -1,4 +1,9 @@
 {
+  "class-detail-open": {
+    "sourceSha256": "ebd01836ee9355f878821e9dee0199a7846d7bb648d54226bcd05bada24af903",
+    "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
+    "verifiedAt": "2026-09-24"
+  },
   "login": {
     "sourceSha256": "8e533b11a31f57e7b7e9ea93ab3c5b1a226f61784afdc926fcb65b9c4cf93a49",
     "baselineSha256": "3c24a27953b78e9fece08f4b41bdbb082d8d931e31598a5d7f8c135e2f5429c2",
