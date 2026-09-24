@@ -23,13 +23,14 @@ let bookingStudentId: string;
 let bookingStudentToken: string;
 let walkInStudentId: string;
 let classId: string;
-/** Set by the check-in test, which moves the class to "now"; read by the
- *  payments-overview test to pin the start time inside the reminder label. */
+/** Set by the check-in test, which moves the class into its finish window;
+ *  read by the payments-overview test to pin the start time inside the
+ *  reminder label. */
 let slot: ReturnType<typeof checkinSlot>;
 
-/** A class slot that started five minutes ago, in the teacher's UTC clock. */
-function checkinSlot(): { date: Date; startTime: string } {
-  const t = new Date(Date.now() - 5 * 60 * 1000);
+/** A class slot whose finish window is open: it ends in ten minutes, in the teacher's UTC clock. */
+function checkinSlot(durationMinutes: number): { date: Date; startTime: string } {
+  const t = new Date(Date.now() - (durationMinutes - 10) * 60 * 1000);
   const startTime = `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`;
   const date = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()));
   return { date, startTime };
@@ -323,13 +324,16 @@ test.describe('Teacher journey', () => {
   });
 
   test('check-in: a walk-in joins at the door', async ({ page, context }) => {
-    // Move the class to "now" — check-in opens 15 minutes before start.
-    slot = checkinSlot();
+    // Move the class into its finish window — ends in ten minutes, so
+    // check-in (opens 15 min before start) and finishing (opens 15 min
+    // before end) both work.
+    const entry = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntryId: true, calendarEntry: { select: { durationMinutes: true } } },
+    });
+    slot = checkinSlot(entry.calendarEntry.durationMinutes);
     await prisma.calendarEntry.update({
-      where: { id: (await prisma.class.findUniqueOrThrow({
-        where: { id: classId },
-        select: { calendarEntryId: true },
-      })).calendarEntryId },
+      where: { id: entry.calendarEntryId },
       data: { date: slot.date, startTime: hhmmToTime(slot.startTime) },
     });
 
@@ -359,10 +363,16 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto(`/class/${classId}`);
 
-    await page.getByRole('button', { name: 'Complete class' }).click();
-    await expect(page.getByText('Completed')).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Finish class' }).click();
+    await page.getByRole('button', { name: 'Finish', exact: true }).click();
+    await expect(page.getByText('Completed', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('heading', { name: 'Pricing breakdown' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Payments' })).toBeVisible();
+
+    // Attendance survives completion, read-only until the teacher asks to correct it.
+    await expect(page.getByRole('heading', { name: 'Attendance' })).toBeVisible();
+    await page.getByRole('button', { name: 'Edit attendance' }).click();
+    await expect(page.getByRole('button', { name: 'Mark Journey s. as no-show' })).toBeVisible();
 
     // Both charged registrations start unpaid; payment state is text, not a badge.
     await expect(page.getByText('○ Unpaid')).toHaveCount(2);

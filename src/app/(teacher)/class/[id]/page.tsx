@@ -14,6 +14,7 @@ import { CompleteClassButton } from '@/components/class/complete-class-button';
 import type { AttendanceItem } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 import { classStartInstant } from '@/lib/timezone';
+import { classEndInstant, finishOpensAt, autoFinishAt, formatClockInZone } from '@/lib/finish-window';
 import { CancelClassButton } from '@/components/class/cancel-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { AddWalkIn } from '@/components/class/add-walk-in';
@@ -136,25 +137,21 @@ export default async function ClassDetailPage({
       price: Number(r.price),
     }));
 
-  // Check-in available: in_progress, or open within 15 min of start
-  // (class start resolved in the teacher's timezone)
-  //
-  // This expression IS the gap issue #234 is about:
-  // `autoCompleteClasses` flips a class to `completed`
-  // within 60 seconds of its scheduled end, `showCheckin` goes false the
-  // moment that happens, and `AttendanceList` below stops rendering — so a
-  // teacher mid-checklist loses the ability to finish it about a minute
-  // after the class ends, every class. The PUT route's guard
-  // (`registrations/[id]/route.ts`) keeps `completed` writable precisely so
-  // that gap can be closed without a lock-discipline change; this line is
-  // where the UI fix has to start.
-  const classStart = classStartInstant(
-    cls.calendarEntry,
-    cls.calendarEntry.teacher.defaultTimezone,
-  );
+  // Check-in: `in_progress`, or `open` within 15 minutes of the start. A class
+  // stays `in_progress` until `autoFinishAt` (end + FINISH_GRACE_MINUTES), so
+  // the list stays up through the grace after the end.
+  const tz = cls.calendarEntry.teacher.defaultTimezone;
+  const classStart = classStartInstant(cls.calendarEntry, tz);
   const minutesToStart = (classStart.getTime() - now) / 60_000;
   const showCheckin = !cancelled
     && (cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15));
+
+  // The finish button follows the window `completeClass` enforces under its
+  // lock; both read `@/lib/finish-window`.
+  const classEnd = classEndInstant(cls.calendarEntry, tz);
+  const canFinish = !cancelled
+    && (cls.status === 'in_progress' || cls.status === 'open')
+    && now >= finishOpensAt(classEnd).getTime();
 
   return (
     <>
@@ -164,8 +161,9 @@ export default async function ClassDetailPage({
         action={
           !cancelled && cls.status === 'draft'
             ? <PublishClassButton classId={cls.id} />
-            : showCheckin
-              ? <CompleteClassButton classId={cls.id} />
+            : canFinish
+              // `attendanceItems` is every non-cancelled registration — exactly the charged set.
+              ? <CompleteClassButton classId={cls.id} chargedCount={attendanceItems.length} />
               : undefined
         }
       />
@@ -174,6 +172,12 @@ export default async function ClassDetailPage({
         registrationCount={seatCount}
         waitlistCount={waitlistCount}
       />
+
+      {canFinish && (
+        <p className="type-caption py-2">
+          Payment requests go out automatically at {formatClockInZone(autoFinishAt(classEnd), tz)}.
+        </p>
+      )}
 
       {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}
       {showCheckin && (
@@ -217,9 +221,10 @@ export default async function ClassDetailPage({
         <PricingPreview cls={cls} />
       )}
 
-      {/* Completed: Show pricing breakdown + payment checklist */}
+      {/* Completed: attendance (read-only; Edit attendance to correct), pricing breakdown, payment checklist */}
       {!cancelled && cls.status === 'completed' && (
         <>
+          <AttendanceList items={attendanceItems} locked />
           <PricingBreakdown cls={cls} tierPrices={tierPrices} />
           <PaymentChecklist items={paymentItems} />
         </>

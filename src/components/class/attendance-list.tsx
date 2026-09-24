@@ -14,6 +14,38 @@ export interface AttendanceItem {
 
 interface AttendanceListProps {
   items: AttendanceItem[];
+  /** True on a completed class: rows render read-only until the teacher opts
+   *  into "Edit attendance". Defaults to `false` (check-in behaviour, always
+   *  editable). */
+  locked?: boolean;
+}
+
+/**
+ * A row's label, tethered to the compiler against `RegistrationStatus` so a
+ * future member fails here rather than falling through to a wrong label.
+ * `registered` reads "Not marked" rather than "No-show" — an untouched row is
+ * not a recorded absence, and must not read as one (spec D5; #234).
+ * `cancelled` cannot reach this component (`activeRegistrations` in
+ * `(teacher)/class/[id]/page.tsx` filters it out before building
+ * `AttendanceItem[]`); the branch exists only to keep the switch exhaustive.
+ */
+function statusLabel(status: RegistrationStatus): string {
+  switch (status) {
+    case 'attended':
+      return 'Present';
+    case 'late_cancel':
+      return 'Late cancel';
+    case 'no_show':
+      return 'No-show';
+    case 'registered':
+      return 'Not marked';
+    case 'cancelled':
+      return 'Cancelled';
+    default: {
+      const exhaustive: never = status;
+      return exhaustive;
+    }
+  }
 }
 
 /**
@@ -33,7 +65,7 @@ interface AttendanceListProps {
  * The server is the only thing that knows, so it decides and says why, and a
  * refusal refreshes the page so the next tap is judged against what is now true.
  */
-export function AttendanceList({ items }: AttendanceListProps) {
+export function AttendanceList({ items, locked = false }: AttendanceListProps) {
   const router = useRouter();
   const [attendanceState, setAttendanceState] = useState<
     Record<string, RegistrationStatus>
@@ -42,6 +74,10 @@ export function AttendanceList({ items }: AttendanceListProps) {
   );
   const [updating, setUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // `locked` only sets where this starts — check-in opens editable, a
+  // completed class opens read-only until the teacher's own "Edit
+  // attendance" tap unlocks the row controls.
+  const [editing, setEditing] = useState(!locked);
 
   async function toggleAttendance(registrationId: string, originalStatus: RegistrationStatus) {
     const currentStatus = attendanceState[registrationId] ?? 'registered';
@@ -107,6 +143,18 @@ export function AttendanceList({ items }: AttendanceListProps) {
     <div className="py-6">
       <h2 className="type-subtitle mb-3">Attendance</h2>
 
+      {!editing && (
+        <button type="button" onClick={() => setEditing(true)} className="type-label text-teal mb-3">
+          Edit attendance
+        </button>
+      )}
+
+      {editing && locked && (
+        <p className="type-caption mb-3">
+          Corrections update the record — the payment request already sent stays as it is.
+        </p>
+      )}
+
       {error && (
         <p role="alert" className="text-danger text-sm mb-3">
           {error}
@@ -118,16 +166,7 @@ export function AttendanceList({ items }: AttendanceListProps) {
           const status = attendanceState[item.registrationId] ?? 'registered';
           const isAttended = status === 'attended';
           const isUpdating = updating === item.registrationId;
-          // Shown, but not yet actionable — see `classIsOpen`. Once the class
-          // starts this goes false and the row behaves like any other.
-          // A late cancel is neither present nor a no-show. Labelling it
-          // "No-show" said the opposite of what happened, and is what made the
-          // row look like an untouched one worth tapping.
-          const statusLabel = isAttended
-            ? 'Present'
-            : status === 'late_cancel'
-              ? 'Late cancel'
-              : 'No-show';
+          const label = statusLabel(status);
 
           return (
             <div
@@ -138,26 +177,28 @@ export function AttendanceList({ items }: AttendanceListProps) {
               <span className="text-[17px] text-ink">{item.studentName}</span>
 
               <div className="flex items-center gap-3">
-                <span className="type-caption">{statusLabel}</span>
-                <button
-                  type="button"
-                  onClick={() => toggleAttendance(item.registrationId, item.status)}
-                  disabled={isUpdating}
-                  className={`
-                    w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
-                    ${isAttended
-                      ? 'bg-teal border-teal text-cream'
-                      : 'bg-sand-soft border-border text-transparent'}
-                    ${isUpdating ? 'opacity-50' : ''}
-                  `}
-                  aria-label={
-                    item.status === 'late_cancel'
-                      ? `${item.studentName} cancelled late — mark them ${isAttended ? 'cancelled again' : 'present'}`
-                      : `Mark ${item.studentName} as ${isAttended ? 'no-show' : 'present'}`
-                  }
-                >
-                  {isAttended && <Icon name="check" size={22} />}
-                </button>
+                <span className="type-caption">{label}</span>
+                {editing && (
+                  <button
+                    type="button"
+                    onClick={() => toggleAttendance(item.registrationId, item.status)}
+                    disabled={isUpdating}
+                    className={`
+                      w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
+                      ${isAttended
+                        ? 'bg-teal border-teal text-cream'
+                        : 'bg-sand-soft border-border text-transparent'}
+                      ${isUpdating ? 'opacity-50' : ''}
+                    `}
+                    aria-label={
+                      item.status === 'late_cancel'
+                        ? `${item.studentName} cancelled late — mark them ${isAttended ? 'cancelled again' : 'present'}`
+                        : `Mark ${item.studentName} as ${isAttended ? 'no-show' : 'present'}`
+                    }
+                  >
+                    {isAttended && <Icon name="check" size={22} />}
+                  </button>
+                )}
               </div>
             </div>
           );
