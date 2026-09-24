@@ -3,6 +3,7 @@ import { PrismaClient, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { economicsViolations, formatEconomicsViolations } from '@/lib/class-economics';
 import { createClassFixture } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
@@ -1099,6 +1100,9 @@ describe('PUT /api/classes/[id]', () => {
   // shared fixture holds, and cleans itself up rather than reusing
   // `economicsClassId`, whose values other tests assert against.
   it('partial economic edit that breaks a stored invariant -> 400 with the schema-shaped message (#221)', async () => {
+    // The fixture's stored economics — spread into the create below, and
+    // into the expected-violation computation, so the two cannot drift.
+    const storedEconomics = { roomCost: 35, minRate: 15, targetRate: 25, minStudents: 4, maxStudents: 12 };
     const cls = await createClassFixture(prisma, {
       teacherId: ownerId,
       teacherRoomId,
@@ -1106,19 +1110,18 @@ describe('PUT /api/classes/[id]', () => {
       date: new Date('2099-09-01'),
       startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
-      roomCost: 35,
-      minRate: 15,
-      targetRate: 25,
-      minStudents: 4,
-      maxStudents: 12,
+      ...storedEconomics,
       status: 'open',
     });
 
     try {
-      const res = await put(ownerToken, cls.id, { maxStudents: 2 });
+      const edit = { maxStudents: 2 };
+      const res = await put(ownerToken, cls.id, edit);
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: { message: string; code?: string } };
-      expect(body.error.message).toBe('minStudents: minStudents cannot exceed maxStudents');
+      const violations = economicsViolations({ ...storedEconomics, ...edit });
+      expect(violations.length).toBeGreaterThan(0);
+      expect(body.error.message).toBe(formatEconomicsViolations(violations));
       expect(body.error.code).toBeUndefined();
     } finally {
       await removeIsolatedClass(cls);
