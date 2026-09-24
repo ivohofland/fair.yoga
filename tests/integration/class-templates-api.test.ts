@@ -9,6 +9,7 @@ import { getNextOccurrences } from '@/services/entry-generation';
 import { mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { economicsViolations, formatEconomicsViolations } from '@/lib/class-economics';
 import { createClassFixture } from '../class-fixtures';
 import { expectRefusal } from '../api-assertions';
 
@@ -1494,15 +1495,28 @@ describe('PUT /api/class-templates/[id]', () => {
   // ALT_DAY_5 at '10:00': no other template here uses ALT_DAY_5 at 10:00, so
   // this is a free slot.
   it('partial economic edit that breaks a stored invariant -> 400 with the schema-shaped message (#221)', async () => {
+    // `templateBody`'s own values — the fixture's stored economics — with
+    // the edit below applied, so the expectation cannot drift from what the
+    // fixture actually stored.
+    const fixture = templateBody('Econ Refusal', '10:00', ALT_DAY_5);
     const id = await createTemplate('Econ Refusal', '10:00', ALT_DAY_5);
+    const edit = { minRate: -10_000 };
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify({ minRate: -10_000 }),
+      body: JSON.stringify(edit),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string; code?: string } };
-    expect(body.error.message).toBe('minRate: minRate cannot subsidize more than the room cost — prices would go negative');
+    const violations = economicsViolations({
+      roomCost: fixture.roomCost,
+      minRate: edit.minRate,
+      targetRate: fixture.targetRate,
+      minStudents: fixture.minStudents,
+      maxStudents: fixture.maxStudents,
+    });
+    expect(violations.length).toBeGreaterThan(0);
+    expect(body.error.message).toBe(formatEconomicsViolations(violations));
     expect(body.error.code).toBeUndefined();
   });
 
