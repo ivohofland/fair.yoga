@@ -7,6 +7,7 @@ import {
   magicLinkSendSchema,
   passkeyAuthVerifySchema,
   createClassSchema,
+  createClassTemplateSchema,
   createStudioClassSchema,
   createRoomSchema,
   updateRoomSchema,
@@ -194,6 +195,27 @@ describe('createClassSchema', () => {
       'teacherRoomId',
     ]);
   });
+
+  it('reports every broken economics rule at once, not just the first (#221)', () => {
+    const result = createClassSchema.safeParse({
+      teacherRoomId: '4f7c2a10-1111-4222-8333-444455556666',
+      classType: 'Hatha',
+      date: '2099-06-01',
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 30,
+      targetRate: 20,
+      minStudents: 8,
+      maxStudents: 4,
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((i) => i.message)).toEqual([
+      'minStudents cannot exceed maxStudents',
+      'minRate cannot exceed targetRate',
+    ]);
+  });
 });
 
 describe('createStudioClassSchema', () => {
@@ -212,16 +234,15 @@ describe('createStudioClassSchema', () => {
 });
 
 describe('updateClassSchema', () => {
-  it('accepts partial payloads — the undefined guards on refinements are load-bearing', () => {
-    // A locked-class save omits all economic fields; dropping the
-    // `=== undefined` guards would fail every such save.
+  it('accepts partial payloads — every economic field is optional', () => {
+    // A locked-class save omits all economic fields.
     expect(updateClassSchema.safeParse({ description: 'Bring a mat.' }).success).toBe(true);
     expect(updateClassSchema.safeParse({ minRate: 30 }).success).toBe(true);
   });
 
-  it('rejects economic inversions when both sides are present', () => {
-    expect(updateClassSchema.safeParse({ minRate: 30, targetRate: 20 }).success).toBe(false);
-    expect(updateClassSchema.safeParse({ minStudents: 8, maxStudents: 4 }).success).toBe(false);
+  it('accepts a partial inversion — the rule is checked on the merged row in the service (#221)', () => {
+    expect(updateClassSchema.safeParse({ minRate: 30, targetRate: 20 }).success).toBe(true);
+    expect(updateClassSchema.safeParse({ minStudents: 8, maxStudents: 4 }).success).toBe(true);
   });
 
   it('rejects unknown fields — the schema is strict', () => {
@@ -309,7 +330,35 @@ describe('isoDate (via updateClassSchema.date)', () => {
   );
 });
 
+describe('createClassTemplateSchema', () => {
+  it('reports every broken economics rule at once, not just the first (#221)', () => {
+    const result = createClassTemplateSchema.safeParse({
+      teacherRoomId: '4f7c2a10-1111-4222-8333-444455556666',
+      classType: 'Hatha',
+      dayOfWeek: 1,
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 30,
+      targetRate: 20,
+      minStudents: 8,
+      maxStudents: 4,
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((i) => i.message)).toEqual([
+      'minStudents cannot exceed maxStudents',
+      'minRate cannot exceed targetRate',
+    ]);
+  });
+});
+
 describe('updateClassTemplateSchema', () => {
+  it('accepts a partial inversion — the rule is checked on the merged row in the service (#221)', () => {
+    expect(updateClassTemplateSchema.safeParse({ minRate: 30, targetRate: 20 }).success).toBe(true);
+    expect(updateClassTemplateSchema.safeParse({ minStudents: 8, maxStudents: 4 }).success).toBe(true);
+  });
+
   // Mirrors the updateClassSchema key-set test. Less load-bearing here —
   // ClassTemplateUpdateData is a straight z.infer with no intersection, so the
   // reverse pin has no blind spot to compensate for — but it fails naming the
