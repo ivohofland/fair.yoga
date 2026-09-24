@@ -36,6 +36,8 @@ import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { transientDbFailure } from '@/lib/api-errors';
+import { ECONOMIC_FIELDS } from '@/lib/class-fields';
+import { economicsViolations, type EconomicsViolation } from '@/lib/class-economics';
 import {
   CLASS_TO_ENTRY_JOIN,
   lockClassRowsOrdered,
@@ -437,20 +439,41 @@ export function withSlot(template: ClassTemplate, rule: ScheduleRule): ClassTemp
   };
 }
 
+/** Thrown from inside `updateRule`'s transaction to roll it back; `updateClassTemplate` turns it into its result. */
+class InvalidTemplateEconomics extends Error {
+  constructor(readonly violations: readonly [EconomicsViolation, ...EconomicsViolation[]]) {
+    super('updateClassTemplate: economics refused, rolling back');
+  }
+}
+
 /**
  * Why an update did or did not happen. Every business outcome is a variant;
  * callers own the user-facing wording.
  *
- * Aliased to `UpdateRuleResult` (`rule-lifecycle.ts`), parameterised by `ClassTemplate`.
+ * Aliased to `UpdateRuleResult` (`rule-lifecycle.ts`), parameterised by
+ * `ClassTemplate`, plus one arm of its own: `invalid_economics`, a partial
+ * economic edit that, merged with the stored template, breaks one of
+ * `economicsViolations`'s cross-field rules (#221). Kept off `UpdateRuleResult`
+ * itself because the studio family shares that type and has no economics.
  */
-export type UpdateClassTemplateResult = UpdateRuleResult<ClassTemplate>;
+export type UpdateClassTemplateResult =
+  | UpdateRuleResult<ClassTemplate>
+  | {
+      ok: false;
+      reason: 'invalid_economics';
+      violations: readonly [EconomicsViolation, ...EconomicsViolation[]];
+    };
 
 /**
  * Apply a partial update to a class template.
  *
- * Runs on `updateRule` in `rule-lifecycle.ts` parameterised by `CLASS_FAMILY` (issue 284 / stage C2).
+ * Runs on `updateRule` in `rule-lifecycle.ts` parameterised by `CLASS_FAMILY`
+ * (issue 284 / stage C2). `CLASS_FAMILY.updateChild` below throws
+ * `InvalidTemplateEconomics` to roll the transaction back on a merged-row
+ * violation; this catches it and returns the `invalid_economics` result
+ * instead of letting it escape (#221).
  */
-export function updateClassTemplate(
+export async function updateClassTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
@@ -458,7 +481,14 @@ export function updateClassTemplate(
     Partial<Record<PlainUpdateForbiddenTemplateField, never>> &
     Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>,
 ): Promise<UpdateClassTemplateResult> {
-  return updateRule(db, CLASS_FAMILY, templateId, teacherId, data);
+  try {
+    return await updateRule(db, CLASS_FAMILY, templateId, teacherId, data);
+  } catch (err) {
+    if (err instanceof InvalidTemplateEconomics) {
+      return { ok: false, reason: 'invalid_economics', violations: err.violations };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -859,6 +889,26 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
     foreignKeyConstraint: CLASS_TEMPLATE_ROOM_FK,
   },
   updateChild: async (tx, templateId, childData, roomResult, template, data) => {
+    // Checked on the row the write would leave, under the row lock
+    // `updateRule` took, and before the write: the `CHECK`s raise at the
+    // write itself, as a 500.
+    if (ECONOMIC_FIELDS.some((f) => childData[f] !== undefined)) {
+      const stored = await tx.classTemplate.findUniqueOrThrow({
+        where: { id: templateId },
+        select: { roomCost: true, minRate: true, targetRate: true, minStudents: true, maxStudents: true },
+      });
+      const [first, ...rest] = economicsViolations({
+        roomCost: typeof childData.roomCost === 'number' ? childData.roomCost : Number(stored.roomCost),
+        minRate: typeof childData.minRate === 'number' ? childData.minRate : Number(stored.minRate),
+        targetRate:
+          typeof childData.targetRate === 'number' ? childData.targetRate : Number(stored.targetRate),
+        minStudents:
+          typeof childData.minStudents === 'number' ? childData.minStudents : stored.minStudents,
+        maxStudents:
+          typeof childData.maxStudents === 'number' ? childData.maxStudents : stored.maxStudents,
+      });
+      if (first !== undefined) throw new InvalidTemplateEconomics([first, ...rest]);
+    }
     const writeData: Prisma.ClassTemplateUncheckedUpdateManyInput &
       Partial<Record<PlainUpdateForbiddenTemplateField, never>> =
       childData as ClassTemplateOwnUpdateData;

@@ -14,6 +14,7 @@ import { isCheckViolationOn } from '@/lib/check-violation';
 import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { log } from '@/lib/log';
 import { updateClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
+import { formatEconomicsViolations } from '@/lib/class-economics';
 import {
   updateClassTemplate,
   CLASS_TEMPLATE_ROOM_FK,
@@ -331,6 +332,12 @@ export const PUT = withErrorHandler(async (
   // update this recurring class"): this is the edit, that is the toggle.
   if (result.reason === 'busy') {
     return templateEditBusyResponse();
+  }
+  // A partial economic edit that, merged with the stored template, breaks a
+  // cross-field rule (#221). Same status and message shape as the create
+  // schema's refusal of the same rule.
+  if (result.reason === 'invalid_economics') {
+    return respondError(formatEconomicsViolations(result.violations), 400);
   }
 
   // Exhaustiveness: a new UpdateClassTemplateResult variant becomes a compile
