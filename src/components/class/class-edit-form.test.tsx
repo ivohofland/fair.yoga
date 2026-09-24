@@ -104,6 +104,31 @@ describe('ClassEditForm', () => {
     }
   });
 
+  /**
+   * F3 (#221 review fold). `handleSave`'s `economicsViolations` check is
+   * wrapped in `if (!settingsLocked)`: locked economics are stripped from
+   * the payload before it is sent, so they never reach the route for it to
+   * validate either. Checking them client-side regardless would block a save
+   * the route would accept. `initial` here carries an invalid
+   * `minRate`/`targetRate` pair on purpose: were the wrapper removed, the
+   * client-side check would fire on these STORED (locked) values before
+   * `saveWith`-style stripping ever runs, and no request would be sent.
+   */
+  it('locked settings: saves despite economically invalid initial values, with no alert', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ClassEditForm
+        classId="cls-1"
+        settingsLocked={true}
+        initial={{ ...initial, minRate: 30, targetRate: 25 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('sends an empty description as null', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
