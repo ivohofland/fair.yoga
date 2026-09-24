@@ -4,9 +4,11 @@ import { log } from './log';
 import type { NoneOf } from './type-pins';
 import {
   buildJobs,
+  getJobHealth,
   isolatedSweeps,
   makeTick,
   scheduleJobs,
+  startScheduler,
   type Job,
   type JobHealth,
   type SchedulerSweeps,
@@ -310,8 +312,11 @@ describe('scheduleJobs', () => {
     // by position. What this multiset cannot see is two registrations of the
     // same kind and delay trading jobs — any two boot ticks, or two
     // same-interval repeats; the health test below catches that.
+    // Snapshot before iterating: a boot tick that lazily registers its own
+    // interval would otherwise get visited mid-loop, which this test must
+    // not silently absorb.
     const observed: Array<[string, string, number]> = [];
-    for (const r of registrations) {
+    for (const r of [...registrations]) {
       ran.length = 0;
       await r.fn();
       expect(ran).toHaveLength(1);
@@ -374,6 +379,56 @@ describe('scheduleJobs', () => {
     }
   });
 
+  it("routes a failing run into the job's own registered health entry", async () => {
+    const job: Job = {
+      name: 'test-job',
+      intervalMs: MINUTE,
+      run: async () => {
+        throw new Error('boom');
+      },
+    };
+    const { timers, registrations } = recordingTimers();
+    const health: Record<string, JobHealth> = {};
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+
+    scheduleJobs([job], db, health, timers);
+
+    for (const r of registrations) {
+      health[job.name]!.lastError = null;
+      await r.fn();
+      expect(health[job.name]!.lastError).toBe('boom');
+      expect(health[job.name]!.lastSuccessAt).toBeNull();
+    }
+  });
+
+  it("shares one job's re-entrancy guard between its boot and interval registrations", async () => {
+    let runs = 0;
+    const releases: Array<() => void> = [];
+    const job: Job = {
+      name: 'test-job',
+      intervalMs: MINUTE,
+      run: async () => {
+        runs += 1;
+        await new Promise<void>((release) => releases.push(release));
+      },
+    };
+    const { timers, registrations } = recordingTimers();
+
+    scheduleJobs([job], db, {}, timers);
+
+    const [boot, interval] = registrations;
+    const first = boot!.fn();
+    // Not awaited before the assertion: awaiting here would let the first
+    // tick's guard release before the second tick lands, defeating the test.
+    const second = interval!.fn();
+    expect(runs).toBe(1);
+
+    for (const release of releases) release();
+    await first;
+    await second;
+  });
+
   /**
    * The default argument is the one line of wiring the recording tests above
    * cannot see; run it against faked globals so `setTimeout` and `setInterval`
@@ -404,5 +459,67 @@ describe('scheduleJobs', () => {
     expect(runs).toBe(2);
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(runs).toBe(3);
+  });
+});
+
+describe('startScheduler', () => {
+  function jobNames(): string[] {
+    return buildJobs(buildStubs(() => async () => {}))
+      .map((j) => j.name)
+      .sort();
+  }
+
+  function resetGlobals(): void {
+    globalThis.__fairYogaSchedulerStarted = undefined;
+    globalThis.__fairYogaJobHealth = undefined;
+  }
+
+  /**
+   * The real dynamic imports run here, but under fake timers nothing fires:
+   * `new PrismaClient()` (`@/lib/db`) is only constructed, never connected,
+   * since no tick ever reaches a query. The clock is never advanced.
+   */
+  it('registers a health entry per job and starts at most once', async () => {
+    vi.stubEnv('CRON_SCHEDULER', '');
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    resetGlobals();
+    onTestFinished(() => {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      setIntervalSpy.mockRestore();
+      info.mockRestore();
+      resetGlobals();
+    });
+
+    await startScheduler();
+
+    expect(Object.keys(getJobHealth()).sort()).toEqual(jobNames());
+
+    const callsAfterFirstStart = setIntervalSpy.mock.calls.length;
+    await startScheduler();
+    // The started-flag guard: a second call must not register again.
+    expect(setIntervalSpy.mock.calls.length).toBe(callsAfterFirstStart);
+  });
+
+  it('registers nothing when CRON_SCHEDULER=off', async () => {
+    vi.stubEnv('CRON_SCHEDULER', 'off');
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    resetGlobals();
+    onTestFinished(() => {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      setIntervalSpy.mockRestore();
+      info.mockRestore();
+      resetGlobals();
+    });
+
+    await startScheduler();
+
+    expect(getJobHealth()).toEqual({});
+    expect(setIntervalSpy).not.toHaveBeenCalled();
   });
 });
