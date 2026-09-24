@@ -227,6 +227,24 @@ describe('NotificationList — show older (#663)', () => {
     expect(button).toHaveFocus();
   });
 
+  it('marks the button aria-disabled, never disabled, while a fetch is in flight', async () => {
+    let release: (v: unknown) => void = () => {};
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise((resolve) => { release = resolve; })));
+    render(<NotificationList notifications={[notification({ id: 'a' })]} paging={{ audience: 'teacher', nextCursor: 'c1' }} />);
+
+    const button = screen.getByRole('button', { name: 'Show older messages' });
+    expect(button).toHaveAttribute('aria-disabled', 'false');
+    fireEvent.click(button);
+
+    const loading = screen.getByRole('button', { name: 'Loading…' });
+    expect(loading).toBe(button);
+    expect(loading).toHaveAttribute('aria-disabled', 'true');
+    expect(loading).not.toBeDisabled();
+
+    release(olderResponse([], null));
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /older messages|Loading/ })).toBeNull());
+  });
+
   it('fetches once when clicked twice while a fetch is in flight', async () => {
     let release: (v: unknown) => void = () => {};
     const fetchMock = vi.fn().mockReturnValue(new Promise((resolve) => { release = resolve; }));
