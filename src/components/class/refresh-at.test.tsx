@@ -1,7 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { RefreshAt } from './refresh-at';
-import { routerRefresh } from '../../../tests/setup/components';
+
+// One router object for every render, as Next's `useRouter` gives. The shared
+// setup's mock builds a new one per call, which re-runs the effect on every
+// render whatever its other dependencies — and so could not show that a new
+// `serverNow` alone re-arms the timers.
+const { routerRefresh, router } = vi.hoisted(() => {
+  const refresh = vi.fn();
+  return { routerRefresh: refresh, router: { refresh } };
+});
+vi.mock('next/navigation', () => ({ useRouter: () => router }));
 
 /**
  * #234. The class page decides the finish button and the auto-finish from
@@ -14,6 +23,7 @@ describe('RefreshAt', () => {
   const MINUTE = 60_000;
 
   beforeEach(() => {
+    routerRefresh.mockClear();
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
   });
