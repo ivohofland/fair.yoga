@@ -1491,6 +1491,20 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(after.teacherRoomId).toBe(teacherRoomId);
   });
 
+  // ALT_DAY_5 at '10:00': ALT_DAY_5 is otherwise used only once in this file
+  // ('Sync Slot Template' at '00:00'), so this is a free slot.
+  it('partial economic edit that breaks a stored invariant -> 400 with the schema-shaped message (#221)', async () => {
+    const id = await createTemplate('Econ Refusal', '10:00', ALT_DAY_5);
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ minRate: -10_000 }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('minRate: minRate cannot subsidize more than the room cost — prices would go negative');
+  });
+
   // Body parsing now runs before the exists/ownership checks, because the
   // service owns those and needs typed data to be called at all. So a
   // malformed body against someone else's template is a 400, not the 403 the

@@ -1236,6 +1236,96 @@ describe('updateClassTemplate (DB)', () => {
   });
 });
 
+describe('updateClassTemplate economics (DB) (#221)', () => {
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  // Own counter and own `dayOfWeek` (4), separate from `updateClassTemplate
+  // (DB)`'s `makeTemplate` above: that block's counter is already used by
+  // exactly as many calls as it has slots, and one more makes `slotTime`
+  // throw.
+  let makeTemplateCounter = 0;
+  const makeTemplate = (classType: string) => {
+    makeTemplateCounter += 1;
+    return prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType,
+            dayOfWeek: 4,
+            startTime: hhmmToTime(slotTime(30 + makeTemplateCounter * 75)),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      include: { scheduleRule: true },
+    });
+  };
+
+  beforeAll(async () => {
+    await prisma.$connect();
+    const seeded = await seedTeacher('economics');
+    teacherId = seeded.teacherId;
+    accountId = seeded.accountId;
+    roomId = seeded.roomId;
+    teacherRoomId = seeded.teacherRoomId;
+  });
+
+  afterAll(async () => {
+    // Guarded against an undefined `teacherId`: if `beforeAll` fails early,
+    // an unguarded `deleteMany({ where: { teacherId: undefined } })` deletes
+    // every row in the table.
+    if (teacherId !== undefined) {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      await prisma.room.delete({ where: { id: roomId } });
+      await prisma.session.deleteMany({ where: { accountId } });
+      await prisma.teacher.delete({ where: { id: teacherId } });
+      await prisma.account.delete({ where: { id: accountId } });
+    }
+    await prisma.$disconnect();
+  });
+
+  it.each([
+    ['maxStudents below the stored minStudents', { maxStudents: 1 }, 'students_order'],
+    ['minRate above the stored targetRate', { minRate: 25 }, 'rate_order'],
+    ['minRate subsidising past the stored roomCost', { minRate: -500 }, 'room_subsidy'],
+  ] as const)('refuses %s and leaves the template unchanged', async (_label, edit, rule) => {
+    const tpl = await makeTemplate('Econ');
+    const result = await updateClassTemplate(prisma, tpl.id, teacherId, edit);
+    expect(result.ok).toBe(false);
+    if (result.ok || result.reason !== 'invalid_economics') throw new Error(`expected invalid_economics, got ${JSON.stringify(result)}`);
+    expect(result.violations.map((v) => v.rule)).toEqual([rule]);
+    const stored = await prisma.classTemplate.findUniqueOrThrow({ where: { id: tpl.id } });
+    expect([Number(stored.minRate), stored.maxStudents]).toEqual([10, 8]);
+  });
+
+  it('rolls back a rule-level field sent alongside the invalid economics', async () => {
+    const tpl = await makeTemplate('Econ Rollback');
+    const result = await updateClassTemplate(prisma, tpl.id, teacherId, { classType: 'Renamed', maxStudents: 1 });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_economics' });
+    const rule = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: tpl.scheduleRuleId } });
+    expect(rule.classType).toBe('Econ Rollback');
+  });
+
+  it('applies a partial economic edit that stays valid against the stored row', async () => {
+    const tpl = await makeTemplate('Econ Valid');
+    const result = await updateClassTemplate(prisma, tpl.id, teacherId, { maxStudents: 2 });
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe('archiveOrUnarchiveTemplate (DB)', () => {
   // Every case below is one row of the deletion rule. They are separate tests
   // rather than one sweep because when this breaks, which row broke is the
