@@ -2,15 +2,18 @@
  * The ceiling harness itself: a lowered `max_stack_depth` must split a
  * `SWEEP_PAGE_SIZE` parent set from a `CEILING_ROWS` one, on the raw SQL path
  * and on Prisma's relation-load path, and must not leak past its own client.
- * Every per-sweep ceiling test rests on these cases; the design is
+ * These cases are the ceiling tests' premise; the design is
  * `docs/superpowers/specs/2026-09-24-relation-load-paging-design.md`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
+import { autoCancelClasses } from './class-transitions';
+import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   CEILING_ROWS,
   CEILING_STACK,
+  expectLowered,
   isStackDepthError,
   lowStackClient,
   seedClasses,
@@ -19,6 +22,10 @@ import {
 } from '../../tests/stack-ceiling';
 
 const prisma = new PrismaClient();
+
+afterAll(async () => {
+  await prisma.$disconnect();
+});
 
 describe('ceiling harness', () => {
   let low: PrismaClient;
@@ -40,7 +47,6 @@ describe('ceiling harness', () => {
   afterAll(async () => {
     await teachers?.cleanup();
     await low?.$disconnect();
-    await prisma.$disconnect();
   });
 
   function rowValueIn(count: number) {
@@ -82,5 +88,40 @@ describe('ceiling harness', () => {
     );
     expect(isStackDepthError(err)).toBe(true);
     await expect(load(classIds.slice(0, SWEEP_PAGE_SIZE))).resolves.toHaveLength(SWEEP_PAGE_SIZE);
+  });
+});
+
+describe('autoCancelClasses', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 11, 'ceiling-auto-cancel');
+    // `minStudents: 0`: a count of 0 is not below it, so every row is a no-op.
+    await seedClasses(prisma, teachers, {
+      rows: CEILING_ROWS,
+      dates: [today],
+      status: 'open',
+      minStudents: 0,
+      maxStudents: 10,
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads CEILING_ROWS in-window open classes under the lowered stack', async () => {
+    if (!teachers) throw new Error('seed failed');
+    const scoped = scopeSweep(low, {
+      Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
+    });
+    await expect(autoCancelClasses(scoped.db, now)).resolves.toBe(0);
+    expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    await expectLowered(scoped.db);
   });
 });
