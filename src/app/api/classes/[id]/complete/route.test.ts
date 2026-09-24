@@ -83,4 +83,13 @@ describe('POST /api/classes/[id]/complete — each service result', () => {
 
     await expectRefusal(await complete(), code);
   });
+
+  it('asks the service to judge the teacher’s own finish window', async () => {
+    completeClass.mockResolvedValueOnce({ ok: true, newStatus: 'completed' });
+
+    await complete();
+
+    const timing = completeClass.mock.calls[0]?.[2] as { teacherAt?: unknown } | undefined;
+    expect(timing?.teacherAt).toBeInstanceOf(Date);
+  });
 });

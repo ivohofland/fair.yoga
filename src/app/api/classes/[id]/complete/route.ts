@@ -24,8 +24,8 @@ type CompleteRefusalReason = Exclude<
 /**
  * How each refusal but `ILLEGAL_TRANSITION` reaches the client, keyed by
  * `completeClass`'s own range: a reason added to it fails to compile here
- * until it has an answer. `NOT_ENDED_YET` cannot reach this route, which
- * passes `finishedEarly`.
+ * until it has an answer. `NOT_ENDED_YET` is the teacher finishing before the
+ * window opens (`finishOpensAt`, end − `FINISH_GRACE_MINUTES`).
  */
 const COMPLETE_REFUSAL = {
   NOT_FOUND: CLASS_GONE,
@@ -51,9 +51,9 @@ export const POST = withErrorHandler(async (
     return respondError('Not your class', 403);
   }
 
-  // `finishedEarly`: this endpoint IS the teacher ending a class early, which
-  // is why it does not pass a clock to check against.
-  const result = await completeClass(prisma, id, { finishedEarly: true });
+  // `teacherAt`: the teacher may finish from `finishOpensAt` (end − grace).
+  // Earlier is refused under the lock as NOT_ENDED_YET → CLASS_NOT_ENDED_YET.
+  const result = await completeClass(prisma, id, { teacherAt: new Date() });
   if (result.ok) return respondOk(result);
 
   if (result.reason === 'ILLEGAL_TRANSITION') {

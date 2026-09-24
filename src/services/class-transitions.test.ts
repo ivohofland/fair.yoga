@@ -1170,12 +1170,13 @@ describe('class transitions (DB, timezone-aware)', () => {
     }
   });
 
-  // Ordered before 'auto-completes an in-progress class after its local end
-  // time' below on purpose: that test reuses the default `makeClass` slot
-  // (`teacherId`+`2026-07-20`+`18:00`, `CalendarEntry_teacher_slot_excl`) and,
-  // being the block's original last test, relies on this block's `afterAll`
-  // (teacherId sweep) rather than an inline delete — so it must run AFTER
-  // this test's own inline cleanup frees that slot, not before.
+  // Ordered before 'leaves a class in progress through the grace after its
+  // end' and 'auto-completes an in-progress class at autoFinishAt, not at its
+  // end' below on purpose: both reuse the default `makeClass` slot
+  // (`teacherId`+`2026-07-20`+`18:00`, `CalendarEntry_teacher_slot_excl`), and
+  // the last of the two is the block's original last test, relying on this
+  // block's `afterAll` (teacherId sweep) rather than an inline delete — so it
+  // must run AFTER this test's own inline cleanup frees that slot, not before.
   it('does not complete a class rescheduled after the sweep read it', async () => {
     const cls = await makeClass({ status: 'in_progress' });
     await prisma.registration.create({
@@ -1243,13 +1244,36 @@ describe('class transitions (DB, timezone-aware)', () => {
     }
   });
 
-  it('auto-completes an in-progress class after its local end time', async () => {
+  // Own inline cleanup, unlike the final test below: this one is no longer
+  // the block's last use of the default `makeClass` slot
+  // (`teacherId`+`2026-07-20`+`18:00`, `CalendarEntry_teacher_slot_excl`), so
+  // it must free that slot itself rather than leaning on this block's
+  // `afterAll` — the same reason the comment above 'does not complete a class
+  // rescheduled after the sweep read it' gives.
+  it('leaves a class in progress through the grace after its end', async () => {
     const cls = await makeClass({ status: 'in_progress', minStudents: 1 });
     await prisma.registration.create({
       data: { classId: cls.id, studentId, status: 'attended', tierAtBooking: 3 },
     });
 
-    // Ends 17:00Z (16:00Z start + 60 min); 17:30Z is past that.
+    try {
+      // Ends 17:00Z (16:00Z start + 60 min). 17:05Z is inside the grace.
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      expect(await autoCompleteClasses(scoped.db, new Date('2026-07-20T17:05:00Z'))).toBe(0);
+      expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).status).toBe('in_progress');
+    } finally {
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  it('auto-completes an in-progress class at autoFinishAt, not at its end', async () => {
+    const cls = await makeClass({ status: 'in_progress', minStudents: 1 });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId, status: 'attended', tierAtBooking: 3 },
+    });
+
+    // Ends 17:00Z (16:00Z start + 60 min); 17:30Z is past autoFinishAt (end + 15 min).
     const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
     const completed = await autoCompleteClasses(scoped.db, new Date('2026-07-20T17:30:00Z'));
     expect(completed).toBe(1);

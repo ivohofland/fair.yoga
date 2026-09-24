@@ -1,4 +1,5 @@
 import { codedRefusal } from '@/lib/api-error-codes';
+import { FINISH_GRACE_MINUTES } from '@/lib/finish-window';
 
 /**
  * Refusals the doors under this resource draw on, each sentence written once
@@ -21,8 +22,8 @@ export const CLASS_GONE = codedRefusal('NOT_FOUND', 'This class no longer exists
 /** A class whose entry carries `cancelledAt`: it is off, whatever status it kept. */
 export const CLASS_CANCELLED = codedRefusal('CLASS_CANCELLED', 'This class has been cancelled.');
 
-/** A completion refused because the class's scheduled end is still ahead. */
+/** A completion refused because the class's finish window has not opened yet. */
 export const CLASS_NOT_ENDED_YET = codedRefusal(
   'CLASS_NOT_ENDED_YET',
-  "This class hasn't finished yet.",
+  `You can finish this class from ${FINISH_GRACE_MINUTES} minutes before it ends.`,
 );

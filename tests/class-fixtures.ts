@@ -1,4 +1,5 @@
 import type { CalendarEntry, Class, Prisma, PrismaClient, StudioClass } from '@prisma/client';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * Fixture builders for the two class families, taking the FLAT shape a class
@@ -239,4 +240,25 @@ export function slotTime(totalMinutesFrom9am: number): string {
     throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
   }
   return startTime;
+}
+
+/**
+ * The `(date, startTime)` pair whose `classStartInstant` in `timeZone` is
+ * `instant`, truncated to the minute. For a fixture that has to sit at a
+ * given distance from now: a finish-window test cannot use a far-future date.
+ */
+export function wallSlotAt(instant: Date, timeZone: string): { date: Date; startTime: Date } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    })
+      .formatToParts(instant)
+      .map((p) => [p.type, p.value]),
+  );
+  return {
+    date: new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00Z`),
+    startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
+  };
 }

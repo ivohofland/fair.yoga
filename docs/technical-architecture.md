@@ -379,7 +379,8 @@ interface ClassTransition {
 
 // Key transitions:
 // open → in_progress:      when the class start instant is reached
-// in_progress → completed: when teacher marks class as done (or auto after duration)
+// in_progress → completed: when the teacher finishes the class (from 15 min
+//                           before its end), or automatically 15 min after its end
 // completed triggers:      pricing calculation → payment creation → notifications
 //
 // Not a transition: cancellation. `auto_cancel_check` firing below minStudents
@@ -791,7 +792,7 @@ Every job skips a tick while its own previous run is still in flight; the `src/l
 
 | Job | Schedule | What it does |
 |---|---|---|
-| Class transitions | Every minute | Advances open → in_progress, auto-cancels classes below min_students, auto-completes finished ones |
+| Class transitions | Every minute | Advances open → in_progress, auto-cancels classes below min_students, auto-completes classes 15 minutes after their end |
 | Email fallback | Every 5 minutes | Sends email for unread notifications older than 30 minutes, or on the next sweep regardless of age for a waitlist promotion |
 | Class generation | Every hour | Extends recurring class and studio-class instances on the rolling 4-week window |
 | Payment reminders | Every hour | Flips pending payments to overdue after 7 days, then reminds on overdue payments not reminded in the last 7 days |

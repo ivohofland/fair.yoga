@@ -314,7 +314,8 @@ describe('startsInPast', () => {
    * now)` returned `false`, letting a 2020 date through both guards.
    *
    * `completeClass` (`class-lifecycle.ts`) already `Number.isNaN`-guards this
-   * exact shape on `requireEndedBy`; this is the same defence one file over.
+   * exact shape on its completion instant (`sweepAt`/`teacherAt`); this is the
+   * same defence one file over.
    *
    * A stored `startTime` can only be a valid `@db.Time` value — Postgres
    * enforces the column type, and `timeHHmm` validates the wire format before
