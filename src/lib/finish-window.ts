@@ -85,7 +85,8 @@ export interface ClassPageClock {
    * The instants at which what this function answers can change: the check-in
    * edge (`open` only), `finishOpensAt` and `autoFinishAt` — some possibly
    * already past — and, once `autoFinishing`, a retry `SWEEP_RETRY_MS` after
-   * `now`. Empty unless `live`.
+   * `now`. Empty unless `live`. An unreadable edge is left out: its
+   * `toISOString()` throws.
    */
   refreshInstants: Date[];
 }
@@ -124,7 +125,7 @@ export function classPageClock({
         opensAt,
         autoAt,
         ...(autoFinishing ? [new Date(t + SWEEP_RETRY_MS)] : []),
-      ]
+      ].filter((d) => !Number.isNaN(d.getTime()))
     : [];
 
   return { live, showCheckin, canFinish, autoFinishing, autoAt, refreshInstants };
