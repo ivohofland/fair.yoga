@@ -305,8 +305,9 @@ describe('scheduleJobs', () => {
     scheduleJobs(jobs, db, {}, timers);
 
     // Identify each registration by the job its function actually runs, not
-    // by position: a tick bound to the wrong job must fail here even when the
-    // two jobs share an interval.
+    // by position. A tick bound to a same-interval sibling job leaves this
+    // multiset unchanged, though — that swap is caught by the health test
+    // below, not here.
     const observed: Array<[string, string, number]> = [];
     for (const r of registrations) {
       ran.length = 0;
@@ -352,13 +353,18 @@ describe('scheduleJobs', () => {
         .filter(([, entry]) => entry.lastSuccessAt !== null)
         .map(([name]) => name);
 
-    // One interval tick per job, each run alone: the entry it newly stamps
-    // must be the one registered under the name of the job it ran.
-    for (const r of registrations.filter((reg) => reg.kind === 'interval')) {
-      const before = new Set(stamped());
+    // Every registration, timeout and interval, run alone: reset every entry
+    // first (a job's timeout and interval both write the same entry, so a
+    // second stamp of an already-stamped one would not read as "new") and
+    // check the set it stamps is exactly the job that ran.
+    for (const r of registrations) {
+      for (const entry of Object.values(health)) {
+        entry.lastRunAt = null;
+        entry.lastSuccessAt = null;
+      }
       ran.length = 0;
       await r.fn();
-      expect(stamped().filter((name) => !before.has(name))).toEqual(ran);
+      expect(stamped()).toEqual(ran);
     }
   });
 
