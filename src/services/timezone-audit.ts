@@ -22,9 +22,9 @@
  *
  * OFFSET IDENTIFIERS FLAG TOO. `isValidTimeZone` refuses `+18:00` and its
  * kin although `Intl` resolves them, so a stored one fails this audit. Its
- * calendar boundaries are correct — it is not silently UTC — but an offset
- * outside UTC−12..UTC+14 can put a class outside `cancelCandidateDates`'s
- * window, where auto-cancel never reads it.
+ * calendar boundaries are correct — it is not silently UTC — but it is not a
+ * real IANA zone, and `cancelCandidateDates` bounds its window by the IANA
+ * offset range, so an offset beyond it is never read by auto-cancel.
  *
  * NOT tzdata renames, despite that being the motivating story on the issue.
  * Measured 2026-09-01 on Node v22.22.2 with full ICU: every renamed and

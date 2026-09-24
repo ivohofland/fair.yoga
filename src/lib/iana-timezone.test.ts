@@ -38,12 +38,13 @@ describe('isValidTimeZone', () => {
   });
 
   /**
-   * `cancelCandidateDates` assumes every stored zone's offset lies within
-   * UTC−12..UTC+14. ECMA-402 offset identifiers resolve in Intl but can sit
-   * outside that range, so the probe refuses the whole shape.
+   * Real IANA zones only: offset identifiers resolve in Intl, and the probe
+   * refuses them because `cancelCandidateDates` relies on the IANA offset
+   * range. `−18:00` (written `−` below) starts with U+2212 MINUS SIGN, not an ASCII sign; Intl
+   * resolves it to `-18:00`, so only the resolved-name check refuses it.
    */
   it('rejects offset identifiers, which Intl resolves but no IANA zone is', () => {
-    for (const offset of ['+18:00', '-23:59', '+14:00', '+2359', '+18']) {
+    for (const offset of ['+18:00', '-23:59', '+14:00', '+2359', '+18', '−18:00']) {
       expect(isValidTimeZone(offset)).toBe(false);
     }
   });

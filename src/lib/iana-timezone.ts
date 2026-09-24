@@ -17,10 +17,12 @@
  * Keep this file dependency-free. An import added here is an import added to
  * every client bundle that reaches `schemas.ts`.
  *
- * Refuses ECMA-402 offset identifiers (`+18:00`, `-0530`), which the probe
- * alone accepts: an offset can lie outside UTC−12..UTC+14, the range
- * `cancelCandidateDates` depends on. IANA's fixed-offset zones spell
- * themselves `Etc/GMT±N`, so no IANA name starts with a sign.
+ * Refuses offset identifiers (`+18:00`, `-0530`), which the probe alone
+ * accepts: real IANA zones only, because `cancelCandidateDates` depends on
+ * the IANA offset range. IANA's fixed-offset zones spell themselves
+ * `Etc/GMT±N`, so no IANA name starts with a sign. Both the input and the
+ * resolved name are checked: Intl normalises some inputs that do not start
+ * with an ASCII sign — `−18:00` with U+2212 — into an offset.
  */
 export function isValidTimeZone(tz: string): boolean {
   const isOffset = (s: string) => s.startsWith('+') || s.startsWith('-');
