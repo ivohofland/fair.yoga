@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { Notification } from '@prisma/client';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
@@ -213,8 +213,10 @@ describe('NotificationList — show older (#663)', () => {
     render(<NotificationList notifications={[notification({ id: 'a' })]} paging={{ audience: 'teacher', nextCursor: 'c1' }} />);
 
     const button = screen.getByRole('button', { name: 'Show older messages' });
-    fireEvent.click(button);
-    fireEvent.click(button);
+    act(() => {
+      button.click();
+      button.click();
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     release(olderResponse([], null));
