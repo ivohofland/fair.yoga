@@ -355,8 +355,8 @@ export function isoOrNull(date: Date): string | null {
  * like it: an unparseable `startTime` yields an Invalid Date, every relational
  * comparison against one is `false`, and the guard waved the write through
  * while appearing to have checked it. That is the same silent-`false` shape
- * `completeClass` guards its completion instant (`sweepAt`/`teacherAt`)
- * against with `Number.isNaN`.
+ * `completeClass` guards a `CompletionTiming` clock and edge against with
+ * `Number.isNaN`.
  *
  * Unparseable is not reachable from validated input — `startTime` is `HH:mm`
  * by schema on every write, converted to the `@db.Time` `Date` this function
