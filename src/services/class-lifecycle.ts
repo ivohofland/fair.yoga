@@ -1559,26 +1559,31 @@ export async function updateClass(
       // would deadlock against every other holder of this pair.
       await lockClassRow(tx, classId);
 
+      // The `Class` CAS filter, built once: the pre-check below reads through
+      // it and the `updateMany` writes through it, so the two cannot disagree
+      // about which row is still writable. The cancel half of the freeze lives
+      // on the entry, not this row — without that conjunct a cancelled class
+      // would accept a description or an economic edit, because its status is
+      // still `draft` or `open`.
+      const casWhere = {
+        id: classId,
+        status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+        calendarEntry: { cancelledAt: null },
+        ...(sentEconomic !== null ? { settingsLocked: false } : {}),
+      } satisfies Prisma.ClassWhereInput;
+
       // The cross-field economics are checked on the row the write would
       // leave, read under the lock just taken, and BEFORE the write: the
-      // `CHECK`s on `Class` raise at the write itself, as a 500. Skipped when
-      // the fresh row would fail the CAS below, so a class that locked or
-      // froze since the first read keeps answering `locked`/`terminal`.
+      // `CHECK`s on `Class` raise at the write itself, as a 500. The read goes
+      // through `casWhere`, so a class that locked or froze since the first
+      // read comes back null, skips the check, and lets the CAS below answer
+      // `locked`/`terminal`.
       if (sentEconomic !== null) {
-        const fresh = await tx.class.findUnique({
-          where: { id: classId },
-          select: {
-            roomCost: true, minRate: true, targetRate: true, minStudents: true, maxStudents: true,
-            settingsLocked: true, status: true,
-            calendarEntry: { select: { cancelledAt: true } },
-          },
+        const fresh = await tx.class.findFirst({
+          where: casWhere,
+          select: { roomCost: true, minRate: true, targetRate: true, minStudents: true, maxStudents: true },
         });
-        const passesCas =
-          fresh !== null &&
-          !fresh.settingsLocked &&
-          !TERMINAL_CLASS_STATUSES.includes(fresh.status) &&
-          fresh.calendarEntry.cancelledAt === null;
-        if (passesCas) {
+        if (fresh !== null) {
           const [first, ...rest] = economicsViolations({
             roomCost: data.roomCost ?? Number(fresh.roomCost),
             minRate: data.minRate ?? Number(fresh.minRate),
@@ -1592,26 +1597,8 @@ export async function updateClass(
         }
       }
 
-      // Both CASes carry the SAME freeze, expressed against whichever row
-      // they write — `frozenStateOf`'s two halves, one on each table. That
-      // symmetry is what makes a partial edit unreachable rather than merely
-      // unlikely: the entry's filter can only miss for a class that also fails
-      // the class filter, so a successful class write is never followed by an
-      // entry refusal. The `UpdateClassRefusal` throw below does not depend on
-      // that argument holding — it rolls back either way.
       if (hasClassEdit) {
-        const written = await tx.class.updateMany({
-          where: {
-            id: classId,
-            status: { notIn: [...TERMINAL_CLASS_STATUSES] },
-            // The cancel half of the freeze, which no longer lives on this
-            // row. Without it a cancelled class would accept a description or
-            // an economic edit, because its status is still `draft` or `open`.
-            calendarEntry: { cancelledAt: null },
-            ...(sentEconomic !== null ? { settingsLocked: false } : {}),
-          },
-          data: classFields,
-        });
+        const written = await tx.class.updateMany({ where: casWhere, data: classFields });
         if (written.count !== 1) {
           throw new UpdateClassRefusal(await explainClassCasMiss(tx, classId, sentEconomic));
         }

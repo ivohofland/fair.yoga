@@ -1931,39 +1931,63 @@ describe('updateClass (DB)', () => {
     });
 
     /**
-     * The in-transaction ordering: a class whose economics lock BETWEEN
+     * The in-transaction ordering: a class that locks or freezes BETWEEN
      * `updateClass`'s opening read and the row lock it takes inside the
-     * transaction. The opening read still sees the class unlocked, so the
-     * pre-transaction `locked` check does not fire — this is what makes the
-     * case land on `passesCas` rather than being answered earlier the way the
-     * settings-locked case above is.
+     * transaction. The opening read still sees the class unlocked and live, so
+     * neither pre-transaction check fires — these cases land on the economics
+     * pre-check's read through the CAS filter, which comes back empty and
+     * leaves the refusal to the CAS itself.
      *
      * `maxStudents: 2` is sent because it also breaks `students_order` against
      * the fixture's stored `minStudents: 4` — the edit has to be invalid on
-     * its own terms, or `passesCas` gating nothing would leave this case
-     * unable to tell the guarded and unguarded code apart.
+     * its own terms, or a pre-check that ignored the CAS filter would answer
+     * the same as one that honoured it.
      */
-    it('answers locked, not invalid_economics, for a class that locks between the read and the row lock', async () => {
-      const cls = await makeClass(false);
-
+    const raceAfterOpeningRead = (flip: () => Promise<unknown>) => {
       let flipped = false;
-      const racing = prisma.$extends({
+      return prisma.$extends({
         query: {
           class: {
             async findUnique({ args, query }) {
               const row = await query(args);
               if (!flipped) {
                 flipped = true;
-                await prisma.class.update({ where: { id: cls.id }, data: { settingsLocked: true } });
+                await flip();
               }
               return row;
             },
           },
         },
       }) as unknown as PrismaClient;
+    };
+
+    it('answers locked, not invalid_economics, for a class that locks between the read and the row lock', async () => {
+      const cls = await makeClass(false);
+      const racing = raceAfterOpeningRead(() =>
+        prisma.class.update({ where: { id: cls.id }, data: { settingsLocked: true } }));
 
       const result = await updateClass(racing, cls.id, { maxStudents: 2 });
       expect(result).toMatchObject({ ok: false, reason: 'locked' });
+    });
+
+    it('answers terminal, not invalid_economics, for a class that completes between the read and the row lock', async () => {
+      const cls = await makeClass(false, 'open');
+      const racing = raceAfterOpeningRead(() =>
+        prisma.class.update({ where: { id: cls.id }, data: { status: 'completed' } }));
+
+      const result = await updateClass(racing, cls.id, { maxStudents: 2 });
+      expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
+      expect((await economics(cls.id)).maxStudents).toBe(12);
+    });
+
+    it('answers terminal, not invalid_economics, for a class cancelled between the read and the row lock', async () => {
+      const cls = await makeClass(false, 'open');
+      const racing = raceAfterOpeningRead(() =>
+        prisma.calendarEntry.update({ where: { id: cls.calendarEntryId }, data: { cancelledAt: new Date() } }));
+
+      const result = await updateClass(racing, cls.id, { maxStudents: 2 });
+      expect(result).toEqual({ ok: false, reason: 'terminal', state: 'cancelled' });
+      expect((await economics(cls.id)).maxStudents).toBe(12);
     });
   });
 });
@@ -1979,6 +2003,7 @@ describe('updateClass — the count === 0 branches', () => {
   // `settingsLocked: false` guard from the compare-and-swap left every test
   // passing.
   type UpdateManyArgs = { where: Record<string, unknown>; data: Record<string, unknown> };
+  type FindFirstArgs = { where: Record<string, unknown> };
 
   function stubDb(opts: {
     settingsLocked: boolean;
@@ -2003,6 +2028,7 @@ describe('updateClass — the count === 0 branches', () => {
   }) {
     const updateManyCalls: UpdateManyArgs[] = [];
     const entryUpdateManyCalls: UpdateManyArgs[] = [];
+    const findFirstCalls: FindFirstArgs[] = [];
     // Resolved once rather than as a `??` chain at each use, so "statusAfter
     // defaults to status, which defaults to open" is a statement rather than
     // operator precedence, and `'open'` appears in one place.
@@ -2041,6 +2067,18 @@ describe('updateClass — the count === 0 branches', () => {
         ? { id: 'stub-class', status: statusOnReRead, calendarEntry: { cancelledAt } }
         : null;
     };
+    // The economics pre-check (#221) reads through the CAS filter. Its row
+    // carries the five columns it selects, valid against one another, so the
+    // check passes on real comparisons and the request reaches the CAS this
+    // block is about. Counted in `reads` alongside the opening read and the
+    // CAS re-check.
+    const readEconomics = async (args: FindFirstArgs) => {
+      reads += 1;
+      findFirstCalls.push(args);
+      return opts.rowSurvives
+        ? { roomCost: 35, minRate: 15, targetRate: 25, minStudents: 4, maxStudents: 12 }
+        : null;
+    };
     // `updateClass` opens a transaction and takes `lockClassRow` since #327, so
     // the stub has to answer `$transaction` and the two raw lock statements as
     // well as the model calls. The lock reads return nothing and are not
@@ -2050,6 +2088,7 @@ describe('updateClass — the count === 0 branches', () => {
       $queryRaw: async () => [],
       class: {
         findUnique: readClass,
+        findFirst: readEconomics,
         updateMany: async (args: UpdateManyArgs) => {
           updateManyCalls.push(args);
           return { count: 0 };
@@ -2068,12 +2107,12 @@ describe('updateClass — the count === 0 branches', () => {
     } as unknown as PrismaClient;
     // A getter, not a snapshot: it must read the live `reads` closure
     // variable at assertion time, after updateClass has run.
-    return { db, updateManyCalls, entryUpdateManyCalls, get reads() { return reads; } };
+    return { db, updateManyCalls, entryUpdateManyCalls, findFirstCalls, get reads() { return reads; } };
   }
 
   it('reports locked when the row survives — the compare-and-swap lost its race', async () => {
     const stub = stubDb({ settingsLocked: false, rowSurvives: true });
-    const { db, updateManyCalls } = stub;
+    const { db, updateManyCalls, findFirstCalls } = stub;
 
     const result = await updateClass(db, 'stub-class', { roomCost: 42 });
     expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
@@ -2081,13 +2120,18 @@ describe('updateClass — the count === 0 branches', () => {
     // Proves the CAS path actually ran rather than the early lock-check, which
     // returns an identical value and would otherwise be indistinguishable —
     // and pins the guard whose removal this suite previously did not notice.
-    expect(updateManyCalls).toHaveLength(1);
-    expect(updateManyCalls[0]?.where).toEqual({
+    const casWhere = {
       id: 'stub-class',
       settingsLocked: false,
       status: { notIn: [...TERMINAL_CLASS_STATUSES] },
       calendarEntry: { cancelledAt: null },
-    });
+    };
+    expect(updateManyCalls).toHaveLength(1);
+    expect(updateManyCalls[0]?.where).toEqual(casWhere);
+    // The economics pre-check reads through the same filter, so a row the CAS
+    // would refuse is never checked for economics.
+    expect(findFirstCalls).toHaveLength(1);
+    expect(findFirstCalls[0]?.where).toEqual(casWhere);
 
     // The opening read, the economics pre-check's own read (#221 — this
     // request sends `roomCost`, so `sentEconomic !== null`), and one CAS
@@ -2231,6 +2275,7 @@ describe('updateClass — the count === 0 branches', () => {
       settingsLocked: false,
       ...live,
     });
+    expect(economic.findFirstCalls[0]?.where).toEqual(economic.updateManyCalls[0]?.where);
 
     const plain = stubDb({ settingsLocked: false, rowSurvives: false });
     await updateClass(plain.db, 'stub-class', { description: 'x' });
