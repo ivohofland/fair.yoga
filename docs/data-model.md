@@ -401,6 +401,10 @@ Class instances are generated on a rolling 4-week basis. Runs indefinitely
 until the rule is paused or archived — see ScheduleRule above for day/time,
 active/archived state, and the cross-family slot rule.
 
+The five economics columns above carry six `CHECK` constraints —
+`20260924190000_class_economics_checks` — the same six as `Class` below. See
+Design Notes for what they enforce and why.
+
 ### CalendarEntry (shared calendar identity, #327)
 
 | Field | Type | Notes |
@@ -492,6 +496,10 @@ child, and the reverse does not.
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
+
+The five economics columns above carry six `CHECK` constraints —
+`20260924190000_class_economics_checks` — the same six as `ClassTemplate`
+above. See Design Notes for what they enforce and why.
 
 ### StudioClass (simple tracking)
 
@@ -755,6 +763,10 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
   distinct identities: sign-in silently missed, and signup could create a second
 - **Invitation and TeacherBlock** (#166) exist because a teacher may not link a student unilaterally. `POST /api/students` creates only an Invitation; the TeacherStudent link forms when the invitee accepts it or books a class. Declining leaves the Invitation row itself as a tombstone against re-inviting, and both ways of saying no — declining, and unlinking after being linked — write a TeacherBlock as well, so the two "no" states are uniform. The two rows do different jobs: the Invitation row is what makes a re-invite answer DECLINED, the TeacherBlock is what makes one undeliverable, and only the block survives the subject's own erasure (#522 — see the TeacherBlock section above).
 - **Room identity is case- and whitespace-insensitive** (#260). PostgreSQL expression indexes `Room_public_identity_unique` (on `(lower(trim(address)), lower(trim(floor)), lower(trim(roomName))) WHERE isPublic = true`) and `Room_private_identity_unique` (on `(createdById, lower(trim(address)), lower(trim(floor)), lower(trim(roomName))) WHERE isPublic = false`) enforce uniqueness without modifying teacher-entered text in the database. Client-side predicate `sameRoomIdentity` (`src/lib/room-identity.ts`) mirrors this normalization using `normalizeRoomField`, and `isUniqueConflictOn` (`src/lib/unique-conflict.ts`) unwraps decompiled expression targets so route handlers continue matching standard column lists.
+- **`Class` and `ClassTemplate` each carry six economic `CHECK` constraints** (#221, `20260924190000_class_economics_checks`) — `_room_cost_check` (`roomCost >= 0`), `_min_students_range_check` (`minStudents BETWEEN 0 AND 200`), `_max_students_range_check` (`maxStudents BETWEEN 1 AND 200`), `_students_order_check` (`minStudents <= maxStudents`), `_rate_order_check` (`minRate <= targetRate`), `_room_subsidy_check` (`minRate >= -roomCost`). Re-derive rather than trusting this list: `grep -n "CHECK" prisma/migrations/*_class_economics_checks/migration.sql`.
+  - **The `minStudents` floor is 0 in the database, 1 in Zod.** Zero breaks no arithmetic — `calculateEffectiveTeacherRate`'s clamps return early whenever `minStudents == maxStudents` and for every count once `minStudents > maxStudents`, so a zero minimum is never a divide-by-zero. "At least one student" is a product rule, not a data-integrity one, and Zod (`src/lib/schemas.ts`) keeps enforcing it on every request body; the database only rules out rows that are impossible outright. The gap between the two floors is not incidental: nine test fixtures across `waitlist.test.ts`, `invitations-api.test.ts`, `waitlist-api.test.ts` and `registrations-api.test.ts` write `minStudents: 0` on purpose, to keep a class open under the live scheduler's auto-cancel sweep (`AutoCancelCheck` has no "never" value) — a database floor of 1 would have broken every one of them.
+  - **200 is duplicated from `MAX_CLASS_SIZE`** (`src/lib/schemas.ts`) into both range constraints' upper bound. The two must move together — `MAX_CLASS_SIZE`'s own docblock points back here.
+  - **`economicsViolations`** (`src/lib/class-economics.ts`) and the three cross-field constraints (`_students_order_check`, `_rate_order_check`, `_room_subsidy_check`) state the same three rules — the function is what the update services check before writing, the database is the backstop for any writer that skips it (decision 3, `docs/superpowers/specs/2026-09-24-class-economic-invariants-design.md`).
 
 ## Open Questions
 

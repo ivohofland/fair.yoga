@@ -101,6 +101,7 @@ export function requireNormalised(email: string): string {
  * Upper bound for min/max students. Generous for any real class, and a hard
  * ceiling for the price-estimate tables the public booking page renders per
  * seat — unbounded values would let anyone allocate absurd arrays there.
+ * Duplicated in the class economics CHECKs; see docs/data-model.md (Design Notes).
  */
 export const MAX_CLASS_SIZE = 200;
 
