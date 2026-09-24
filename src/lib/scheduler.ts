@@ -21,8 +21,8 @@
  *   and neither was examined for this.
  * - A per-job `running` flag prevents a slow tick from stacking on itself.
  * - CRON_SCHEDULER=off disables the scheduler entirely and is a CI setting,
- *   not a production mode: CI runs the built app while tests drive the same
- *   services with explicit clocks. `startScheduler` warns when it is set.
+ *   not a production mode (`DEPLOYMENT.md` §5). `startScheduler` warns when
+ *   it is set.
  */
 
 import type { PrismaClient } from '@prisma/client';

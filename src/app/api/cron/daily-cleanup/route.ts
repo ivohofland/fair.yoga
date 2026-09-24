@@ -46,9 +46,8 @@ import { auditTeacherTimezones } from '@/services/timezone-audit';
  * review decided not to cover.
  *
  * Recorded here rather than filed, deliberately: the stakes are low, because
- * the in-process scheduler — not this route — is what actually runs these
- * sweeps in production (`scheduler.ts`'s header: the `/api/cron/*` endpoints
- * "remain for manual runs"). If you change WHICH sweeps
+ * the in-process scheduler — not this route — is what runs these sweeps in
+ * production (`DEPLOYMENT.md` §5). If you change WHICH sweeps
  * this route runs, verify it by hand against the running app — a green suite
  * says nothing about that. If you change the status mapping, `route.test.ts`
  * will tell you.
@@ -60,11 +59,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Sequential, not `Promise.all`: these share one connection pool of three
   // (one vCPU), and none is urgent.
   //
-  // ISOLATED FROM EACH OTHER, matching the scheduler's `daily-cleanup` job,
-  // which runs every sweep through `isolatedSweeps`: a thrown sweep must not
-  // skip the ones after it on this route either — an intermittently failing
-  // auth cleanup must not silently stop retention from running on a manual
-  // call here.
+  // ISOLATED FROM EACH OTHER: a thrown sweep must not skip the ones after it.
   //
   // Reported per sweep in the body, so a caller reading the response learns
   // WHICH one ran.
@@ -80,7 +75,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const auth = await settle(() => cleanupExpiredAuth(prisma));
   const waitlistRetention = await settle(() => reapClosedWaitlistEntries(prisma));
   const notificationRetention = await settle(() => reapExpiredNotifications(prisma));
-  // Last, matching the scheduler job this route mirrors.
   const timezoneAudit = await settle(() => auditTeacherTimezones(prisma));
 
   // The composite body at whichever status the outcomes earn — the shape
@@ -131,7 +125,7 @@ async function settle<T>(run: () => Promise<T>): Promise<SweepOutcome<T>> {
  * 503 only when EVERY failure is transient — a transient database failure is
  * worth a retry and a caller that backs off, and this is how the rest of the
  * codebase answers contention. One permanent failure alongside it makes 500
- * the run's honest answer: a schema drift does not clear on the next tick,
+ * the run's honest answer: a schema drift does not clear on the next run,
  * and reporting "try again" for it would be the misleading half of the same
  * trade. A 409 cannot come from these sweeps, and would mean nothing to a
  * caller if it did, so it folds into 500 rather than being forwarded.

@@ -479,6 +479,7 @@ describe('startScheduler', () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     resetGlobals();
     onTestFinished(() => {
       // The spy first: it restores the function it wrapped, which is the fake,
@@ -487,12 +488,15 @@ describe('startScheduler', () => {
       vi.useRealTimers();
       vi.unstubAllEnvs();
       info.mockRestore();
+      warn.mockRestore();
       resetGlobals();
     });
 
     await startScheduler();
 
     expect(Object.keys(getJobHealth()).sort()).toEqual(jobNames());
+    // The warn belongs to the off-path only: on-path boot must not warn.
+    expect(warn).not.toHaveBeenCalled();
 
     const callsAfterFirstStart = setIntervalSpy.mock.calls.length;
     await startScheduler();
