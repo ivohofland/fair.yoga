@@ -1645,7 +1645,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(await prisma.class.count({ where: { id: { in: [draft.id, booked.id] } } })).toBe(0);
 
     expect(lockSets).toHaveLength(1);
-    expect([...lockSets[0]].sort()).toEqual([draft.id, booked.id].sort());
+    expect([...(lockSets[0] ?? [])].sort()).toEqual([draft.id, booked.id].sort());
   });
 
   it('deletes a future class whose only registration is cancelled', async () => {
