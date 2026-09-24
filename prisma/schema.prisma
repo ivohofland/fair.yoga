@@ -558,7 +558,7 @@ model Class {
   /// `docs/lock-order.md`, the `#339` section.
   @@index([teacherRoomId, roomArchived])
   /// Plain, never partial — see `docs/data-model.md` (Design Notes, status
-  /// indexes) for why a `WHERE status = ...` predicate would serve nothing.
+  /// indexes) for why a `WHERE status = ...` predicate would serve no Prisma query.
   @@index([status])
 }
 
@@ -1030,7 +1030,7 @@ model WaitlistEntry {
   @@unique([classId, studentId])
   @@index([classId, position])
   /// Plain, never partial — see `docs/data-model.md` (Design Notes, status
-  /// indexes) for why a `WHERE status = 'waiting'` predicate would serve nothing.
+  /// indexes) for why a `WHERE status = 'waiting'` predicate would serve no Prisma query.
   @@index([status])
 }
 

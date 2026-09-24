@@ -5,9 +5,10 @@
  * The definitions are pinned exactly rather than by existence, because the
  * likeliest regression is a well-meant narrowing to a partial index
  * (`WHERE status = 'waiting'`), which Prisma's queries can never use — why is in
- * `docs/data-model.md` (Design Notes, status indexes). A schema edit that drops
- * the `@@index` would ship its own dropping migration, and the drift check
- * would pass it; this test is what refuses it.
+ * `docs/data-model.md` (Design Notes, status indexes). Neither regression
+ * reaches the drift check: a dropped `@@index` ships its own dropping
+ * migration, and `prisma migrate diff` does not see a partial predicate, so a
+ * hand-written narrowing passes it too. This test refuses both.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
