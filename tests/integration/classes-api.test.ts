@@ -66,9 +66,16 @@ async function makeTeacher(tag: string): Promise<{ id: string; token: string }> 
 }
 
 /**
- * A class of its own, for a test that writes to it. Every caller passes a
- * date no other fixture in this file uses, so a run that fails before its
- * cleanup cannot block another test's slot.
+ * A class of its own, for a test that writes to it, at 09:00 on `date` — a day
+ * no other fixture in this file uses, so a run that fails before its cleanup
+ * cannot block another test's slot.
+ *
+ * `slot`, when given, replaces both the day and the start. It is for a test
+ * that needs the class positioned against the real clock — the teacher's
+ * finish window is measured from now, so a far-future date would be refused —
+ * and such a caller passes a slot near now (`wallSlotAt`) and `''` for the
+ * `date` it no longer uses. Such a slot gives up the by-day isolation `date`
+ * provides.
  */
 function isolatedClass(
   classType: string,

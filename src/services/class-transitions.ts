@@ -509,8 +509,8 @@ export async function autoCancelClasses(
         // start instant, the same shape as this function. `autoCompleteClasses`
         // below takes no lock of its own; the equivalent decision moved into
         // `completeClass` (`class-lifecycle.ts`), which already held the lock
-        // and now also compares its caller's `sweepAt` against the fresh
-        // row's recomputed end time before completing.
+        // and now also compares its caller's `sweepAt` against `autoFinishAt`
+        // of the fresh row's recomputed end before completing.
         const fresh = await tx.class.findUnique({
           where: { id: cls.id },
           select: {

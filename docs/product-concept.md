@@ -75,7 +75,7 @@ The ratios use a compressed spread: the inner step (tier 2↔3, tier 3↔4) is 0
 
 Setting min rate and target rate to the same value collapses the scaling to a flat rate, making the feature fully backwards compatible without a toggle.
 
-**Post-class billing:** Prices are calculated automatically at the end of class based on the final registration list. This list includes all registered students (late cancellations and no-shows are still charged), plus any walk-ins the teacher added during class. No user action is needed — the system runs the calculation when the class ends. Students see an estimated price range before class (based on the teacher's settings and current tier ratios) but the final amount is determined afterward.
+**Post-class billing:** Prices are calculated automatically at the end of class based on the final registration list. This list includes all registered students (late cancellations and no-shows are still charged), plus any walk-ins the teacher added during class. No user action is needed — the system runs the calculation when the teacher finishes the class, or automatically 15 minutes after it ends. Students see an estimated price range before class (based on the teacher's settings and current tier ratios) but the final amount is determined afterward.
 
 **Walk-ins:** Teachers can add walk-in students during or just before class. The walk-in must have an existing account with a tier. Walk-ins can exceed the maximum student count — the actual number of students becomes the new count for the price calculation. The teacher rate remains capped at the target rate, so walk-ins beyond max simply lower everyone's price. Walk-ins benefit everyone — more people sharing costs means lower prices for all.
 

@@ -146,8 +146,8 @@ export const PUT = withErrorHandler(async (
   // the exact no-shows after the class, not during it. All three values
   // `updateRegistrationSchema` accepts are in `CHARGED_STATUSES`, so a
   // correction made after completion cannot change who is billed. There is a
-  // test pinning this as a product requirement; #234 is the UI work that makes
-  // it reachable.
+  // test pinning this as a product requirement. A teacher reaches it through
+  // the completed class's "Edit attendance" (`attendance-list.tsx`, `locked`).
   //
   // No guard on class TIME either: check-in renders on an `open` class within
   // 15 minutes of its start, so attendance before the class begins is the
