@@ -2144,7 +2144,7 @@ describe('updateClass — the count === 0 branches', () => {
 
     // The opening read, the economics pre-check's own read (#221 — this
     // request sends `roomCost`, so `sentEconomic !== null`), and one CAS
-    // re-check — a spurious fourth `findUnique` would be invisible to every
+    // re-check — a spurious fourth read would be invisible to every
     // other assertion here. Read via `stub.reads`, not a destructured copy,
     // because a getter destructured before `updateClass` runs captures its
     // value at that instant (0), not the live count.

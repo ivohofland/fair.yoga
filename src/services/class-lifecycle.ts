@@ -1598,6 +1598,14 @@ export async function updateClass(
         }
       }
 
+      // Both CASes carry the SAME freeze, expressed against whichever row
+      // they write — `casWhere` is the class half, `frozenStateOf`'s other
+      // half is the entry `updateMany`'s own filter below. That symmetry is
+      // what makes a partial edit unreachable rather than merely unlikely:
+      // the entry's filter can only miss for a class that also fails
+      // `casWhere`, so a successful class write is never followed by an
+      // entry refusal. The `UpdateClassRefusal` throw below does not depend
+      // on that argument holding — it rolls back either way.
       if (hasClassEdit) {
         const written = await tx.class.updateMany({ where: casWhere, data: classFields });
         if (written.count !== 1) {
