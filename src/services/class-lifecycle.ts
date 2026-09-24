@@ -646,14 +646,7 @@ export async function transitionClass(
  * callers spread (`in: [...CHARGED_STATUSES]`) exactly as the callers of
  * `ACTIVE_REGISTRATION_STATUSES` (`@/lib/registration-status`) do. That set
  * is this one minus `late_cancel`: it asks who occupies a seat, this one asks
- * who gets billed. This constant stays here rather than joining it in `lib/`
- * because only server code uses it, and comments in
- * `class-transitions.test.ts` and `tests/integration/registrations-api.test.ts`
- * name this file as its home — all by name rather than by line number,
- * deliberately: this docblock has already grown twice since the earliest of
- * them was written (once before this branch, once again by it),
- * and a line-number citation into a docblock that keeps growing is exactly
- * the kind of claim that goes stale silently.
+ * who gets billed.
  */
 export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
   'registered',
@@ -662,13 +655,6 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
   'late_cancel',
 ]);
 
-/**
- * Complete a class: validate transition, calculate pricing, update
- * registrations with prices, and create pending payments.
- *
- * Wrapped in a transaction so that all DB mutations (class status,
- * registration prices, payment creation) succeed or fail atomically.
- */
 /**
  * Who is finishing the class, which decides which clock edge applies.
  *
@@ -682,35 +668,47 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
  * - `finishedEarly`: `deleteTeacherAccount` closing in-flight classes during
  *   erasure. No clock.
  *
+ * The variants exclude one another: each declares the other two keys as
+ * `never`, so a timing naming two callers does not compile.
+ *
  * Both edges come from `@/lib/finish-window`.
  */
 export type CompletionTiming =
-  | { sweepAt: Date }
-  | { teacherAt: Date }
-  | { finishedEarly: true };
+  | { sweepAt: Date; teacherAt?: never; finishedEarly?: never }
+  | { teacherAt: Date; sweepAt?: never; finishedEarly?: never }
+  | { finishedEarly: true; sweepAt?: never; teacherAt?: never };
 
 /**
  * The caller's instant and the edge it may not precede, or `null` for a caller
  * with no clock. Every `CompletionTiming` variant is handled by name, and the
  * `never` below stops a new one compiling until it says which edge it takes.
+ * Each variant is told apart by its own key's value, not by `in`: every
+ * variant declares every key, the others as `never`.
  */
 function completionClock(
   timing: CompletionTiming,
   entry: { date: Date; startTime: Date; durationMinutes: number },
   timeZone: string,
 ): { at: Date; edge: Date } | null {
-  if ('sweepAt' in timing) {
+  if (timing.sweepAt !== undefined) {
     return { at: timing.sweepAt, edge: autoFinishAt(classEndInstant(entry, timeZone)) };
   }
-  if ('teacherAt' in timing) {
+  if (timing.teacherAt !== undefined) {
     const span = { start: classStartInstant(entry, timeZone), end: classEndInstant(entry, timeZone) };
     return { at: timing.teacherAt, edge: finishOpensAt(span) };
   }
-  if ('finishedEarly' in timing) return null;
+  if (timing.finishedEarly === true) return null;
   const unhandled: never = timing;
   throw new Error(`completeClass: unhandled completion timing ${JSON.stringify(unhandled)}`);
 }
 
+/**
+ * Complete a class: validate transition, calculate pricing, update
+ * registrations with prices, and create pending payments.
+ *
+ * Wrapped in a transaction so that all DB mutations (class status,
+ * registration prices, payment creation) succeed or fail atomically.
+ */
 export async function completeClass(
   db: PrismaClient,
   classId: string,
@@ -776,6 +774,16 @@ export async function completeClass(
       // against everything, so it would slip past the edge below.
       if (Number.isNaN(clock.at.getTime())) {
         throw new TypeError('completeClass: the completion instant is not a valid Date');
+      }
+      // An unreadable schedule places no edge, and `at < edge` against an
+      // Invalid Date is `false` for every `at`: without this the class would
+      // complete and bill. Fails closed.
+      if (Number.isNaN(clock.edge.getTime())) {
+        log.error(
+          { classId },
+          'refusing completion: this class schedule is unreadable, so its finish window cannot be placed',
+        );
+        return { ok: false, reason: 'NOT_ENDED_YET', error: `Class ${classId} has no readable finish window` };
       }
       if (clock.at < clock.edge) {
         return { ok: false, reason: 'NOT_ENDED_YET', error: `Class ${classId} is not finishable yet` };

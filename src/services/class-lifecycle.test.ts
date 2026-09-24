@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient, ClassStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-window';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
+import { log } from '@/lib/log';
 import {
   VALID_TRANSITIONS,
   TERMINAL_CLASS_STATUSES,
@@ -43,6 +44,22 @@ import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtur
 async function _completionTimingIsRequired(db: PrismaClient): Promise<void> {
   // @ts-expect-error Omitting the timing must never mean "do not check the clock".
   await completeClass(db, 'never-called');
+}
+
+/**
+ * `CompletionTiming`'s variants exclude one another: a timing that names two
+ * callers does not say which edge applies, so it must not compile. An object
+ * literal is checked for excess properties against the union as a whole, so a
+ * plain union of `{ sweepAt }` and `{ teacherAt }` accepts one carrying both.
+ * Same instrument as `_completionTimingIsRequired` above: verified by
+ * `tsc --noEmit` only.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _completionTimingVariantsExclude(db: PrismaClient): Promise<void> {
+  // @ts-expect-error A sweep and a teacher at once: which edge?
+  await completeClass(db, 'never-called', { sweepAt: new Date(), teacherAt: new Date() });
+  // @ts-expect-error A clock and no clock at once.
+  await completeClass(db, 'never-called', { teacherAt: new Date(), finishedEarly: true });
 }
 
 /**
@@ -1191,8 +1208,8 @@ describe('completeClass (DB)', () => {
   /**
    * The sweep's edge. `autoFinishAt` is end + grace; one millisecond before it
    * the class is still inside the teacher's attendance window and must stay
-   * `in_progress`. Exactly at it, the class completes, because the sweep's
-   * 60-second tick can land on that instant.
+   * `in_progress`. Exactly at it, the class completes: the guard is
+   * `at < edge`, so an instant equal to the edge qualifies.
    */
   it('keeps a class in progress until autoFinishAt under sweepAt', async () => {
     const cls = await makeClass({ status: 'in_progress' });
@@ -1254,7 +1271,8 @@ describe('completeClass (DB)', () => {
     const entry = await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: studentIds[1]!, position: 1, status: 'waiting' },
     });
-    // An hour before the window opens: before the class has even started.
+    // An hour before the window opens: with this fixture's 75 minutes, the
+    // class's own start instant.
     const tooEarly = new Date(finishOpensAt(await spanOf(cls)).getTime() - 60 * 60_000);
 
     const result = await completeClass(prisma, cls.id, { teacherAt: tooEarly });
@@ -2449,6 +2467,68 @@ describe('updateClass — the count === 0 branches', () => {
     // sent falls through to `locked` once this check is gone, before the CAS
     // ever runs.
     expect(updateManyCalls).toHaveLength(0);
+  });
+});
+
+/**
+ * An unreadable schedule places no finish window, and `completeClass` must not
+ * read that as a window already passed: every comparison against an Invalid
+ * Date is `false`, so `at < edge` would let every caller through to billing.
+ *
+ * A stub, because `CalendarEntry.startTime` is `@db.Time` and no row can be
+ * stood up with a value `classStartInstant` cannot read.
+ */
+describe('completeClass — an unreadable schedule', () => {
+  function stubDb() {
+    const writes: unknown[] = [];
+    const tx = {
+      $executeRawUnsafe: async () => 0,
+      $queryRaw: async () => [],
+      class: {
+        findUnique: async () => ({
+          id: 'stub-class',
+          status: 'in_progress' as ClassStatus,
+          registrations: [],
+          calendarEntry: {
+            teacherId: 'stub-teacher',
+            classType: 'Vinyasa',
+            date: new Date('2026-06-01T00:00:00.000Z'),
+            startTime: new Date('garbage'),
+            durationMinutes: 75,
+            cancelledAt: null,
+            teacher: { defaultTimezone: 'Europe/Amsterdam' },
+          },
+        }),
+        update: async (args: unknown) => {
+          writes.push(args);
+          return {};
+        },
+      },
+    };
+    const db = {
+      $transaction: async (cb: (t: typeof tx) => unknown) => cb(tx),
+    } as unknown as PrismaClient;
+    return { db, writes };
+  }
+
+  it.each([
+    ['sweepAt', { sweepAt: new Date('2027-01-01T00:00:00.000Z') }],
+    ['teacherAt', { teacherAt: new Date('2027-01-01T00:00:00.000Z') }],
+  ] as const)('refuses under %s, writes nothing, and logs the class at error', async (_name, timing) => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as unknown as void);
+    try {
+      const { db, writes } = stubDb();
+
+      const result = await completeClass(db, 'stub-class', timing);
+
+      expect(result).toMatchObject({ ok: false, reason: 'NOT_ENDED_YET' });
+      expect(writes).toEqual([]);
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ classId: 'stub-class' }), expect.any(String));
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
   });
 });
 
