@@ -21,6 +21,7 @@ import { isEmailEligible, IMMEDIATE_EMAIL_TYPES } from './notification-policy';
 import { classStartInstant } from '@/lib/timezone';
 import { studentNotificationHref, teacherNotificationHref } from '@/lib/notification-links';
 import { encodeNotificationCursor, type NotificationCursor } from '@/lib/notification-paging';
+import { readInPages } from '@/lib/read-in-pages';
 
 /** Accepts a plain client or a transaction client so notification creation
  *  can participate in the caller's transaction. */
@@ -234,7 +235,7 @@ export async function listNotificationPage(
  * URGENT_WINDOW_MINUTES (see notification-policy.ts — urgency changes when,
  * never whether).
  *
- * Ordered by createdAt ASC (oldest first).
+ * Ordered by createdAt ASC (oldest first), ties by id ASC.
  *
  * @param thresholdMinutes — minutes a notification must remain unread before
  *   email fallback kicks in, unless the linked class starts within the
@@ -247,37 +248,11 @@ export async function getUnreadForEmailFallback(
   const now = new Date();
   const threshold = new Date(now.getTime() - thresholdMinutes * 60 * 1000);
 
-  // Class-linked rows are fetched regardless of age: a class starting
-  // within the urgent window makes them eligible before the threshold.
-  // Immediate-email types are fetched regardless of age too, from the same
-  // set `isEmailEligible` checks below, so the two cannot drift — an
-  // immediate type this OR left out would still reach `isEmailEligible`,
-  // just up to `thresholdMinutes` late.
-  const candidates = await db.notification.findMany({
-    where: {
-      isRead: false,
-      emailSent: false,
-      OR: [
-        { createdAt: { lt: threshold } },
-        { relatedClassId: { not: null } },
-        { type: { in: [...IMMEDIATE_EMAIL_TYPES] } },
-      ],
-    },
-    include: {
-      relatedClass: {
-        select: {
-          calendarEntry: {
-            select: {
-              date: true,
-              startTime: true,
-              teacher: { select: { defaultTimezone: true } },
-            },
-          },
-        },
-      },
-    },
-    orderBy: { createdAt: 'asc' },
-  });
+  // Paged via `readInPages` (`@/lib/read-in-pages`); why is in
+  // `docs/technical-architecture.md` ("Relation loads over platform-wide sets").
+  const candidates = await readInPages<EmailFallbackCandidate>((after, take) =>
+    readEmailFallbackPage(db, threshold, after, take),
+  );
 
   return candidates.filter((n) =>
     isEmailEligible(
@@ -296,6 +271,67 @@ export async function getUnreadForEmailFallback(
     ),
   );
 }
+
+/**
+ * One page of `getUnreadForEmailFallback`'s candidates, keyed on
+ * `(createdAt, id)`: `createdAt` alone is not unique, and a cursor on it
+ * alone would skip the rest of a tie that straddles a page boundary.
+ */
+function readEmailFallbackPage(
+  db: PrismaClient,
+  threshold: Date,
+  after: { createdAt: Date; id: string } | undefined,
+  take: number,
+) {
+  return db.notification.findMany({
+    where: {
+      isRead: false,
+      emailSent: false,
+      // `AND`, not a spread: the cursor is an `OR` too, and a second
+      // top-level `OR` key would replace the eligibility one.
+      AND: [
+        // Class-linked rows are fetched regardless of age: a class starting
+        // within the urgent window makes them eligible before the threshold.
+        // Immediate-email types are fetched regardless of age too, from the
+        // same set `isEmailEligible` checks, so the two cannot drift — an
+        // immediate type this OR left out would still reach
+        // `isEmailEligible`, just up to `thresholdMinutes` late.
+        {
+          OR: [
+            { createdAt: { lt: threshold } },
+            { relatedClassId: { not: null } },
+            { type: { in: [...IMMEDIATE_EMAIL_TYPES] } },
+          ],
+        },
+        after
+          ? {
+              OR: [
+                { createdAt: { gt: after.createdAt } },
+                { createdAt: after.createdAt, id: { gt: after.id } },
+              ],
+            }
+          : {},
+      ],
+    },
+    include: {
+      relatedClass: {
+        select: {
+          calendarEntry: {
+            select: {
+              date: true,
+              startTime: true,
+              teacher: { select: { defaultTimezone: true } },
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take,
+  });
+}
+
+type EmailFallbackCandidate = Awaited<ReturnType<typeof readEmailFallbackPage>>[number];
 
 /**
  * Claims ONE notification for email fallback, and says whether this call won
