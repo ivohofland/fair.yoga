@@ -106,13 +106,12 @@ export const claimStudioTemplateForGeneration = (
  * isArchived is defence in depth, matching class-generator.ts: the PATCH
  * route keeps archived templates inactive, but if that invariant ever slips
  * the generator must not materialise classes for something the teacher
- * shelved. It slipped once — the studio route had neither guard until #53's
- * coverage pass found it.
+ * shelved.
  *
- * Narrowed to `id` and `scheduleRule.teacherId` — the two fields the sweep's
- * loop reads, both for logging. Everything else about the template is
- * re-read fresh under `claimStudioTemplateForGeneration`, inside its own
- * transaction.
+ * Narrowed to `id` and `scheduleRule.teacherId`: `id` is what the sweep's
+ * loop re-claims the row by and names it by in logs, and `teacherId` is for
+ * logs only. Everything else about the template is re-read fresh under
+ * `claimStudioTemplateForGeneration`, inside its own transaction.
  */
 function readStudioTemplateCandidatePage(
   db: PrismaClient,
@@ -182,8 +181,9 @@ export async function generateStudioClassInstances(
   for (const template of templates) {
     try {
       // One transaction per template: the claim's row lock has to still be
-      // held when the instances are created (#95). The `findMany` above is
-      // only a pre-filter — this template's row may be minutes stale by now.
+      // held when the instances are created (#95). The snapshot read above
+      // (`readStudioGenerationCandidates`) is only a pre-filter — this
+      // template's row may be minutes stale by now.
       totalCreated += await db.$transaction(
         async (tx) => {
           const fresh = await claimStudioTemplateForGeneration(tx, template.id);
