@@ -7,11 +7,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import {
-  NOTIFICATION_MAX_PAGE_SIZE,
-  NOTIFICATION_PAGE_SIZE,
-  decodeNotificationCursor,
-} from '@/lib/notification-paging';
+import { decodeNotificationCursor, parseLimit } from '@/lib/notification-paging';
 import { listNotificationPage, type NotificationPage } from '@/services/notifications';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -19,12 +15,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const url = new URL(request.url);
-  // A non-numeric limit is NaN, and Math.max(1, NaN) is NaN — degrade it to the
-  // default rather than a 500.
-  const rawLimit = parseInt(url.searchParams.get('limit') ?? '', 10);
-  const limit = Number.isNaN(rawLimit)
-    ? NOTIFICATION_PAGE_SIZE
-    : Math.min(NOTIFICATION_MAX_PAGE_SIZE, Math.max(1, rawLimit));
+  const limit = parseLimit(url.searchParams.get('limit'));
 
   // A bad cursor is refused, not degraded to page one: a client that keeps
   // sending it would loop over the first page forever.
@@ -37,7 +28,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     return respondError('Invalid recipientType', 400);
   }
 
-  // A dual-role account reads both of its profiles' notifications.
+  // Absent recipientType, a dual-role account reads both of its profiles' notifications.
   const profiles = [
     ...(session.teacherId
       ? [{ recipientType: 'teacher' as const, recipientId: session.teacherId }]

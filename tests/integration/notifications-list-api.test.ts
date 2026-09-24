@@ -25,6 +25,11 @@ let otherToken: string;
 let teacherInvitationRowId: string;
 let studentInvitationRowId: string;
 
+// Filled as beforeAll creates each row, and read by afterAll instead of the
+// variables above: Prisma reads an undefined filter value as no filter, so a
+// delete built from an id beforeAll never reached would match every row.
+const created = { teacherIds: [] as string[], studentIds: [] as string[], accountIds: [] as string[] };
+
 // T sits a minute in the past at a whole second, so the tie group shares one
 // exact instant. It is derived from now because the daily cleanup reaps rows a
 // year past their createdAt, which a fixed date would eventually be.
@@ -85,6 +90,8 @@ beforeAll(async () => {
       account: { create: { email: dualEmail } },
     },
   });
+  created.teacherIds.push(dualTeacher.id);
+  created.accountIds.push(dualTeacher.accountId);
   dualTeacherId = dualTeacher.id;
   dualAccountId = dualTeacher.accountId;
   const dualStudent = await prisma.student.create({
@@ -97,6 +104,7 @@ beforeAll(async () => {
       accountId: dualAccountId,
     },
   });
+  created.studentIds.push(dualStudent.id);
   dualStudentId = dualStudent.id;
   dualToken = await seedSession(prisma, dualAccountId);
 
@@ -110,6 +118,8 @@ beforeAll(async () => {
       account: { create: { email: otherEmail } },
     },
   });
+  created.teacherIds.push(otherTeacher.id);
+  created.accountIds.push(otherTeacher.accountId);
   otherTeacherId = otherTeacher.id;
   otherAccountId = otherTeacher.accountId;
   otherToken = await seedSession(prisma, otherAccountId);
@@ -143,13 +153,18 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.notification.deleteMany({
-    where: { recipientId: { in: [dualTeacherId, dualStudentId, otherTeacherId] } },
-  });
-  await prisma.session.deleteMany({ where: { accountId: { in: [dualAccountId, otherAccountId] } } });
-  await prisma.student.deleteMany({ where: { id: dualStudentId } });
-  await prisma.teacher.deleteMany({ where: { id: { in: [dualTeacherId, otherTeacherId] } } });
-  await prisma.account.deleteMany({ where: { id: { in: [dualAccountId, otherAccountId] } } });
+  const { teacherIds, studentIds, accountIds } = created;
+  if (teacherIds.length + studentIds.length > 0) {
+    await prisma.notification.deleteMany({
+      where: { recipientId: { in: [...teacherIds, ...studentIds] } },
+    });
+  }
+  if (accountIds.length > 0) {
+    await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+  }
+  if (studentIds.length > 0) await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+  if (teacherIds.length > 0) await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+  if (accountIds.length > 0) await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   await prisma.$disconnect();
 });
 
@@ -243,9 +258,17 @@ describe('GET /api/notifications — keyset paging', () => {
     ['a malformed cursor', 'before=garbage'],
     ['an empty cursor', 'before='],
     ['a bad recipientType', 'recipientType=admin'],
+    ['an epoch past year 9999', 'before=253402300800000.x'],
+    ['a NUL in the cursor id', 'before=1.%00'],
   ])('refuses %s with 400', async (_label, query) => {
     const res = await authed(`/api/notifications?${query}`, dualToken);
     expect(res.status).toBe(400);
+  });
+
+  it('answers a hat the account does not have with an empty page', async () => {
+    const { status, page } = await getPage(otherToken, 'recipientType=student&limit=100');
+    expect(status).toBe(200);
+    expect(page).toEqual({ notifications: [], hrefById: {}, nextCursor: null });
   });
 
   it('degrades a non-numeric limit and clamps a zero one', async () => {

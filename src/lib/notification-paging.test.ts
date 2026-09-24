@@ -4,6 +4,7 @@ import {
   decodeNotificationCursor,
   encodeNotificationCursor,
   mergeNotifications,
+  parseLimit,
 } from './notification-paging';
 
 function row(id: string, iso: string, over: Partial<Notification> = {}): Notification {
@@ -29,12 +30,33 @@ describe('notification cursor', () => {
     expect(decoded?.id).toBe('a.b');
   });
 
-  it.each(['', 'abc', '.x', '12.', 'NaN.x', '-5.x', '1e3.x', '99999999999999999.x', `1000.${'x'.repeat(65)}`])(
+  it.each(['', 'abc', '.x', '12.', 'NaN.x', '-5.x', '1e3.x', '99999999999999999.x', `1000.${'x'.repeat(65)}`,
+    '253402300800000.x', '999999999999999.x', '1.\u0000', '1.a\u0000b', '1.a b'])(
     'rejects %j',
     (raw) => {
       expect(decodeNotificationCursor(raw)).toBeNull();
     },
   );
+});
+
+describe('notification cursor bounds', () => {
+  it('accepts the last millisecond of year 9999', () => {
+    const decoded = decodeNotificationCursor('253402300799999.x');
+    expect(decoded?.createdAt.toISOString()).toBe('9999-12-31T23:59:59.999Z');
+  });
+
+  it('accepts a uuid-shaped id', () => {
+    const id = '0b8f2f4e-6d1c-4f0a-9a52-1c2d3e4f5a6b';
+    expect(decodeNotificationCursor(`1000.${id}`)?.id).toBe(id);
+  });
+});
+
+describe('parseLimit', () => {
+  it.each([
+    [null, 50], ['abc', 50], ['', 50], ['0', 1], ['-3', 1], ['1000', 100], ['100', 100], ['12abc', 12],
+  ] as const)('parses %j as %i', (raw, expected) => {
+    expect(parseLimit(raw)).toBe(expected);
+  });
 });
 
 describe('mergeNotifications', () => {
