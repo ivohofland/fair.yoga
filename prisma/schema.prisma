@@ -557,6 +557,9 @@ model Class {
   /// 272 design §7.3, the same precedent) — the numbers are in
   /// `docs/lock-order.md`, the `#339` section.
   @@index([teacherRoomId, roomArchived])
+  /// Plain, never partial — see `docs/data-model.md` (Design Notes, status
+  /// indexes) for why a `WHERE status = ...` predicate would serve nothing.
+  @@index([status])
 }
 
 /// Since #298, carries neither a slot index nor a trigger: the calendar
@@ -1026,6 +1029,9 @@ model WaitlistEntry {
 
   @@unique([classId, studentId])
   @@index([classId, position])
+  /// Plain, never partial — see `docs/data-model.md` (Design Notes, status
+  /// indexes) for why a `WHERE status = 'waiting'` predicate would serve nothing.
+  @@index([status])
 }
 
 // ============================================================================
