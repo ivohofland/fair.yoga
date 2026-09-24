@@ -405,12 +405,8 @@ describe('class transitions (DB, timezone-aware)', () => {
         where: { recipientType: 'teacher', recipientId: teacherId, relatedClassId: cls.id },
       });
 
-      // #200. The teacher's row is the one that can never link: the inbox page
-      // (`app/(teacher)/inbox/page.tsx`) selects no `relatedClass`, so
-      // `NotificationList`'s `hrefById` arrives undefined and every teacher row
-      // renders inert (filed as #201). The body is not the best channel here —
-      // it is the only one. A teacher running two weekly Hatha classes cannot
-      // otherwise tell which one was cancelled.
+      // #200. The body has to name the class: a teacher running two weekly
+      // Hatha classes cannot otherwise tell which one was cancelled.
       //
       // Three separate `toContain`s rather than one whole-string equality: the
       // realistic regression is a field being dropped in an edit, and a single

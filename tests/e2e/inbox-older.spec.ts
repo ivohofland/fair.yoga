@@ -10,7 +10,7 @@ import { NOTIFICATION_PAGE_SIZE } from '@/lib/notification-paging';
  * #663 end to end: `/inbox` and `/updates` show one page of a recipient's
  * notifications and reach the rest through "Show older messages".
  *
- * The rows come in groups of six that share an instant, so the boundary
+ * The rows come in groups of `GROUP` that share an instant, so the boundary
  * between the first page and the second falls inside a group: a page read
  * without an id tie-breaker would repeat or drop a row there.
  */

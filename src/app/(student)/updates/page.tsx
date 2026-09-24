@@ -9,7 +9,7 @@ import { NOTIFICATION_PAGE_SIZE } from '@/lib/notification-paging';
 
 export const dynamic = 'force-dynamic';
 
-// The student's notifications, newest first; older ones load on request. The strip on /bookings previews unread (communication layer 2).
+// The student's notifications, newest first; older ones load on request (communication layer 2).
 export default async function StudentUpdatesPage() {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);

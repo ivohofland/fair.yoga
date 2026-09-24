@@ -25,9 +25,20 @@ let otherToken: string;
 let teacherInvitationRowId: string;
 let studentInvitationRowId: string;
 
-// T is fixed so the tie group shares one exact instant.
-const T = new Date('2026-09-10T12:00:00.000Z');
+// T sits a minute in the past at a whole second, so the tie group shares one
+// exact instant. It is derived from now because the daily cleanup reaps rows a
+// year past their createdAt, which a fixed date would eventually be.
+const T = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000);
 const at = (offsetSeconds: number) => new Date(T.getTime() + offsetSeconds * 1000);
+
+// The teacher hat's rows, newest first: a newer group, a tie group at exactly
+// T, an older group, then the teacher_invitation row seeded below.
+const NEWER = 3;
+const TIE = 5;
+const OLDER = 2;
+const TEACHER_TOTAL = NEWER + TIE + OLDER + 1;
+// One row past the newer group, so the first page boundary falls inside the tie group.
+const WALK_LIMIT = NEWER + 1;
 
 type Page = {
   notifications: Array<{ id: string; recipientType: string; recipientId: string }>;
@@ -103,13 +114,11 @@ beforeAll(async () => {
   otherAccountId = otherTeacher.accountId;
   otherToken = await seedSession(prisma, otherAccountId);
 
-  // Teacher hat, 11 rows: 3 newer, a 5-row tie group at exactly T, 2 older, and
-  // the teacher_invitation row below.
   await prisma.notification.createMany({
     data: [
-      ...seedRows('teacher', dualTeacherId, at(2), 3),
-      ...seedRows('teacher', dualTeacherId, at(0), 5),
-      ...seedRows('teacher', dualTeacherId, at(-2), 2),
+      ...seedRows('teacher', dualTeacherId, at(2), NEWER),
+      ...seedRows('teacher', dualTeacherId, at(0), TIE),
+      ...seedRows('teacher', dualTeacherId, at(-2), OLDER),
     ],
   });
   // Student hat, plus one invitation on each hat for the href test.
@@ -153,13 +162,13 @@ describe('GET /api/notifications — keyset paging', () => {
         select: { id: true },
       })
     ).map((n) => n.id);
-    expect(expected).toHaveLength(11);
+    expect(expected).toHaveLength(TEACHER_TOTAL);
 
     const ids: string[] = [];
     let requests = 0;
     let cursor: string | null = null;
     do {
-      const query: string = `recipientType=teacher&limit=4${
+      const query: string = `recipientType=teacher&limit=${WALK_LIMIT}${
         cursor === null ? '' : `&before=${encodeURIComponent(cursor)}`
       }`;
       const { status, page } = await getPage(dualToken, query);
@@ -171,17 +180,25 @@ describe('GET /api/notifications — keyset paging', () => {
 
     expect(ids).toEqual(expected);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(requests).toBe(3);
+    expect(requests).toBe(Math.ceil(TEACHER_TOTAL / WALK_LIMIT));
   });
 
   it('answers an exact fit without a next page', async () => {
-    const exact = await getPage(dualToken, 'recipientType=teacher&limit=11');
-    expect(exact.page.notifications).toHaveLength(11);
+    const exact = await getPage(dualToken, `recipientType=teacher&limit=${TEACHER_TOTAL}`);
+    expect(exact.page.notifications).toHaveLength(TEACHER_TOTAL);
     expect(exact.page.nextCursor).toBeNull();
 
-    const short = await getPage(dualToken, 'recipientType=teacher&limit=10');
-    expect(short.page.notifications).toHaveLength(10);
+    const short = await getPage(dualToken, `recipientType=teacher&limit=${TEACHER_TOTAL - 1}`);
+    expect(short.page.notifications).toHaveLength(TEACHER_TOTAL - 1);
     expect(short.page.nextCursor).not.toBeNull();
+  });
+
+  it('returns bare notification rows, without the relatedClass join', async () => {
+    const { page } = await getPage(dualToken, 'limit=100');
+    expect(page.notifications.length).toBeGreaterThan(0);
+    for (const n of page.notifications) {
+      expect(n).not.toHaveProperty('relatedClass');
+    }
   });
 
   it('narrows a dual-role account to the requested hat', async () => {

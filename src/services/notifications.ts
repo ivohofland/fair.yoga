@@ -161,8 +161,8 @@ export interface NotificationPage {
 /**
  * One page of the recipients' notifications, newest first, `createdAt desc,
  * id desc` — the id breaks ties between rows created in the same instant
- * (batch inserts), which is what keeps a page boundary from splitting a tie
- * group. Keyset, not offset: rows arrive at the head while a reader is
+ * (batch inserts), which lets a page boundary fall inside such a group without
+ * repeating or dropping a row. Keyset, not offset: rows arrive at the head while a reader is
  * mid-list, and a `skip` would shift under them.
  *
  * Reads `limit + 1` rows; the extra one is the answer to "is there more", so
