@@ -7,7 +7,7 @@
  * 3. Auto-complete: in_progress → completed when class duration has elapsed
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { AutoCancelCheck, PrismaClient } from '@prisma/client';
 import { completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
@@ -27,7 +27,7 @@ const CANCEL_CHECK_HOURS: Record<string, number> = {
   HOURS_4: 4,
   HOURS_2: 2,
   HOURS_1: 1,
-};
+} satisfies Record<AutoCancelCheck, number>;
 
 /** The check hours `inCancelWindow` uses for an `autoCancelCheck` the record
  * does not name. */
@@ -84,6 +84,39 @@ function inCancelWindow(
 // ---------------------------------------------------------------------------
 
 /**
+ * One page of `autoTransitionToInProgress`'s snapshot: open, live classes
+ * stored on or before `dateCeiling`, after `afterId` in id order. Paged
+ * because the `calendarEntry` relation load grows with the parent set — see
+ * `docs/technical-architecture.md` ("Relation loads over platform-wide sets").
+ */
+function readStartCandidatePage(
+  db: PrismaClient,
+  dateCeiling: Date,
+  afterId: string | undefined,
+  take: number,
+) {
+  // `cancelledAt: null` beside the status, not instead of it (#327). A
+  // cancelled class keeps its `open` status now, so the status filter alone
+  // selects exactly the classes this sweep must never start.
+  return db.class.findMany({
+    where: {
+      status: 'open',
+      calendarEntry: { cancelledAt: null, date: { lte: dateCeiling } },
+      ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
+    },
+    orderBy: { id: 'asc' },
+    take,
+    include: {
+      calendarEntry: {
+        select: { date: true, startTime: true, teacher: { select: { defaultTimezone: true } } },
+      },
+    },
+  });
+}
+
+type StartCandidate = Awaited<ReturnType<typeof readStartCandidatePage>>[number];
+
+/**
  * Finds all open classes whose start time has passed and transitions
  * them to in_progress.
  */
@@ -96,20 +129,9 @@ export async function autoTransitionToInProgress(
   // A class early in the teacher's local morning can start *before* its
   // stored UTC-midnight date, so include the next calendar day in the sweep.
   const dateCeiling = new Date(currentTime.getTime() + 24 * 60 * 60 * 1000);
-  // `cancelledAt: null` beside the status, not instead of it (#327). A
-  // cancelled class keeps its `open` status now, so the status filter alone
-  // selects exactly the classes this sweep must never start.
-  const openClasses = await db.class.findMany({
-    where: {
-      status: 'open',
-      calendarEntry: { cancelledAt: null, date: { lte: dateCeiling } },
-    },
-    include: {
-      calendarEntry: {
-        select: { date: true, startTime: true, teacher: { select: { defaultTimezone: true } } },
-      },
-    },
-  });
+  const openClasses = await readInPages<StartCandidate>((after, take) =>
+    readStartCandidatePage(db, dateCeiling, after?.id, take),
+  );
 
   let transitioned = 0;
 
@@ -633,20 +655,23 @@ export async function autoCancelClasses(
 // ---------------------------------------------------------------------------
 
 /**
- * Finds in_progress classes whose duration has elapsed and completes them.
- * Triggers pricing calculation and payment creation via completeClass().
+ * One page of `autoCompleteClasses`'s snapshot: in-progress, live classes
+ * after `afterId` in id order. Paged because the `calendarEntry` relation
+ * load grows with the parent set — see `docs/technical-architecture.md`
+ * ("Relation loads over platform-wide sets").
  */
-export async function autoCompleteClasses(
-  db: PrismaClient,
-  now?: Date,
-): Promise<number> {
-  const currentTime = now ?? new Date();
-
+function readCompleteCandidatePage(db: PrismaClient, afterId: string | undefined, take: number) {
   // `cancelledAt: null` beside the status (#327). Completion runs the pricing
   // engine and writes `Payment` rows, so a cancelled class reaching this sweep
   // would bill students for a class that is off.
-  const inProgressClasses = await db.class.findMany({
-    where: { status: 'in_progress', calendarEntry: { cancelledAt: null } },
+  return db.class.findMany({
+    where: {
+      status: 'in_progress',
+      calendarEntry: { cancelledAt: null },
+      ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
+    },
+    orderBy: { id: 'asc' },
+    take,
     include: {
       calendarEntry: {
         select: {
@@ -658,6 +683,23 @@ export async function autoCompleteClasses(
       },
     },
   });
+}
+
+type CompleteCandidate = Awaited<ReturnType<typeof readCompleteCandidatePage>>[number];
+
+/**
+ * Finds in_progress classes whose duration has elapsed and completes them.
+ * Triggers pricing calculation and payment creation via completeClass().
+ */
+export async function autoCompleteClasses(
+  db: PrismaClient,
+  now?: Date,
+): Promise<number> {
+  const currentTime = now ?? new Date();
+
+  const inProgressClasses = await readInPages<CompleteCandidate>((after, take) =>
+    readCompleteCandidatePage(db, after?.id, take),
+  );
 
   let completed = 0;
 
@@ -683,15 +725,15 @@ export async function autoCompleteClasses(
           completed++;
         } else if (result.reason === 'NOT_ENDED_YET' || result.reason === 'CANCELLED') {
           // The race `requireEndedBy` exists to catch: this class was
-          // rescheduled to a later time between the `findMany` snapshot
-          // above and `completeClass`'s locked re-read. Not a failure — the
+          // rescheduled to a later time between the snapshot read above and
+          // `completeClass`'s locked re-read. Not a failure — the
           // lock did its job and deferred to the next tick, which will
           // re-evaluate the class's now-current end time. `warn`, not
           // `error`, so this expected, self-resolving outcome does not page
           // anyone; every OTHER refusal reason still logs at `error` below.
           //
           // `CANCELLED` shares this branch and shares the reason. The
-          // `findMany` above already excludes cancelled classes, so reaching
+          // snapshot read already excludes cancelled classes, so reaching
           // this means one was cancelled in the same gap — the lock refusing
           // to bill for it, which is the guard working rather than failing.
           // It is also the terminal one of the two: the next tick will not

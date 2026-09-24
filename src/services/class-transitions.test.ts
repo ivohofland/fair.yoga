@@ -267,7 +267,9 @@ describe('class transitions (DB, timezone-aware)', () => {
           async findMany({ args, query }) {
             // Shape-keyed, per this file's house rule: this sweep's read
             // filters on `status: 'open'` and a `date` bound under
-            // `calendarEntry`.
+            // `calendarEntry`. `autoCancelClasses`'s read has that shape
+            // too; this test calls only `autoTransitionToInProgress`, whose
+            // snapshot is its only `class.findMany`.
             const where = args.where as
               | { status?: unknown; calendarEntry?: { date?: unknown } }
               | undefined;
