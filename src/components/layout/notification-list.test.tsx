@@ -169,10 +169,13 @@ describe('NotificationList — show older (#663)', () => {
   });
 
   it('shows every row once when the page refreshes between clicks', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(olderResponse([
-      notification({ id: 'n3', createdAt: at(3) }),
-      notification({ id: 'n2', createdAt: at(4) }),
-    ], 'c2')));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(olderResponse([
+        notification({ id: 'n3', createdAt: at(3) }),
+        notification({ id: 'n2', createdAt: at(4) }),
+      ], 'c2'))
+      .mockResolvedValueOnce(olderResponse([notification({ id: 'n1', createdAt: at(5) })], null));
+    vi.stubGlobal('fetch', fetchMock);
     const first = [notification({ id: 'n5', createdAt: at(1) }), notification({ id: 'n4', createdAt: at(2) })];
     const { container, rerender } = render(<NotificationList notifications={first} paging={{ audience: 'teacher', nextCursor: 'c1' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Show older messages' }));
@@ -187,7 +190,12 @@ describe('NotificationList — show older (#663)', () => {
     );
 
     expect(rowIds(container)).toEqual(['n6', 'n5', 'n4', 'n3', 'n2']);
-    expect(screen.getByRole('button', { name: 'Show older messages' })).toBeInTheDocument();
+
+    // The cursor is the one the last fetch returned, not the refreshed page's:
+    // resuming from the prop's would refetch page 2 and never reach page 3.
+    fireEvent.click(screen.getByRole('button', { name: 'Show older messages' }));
+    await vi.waitFor(() => expect(rowIds(container)).toEqual(['n6', 'n5', 'n4', 'n3', 'n2', 'n1']));
+    expect(new URL(String(fetchMock.mock.calls[1]?.[0]), 'http://x').searchParams.get('before')).toBe('c2');
   });
 
   it('says so on a failed fetch, keeps the cursor, and succeeds on retry', async () => {
@@ -204,6 +212,19 @@ describe('NotificationList — show older (#663)', () => {
     await vi.waitFor(() => expect(rowIds(container)).toEqual(['a', 'b']));
     expect(new URL(String(fetchMock.mock.calls[1]?.[0]), 'http://x').searchParams.get('before')).toBe('c1');
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps focus on the button through a failed fetch', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) }));
+    render(<NotificationList notifications={[notification({ id: 'a', createdAt: at(1) })]} paging={{ audience: 'teacher', nextCursor: 'c1' }} />);
+
+    const button = screen.getByRole('button', { name: 'Show older messages' });
+    button.focus();
+    fireEvent.click(button);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load older messages.");
+    expect(screen.getByRole('button', { name: 'Show older messages' })).toBe(button);
+    expect(button).toHaveFocus();
   });
 
   it('fetches once when clicked twice while a fetch is in flight', async () => {
