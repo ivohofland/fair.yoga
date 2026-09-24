@@ -1886,6 +1886,7 @@ describe('updateClass (DB)', () => {
       ['maxStudents below the stored minStudents', { maxStudents: 2 }, 'students_order'],
       ['minStudents above the stored maxStudents', { minStudents: 13 }, 'students_order'],
       ['minRate above the stored targetRate', { minRate: 30 }, 'rate_order'],
+      ['targetRate below the stored minRate', { targetRate: 5 }, 'rate_order'],
       ['minRate subsidising past the stored roomCost', { minRate: -500 }, 'room_subsidy'],
     ] as const)('refuses %s and leaves the row unchanged', async (_label, edit, rule) => {
       const cls = await makeClass(false);
@@ -1922,6 +1923,14 @@ describe('updateClass (DB)', () => {
       const result = await updateClass(prisma, cls.id, { maxStudents: 4 });
       expect(result.ok).toBe(true);
       expect((await economics(cls.id)).maxStudents).toBe(4);
+    });
+
+    it('applies an edit to both rates that stays valid against the stored row', async () => {
+      const cls = await makeClass(false);
+      const result = await updateClass(prisma, cls.id, { minRate: 30, targetRate: 40 });
+      expect(result.ok).toBe(true);
+      const stored = await economics(cls.id);
+      expect([Number(stored.minRate), Number(stored.targetRate)]).toEqual([30, 40]);
     });
 
     it('answers locked, not invalid_economics, for a settings-locked class', async () => {

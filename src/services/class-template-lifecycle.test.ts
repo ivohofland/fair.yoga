@@ -1299,7 +1299,9 @@ describe('updateClassTemplate economics (DB) (#221)', () => {
 
   it.each([
     ['maxStudents below the stored minStudents', { maxStudents: 1 }, 'students_order'],
+    ['minStudents above the stored maxStudents', { minStudents: 9 }, 'students_order'],
     ['minRate above the stored targetRate', { minRate: 25 }, 'rate_order'],
+    ['targetRate below the stored minRate', { targetRate: 5 }, 'rate_order'],
     ['minRate subsidising past the stored roomCost', { minRate: -500 }, 'room_subsidy'],
   ] as const)('refuses %s and leaves the template unchanged', async (_label, edit, rule) => {
     const tpl = await makeTemplate('Econ');
@@ -1308,7 +1310,28 @@ describe('updateClassTemplate economics (DB) (#221)', () => {
     if (result.ok || result.reason !== 'invalid_economics') throw new Error(`expected invalid_economics, got ${JSON.stringify(result)}`);
     expect(result.violations.map((v) => v.rule)).toEqual([rule]);
     const stored = await prisma.classTemplate.findUniqueOrThrow({ where: { id: tpl.id } });
-    expect([Number(stored.minRate), stored.maxStudents]).toEqual([10, 8]);
+    expect([Number(stored.minRate), Number(stored.targetRate), stored.minStudents, stored.maxStudents]).toEqual([10, 20, 2, 8]);
+  });
+
+  it('refuses a roomCost edit that leaves a stored negative minRate subsidising past it', async () => {
+    const tpl = await makeTemplate('Econ Room');
+    await prisma.classTemplate.update({ where: { id: tpl.id }, data: { minRate: -10 } });
+
+    const result = await updateClassTemplate(prisma, tpl.id, teacherId, { roomCost: 5 });
+
+    expect(result.ok).toBe(false);
+    if (result.ok || result.reason !== 'invalid_economics') throw new Error(`expected invalid_economics, got ${JSON.stringify(result)}`);
+    expect(result.violations.map((v) => v.rule)).toEqual(['room_subsidy']);
+    const stored = await prisma.classTemplate.findUniqueOrThrow({ where: { id: tpl.id } });
+    expect(Number(stored.roomCost)).toBe(15);
+  });
+
+  it('applies an edit to both rates that stays valid against the stored row', async () => {
+    const tpl = await makeTemplate('Econ Rates');
+    const result = await updateClassTemplate(prisma, tpl.id, teacherId, { minRate: 30, targetRate: 40 });
+    expect(result.ok).toBe(true);
+    const stored = await prisma.classTemplate.findUniqueOrThrow({ where: { id: tpl.id } });
+    expect([Number(stored.minRate), Number(stored.targetRate)]).toEqual([30, 40]);
   });
 
   it('rolls back a rule-level field sent alongside the invalid economics', async () => {
