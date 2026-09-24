@@ -252,9 +252,9 @@ makes a session-level `SET` reach every later query on it). The harness
 asserts that an unpaged `CEILING_ROWS` load fails with `54001`
 (`isStackDepthError`) and that a `SWEEP_PAGE_SIZE` page passes. Each per-site
 test then seeds a `CEILING_ROWS` parent set and asserts the paged read
-completes on the lowered stack without returning a row twice; `expectLowered` confirms the session is
-actually running under it, so a test cannot pass by silently running on a
-default-stack connection. Un-paging a site's read turns its test red with
+completes on the lowered stack without returning a row twice;
+`expectLowered` confirms the session is actually running under it, so a
+test cannot pass by silently running on a default-stack connection. Un-paging a site's read turns its test red with
 `54001`, which is how each was verified. The per-site tests live in
 `src/services/sweep-page-ceiling.test.ts`.
 
