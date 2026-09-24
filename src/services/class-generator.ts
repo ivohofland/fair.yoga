@@ -120,13 +120,12 @@ export const claimTemplateForGeneration = (
  * selects.
  *
  * The selection reads only the template's OWN flags — `scheduleRule`'s
- * `isActive`/`isArchived` — and never `teacherRoom.isArchived`. That used to
- * be a known gap, measured on #116's branch (four classes generated into a
- * just-archived room), and is closed structurally: `ClassTemplate` mirrors
- * the rule's liveness and the room's archive onto its own row, kept equal by
- * foreign keys, and `ClassTemplate_live_needs_open_room` refuses every write
- * that would leave a live template on an archived room (issue 272). No row
- * this query selects can therefore point into an archived room.
+ * `isActive`/`isArchived` — and never `teacherRoom.isArchived`; that gap is
+ * closed structurally instead: `ClassTemplate` mirrors the rule's liveness
+ * and the room's archive onto its own row, kept equal by foreign keys, and
+ * `ClassTemplate_live_needs_open_room` refuses every write that would leave a
+ * live template on an archived room. No row this query selects can therefore
+ * point into an archived room.
  *
  * That guarantee holds while `ScheduleRule.live` and `ACTIVE_TEMPLATE_WHERE`
  * stay the same predicate, which is asserted at all four corners in
@@ -138,9 +137,10 @@ export const claimTemplateForGeneration = (
  * See `lib/template-selection.ts`.
  *
  * Narrowed to `id` and `scheduleRule.teacherId` — the two fields the sweep's
- * loop reads, both for logging. Everything else about the template is
+ * loop reads, both for logging; the loop never uses the teacher-timezone hop,
+ * so the selection excludes it. Everything else about the template is
  * re-read fresh under `claimTemplateForGeneration`, inside its own
- * transaction, so this drops the teacher-timezone hop the loop never used.
+ * transaction.
  */
 function readTemplateCandidatePage(
   db: PrismaClient,

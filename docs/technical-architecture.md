@@ -228,7 +228,9 @@ one keyed on more than one column, such as `Class.calendarEntry` — that key
 is a row value, and the statement Prisma sends is a row-value `IN` list:
 `WHERE ("id","kind","live") IN (($1, $2, $3), ...)`. Postgres parses that
 list into a nested expression tree and fails with `54001 stack depth limit
-exceeded` at about 7,500 tuples on the default `max_stack_depth` (2 MB). A
+exceeded` at about 7,500 tuples on the default `max_stack_depth` (2 MB) —
+measured by bisection on Prisma's bound-parameter path, between about 7,500
+and 7,750 parents (#674); in plain SQL, 3,000 tuples pass and 8,000 fail. A
 **single-column** `IN` list is flat — Postgres compiles it to
 `= ANY(array)` — and stays safe at any size tested (32,000 values). Relation
 **filters** (`where: { calendarEntry: { cancelledAt: null } }`) compile to a
@@ -246,12 +248,14 @@ the verdict below.
 **How the ceiling tests reproduce it.** `tests/stack-ceiling.ts`'s
 `lowStackClient` opens a `connection_limit=1` Prisma client and lowers
 `max_stack_depth` for that session (a `connection_limit=1` client is what
-makes a session-level `SET` reach every later query on it), so a per-site
-test can seed a parent set that overflows the lowered threshold and assert
-RED — the unpaged read fails with `54001` (`isStackDepthError`) — before
-GREEN — the paged read returns. `expectLowered` asserts the session is
-actually running under the lowered stack, so a test cannot pass by silently
-running on a default-stack connection. The per-site tests live in
+makes a session-level `SET` reach every later query on it). The harness
+asserts that an unpaged `CEILING_ROWS` load fails with `54001`
+(`isStackDepthError`) and that a `SWEEP_PAGE_SIZE` page passes. Each per-site
+test then seeds a `CEILING_ROWS` parent set and asserts only the paged read
+completes on the lowered stack; `expectLowered` confirms the session is
+actually running under it, so a test cannot pass by silently running on a
+default-stack connection. Un-paging a site's read turns its test red with
+`54001`, which is how each was verified. The per-site tests live in
 `src/services/sweep-page-ceiling.test.ts`.
 
 **Per-tenant verdict.** Bounded by one teacher's or one student's own

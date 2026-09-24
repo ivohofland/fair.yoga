@@ -1,9 +1,10 @@
 /**
- * The ceiling harness itself: a lowered `max_stack_depth` must split a
+ * Calibrates the ceiling harness — a lowered `max_stack_depth` must split a
  * `SWEEP_PAGE_SIZE` parent set from a `CEILING_ROWS` one, on the raw SQL path
- * and on Prisma's relation-load path, and must not leak past its own client.
- * These cases are the ceiling tests' premise; the design is
- * `docs/superpowers/specs/2026-09-24-relation-load-paging-design.md`.
+ * and on Prisma's relation-load path, and must not leak past its own client —
+ * then runs one ceiling test per paged read: each seeds a `CEILING_ROWS`
+ * parent set and asserts the read completes on the lowered stack. The design
+ * is `docs/superpowers/specs/2026-09-24-relation-load-paging-design.md`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import crypto from 'crypto';
@@ -24,6 +25,7 @@ import {
   lowStackClient,
   seedClasses,
   seedTeachers,
+  SLOTS_PER_DAY,
   type SeededTeachers,
 } from '../../tests/stack-ceiling';
 
@@ -221,7 +223,7 @@ describe('reconcileWaitlists', () => {
   beforeAll(async () => {
     low = await lowStackClient();
     teachers = await seedTeachers(prisma, 11, 'ceiling-reconcile');
-    const dateCount = Math.ceil(CEILING_ROWS / (11 * 96));
+    const dateCount = Math.ceil(CEILING_ROWS / (11 * SLOTS_PER_DAY));
     const dates = Array.from({ length: dateCount }, (_, i) => new Date(Date.UTC(2031, 0, 6 + i)));
     // `maxStudents: 1` and one registration each: every class is full, so
     // none is handed to `handleSpotFreed`.
@@ -290,20 +292,27 @@ describe('reconcileWaitlists', () => {
 /**
  * `CEILING_ROWS` `ScheduleRule` rows, split evenly across `teachers`, one
  * `dayOfWeek`/`startTime` slot each: `dayOfWeek = i % 7`, `startTime` a
- * 15-minute step at `floor(i / 7)` — at most 72 steps per day, inside the 96
- * available, so no two of one teacher's rows overlap under
- * `ScheduleRule_teacher_slot_excl`. `i` runs per teacher, so two teachers
- * never collide on `teacherId` either. Returns the rule ids in creation
- * order, teacher by teacher: all of the first teacher's rules, then all of
- * the next's, matching how each caller below pairs them with its own child
- * rows.
+ * 15-minute step at `floor(i / 7)`, so no two of one teacher's rows overlap
+ * under `ScheduleRule_teacher_slot_excl`. `i` runs per teacher, so two
+ * teachers never collide on `teacherId` either. Returns the rule ids in
+ * creation order, teacher by teacher — all of the first teacher's rules, then
+ * all of the next's, matching how each caller below pairs them with its own
+ * child rows — and the `perTeacher` count so callers don't recompute it.
  */
 async function seedScheduleRules(
   db: PrismaClient,
   teachers: SeededTeachers,
   kind: 'regular' | 'studio',
-): Promise<{ ruleIds: string[] }> {
-  const perTeacher = CEILING_ROWS / teachers.teacherIds.length;
+): Promise<{ ruleIds: string[]; perTeacher: number }> {
+  const teacherCount = teachers.teacherIds.length;
+  if (CEILING_ROWS % teacherCount !== 0) {
+    throw new Error(`seedScheduleRules: CEILING_ROWS ${CEILING_ROWS} does not divide evenly across ${teacherCount} teachers`);
+  }
+  const perTeacher = CEILING_ROWS / teacherCount;
+  const capacity = 7 * SLOTS_PER_DAY;
+  if (perTeacher > capacity) {
+    throw new Error(`seedScheduleRules: ${perTeacher} rules per teacher exceed ${capacity} non-overlapping slots`);
+  }
   const rules: Prisma.ScheduleRuleCreateManyInput[] = [];
   const ruleIds: string[] = [];
   for (const teacherId of teachers.teacherIds) {
@@ -324,7 +333,7 @@ async function seedScheduleRules(
     }
   }
   await db.scheduleRule.createMany({ data: rules });
-  return { ruleIds };
+  return { ruleIds, perTeacher };
 }
 
 describe('readGenerationCandidates', () => {
@@ -337,9 +346,9 @@ describe('readGenerationCandidates', () => {
     low = await lowStackClient();
     teachers = await seedTeachers(prisma, 2, 'ceiling-class-gen');
 
-    ({ ruleIds } = await seedScheduleRules(prisma, teachers, 'regular'));
+    let perTeacher: number;
+    ({ ruleIds, perTeacher } = await seedScheduleRules(prisma, teachers, 'regular'));
 
-    const perTeacher = CEILING_ROWS / teachers.teacherIds.length;
     const templates: Prisma.ClassTemplateCreateManyInput[] = [];
     ruleIds.forEach((scheduleRuleId, idx) => {
       const teacherRoomId = teachers!.teacherRoomIds[Math.floor(idx / perTeacher)]!;

@@ -35,8 +35,12 @@ export async function markOverduePayments(
 }
 
 /** One page of `readDuePayments`, keyed on `id`. */
-function readDuePaymentPage(db: PrismaClient, now: Date, afterId: string | undefined, take: number) {
-  const remindCutoff = new Date(now.getTime() - REMIND_EVERY_DAYS * DAY_MS);
+function readDuePaymentPage(
+  db: PrismaClient,
+  remindCutoff: Date,
+  afterId: string | undefined,
+  take: number,
+) {
   return db.payment.findMany({
     where: {
       status: 'overdue',
@@ -70,14 +74,14 @@ function readDuePaymentPage(db: PrismaClient, now: Date, afterId: string | undef
 export type DuePayment = Awaited<ReturnType<typeof readDuePaymentPage>>[number];
 
 /**
- * The overdue payments `sendPaymentReminders` reminds: not reminded in the
- * last REMIND_EVERY_DAYS, with neither side of the payment erased. Read
+ * The overdue payments `sendPaymentReminders` reminds: not reminded since
+ * `remindCutoff`, with neither side of the payment erased. Read
  * `SWEEP_PAGE_SIZE` at a time via `readInPages` (`@/lib/read-in-pages`); why
  * is in `docs/technical-architecture.md` ("Relation loads over platform-wide
  * sets").
  */
-export function readDuePayments(db: PrismaClient, now: Date): Promise<DuePayment[]> {
-  return readInPages<DuePayment>((after, take) => readDuePaymentPage(db, now, after?.id, take));
+export function readDuePayments(db: PrismaClient, remindCutoff: Date): Promise<DuePayment[]> {
+  return readInPages<DuePayment>((after, take) => readDuePaymentPage(db, remindCutoff, after?.id, take));
 }
 
 /**
@@ -90,7 +94,7 @@ export async function sendPaymentReminders(
 ): Promise<number> {
   const remindCutoff = new Date(now.getTime() - REMIND_EVERY_DAYS * DAY_MS);
 
-  const due = await readDuePayments(db, now);
+  const due = await readDuePayments(db, remindCutoff);
 
   if (due.length === 0) return 0;
 
