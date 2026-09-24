@@ -57,7 +57,9 @@ export function CompleteClassButton({ classId, chargedCount }: CompleteClassButt
           <button
             type="button"
             onClick={() => setConfirming(false)}
-            className="type-label text-teal"
+            // The POST cannot be recalled once sent.
+            disabled={submitting}
+            className="type-label text-teal disabled:opacity-50"
           >
             Keep open
           </button>

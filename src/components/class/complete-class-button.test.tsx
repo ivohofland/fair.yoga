@@ -54,6 +54,26 @@ describe('CompleteClassButton', () => {
     screen.getByRole('button', { name: 'Finish class' });
   });
 
+  /**
+   * The POST cannot be recalled once sent, so "Keep open" must not offer to
+   * while it is in flight.
+   */
+  it('disables Keep open while the finish is in flight', async () => {
+    let answer: (value: { ok: boolean }) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CompleteClassButton classId="c-9" chargedCount={2} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    expect(screen.getByRole('button', { name: 'Keep open' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Keep open' })).toBeDisabled());
+
+    answer({ ok: true });
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+  });
+
   it('says one student, not one students', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<CompleteClassButton classId="c-9" chargedCount={1} />);
