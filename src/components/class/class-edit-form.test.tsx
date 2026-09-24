@@ -122,11 +122,13 @@ describe('ClassEditForm', () => {
   });
 
   /**
-   * `updateClassSchema`'s minRate/targetRate refine (schemas.ts) is mirrored
-   * by hand in `handleSave`, because a client form cannot value-import zod
-   * without shipping it to the browser. The pins in the source file cannot
-   * guard that mirror — they compare key sets, not predicates — so this test
-   * is the only thing that would notice it drifting from the schema.
+   * `updateClassSchema`'s minRate/targetRate refine (schemas.ts) is checked
+   * here through `economicsViolations` (class-economics.ts), the same
+   * function the server calls, so a teacher sees the message immediately
+   * instead of after a round trip. The pins in the source file cannot guard
+   * that the copy still matches the rule — they compare key sets, not
+   * predicates — so this test is the only thing that would notice it
+   * drifting.
    */
   it('rejects a min rate above target rate before any request is sent', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
@@ -141,6 +143,30 @@ describe('ClassEditForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+  });
+
+  /**
+   * #221. `updateClass` refuses a `minRate` that subsidizes more than the
+   * room cost on every edit, not only on create, through the same
+   * `economicsViolations` function this form now calls.
+   */
+  it('rejects min rate subsidizing more than room cost before any request is sent', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ClassEditForm
+        classId="cls-1"
+        settingsLocked={false}
+        initial={{ ...initial, roomCost: 20, minRate: -25, targetRate: 25 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(
+        /min rate cannot subsidize more than the room cost — prices would go negative/i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('emits no date bound from a server render (#249)', () => {

@@ -317,11 +317,11 @@ describe('TemplateForm', () => {
 
   /**
    * `createClassTemplateSchema`'s and `updateClassTemplateSchema`'s
-   * minRate/targetRate refine (schemas.ts) is mirrored by hand in
-   * `handleSubmit`, because a client form cannot value-import zod without
-   * shipping it to the browser. The pins in the source file cannot guard
-   * that mirror — they compare key sets, not predicates — so this test is
-   * the only thing that would notice it drifting from the schema.
+   * minRate/targetRate refine (schemas.ts) is checked here through
+   * `economicsViolations` (class-economics.ts), the same function the server
+   * calls. The pins in the source file cannot guard that the copy still
+   * matches the rule — they compare key sets, not predicates — so this test
+   * is the only thing that would notice it drifting from the schema.
    *
    * The room fetch fires on mount, so the fetch-not-called assertion checks
    * the call count did not increase across the click rather than that fetch
@@ -399,12 +399,12 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * #590. The room subsidy guard is create-only because updateClassTemplateSchema
-   * has no roomCost refine. Editing a template with a rate subsidizing below
-   * roomCost is permitted and dispatches the request.
-   * Kills the mutant that drops `mode === 'create' &&`.
+   * #221. The server now refuses this rule on edit too — `updateClassTemplateSchema`
+   * gained the same room-subsidy refine `createClassTemplateSchema` already had —
+   * so this form's own check is no longer create-only either. Both modes run
+   * the same `economicsViolations` function and share one `ECONOMICS_COPY` map.
    */
-  it('permits min rate subsidizing more than room cost on edit', async () => {
+  it('rejects min rate subsidizing more than room cost on edit before any request is sent', async () => {
     stubFetch();
     render(
       <TemplateForm
@@ -417,8 +417,10 @@ describe('TemplateForm', () => {
     const callsBeforeSubmit = fetchMock.mock.calls.length;
     fireEvent.click(button);
 
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit + 1));
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /^Min rate cannot subsidize more than the room cost — prices would go negative$/,
+    );
   });
 
   /**

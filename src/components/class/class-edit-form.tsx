@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
+import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
 import { readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
@@ -27,6 +28,13 @@ export interface ClassEditInitial {
 }
 
 type UpdateClassWire = z.infer<typeof updateClassSchema>;
+
+/** This form's own wording for each rule `economicsViolations` can report. */
+const ECONOMICS_COPY = {
+  students_order: 'Min students cannot exceed max students',
+  rate_order: 'Min rate cannot exceed target rate',
+  room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
+} as const satisfies Record<EconomicsRule, string>;
 
 /**
  * #81. `ClassEditInitial` is the only enumeration of this form's fields, and
@@ -74,24 +82,18 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
   }
 
   async function handleSave() {
-    // Mirrors two of updateClassSchema's refines (schemas.ts) so a teacher
-    // sees the message immediately instead of after a round trip. This
-    // restates rules that live in schemas.ts — the exact defect class this
-    // PR exists to remove — and the pins above cannot help: they compare key
-    // sets, not predicates, so a refine added or changed there fails no
-    // build here. The tests in class-edit-form.test.tsx are the only thing
-    // holding this mirror true.
+    // The same three cross-field rules `updateClass` enforces
+    // (class-economics.ts), checked through the same `economicsViolations`
+    // function so a teacher sees the message immediately instead of after a
+    // round trip. `ECONOMICS_COPY` above is this form's own wording.
     //
     // Only checked while unlocked: locked economics are stripped from the
     // payload below and so are never sent for the schema to validate either,
     // whatever their stored values are.
     if (!settingsLocked) {
-      if (form.minStudents > form.maxStudents) {
-        setError('Min students cannot exceed max students');
-        return;
-      }
-      if (form.minRate > form.targetRate) {
-        setError('Min rate cannot exceed target rate');
+      const [violation] = economicsViolations(form);
+      if (violation !== undefined) {
+        setError(ECONOMICS_COPY[violation.rule]);
         return;
       }
     }

@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
 import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
 import type { NoneOf } from '@/lib/type-pins';
+import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -123,6 +124,13 @@ function isAutoCancelCheck(v: string): v is AutoCancelCheck {
  * comparing one literal to itself could catch.
  */
 const RECURRING_LIST_PATH = '/settings/recurring';
+
+/** This form's own wording for each rule `economicsViolations` can report. */
+const ECONOMICS_COPY = {
+  students_order: 'Min students cannot exceed max students',
+  rate_order: 'Min rate cannot exceed target rate',
+  room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
+} as const satisfies Record<EconomicsRule, string>;
 
 const INITIAL_VALUES: TemplateFormValues = {
   teacherRoomId: '',
@@ -253,28 +261,14 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       setError('Class type is required');
       return;
     }
-    // Mirrors createClassTemplateSchema's and updateClassTemplateSchema's
-    // refines (schemas.ts) so a teacher sees the message immediately instead
-    // of after a round trip. This restates rules that live in schemas.ts —
-    // the exact defect class this PR exists to remove — and the pins above
-    // cannot help: they compare key sets, not predicates, so a refine added
-    // or changed there fails no build here. The tests in
-    // template-form.test.tsx are the only thing holding this mirror true.
-    //
-    // The room-cost check is create-only because the underlying refine is:
-    // updateClassTemplateSchema has no minRate/roomCost refine, so a PUT
-    // carrying an already-subsidizing rate is one the server itself would
-    // not reject.
-    if (form.minStudents > form.maxStudents) {
-      setError('Min students cannot exceed max students');
-      return;
-    }
-    if (form.minRate > form.targetRate) {
-      setError('Min rate cannot exceed target rate');
-      return;
-    }
-    if (mode === 'create' && form.minRate < -form.roomCost) {
-      setError('Min rate cannot subsidize more than the room cost — prices would go negative');
+    // The same three cross-field rules `createClassTemplate`/
+    // `updateClassTemplate` enforce (class-economics.ts), checked through
+    // the same `economicsViolations` function so a teacher sees the message
+    // immediately instead of after a round trip, on create and edit alike.
+    // `ECONOMICS_COPY` above is this form's own wording.
+    const [violation] = economicsViolations(form);
+    if (violation !== undefined) {
+      setError(ECONOMICS_COPY[violation.rule]);
       return;
     }
 
