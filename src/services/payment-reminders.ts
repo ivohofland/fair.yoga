@@ -14,6 +14,7 @@ import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
+import { readInPages } from '@/lib/read-in-pages';
 
 export const OVERDUE_AFTER_DAYS = 7;
 export const REMIND_EVERY_DAYS = 7;
@@ -33,17 +34,10 @@ export async function markOverduePayments(
   return result.count;
 }
 
-/**
- * Sends a reminder notification for each overdue payment that has not been
- * reminded in the last REMIND_EVERY_DAYS. Returns the number of reminders.
- */
-export async function sendPaymentReminders(
-  db: PrismaClient,
-  now: Date = new Date(),
-): Promise<number> {
+/** One page of `readDuePayments`, keyed on `id`. */
+function readDuePaymentPage(db: PrismaClient, now: Date, afterId: string | undefined, take: number) {
   const remindCutoff = new Date(now.getTime() - REMIND_EVERY_DAYS * DAY_MS);
-
-  const due = await db.payment.findMany({
+  return db.payment.findMany({
     where: {
       status: 'overdue',
       OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
@@ -53,7 +47,10 @@ export async function sendPaymentReminders(
         student: { deletedAt: null },
         class: { calendarEntry: { teacher: { deletedAt: null } } },
       },
+      ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
     },
+    orderBy: { id: 'asc' },
+    take,
     include: {
       registration: {
         select: {
@@ -68,6 +65,32 @@ export async function sendPaymentReminders(
       },
     },
   });
+}
+
+export type DuePayment = Awaited<ReturnType<typeof readDuePaymentPage>>[number];
+
+/**
+ * The overdue payments `sendPaymentReminders` reminds: not reminded in the
+ * last REMIND_EVERY_DAYS, with neither side of the payment erased. Read
+ * `SWEEP_PAGE_SIZE` at a time via `readInPages` (`@/lib/read-in-pages`); why
+ * is in `docs/technical-architecture.md` ("Relation loads over platform-wide
+ * sets").
+ */
+export function readDuePayments(db: PrismaClient, now: Date): Promise<DuePayment[]> {
+  return readInPages<DuePayment>((after, take) => readDuePaymentPage(db, now, after?.id, take));
+}
+
+/**
+ * Sends a reminder notification for each overdue payment that has not been
+ * reminded in the last REMIND_EVERY_DAYS. Returns the number of reminders.
+ */
+export async function sendPaymentReminders(
+  db: PrismaClient,
+  now: Date = new Date(),
+): Promise<number> {
+  const remindCutoff = new Date(now.getTime() - REMIND_EVERY_DAYS * DAY_MS);
+
+  const due = await readDuePayments(db, now);
 
   if (due.length === 0) return 0;
 

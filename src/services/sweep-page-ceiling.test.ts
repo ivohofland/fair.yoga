@@ -13,6 +13,8 @@ import { autoCancelClasses, autoCompleteClasses, autoTransitionToInProgress } fr
 import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reconciliation';
 import { readGenerationCandidates } from './class-generator';
 import { readStudioGenerationCandidates } from './studio-class-generator';
+import { getUnreadForEmailFallback } from './notifications';
+import { readDuePayments } from './payment-reminders';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   CEILING_ROWS,
@@ -292,8 +294,9 @@ describe('reconcileWaitlists', () => {
  * available, so no two of one teacher's rows overlap under
  * `ScheduleRule_teacher_slot_excl`. `i` runs per teacher, so two teachers
  * never collide on `teacherId` either. Returns the rule ids in creation
- * order, round-robin across teachers, matching how each caller below pairs
- * them with its own child rows.
+ * order, teacher by teacher: all of the first teacher's rules, then all of
+ * the next's, matching how each caller below pairs them with its own child
+ * rows.
  */
 async function seedScheduleRules(
   db: PrismaClient,
@@ -421,6 +424,179 @@ describe('readStudioGenerationCandidates', () => {
     const result = await readStudioGenerationCandidates(low);
     const ids = new Set(result.map((r) => r.id));
     for (const id of templateIds) {
+      expect(ids.has(id)).toBe(true);
+    }
+    await expectLowered(low);
+  });
+});
+
+describe('getUnreadForEmailFallback', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  let studentId: string | undefined;
+  const notificationIds: string[] = [];
+  // Unread and unsent, but recent, unlinked and not an immediate type: the
+  // read's own predicate excludes it, on a later page as on the first.
+  const freshId = crypto.randomUUID();
+  const tag = `ceiling-fallback-${Date.now()}`;
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 11, 'ceiling-fallback');
+    const { classIds } = await seedClasses(prisma, teachers, {
+      rows: CEILING_ROWS,
+      dates: [new Date('2030-01-07')],
+      status: 'open',
+      minStudents: 0,
+      maxStudents: 10,
+    });
+    const student = await prisma.student.create({
+      data: { firstName: 'Ceiling', lastName: 'Recipient', email: `${tag}@test.local` },
+    });
+    studentId = student.id;
+    // One shared `createdAt`, past the unread threshold, so every row is
+    // eligible. `CEILING_ROWS` is more than one page, so the tie spans a page
+    // boundary: a cursor on `createdAt` alone would lose rows there.
+    const createdAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await prisma.notification.createMany({
+      data: classIds.map((relatedClassId) => {
+        const id = crypto.randomUUID();
+        notificationIds.push(id);
+        return {
+          id,
+          recipientType: 'student' as const,
+          recipientId: student.id,
+          type: 'reminder' as const,
+          title: 'Ceiling',
+          body: 'Ceiling',
+          relatedClassId,
+          isRead: false,
+          emailSent: false,
+          createdAt,
+        };
+      }),
+    });
+    await prisma.notification.create({
+      data: {
+        id: freshId,
+        recipientType: 'student',
+        recipientId: student.id,
+        type: 'reminder',
+        title: 'Ceiling fresh',
+        body: 'Ceiling fresh',
+        isRead: false,
+        emailSent: false,
+      },
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    // Before the teachers: deleting their classes only nulls
+    // `relatedClassId`, which would leave these rows behind.
+    await prisma.notification.deleteMany({ where: { id: { in: [...notificationIds, freshId] } } });
+    if (studentId !== undefined) {
+      await prisma.student.deleteMany({ where: { id: studentId } });
+    }
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads every seeded notification under the lowered stack, oldest first', async () => {
+    const result = await getUnreadForEmailFallback(low);
+    const ids = new Set(result.map((n) => n.id));
+    expect(notificationIds).toHaveLength(CEILING_ROWS);
+    for (const id of notificationIds) {
+      expect(ids.has(id)).toBe(true);
+    }
+    for (let i = 1; i < result.length; i++) {
+      const prev = result[i - 1]!;
+      const cur = result[i]!;
+      const ordered =
+        prev.createdAt.getTime() < cur.createdAt.getTime() ||
+        (prev.createdAt.getTime() === cur.createdAt.getTime() && prev.id < cur.id);
+      expect(ordered).toBe(true);
+    }
+    await expectLowered(low);
+  });
+
+  it('applies its eligibility predicate on pages after the first', async () => {
+    // The extension's row type leaves `id` optional: `args` may not select it.
+    const fetched: (string | undefined)[] = [];
+    const recording = low.$extends({
+      query: {
+        notification: {
+          async findMany({ args, query }) {
+            const rows = await query(args);
+            for (const row of rows) fetched.push(row.id);
+            return rows;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    await getUnreadForEmailFallback(recording);
+    expect(fetched.length).toBeGreaterThan(SWEEP_PAGE_SIZE);
+    expect(fetched).toEqual(expect.arrayContaining(notificationIds));
+    expect(fetched).not.toContain(freshId);
+  });
+});
+
+describe('readDuePayments', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  let studentId: string | undefined;
+  const registrationIds: string[] = [];
+  const paymentIds: string[] = [];
+  const tag = `ceiling-payments-${Date.now()}`;
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 11, 'ceiling-payments');
+    const { classIds } = await seedClasses(prisma, teachers, {
+      rows: CEILING_ROWS,
+      dates: [new Date('2030-01-07')],
+      status: 'open',
+      minStudents: 0,
+      maxStudents: 10,
+    });
+    const student = await prisma.student.create({
+      data: { firstName: 'Ceiling', lastName: 'Payer', email: `${tag}@test.local` },
+    });
+    studentId = student.id;
+    await prisma.registration.createMany({
+      data: classIds.map((classId) => {
+        const id = crypto.randomUUID();
+        registrationIds.push(id);
+        return { id, classId, studentId: student.id, status: 'registered' as const, tierAtBooking: 3 };
+      }),
+    });
+    await prisma.payment.createMany({
+      data: registrationIds.map((registrationId) => {
+        const id = crypto.randomUUID();
+        paymentIds.push(id);
+        return { id, registrationId, status: 'overdue' as const, reminderSentAt: null, amount: 1 };
+      }),
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    if (paymentIds.length > 0) {
+      await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
+    }
+    if (registrationIds.length > 0) {
+      await prisma.registration.deleteMany({ where: { id: { in: registrationIds } } });
+    }
+    if (studentId !== undefined) {
+      await prisma.student.deleteMany({ where: { id: studentId } });
+    }
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads every seeded overdue payment under the lowered stack', async () => {
+    const result = await readDuePayments(low, new Date());
+    const ids = new Set(result.map((p) => p.id));
+    expect(paymentIds).toHaveLength(CEILING_ROWS);
+    for (const id of paymentIds) {
       expect(ids.has(id)).toBe(true);
     }
     await expectLowered(low);
