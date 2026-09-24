@@ -132,7 +132,7 @@ export async function seedTeachers(
 }
 
 const SLOT_MINUTES = 15;
-const SLOTS_PER_DAY = (24 * 60) / SLOT_MINUTES;
+export const SLOTS_PER_DAY = (24 * 60) / SLOT_MINUTES;
 
 /**
  * `opts.rows` regular classes, each an entry plus its class, written in two

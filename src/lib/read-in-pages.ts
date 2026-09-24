@@ -1,8 +1,9 @@
 /**
- * The page size a sweep reads a platform-wide set in. A relation load's
- * parent set becomes one row-value `IN` list in the SQL Prisma sends, and the
- * Postgres parser's stack grows with that list — why sweeps page at all is in
- * `docs/technical-architecture.md` ("Relation loads over platform-wide sets").
+ * The page size a sweep reads a platform-wide set in. A composite relation
+ * load's parent set becomes one row-value `IN` list in the SQL Prisma sends,
+ * and the Postgres parser's stack grows with that list — why sweeps page at
+ * all is in `docs/technical-architecture.md` ("Relation loads over
+ * platform-wide sets").
  */
 export const SWEEP_PAGE_SIZE = 500;
 
