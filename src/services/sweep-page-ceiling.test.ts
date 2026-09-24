@@ -6,10 +6,13 @@
  * `docs/superpowers/specs/2026-09-24-relation-load-paging-design.md`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import crypto from 'crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
 import { autoCancelClasses, autoCompleteClasses, autoTransitionToInProgress } from './class-transitions';
 import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reconciliation';
+import { readGenerationCandidates } from './class-generator';
+import { readStudioGenerationCandidates } from './studio-class-generator';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   CEILING_ROWS,
@@ -279,5 +282,147 @@ describe('reconcileWaitlists', () => {
     expect(summary.failedClassIds).toEqual([]);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
     await expectLowered(scoped.db);
+  });
+});
+
+/**
+ * `CEILING_ROWS` `ScheduleRule` rows, split evenly across `teachers`, one
+ * `dayOfWeek`/`startTime` slot each: `dayOfWeek = i % 7`, `startTime` a
+ * 15-minute step at `floor(i / 7)` — at most 72 steps per day, inside the 96
+ * available, so no two of one teacher's rows overlap under
+ * `ScheduleRule_teacher_slot_excl`. `i` runs per teacher, so two teachers
+ * never collide on `teacherId` either. Returns the rule ids in creation
+ * order, round-robin across teachers, matching how each caller below pairs
+ * them with its own child rows.
+ */
+async function seedScheduleRules(
+  db: PrismaClient,
+  teachers: SeededTeachers,
+  kind: 'regular' | 'studio',
+): Promise<{ ruleIds: string[] }> {
+  const perTeacher = CEILING_ROWS / teachers.teacherIds.length;
+  const rules: Prisma.ScheduleRuleCreateManyInput[] = [];
+  const ruleIds: string[] = [];
+  for (const teacherId of teachers.teacherIds) {
+    for (let i = 0; i < perTeacher; i++) {
+      const id = crypto.randomUUID();
+      ruleIds.push(id);
+      rules.push({
+        id,
+        teacherId,
+        kind,
+        classType: 'Ceiling',
+        dayOfWeek: i % 7,
+        startTime: new Date(Date.UTC(1970, 0, 1, 0, Math.floor(i / 7) * 15)),
+        durationMinutes: 15,
+        isActive: true,
+        isArchived: false,
+      });
+    }
+  }
+  await db.scheduleRule.createMany({ data: rules });
+  return { ruleIds };
+}
+
+describe('readGenerationCandidates', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  let ruleIds: string[] = [];
+  const templateIds: string[] = [];
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 2, 'ceiling-class-gen');
+
+    ({ ruleIds } = await seedScheduleRules(prisma, teachers, 'regular'));
+
+    const perTeacher = CEILING_ROWS / teachers.teacherIds.length;
+    const templates: Prisma.ClassTemplateCreateManyInput[] = [];
+    ruleIds.forEach((scheduleRuleId, idx) => {
+      const teacherRoomId = teachers!.teacherRoomIds[Math.floor(idx / perTeacher)]!;
+      const id = crypto.randomUUID();
+      templateIds.push(id);
+      templates.push({
+        id,
+        scheduleRuleId,
+        kind: 'regular',
+        teacherRoomId,
+        ruleLive: true,
+        roomArchived: false,
+        roomCost: 0,
+        minRate: 0,
+        targetRate: 0,
+        minStudents: 0,
+        maxStudents: 10,
+      });
+    });
+    await prisma.classTemplate.createMany({ data: templates });
+  }, 60_000);
+
+  afterAll(async () => {
+    if (templateIds.length > 0) {
+      await prisma.classTemplate.deleteMany({ where: { id: { in: templateIds } } });
+    }
+    if (ruleIds.length > 0) {
+      await prisma.scheduleRule.deleteMany({ where: { id: { in: ruleIds } } });
+    }
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads every seeded template under the lowered stack', async () => {
+    const result = await readGenerationCandidates(low);
+    const ids = new Set(result.map((r) => r.id));
+    for (const id of templateIds) {
+      expect(ids.has(id)).toBe(true);
+    }
+    await expectLowered(low);
+  });
+});
+
+describe('readStudioGenerationCandidates', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  let ruleIds: string[] = [];
+  const templateIds: string[] = [];
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 2, 'ceiling-studio-gen');
+
+    ({ ruleIds } = await seedScheduleRules(prisma, teachers, 'studio'));
+
+    const templates: Prisma.StudioClassTemplateCreateManyInput[] = ruleIds.map((scheduleRuleId) => {
+      const id = crypto.randomUUID();
+      templateIds.push(id);
+      return {
+        id,
+        scheduleRuleId,
+        kind: 'studio',
+        location: 'Ceiling Studio',
+        hourlyRate: 0,
+      };
+    });
+    await prisma.studioClassTemplate.createMany({ data: templates });
+  }, 60_000);
+
+  afterAll(async () => {
+    if (templateIds.length > 0) {
+      await prisma.studioClassTemplate.deleteMany({ where: { id: { in: templateIds } } });
+    }
+    if (ruleIds.length > 0) {
+      await prisma.scheduleRule.deleteMany({ where: { id: { in: ruleIds } } });
+    }
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads every seeded template under the lowered stack', async () => {
+    const result = await readStudioGenerationCandidates(low);
+    const ids = new Set(result.map((r) => r.id));
+    for (const id of templateIds) {
+      expect(ids.has(id)).toBe(true);
+    }
+    await expectLowered(low);
   });
 });
