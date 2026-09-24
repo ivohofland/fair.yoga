@@ -481,9 +481,11 @@ describe('startScheduler', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
     resetGlobals();
     onTestFinished(() => {
+      // The spy first: it restores the function it wrapped, which is the fake,
+      // so restoring it after useRealTimers() would put the fake back.
+      setIntervalSpy.mockRestore();
       vi.useRealTimers();
       vi.unstubAllEnvs();
-      setIntervalSpy.mockRestore();
       info.mockRestore();
       resetGlobals();
     });
@@ -505,9 +507,11 @@ describe('startScheduler', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
     resetGlobals();
     onTestFinished(() => {
+      // The spy first: it restores the function it wrapped, which is the fake,
+      // so restoring it after useRealTimers() would put the fake back.
+      setIntervalSpy.mockRestore();
       vi.useRealTimers();
       vi.unstubAllEnvs();
-      setIntervalSpy.mockRestore();
       info.mockRestore();
       resetGlobals();
     });
