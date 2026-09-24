@@ -107,6 +107,11 @@ describe('class transitions (DB, timezone-aware)', () => {
   let studentId: string;
   let secondStudentId: string;
   let waiterStudentId: string;
+  let teacherAccountId: string;
+  // A teacher at UTC−12, for the auto-cancel window's lower bound.
+  let westTeacherId: string;
+  let westTeacherAccountId: string;
+  let westTeacherRoomId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -121,6 +126,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       },
     });
     teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
 
     const room = await prisma.room.create({
       data: {
@@ -182,25 +188,48 @@ describe('class transitions (DB, timezone-aware)', () => {
       },
     });
     waiterStudentId = waiter.id;
+
+    const westTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Tz',
+        lastName: 'West',
+        email: `tz-west-${uniqueSuffix}@test.local`,
+        account: { create: { email: `tz-west-${uniqueSuffix}@test.local` } },
+        bio: 'Timezone transition tests, UTC−12',
+        pageSlug: `tz-west-${uniqueSuffix}`,
+        defaultTimezone: 'Etc/GMT+12',
+      },
+    });
+    westTeacherId = westTeacher.id;
+    westTeacherAccountId = westTeacher.accountId;
+    const westTeacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: westTeacherId, roomId, capacityOverride: 15, rentalRate: 35 },
+    });
+    westTeacherRoomId = westTeacherRoom.id;
   });
 
   afterAll(async () => {
+    // Guarded: every id here is assigned in `beforeAll`, and one that failed
+    // first leaves it undefined — an undefined filter turns `deleteMany` into
+    // a delete of the whole table.
+    const teacherIds = [teacherId, westTeacherId].filter(Boolean);
+    const studentIds = [studentId, secondStudentId, waiterStudentId].filter(Boolean);
+    const accountIds = [teacherAccountId, westTeacherAccountId].filter(Boolean);
     await prisma.notification.deleteMany({
-      where: { recipientId: { in: [teacherId, studentId, secondStudentId, waiterStudentId] } },
+      where: { recipientId: { in: [...teacherIds, ...studentIds] } },
     });
     await prisma.payment.deleteMany({
-      where: { registration: { studentId: { in: [studentId, secondStudentId, waiterStudentId] } } },
+      where: { registration: { studentId: { in: studentIds } } },
     });
     await prisma.registration.deleteMany({
-      where: { studentId: { in: [studentId, secondStudentId, waiterStudentId] } },
+      where: { studentId: { in: studentIds } },
     });
-    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.student.deleteMany({
-      where: { id: { in: [studentId, secondStudentId, waiterStudentId] } },
-    });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    if (roomId) await prisma.room.delete({ where: { id: roomId } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
     await prisma.$disconnect();
   });
 
@@ -516,6 +545,60 @@ describe('class transitions (DB, timezone-aware)', () => {
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.calendarEntry.cancelledAt).toBeNull();
     } finally {
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  // The two window bounds are inclusive, and each test below stores a class
+  // on exactly one of them, so the read's `gte`/`lte` is what reaches it.
+  it('reads and cancels a class stored on the window\'s upper bound', async () => {
+    // 07:00 Amsterdam on 2026-07-21 starts at 05:00Z; HOURS_2 opens at 03:00Z.
+    const cls = await makeClass({
+      autoCancelCheck: 'HOURS_2',
+      date: new Date('2026-07-21'),
+      startTime: hhmmToTime('07:00'),
+    });
+    const now = new Date('2026-07-21T04:00:00Z');
+    expect(cancelCandidateDates(now).to).toEqual(cls.calendarEntry.date);
+
+    try {
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      const cancelledCount = await autoCancelClasses(scoped.db, now);
+
+      expect(scoped.rowsRead('Class')).toBe(1);
+      expect(cancelledCount).toBe(1);
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(updated.calendarEntry.cancelledAt).not.toBeNull();
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  it('reads and cancels a class stored on the window\'s lower bound', async () => {
+    // 23:30 at UTC−12 on 2026-07-20 starts at 2026-07-21T11:30Z; HOURS_2
+    // opens at 09:30Z. At 10:00Z, now − 12 h is 2026-07-20T22:00Z, so the
+    // window's lower bound is the stored date itself.
+    const cls = await makeClass({
+      teacherId: westTeacherId,
+      teacherRoomId: westTeacherRoomId,
+      autoCancelCheck: 'HOURS_2',
+      date: new Date('2026-07-20'),
+      startTime: hhmmToTime('23:30'),
+    });
+    const now = new Date('2026-07-21T10:00:00Z');
+    expect(cancelCandidateDates(now).from).toEqual(cls.calendarEntry.date);
+
+    try {
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      const cancelledCount = await autoCancelClasses(scoped.db, now);
+
+      expect(scoped.rowsRead('Class')).toBe(1);
+      expect(cancelledCount).toBe(1);
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(updated.calendarEntry.cancelledAt).not.toBeNull();
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
