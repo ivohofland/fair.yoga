@@ -172,6 +172,22 @@ describe('classPageClock', () => {
     expect(c.refreshInstants).toEqual([]);
   });
 
+  /**
+   * An unreadable schedule makes every edge an Invalid Date, whose
+   * `toISOString()` throws: handed on, it would fail the page's render.
+   */
+  it('offers nothing and waits for nothing when the schedule is unreadable', () => {
+    const c = classPageClock({
+      now: start,
+      start: new Date(NaN),
+      end: new Date(NaN),
+      status: 'open',
+      cancelled: false,
+    });
+    expect(c).toMatchObject({ showCheckin: false, canFinish: false, autoFinishing: false });
+    expect(c.refreshInstants).toEqual([]);
+  });
+
   it.each(['open', 'in_progress'] as const)('is inert on a cancelled %s class', (status) => {
     const c = clock(ms(autoAt, 5 * MINUTE), status, true);
     expect(c).toMatchObject({ live: false, showCheckin: false, canFinish: false, autoFinishing: false });
