@@ -79,4 +79,21 @@ describe('readInPages', () => {
     await expect(readInPages(overfull)).rejects.toBeInstanceOf(Error);
     expect(calls).toBe(1);
   });
+
+  it('rejects with a later page’s own error, unwrapped', async () => {
+    const full = source(SWEEP_PAGE_SIZE);
+    const failure = new Error('page 2 failed');
+    let calls = 0;
+    const failsSecond = async (): Promise<Row[]> => {
+      calls++;
+      if (calls === 1) return full;
+      throw failure;
+    };
+    const rejection: unknown = await readInPages(failsSecond).then(
+      () => 'resolved',
+      (e: unknown) => e,
+    );
+    expect(rejection).toBe(failure);
+    expect(calls).toBe(2);
+  });
 });

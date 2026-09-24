@@ -15,7 +15,7 @@ import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reco
 import { readGenerationCandidates } from './class-generator';
 import { readStudioGenerationCandidates } from './studio-class-generator';
 import { getUnreadForEmailFallback } from './notifications';
-import { readDuePayments } from './payment-reminders';
+import { readDuePayments, REMIND_EVERY_DAYS } from './payment-reminders';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   CEILING_ROWS,
@@ -34,6 +34,34 @@ const prisma = new PrismaClient();
 afterAll(async () => {
   await prisma.$disconnect();
 });
+
+/**
+ * `base`, recording the id of every row a `class.findMany` through it returns.
+ * Pass the result to `scopeSweep` rather than extending the scoped client:
+ * `tests/scoped-sweep.ts`'s header explains the hook order.
+ */
+function recordClassReads(base: PrismaClient): { client: PrismaClient; ids: (string | undefined)[] } {
+  // The extension's row type leaves `id` optional: `args` may not select it.
+  const ids: (string | undefined)[] = [];
+  const client = base.$extends({
+    query: {
+      class: {
+        async findMany({ args, query }) {
+          const rows = await query(args);
+          for (const row of rows) ids.push(row.id);
+          return rows;
+        },
+      },
+    },
+  }) as unknown as PrismaClient;
+  return { client, ids };
+}
+
+/** Every seeded id was read, exactly once, and nothing else was. */
+function expectReadExactlyOnce(read: (string | undefined)[], seeded: string[]): void {
+  expect(new Set(read).size).toBe(read.length);
+  expect([...read].sort()).toEqual([...seeded].sort());
+}
 
 describe('ceiling harness', () => {
   let low: PrismaClient;
@@ -102,6 +130,7 @@ describe('ceiling harness', () => {
 describe('autoCancelClasses', () => {
   let low: PrismaClient;
   let teachers: SeededTeachers | undefined;
+  let classIds: string[] = [];
   const now = new Date();
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
@@ -109,13 +138,13 @@ describe('autoCancelClasses', () => {
     low = await lowStackClient();
     teachers = await seedTeachers(prisma, 11, 'ceiling-auto-cancel');
     // `minStudents: 0`: a count of 0 is not below it, so every row is a no-op.
-    await seedClasses(prisma, teachers, {
+    ({ classIds } = await seedClasses(prisma, teachers, {
       rows: CEILING_ROWS,
       dates: [today],
       status: 'open',
       minStudents: 0,
       maxStudents: 10,
-    });
+    }));
   }, 60_000);
 
   afterAll(async () => {
@@ -125,11 +154,13 @@ describe('autoCancelClasses', () => {
 
   it('reads CEILING_ROWS in-window open classes under the lowered stack', async () => {
     if (!teachers) throw new Error('seed failed');
-    const scoped = scopeSweep(low, {
+    const recorded = recordClassReads(low);
+    const scoped = scopeSweep(recorded.client, {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
     await expect(autoCancelClasses(scoped.db, now)).resolves.toBe(0);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
   });
 });
@@ -150,17 +181,18 @@ describe('autoTransitionToInProgress', () => {
   // Every row is stored on tomorrow, so each is inside `date <= now + 24h`,
   // and none has started by `now`: the pre-filter skips them all.
   const { tomorrow, justAfterMidnight: now } = todayUtc();
+  let classIds: string[] = [];
 
   beforeAll(async () => {
     low = await lowStackClient();
     teachers = await seedTeachers(prisma, 11, 'ceiling-auto-start');
-    await seedClasses(prisma, teachers, {
+    ({ classIds } = await seedClasses(prisma, teachers, {
       rows: CEILING_ROWS,
       dates: [tomorrow],
       status: 'open',
       minStudents: 0,
       maxStudents: 10,
-    });
+    }));
   }, 60_000);
 
   afterAll(async () => {
@@ -170,11 +202,13 @@ describe('autoTransitionToInProgress', () => {
 
   it('reads CEILING_ROWS open classes under the lowered stack', async () => {
     if (!teachers) throw new Error('seed failed');
-    const scoped = scopeSweep(low, {
+    const recorded = recordClassReads(low);
+    const scoped = scopeSweep(recorded.client, {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
     await expect(autoTransitionToInProgress(scoped.db, now)).resolves.toBe(0);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
   });
 });
@@ -184,17 +218,18 @@ describe('autoCompleteClasses', () => {
   let teachers: SeededTeachers | undefined;
   // No row has ended by `now`, so the pre-filter skips them all.
   const { tomorrow, justAfterMidnight: now } = todayUtc();
+  let classIds: string[] = [];
 
   beforeAll(async () => {
     low = await lowStackClient();
     teachers = await seedTeachers(prisma, 11, 'ceiling-auto-complete');
-    await seedClasses(prisma, teachers, {
+    ({ classIds } = await seedClasses(prisma, teachers, {
       rows: CEILING_ROWS,
       dates: [tomorrow],
       status: 'in_progress',
       minStudents: 0,
       maxStudents: 10,
-    });
+    }));
   }, 60_000);
 
   afterAll(async () => {
@@ -204,11 +239,13 @@ describe('autoCompleteClasses', () => {
 
   it('reads CEILING_ROWS in-progress classes under the lowered stack', async () => {
     if (!teachers) throw new Error('seed failed');
-    const scoped = scopeSweep(low, {
+    const recorded = recordClassReads(low);
+    const scoped = scopeSweep(recorded.client, {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
     await expect(autoCompleteClasses(scoped.db, now)).resolves.toBe(0);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
   });
 });
@@ -218,6 +255,7 @@ describe('reconcileWaitlists', () => {
   let teachers: SeededTeachers | undefined;
   let registeredId: string | undefined;
   let waitingId: string | undefined;
+  let classIds: string[] = [];
   const tag = `ceiling-reconcile-${Date.now()}`;
 
   beforeAll(async () => {
@@ -227,13 +265,13 @@ describe('reconcileWaitlists', () => {
     const dates = Array.from({ length: dateCount }, (_, i) => new Date(Date.UTC(2031, 0, 6 + i)));
     // `maxStudents: 1` and one registration each: every class is full, so
     // none is handed to `handleSpotFreed`.
-    const { classIds } = await seedClasses(prisma, teachers, {
+    ({ classIds } = await seedClasses(prisma, teachers, {
       rows: CEILING_ROWS,
       dates,
       status: 'open',
       minStudents: 0,
       maxStudents: 1,
-    });
+    }));
     const registered = await prisma.student.create({
       data: { firstName: 'Ceiling', lastName: 'Registered', email: `${tag}-a@test.local` },
     });
@@ -273,7 +311,8 @@ describe('reconcileWaitlists', () => {
   it('reads CEILING_ROWS queued classes under the lowered stack', async () => {
     if (!teachers) throw new Error('seed failed');
     const byTeacher = { calendarEntry: { teacherId: { in: teachers.teacherIds } } };
-    const scoped = scopeSweep(low, {
+    const recorded = recordClassReads(low);
+    const scoped = scopeSweep(recorded.client, {
       Class: byTeacher,
       WaitlistEntry: { class: byTeacher },
       Registration: { class: byTeacher },
@@ -285,6 +324,7 @@ describe('reconcileWaitlists', () => {
     expect(summary.reconciledClassIds).toEqual([]);
     expect(summary.failedClassIds).toEqual([]);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
   });
 });
@@ -385,6 +425,7 @@ describe('readGenerationCandidates', () => {
   it('reads every seeded template under the lowered stack', async () => {
     const result = await readGenerationCandidates(low);
     const ids = new Set(result.map((r) => r.id));
+    expect(ids.size).toBe(result.length);
     for (const id of templateIds) {
       expect(ids.has(id)).toBe(true);
     }
@@ -432,6 +473,7 @@ describe('readStudioGenerationCandidates', () => {
   it('reads every seeded template under the lowered stack', async () => {
     const result = await readStudioGenerationCandidates(low);
     const ids = new Set(result.map((r) => r.id));
+    expect(ids.size).toBe(result.length);
     for (const id of templateIds) {
       expect(ids.has(id)).toBe(true);
     }
@@ -556,12 +598,17 @@ describe('readDuePayments', () => {
   const registrationIds: string[] = [];
   const paymentIds: string[] = [];
   const tag = `ceiling-payments-${Date.now()}`;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  // Overdue but reminded a day ago, so not due. The `ffffffff-ffff` prefix
+  // sorts it after every random uuid, so only a page after the first can
+  // reach it: the predicate that excludes it is the later pages' copy.
+  const recentId = `ffffffff-ffff-4fff-bfff-${crypto.randomUUID().slice(-12)}`;
 
   beforeAll(async () => {
     low = await lowStackClient();
     teachers = await seedTeachers(prisma, 11, 'ceiling-payments');
     const { classIds } = await seedClasses(prisma, teachers, {
-      rows: CEILING_ROWS,
+      rows: CEILING_ROWS + 1,
       dates: [new Date('2030-01-07')],
       status: 'open',
       minStudents: 0,
@@ -578,19 +625,27 @@ describe('readDuePayments', () => {
         return { id, classId, studentId: student.id, status: 'registered' as const, tierAtBooking: 3 };
       }),
     });
+    const [recentRegistrationId, ...dueRegistrationIds] = registrationIds;
     await prisma.payment.createMany({
-      data: registrationIds.map((registrationId) => {
+      data: dueRegistrationIds.map((registrationId) => {
         const id = crypto.randomUUID();
         paymentIds.push(id);
         return { id, registrationId, status: 'overdue' as const, reminderSentAt: null, amount: 1 };
       }),
     });
+    await prisma.payment.create({
+      data: {
+        id: recentId,
+        registrationId: recentRegistrationId!,
+        status: 'overdue',
+        reminderSentAt: new Date(Date.now() - DAY_MS),
+        amount: 1,
+      },
+    });
   }, 60_000);
 
   afterAll(async () => {
-    if (paymentIds.length > 0) {
-      await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
-    }
+    await prisma.payment.deleteMany({ where: { id: { in: [...paymentIds, recentId] } } });
     if (registrationIds.length > 0) {
       await prisma.registration.deleteMany({ where: { id: { in: registrationIds } } });
     }
@@ -602,12 +657,30 @@ describe('readDuePayments', () => {
   });
 
   it('reads every seeded overdue payment under the lowered stack', async () => {
-    const result = await readDuePayments(low, new Date());
+    const pages: (string | undefined)[][] = [];
+    const recording = low.$extends({
+      query: {
+        payment: {
+          async findMany({ args, query }) {
+            const rows = await query(args);
+            // The extension's row type leaves `id` optional: `args` may not select it.
+            pages.push(rows.map((row) => row.id));
+            return rows;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    const result = await readDuePayments(recording, new Date(Date.now() - REMIND_EVERY_DAYS * DAY_MS));
     const ids = new Set(result.map((p) => p.id));
+    expect(ids.size).toBe(result.length);
     expect(paymentIds).toHaveLength(CEILING_ROWS);
     for (const id of paymentIds) {
       expect(ids.has(id)).toBe(true);
     }
+    const firstPageLast = pages[0]?.at(-1);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(firstPageLast !== undefined && firstPageLast < recentId).toBe(true);
+    expect(ids.has(recentId)).toBe(false);
     await expectLowered(low);
   });
 });
