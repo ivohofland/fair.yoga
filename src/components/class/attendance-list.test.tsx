@@ -150,6 +150,40 @@ describe('AttendanceList', () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  const untouched: AttendanceItem = { registrationId: 'reg-1', studentName: 'Grace Hopper', status: 'registered' };
+
+  it('labels an untouched registration "Not marked", never "No-show"', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AttendanceList items={[untouched]} />);
+    screen.getByText('Not marked');
+    expect(screen.queryByText('No-show')).toBeNull();
+  });
+
+  it('labels a recorded no-show as such', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AttendanceList items={[{ ...untouched, status: 'no_show' }]} />);
+    screen.getByText('No-show');
+  });
+
+  it('shows locked rows without controls until "Edit attendance" is chosen', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AttendanceList items={[untouched]} locked />);
+
+    screen.getByText('Not marked');
+    expect(screen.queryByRole('button', { name: 'Mark Grace Hopper as present' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit attendance' }));
+
+    screen.getByRole('button', { name: 'Mark Grace Hopper as present' });
+    screen.getByText('Corrections update the record — the payment request already sent stays as it is.');
+  });
+
+  it('shows no edit affordance during check-in', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AttendanceList items={[untouched]} />);
+    expect(screen.queryByRole('button', { name: 'Edit attendance' })).toBeNull();
+  });
+
   it('marks the student present when the server finds that already recorded', async () => {
     fetchMock.mockResolvedValue({
       ok: true,

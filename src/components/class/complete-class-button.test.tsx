@@ -19,17 +19,54 @@ describe('CompleteClassButton', () => {
     vi.unstubAllGlobals();
   });
 
-  it('posts the completion and refreshes on success', async () => {
+  it('posts the completion once confirmed and refreshes on success', async () => {
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" />);
+    render(<CompleteClassButton classId="c-9" chargedCount={2} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('/api/classes/c-9/complete', { method: 'POST' }),
     );
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+  });
+
+  it('asks before finishing, and posts nothing until confirmed', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CompleteClassButton classId="c-9" chargedCount={2} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+
+    screen.getByText('Finish class? Payment requests go to 2 students now.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the class open when the teacher backs out', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CompleteClassButton classId="c-9" chargedCount={2} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep open' }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    screen.getByRole('button', { name: 'Finish class' });
+  });
+
+  it('says one student, not one students', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CompleteClassButton classId="c-9" chargedCount={1} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    screen.getByText('Finish class? A payment request goes to 1 student now.');
+  });
+
+  // Review Focus 4.
+  it('does not promise payment requests when nobody is charged', () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CompleteClassButton classId="c-9" chargedCount={0} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    screen.getByText('Finish class? No one is charged for this class.');
   });
 
   it('treats an unchanged answer as success: the class was already completed', async () => {
@@ -39,9 +76,10 @@ describe('CompleteClassButton', () => {
       json: async () => ({ data: { ok: true, newStatus: 'completed' }, outcome: 'unchanged' }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" />);
+    render(<CompleteClassButton classId="c-9" chargedCount={2} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
 
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -56,9 +94,10 @@ describe('CompleteClassButton', () => {
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" />);
+    render(<CompleteClassButton classId="c-9" chargedCount={2} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('This class has been cancelled.');
     expect(routerRefresh).not.toHaveBeenCalled();
@@ -67,9 +106,10 @@ describe('CompleteClassButton', () => {
   it('says something when the request never reaches the server', async () => {
     fetchMock.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" />);
+    render(<CompleteClassButton classId="c-9" chargedCount={2} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
   });
