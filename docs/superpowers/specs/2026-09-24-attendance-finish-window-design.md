@@ -83,7 +83,18 @@ export const FINISH_GRACE_MINUTES = 15;
 export function classEndInstant(entry, timeZone): Date      // start + durationMinutes
 export function finishOpensAt({ start, end }): Date         // max(start, end − grace)
 export function autoFinishAt(end: Date): Date               // end + grace
+export function formatClockInZone(instant, timeZone): string // HH:MM for the caption
+export const CHECKIN_OPENS_MINUTES = 15;
+export function classPageClock({ now, start, end, status, cancelled })
+  // → { live, showCheckin, canFinish, autoFinishing, autoAt, refreshInstants }
 ```
+
+`formatClockInZone` falls back to UTC on an unreadable zone and says so, and
+answers the placeholder `formatInstantInZone` uses for an unreadable instant
+rather than throwing; both log at `error`. `CHECKIN_OPENS_MINUTES` is the
+check-in rule's own lead time, not the grace. `classPageClock` is the class
+page's whole clock logic (§5.1), pure and unit-tested; an unreadable edge is
+left out of its `refreshInstants`.
 
 One constant sets both edges. Both edges are the same length from the end
 because a teacher who can finish 15 minutes early and gets 15 minutes
@@ -116,6 +127,11 @@ export type CompletionTiming =
   | { finishedEarly: true }; // deleteTeacherAccount only: no clock
 ```
 
+Each variant also declares the other two keys as `?: never`, so a literal
+naming two callers (`{ sweepAt, teacherAt }`) does not compile. A plain union
+accepts it, because an object literal's excess-property check runs against the
+union as a whole. An `@ts-expect-error` fixture pins this.
+
 It stays a required union, for the reason its docblock gives (#182: the
 dangerous mode must not be the silent default). Under the row lock, after
 the cancellation check, the function computes the start and end from the row it
@@ -124,7 +140,9 @@ caller's edge — `autoFinishAt(end)` for `sweepAt`, `finishOpensAt({ start, end
 for `teacherAt`, both from that row. The variant-to-edge mapping is an
 exhaustive helper whose `never` default stops a new variant compiling until it
 names its edge. The `Invalid Date` → `TypeError` guard applies to both clock
-variants.
+variants. An unreadable schedule makes the edge itself an Invalid Date, which
+`at < edge` would pass for every `at`. The function fails closed: it logs at
+`error` with the class id and refuses `NOT_ENDED_YET` before any write.
 
 **The status is checked before the clock, and nothing is written before
 either passes.** Today the clock comes first, which was harmless while the
@@ -164,9 +182,11 @@ instead of `ILLEGAL_TRANSITION`. The order under the lock is therefore:
 
 ### 5.1 Class page (`src/app/(teacher)/class/[id]/page.tsx`)
 
-- Check-in visibility is unchanged: `in_progress`, or `open` within 15 minutes
-  of the start. The only difference is that `in_progress` now lasts until
-  `autoFinishAt`.
+- The page's clock logic is `classPageClock` (§3). The page passes its render
+  time and uses what comes back.
+- Check-in visibility is unchanged: `in_progress`, or `open` within
+  `CHECKIN_OPENS_MINUTES` of the start. The only difference is that
+  `in_progress` now lasts until `autoFinishAt`.
 - **The finish button** replaces the `showCheckin` header action with its own
   condition: not cancelled, `in_progress` or `open`, and `now ≥ finishOpensAt`.
   Before that, check-in shows no header action.
@@ -174,13 +194,18 @@ instead of `ILLEGAL_TRANSITION`. The order under the lock is therefore:
   requests go out automatically at {time}", in the teacher's timezone, where
   {time} is `autoFinishAt`. When no one is charged it reads "This class
   finishes automatically at {time}" instead, matching the confirm's n = 0 copy.
+  At or past `autoFinishAt` (the sweep is late, or down) it names no time and
+  reads "This class is finishing automatically."
 - **The page re-renders itself at the edges.** Both conditions above are read
   from the clock at render, so while the class is live the page mounts a small
-  client component (`refresh-at.tsx`) that calls `router.refresh()` when
-  `finishOpensAt` and `autoFinishAt` arrive. A render that finds the class still
-  live past `autoFinishAt` (the sweep has not landed yet) asks again a minute
-  later. The page passes ISO strings; the client component does not import
-  `@/lib/finish-window`.
+  client component (`refresh-at.tsx`) that calls `router.refresh()` when the
+  check-in edge (an `open` class only), `finishOpensAt` and `autoFinishAt`
+  arrive. A render that finds the class still live past `autoFinishAt` (the
+  sweep has not landed yet) asks again a minute later. The page passes ISO
+  strings and its own render time (`serverNow`); each wait is
+  `instant − serverNow`, so a client clock ahead of the server cannot refresh
+  before the server-side edge, and every render re-arms the timers. The client
+  component does not import `@/lib/finish-window`.
 - **Completed view**: an Attendance section above `PricingBreakdown`, read-only
   by default (§5.3).
 
@@ -194,6 +219,7 @@ instead of `ILLEGAL_TRANSITION`. The order under the lock is therefore:
   n = 0 needs its own wording ("No one is charged for this class.").
 - Error handling is unchanged (`readErrorMessage`, `router.refresh()` on
   success).
+- **Keep open** is disabled while the POST is in flight: it cannot be recalled.
 
 ### 5.3 Attendance list (`attendance-list.tsx`)
 
@@ -204,7 +230,7 @@ instead of `ILLEGAL_TRANSITION`. The order under the lock is therefore:
   `attended ↔ no_show`, and late cancel keeps its `attended ↔ late_cancel`
   round trip. The aria-labels follow the new labels.
 - **Edit mode.** A new prop selects `editable` (check-in) or `locked`
-  (completed). `locked` renders the same rows with the toggles disabled, and an
+  (completed). `locked` renders the same rows with the toggles hidden, and an
   "Edit attendance" link switches the component to editable in place. Editable
   on a completed class carries the caption: "Corrections update the record —
   the payment request already sent stays as it is."
@@ -246,12 +272,20 @@ restore.
   - AttendanceList: labels per status, locked vs editable, and the "Edit
     attendance" switch.
   - CompleteClassButton: first tap confirms and the second posts; "Keep open"
-    posts nothing; the n = 0 copy.
+    posts nothing, and is disabled while the POST is in flight; the n = 0 copy.
   - RefreshAt: refreshes at each future instant and not before, ignores a
-    past one and one beyond `setTimeout`'s limit, and not after unmount.
-- e2e `teacher-journey.spec.ts`. Its check-in class started 5 minutes ago, so
-  the new window refuses its "Complete class" click. The fixture moves near the
-  class end, and the click goes through the confirm.
+    past one and one beyond `setTimeout`'s limit, and not after unmount. It
+    counts from `serverNow` with the client clock skewed ahead, and re-arms on
+    new instants and on a new `serverNow` alone.
+- `classPageClock`: the check-in edge, `finishOpensAt` and its clamp to the
+  start, the retry a minute after a render past `autoFinishAt`, and nothing
+  live on a completed, cancelled or draft class.
+- `completeClass` on an unreadable schedule, through a stub (no row can hold
+  one): refused `NOT_ENDED_YET` under both clock variants, no writes.
+- e2e `teacher-journey.spec.ts`. `checkinSlot(durationMinutes)` places the
+  class so it ends in ten minutes, inside both the check-in window and the
+  teacher's finish window. "Finish class" opens the inline confirm and
+  "Finish" completes it.
 
 ## 8. Docs and comments this changes
 

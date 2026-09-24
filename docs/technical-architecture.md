@@ -380,7 +380,8 @@ interface ClassTransition {
 // Key transitions:
 // open → in_progress:      when the class start instant is reached
 // in_progress → completed: when the teacher finishes the class (from 15 min
-//                           before its end), or automatically 15 min after its end
+//                           before its end, but never before its start), or
+//                           automatically 15 min after its end
 // completed triggers:      pricing calculation → payment creation → notifications
 //
 // Not a transition: cancellation. `auto_cancel_check` firing below minStudents
