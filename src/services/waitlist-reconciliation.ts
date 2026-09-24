@@ -52,6 +52,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { readInPages } from '@/lib/read-in-pages';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import {
   claimWindowStart,
@@ -443,22 +444,33 @@ export async function reconcileWaitlists(
   // order, which makes the position of a given class in the sweep depend on the
   // heap — and the two tests that hold a row lock against a wall clock then
   // race against however much work happens before their target is reached.
-  const classes = await db.class.findMany({
-    where: { id: { in: candidateIds }, status: 'open', calendarEntry: { cancelledAt: null } },
-    orderBy: { id: 'asc' },
-    select: {
-      id: true,
-      maxStudents: true,
-      spotBroadcastAt: true,
-      calendarEntry: {
-        select: {
-          date: true,
-          startTime: true,
-          teacher: { select: { defaultTimezone: true } },
+  //
+  // Paged because the `calendarEntry` relation load grows with the parent set
+  // — see `docs/technical-architecture.md` ("Relation loads over platform-wide
+  // sets").
+  const classes = await readInPages<CandidateClass>((after, take) =>
+    db.class.findMany({
+      where: {
+        id: { in: candidateIds, ...(after ? { gt: after.id } : {}) },
+        status: 'open',
+        calendarEntry: { cancelledAt: null },
+      },
+      orderBy: { id: 'asc' },
+      take,
+      select: {
+        id: true,
+        maxStudents: true,
+        spotBroadcastAt: true,
+        calendarEntry: {
+          select: {
+            date: true,
+            startTime: true,
+            teacher: { select: { defaultTimezone: true } },
+          },
         },
       },
-    },
-  });
+    }),
+  );
   if (classes.length === 0) {
     // `queuedClasses`, not a hardcoded zero: `candidateIds.length` is >= 1 here
     // by construction, and it is the interesting number. One or two is an

@@ -8,7 +8,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
-import { autoCancelClasses } from './class-transitions';
+import { autoCancelClasses, autoCompleteClasses, autoTransitionToInProgress } from './class-transitions';
+import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reconciliation';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   CEILING_ROWS,
@@ -121,6 +122,161 @@ describe('autoCancelClasses', () => {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
     await expect(autoCancelClasses(scoped.db, now)).resolves.toBe(0);
+    expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    await expectLowered(scoped.db);
+  });
+});
+
+/** Tomorrow's UTC midnight, and the instant 30 seconds after today's. */
+function todayUtc(): { tomorrow: Date; justAfterMidnight: Date } {
+  const wall = new Date();
+  const today = Date.UTC(wall.getUTCFullYear(), wall.getUTCMonth(), wall.getUTCDate());
+  return {
+    tomorrow: new Date(today + 24 * 60 * 60 * 1000),
+    justAfterMidnight: new Date(today + 30 * 1000),
+  };
+}
+
+describe('autoTransitionToInProgress', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  // Every row is stored on tomorrow, so each is inside `date <= now + 24h`,
+  // and none has started by `now`: the pre-filter skips them all.
+  const { tomorrow, justAfterMidnight: now } = todayUtc();
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 11, 'ceiling-auto-start');
+    await seedClasses(prisma, teachers, {
+      rows: CEILING_ROWS,
+      dates: [tomorrow],
+      status: 'open',
+      minStudents: 0,
+      maxStudents: 10,
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads CEILING_ROWS open classes under the lowered stack', async () => {
+    if (!teachers) throw new Error('seed failed');
+    const scoped = scopeSweep(low, {
+      Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
+    });
+    await expect(autoTransitionToInProgress(scoped.db, now)).resolves.toBe(0);
+    expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    await expectLowered(scoped.db);
+  });
+});
+
+describe('autoCompleteClasses', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  // No row has ended by `now`, so the pre-filter skips them all.
+  const { tomorrow, justAfterMidnight: now } = todayUtc();
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 11, 'ceiling-auto-complete');
+    await seedClasses(prisma, teachers, {
+      rows: CEILING_ROWS,
+      dates: [tomorrow],
+      status: 'in_progress',
+      minStudents: 0,
+      maxStudents: 10,
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads CEILING_ROWS in-progress classes under the lowered stack', async () => {
+    if (!teachers) throw new Error('seed failed');
+    const scoped = scopeSweep(low, {
+      Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
+    });
+    await expect(autoCompleteClasses(scoped.db, now)).resolves.toBe(0);
+    expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    await expectLowered(scoped.db);
+  });
+});
+
+describe('reconcileWaitlists', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  let registeredId: string | undefined;
+  let waitingId: string | undefined;
+  const tag = `ceiling-reconcile-${Date.now()}`;
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 11, 'ceiling-reconcile');
+    const dateCount = Math.ceil(CEILING_ROWS / (11 * 96));
+    const dates = Array.from({ length: dateCount }, (_, i) => new Date(Date.UTC(2031, 0, 6 + i)));
+    // `maxStudents: 1` and one registration each: every class is full, so
+    // none is handed to `handleSpotFreed`.
+    const { classIds } = await seedClasses(prisma, teachers, {
+      rows: CEILING_ROWS,
+      dates,
+      status: 'open',
+      minStudents: 0,
+      maxStudents: 1,
+    });
+    const registered = await prisma.student.create({
+      data: { firstName: 'Ceiling', lastName: 'Registered', email: `${tag}-a@test.local` },
+    });
+    registeredId = registered.id;
+    const waiting = await prisma.student.create({
+      data: { firstName: 'Ceiling', lastName: 'Waiting', email: `${tag}-b@test.local` },
+    });
+    waitingId = waiting.id;
+    await prisma.registration.createMany({
+      data: classIds.map((classId) => ({
+        classId,
+        studentId: registered.id,
+        status: 'registered' as const,
+        tierAtBooking: 3,
+      })),
+    });
+    await prisma.waitlistEntry.createMany({
+      data: classIds.map((classId) => ({
+        classId,
+        studentId: waiting.id,
+        position: 1,
+        status: 'waiting' as const,
+      })),
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    // Students first: their registrations and waitlist entries cascade.
+    const studentIds = [registeredId, waitingId].filter((id): id is string => id !== undefined);
+    if (studentIds.length > 0) {
+      await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    }
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads CEILING_ROWS queued classes under the lowered stack', async () => {
+    if (!teachers) throw new Error('seed failed');
+    const byTeacher = { calendarEntry: { teacherId: { in: teachers.teacherIds } } };
+    const scoped = scopeSweep(low, {
+      Class: byTeacher,
+      WaitlistEntry: { class: byTeacher },
+      Registration: { class: byTeacher },
+    });
+    const summary = await reconcileWaitlists(scoped.db, {
+      streaks: createReconciliationStreaks(),
+    });
+    expect(summary.candidates).toBe(CEILING_ROWS);
+    expect(summary.reconciledClassIds).toEqual([]);
+    expect(summary.failedClassIds).toEqual([]);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
     await expectLowered(scoped.db);
   });
