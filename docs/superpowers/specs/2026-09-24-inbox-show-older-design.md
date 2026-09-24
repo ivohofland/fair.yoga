@@ -56,7 +56,9 @@ So the API exists but cannot serve either page as it stands.
   - Read state is unchanged: `readState[id] ?? notification.isRead`, so a row
     loaded later shows its own `isRead` until the user marks it.
   - A failed fetch shows a `role="alert"` line and leaves the button, so a retry
-    resumes from the same cursor. Clicks are ignored while a fetch is in flight.
+    resumes from the same cursor. A 401 first calls `router.refresh()`, so the
+    page's own server guard redirects to sign-in; no other failure refreshes.
+    Clicks are ignored while a fetch is in flight.
   - After a page loads, focus moves to the first new row, so the button
     disappearing at the end of the list does not drop keyboard focus to `body`.
 - **Pages.** Both call the service with `NOTIFICATION_PAGE_SIZE` (50, unchanged)
