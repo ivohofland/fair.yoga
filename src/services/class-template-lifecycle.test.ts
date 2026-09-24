@@ -1607,6 +1607,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     onTestFinished(() => spy.mockRestore());
 
     let calls = 0;
+    let lockSetsAtCancel: number | undefined;
     const interposing = prisma.$extends({
       query: {
         waitlistEntry: {
@@ -1614,6 +1615,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
             calls++;
             const rows = await query(args);
             if (calls === 1) {
+              // Pins that the pre-lock has already run by the time the cancel
+              // below lands: if it hadn't, this count would still be 0 here.
+              lockSetsAtCancel = lockSets.length;
               // Committed from OUTSIDE the archive transaction, after the
               // pre-lock ran: `cancelled` is not in `CHARGED_STATUSES`, so the
               // delete's predicate now matches this class.
@@ -1638,6 +1642,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(calls).toBe(1);
     expect(result.deleted).toBe(2);
     expect(await prisma.class.count({ where: { id: { in: [draft.id, booked.id] } } })).toBe(0);
+    // The pre-lock had already produced its one row set before the cancel
+    // landed — without this, a pre-lock moved below the candidate read would
+    // still pass the set-equality assertion below.
+    expect(lockSetsAtCancel).toBe(1);
 
     expect(lockSets).toHaveLength(1);
     expect([...(lockSets[0] ?? [])].sort()).toEqual([draft.id, booked.id].sort());
