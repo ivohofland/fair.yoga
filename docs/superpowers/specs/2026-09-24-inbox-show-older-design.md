@@ -2,18 +2,18 @@
 
 ## Problem
 
-`/inbox` (teacher) and `/updates` (student) each render `findMany({ …, take: 50 })`
-and stop. A recipient with more than 50 stored notifications cannot reach the
+`/inbox` (teacher) and `/updates` (student) each rendered `findMany({ …, take: 50 })`
+and stopped. A recipient with more than 50 stored notifications cannot reach the
 rest, while both pages end with "Messages are kept for a year." (#223).
 
 ## What the issue claimed, and what measured true
 
 | Claim in #663 | Measured |
 |---|---|
-| "`GET /api/notifications` already paginates, but neither page uses it" | True that no page uses it. It has **no product consumer at all**: `grep -rn "api/notifications" src` finds the SSE stream and the `/[id]/read` route only, and the sole caller of the list route is `tests/integration/account-api.test.ts`. |
+| "`GET /api/notifications` already paginates, but neither page uses it" | Before this change: true that no page used it. It had **no product consumer at all**: `grep -rn "api/notifications" src` found the SSE stream and the `/[id]/read` route only, and the sole caller of the list route was `tests/integration/account-api.test.ts`. `notification-list.tsx` now calls it. |
 | "Order stays `createdAt desc, id desc` … the id tie-breaker the pages already use" | **The API has no tie-breaker**: `orderBy: { createdAt: 'desc' }`. With `skip`/`take`, rows sharing a `createdAt` (batch inserts, `createBulkNotifications`) can repeat or vanish across a page boundary. The pages have the tie-breaker; the API does not. |
 | "Fetch the next page from `/api/notifications`" | The route returns **both profiles' rows** for a dual-role account, so `/inbox` fed from it would show student-side rows. It also returns raw rows with no `relatedClass`, and the student page's link targets (`studentNotificationHref`) need `relatedClass.status`, `calendarEntry.cancelledAt` and the teacher's `pageSlug`. |
-| (implicit) offset pagination is adequate | `LiveUpdates` calls `router.refresh()` on every new notification, so rows are inserted at the head while a recipient is mid-scroll, and an offset (`skip`) shifts under them. |
+| (implicit) offset pagination is adequate | `LiveUpdates` calls `router.refresh()` (debounced) when a new notification arrives, so rows are inserted at the head while a recipient is mid-scroll, and an offset (`skip`) shifts under them. |
 
 So the API exists but cannot serve either page as it stands.
 
@@ -38,9 +38,11 @@ So the API exists but cannot serve either page as it stands.
 - **API.** `GET /api/notifications?before=<cursor>&limit=<1..100>&recipientType=<teacher|student>`.
   `recipientType` narrows a dual-role account to one hat (the list component
   always passes it); absent, the account's whole set is read, as today. `limit`
-  keeps its garbage-degrades-to-default behaviour and now defaults to
-  `NOTIFICATION_PAGE_SIZE`. A malformed `before` or `recipientType` is 400:
-  degrading a bad cursor to page one would make a client loop. `page` and
+  is read by `parseLimit`: garbage degrades to the default, `NOTIFICATION_PAGE_SIZE`,
+  and a number is clamped to 1..100. A malformed `before` or `recipientType` is
+  400 — the cursor decoder rejects an epoch after year 9999 and an id outside
+  `[0-9A-Za-z._-]{1,64}` — because degrading a bad cursor to page one would make
+  a client loop. `page` and
   `total` go, since nothing reads them and a total needs a count neither page wants.
 - **Client.** `NotificationList` gains `paging?: { audience; nextCursor }`. With
   a non-null cursor it renders a **"Show older messages"** button between the

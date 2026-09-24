@@ -162,8 +162,12 @@ export interface NotificationPage {
  * One page of the recipients' notifications, newest first, `createdAt desc,
  * id desc` — the id breaks ties between rows created in the same instant
  * (batch inserts), which lets a page boundary fall inside such a group without
- * repeating or dropping a row. Keyset, not offset: rows arrive at the head while a reader is
- * mid-list, and a `skip` would shift under them.
+ * repeating or dropping a row. Keyset, not offset: rows arrive at the head
+ * while a reader is mid-list, and a `skip` would shift under them.
+ *
+ * `hrefById` gives each row's link target, chosen by that row's own
+ * `recipientType`; the `relatedClass` join it needs is read here and not
+ * returned.
  *
  * Reads `limit + 1` rows; the extra one is the answer to "is there more", so
  * there is no count query and no empty trailing page.

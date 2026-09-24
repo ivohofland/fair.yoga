@@ -10,7 +10,8 @@ import { NOTIFICATION_PAGE_SIZE } from '@/lib/notification-paging';
  * #663 end to end: `/inbox` and `/updates` show one page of a recipient's
  * notifications and reach the rest through "Show older messages".
  *
- * The rows come in groups of `GROUP` that share an instant, so the boundary
+ * The rows come in groups of `GROUP` that share an instant, and `GROUP` does not
+ * divide the page size (asserted in `showOlderThroughTheButton`), so the boundary
  * between the first page and the second falls inside a group: a page read
  * without an id tie-breaker would repeat or drop a row there.
  */
@@ -54,6 +55,7 @@ async function expectEveryTitleOnce(page: Page): Promise<void> {
 }
 
 async function showOlderThroughTheButton(page: Page, path: string): Promise<void> {
+  expect(NOTIFICATION_PAGE_SIZE % GROUP).not.toBe(0);
   const hydrated = hydrationSignal(page);
   await page.goto(path);
   await hydrated;

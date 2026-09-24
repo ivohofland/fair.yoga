@@ -14,7 +14,7 @@ interface NotificationListProps {
   /** Per-row link overrides. Without it, rows take the teacher targets
    * (`teacherNotificationHref`); student pages must pass their own. */
   hrefById?: Record<string, string | null>;
-  /** Present when older rows may exist: which recipient hat to read, and where to resume. */
+  /** Enables the "Show older messages" control: which recipient hat to read, and where to resume (`nextCursor`, null when nothing is older). */
   paging?: { audience: RecipientType; nextCursor: string | null };
 }
 
@@ -69,7 +69,12 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
         limit: String(NOTIFICATION_PAGE_SIZE),
       });
       const res = await fetch(`/api/notifications?${params.toString()}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // An expired session cannot be retried into success; the page's own
+        // server guard sends the reader to sign in.
+        if (res.status === 401) router.refresh();
+        throw new Error(`HTTP ${res.status}`);
+      }
       const body = (await res.json()) as { data: OlderPageBody };
       const older = body.data.notifications.map(reviveNotification);
       pendingFocus.current = older[0]?.id ?? null;
