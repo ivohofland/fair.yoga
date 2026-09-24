@@ -22,11 +22,7 @@ const TOTAL = NOTIFICATION_PAGE_SIZE + 5;
 const GROUP = 6;
 const ROW = '[id^="notification-row-"]';
 
-// Derived at seed time, a minute back: recent enough to sit inside every
-// retention window, and older than anything the app writes during the run.
-const base = Date.now() - 60_000;
-
-function seedRows(recipientType: 'teacher' | 'student', recipientId: string) {
+function seedRows(recipientType: 'teacher' | 'student', recipientId: string, base: number) {
   return Array.from({ length: TOTAL }, (_, i) => ({
     recipientType,
     recipientId,
@@ -78,15 +74,21 @@ test.describe('Inbox — Show older messages (#663)', () => {
 
   const teacherEmail = `e2e-older-teacher-${suffix}@test.local`;
   const studentEmail = `e2e-older-student-${suffix}@test.local`;
-  let teacherId: string;
-  let studentId: string;
-  let teacherAccountId: string;
-  let studentAccountId: string;
+  // Undefined until beforeAll has created them: Prisma reads an undefined
+  // filter value as no filter, so afterAll deletes only by ids that exist.
+  let teacherId: string | undefined;
+  let studentId: string | undefined;
+  let teacherAccountId: string | undefined;
+  let studentAccountId: string | undefined;
   let teacherToken: string;
   let studentToken: string;
 
   test.beforeAll(async () => {
     await prisma.$connect();
+
+    // Derived at seed time, a minute back: recent enough to sit inside every
+    // retention window, and older than anything the app writes during the run.
+    const base = Date.now() - 60_000;
 
     const teacher = await prisma.teacher.create({
       data: {
@@ -99,7 +101,7 @@ test.describe('Inbox — Show older messages (#663)', () => {
       },
     });
     teacherId = teacher.id;
-    teacherAccountId = await accountIdOfTeacher(prisma, teacherId);
+    teacherAccountId = await accountIdOfTeacher(prisma, teacher.id);
     teacherToken = await seedSession(prisma, teacherAccountId);
 
     const student = await prisma.student.create({
@@ -113,28 +115,35 @@ test.describe('Inbox — Show older messages (#663)', () => {
       },
     });
     studentId = student.id;
-    studentAccountId = await accountIdOfStudent(prisma, studentId);
+    studentAccountId = await accountIdOfStudent(prisma, student.id);
     studentToken = await seedSession(prisma, studentAccountId);
 
-    await prisma.notification.createMany({ data: seedRows('teacher', teacherId) });
-    await prisma.notification.createMany({ data: seedRows('student', studentId) });
+    await prisma.notification.createMany({ data: seedRows('teacher', teacher.id, base) });
+    await prisma.notification.createMany({ data: seedRows('student', student.id, base) });
   });
 
   test.afterAll(async () => {
-    await prisma.notification.deleteMany({
-      where: {
-        OR: [
-          { recipientType: 'teacher', recipientId: teacherId },
-          { recipientType: 'student', recipientId: studentId },
-        ],
-      },
-    });
-    await prisma.session.deleteMany({
-      where: { accountId: { in: [teacherAccountId, studentAccountId] } },
-    });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.student.delete({ where: { id: studentId } });
-    await prisma.account.deleteMany({ where: { id: { in: [teacherAccountId, studentAccountId] } } });
+    // Every delete is by ids beforeAll got as far as creating, skipped when
+    // there are none (the account delete, by this run's own addresses).
+    const accountIds = [teacherAccountId, studentAccountId].filter((id) => id !== undefined);
+    if (teacherId !== undefined) {
+      await prisma.notification.deleteMany({
+        where: { recipientType: 'teacher', recipientId: { in: [teacherId] } },
+      });
+    }
+    if (studentId !== undefined) {
+      await prisma.notification.deleteMany({
+        where: { recipientType: 'student', recipientId: { in: [studentId] } },
+      });
+    }
+    if (accountIds.length > 0) {
+      await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    }
+    if (teacherId !== undefined) await prisma.teacher.delete({ where: { id: teacherId } });
+    if (studentId !== undefined) await prisma.student.delete({ where: { id: studentId } });
+    // By address, which is defined from the start and unique to this run, so an
+    // account created before beforeAll failed is still removed.
+    await prisma.account.deleteMany({ where: { email: { in: [teacherEmail, studentEmail] } } });
     await prisma.$disconnect();
   });
 
