@@ -720,7 +720,12 @@ than discovered later.**
   rows, and the fixture assigns it — but a future fixture whose rows tie on the
   driving key gets heap order back *through* a btree `Index Scan`, with none of
   the settings above able to prevent it. Assign the leading key, not just some
-  key.
+  key — or keep the index out of reach. `Class_status_idx` (#224) is the live
+  case: fixtures routinely share a status, so a probe predicate on
+  `c.status` makes a tie-prone index eligible to drive, and under
+  `FORCED_PLAN_SETTINGS` a selective-looking status list does drive from it.
+  `gdpr-lock-order.test.ts`'s teacher probe omits its status list for that
+  reason.
 - **A parallel plan interleaves.** A `Gather` above a btree index scan returns
   neither key order nor heap order, and none of the four settings forbids one.
   `gdpr-lock-order.test.ts`'s two probes are immune **by construction**, and
