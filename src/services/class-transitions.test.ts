@@ -405,8 +405,9 @@ describe('class transitions (DB, timezone-aware)', () => {
         where: { recipientType: 'teacher', recipientId: teacherId, relatedClassId: cls.id },
       });
 
-      // #200. The body has to name the class: a teacher running two weekly
-      // Hatha classes cannot otherwise tell which one was cancelled.
+      // #200. The body has to name the class so the notification reads on its own:
+      // a teacher running two weekly Hatha classes cannot otherwise tell which one
+      // was cancelled.
       //
       // Three separate `toContain`s rather than one whole-string equality: the
       // realistic regression is a field being dropped in an edit, and a single

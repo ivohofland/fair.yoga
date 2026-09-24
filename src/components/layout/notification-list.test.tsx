@@ -214,19 +214,37 @@ describe('NotificationList — show older (#663)', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  // Documents that focus stays put; it does not guard it (jsdom does not blur a
-  // focused element that becomes disabled). The aria-disabled test below is the pin.
-  it('leaves focus on the button through a failed fetch', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) }));
+  it('refreshes the page when the fetch answers 401, and not on any other failure', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
     render(<NotificationList notifications={[notification({ id: 'a', createdAt: at(1) })]} paging={{ audience: 'teacher', nextCursor: 'c1' }} />);
 
-    const button = screen.getByRole('button', { name: 'Show older messages' });
-    button.focus();
-    fireEvent.click(button);
-
+    fireEvent.click(screen.getByRole('button', { name: 'Show older messages' }));
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load older messages.");
-    expect(screen.getByRole('button', { name: 'Show older messages' })).toBe(button);
-    expect(button).toHaveFocus();
+    expect(routerRefresh).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Show older messages' }));
+    await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load older messages.");
+  });
+
+  it('follows the cursor the page renders with until a fetch has replaced it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(olderResponse([], null));
+    vi.stubGlobal('fetch', fetchMock);
+    const audience = 'teacher';
+    const { rerender } = render(<NotificationList notifications={[notification({ id: 'a', createdAt: at(1) })]} paging={{ audience, nextCursor: null }} />);
+    expect(screen.queryByRole('button', { name: 'Show older messages' })).toBeNull();
+
+    rerender(<NotificationList notifications={[notification({ id: 'a', createdAt: at(1) })]} paging={{ audience, nextCursor: 'c1' }} />);
+    expect(screen.getByRole('button', { name: 'Show older messages' })).toBeInTheDocument();
+
+    rerender(<NotificationList notifications={[notification({ id: 'z', createdAt: at(0) }), notification({ id: 'a', createdAt: at(1) })]} paging={{ audience, nextCursor: 'c2' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show older messages' }));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0]), 'http://x').searchParams.get('before')).toBe('c2');
   });
 
   it('marks the button aria-disabled, never disabled, while a fetch is in flight', async () => {
