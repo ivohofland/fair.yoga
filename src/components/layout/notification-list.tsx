@@ -179,7 +179,7 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
           <button
             type="button"
             onClick={showOlder}
-            disabled={status === 'loading'}
+            aria-disabled={status === 'loading'}
             className="type-label text-teal min-h-[44px]"
           >
             {status === 'loading' ? 'Loading…' : 'Show older messages'}
