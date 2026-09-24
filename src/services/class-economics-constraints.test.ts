@@ -20,6 +20,7 @@ const prisma = new PrismaClient();
 const uniqueSuffix = `econ-check-${Date.now()}`;
 
 let teacherId: string;
+let accountId: string;
 let roomId: string;
 let teacherRoomId: string;
 
@@ -35,6 +36,7 @@ beforeAll(async () => {
     },
   });
   teacherId = teacher.id;
+  accountId = teacher.accountId;
 
   const room = await prisma.room.create({
     data: {
@@ -66,6 +68,7 @@ afterAll(async () => {
   }
   if (roomId) await prisma.room.delete({ where: { id: roomId } });
   if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
+  if (accountId) await prisma.account.delete({ where: { id: accountId } });
   await prisma.$disconnect();
 });
 
