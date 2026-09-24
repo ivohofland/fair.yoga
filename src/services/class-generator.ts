@@ -18,6 +18,7 @@ import {
   generateEntriesForRule,
   type GeneratorFamily,
 } from './entry-generation';
+import { readInPages } from '@/lib/read-in-pages';
 
 // ---------------------------------------------------------------------------
 // generateClassInstances
@@ -105,6 +106,77 @@ export const claimTemplateForGeneration = (
   claimRuleForGeneration(tx, CLASS_GENERATOR, templateId);
 
 /**
+ * One page of `generateClassInstances`'s candidate set: live class templates
+ * (or one teacher's), after `afterId` in id order. Paged because the
+ * `scheduleRule` relation load grows with the parent set — see
+ * `docs/technical-architecture.md` ("Relation loads over platform-wide
+ * sets").
+ *
+ * `isArchived` is defense in depth, for ONE reason rather than two: the
+ * routes keep archived templates inactive, but if that pairing ever slips,
+ * the generator must not materialize classes for something the teacher
+ * shelved. That half comes from the shared constant so
+ * `services/room-archive.ts` cannot block on a different set than this query
+ * selects.
+ *
+ * The selection reads only the template's OWN flags — `scheduleRule`'s
+ * `isActive`/`isArchived` — and never `teacherRoom.isArchived`. That used to
+ * be a known gap, measured on #116's branch (four classes generated into a
+ * just-archived room), and is closed structurally: `ClassTemplate` mirrors
+ * the rule's liveness and the room's archive onto its own row, kept equal by
+ * foreign keys, and `ClassTemplate_live_needs_open_room` refuses every write
+ * that would leave a live template on an archived room (issue 272). No row
+ * this query selects can therefore point into an archived room.
+ *
+ * That guarantee holds while `ScheduleRule.live` and `ACTIVE_TEMPLATE_WHERE`
+ * stay the same predicate, which is asserted at all four corners in
+ * `template-room-constraint.test.ts` rather than left to this sentence — a
+ * claim about another module cannot be owned here. The ROOM half needs no
+ * filter in this query at all: a writer that sets the rule's flag directly
+ * does not reach around the constraint either, because the cascade
+ * recomputes `ruleLive` and the CHECK refuses the write.
+ * See `lib/template-selection.ts`.
+ *
+ * Narrowed to `id` and `scheduleRule.teacherId` — the two fields the sweep's
+ * loop reads, both for logging. Everything else about the template is
+ * re-read fresh under `claimTemplateForGeneration`, inside its own
+ * transaction, so this drops the teacher-timezone hop the loop never used.
+ */
+function readTemplateCandidatePage(
+  db: PrismaClient,
+  teacherId: string | undefined,
+  afterId: string | undefined,
+  take: number,
+) {
+  return db.classTemplate.findMany({
+    where: {
+      scheduleRule: { ...ACTIVE_TEMPLATE_WHERE.scheduleRule, ...(teacherId ? { teacherId } : {}) },
+      ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
+    },
+    orderBy: { id: 'asc' },
+    take,
+    select: { id: true, scheduleRule: { select: { teacherId: true } } },
+  });
+}
+
+type GenerationCandidate = Awaited<ReturnType<typeof readTemplateCandidatePage>>[number];
+
+/**
+ * Reads every live class template `generateClassInstances` will generate for
+ * (or one teacher's), `SWEEP_PAGE_SIZE` at a time via `readInPages`
+ * (`@/lib/read-in-pages`). Extracted so a ceiling test can exercise the read
+ * directly without generating classes for a platform-wide template set.
+ */
+export function readGenerationCandidates(
+  db: PrismaClient,
+  teacherId?: string,
+): Promise<GenerationCandidate[]> {
+  return readInPages<GenerationCandidate>((after, take) =>
+    readTemplateCandidatePage(db, teacherId, after?.id, take),
+  );
+}
+
+/**
  * Cron / teacher-wide entry point: tops up the rolling window for all
  * active templates (or one teacher's). Each template is isolated — one
  * template whose generation throws is logged and skipped. If the throw is
@@ -121,36 +193,7 @@ export async function generateClassInstances(
 ): Promise<number> {
   const startDate = from ?? new Date();
 
-  // `isArchived` is defense in depth, for ONE reason rather than two: the
-  // routes keep archived templates inactive, but if that pairing ever slips,
-  // the generator must not materialize classes for something the teacher
-  // shelved. That half comes from the shared constant so
-  // `services/room-archive.ts` cannot block on a different set than this query
-  // selects.
-  //
-  // The selection reads only the template's OWN flags — `scheduleRule`'s
-  // `isActive`/`isArchived` — and never `teacherRoom.isArchived`. That used to
-  // be a known gap, measured on #116's branch (four classes generated into a
-  // just-archived room), and is closed structurally: `ClassTemplate` mirrors
-  // the rule's liveness and the room's archive onto its own row, kept equal by
-  // foreign keys, and `ClassTemplate_live_needs_open_room` refuses every write
-  // that would leave a live template on an archived room (issue 272). No row
-  // this query selects can therefore point into an archived room.
-  //
-  // That guarantee holds while `ScheduleRule.live` and `ACTIVE_TEMPLATE_WHERE`
-  // stay the same predicate, which is asserted at all four corners in
-  // `template-room-constraint.test.ts` rather than left to this sentence — a
-  // claim about another module cannot be owned here. The ROOM half needs no
-  // filter in this query at all: a writer that sets the rule's flag directly
-  // does not reach around the constraint either, because the cascade
-  // recomputes `ruleLive` and the CHECK refuses the write.
-  // See `lib/template-selection.ts`.
-  const templates = await db.classTemplate.findMany({
-    where: {
-      scheduleRule: { ...ACTIVE_TEMPLATE_WHERE.scheduleRule, ...(teacherId ? { teacherId } : {}) },
-    },
-    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
-  });
+  const templates = await readGenerationCandidates(db, teacherId);
 
   let totalCreated = 0;
   const errors: unknown[] = [];

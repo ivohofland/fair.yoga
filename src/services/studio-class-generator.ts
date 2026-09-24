@@ -15,6 +15,7 @@ import {
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { isLockTimeout } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { readInPages } from '@/lib/read-in-pages';
 
 /**
  * The studio mirror of `class-generator.ts`'s `TemplateWithTimezone`. The
@@ -96,6 +97,56 @@ export const claimStudioTemplateForGeneration = (
   claimRuleForGeneration(tx, STUDIO_GENERATOR, templateId);
 
 /**
+ * One page of `generateStudioClassInstances`'s candidate set: live studio
+ * templates, after `afterId` in id order. Paged because the `scheduleRule`
+ * relation load grows with the parent set — see
+ * `docs/technical-architecture.md` ("Relation loads over platform-wide
+ * sets").
+ *
+ * isArchived is defence in depth, matching class-generator.ts: the PATCH
+ * route keeps archived templates inactive, but if that invariant ever slips
+ * the generator must not materialise classes for something the teacher
+ * shelved. It slipped once — the studio route had neither guard until #53's
+ * coverage pass found it.
+ *
+ * Narrowed to `id` and `scheduleRule.teacherId` — the two fields the sweep's
+ * loop reads, both for logging. Everything else about the template is
+ * re-read fresh under `claimStudioTemplateForGeneration`, inside its own
+ * transaction.
+ */
+function readStudioTemplateCandidatePage(
+  db: PrismaClient,
+  afterId: string | undefined,
+  take: number,
+) {
+  return db.studioClassTemplate.findMany({
+    where: {
+      scheduleRule: { isActive: true, isArchived: false },
+      ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
+    },
+    orderBy: { id: 'asc' },
+    take,
+    select: { id: true, scheduleRule: { select: { teacherId: true } } },
+  });
+}
+
+type StudioGenerationCandidate = Awaited<ReturnType<typeof readStudioTemplateCandidatePage>>[number];
+
+/**
+ * Reads every live studio template `generateStudioClassInstances` will
+ * generate for, `SWEEP_PAGE_SIZE` at a time via `readInPages`
+ * (`@/lib/read-in-pages`). Extracted so a ceiling test can exercise the read
+ * directly without generating classes for a platform-wide template set.
+ */
+export function readStudioGenerationCandidates(
+  db: PrismaClient,
+): Promise<StudioGenerationCandidate[]> {
+  return readInPages<StudioGenerationCandidate>((after, take) =>
+    readStudioTemplateCandidatePage(db, after?.id, take),
+  );
+}
+
+/**
  * Cron entry point: tops up the rolling window for every active, unarchived
  * studio template, platform-wide — no `teacherId` scoping, unlike
  * `generateClassInstances`. That absence is what puts this function out of
@@ -123,15 +174,7 @@ export async function generateStudioClassInstances(
 ): Promise<number> {
   const startDate = from ?? new Date();
 
-  // isArchived is defence in depth, matching class-generator.ts: the PATCH
-  // route keeps archived templates inactive, but if that invariant ever slips
-  // the generator must not materialise classes for something the teacher
-  // shelved. It slipped once — the studio route had neither guard until #53's
-  // coverage pass found it.
-  const templates = await db.studioClassTemplate.findMany({
-    where: { scheduleRule: { isActive: true, isArchived: false } },
-    include: { scheduleRule: true },
-  });
+  const templates = await readStudioGenerationCandidates(db);
 
   let totalCreated = 0;
   const errors: unknown[] = [];
