@@ -6,6 +6,7 @@ import type { Notification, RecipientType } from '@prisma/client';
 import { EmptyState } from '@/components/ui/empty-state';
 import { RetentionNote } from './retention-note';
 import { timeAgo } from '@/lib/format';
+import { postMarkRead } from '@/lib/mark-notification-read';
 import { teacherNotificationHref } from '@/lib/notification-links';
 import { NOTIFICATION_PAGE_SIZE, mergeNotifications } from '@/lib/notification-paging';
 
@@ -43,7 +44,8 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
   const [readState, setReadState] = useState<Record<string, boolean>>(
     Object.fromEntries(notifications.map((n) => [n.id, n.isRead])),
   );
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [readFailed, setReadFailed] = useState<Record<string, boolean>>({});
+  const [loaded, setLoaded]= useState<Loaded | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'failed'>('idle');
   const inFlight = useRef(false);
   const pendingFocus = useRef<string | null>(null);
@@ -94,9 +96,18 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
   async function markRead(id: string) {
     if (readState[id]) return;
     setReadState((prev) => ({ ...prev, [id]: true }));
-    await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
-    // Re-runs the layout server component so the tab bar's unread dot updates.
-    router.refresh();
+    setReadFailed((prev) => ({ ...prev, [id]: false }));
+    const outcome = await postMarkRead(id);
+    if (outcome === 'marked') {
+      // Re-runs the layout server component so the tab bar's unread dot updates.
+      router.refresh();
+      return;
+    }
+    setReadState((prev) => ({ ...prev, [id]: false }));
+    setReadFailed((prev) => ({ ...prev, [id]: true }));
+    // An expired session cannot be retried into success; the page's own
+    // server guard sends the reader to sign in.
+    if (outcome === 'session-expired') router.refresh();
   }
 
   function resolveHref(notification: Notification): string | null {
@@ -138,22 +149,29 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
               isRead ? '' : 'bg-sand-soft'
             }`}
           >
-            <button
-              id={rowButtonId(notification.id)}
-              type="button"
-              onClick={() => handleNavigate(notification)}
-              className="flex items-start min-w-0 text-left flex-1"
-            >
-              <div className="flex flex-col gap-0.5 min-w-0">
-                <span className={`text-[15px] text-ink ${isRead ? '' : 'font-medium'}`}>
-                  {notification.title}
-                  {href && <span className="text-brown-light"> &rarr;</span>}
-                </span>
-                <span className="type-caption">
-                  {notification.body}
-                </span>
-              </div>
-            </button>
+            <div className="flex flex-col min-w-0 flex-1">
+              <button
+                id={rowButtonId(notification.id)}
+                type="button"
+                onClick={() => handleNavigate(notification)}
+                className="flex items-start min-w-0 text-left"
+              >
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className={`text-[15px] text-ink ${isRead ? '' : 'font-medium'}`}>
+                    {notification.title}
+                    {href && <span className="text-brown-light"> &rarr;</span>}
+                  </span>
+                  <span className="type-caption">
+                    {notification.body}
+                  </span>
+                </div>
+              </button>
+              {readFailed[notification.id] && (
+                <p role="alert" className="type-caption text-danger">
+                  Couldn&apos;t mark this message read.
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-2 shrink-0 ml-2 pt-0.5">
               <span className="type-caption">
                 {timeAgo(notification.createdAt)}
