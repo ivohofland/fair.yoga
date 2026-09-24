@@ -6,10 +6,13 @@ import type { RegistrationStatus } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
 import { readErrorMessage } from '@/lib/client-errors';
 
+/** A registration this list can show: every status but `cancelled`. */
+export type AttendanceStatus = Exclude<RegistrationStatus, 'cancelled'>;
+
 export interface AttendanceItem {
   registrationId: string;
   studentName: string;
-  status: RegistrationStatus;
+  status: AttendanceStatus;
 }
 
 interface AttendanceListProps {
@@ -21,15 +24,12 @@ interface AttendanceListProps {
 }
 
 /**
- * A row's label, tethered to the compiler against `RegistrationStatus` so a
+ * A row's label, tethered to the compiler against `AttendanceStatus` so a
  * future member fails here rather than falling through to a wrong label.
  * `registered` reads "Not marked" rather than "No-show" — an untouched row is
  * not a recorded absence, and must not read as one (spec D5; #234).
- * `cancelled` cannot reach this component (`activeRegistrations` in
- * `(teacher)/class/[id]/page.tsx` filters it out before building
- * `AttendanceItem[]`); the branch exists only to keep the switch exhaustive.
  */
-function statusLabel(status: RegistrationStatus): string {
+function statusLabel(status: AttendanceStatus): string {
   switch (status) {
     case 'attended':
       return 'Present';
@@ -39,8 +39,6 @@ function statusLabel(status: RegistrationStatus): string {
       return 'No-show';
     case 'registered':
       return 'Not marked';
-    case 'cancelled':
-      return 'Cancelled';
     default: {
       const exhaustive: never = status;
       return exhaustive;
@@ -68,7 +66,7 @@ function statusLabel(status: RegistrationStatus): string {
 export function AttendanceList({ items, locked = false }: AttendanceListProps) {
   const router = useRouter();
   const [attendanceState, setAttendanceState] = useState<
-    Record<string, RegistrationStatus>
+    Record<string, AttendanceStatus>
   >(() =>
     Object.fromEntries(items.map((item) => [item.registrationId, item.status])),
   );
@@ -79,7 +77,7 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
   // attendance" tap unlocks the row controls.
   const [editing, setEditing] = useState(!locked);
 
-  async function toggleAttendance(registrationId: string, originalStatus: RegistrationStatus) {
+  async function toggleAttendance(registrationId: string, originalStatus: AttendanceStatus) {
     const currentStatus = attendanceState[registrationId] ?? 'registered';
     // A student who cancelled late is not a no-show — they told the teacher they
     // were not coming, and were charged for saying so. The only correction that
@@ -89,7 +87,7 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
     // `/bookings` page shows them ("Cancelled after the deadline — this class is
     // still charged"). `updateRegistrationSchema` accepts `late_cancel`, so the
     // round trip is expressible.
-    const newStatus: RegistrationStatus =
+    const newStatus: AttendanceStatus =
       originalStatus === 'late_cancel'
         ? currentStatus === 'attended'
           ? 'late_cancel'
