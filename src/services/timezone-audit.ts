@@ -39,8 +39,8 @@
  * `makeTick` records `lastError` and withholds `lastSuccessAt`, and
  * `/api/health` reports `healthy: false` with `status: 'degraded'`. The cost
  * is that this job then reports unhealthy indefinitely for a data problem
- * rather than a code one, and `/api/cron/daily-cleanup` answers 500 nightly
- * until the row is fixed. That is deliberate, and the same trade
+ * rather than a code one, and `/api/cron/daily-cleanup` answers 500 on every
+ * call until the row is fixed. That is deliberate, and the same trade
  * `RetentionFailedError` makes in `waitlist-retention.ts`.
  *
  * LIVE TEACHERS ONLY. Erasure soft-deletes and does not touch this column, so

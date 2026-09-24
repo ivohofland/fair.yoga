@@ -18,9 +18,7 @@
  *   also sends recipient-visible notifications — `autoCancelClasses` writes a
  *   `class_cancelled` set (`class-transitions.ts`) and `autoCompleteClasses`
  *   reaches `completeClass`'s `payment_request` set (`class-lifecycle.ts`) —
- *   and neither was examined for this. An earlier version of this docblock
- *   claimed every job was idempotent; the correction is to claim less, not to
- *   redraw the set and claim it exhaustively.
+ *   and neither was examined for this.
  * - A per-job `running` flag prevents a slow tick from stacking on itself.
  * - CRON_SCHEDULER=off disables the scheduler entirely and is a CI setting,
  *   not a production mode: CI runs the built app while tests drive the same
