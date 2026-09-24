@@ -60,7 +60,8 @@ describe('NotificationList — retention note (#223)', () => {
     ]} />);
 
     const note = screen.getByText('Messages are kept for a year.');
-    const lastRow = screen.getByRole('button', { name: /^Second/ }).parentElement;
+    const lastRow = screen.getByRole('button', { name: /^Second/ }).closest('div.border-b');
+    expect(lastRow).not.toBeNull();
     expect(lastRow?.contains(note)).toBe(false);
     expect(lastRow?.compareDocumentPosition(note)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.queryByText('No notifications.')).toBeNull();
@@ -399,5 +400,38 @@ describe('NotificationList — a failed mark-read (#670)', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't mark this message read.");
     expect(screen.getByRole('button', { name: 'Mark "Old unread" read' })).not.toHaveClass('invisible');
+  });
+
+  describe('an already-read row loaded by Show older', () => {
+    async function renderWithOldRead() {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(olderResponse([notification({ id: 'b', title: 'Old read', isRead: true, createdAt: at(5) })], null))
+        .mockResolvedValue({ ok: false, status: 500 });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<NotificationList notifications={[notification({ id: 'a', createdAt: at(1) })]} paging={{ audience: 'teacher', nextCursor: 'c1' }} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Show older messages' }));
+      await screen.findByRole('button', { name: /^Old read/ });
+      return fetchMock;
+    }
+
+    it('sends nothing and shows no alert when its title is clicked', async () => {
+      const fetchMock = await renderWithOldRead();
+
+      fireEvent.click(screen.getByRole('button', { name: /^Old read/ }));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Mark "Old read" read' })).toHaveClass('invisible');
+    });
+
+    it('sends nothing and shows no alert when its Mark read button is clicked', async () => {
+      const fetchMock = await renderWithOldRead();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark "Old read" read' }));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Mark "Old read" read' })).toHaveClass('invisible');
+    });
   });
 });

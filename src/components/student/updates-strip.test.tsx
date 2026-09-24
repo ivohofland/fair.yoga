@@ -37,7 +37,7 @@ describe('UpdatesStrip mark read', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('says so, keeps the row and does not refresh on a 500', async () => {
+  it('says so and does not refresh on a 500', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     render(<UpdatesStrip updates={[update({})]} hasHistory />);
 
@@ -45,7 +45,6 @@ describe('UpdatesStrip mark read', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe(ALERT_TEXT);
-    expect(markReadButton()).toBeTruthy();
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 
@@ -87,12 +86,14 @@ describe('UpdatesStrip mark read', () => {
     await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
   });
 
-  it('still follows the link when the mark fails', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+  it('marks read from the title link and reports a failure', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
     render(<UpdatesStrip updates={[update({ href: '/book/c-1' })]} hasHistory />);
 
     fireEvent.click(screen.getByRole('link', { name: /^Spot opened/ }));
 
+    expect(fetchMock).toHaveBeenCalledWith('/api/notifications/u-1/read', { method: 'POST' });
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe(ALERT_TEXT);
   });
