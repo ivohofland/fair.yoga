@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { timeAgo } from '@/lib/format';
+import { postMarkRead } from '@/lib/mark-notification-read';
 
 export interface StudentUpdate {
   id: string;
@@ -28,10 +30,20 @@ interface UpdatesStripProps {
 export function UpdatesStrip({ updates, hasHistory }: UpdatesStripProps) {
   const router = useRouter();
 
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+
   async function markRead(id: string) {
-    await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
-    // Server component re-render drops the row from the strip.
-    router.refresh();
+    setFailed((prev) => ({ ...prev, [id]: false }));
+    const outcome = await postMarkRead(id);
+    if (outcome === 'marked') {
+      // Server component re-render drops the row from the strip.
+      router.refresh();
+      return;
+    }
+    setFailed((prev) => ({ ...prev, [id]: true }));
+    // An expired session cannot be retried into success; the page's own
+    // server guard sends the reader to sign in.
+    if (outcome === 'session-expired') router.refresh();
   }
 
   if (updates.length === 0 && !hasHistory) return null;
@@ -69,6 +81,11 @@ export function UpdatesStrip({ updates, hasHistory }: UpdatesStripProps) {
                 )}
               </span>
               <span className="type-caption">{update.body}</span>
+              {failed[update.id] && (
+                <span role="alert" className="type-caption text-danger">
+                  Couldn&apos;t mark this message read.
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-2 pt-0.5">
               <span className="type-caption">{timeAgo(new Date(update.createdAt))}</span>
