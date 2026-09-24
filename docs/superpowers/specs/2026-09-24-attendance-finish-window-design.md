@@ -64,7 +64,7 @@ What the issue did not say, measured in the premise sweep:
 | # | Decision | Chosen |
 |---|---|---|
 | D1 | When does a class complete on its own? | At **end + 15 minutes**, not at end. |
-| D2 | Can the teacher finish earlier? | Yes, from **end − 15 minutes**, with a confirm step. |
+| D2 | Can the teacher finish earlier? | Yes, from **end − 15 minutes** but never before the start, with a confirm step. |
 | D3 | Is the finish window enforced below the UI? | Yes — under the class row lock in `completeClass`, for both the sweep and the teacher route. |
 | D4 | Does editing close after completion? | **No.** Corrections stay possible, behind an "Edit attendance" affordance on the completed view. They do not resend the payment request. |
 | D5 | Row labels | Untouched `registered` reads **"Not marked"**. One tap: Not marked → Present, then Present ↔ No-show. Late cancel keeps its own round trip. |
@@ -81,14 +81,21 @@ What the issue did not say, measured in the premise sweep:
 export const FINISH_GRACE_MINUTES = 15;
 
 export function classEndInstant(entry, timeZone): Date      // start + durationMinutes
-export function finishOpensAt(end: Date): Date              // end − grace
+export function finishOpensAt({ start, end }): Date         // max(start, end − grace)
 export function autoFinishAt(end: Date): Date               // end + grace
 ```
 
 One constant sets both edges. Both edges are the same length from the end
 because a teacher who can finish 15 minutes early and gets 15 minutes
-afterwards has one symmetric window around the end. Callers never do this
-arithmetic themselves:
+afterwards has one symmetric window around the end.
+
+**The teacher's edge is clamped to the start.** A class no longer than the
+grace (schemas accept any positive duration) would otherwise open its finish
+window at or before it begins, which is the pre-start billing hole §1 names.
+`finishOpensAt` therefore takes the start as well as the end, as named fields
+so the two cannot be swapped, and returns the later of the start and
+end − grace. The sweep's edge needs no clamp: end + grace is always after the
+start. Callers never do this arithmetic themselves:
 
 - `autoCompleteClasses`'s pre-filter compares `now` against `autoFinishAt`.
 - `completeClass`'s locked check does the same (§4).
@@ -105,15 +112,18 @@ It becomes:
 ```ts
 export type CompletionTiming =
   | { sweepAt: Date }        // autoCompleteClasses: refused before autoFinishAt
-  | { teacherAt: Date }      // POST /complete: refused before finishOpensAt
+  | { teacherAt: Date }      // POST /complete: refused before finishOpensAt (≥ start)
   | { finishedEarly: true }; // deleteTeacherAccount only: no clock
 ```
 
 It stays a required union, for the reason its docblock gives (#182: the
 dangerous mode must not be the silent default). Under the row lock, after
-the cancellation check, the function computes the end from the row it just
-read and refuses `NOT_ENDED_YET` when the caller's instant is before that
-caller's edge. The `Invalid Date` → `TypeError` guard applies to both clock
+the cancellation check, the function computes the start and end from the row it
+just read and refuses `NOT_ENDED_YET` when the caller's instant is before that
+caller's edge — `autoFinishAt(end)` for `sweepAt`, `finishOpensAt({ start, end })`
+for `teacherAt`, both from that row. The variant-to-edge mapping is an
+exhaustive helper whose `never` default stops a new variant compiling until it
+names its edge. The `Invalid Date` → `TypeError` guard applies to both clock
 variants.
 
 **The status is checked before the clock, and nothing is written before
@@ -139,7 +149,9 @@ instead of `ILLEGAL_TRANSITION`. The order under the lock is therefore:
   registered `CLASS_NOT_ENDED_YET` (409), which has been unreachable until now.
   Its copy changes from "This class hasn't finished yet." to one that tells
   the teacher when they can finish ("You can finish this class from 15 minutes
-  before it ends."), built from `FINISH_GRACE_MINUTES`. This is the only user
+  before it ends, once it has started."), built from `FINISH_GRACE_MINUTES`.
+  The "once it has started" clause is the clamp, and is what makes the copy
+  true for a class no longer than the grace. This is the only user
   of that refusal.
 - **Erasure.** `deleteTeacherAccount` keeps `finishedEarly`. Its docblock
   loses the teacher-route mention.
@@ -160,7 +172,15 @@ instead of `ILLEGAL_TRANSITION`. The order under the lock is therefore:
   Before that, check-in shows no header action.
 - **The auto-finish caption** appears while the button is visible: "Payment
   requests go out automatically at {time}", in the teacher's timezone, where
-  {time} is `autoFinishAt`.
+  {time} is `autoFinishAt`. When no one is charged it reads "This class
+  finishes automatically at {time}" instead, matching the confirm's n = 0 copy.
+- **The page re-renders itself at the edges.** Both conditions above are read
+  from the clock at render, so while the class is live the page mounts a small
+  client component (`refresh-at.tsx`) that calls `router.refresh()` when
+  `finishOpensAt` and `autoFinishAt` arrive. A render that finds the class still
+  live past `autoFinishAt` (the sweep has not landed yet) asks again a minute
+  later. The page passes ISO strings; the client component does not import
+  `@/lib/finish-window`.
 - **Completed view**: an Attendance section above `PricingBreakdown`, read-only
   by default (§5.3).
 
@@ -216,7 +236,8 @@ restore.
     `sweepAt`.
   - **Teacher.** Refused at `finishOpensAt − 1ms`, completes at exactly
     `finishOpensAt`. Also: a teacher finish on an `open` class inside the
-    window, and one refused outside it (the pre-start billing hole).
+    window, and one refused outside it (the pre-start billing hole), and a
+    class no longer than the grace refused a millisecond before its start.
 - `autoCompleteClasses`: a class at end + 5 minutes stays `in_progress`, and at
   end + 15 minutes it completes.
 - The complete route: 409 `CLASS_NOT_ENDED_YET` (asserting the code, not the
@@ -226,6 +247,8 @@ restore.
     attendance" switch.
   - CompleteClassButton: first tap confirms and the second posts; "Keep open"
     posts nothing; the n = 0 copy.
+  - RefreshAt: refreshes at each future instant and not before, ignores a
+    past one and one beyond `setTimeout`'s limit, and not after unmount.
 - e2e `teacher-journey.spec.ts`. Its check-in class started 5 minutes ago, so
   the new window refuses its "Complete class" click. The fixture moves near the
   class end, and the click goes through the confirm.

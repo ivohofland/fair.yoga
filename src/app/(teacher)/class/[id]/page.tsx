@@ -150,7 +150,7 @@ export default async function ClassDetailPage({
   // The finish button follows the window `completeClass` enforces under its
   // lock; both read `@/lib/finish-window`.
   const classEnd = classEndInstant(cls.calendarEntry, tz);
-  const opensAt = finishOpensAt(classEnd);
+  const opensAt = finishOpensAt({ start: classStart, end: classEnd });
   const autoAt = autoFinishAt(classEnd);
   const live = !cancelled && (cls.status === 'in_progress' || cls.status === 'open');
   const canFinish = live && now >= opensAt.getTime();

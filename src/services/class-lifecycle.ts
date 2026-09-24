@@ -689,6 +689,28 @@ export type CompletionTiming =
   | { teacherAt: Date }
   | { finishedEarly: true };
 
+/**
+ * The caller's instant and the edge it may not precede, or `null` for a caller
+ * with no clock. Every `CompletionTiming` variant is handled by name, and the
+ * `never` below stops a new one compiling until it says which edge it takes.
+ */
+function completionClock(
+  timing: CompletionTiming,
+  entry: { date: Date; startTime: Date; durationMinutes: number },
+  timeZone: string,
+): { at: Date; edge: Date } | null {
+  if ('sweepAt' in timing) {
+    return { at: timing.sweepAt, edge: autoFinishAt(classEndInstant(entry, timeZone)) };
+  }
+  if ('teacherAt' in timing) {
+    const span = { start: classStartInstant(entry, timeZone), end: classEndInstant(entry, timeZone) };
+    return { at: timing.teacherAt, edge: finishOpensAt(span) };
+  }
+  if ('finishedEarly' in timing) return null;
+  const unhandled: never = timing;
+  throw new Error(`completeClass: unhandled completion timing ${JSON.stringify(unhandled)}`);
+}
+
 export async function completeClass(
   db: PrismaClient,
   classId: string,
@@ -748,16 +770,14 @@ export async function completeClass(
     // The clock, decided from THIS locked row (#182): a caller's snapshot can
     // predate a reschedule, and completion runs the pricing engine and writes
     // `Payment` rows.
-    const at = 'sweepAt' in timing ? timing.sweepAt : 'teacherAt' in timing ? timing.teacherAt : null;
-    if (at !== null) {
+    const clock = completionClock(timing, cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone);
+    if (clock !== null) {
       // Not a truthiness test: an `Invalid Date` is truthy and compares false
       // against everything, so it would slip past the edge below.
-      if (Number.isNaN(at.getTime())) {
+      if (Number.isNaN(clock.at.getTime())) {
         throw new TypeError('completeClass: the completion instant is not a valid Date');
       }
-      const end = classEndInstant(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone);
-      const edge = 'sweepAt' in timing ? autoFinishAt(end) : finishOpensAt(end);
-      if (at < edge) {
+      if (clock.at < clock.edge) {
         return { ok: false, reason: 'NOT_ENDED_YET', error: `Class ${classId} is not finishable yet` };
       }
     }

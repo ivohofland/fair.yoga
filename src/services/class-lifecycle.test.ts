@@ -778,7 +778,7 @@ describe('completeClass (DB)', () => {
   // deliberately: the wording this replaces named two, and the block has held
   // more than that for some time without anything noticing.
   let makeClassCounter = 0;
-  const makeClass = ({ status }: { status: ClassStatus }) => {
+  const makeClass = ({ status, durationMinutes = 75 }: { status: ClassStatus; durationMinutes?: number }) => {
     makeClassCounter += 1;
     return createClassFixture(prisma, {
         teacherId,
@@ -792,7 +792,7 @@ describe('completeClass (DB)', () => {
         // produce.
         date: slotDate('2026-06-01', makeClassCounter),
         startTime: hhmmToTime(slotTime(540)),
-        durationMinutes: 75,
+        durationMinutes,
         roomCost: 35,
         minRate: 15,
         targetRate: 25,
@@ -1175,10 +1175,17 @@ describe('completeClass (DB)', () => {
     expect(after.status).toBe('expired');
   });
 
-  /** The row's own end, so a counter-derived fixture time never goes stale. */
-  async function endOf(cls: { calendarEntryId: string }): Promise<Date> {
+  /** The row's own start and end, so a counter-derived fixture time never goes stale. */
+  async function spanOf(cls: { calendarEntryId: string }): Promise<{ start: Date; end: Date }> {
     const row = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: cls.calendarEntryId } });
-    return classEndInstant(row, 'Europe/Amsterdam');
+    return {
+      start: classStartInstant(row, 'Europe/Amsterdam'),
+      end: classEndInstant(row, 'Europe/Amsterdam'),
+    };
+  }
+
+  async function endOf(cls: { calendarEntryId: string }): Promise<Date> {
+    return (await spanOf(cls)).end;
   }
 
   /**
@@ -1205,13 +1212,31 @@ describe('completeClass (DB)', () => {
   /** The teacher's edge: finishOpensAt, end − grace. */
   it('lets a teacher finish from finishOpensAt and not a millisecond before', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    const edge = finishOpensAt(await endOf(cls));
+    const edge = finishOpensAt(await spanOf(cls));
 
     const early = await completeClass(prisma, cls.id, { teacherAt: new Date(edge.getTime() - 1) });
     expect(early.ok).toBe(false);
     if (!early.ok) expect(early.reason).toBe('NOT_ENDED_YET');
 
     const onTime = await completeClass(prisma, cls.id, { teacherAt: edge });
+    expect(onTime.ok).toBe(true);
+  });
+
+  /**
+   * A class no longer than the grace: end − grace falls before the start, so
+   * the teacher's edge is the start itself. A millisecond before it the class
+   * has not begun and must not be billed.
+   */
+  it('refuses a teacher finish before the start of a class no longer than the grace', async () => {
+    const cls = await makeClass({ status: 'in_progress', durationMinutes: 10 });
+    const { start } = await spanOf(cls);
+
+    const early = await completeClass(prisma, cls.id, { teacherAt: new Date(start.getTime() - 1) });
+    expect(early.ok).toBe(false);
+    if (!early.ok) expect(early.reason).toBe('NOT_ENDED_YET');
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).status).toBe('in_progress');
+
+    const onTime = await completeClass(prisma, cls.id, { teacherAt: start });
     expect(onTime.ok).toBe(true);
   });
 
@@ -1230,7 +1255,7 @@ describe('completeClass (DB)', () => {
       data: { classId: cls.id, studentId: studentIds[1]!, position: 1, status: 'waiting' },
     });
     // An hour before the window opens: before the class has even started.
-    const tooEarly = new Date(finishOpensAt(await endOf(cls)).getTime() - 60 * 60_000);
+    const tooEarly = new Date(finishOpensAt(await spanOf(cls)).getTime() - 60 * 60_000);
 
     const result = await completeClass(prisma, cls.id, { teacherAt: tooEarly });
 
@@ -1252,7 +1277,7 @@ describe('completeClass (DB)', () => {
       data: { classId: cls.id, studentId: studentIds[1]!, position: 1, status: 'waiting' },
     });
     try {
-      const result = await completeClass(prisma, cls.id, { teacherAt: finishOpensAt(await endOf(cls)) });
+      const result = await completeClass(prisma, cls.id, { teacherAt: finishOpensAt(await spanOf(cls)) });
       expect(result.ok).toBe(true);
       expect((await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } })).status).toBe('expired');
     } finally {

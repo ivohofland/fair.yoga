@@ -25,5 +25,5 @@ export const CLASS_CANCELLED = codedRefusal('CLASS_CANCELLED', 'This class has b
 /** A completion refused because the class's finish window has not opened yet. */
 export const CLASS_NOT_ENDED_YET = codedRefusal(
   'CLASS_NOT_ENDED_YET',
-  `You can finish this class from ${FINISH_GRACE_MINUTES} minutes before it ends.`,
+  `You can finish this class from ${FINISH_GRACE_MINUTES} minutes before it ends, once it has started.`,
 );
