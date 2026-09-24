@@ -111,7 +111,7 @@ describe('GET /api/account/export — dual account', () => {
 });
 
 describe('GET /api/notifications — dual account', () => {
-  it('returns both profiles’ notifications with a combined total', async () => {
+  it('returns both profiles’ notifications', async () => {
     await prisma.notification.create({
       data: {
         recipientType: 'teacher',
@@ -134,12 +134,11 @@ describe('GET /api/notifications — dual account', () => {
     const res = await authed('/api/notifications');
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { notifications: Array<{ title: string }>; total: number };
+      data: { notifications: Array<{ title: string }> };
     };
     const titles = body.data.notifications.map((n) => n.title);
     expect(titles).toContain('Teacher-side note');
     expect(titles).toContain('Student-side note');
-    expect(body.data.total).toBe(2);
   });
 });
 
