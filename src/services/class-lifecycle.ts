@@ -14,6 +14,7 @@ import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
+import { economicsViolations, type EconomicsViolation } from '@/lib/class-economics';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { lockClassRow } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
@@ -1223,6 +1224,10 @@ class UpdateClassRefusal extends Error {
  * — an invariant violation, where the function's own reasoning about its
  * inputs turns out to be wrong — is not encoded as a value; it throws
  * `UpdateClassInvariantError` instead.
+ *
+ * `invalid_economics` carries a NON-EMPTY tuple: the economics the write
+ * would leave behind break at least one of `economicsViolations`'s
+ * cross-field rules (#221).
  */
 export type UpdateClassResult =
   | { ok: true; cls: ClassWithEntry }
@@ -1230,6 +1235,11 @@ export type UpdateClassResult =
   | { ok: false; reason: 'locked'; fields: readonly [EconomicField, ...EconomicField[]] }
   | { ok: false; reason: 'terminal'; state: TerminalClassState }
   | { ok: false; reason: 'no_fields' }
+  | {
+      ok: false;
+      reason: 'invalid_economics';
+      violations: readonly [EconomicsViolation, ...EconomicsViolation[]];
+    }
   /**
    * The ENTRY refused the write: its schedule is frozen. Distinct from
    * `terminal`, which is the `Class` row's own refusal, because the two
@@ -1548,6 +1558,39 @@ export async function updateClass(
       // from Prisma's statement emission: an entry-then-class emission order
       // would deadlock against every other holder of this pair.
       await lockClassRow(tx, classId);
+
+      // The cross-field economics are checked on the row the write would
+      // leave, read under the lock just taken, and BEFORE the write: the
+      // `CHECK`s on `Class` raise at the write itself, as a 500. Skipped when
+      // the fresh row would fail the CAS below, so a class that locked or
+      // froze since the first read keeps answering `locked`/`terminal`.
+      if (sentEconomic !== null) {
+        const fresh = await tx.class.findUnique({
+          where: { id: classId },
+          select: {
+            roomCost: true, minRate: true, targetRate: true, minStudents: true, maxStudents: true,
+            settingsLocked: true, status: true,
+            calendarEntry: { select: { cancelledAt: true } },
+          },
+        });
+        const passesCas =
+          fresh !== null &&
+          !fresh.settingsLocked &&
+          !TERMINAL_CLASS_STATUSES.includes(fresh.status) &&
+          fresh.calendarEntry.cancelledAt === null;
+        if (passesCas) {
+          const [first, ...rest] = economicsViolations({
+            roomCost: data.roomCost ?? Number(fresh.roomCost),
+            minRate: data.minRate ?? Number(fresh.minRate),
+            targetRate: data.targetRate ?? Number(fresh.targetRate),
+            minStudents: data.minStudents ?? fresh.minStudents,
+            maxStudents: data.maxStudents ?? fresh.maxStudents,
+          });
+          if (first !== undefined) {
+            throw new UpdateClassRefusal({ ok: false, reason: 'invalid_economics', violations: [first, ...rest] });
+          }
+        }
+      }
 
       // Both CASes carry the SAME freeze, expressed against whichever row
       // they write — `frozenStateOf`'s two halves, one on each table. That

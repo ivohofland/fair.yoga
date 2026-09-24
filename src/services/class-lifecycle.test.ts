@@ -1874,6 +1874,98 @@ describe('updateClass (DB)', () => {
       state: 'completed',
     });
   });
+
+  describe('merged-row economics (#221)', () => {
+    const economics = (id: string) =>
+      prisma.class.findUniqueOrThrow({
+        where: { id },
+        select: { roomCost: true, minRate: true, targetRate: true, minStudents: true, maxStudents: true },
+      });
+
+    it.each([
+      ['maxStudents below the stored minStudents', { maxStudents: 2 }, 'students_order'],
+      ['minStudents above the stored maxStudents', { minStudents: 13 }, 'students_order'],
+      ['minRate above the stored targetRate', { minRate: 30 }, 'rate_order'],
+      ['minRate subsidising past the stored roomCost', { minRate: -500 }, 'room_subsidy'],
+    ] as const)('refuses %s and leaves the row unchanged', async (_label, edit, rule) => {
+      const cls = await makeClass(false);
+      const before = await economics(cls.id);
+
+      const result = await updateClass(prisma, cls.id, edit);
+
+      expect(result.ok).toBe(false);
+      if (result.ok || result.reason !== 'invalid_economics') throw new Error(`expected invalid_economics, got ${JSON.stringify(result)}`);
+      expect(result.violations.map((v) => v.rule)).toEqual([rule]);
+      expect(await economics(cls.id)).toEqual(before);
+    });
+
+    it('refuses a roomCost edit that leaves a stored negative minRate subsidising past it', async () => {
+      const cls = await makeClass(false);
+      await prisma.class.update({ where: { id: cls.id }, data: { minRate: -20 } });
+
+      const result = await updateClass(prisma, cls.id, { roomCost: 10 });
+
+      expect(result).toMatchObject({ ok: false, reason: 'invalid_economics' });
+      expect(Number((await economics(cls.id)).roomCost)).toBe(35);
+    });
+
+    it('rolls back a non-economic field sent alongside the invalid economics', async () => {
+      const cls = await makeClass(false);
+      const result = await updateClass(prisma, cls.id, { description: 'should not land', maxStudents: 2 });
+      expect(result).toMatchObject({ ok: false, reason: 'invalid_economics' });
+      const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(stored.description).not.toBe('should not land');
+    });
+
+    it('applies a partial economic edit that stays valid against the stored row', async () => {
+      const cls = await makeClass(false);
+      const result = await updateClass(prisma, cls.id, { maxStudents: 4 });
+      expect(result.ok).toBe(true);
+      expect((await economics(cls.id)).maxStudents).toBe(4);
+    });
+
+    it('answers locked, not invalid_economics, for a settings-locked class', async () => {
+      const cls = await makeClass(true);
+      const result = await updateClass(prisma, cls.id, { maxStudents: 2 });
+      expect(result).toMatchObject({ ok: false, reason: 'locked' });
+    });
+
+    /**
+     * The in-transaction ordering: a class whose economics lock BETWEEN
+     * `updateClass`'s opening read and the row lock it takes inside the
+     * transaction. The opening read still sees the class unlocked, so the
+     * pre-transaction `locked` check does not fire — this is what makes the
+     * case land on `passesCas` rather than being answered earlier the way the
+     * settings-locked case above is.
+     *
+     * `maxStudents: 2` is sent because it also breaks `students_order` against
+     * the fixture's stored `minStudents: 4` — the edit has to be invalid on
+     * its own terms, or `passesCas` gating nothing would leave this case
+     * unable to tell the guarded and unguarded code apart.
+     */
+    it('answers locked, not invalid_economics, for a class that locks between the read and the row lock', async () => {
+      const cls = await makeClass(false);
+
+      let flipped = false;
+      const racing = prisma.$extends({
+        query: {
+          class: {
+            async findUnique({ args, query }) {
+              const row = await query(args);
+              if (!flipped) {
+                flipped = true;
+                await prisma.class.update({ where: { id: cls.id }, data: { settingsLocked: true } });
+              }
+              return row;
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      const result = await updateClass(racing, cls.id, { maxStudents: 2 });
+      expect(result).toMatchObject({ ok: false, reason: 'locked' });
+    });
+  });
 });
 
 describe('updateClass — the count === 0 branches', () => {
@@ -1997,12 +2089,13 @@ describe('updateClass — the count === 0 branches', () => {
       calendarEntry: { cancelledAt: null },
     });
 
-    // Exactly the opening read plus one re-check — a spurious third
-    // `findUnique` would be invisible to every other assertion here. Read via
-    // `stub.reads`, not a destructured copy, because a getter destructured
-    // before `updateClass` runs captures its value at that instant (0), not
-    // the live count.
-    expect(stub.reads).toBe(2);
+    // The opening read, the economics pre-check's own read (#221 — this
+    // request sends `roomCost`, so `sentEconomic !== null`), and one CAS
+    // re-check — a spurious fourth `findUnique` would be invisible to every
+    // other assertion here. Read via `stub.reads`, not a destructured copy,
+    // because a getter destructured before `updateClass` runs captures its
+    // value at that instant (0), not the live count.
+    expect(stub.reads).toBe(3);
   });
 
   it('reports not_found when economic fields were sent but the row is gone', async () => {
