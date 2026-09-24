@@ -24,6 +24,7 @@ export const SWEEP_TESTS = [
   'src/services/notifications.test.ts',
   'src/services/payment-reminders.test.ts',
   'src/services/studio-class-generator.test.ts',
+  'src/services/sweep-page-ceiling.test.ts',
 ] as const;
 
 // Files that cannot run in `unit`'s parallel tier because of LOCK TIMING —
