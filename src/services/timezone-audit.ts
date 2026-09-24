@@ -20,6 +20,12 @@
  * hypothetical one. The column is a bare `String`, so neither gets a
  * compile-time signal.
  *
+ * OFFSET IDENTIFIERS FLAG TOO. `isValidTimeZone` refuses `+18:00` and its
+ * kin although `Intl` resolves them, so a stored one fails this audit. Its
+ * calendar boundaries are correct — it is not silently UTC — but an offset
+ * outside UTC−12..UTC+14 can put a class outside `cancelCandidateDates`'s
+ * window, where auto-cancel never reads it.
+ *
  * NOT tzdata renames, despite that being the motivating story on the issue.
  * Measured 2026-09-01 on Node v22.22.2 with full ICU: every renamed and
  * deprecated identifier probed still resolves, because ICU ships IANA's
@@ -52,12 +58,14 @@ export interface TimezoneAuditSummary {
   readonly checked: number;
   /** Live teachers holding one of the `invalid` zones. */
   readonly teachers: number;
-  /** The distinct unresolvable zone strings, sorted for a stable log line. */
+  /** The distinct zone strings `isValidTimeZone` refuses, sorted for a
+   * stable log line. */
   readonly invalid: readonly string[];
 }
 
 /**
- * Thrown when at least one live teacher holds a zone `Intl` cannot resolve.
+ * Thrown when at least one live teacher holds a zone `isValidTimeZone`
+ * refuses: one `Intl` cannot resolve, or an offset identifier.
  *
  * Carries the zone strings rather than teacher ids: the repair is
  * `UPDATE "Teacher" SET "defaultTimezone" = '<good>' WHERE
@@ -65,7 +73,7 @@ export interface TimezoneAuditSummary {
  */
 export class InvalidTimezoneError extends Error {
   constructor(public readonly zones: readonly string[]) {
-    super(`stored teacher timezones no longer resolve: ${zones.join(', ')}`);
+    super(`stored teacher timezones are unresolvable or offset identifiers: ${zones.join(', ')}`);
     this.name = 'InvalidTimezoneError';
   }
 }
@@ -95,11 +103,11 @@ export async function auditTeacherTimezones(
   if (summary.invalid.length > 0) {
     log.error(
       summary,
-      'stored teacher timezones are unresolvable — every calendar boundary for these teachers is silently UTC',
+      'stored teacher timezones are unresolvable or offset identifiers — an unresolvable zone makes every calendar boundary silently UTC; an offset can escape the auto-cancel window',
     );
     throw new InvalidTimezoneError(summary.invalid);
   }
 
-  log.info(summary, 'teacher timezone audit: every stored zone resolves');
+  log.info(summary, 'teacher timezone audit: every stored zone is a valid IANA zone');
   return summary;
 }

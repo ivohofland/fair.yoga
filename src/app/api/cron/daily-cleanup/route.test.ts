@@ -218,7 +218,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
     reapClosedWaitlistEntries.mockResolvedValue({ deleted: 0, classes: 0 });
     auditTeacherTimezones.mockRejectedValue(
-      new Error('stored teacher timezones no longer resolve: Invalid/Test_Zone_145'),
+      new Error('stored teacher timezones are unresolvable or offset identifiers: Invalid/Test_Zone_145'),
     );
 
     const res = await POST(post());

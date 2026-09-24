@@ -16,11 +16,17 @@
  *
  * Keep this file dependency-free. An import added here is an import added to
  * every client bundle that reaches `schemas.ts`.
+ *
+ * Refuses ECMA-402 offset identifiers (`+18:00`, `-0530`), which the probe
+ * alone accepts: an offset can lie outside UTC−12..UTC+14, the range
+ * `cancelCandidateDates` depends on. IANA's fixed-offset zones spell
+ * themselves `Etc/GMT±N`, so no IANA name starts with a sign.
  */
 export function isValidTimeZone(tz: string): boolean {
+  const isOffset = (s: string) => s.startsWith('+') || s.startsWith('-');
+  if (isOffset(tz)) return false;
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
+    return !isOffset(new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone);
   } catch {
     return false;
   }

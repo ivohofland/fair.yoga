@@ -84,6 +84,16 @@ describe('auditTeacherTimezones', () => {
     await expect(auditTeacherTimezones(scoped.db)).rejects.toThrow(InvalidTimezoneError);
   });
 
+  it('flags a stored offset identifier, which Intl resolves but isValidTimeZone refuses', async () => {
+    const teacherId = await seedTeacher('offset', '+18:00');
+    const scoped = scopeSweep(prisma, { Teacher: { id: { in: [teacherId] } } });
+    vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => { vi.restoreAllMocks(); });
+    await expect(auditTeacherTimezones(scoped.db)).rejects.toMatchObject({
+      zones: ['+18:00'],
+    });
+  });
+
   it('carries the offending zone on the error, so the log line names it', async () => {
     const teacherId = await seedTeacher('named', SENTINEL);
     const scoped = scopeSweep(prisma, { Teacher: { id: { in: [teacherId] } } });

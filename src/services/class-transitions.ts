@@ -40,7 +40,8 @@ export const MAX_CANCEL_CHECK_HOURS = Math.max(...Object.values(CANCEL_CHECK_HOU
 const HOUR_MS = 60 * 60 * 1000;
 
 /** The stored `date`s a class inside its check window at `now` can have, as
- * UTC-midnight bounds, both inclusive. Zone offsets span UTC−12..UTC+14, and a
+ * UTC-midnight bounds, both inclusive. Zone offsets span UTC−12..UTC+14 — the
+ * IANA range; `isValidTimeZone` refuses offset identifiers — and a
  * stored `date` is the teacher's local day, so a start instant lies in
  * [date − 14 h, date + 36 h). */
 export function cancelCandidateDates(now: Date): { from: Date; to: Date } {
