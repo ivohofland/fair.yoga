@@ -893,6 +893,19 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
     // `updateRule` took, and before the write: the `CHECK`s raise at the
     // write itself, as a 500.
     if (ECONOMIC_FIELDS.some((f) => childData[f] !== undefined)) {
+      // `childData` is `Record<string, unknown>` (the generic boundary
+      // `rule-lifecycle.ts` shares with the studio family), so a field the
+      // gate above found present is not yet known to be a number. Checked
+      // here, before the overlay below reads it: left unchecked, a present
+      // non-number would fall through the `typeof` checks there as if it
+      // were absent, checking the STORED value while the write below still
+      // sends the real one.
+      const badField = ECONOMIC_FIELDS.find(
+        (f) => childData[f] !== undefined && typeof childData[f] !== 'number',
+      );
+      if (badField !== undefined) {
+        throw new Error(`updateClassTemplate: ${badField} is not a number at the service boundary`);
+      }
       const stored = await tx.classTemplate.findUniqueOrThrow({
         where: { id: templateId },
         select: { roomCost: true, minRate: true, targetRate: true, minStudents: true, maxStudents: true },

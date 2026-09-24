@@ -1242,9 +1242,8 @@ describe('updateClassTemplate economics (DB) (#221)', () => {
   let roomId: string;
   let teacherRoomId: string;
 
-  // Own counter and own `dayOfWeek` (4), separate from `updateClassTemplate
-  // (DB)`'s `makeTemplate` above, so this block's templates cannot collide
-  // with that block's.
+  // Own teacher and own counter, so its templates cannot collide with the
+  // blocks above.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
@@ -1345,6 +1344,67 @@ describe('updateClassTemplate economics (DB) (#221)', () => {
     const tpl = await makeTemplate('Econ Valid');
     const result = await updateClassTemplate(prisma, tpl.id, teacherId, { maxStudents: 2 });
     expect(result.ok).toBe(true);
+  });
+
+  /**
+   * F2 (#221 review fold). `CLASS_FAMILY.updateChild`'s
+   * `ECONOMIC_FIELDS.some(…)` gate is what stops a rule-only edit (day, time,
+   * classType) from reading the stored economics it does not need — deleting
+   * the condition reddens nothing else in this file, since every other test
+   * here sends an economic field. Counted through a `prisma.$extends` query
+   * hook on `classTemplate.findUniqueOrThrow`, the shape the sibling blocks
+   * above already use for interposing on a call.
+   */
+  it('reads the stored economics only when an economic field is sent', async () => {
+    let findUniqueOrThrowCalls = 0;
+    const counting = prisma.$extends({
+      query: {
+        classTemplate: {
+          async findUniqueOrThrow({ args, query }) {
+            findUniqueOrThrowCalls += 1;
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    // One template, two edits in sequence: the rule-only edit first, so its
+    // call count is read before the economic edit below adds to the same
+    // counter.
+    const tpl = await makeTemplate('Econ Read Gate');
+    const ruleResult = await updateClassTemplate(counting, tpl.id, teacherId, {
+      classType: 'Renamed Econ Read Gate',
+    });
+    expect(ruleResult.ok).toBe(true);
+    expect(findUniqueOrThrowCalls).toBe(0);
+
+    const economicResult = await updateClassTemplate(counting, tpl.id, teacherId, { maxStudents: 3 });
+    expect(economicResult.ok).toBe(true);
+    expect(findUniqueOrThrowCalls).toBe(1);
+  });
+
+  /**
+   * F6 (#221 review fold). `childData` is `Record<string, unknown>` — the
+   * generic boundary `rule-lifecycle.ts` shares with the studio family — so
+   * the overlay in `CLASS_FAMILY.updateChild` used to take the sent value
+   * only when `typeof childData[f] === 'number'`, falling back to the STORED
+   * value for a present non-number as though it were absent. The gate
+   * earlier in the same function tests `childData[f] !== undefined`, so the
+   * two could diverge: the gate would open, the overlay would check the
+   * stored row, and the write below would still send the real (non-number)
+   * value. Unreachable through the Zod-validated route today
+   * (`updateClassTemplateSchema` only ever sends a `number` or nothing for an
+   * economic field), which is why this bypasses the route's typing on
+   * purpose: `as unknown as number` below is a deliberate type-boundary
+   * bypass for the test, not a cast smuggled past a guard in shipped code.
+   */
+  it('rejects a non-number economic field at the service boundary, rather than checking the stored value', async () => {
+    const tpl = await makeTemplate('Econ Non-Number Boundary');
+    await expect(
+      updateClassTemplate(prisma, tpl.id, teacherId, {
+        maxStudents: '12' as unknown as number,
+      }),
+    ).rejects.toThrow('maxStudents is not a number at the service boundary');
   });
 });
 
