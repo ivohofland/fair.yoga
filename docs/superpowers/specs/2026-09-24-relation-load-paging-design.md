@@ -154,11 +154,13 @@ Solving for `date`:
 date ∈ ( now − 36 h, now + MAX_CHECK_HOURS + 14 h ]
 ```
 
-This is taken as whole UTC calendar dates, inclusive at both ends, so it
-covers slightly more than needed and is safe for a pre-filter. The bounds are
-passed as UTC-midnight `Date`s for the `@db.Date` column, so no
-timestamp-to-date truncation can narrow them. That makes about 3 calendar
-dates instead of 4 weeks. The window lives in a small exported pure function
+This is taken as whole UTC calendar dates, inclusive at both ends. `from` is
+the first midnight strictly after `now − 36 h`, and `to` is the midnight at
+or before `now + MAX_CHECK_HOURS + 14 h`. Both bounds are tight, so moving
+either inward by a day misses a reachable class. That is what lets the edge
+tests bite. The bounds are passed as UTC-midnight `Date`s for the `@db.Date`
+column, so no timestamp-to-date truncation can narrow them. That makes 2 or 3
+calendar dates instead of 4 weeks. The window lives in a small exported pure function
 beside `inCancelWindow`, so it can be tested at its edges without a database.
 
 **The count.** The `_count` is removed from the snapshot. After the windowed,
