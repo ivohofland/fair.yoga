@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, onTestFinished } from 'vitest';
+import { describe, it, expect, vi, onTestFinished, type Mock } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { log } from './log';
 import type { NoneOf } from './type-pins';
@@ -6,9 +6,11 @@ import {
   buildJobs,
   isolatedSweeps,
   makeTick,
+  scheduleJobs,
   type Job,
   type JobHealth,
   type SchedulerSweeps,
+  type SchedulerTimers,
 } from './scheduler';
 
 const MINUTE = 60 * 1000;
@@ -251,5 +253,144 @@ describe('makeTick', () => {
     // `finally`, not the success path: a job that throws every tick must still
     // be allowed to try again rather than wedging itself permanently.
     expect(job.running).toBe(false);
+  });
+});
+
+describe('scheduleJobs', () => {
+  interface Registration {
+    kind: 'timeout' | 'interval';
+    fn: () => Promise<void>;
+    ms: number;
+    unref: Mock<() => unknown>;
+  }
+
+  /** Timers that record what they were asked for instead of starting a clock. */
+  function recordingTimers(): { timers: SchedulerTimers; registrations: Registration[] } {
+    const registrations: Registration[] = [];
+    const record =
+      (kind: Registration['kind']) =>
+      (fn: () => Promise<void>, ms: number) => {
+        const unref = vi.fn<() => unknown>();
+        registrations.push({ kind, fn, ms, unref });
+        return { unref };
+      };
+    return {
+      timers: { setTimeout: record('timeout'), setInterval: record('interval') },
+      registrations,
+    };
+  }
+
+  /**
+   * The real job table with each `run` replaced by a recorder, so a registered
+   * function can be traced back to the job it runs. Name and interval come from
+   * `buildJobs`, whose own test pins them as literals — together the two tests
+   * cover the table and its use.
+   */
+  function tracedJobs(): { jobs: Job[]; ran: string[] } {
+    const ran: string[] = [];
+    const jobs = buildJobs(buildStubs(() => async () => {})).map((job) => ({
+      name: job.name,
+      intervalMs: job.intervalMs,
+      run: async () => {
+        ran.push(job.name);
+      },
+    }));
+    return { jobs, ran };
+  }
+
+  it("registers each job's first run 15 seconds after boot and its repeat at its own interval", async () => {
+    const { jobs, ran } = tracedJobs();
+    const { timers, registrations } = recordingTimers();
+
+    scheduleJobs(jobs, db, {}, timers);
+
+    // Identify each registration by the job its function actually runs, not
+    // by position: a tick bound to the wrong job must fail here even when the
+    // two jobs share an interval.
+    const observed: Array<[string, string, number]> = [];
+    for (const r of registrations) {
+      ran.length = 0;
+      await r.fn();
+      expect(ran).toHaveLength(1);
+      observed.push([r.kind, ran[0]!, r.ms]);
+    }
+
+    const expected = jobs.flatMap((job): Array<[string, string, number]> => [
+      ['timeout', job.name, 15 * 1000],
+      ['interval', job.name, job.intervalMs],
+    ]);
+    const byKey = (a: [string, string, number], b: [string, string, number]): number =>
+      `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`);
+    expect(observed.sort(byKey)).toEqual(expected.sort(byKey));
+  });
+
+  it('unrefs every timer, so none keeps a shutting-down process alive', () => {
+    const { jobs } = tracedJobs();
+    const { timers, registrations } = recordingTimers();
+
+    scheduleJobs(jobs, db, {}, timers);
+
+    expect(registrations).toHaveLength(jobs.length * 2);
+    for (const r of registrations) expect(r.unref).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * `/api/health` reads the entry registered here; if the tick wrote to any
+   * other object, the job would run and its health would read null forever.
+   */
+  it("registers a health entry per job that the job's own tick writes to", async () => {
+    const { jobs, ran } = tracedJobs();
+    const { timers, registrations } = recordingTimers();
+    const health: Record<string, JobHealth> = {};
+
+    scheduleJobs(jobs, db, health, timers);
+
+    expect(Object.keys(health).sort()).toEqual(jobs.map((j) => j.name).sort());
+
+    const stamped = (): string[] =>
+      Object.entries(health)
+        .filter(([, entry]) => entry.lastSuccessAt !== null)
+        .map(([name]) => name);
+
+    // One interval tick per job, each run alone: the entry it newly stamps
+    // must be the one registered under the name of the job it ran.
+    for (const r of registrations.filter((reg) => reg.kind === 'interval')) {
+      const before = new Set(stamped());
+      ran.length = 0;
+      await r.fn();
+      expect(stamped().filter((name) => !before.has(name))).toEqual(ran);
+    }
+  });
+
+  /**
+   * The default argument is the one line of wiring the recording tests above
+   * cannot see; run it against faked globals so `setTimeout` and `setInterval`
+   * cannot be swapped or dropped unnoticed.
+   */
+  it('defaults to the global timers: once after 15 seconds, then every interval', async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let runs = 0;
+    const job: Job = {
+      name: 'test-job',
+      intervalMs: MINUTE,
+      run: async () => {
+        runs += 1;
+      },
+    };
+
+    scheduleJobs([job], db, {});
+
+    await vi.advanceTimersByTimeAsync(15 * 1000 - 1);
+    expect(runs).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runs).toBe(1);
+    // The interval runs from registration, not from the boot run.
+    await vi.advanceTimersByTimeAsync(MINUTE - 15 * 1000);
+    expect(runs).toBe(2);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(runs).toBe(3);
   });
 });

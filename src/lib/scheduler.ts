@@ -141,19 +141,40 @@ export async function startScheduler(): Promise<void> {
     auditTeacherTimezones,
   });
 
-  const health = (globalThis.__fairYogaJobHealth ??= {});
+  scheduleJobs(jobs, prisma, (globalThis.__fairYogaJobHealth ??= {}));
+
+  log.info({ jobs: jobs.length }, 'scheduler started');
+}
+
+/** The timer functions `scheduleJobs` registers with, injectable for tests. */
+export interface SchedulerTimers {
+  setTimeout: (fn: () => Promise<void>, ms: number) => { unref: () => unknown };
+  setInterval: (fn: () => Promise<void>, ms: number) => { unref: () => unknown };
+}
+
+/**
+ * Registers each job's tick: once shortly after boot, then on the job's own
+ * interval, with its health entry under the job's name. Separated from
+ * `startScheduler` for the reason `buildJobs` and `makeTick` were — this is
+ * where the table's intervals are used rather than merely stated, and a test
+ * can record what was registered without starting a clock.
+ */
+export function scheduleJobs(
+  jobs: Job[],
+  db: PrismaClient,
+  health: Record<string, JobHealth>,
+  timers: SchedulerTimers = { setTimeout, setInterval },
+): void {
   for (const job of jobs) {
     const jobHealth: JobHealth = { lastRunAt: null, lastSuccessAt: null, lastError: null };
     health[job.name] = jobHealth;
-    const tick = makeTick(job, jobHealth, prisma);
+    const tick = makeTick(job, jobHealth, db);
 
     // First run shortly after boot, then on the interval. unref() so the
     // timers never keep a shutting-down process alive.
-    setTimeout(tick, 15 * 1000).unref();
-    setInterval(tick, job.intervalMs).unref();
+    timers.setTimeout(tick, 15 * 1000).unref();
+    timers.setInterval(tick, job.intervalMs).unref();
   }
-
-  log.info({ jobs: jobs.length }, 'scheduler started');
 }
 
 /**
