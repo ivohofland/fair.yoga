@@ -927,8 +927,8 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
             // `@@unique([scheduleRuleId, date])`, so this test would pass
             // byte-identically with `CalendarEntry_teacher_slot_excl` dropped.
             // `null` isolates the collision to the slot constraint — and is
-            // the production shape too: a standalone class racing the nightly
-            // `api/cron/generate-classes` sweep onto a template's slot.
+            // the production shape too: a standalone class racing the
+            // generation sweep onto a template's slot.
             scheduleRuleId: null,
             classType: 'Holder',
             date: collide,

@@ -71,18 +71,23 @@ and in production they must — nothing to configure.
 own clocks, so CI does not need the in-process scheduler running. It is not a
 production mode. With it set, no scheduled job runs in the app: classes don't
 start, auto-cancel, or complete; recurring classes aren't generated; fallback
-emails and payment reminders don't send; retention doesn't run. Waitlist
+emails and payment reminders don't send; daily cleanup (retention, expired
+sessions and auth tokens, the timezone audit) doesn't run. Waitlist
 reconciliation is worse off than the rest — it has no endpoint, so it cannot
 be run any other way — and a seat freed by a cancellation whose spot-freed
-hook was dropped (§7) is never offered to the queue. The app logs a warning
-at boot when the scheduler is off.
+hook was dropped (§7) is never offered to the queue. `/api/health` still
+answers `ok` — its job list is simply empty — so the boot warning is the only
+sign. The app logs a warning at boot when the scheduler is off.
 
-The `/api/cron/*` endpoints are for running a job by hand — after an outage,
-say — alongside the scheduler, not instead of it:
+The `/api/cron/*` endpoints are for running a job by hand between its ticks —
+useful for the hourly and daily jobs — alongside the scheduler, not instead of
+it. Every job already runs within 15 seconds of the app starting, so a
+restart needs none. Not every job has been examined for a manual call that
+overlaps its own tick — `src/lib/scheduler.ts`'s header says which were:
 
 ```bash
-curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/transition-classes
-# also: /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/daily-cleanup
+curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/daily-cleanup
+# also: /api/cron/transition-classes  /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders
 ```
 
 `--fail` is not optional here, and `/api/cron/daily-cleanup` is why. That route

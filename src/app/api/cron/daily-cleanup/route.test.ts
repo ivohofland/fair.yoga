@@ -194,7 +194,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
 
   /**
    * One permanent failure alongside a transient one makes 500 the honest
-   * answer — a schema drift does not clear on the next tick, and "try again"
+   * answer — a schema drift does not clear on the next run, and "try again"
    * would be the misleading half of that trade.
    */
   it('answers 500 when a permanent failure accompanies a transient one', async () => {
@@ -211,7 +211,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
    * 500 and not 503: `InvalidTimezoneError` matches no branch in
    * `classifyApiError`, so it falls to the generic 500 — which is the right
    * answer, because 503 tells a caller to back off and retry, and a
-   * stored zone that will not resolve does not clear on the next tick.
+   * stored zone that will not resolve does not clear on the next run.
    */
   it('answers 500 when only the timezone audit fails', async () => {
     cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
