@@ -144,12 +144,16 @@ async function probeUnderForcedPlan(
 }
 
 /**
- * The guard `lockClassRowsOrdered`'s `ORDER BY c.id` exists to be tested
- * directly, here, rather than through a per-pairing reproduction: each
- * caller takes its `Class` locks in one statement, so two real callers leave
- * no application-level window to interleave, and a test that races them
- * cannot be relied on to build an AB-BA cycle. Testing the shared primitive
- * once here covers every call site at the same time.
+ * The test below is the guard for `lockClassRowsOrdered`'s `ORDER BY c.id`,
+ * and it exercises the shared primitive rather than a pairing of real
+ * callers. Every caller takes its `Class` locks in this one statement, so a
+ * race between two of them has no application-level window to interleave and
+ * cannot make a missing clause deadlock on demand. Here two forced plans reach
+ * the same rows in opposite natural orders, and each caller's returned ids
+ * are asserted ascending — the assertion that fails deterministically without
+ * the clause (WHAT ACTUALLY CATCHES A MISSING `ORDER BY`, below). Since every
+ * caller shares the one statement, one test covers the clause at every call
+ * site.
  *
  * WHY TWO DIFFERENT PLANS, and not two calls with the same predicate. Two
  * identical statements produce one plan, visit one physical order, and

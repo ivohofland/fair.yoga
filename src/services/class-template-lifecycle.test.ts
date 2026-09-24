@@ -1589,10 +1589,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    *
    * Asserted on the lock set rather than by staging a deadlock: the set is
    * what a narrowing changes, and reading it needs no competing erasure and
-   * no timing. It reads the ids the pre-lock returned, not how they were
-   * locked, so the lock mode and order are `lockClassRowsOrdered`'s own
-   * tests' job; it also pins that the pre-lock ran before the registration
-   * was cancelled.
+   * no timing. It reads the ids the pre-lock returned and whether `booked`'s
+   * entry row is held, not the lock mode or order — those are
+   * `lockClassRowsOrdered`'s own tests' job; it also pins that the pre-lock
+   * ran before the registration was cancelled.
    */
   it('locks every class the delete takes, including one that became deletable mid-transaction', async () => {
     const t = await makeTemplate('Pre-lock Covers Delete');
@@ -1658,10 +1658,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived'),
     );
 
-    // The candidate read ran once, so the cancel landed once and before the
-    // delete, and the delete took both classes — without these the lock-set
-    // assertion is about an archive that withdrew less than this test
-    // staged.
+    // The candidate read ran exactly once, so the cancel landed exactly once;
+    // the delete took both classes, so it landed before the delete — without
+    // these the lock-set assertion is about an archive that withdrew less
+    // than this test staged.
     expect(calls).toBe(1);
     expect(result.deleted).toBe(2);
     expect(await prisma.class.count({ where: { id: { in: [draft.id, booked.id] } } })).toBe(0);
@@ -3121,9 +3121,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
     let deleted = false;
     // Cast for the same reason as `interposing` above: the
     // extended client is missing `$on`, so it is not assignable to
-    // `pauseOrResumeTemplate`'s `PrismaClient`-typed `db` parameter, and
-    // reusing the existing stub-client cast is the only accepted way past
-    // that without loosening the parameter's type.
+    // `pauseOrResumeTemplate`'s `PrismaClient`-typed `db` parameter;
+    // widening that parameter is the alternative this avoids.
     const interposing = prisma.$extends({
       query: {
         classTemplate: {
