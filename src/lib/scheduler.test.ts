@@ -500,11 +500,12 @@ describe('startScheduler', () => {
     expect(setIntervalSpy.mock.calls.length).toBe(callsAfterFirstStart);
   });
 
-  it('registers nothing when CRON_SCHEDULER=off', async () => {
+  it('registers nothing, and warns, when CRON_SCHEDULER=off', async () => {
     vi.stubEnv('CRON_SCHEDULER', 'off');
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     resetGlobals();
     onTestFinished(() => {
       // The spy first: it restores the function it wrapped, which is the fake,
@@ -513,6 +514,7 @@ describe('startScheduler', () => {
       vi.useRealTimers();
       vi.unstubAllEnvs();
       info.mockRestore();
+      warn.mockRestore();
       resetGlobals();
     });
 
@@ -520,5 +522,9 @@ describe('startScheduler', () => {
 
     expect(getJobHealth()).toEqual({});
     expect(setIntervalSpy).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('CRON_SCHEDULER=off'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not a production mode'));
+    expect(info).not.toHaveBeenCalled();
   });
 });
