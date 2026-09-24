@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
-import { RefreshAt } from './refresh-at';
+import { RefreshAt, resetSeenServerNows } from './refresh-at';
 
 // One router object for every render, as Next's `useRouter` gives. The shared
 // setup's mock builds a new one per call, which re-runs the effect on every
@@ -26,6 +26,7 @@ describe('RefreshAt', () => {
     routerRefresh.mockClear();
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
+    resetSeenServerNows();
   });
 
   afterEach(() => {
@@ -108,9 +109,9 @@ describe('RefreshAt', () => {
   });
 
   /**
-   * Each render re-arms, even with the same instants: a refresh that reached
-   * the server a moment before an edge renders the same instants again, and
-   * the page must still wait out the rest.
+   * Each render re-arms, even with the same instants: a refresh from
+   * elsewhere (an attendance toggle, say) carries a fresh `serverNow`, and
+   * re-arming from it corrects timers armed from an older one.
    */
   it('re-arms on a new render time even when the instants are the same', () => {
     const { rerender } = render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW} />);
@@ -132,5 +133,36 @@ describe('RefreshAt', () => {
 
     vi.advanceTimersByTime(10 * MINUTE);
     expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Next's client router cache can restore this page from an old payload —
+   * back/forward after tapping a student or edit link — bringing back a
+   * `serverNow` this client already mounted with once. Every pending timer
+   * from that stale render would then fire late by however long the payload
+   * sat cached, so a repeated `serverNow` refreshes immediately instead.
+   */
+  describe('mounting with a serverNow seen before (a router-cache restore)', () => {
+    it('refreshes immediately and arms no stale timer on the second mount', () => {
+      const { unmount } = render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW} />);
+      unmount();
+
+      render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW} />);
+      expect(routerRefresh).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(10 * MINUTE);
+      expect(routerRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('arms normally, with no immediate refresh, when the second mount brings a new serverNow', () => {
+      const { unmount } = render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW} />);
+      unmount();
+
+      render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW + 1} />);
+      expect(routerRefresh).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(10 * MINUTE);
+      expect(routerRefresh).toHaveBeenCalledTimes(1);
+    });
   });
 });
