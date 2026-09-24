@@ -506,8 +506,10 @@ const SCHEDULED_STATUSES: readonly ClassStatus[] = statusesWhere(CLASS_STATUS_SC
  * Derived, not retyped. This was a second hand-written `'draft', 'open'`
  * literal in the raw SQL with nothing tying the two lists together, and
  * issue 180 task 4's review measured what that cost: dropping `'draft'` from
- * the raw list left every test covering this function green, silently
- * re-opening the deadlock the pre-lock exists to close.
+ * the raw list silently re-opened the deadlock the pre-lock exists to close.
+ * `class-template-lifecycle.test.ts`'s "locks every class the delete takes,
+ * including one that became deletable mid-transaction" now fails if the
+ * pre-lock's status list drops a scheduled status.
  */
 const SCHEDULED_STATUSES_SQL = statusInList(SCHEDULED_STATUSES);
 
@@ -649,13 +651,13 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // deletable mid-transaction": one class carries a charged
       // `Registration` at pre-lock time — a narrow pre-lock would skip
       // locking it, since it is not yet a delete candidate — and that
-      // registration is cancelled from OUTSIDE the transaction during the
+      // registration is cancelled from OUTSIDE the transaction after the
       // candidate read, a write that, like `DELETE /api/registrations/[id]`'s
       // own `registration.updateMany`, takes no `Class` row lock. It pins the
       // wide row set by its lock set — spying on `lockClassRowsOrdered` and
       // asserting the pre-lock already held that class before the delete ran
       // — rather than by staging a deadlock. The `40P01` a narrowed pre-lock
-      // reproduces here is recorded in the atomic-template-update spec, §4 —
+      // reproduced is recorded in the atomic-template-update spec, §4 —
       // inlined there rather than left in a task report, because
       // `.superpowers/sdd/` is gitignored and this is the only evidence that
       // the wide set is required rather than merely conservative.

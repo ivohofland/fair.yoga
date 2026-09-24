@@ -177,7 +177,7 @@ async function probeUnderForcedPlan(
  *
  * WHY A THIRD TRANSACTION. Both callers take their locks inside one statement
  * each, so there is no application-level window to interleave — the same
- * property that made the per-pairing reproductions unconstructible. Holding
+ * property that makes a per-pairing reproduction unconstructible (above). Holding
  * both rows from a third transaction and releasing them parks BOTH callers
  * before either can start, which is what a bare `Promise.all` cannot
  * guarantee. It does not decide what happens next — see the catch rates
