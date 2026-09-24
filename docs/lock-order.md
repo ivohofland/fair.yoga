@@ -1655,7 +1655,7 @@ the pre-check did not stop the delete. A
 `lock_timeout` on the delete was considered and rejected: it would add a
 lock-taking node to the within-`Class` ascending-id order ("Ordering WITHIN
 `Class`" above), for a few seconds in a window that needs a concurrent
-template creation — the same trade `room-archive.ts:146-147` refused.
+template creation.
 
 ## One teacher, one slot: two exclusion constraints (#296, #298, #327)
 
