@@ -286,28 +286,30 @@ describe('scheduleJobs', () => {
    * `buildJobs`, whose own test pins them as literals — together the two tests
    * cover the table and its use.
    */
-  function tracedJobs(): { jobs: Job[]; ran: string[] } {
+  function tracedJobs(): { jobs: Job[]; ran: string[]; dbs: PrismaClient[] } {
     const ran: string[] = [];
+    const dbs: PrismaClient[] = [];
     const jobs = buildJobs(buildStubs(() => async () => {})).map((job) => ({
       name: job.name,
       intervalMs: job.intervalMs,
-      run: async () => {
+      run: async (runDb: PrismaClient) => {
         ran.push(job.name);
+        dbs.push(runDb);
       },
     }));
-    return { jobs, ran };
+    return { jobs, ran, dbs };
   }
 
   it("registers each job's first run 15 seconds after boot and its repeat at its own interval", async () => {
-    const { jobs, ran } = tracedJobs();
+    const { jobs, ran, dbs } = tracedJobs();
     const { timers, registrations } = recordingTimers();
 
     scheduleJobs(jobs, db, {}, timers);
 
     // Identify each registration by the job its function actually runs, not
-    // by position. A tick bound to a same-interval sibling job leaves this
-    // multiset unchanged, though — that swap is caught by the health test
-    // below, not here.
+    // by position. What this multiset cannot see is two registrations of the
+    // same kind and delay trading jobs — any two boot ticks, or two
+    // same-interval repeats; the health test below catches that.
     const observed: Array<[string, string, number]> = [];
     for (const r of registrations) {
       ran.length = 0;
@@ -323,6 +325,10 @@ describe('scheduleJobs', () => {
     const byKey = (a: [string, string, number], b: [string, string, number]): number =>
       `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`);
     expect(observed.sort(byKey)).toEqual(expected.sort(byKey));
+
+    // Every run must receive the same db scheduleJobs was given, not a
+    // different client smuggled in through makeTick's third argument.
+    for (const runDb of dbs) expect(runDb).toBe(db);
   });
 
   it('unrefs every timer, so none keeps a shutting-down process alive', () => {

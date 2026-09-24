@@ -18,7 +18,7 @@
 
 ## Direction
 
-Chosen: inject the timer functions (the issue's second option), with the loop extracted so health registration and tick binding are covered by the same tests. Rejected: driving `startScheduler` under `vi.useFakeTimers()` — it would mean mocking `@/lib/db`, eleven service modules and `globalThis` flags to test four lines.
+Chosen: inject the timer functions (the issue's second option), with the loop extracted so health registration and tick binding are covered by the same tests. Rejected: driving `startScheduler` under `vi.useFakeTimers()` — it would mean mocking `@/lib/db`, ten service modules and `globalThis` flags to test four lines.
 
 ## Global Constraints
 

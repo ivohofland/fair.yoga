@@ -153,8 +153,8 @@ export interface SchedulerTimers {
 }
 
 /**
- * Registers each job's tick: once shortly after boot, then on the job's own
- * interval, with its health entry under the job's name. Separated from
+ * Registers each job's tick: once 15 seconds after registration, then on the
+ * job's own interval, with its health entry under the job's name. Separated from
  * `startScheduler` for the reason `buildJobs` and `makeTick` were — this is
  * where the table's intervals are used rather than merely stated, and a test
  * can record what was registered without starting a clock.
@@ -170,8 +170,8 @@ export function scheduleJobs(
     health[job.name] = jobHealth;
     const tick = makeTick(job, jobHealth, db);
 
-    // First run shortly after boot, then on the interval. unref() so the
-    // timers never keep a shutting-down process alive.
+    // First run 15 seconds after registration, then on the interval. unref()
+    // so the timers never keep a shutting-down process alive.
     timers.setTimeout(tick, 15 * 1000).unref();
     timers.setInterval(tick, job.intervalMs).unref();
   }
@@ -179,7 +179,8 @@ export function scheduleJobs(
 
 /**
  * One job's tick: the re-entrancy guard and the health bookkeeping, separated
- * from `startScheduler` so both can be asserted without starting timers.
+ * from the timer registration in `scheduleJobs` so both can be asserted
+ * without starting timers.
  *
  * Worth separating for the same reason `buildJobs` was. The `running` guard is
  * load-bearing by another module's argument — `waitlist-reconciliation.ts`
