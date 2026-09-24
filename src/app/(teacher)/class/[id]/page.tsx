@@ -23,6 +23,7 @@ import { SendAnnouncement } from '@/components/class/send-announcement';
 import { toIncomeTier } from '@/lib/tiers.server';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
+import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 
 export default async function ClassDetailPage({
   params,
@@ -111,6 +112,11 @@ export default async function ClassDetailPage({
     ACTIVE_REGISTRATION_STATUSES.includes(r.status),
   ).length;
 
+  // Who completion would bill, by the set `completeClass` bills from.
+  const chargedCount = cls.registrations.filter((r) =>
+    CHARGED_STATUSES.includes(r.status),
+  ).length;
+
   // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
   const attendanceItems: AttendanceItem[] = activeRegistrations
     .map((r) => ({
@@ -170,8 +176,7 @@ export default async function ClassDetailPage({
           !cancelled && cls.status === 'draft'
             ? <PublishClassButton classId={cls.id} />
             : canFinish
-              // `attendanceItems` is every non-cancelled registration — exactly the charged set.
-              ? <CompleteClassButton classId={cls.id} chargedCount={attendanceItems.length} />
+              ? <CompleteClassButton classId={cls.id} chargedCount={chargedCount} />
               : undefined
         }
       />
@@ -184,7 +189,9 @@ export default async function ClassDetailPage({
 
       {canFinish && (
         <p className="type-caption py-2">
-          Payment requests go out automatically at {formatClockInZone(autoAt, tz)}.
+          {chargedCount > 0
+            ? `Payment requests go out automatically at ${formatClockInZone(autoAt, tz)}.`
+            : `This class finishes automatically at ${formatClockInZone(autoAt, tz)}.`}
         </p>
       )}
 

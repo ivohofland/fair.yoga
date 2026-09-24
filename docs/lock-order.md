@@ -2555,8 +2555,8 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
 - **`completeClass`** (`src/services/class-lifecycle.ts`) — `Class` via
   `lockClassRow`, then `WaitlistEntry` (via `closeQueueOnStart`, #216/#182 —
   only on the inline `open → in_progress` bump this function does when a
-  teacher completes an `open` class directly; the `else` branch, a class
-  already `in_progress`, writes none because its queue closed on the way in),
+  teacher completes an `open` class directly; for a class already
+  `in_progress` it writes none, because its queue closed on the way in),
   then `Registration`, `Payment`. `transitionClass`'s own
   docblock names this and `autoCancelClasses`
   as the two sites that read more state than a bare status under the
@@ -2566,10 +2566,10 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   #216/#182 this is also where `autoCompleteClasses`' timing decision lives:
   `autoCompleteClasses` itself takes no lock of its own — its `sweepAt` (and
   the teacher route's `teacherAt`) is compared against `autoFinishAt`/
-  `finishOpensAt` of the fresh, locked row's recomputed end time inside this
-  function, under the same `lockClassRow` that already guards the status
-  re-read, rather than in a second lock the sweep would otherwise need to
-  take.
+  `finishOpensAt` of the fresh, locked row's recomputed end (and, for
+  `finishOpensAt`, start) inside this function, under the same
+  `lockClassRow` that already guards the status re-read, rather than in a
+  second lock the sweep would otherwise need to take.
 - **`autoCancelClasses`** (`src/services/class-transitions.ts`) — `Class` via
   `lockClassRow` (#174 task 6), then a `Registration` count read, then the
   CAS `class.updateMany`. Matches `transitionClass`'s docblock.

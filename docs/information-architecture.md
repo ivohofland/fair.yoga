@@ -72,7 +72,7 @@ Schedule
 │   ├── [Future] Full info + edit + share + cancel
 │   ├── [Registering] Registration list + tier distribution + share
 │   ├── [Today] Attendance view + add walk-in
-│   ├── [Completed] Pricing summary + payment checklist
+│   ├── [Completed] Attendance (read-only, Edit attendance) + pricing summary + payment checklist
 │   └── [Archived] Historical view + payment status
 │
 ├── Create class (stepped flow)
