@@ -19,9 +19,13 @@ export function classEndInstant(
   return new Date(start.getTime() + entry.durationMinutes * 60_000);
 }
 
-/** The earliest instant a teacher may finish the class. */
-export function finishOpensAt(end: Date): Date {
-  return new Date(end.getTime() - GRACE_MS);
+/**
+ * The earliest instant a teacher may finish the class: `FINISH_GRACE_MINUTES`
+ * before its end, but never before its start. A class no longer than the grace
+ * would otherwise be finishable, and so billable, before it begins.
+ */
+export function finishOpensAt({ start, end }: { start: Date; end: Date }): Date {
+  return new Date(Math.max(start.getTime(), end.getTime() - GRACE_MS));
 }
 
 /** The instant the sweep finishes the class if the teacher has not. */

@@ -191,7 +191,7 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 - Checkbox per student: present / no-show (untouched rows read "Not marked", never "No-show")
 - Total students present and resulting price estimate
 - "Add Walk-In" button
-- "Finish class" button, available from 15 minutes before the class ends; tapping it asks for confirmation (payment-request count, or that no one is charged) before it runs — no browser confirm dialog. A caption states when the class finishes automatically if the teacher does not
+- "Finish class" button, available from 15 minutes before the class ends (never before it starts); tapping it asks for confirmation (payment-request count, or that no one is charged) before it runs — no browser confirm dialog. A caption states when the class finishes automatically if the teacher does not
 - *Leads to:* 6.2 Add Walk-In, 7.1 Post-Class Summary
 
 ### 6.2 — Add Walk-In

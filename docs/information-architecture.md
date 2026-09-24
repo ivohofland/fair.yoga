@@ -116,7 +116,7 @@ This is the most important screen in the app. It's not one static design — it 
 | Completed | Attendance (read-only; Edit attendance to correct), pricing breakdown, payment checklist | Mark paid, Send reminder |
 | Archived | Final summary, payment status | View only |
 
-The transition from "registering" to "today" happens automatically based on time. The transition to "completed" happens when the teacher finishes the class (from 15 minutes before it ends) or, if they don't, automatically 15 minutes after it ends. The teacher never navigates to a different screen — the class detail evolves.
+The transition from "registering" to "today" happens automatically based on time. The transition to "completed" happens when the teacher finishes the class (from 15 minutes before it ends, but not before it starts) or, if they don't, automatically 15 minutes after it ends. The teacher never navigates to a different screen — the class detail evolves.
 
 ### Create class
 

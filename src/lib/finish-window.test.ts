@@ -35,9 +35,20 @@ describe('finish window', () => {
   });
 
   it('opens the finish window FINISH_GRACE_MINUTES before the end and auto-finishes as long after', () => {
+    const start = new Date('2026-06-01T16:00:00Z');
     const end = new Date('2026-06-01T17:15:00Z');
-    expect(finishOpensAt(end).getTime()).toBe(end.getTime() - FINISH_GRACE_MINUTES * MINUTE);
+    expect(finishOpensAt({ start, end }).getTime()).toBe(end.getTime() - FINISH_GRACE_MINUTES * MINUTE);
     expect(autoFinishAt(end).getTime()).toBe(end.getTime() + FINISH_GRACE_MINUTES * MINUTE);
+  });
+
+  /**
+   * A class no longer than the grace would otherwise open its finish window
+   * at or before its start, which is billing a class that has not begun.
+   */
+  it('never opens the finish window before the class starts', () => {
+    const start = new Date('2026-06-01T16:00:00Z');
+    const end = new Date(start.getTime() + 10 * MINUTE);
+    expect(finishOpensAt({ start, end }).toISOString()).toBe(start.toISOString());
   });
 
   it('pins the grace at 15 minutes', () => {
