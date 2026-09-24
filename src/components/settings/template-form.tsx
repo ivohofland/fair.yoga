@@ -261,11 +261,11 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       setError('Class type is required');
       return;
     }
-    // The same three cross-field rules `createClassTemplate`/
-    // `updateClassTemplate` enforce (class-economics.ts), checked through
-    // the same `economicsViolations` function so a teacher sees the message
-    // immediately instead of after a round trip, on create and edit alike.
-    // `ECONOMICS_COPY` above is this form's own wording.
+    // The cross-field rules of `economicsViolations` (class-economics.ts),
+    // which the server checks in `createClassTemplateSchema` on create and in
+    // `updateClassTemplate` on edit. Checked here through the same function so
+    // a teacher sees the message immediately instead of after a round trip, on
+    // create and edit alike. `ECONOMICS_COPY` above is this form's own wording.
     const [violation] = economicsViolations(form);
     if (violation !== undefined) {
       setError(ECONOMICS_COPY[violation.rule]);

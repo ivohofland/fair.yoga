@@ -348,9 +348,10 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * #590. The create-only room subsidy guard in handleSubmit mirrors
-   * `createClassTemplateSchema`'s refine (schemas.ts). It ensures minRate cannot
-   * subsidize more than the room cost (prices going negative).
+   * #590. `handleSubmit` checks `economicsViolations`' `room_subsidy` rule in
+   * both modes; this is the create side, where `createClassTemplateSchema`
+   * (schemas.ts) checks the same rule at the route. minRate may not subsidize
+   * more than the room cost, or prices go negative.
    */
   it('rejects min rate subsidizing more than room cost on create before any request is sent', async () => {
     stubFetch();
@@ -377,9 +378,9 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * #590. A minRate exactly matching -roomCost gives a total class floor of $0
-   * (valid per createClassTemplateSchema's minRate >= -roomCost refine).
-   * Kills the mutant that tightens `<` to `<=`.
+   * #590. A minRate exactly matching -roomCost gives a total class floor of $0,
+   * which `economicsViolations`' `room_subsidy` rule accepts (minRate >=
+   * -roomCost). Kills the mutant that tightens `<` to `<=`.
    */
   it('permits min rate exactly matching negative room cost on create ($0 net)', async () => {
     stubFetch();
@@ -403,15 +404,12 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * #221. The server now refuses this rule on edit too: `updateClassTemplate`
-   * (class-template-lifecycle.ts) → `CLASS_FAMILY.updateChild` checks all
-   * three rules, including room subsidy, on the stored row with the edit
-   * applied, through `economicsViolations`. `updateClassTemplateSchema`
-   * itself gained no refine — it has none, on this rule or any other; only
-   * `createClassTemplateSchema` has one, since create has the full row at
-   * parse time. This form's own check is no longer create-only either: both
-   * modes run the same `economicsViolations` function and share one
-   * `ECONOMICS_COPY` map.
+   * #221. The edit side of the same `room_subsidy` rule. On the server it is a
+   * service check, not a schema one: `updateClassTemplate`
+   * (class-template-lifecycle.ts) runs `economicsViolations` on the stored
+   * row with the edit applied, because a partial body cannot be checked at
+   * parse time. This form runs the same function in both modes and words
+   * every rule through one `ECONOMICS_COPY` map.
    */
   it('rejects min rate subsidizing more than room cost on edit before any request is sent', async () => {
     stubFetch();
