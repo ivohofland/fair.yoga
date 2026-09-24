@@ -11,6 +11,7 @@ import { PricingBreakdown } from '@/components/class/pricing-breakdown';
 import { PaymentChecklist } from '@/components/class/payment-checklist';
 import { PublishClassButton } from '@/components/class/publish-class-button';
 import { CompleteClassButton } from '@/components/class/complete-class-button';
+import { RefreshAt } from '@/components/class/refresh-at';
 import type { AttendanceItem } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 import { classStartInstant } from '@/lib/timezone';
@@ -149,9 +150,16 @@ export default async function ClassDetailPage({
   // The finish button follows the window `completeClass` enforces under its
   // lock; both read `@/lib/finish-window`.
   const classEnd = classEndInstant(cls.calendarEntry, tz);
-  const canFinish = !cancelled
-    && (cls.status === 'in_progress' || cls.status === 'open')
-    && now >= finishOpensAt(classEnd).getTime();
+  const opensAt = finishOpensAt(classEnd);
+  const autoAt = autoFinishAt(classEnd);
+  const live = !cancelled && (cls.status === 'in_progress' || cls.status === 'open');
+  const canFinish = live && now >= opensAt.getTime();
+  // Re-render when the finish button is due and when the sweep should have
+  // finished the class. The sweep lands at its first run at or after
+  // `autoFinishAt`, so a render that finds the class still live past that
+  // instant asks again a minute later, until it is not.
+  const refreshInstants = [opensAt, autoAt, ...(now >= autoAt.getTime() ? [new Date(now + 60_000)] : [])]
+    .map((d) => d.toISOString());
 
   return (
     <>
@@ -167,6 +175,7 @@ export default async function ClassDetailPage({
               : undefined
         }
       />
+      {live && <RefreshAt instants={refreshInstants} />}
       <ClassInfo
         cls={cls}
         registrationCount={seatCount}
@@ -175,7 +184,7 @@ export default async function ClassDetailPage({
 
       {canFinish && (
         <p className="type-caption py-2">
-          Payment requests go out automatically at {formatClockInZone(autoFinishAt(classEnd), tz)}.
+          Payment requests go out automatically at {formatClockInZone(autoAt, tz)}.
         </p>
       )}
 
