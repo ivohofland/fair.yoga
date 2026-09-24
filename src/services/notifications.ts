@@ -19,6 +19,8 @@ import { notificationBus } from '@/lib/event-bus';
 import { log } from '@/lib/log';
 import { isEmailEligible, IMMEDIATE_EMAIL_TYPES } from './notification-policy';
 import { classStartInstant } from '@/lib/timezone';
+import { studentNotificationHref, teacherNotificationHref } from '@/lib/notification-links';
+import { encodeNotificationCursor, type NotificationCursor } from '@/lib/notification-paging';
 
 /** Accepts a plain client or a transaction client so notification creation
  *  can participate in the caller's transaction. */
@@ -139,6 +141,81 @@ export async function markAsRead(
     where: { id: notificationId },
     data: { isRead: true },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Reading the inbox
+// ---------------------------------------------------------------------------
+
+export interface NotificationRecipient {
+  recipientType: RecipientType;
+  recipientId: string;
+}
+
+export interface NotificationPage {
+  notifications: Notification[];
+  hrefById: Record<string, string | null>;
+  nextCursor: string | null;
+}
+
+/**
+ * One page of the recipients' notifications, newest first, `createdAt desc,
+ * id desc` — the id breaks ties between rows created in the same instant
+ * (batch inserts), which is what keeps a page boundary from splitting a tie
+ * group. Keyset, not offset: rows arrive at the head while a reader is
+ * mid-list, and a `skip` would shift under them.
+ *
+ * Reads `limit + 1` rows; the extra one is the answer to "is there more", so
+ * there is no count query and no empty trailing page.
+ */
+export async function listNotificationPage(
+  db: Db,
+  recipients: readonly NotificationRecipient[],
+  opts: { limit: number; before?: NotificationCursor },
+): Promise<NotificationPage> {
+  if (recipients.length === 0) return { notifications: [], hrefById: {}, nextCursor: null };
+  const { limit, before } = opts;
+
+  const rows = await db.notification.findMany({
+    where: {
+      OR: recipients.map((r) => ({ recipientType: r.recipientType, recipientId: r.recipientId })),
+      ...(before && {
+        AND: [
+          {
+            OR: [
+              { createdAt: { lt: before.createdAt } },
+              { createdAt: before.createdAt, id: { lt: before.id } },
+            ],
+          },
+        ],
+      }),
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    include: {
+      relatedClass: {
+        select: {
+          id: true,
+          status: true,
+          calendarEntry: {
+            select: { cancelledAt: true, teacher: { select: { pageSlug: true } } },
+          },
+        },
+      },
+    },
+  });
+
+  const hasMore = rows.length > limit;
+  const hrefById: Record<string, string | null> = {};
+  const notifications = rows.slice(0, limit).map(({ relatedClass, ...notification }) => {
+    hrefById[notification.id] =
+      notification.recipientType === 'student'
+        ? studentNotificationHref({ type: notification.type, relatedClass })
+        : teacherNotificationHref(notification);
+    return notification;
+  });
+  const last = notifications[notifications.length - 1];
+  return { notifications, hrefById, nextCursor: hasMore && last ? encodeNotificationCursor(last) : null };
 }
 
 // ---------------------------------------------------------------------------
