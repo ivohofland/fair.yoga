@@ -6,8 +6,7 @@ export const NOTIFICATION_MAX_PAGE_SIZE = 100;
 // The last millisecond of year 9999: a later instant serialises as `+010000-…`,
 // which the database client refuses.
 const MAX_CURSOR_EPOCH_MS = 253_402_300_799_999;
-// Notification ids are uuid text. The id reaches the database as a comparison
-// operand, and Postgres rejects a NUL in text.
+// The id is passed to Postgres, which rejects a NUL, so it is held to a safe character set.
 const CURSOR_ID = /^[0-9A-Za-z._-]{1,64}$/;
 
 /** Reads a `limit` query value: a non-numeric one falls back to the default, a numeric one is clamped. */
