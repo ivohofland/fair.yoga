@@ -107,6 +107,12 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
     setStudentsFailed(false);
     setInvitationsLoaded(false);
     setInvitationsFailed(false);
+    // A reopen's fetch can fail after an earlier open's succeeded — reset
+    // both lists here, not only inside each `.then`, or a failed refetch
+    // would leave the previous open's rows sitting in state, offered as
+    // current beside the failure message below.
+    setStudents([]);
+    setInvitees([]);
 
     fetch('/api/students')
       .then((res) => {

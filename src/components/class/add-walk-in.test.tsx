@@ -181,7 +181,7 @@ describe('AddWalkIn', () => {
     expect(screen.queryByText('Could not load your students.')).not.toBeInTheDocument();
   });
 
-  it('shows a load-failure message and drops the roster from the picker when the roster fetch fails', async () => {
+  it('shows a load-failure message and drops the roster from the picker when the roster fetch fails, with no invitees to fall back on', async () => {
     stubLists('error', []);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
@@ -191,6 +191,94 @@ describe('AddWalkIn', () => {
     );
     expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
     expect(screen.queryByText('Could not load your invited contacts.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The test above alone doesn't pin that invitees are actually offered on a
+   * roster failure — an empty invitee list there is indistinguishable from
+   * "everything is hidden on any roster failure." A non-empty invitee list
+   * is what actually proves the roster's own failure doesn't take the
+   * invitations half down with it.
+   */
+  it('still offers a non-empty invitee list when only the roster fetch fails', async () => {
+    stubLists('error', [{ id: 'i1', firstName: 'Anna', lastName: 'Bergsma' }]);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText('Walk-in student')).toBeInTheDocument();
+    expect(screen.getByText('Anna Bergsma · invited')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load your invited contacts.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * A load that succeeds once and then fails on a reopen must not leave the
+   * earlier open's rows sitting in state, rendered as current beside the new
+   * failure message — `students`/`invitees` are reset at the top of the
+   * effect for exactly this reason. Covered for both lists: each is fetched
+   * and reset independently, so either one's stale-on-reopen bug is
+   * invisible to a test that only ever exercises the other.
+   */
+  it('does not show a stale roster after a reopen whose roster fetch fails', async () => {
+    let studentsCall = 0;
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === '/api/invitations?status=pending') {
+        return { ok: true, status: 200, json: async () => ({ data: { invitations: [] } }) };
+      }
+      studentsCall += 1;
+      if (studentsCall === 1) {
+        return { ok: true, status: 200, json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }) };
+      }
+      return { ok: false, status: 500, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await screen.findByText('Anna Bakker');
+
+    fireEvent.click(screen.getByText('Close'));
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
+  });
+
+  it('does not show a stale invitee list after a reopen whose invitations fetch fails', async () => {
+    let invitationsCall = 0;
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === '/api/students') {
+        return { ok: true, status: 200, json: async () => ({ data: { students: [] } }) };
+      }
+      invitationsCall += 1;
+      if (invitationsCall === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { invitations: [{ id: 'i1', firstName: 'Anna', lastName: 'Bergsma' }] } }),
+        };
+      }
+      return { ok: false, status: 500, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await screen.findByText('Anna Bergsma · invited');
+
+    fireEvent.click(screen.getByText('Close'));
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your invited contacts.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+    expect(screen.queryByText('Anna Bergsma · invited')).not.toBeInTheDocument();
   });
 
   it('narrows the options as the teacher types in the filter, matching only the name part', async () => {
