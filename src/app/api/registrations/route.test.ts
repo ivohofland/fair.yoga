@@ -1049,6 +1049,31 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
     );
   });
 
+  /**
+   * A class that has started stays inside the walk-in window forever, so the
+   * status refusal also comes before the "already booked" answer. Otherwise
+   * every past class would answer `unchanged` for a booked student's guessed
+   * address and a refusal for anyone else.
+   */
+  it('refuses a walk-in of a student already booked in a completed class', async () => {
+    const booked = await seedClaimedStudent('booked-completed', 3);
+    const classId = await seedClass(main, '2020-01-06', false);
+    await prisma.registration.create({
+      data: { classId, studentId: booked.id, tierAtBooking: 3, status: 'attended' },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'completed' } });
+    const invitation = await invite(main.id, 'booked-completed');
+
+    await expectRefusal(
+      await post(token, { classId, newContact: { firstName: 'Guess', email: booked.email } }),
+      'CLASS_NOT_BOOKABLE',
+    );
+    await expectRefusal(
+      await post(token, { classId, invitationId: invitation.id }),
+      'CLASS_NOT_BOOKABLE',
+    );
+  });
+
   it("refuses a new person into another teacher's class, leaving nothing behind", async () => {
     const email = address('foreign-class');
 

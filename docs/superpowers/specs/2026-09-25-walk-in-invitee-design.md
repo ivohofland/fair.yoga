@@ -193,9 +193,10 @@ Two exported steps, because the lock order puts the class work between them:
 
 **The route** then runs its existing body with that `studentId`:
 `lockLiveStudent` (`Student`), `lockClassRow` (`Class`), ownership,
-cancellation, the window refusal above, status, capacity (walk-ins may exceed
-it), `activateRegistration` with `isWalkIn: true` (`Registration`, claimable
-`WaitlistEntry`).
+cancellation, status (`CLASS_NOT_BOOKABLE` unless `open`/`in_progress`), the
+window refusal above, the `unchanged` answer below, capacity (walk-ins may
+exceed it), `activateRegistration` with `isWalkIn: true` (`Registration`,
+claimable `WaitlistEntry`).
 
 **`completeWalkIn(tx, { teacherId, classId, resolved, notice })`**
 — after `Registration`, in lock order:
@@ -227,7 +228,14 @@ compare-and-set.
 
 An `unchanged` outcome (this student already actively registered in this
 class) answers `respondUnchanged` as today, after the refusals — so a walk-in
-of someone already present is not a red error.
+of someone already present is not a red error. For a walk-in subject, every
+refusal that makes the walk-in moot precedes it, the status and window
+refusals included: once a class has started the window has no end, so a
+completed class would otherwise answer `unchanged` for a booked student's
+guessed address and a refusal for anyone else. No answer depends on whether a
+guessed address is registered, except inside the window of an `open` or
+`in_progress` class, where a wrong guess registers and notifies its holder.
+Roster and self bookings keep `unchanged` ahead of the status refusal.
 
 ### 3. Error codes
 
