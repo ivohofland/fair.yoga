@@ -258,20 +258,28 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         isTeacher &&
         (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
 
+      // Students book open classes; the teacher can also add someone who
+      // shows up while the class is in progress.
+      const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
+      const bookable = allowedStatuses.includes(cls.status);
+
       // An invitee or a new person is booked only with them at the door —
       // their presence is what stands for their acceptance. A roster student
-      // may still be added ahead of time. Outside the window such a request is
-      // not a walk-in at all, so this refusal makes its goal moot and comes
-      // before the `existing` check below: an address already booked here is
-      // refused exactly like any other, and answers nothing about who it is.
-      if (resolved && !isWalkIn) {
-        throw new WalkInWindowClosedError();
+      // may still be added ahead of time. A class that is no longer bookable,
+      // or a request outside the window, makes such a walk-in's goal moot, so
+      // both refusals come before the `existing` check below: an address
+      // already booked here is refused exactly like any other, and no answer
+      // depends on whether a guessed address is registered.
+      if (resolved) {
+        if (!bookable) throw new ClassStatusError('not_bookable');
+        if (!isWalkIn) throw new WalkInWindowClosedError();
       }
 
       // The booking this request asks for already exists. Checked before the
-      // status and capacity refusals below, so a retry is never refused for a
-      // state its own first attempt created. A cancelled registration keeps its
-      // row (unique per class+student) and is reactivated further down.
+      // capacity refusal below — and, for a roster or self booking, before the
+      // status refusal too — so a retry is never refused for a state its own
+      // first attempt created. A cancelled registration keeps its row (unique
+      // per class+student) and is reactivated further down.
       const existing = await tx.registration.findUnique({
         where: { classId_studentId: { classId: body.classId, studentId } },
         select: { id: true, status: true },
@@ -280,10 +288,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         return { outcome: 'unchanged', booking: existing };
       }
 
-      // Students book open classes; the teacher can also add someone who
-      // shows up while the class is in progress.
-      const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
-      if (!allowedStatuses.includes(cls.status)) {
+      if (!bookable) {
         throw new ClassStatusError('not_bookable');
       }
 
