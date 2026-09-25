@@ -202,9 +202,9 @@ model Teacher {
 /// coexist freely. Same visibility caveat as `Teacher`'s.
 model Student {
   id                 String              @id @default(uuid())
-  // Nullable for an unclaimed row, which a walk-in creates
-  // (`services/walk-ins.ts`). Set together with `claimedAt`
-  // (`Student_claim_link_check`). How an unclaimed row is projected is
+  // Nullable for an unclaimed row. Set together with `claimedAt`
+  // (`Student_claim_link_check`). Who creates an unclaimed row is
+  // `docs/data-model.md` (Invitation → Walk-ins); how one is projected,
   // `docs/data-model.md` (StudentPrivacy).
   accountId          String?
   firstName          String

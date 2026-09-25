@@ -41,14 +41,11 @@ interface InvitationListResponse {
  * predicate holds is narrower and still worth holding: an invitation its
  * invitee answered is history, and history is not a contact.
  *
- * `GET /api/invitations` does not filter `accepted` out itself — it only
- * takes `?archived` and `?status=pending` (the latter, dropping `accepted`
- * along with everything else not pending, is what `add-walk-in.tsx` uses).
- * `isContact` below is the only place THIS component excludes `accepted`,
- * which is fine with the one caller it has today — two places deciding "is
- * this still a contact" is how the definition drifts, so a second consumer
- * of this component's own distinction should get a route filter of its own
- * rather than copy this predicate.
+ * This component asks `GET /api/invitations` by `?archived` alone, so
+ * `accepted` rows arrive and `isContact` below is where they are excluded.
+ * Two places deciding "is this still a contact" is how the definition
+ * drifts, so a second consumer of this distinction should get a route filter
+ * of its own rather than copy this predicate.
  */
 interface ContactRow extends Omit<InvitationApiRow, 'status'> {
   status: 'pending' | 'declined';

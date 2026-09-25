@@ -89,7 +89,7 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
  * an environment.
  *
  * A walk-in points at `/login` rather than `/bookings`: the recipient may
- * have no account yet, and signing in is what claims it.
+ * have no account yet.
  */
 const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
   teacher_invitation: { label: STUDENT_INVITATION_LABEL, path: STUDENT_INVITATION_PATH },

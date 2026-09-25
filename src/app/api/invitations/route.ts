@@ -11,8 +11,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const archived = request.nextUrl.searchParams.get('archived') === 'true';
 
-  // `?status=pending`: the walk-in picker's list (`add-walk-in.tsx`); erased
-  // rows are left out because walking one in is refused.
+  // `?status=pending`: the unarchived pending contacts a walk-in may pick,
+  // without erasure placeholders, which a walk-in refuses:
+  // `docs/data-model.md` (Invitation → Walk-ins).
   const pendingOnly = request.nextUrl.searchParams.get('status') === 'pending';
   const where: Prisma.InvitationWhereInput = pendingOnly
     ? {

@@ -6,7 +6,8 @@
  * erasure).
  *
  * `.invalid` is reserved (RFC 2606), so no deliverable address ends in it.
- * The id is lowercased because every email column carries a lowercase CHECK.
+ * The id is lowercased so the address satisfies the email columns'
+ * lowercase CHECKs.
  */
 export const ERASED_EMAIL_DOMAIN = 'deleted.invalid';
 

@@ -156,7 +156,7 @@ Students
 
 A simple searchable list. Not a "CRM dashboard" — it should feel like a personal address book. Each row shows the student's name, how many classes they've attended, and when they last came.
 
-Teachers can add a contact for migrating existing students, but a teacher may not link themselves to a student unilaterally: adding one always sends a platform invitation, and the person stays a contact — visible only in the separate Contacts list, not here — until they accept it on their own account or book one of the teacher's classes.
+Teachers can add a contact for migrating existing students, but a teacher may not link themselves to a student unilaterally: adding one always sends a platform invitation, and the person stays a contact — visible only in the separate Contacts list, not here — until they accept it on their own account or book one of the teacher's classes. The exception is a walk-in: a teacher who registers someone at the door links them there and then (`docs/data-model.md`, Invitation → Walk-ins).
 
 ### Student detail
 
