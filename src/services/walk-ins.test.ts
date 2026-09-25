@@ -363,6 +363,40 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     expect(await prisma.teacherStudent.count({ where: { teacherId } })).toBe(0);
   });
 
+  /**
+   * `completeWalkIn` re-reads both the status (its compare-and-set) and the
+   * block (its last statement), so a walk-in through both steps is refused
+   * whether or not `resolveWalkInStudent` checks first. These two call the
+   * first step alone, so its own reads — which refuse before the `Student`
+   * insert — each have a test that fails without them.
+   */
+  it('refuses a declined invitation in resolve, before complete runs', async () => {
+    const { teacherId } = await seedTeacher('resolve-declined');
+    const email = `walkin-resolve-declined-${suffix}@test.local`;
+    const inv = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Said', lastName: 'No', status: 'declined', respondedAt: new Date() },
+    });
+
+    await expectRefused(
+      prisma.$transaction((tx) => resolveWalkInStudent(tx, { teacherId, subject: { kind: 'invitation', invitationId: inv.id } })),
+      'DECLINED',
+    );
+  });
+
+  it('refuses a blocked address in resolve, before complete runs', async () => {
+    const { teacherId } = await seedTeacher('resolve-blocked');
+    const email = `walkin-resolve-blocked-${suffix}@test.local`;
+    const inv = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Blocked', status: 'pending', delivered: false },
+    });
+    await prisma.teacherBlock.create({ data: { teacherId, email } });
+
+    await expectRefused(
+      prisma.$transaction((tx) => resolveWalkInStudent(tx, { teacherId, subject: { kind: 'invitation', invitationId: inv.id } })),
+      'WALK_IN_REFUSED',
+    );
+  });
+
   it('continues as the match branch when a concurrent create took the address', async () => {
     const { teacherId, classId } = await seedTeacher('conflict');
     const email = `walkin-conflict-${suffix}@test.local`;
