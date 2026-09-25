@@ -4,11 +4,12 @@ import { AddWalkIn } from './add-walk-in';
 import { routerRefresh } from '../../../tests/setup/components';
 
 /**
- * The picker fetches the full roster and filters it locally — no pagination,
- * no truncation notice, no server round-trip on each keystroke.
- *
- * Same mocking idiom as `student-directory.test.tsx`: a shared `fetchMock`,
- * stubbed per test, reset in `afterEach`.
+ * The picker fetches the whole roster and the whole pending-invitation list
+ * and merges them locally — no pagination, no truncation notice, no server
+ * round-trip on each keystroke. Both requests are stubbed on one
+ * `fetchMock`, routed by URL, since the component now issues two GETs per
+ * open. Same mocking idiom as `student-directory.test.tsx` otherwise: a
+ * shared mock, reset in `afterEach`.
  */
 describe('AddWalkIn', () => {
   const fetchMock = vi.fn();
@@ -18,11 +19,20 @@ describe('AddWalkIn', () => {
     vi.unstubAllGlobals();
   });
 
-  function stubStudents(students: unknown[]): void {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ data: { students } }),
+  type ListResult = unknown[] | 'error';
+
+  function stubLists(students: ListResult, invitations: ListResult): void {
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === '/api/students') {
+        if (students === 'error') return { ok: false, status: 500, json: async () => ({}) };
+        return { ok: true, status: 200, json: async () => ({ data: { students } }) };
+      }
+      if (url === '/api/invitations?status=pending') {
+        if (invitations === 'error') return { ok: false, status: 500, json: async () => ({}) };
+        return { ok: true, status: 200, json: async () => ({ data: { invitations } }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
   }
@@ -31,47 +41,186 @@ describe('AddWalkIn', () => {
     fireEvent.click(screen.getByText('Add walk-in'));
   }
 
-  it('lists every student the response carries, with no truncation notice and no pageSize in the request URL', async () => {
-    stubStudents([
-      { id: 's1', displayName: 'Anna Bakker' },
-      { id: 's2', displayName: 'Bram k.' },
-      { id: 's3', displayName: 'Carla d.' },
-    ]);
+  it('lists the roster merged with pending invitees, alphabetical, invitees carrying a quiet "· invited" suffix', async () => {
+    stubLists(
+      [{ id: 's1', displayName: 'Bram V.' }],
+      [{ id: 'i1', firstName: 'Anna', lastName: 'Bergsma', email: 'anna@test.local', status: 'pending' }],
+    );
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
 
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
-    expect(screen.getByText('Bram k.')).toBeInTheDocument();
-    expect(screen.getByText('Carla d.')).toBeInTheDocument();
-
-    expect(fetchMock).toHaveBeenCalledWith('/api/students');
-    expect(screen.queryByText(/Showing your first/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/find the rest under Students/)).not.toBeInTheDocument();
+    const select = await screen.findByLabelText('Walk-in student');
+    const optionLabels = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
+    expect(optionLabels).toEqual(['Choose a student…', 'Anna Bergsma · invited', 'Bram V.']);
   });
 
-  it('narrows the options as the teacher types in the filter', async () => {
-    stubStudents([
-      { id: 's1', displayName: 'Anna Bakker' },
-      { id: 's2', displayName: 'Bram k.' },
-    ]);
+  it('posts invitationId for an invitee pick and studentId for a roster pick', async () => {
+    stubLists(
+      [{ id: 's1', displayName: 'Bram V.' }],
+      [{ id: 'i1', firstName: 'Anna', lastName: 'Bergsma' }],
+    );
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+    const select = (await screen.findByLabelText('Walk-in student')) as HTMLSelectElement;
+
+    fireEvent.change(select, { target: { value: 'invitation:i1' } });
+    fireEvent.click(screen.getByText('Add walk-in', { selector: 'button' }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/registrations',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ classId: 'c1', invitationId: 'i1' }),
+        }),
+      ),
+    );
+
+    fireEvent.change(select, { target: { value: 'student:s1' } });
+    fireEvent.click(screen.getByText('Add walk-in', { selector: 'button' }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/registrations',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ classId: 'c1', studentId: 's1' }),
+        }),
+      ),
+    );
+  });
+
+  it('posts newContact from the new-person form', async () => {
+    stubLists([], []);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await waitFor(() => expect(screen.getByLabelText('First name')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Dana' } });
+    fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'Green' } });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dana@test.local' } });
+    fireEvent.click(screen.getByText('Add new person'));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/registrations',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            classId: 'c1',
+            newContact: { firstName: 'Dana', lastName: 'Green', email: 'dana@test.local' },
+          }),
+        }),
+      ),
+    );
+  });
+
+  it('disables "Add new person" until first name and email are both filled', async () => {
+    stubLists([], []);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await waitFor(() => expect(screen.getByLabelText('First name')).toBeInTheDocument());
+
+    expect(screen.getByText('Add new person')).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Dana' } });
+    expect(screen.getByText('Add new person')).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dana@test.local' } });
+    expect(screen.getByText('Add new person')).not.toBeDisabled();
+  });
+
+  it('shows the server\'s message in the alert region for a 409, whatever its code', async () => {
+    fetchMock.mockImplementation(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/students') {
+        return { ok: true, status: 200, json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }) };
+      }
+      if (url === '/api/invitations?status=pending') {
+        return { ok: true, status: 200, json: async () => ({ data: { invitations: [] } }) };
+      }
+      if (url === '/api/registrations' && init?.method === 'POST') {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({ error: { message: 'This person can\'t be added to your classes.', code: 'WALK_IN_REFUSED' } }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    const select = (await screen.findByLabelText('Walk-in student')) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'student:s1' } });
+    fireEvent.click(screen.getByText('Add walk-in', { selector: 'button' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('This person can\'t be added to your classes.');
+  });
+
+  it('no longer shows the "Not in your students yet?" caption', async () => {
+    stubLists([], []);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await waitFor(() => expect(screen.getByLabelText('First name')).toBeInTheDocument());
+
+    expect(
+      screen.queryByText('Not in your students yet? Add them under Students first.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the roster offered, with its own message, when only the invitations fetch fails', async () => {
+    stubLists([{ id: 's1', displayName: 'Anna Bakker' }], 'error');
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your invited contacts.')).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText('Walk-in student')).toBeInTheDocument();
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load your students.')).not.toBeInTheDocument();
+  });
+
+  it('shows a load-failure message and drops the roster from the picker when the roster fetch fails', async () => {
+    stubLists('error', []);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+    expect(screen.queryByText('Could not load your invited contacts.')).not.toBeInTheDocument();
+  });
+
+  it('narrows the options as the teacher types in the filter, matching only the name part', async () => {
+    stubLists(
+      [{ id: 's1', displayName: 'Bram k.' }],
+      [{ id: 'i1', firstName: 'Anna', lastName: 'Bakker' }],
+    );
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await screen.findByText('Bram k.');
 
     fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'ann' } });
 
-    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.getByText('Anna Bakker · invited')).toBeInTheDocument();
     expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+
+    // "invited" itself must not spuriously match every invitee row — the
+    // filter matches the name part of the label, not the suffix.
+    fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'invited' } });
+    expect(screen.queryByText('Anna Bakker · invited')).not.toBeInTheDocument();
   });
 
   it('keeps an already-registered student excluded from the options after filtering', async () => {
-    stubStudents([
-      { id: 's1', displayName: 'Anna Bakker' },
-      { id: 's2', displayName: 'Anna Smith' },
-    ]);
+    stubLists(
+      [{ id: 's1', displayName: 'Anna Bakker' }, { id: 's2', displayName: 'Anna Smith' }],
+      [],
+    );
     render(<AddWalkIn classId="c1" registeredStudentIds={['s1']} />);
     openPicker();
-    await waitFor(() => expect(screen.getByText('Anna Smith')).toBeInTheDocument());
+    await screen.findByText('Anna Smith');
 
     expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
 
@@ -84,66 +233,58 @@ describe('AddWalkIn', () => {
   /**
    * The one behaviour in this task that is a genuine bug if missed: without
    * clearing `selected`, a teacher could narrow the list until their chosen
-   * student was no longer visible and still submit them — adding someone the
+   * option was no longer visible and still submit it — adding someone the
    * UI was no longer showing. The component clears `selected` on every
    * filter keystroke, not only when the selection would actually become
    * hidden — maximally conservative, and trivially safe to verify here.
    */
   it('clears the selection on any filter change, so a hidden selection can never be submitted', async () => {
-    stubStudents([
-      { id: 's1', displayName: 'Anna Bakker' },
-      { id: 's2', displayName: 'Bram k.' },
-    ]);
+    stubLists([{ id: 's1', displayName: 'Anna Bakker' }, { id: 's2', displayName: 'Bram k.' }], []);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+    await screen.findByText('Anna Bakker');
 
     const select = screen.getByLabelText('Walk-in student') as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: 's1' } });
-    expect(select.value).toBe('s1');
+    fireEvent.change(select, { target: { value: 'student:s1' } });
+    expect(select.value).toBe('student:s1');
 
     fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'bram' } });
 
     expect(select.value).toBe('');
-    expect(screen.getByText('Add walk-in')).toBeDisabled();
+    expect(screen.getByText('Add walk-in', { selector: 'button' })).toBeDisabled();
   });
 
   it('shows a "no student matches" caption instead of an empty select when the filter matches nothing', async () => {
-    stubStudents([
-      { id: 's1', displayName: 'Anna Bakker' },
-      { id: 's2', displayName: 'Bram k.' },
-    ]);
+    stubLists([{ id: 's1', displayName: 'Anna Bakker' }], []);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+    await screen.findByText('Anna Bakker');
 
     fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'zzz' } });
 
     expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
     expect(screen.getByText('No student matches.')).toBeInTheDocument();
-    expect(
-      screen.getByText('Not in your students yet? Add them under Students first.'),
-    ).toBeInTheDocument();
   });
 
   /**
    * `visible.length === 0` is true the instant the picker opens too, before
-   * the fetch resolves — `students` starts `[]`. The "No student matches"
-   * condition also requires `query` to be truthy, so a *bare* open (no
-   * filter typed) never reaches it regardless of the `loaded` gate — that
-   * would pass even with the gate deleted, and would not actually be
-   * pinning it. Typing a filter before the fetch resolves is what makes
-   * `visible.length === 0 && query` true while still loading, which is the
-   * only way to force the code down this branch and prove the `loaded`
-   * gate is what's keeping it from rendering.
+   * either fetch resolves — `students`/`invitees` both start `[]`. The "No
+   * student matches" condition also requires `query` to be truthy, so a
+   * *bare* open (no filter typed) never reaches it regardless of the
+   * `loaded` gate. Typing a filter before either fetch resolves is what
+   * forces the code down this branch and proves `loaded` — which now
+   * requires BOTH fetches to have settled — is what's keeping it from
+   * rendering early.
    */
-  it('does not show "No student matches" before the roster fetch resolves, even with a filter already typed', async () => {
-    let resolveFetch!: (value: unknown) => void;
-    fetchMock.mockReturnValue(
-      new Promise((resolve) => {
-        resolveFetch = resolve;
-      }),
-    );
+  it('does not show "No student matches" before both fetches resolve, even with a filter already typed', async () => {
+    let resolveStudents!: (value: unknown) => void;
+    let resolveInvitations!: (value: unknown) => void;
+    fetchMock.mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url === '/api/students') return new Promise((r) => { resolveStudents = r; });
+      if (url === '/api/invitations?status=pending') return new Promise((r) => { resolveInvitations = r; });
+      throw new Error(`unexpected fetch ${url}`);
+    });
     vi.stubGlobal('fetch', fetchMock);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
@@ -152,71 +293,42 @@ describe('AddWalkIn', () => {
     expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
 
-    resolveFetch({
+    resolveStudents({ ok: true, status: 200, json: async () => ({ data: { students: [] } }) });
+    await Promise.resolve();
+    await Promise.resolve();
+    // Students settled, invitations still pending: still must not render.
+    expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
+
+    resolveInvitations({
       ok: true,
       status: 200,
-      json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
+      json: async () => ({ data: { invitations: [{ id: 'i1', firstName: 'Anna', lastName: 'Bakker' }] } }),
     });
 
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Anna Bakker · invited')).toBeInTheDocument());
   });
 
-  /**
-   * A genuinely empty roster (no filter typed) is not a filter mismatch —
-   * "No student matches." would misstate why the select is missing. Only the
-   * "Add them under Students first" caption, already correct for this case,
-   * should show.
-   */
-  it('shows "Add them under Students first" instead of "No student matches" for an empty roster', async () => {
-    stubStudents([]);
-    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
-    openPicker();
-
-    await waitFor(() =>
-      expect(
-        screen.getByText('Not in your students yet? Add them under Students first.'),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
-  });
-
-  /**
-   * A failed submit sets `error` (`handleAdd`'s catch/else); a failed roster
-   * *load* sets the independent `loadFailed`. Gating the Select on `!error`
-   * (rather than the load-only `loadFailed`) would hide the picker the
-   * moment a submit failed, taking away the control the teacher needs to
-   * retry. The trailing filter-to-"zzz" step is what actually pins this: an
-   * untyped-filter "No student matches." assertion passes regardless of
-   * which gate is used (nothing empties `visible` without a filter), so it
-   * would not fail under the bug this test exists to catch.
-   */
   it('keeps the picker visible after a failed submit — only a failed roster load hides it', async () => {
-    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+    fetchMock.mockImplementation(async (input: unknown, init?: { method?: string }) => {
       const url = String(input);
       if (url === '/api/students') {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
-        };
+        return { ok: true, status: 200, json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }) };
+      }
+      if (url === '/api/invitations?status=pending') {
+        return { ok: true, status: 200, json: async () => ({ data: { invitations: [] } }) };
       }
       if (url === '/api/registrations' && init?.method === 'POST') {
-        return {
-          ok: false,
-          status: 409,
-          json: async () => ({ error: { message: 'This class is full.', code: 'CLASS_FULL' } }),
-        };
+        return { ok: false, status: 409, json: async () => ({ error: { message: 'This class is full.', code: 'CLASS_FULL' } }) };
       }
       throw new Error(`unexpected fetch ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+    await screen.findByText('Anna Bakker');
 
-    fireEvent.change(screen.getByLabelText('Walk-in student'), { target: { value: 's1' } });
-    fireEvent.click(screen.getByText('Add walk-in'));
+    fireEvent.change(screen.getByLabelText('Walk-in student'), { target: { value: 'student:s1' } });
+    fireEvent.click(screen.getByText('Add walk-in', { selector: 'button' }));
 
     await waitFor(() => expect(screen.getByText('This class is full.')).toBeInTheDocument());
     expect(screen.getByLabelText('Walk-in student')).toBeInTheDocument();
@@ -225,32 +337,27 @@ describe('AddWalkIn', () => {
     expect(screen.getByText('No student matches.')).toBeInTheDocument();
   });
 
-  it('closes the picker and refreshes when the student turns out to be booked already', async () => {
-    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+  it('closes the picker and refreshes when the pick turns out to be booked already', async () => {
+    fetchMock.mockImplementation(async (input: unknown, init?: { method?: string }) => {
       const url = String(input);
       if (url === '/api/students') {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
-        };
+        return { ok: true, status: 200, json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }) };
+      }
+      if (url === '/api/invitations?status=pending') {
+        return { ok: true, status: 200, json: async () => ({ data: { invitations: [] } }) };
       }
       if (url === '/api/registrations' && init?.method === 'POST') {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ data: { id: 'r1', status: 'registered' }, outcome: 'unchanged' }),
-        };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'r1', status: 'registered' }, outcome: 'unchanged' }) };
       }
       throw new Error(`unexpected fetch ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+    await screen.findByText('Anna Bakker');
 
-    fireEvent.change(screen.getByLabelText('Walk-in student'), { target: { value: 's1' } });
-    fireEvent.click(screen.getByText('Add walk-in'));
+    fireEvent.change(screen.getByLabelText('Walk-in student'), { target: { value: 'student:s1' } });
+    fireEvent.click(screen.getByText('Add walk-in', { selector: 'button' }));
 
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
     expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
@@ -258,87 +365,32 @@ describe('AddWalkIn', () => {
   });
 
   /**
-   * `loadFailed` is what the whole `error`/`loadFailed` split exists to
-   * preserve: a failed roster load must still hide the picker. `error`
-   * itself is untouched by a load failure now (see the message-lockstep
-   * note on `loadFailed`'s declaration), so the failure message here comes
-   * from the `loadFailed`-gated paragraph, not `error`.
-   */
-  it('shows a load-failure message and hides the picker when the roster fetch fails', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
-    vi.stubGlobal('fetch', fetchMock);
-    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
-    openPicker();
-
-    await waitFor(() =>
-      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
-    );
-    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
-    expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
-  });
-
-  /**
-   * A load failure's `.catch` never clears `students`, so a reopen that
-   * fails after an earlier successful load leaves stale roster data sitting
-   * in state. Only `loadFailed` keeps that stale roster off the screen —
-   * without it, the Select would render the previous (now unverified)
-   * roster underneath a message telling the teacher the load just failed.
-   */
-  it('does not show a stale roster after a reopen whose load fails', async () => {
-    let call = 0;
-    fetchMock.mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
-        };
-      }
-      return { ok: false, status: 500, json: async () => ({}) };
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
-    openPicker();
-    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByText('Close'));
-    openPicker();
-
-    await waitFor(() =>
-      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
-    );
-    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
-    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
-  });
-
-  /**
-   * The mirror case: a load that fails once and then succeeds on a later
-   * refetch — triggered by the effect's `registeredStudentIds` dependency
-   * changing identity, not by the teacher closing and reopening the picker
-   * — must not leave the earlier failure's message stuck next to the
-   * now-current, correctly loaded picker. Deliberately *not* modelled via
-   * Close+reopen: the Close button's own handler calls `setError('')`,
-   * which would clear a stale `error`-based message on its own and mask
-   * exactly the bug this test exists to catch. Re-rendering with a fresh
-   * (but content-equal) array is the realistic trigger — the real caller
+   * A load that fails once and then succeeds on a later refetch — triggered
+   * by the effect's `registeredStudentIds` dependency changing identity, not
+   * by the teacher closing and reopening the picker — must not leave the
+   * earlier failure's message stuck next to the now-current, correctly
+   * loaded picker. Deliberately *not* modelled via Close+reopen: the Close
+   * button's own handler calls `setError('')`, which would clear a stale
+   * `error`-based message on its own and mask exactly the bug this test
+   * exists to catch. Re-rendering with a fresh (but content-equal) array is
+   * the realistic trigger — the real caller
    * (`/app/(teacher)/class/[id]/page.tsx`) hands down a freshly-`.map()`d
    * array on every render, and `LiveUpdates`' `router.refresh()` on any
    * inbound notification is what causes that render while the picker is
-   * still open. Tying the message to `loadFailed` (reset every effect run)
-   * rather than `error` (never reset except by Close) is what keeps the two
-   * from drifting apart here.
+   * still open. Tying the message to `studentsFailed` (reset every effect
+   * run) rather than `error` (never reset except by Close) is what keeps
+   * the two from drifting apart here.
    */
   it('clears the load-failure message once a later refetch succeeds, without closing the picker', async () => {
     let call = 0;
-    fetchMock.mockImplementation(async () => {
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === '/api/invitations?status=pending') {
+        return { ok: true, status: 200, json: async () => ({ data: { invitations: [] } }) };
+      }
       call += 1;
       if (call === 1) return { ok: false, status: 500, json: async () => ({}) };
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
-      };
+      return { ok: true, status: 200, json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }) };
     });
     vi.stubGlobal('fetch', fetchMock);
     const { rerender } = render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);

@@ -13,47 +13,101 @@ interface RosterStudent {
   displayName: string;
 }
 
+interface PendingInvitee {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
 interface AddWalkInProps {
   classId: string;
   /** Students already registered — filtered out of the picker. */
   registeredStudentIds: string[];
 }
 
-// Walk-ins can exceed max_students: the teacher rate stays capped at
-// target and extra students lower everyone's price. Roster-only picker;
-// creating a brand-new student mid-class goes through Students → New.
+/** One row of the merged picker: a roster student or a pending invitee. */
+interface PickerOption {
+  value: string;
+  label: string;
+}
+
+/** The subject half of `POST /api/registrations`'s body — `classId` is added by `submit`. */
+type WalkInSubject =
+  | { studentId: string }
+  | { invitationId: string }
+  | { newContact: { firstName: string; lastName: string; email: string } };
+
+const INVITED_SUFFIX = ' · invited';
+
+function inviteeLabel(invitee: PendingInvitee): string {
+  return `${invitee.firstName} ${invitee.lastName}`.trim() + INVITED_SUFFIX;
+}
+
+/**
+ * The name part of a picker option's label — what the filter matches
+ * against, so typing a fragment of "invited" itself doesn't spuriously
+ * match every invitee row.
+ */
+function nameOf(option: PickerOption): string {
+  return option.label.endsWith(INVITED_SUFFIX)
+    ? option.label.slice(0, -INVITED_SUFFIX.length)
+    : option.label;
+}
+
+// The picker merges this teacher's roster with their pending invitations; a
+// new person is added from the form below, which creates the contact and the
+// registration at once.
 //
-// Fetches the whole roster and filters it locally by `displayName` — no
-// pagination, no truncation.
+// Walk-ins can exceed max_students: the teacher rate stays capped at target
+// and extra students lower everyone's price.
+//
+// Fetches the whole roster and the whole pending-invitation list, and filters
+// them locally by name — no pagination, no truncation.
 export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [students, setStudents] = useState<RosterStudent[]>([]);
+  const [invitees, setInvitees] = useState<PendingInvitee[]>([]);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  // Distinguishes "still fetching" from "fetched, and the roster (or the
-  // filtered view of it) is genuinely empty" — both look like `visible.length
-  // === 0` otherwise, and only the latter should ever read "No student
-  // matches."
-  const [loaded, setLoaded] = useState(false);
-  // Gates the Select/"No student matches" visibility, and carries its own
-  // message, independently of `error`: `error` carries only `handleAdd`'s
+
+  const [newFirstName, setNewFirstName] = useState('');
+  const [newLastName, setNewLastName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+
+  // `loaded` (below) distinguishes "still fetching" from "fetched, and the
+  // merged options (or the filtered view of them) are genuinely empty" —
+  // both look like `visible.length === 0` otherwise, and only the latter
+  // should ever read "No student matches." Each list has its own
+  // loaded/failed pair, independent of the other: a failed invitations
+  // fetch must not take the roster off the picker, and a failed roster
+  // fetch must not take the invitees off it either — `options` below builds
+  // from whichever of `students`/`invitees` its own fetch actually filled,
+  // and each failure gets its own message underneath.
+  const [studentsLoaded, setStudentsLoaded] = useState(false);
+  // Carries its own message, independently of `error`: `error` carries only
   // submit failures. A failed submit must not hide the picker the teacher
-  // is still using to retry — only a failed *roster load* should — and a
-  // roster load that succeeds after an earlier failure must not leave a
-  // stale "Could not load" message next to the now-current picker; keeping
-  // the message on `loadFailed` (reset every effect run, same as the gate)
-  // rather than on `error` (never reset except by Close) keeps the two in
-  // lockstep.
-  const [loadFailed, setLoadFailed] = useState(false);
+  // is still using to retry — only a failed roster *load* should drop the
+  // roster's contribution to it — and a roster load that succeeds after an
+  // earlier failure must not leave a stale "Could not load" message next to
+  // the now-current picker; keeping the message on `studentsFailed` (reset
+  // every effect run, same as the gate) rather than on `error` (never reset
+  // except by Close) keeps the two in lockstep.
+  const [studentsFailed, setStudentsFailed] = useState(false);
+  // Same shape as the `students` pair above, for the invitations fetch.
+  const [invitationsLoaded, setInvitationsLoaded] = useState(false);
+  const [invitationsFailed, setInvitationsFailed] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setLoaded(false);
-    setLoadFailed(false);
+    setStudentsLoaded(false);
+    setStudentsFailed(false);
+    setInvitationsLoaded(false);
+    setInvitationsFailed(false);
+
     fetch('/api/students')
       .then((res) => {
         if (!res.ok) throw new Error(`students ${res.status}`);
@@ -63,33 +117,52 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
         if (cancelled) return;
         const registered = new Set(registeredStudentIds);
         setStudents(json.data.students.filter((s) => !registered.has(s.id)));
-        setLoaded(true);
+        setStudentsLoaded(true);
       })
       .catch(() => {
         if (cancelled) return;
-        setLoadFailed(true);
+        setStudentsFailed(true);
         // A failed load is still a load that finished — it must not keep
         // showing the loading (no-message) state forever.
-        setLoaded(true);
+        setStudentsLoaded(true);
       });
+
+    fetch('/api/invitations?status=pending')
+      .then((res) => {
+        if (!res.ok) throw new Error(`invitations ${res.status}`);
+        return res.json();
+      })
+      .then((json: { data: { invitations: PendingInvitee[] } }) => {
+        if (cancelled) return;
+        setInvitees(json.data.invitations);
+        setInvitationsLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInvitationsFailed(true);
+        setInvitationsLoaded(true);
+      });
+
     return () => {
       cancelled = true;
     };
   }, [open, registeredStudentIds]);
 
-  async function handleAdd() {
-    if (!selected) return;
+  async function submit(subject: WalkInSubject): Promise<void> {
     setSubmitting(true);
     setError('');
     try {
       const res = await fetch('/api/registrations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ classId, studentId: selected }),
+        body: JSON.stringify({ classId, ...subject }),
       });
       if (res.ok) {
         setOpen(false);
         setSelected('');
+        setNewFirstName('');
+        setNewLastName('');
+        setNewEmail('');
         router.refresh();
       } else {
         setError(await readErrorMessage(res, 'Could not add the walk-in. Try again.'));
@@ -101,6 +174,21 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
     }
   }
 
+  function handleAdd() {
+    if (!selected) return;
+    if (selected.startsWith('invitation:')) {
+      void submit({ invitationId: selected.slice('invitation:'.length) });
+    } else if (selected.startsWith('student:')) {
+      void submit({ studentId: selected.slice('student:'.length) });
+    }
+  }
+
+  function handleAddNewPerson() {
+    void submit({
+      newContact: { firstName: newFirstName, lastName: newLastName, email: newEmail },
+    });
+  }
+
   if (!open) {
     return (
       <Button variant="secondary" onClick={() => setOpen(true)} className="w-full sm:w-auto">
@@ -110,10 +198,18 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
     );
   }
 
+  const options: PickerOption[] = [
+    ...students.map((s) => ({ value: `student:${s.id}`, label: s.displayName })),
+    ...invitees.map((i) => ({ value: `invitation:${i.id}`, label: inviteeLabel(i) })),
+  ].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+
   const query = filter.trim().toLowerCase();
   const visible = query
-    ? students.filter((s) => s.displayName.toLowerCase().includes(query))
-    : students;
+    ? options.filter((o) => nameOf(o).toLowerCase().includes(query))
+    : options;
+
+  const loaded = studentsLoaded && invitationsLoaded;
+  const newPersonDisabled = newFirstName.trim() === '' || newEmail.trim() === '' || submitting;
 
   return (
     <div className="flex flex-col gap-3">
@@ -126,31 +222,28 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
           setSelected('');
         }}
       />
-      {loaded && !loadFailed && visible.length > 0 && (
+      {loaded && visible.length > 0 && (
         <Select
           label="Walk-in student"
           value={selected}
           onChange={(e) => setSelected(e.target.value)}
         >
           <option value="">Choose a student…</option>
-          {visible.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.displayName}
+          {visible.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
             </option>
           ))}
         </Select>
       )}
       {/*
         Only when a typed filter is what emptied the list — a bare empty
-        roster falls through to the "Not in your students yet?" caption
-        below instead, and loading/load-failure states show neither.
+        list shows nothing extra here, and loading/load-failure states show
+        neither.
       */}
-      {loaded && !loadFailed && visible.length === 0 && query && (
+      {loaded && visible.length === 0 && query && (
         <p className="type-caption">No student matches.</p>
       )}
-      <p className="type-caption">
-        Not in your students yet? Add them under Students first.
-      </p>
       <div className="flex gap-3">
         <Button variant="primary" onClick={handleAdd} disabled={!selected || submitting}>
           {submitting ? 'Adding...' : 'Add walk-in'}
@@ -159,11 +252,38 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
           Close
         </Button>
       </div>
-      {loadFailed && (
+      {studentsFailed && (
         <p role="alert" className="text-sm text-danger">
           Could not load your students.
         </p>
       )}
+      {invitationsFailed && (
+        <p role="alert" className="text-sm text-danger">
+          Could not load your invited contacts.
+        </p>
+      )}
+
+      <hr className="border-border" />
+
+      <Input
+        label="First name"
+        value={newFirstName}
+        onChange={(e) => setNewFirstName(e.target.value)}
+      />
+      <Input
+        label="Last name"
+        value={newLastName}
+        onChange={(e) => setNewLastName(e.target.value)}
+      />
+      <Input
+        label="Email"
+        type="email"
+        value={newEmail}
+        onChange={(e) => setNewEmail(e.target.value)}
+      />
+      <Button variant="secondary" onClick={handleAddNewPerson} disabled={newPersonDisabled}>
+        {submitting ? 'Adding...' : 'Add new person'}
+      </Button>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );

@@ -15,6 +15,8 @@ import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions
 import { hhmmToTime } from '@/lib/time-of-day';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
 import { createClassFixture } from '../class-fixtures';
+import { erasedAddress } from '@/lib/erased-address';
+import { randomUUID } from 'crypto';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -280,6 +282,70 @@ describe('GET /api/invitations', () => {
     } finally {
       if (delivered) await prisma.invitation.delete({ where: { id: delivered.id } });
       if (undelivered) await prisma.invitation.delete({ where: { id: undelivered.id } });
+    }
+  });
+
+  it('under ?status=pending, returns only the non-archived, pending, non-erased row', async () => {
+    const statusSuffix = randomUUID();
+    const plainPendingEmail = `inv-status-pending-${statusSuffix}@test.local`;
+    const declinedStatusEmail = `inv-status-declined-${statusSuffix}@test.local`;
+    let plainPending: { id: string } | undefined;
+    let declinedRow: { id: string } | undefined;
+    let archivedPending: { id: string } | undefined;
+    let erasedPending: { id: string } | undefined;
+    try {
+      plainPending = await prisma.invitation.create({
+        data: { teacherId, email: plainPendingEmail, firstName: 'Status', lastName: 'Pending' },
+        select: { id: true },
+      });
+      declinedRow = await prisma.invitation.create({
+        data: {
+          teacherId, email: declinedStatusEmail, firstName: 'Status', lastName: 'Declined',
+          status: 'declined', respondedAt: new Date(),
+        },
+        select: { id: true },
+      });
+      archivedPending = await prisma.invitation.create({
+        data: {
+          teacherId, email: `inv-status-archived-${statusSuffix}@test.local`,
+          firstName: 'Status', lastName: 'Archived', isArchived: true,
+        },
+        select: { id: true },
+      });
+      erasedPending = await prisma.invitation.create({
+        data: {
+          teacherId, email: erasedAddress(randomUUID()),
+          firstName: 'Status', lastName: 'Erased',
+        },
+        select: { id: true },
+      });
+
+      // Scoped to this test's own rows: `pendingId` (module `beforeAll`) is
+      // itself still a live pending invitation for this teacher at this
+      // point in the file, so a bare "exactly one row" assertion would be
+      // false for a reason this test isn't about.
+      const ownIds = new Set([plainPending.id, declinedRow.id, archivedPending.id, erasedPending.id]);
+
+      const filtered = await fetch(`${BASE_URL}/api/invitations?status=pending`, { headers: cookie(teacherToken) });
+      expect(filtered.status).toBe(200);
+      const filteredJson = (await filtered.json()) as { data: { invitations: Array<{ id: string; email: string }> } };
+      const filteredOwnIds = filteredJson.data.invitations.map((i) => i.id).filter((id) => ownIds.has(id));
+      expect(filteredOwnIds).toEqual([plainPending.id]);
+
+      // Without the flag, the response is unchanged: all non-archived rows —
+      // including the declined and erased ones the flag drops.
+      const unfiltered = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
+      const unfilteredJson = (await unfiltered.json()) as { data: { invitations: Array<{ id: string }> } };
+      const unfilteredIds = unfilteredJson.data.invitations.map((i) => i.id);
+      expect(unfilteredIds).toContain(plainPending.id);
+      expect(unfilteredIds).toContain(declinedRow.id);
+      expect(unfilteredIds).toContain(erasedPending.id);
+      expect(unfilteredIds).not.toContain(archivedPending.id);
+    } finally {
+      const ids = [plainPending?.id, declinedRow?.id, archivedPending?.id, erasedPending?.id].filter(
+        (id): id is string => Boolean(id),
+      );
+      if (ids.length) await prisma.invitation.deleteMany({ where: { id: { in: ids } } });
     }
   });
 });
