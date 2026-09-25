@@ -62,12 +62,8 @@ afterAll(async () => {
  * state this function is always called in: the link write runs first and the
  * `LinkOutcome` says who wrote it, not whether it is there.
  *
- * Claimed is load-bearing for the last case and free for the rest.
- * `rosterLinkState` (`invitations.ts`) reads an unclaimed student as tellable
- * whatever their privacy row says, so an unclaimed fixture would meet
- * `ALREADY_LINKED` on the first probe and never reach the sequence under
- * test. The account is what `Student_claim_link_check` demands alongside
- * `claimedAt`.
+ * Claimed, as a student who books is; no case here turns on it. The account
+ * is what `Student_claim_link_check` demands alongside `claimedAt`.
  */
 async function seedPair(
   label: string,

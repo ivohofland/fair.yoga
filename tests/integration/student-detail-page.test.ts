@@ -317,6 +317,18 @@ describe('GET /students/[id] (student detail page)', () => {
           address: 'Singel 50, Amsterdam',
           // Unclaimed: no account, claimedAt is null
           claimedAt: null,
+          // Shares everything with this teacher, so the read-only contact
+          // section has something to render.
+          studentPrivacy: {
+            create: {
+              teacherId,
+              shareFullName: true,
+              shareEmail: true,
+              sharePhone: true,
+              shareBirthday: true,
+              shareAddress: true,
+            },
+          },
         },
       });
       await prisma.teacherStudent.create({
@@ -330,7 +342,7 @@ describe('GET /students/[id] (student detail page)', () => {
       // Unlinked caption
       expect(html).toContain("This student hasn't created an account yet.");
 
-      // Full name and contact info are shown (privacy is not enabled for unclaimed rows)
+      // Full name and contact info are shown, as its privacy row allows
       expect(html).toContain('Daan Dijkstra');
       expect(html).toContain(email);
       expect(html).toContain('+31633334444');

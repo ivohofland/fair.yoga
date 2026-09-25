@@ -1,7 +1,6 @@
 import type { Prisma, StudentPrivacy } from '@prisma/client';
 import type { NoneOf } from './type-pins';
 import { formatStudentName } from './format';
-import { log } from './log';
 
 /**
  * One answer to "what may this teacher see about this student".
@@ -12,15 +11,10 @@ import { log } from './log';
  * the issue could not see the three pages, which is how a helper meant to
  * replace two copies would have become a sixth.
  *
- * Server-only. The `@prisma/client` import is type-only (same as `contacts.ts`
- * and `payment-status.ts`), but `./log` is pino and is a *value* import, so
- * this module must not be value-imported from a `'use client'` component —
- * `tiers.ts` documents the same hazard and answers it with a `tiers.server.ts`
- * split. No such split is needed here: everything this module exports is a
- * server-side gate. `studentNameSelect`/`studentVisibilitySelect` return Prisma
- * selects, and a client running `projectStudentForTeacher` would mean the raw
- * row had already reached the browser, which is the exact leak this module
- * exists to prevent. `import type` from a client module stays free, as always.
+ * Server-side gates only. `studentNameSelect`/`studentVisibilitySelect` return
+ * Prisma selects, and a client running `projectStudentForTeacher` would mean
+ * the raw row had already reached the browser, which is the exact leak this
+ * module exists to prevent. `import type` from a client module stays free.
  */
 
 /**
@@ -96,9 +90,8 @@ void _visibilityFlagsAreExhaustive;
  * runtime: `tsc` fails at every external call site fed by whichever fragment
  * lost it, because the row no longer satisfies `ScopedVisibilityFlags`.
  * Measured: 8 errors from `studentVisibilitySelect` alone, 4 from
- * `studentNameSelect` alone, 12 from both — which is the module's own
- * call-site census, enumerated below. That is this type's real enforcement —
- * the shape, not the `find`.
+ * `studentNameSelect` alone, 12 from both. That is this type's real
+ * enforcement — the shape, not the `find`.
  */
 export type ScopedVisibilityFlags = VisibilityFlags & Pick<StudentPrivacy, 'teacherId'>;
 
@@ -107,10 +100,9 @@ export type ScopedNameFlags = Pick<VisibilityFlags, 'shareFullName'> &
   Pick<StudentPrivacy, 'teacherId'>;
 
 /**
- * Just enough to compose a display name.
- *
- * `id` is here only so `bypassesPrivacy` can name the student in the warning
- * it logs — see its docblock. It is not read by the name composition itself.
+ * Just enough to compose a display name. The name composition reads the names
+ * and the flags; `id` and `claimedAt` ride along for
+ * `StudentProjectionInput`, which extends this and returns both.
  */
 export interface StudentNameInput {
   id: string;
@@ -170,124 +162,12 @@ const _projectionCarriesNoRawIdentity: NoneOf<
 void _projectionCarriesNoRawIdentity;
 
 /**
- * #166 retired the unclaimed student, and the bypass is unreachable because of
- * what creates a `Student`, not because of what links one. The sole site that
- * creates the row is the `prisma.student.create` call in
- * `api/account/student-profile/route.ts`'s `POST` handler, and it sets
- * `claimedAt` under both of its authorizations — ticket and session. There is
- * therefore no unclaimed `Student` for any `TeacherStudent` writer to link,
- * however that writer gets its `studentId`. There is no production deployment
- * either, so no legacy unclaimed rows exist anywhere for this branch to expose.
- *
- * `Student_claim_link_check` is *not* a third support, though an earlier
- * version of this comment leaned on it as one. It is
- * `CHECK (("claimedAt" IS NULL) = ("accountId" IS NULL))`, which `(null, null)`
- * satisfies: it forbids a row where claim and link disagree, not a row that is
- * unclaimed. A future write that sets neither column passes it. The sole
- * creation site is what makes the branch dead; the constraint only keeps
- * `claimedAt` and `accountId` telling the same story.
- *
- * An earlier draft of this comment argued it from the link side instead —
- * "every `TeacherStudent` writer requires a `session.studentId`" — and that is
- * false. Every site that can CREATE a link goes through `linkTeacherStudent`
- * (`services/roster-link.ts`), and an ESLint rule keeps it that way, so the set
- * to check is that function's callers rather than a roster written down here.
- * Most of them do hold a session — the student is acting for themselves. But
- * `promoteNext` (`services/waitlist.ts`) links a `studentId` read off a
- * persisted `WaitlistEntry`, during a cancellation someone else initiated
- * (`promoteAfterCancel` in `api/registrations/[id]/route.ts`;
- * `deleteStudentAccount`'s `handleSpotFreed` call in `services/gdpr.ts`) —
- * and its own docblock says it is there to repair rows "written by hand
- * (fixtures, a psql fix-up)", i.e. precisely the rows no session produced. The
- * conclusion survives on the two supports above; the support that did not
- * survive is what a census of writers looks like when the writers are
- * counted, not read.
- *
- * `TeacherStudent` has one writer that is not a creator and so not in that set
- * — `api/students/[id]/route.ts`'s `teacherStudent.update`, the archive toggle,
- * which only flips a flag on a link that already exists.
- *
- * It is kept rather than deleted because removing it means removing the claim
- * path (`lib/auth/account.ts:37-52`), the `Student_claim_link_check`
- * constraint and `Student.claimedAt` together — one decision, not five edits.
- * Before #167 this comment stood in six places and each copy claimed the
- * question was "filed as a leaf"; no such issue existed. Five were the
- * privacy-rule copies this module replaced. The sixth is in
- * `components/students/student-directory.tsx`, where the same branch gates an
- * "unlinked" caption rather than a field — it still stands, corrected in place
- * rather than deleted, and points here for the canonical argument. Counting by
- * `git grep "Filed as a leaf"` found only five of those six copies, because
- * one wrapped the phrase across two lines; that is how the count in this
- * comment was wrong for the whole of #167. The same grep over `src/` now
- * returns a single hit — this sentence — because every copy but the directory
- * one is gone and that one no longer uses the phrase. It is not filed, and
- * this is deliberate: it is dead code with a complete explanation, not a
- * defect anyone can reach.
- *
- * The proof above is a comment, and comments do not run. The `log.warn` is
- * what makes the day it stops holding show up in a log line rather than in a
- * student's complaint. At the eight `projectStudentForTeacher` call sites this
- * branch ungates *every* field; at the four `teacherVisibleName` ones only
- * `shareFullName` is in play, since the name is all those sites read. Either
- * way a silent failure here is the largest one in the module.
- * Outside this module that is 12 call sites: 5 API routes (`api/payments/[id]`,
- * `api/classes/[id]/registrations`, `api/students`, `api/students/[id]`,
- * `api/registrations/[id]`), 5 across the three teacher pages
- * (`settings/payments` once, `students/[id]` once, `class/[id]` three times),
- * and 2 in `services/payments.ts`. Add the module-internal `teacherVisibleName`
- * call inside `projectStudentForTeacher` below and the total is 13. This
- * comment has already stated a wrong count once — before trusting either
- * number, recount with a grep for `teacherVisibleName` and
- * `projectStudentForTeacher` across `src/`.
- *
- * The payload carries both ids because either alone leaves the incident
- * unanswerable: `studentId` says whose data was bypassed, `teacherId` says who
- * received it. Both are UUIDs and neither is PII — no name, no email — so this
- * line is safe to keep at `warn` in a log anyone operating the box can read.
- *
- * Projecting an unclaimed student logs twice (once through `teacherVisibleName`);
- * deduplicating that would mean either threading a flag through the public
- * signature or composing the display name a second time here, and a doubled
- * line on a should-never-happen event is cheaper than either.
- *
- * `student-visibility.test.ts` asserts both directions — that it fires with
- * both ids for an unclaimed student, and that it stays silent for a claimed
- * one. Until #167's round-two review nothing asserted it at all, so the one
- * runtime tripwire on this branch could have been deleted silently.
+ * An unclaimed student is projected through its `StudentPrivacy` row exactly
+ * like a claimed one.
  */
-/**
- * The rule itself, without the tripwire: an unclaimed `Student` withholds
- * nothing from anyone.
- *
- * Split out and exported because `rosterLinkState` (`services/invitations.ts`)
- * has to answer the same question and cannot call `bypassesPrivacy` — that
- * one logs on a `PROJECTION`, fires for a student nobody was told about, and
- * takes an `id` this caller's query has no other reason to select. #419 was
- * filed because the two surfaces disagreed; sharing the predicate is what
- * keeps a narrowing of this rule from reaching only one of them. Each caller
- * keeps its own logging policy — see `docs/data-model.md` (StudentPrivacy)
- * for the rule the two of them implement.
- */
-export function privacyIsBypassed(student: { claimedAt: Date | null }): boolean {
-  return student.claimedAt === null;
-}
-
-function bypassesPrivacy(
-  student: { id: string; claimedAt: Date | null },
-  teacherId: string,
-): boolean {
-  if (!privacyIsBypassed(student)) return false;
-  log.warn(
-    { studentId: student.id, teacherId },
-    'unclaimed Student reached the teacher projection — every privacy flag is being bypassed',
-  );
-  return true;
-}
-
 export function teacherVisibleName(student: StudentNameInput, teacherId: string): string {
   const flags = student.studentPrivacy.find((p) => p.teacherId === teacherId);
-  const shareFullName = bypassesPrivacy(student, teacherId) || (flags?.shareFullName ?? false);
-  return formatStudentName(student.firstName, student.lastName, shareFullName);
+  return formatStudentName(student.firstName, student.lastName, flags?.shareFullName ?? false);
 }
 
 export function projectStudentForTeacher(
@@ -295,9 +175,8 @@ export function projectStudentForTeacher(
   teacherId: string,
 ): TeacherVisibleStudent {
   const flags = student.studentPrivacy.find((p) => p.teacherId === teacherId);
-  const ungated = bypassesPrivacy(student, teacherId);
   const shared = <T>(flag: boolean | undefined, value: T): T | null =>
-    ungated || (flag ?? false) ? value : null;
+    flag ?? false ? value : null;
 
   return {
     id: student.id,

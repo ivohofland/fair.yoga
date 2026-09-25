@@ -17,7 +17,6 @@ import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 import { recordDispatchFailure } from '@/lib/notify-health';
 import { isRecordNotFound } from '@/lib/api-errors';
-import { privacyIsBypassed } from '@/lib/student-visibility';
 import { requireNormalised } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { liveProfile } from '@/lib/live-profile';
@@ -90,9 +89,8 @@ interface RosterLinkState {
   linked: boolean;
   /**
    * May this teacher be told? Their own `StudentPrivacy.shareEmail` for that
-   * student, OR the student being unclaimed — the two ways this teacher could
-   * already have the address. Reading it as the flag alone is what #419
-   * corrected, so it is no longer named after the flag.
+   * student — the one way this teacher could already have the address,
+   * claimed or not.
    *
    * Meaningful only in conjunction with `linked` — see the docblock below.
    */
@@ -116,19 +114,18 @@ interface RosterLinkState {
  * may not see an address must not be handed a confirmation of one they
  * typed. Answering `ALREADY_LINKED` on the strength of the link alone told
  * them a guessed address belongs to one of their own students. So it asks
- * the question the teacher-facing projection asks, and by the same two
- * routes: the per-teacher flag, and the unclaimed-Student bypass that
- * ungates every field (#419). A missing `StudentPrivacy` row reads as
- * `false`. That rule spans two modules and neither owns it —
- * `docs/data-model.md` does, under StudentPrivacy and Invitation.
+ * the question the teacher-facing projection asks, the same way: the
+ * per-teacher `shareEmail` flag, whether or not the student is claimed. A
+ * missing `StudentPrivacy` row reads as `false`. That rule spans two modules
+ * and neither owns it — `docs/data-model.md` does, under StudentPrivacy and
+ * Invitation.
  *
- * `mayBeTold` does NOT carry the indistinguishability above, and since #419
- * it cannot: an unclaimed `Student` row reads `true` whether or not it is on
- * this teacher's roster, while "no Student row" still reads `false`. Reading
- * it outside a `linked` conjunct therefore rebuilds the #166 oracle.
+ * `mayBeTold` does NOT carry the indistinguishability above: a `Student` with
+ * a `shareEmail: true` row for this teacher reads `true` whether or not it is
+ * on this teacher's roster, while "no Student row" reads `false`. Reading it
+ * outside a `linked` conjunct therefore rebuilds the #166 oracle.
  * `inviteContact` below is its only reader and does conjoin it, and
- * `invitations.gate.test.ts` pins that conjunct from both sides — including
- * the unclaimed stranger, who is the case this paragraph is about.
+ * `invitations.gate.test.ts` pins that conjunct.
  *
  * ONE query, and `student.findUnique` must stay the first statement in it:
  * `invitations.revive.test.ts` hooks that call through a Prisma extension to
@@ -151,8 +148,6 @@ async function rosterLinkState(
   const student = await db.student.findUnique({
     where: { email },
     select: {
-      id: true,
-      claimedAt: true,
       teacherStudents: { where: { teacherId }, select: { id: true } },
       studentPrivacy: { where: { teacherId }, select: { teacherId: true, shareEmail: true } },
     },
@@ -160,23 +155,6 @@ async function rosterLinkState(
   if (!student) return { linked: false, mayBeTold: false };
 
   const linked = student.teacherStudents.length > 0;
-  const unclaimed = privacyIsBypassed(student);
-
-  // The second tripwire on the unclaimed-Student branch. `teacherStudents`
-  // here is unfiltered, so an archived link still answers `linked` here, same
-  // as a live one. Gated on `linked` because that is when the bypass changes
-  // an answer.
-  //
-  // `privacyIsBypassed` rather than an inline `claimedAt === null`: #419 was
-  // the two surfaces disagreeing about this exact rule, so the predicate is
-  // shared and a narrowing of it reaches both. The tripwire is NOT shared —
-  // `bypassesPrivacy`'s fires on a projection, and this gate is not one.
-  if (unclaimed && linked) {
-    log.warn(
-      { studentId: student.id, teacherId },
-      'unclaimed Student reached the ALREADY_LINKED gate — shareEmail is being bypassed',
-    );
-  }
 
   return {
     linked,
@@ -193,14 +171,8 @@ async function rosterLinkState(
     // error, because the callback below would then reference `.teacherId` on
     // a type that no longer has it. See that file's `studentNameSelect` for
     // the same pattern, stated once and measured.
-    //
-    // `unclaimed ||` is the other half, and it short-circuits the flag
-    // entirely rather than defaulting it: an unclaimed student's address is
-    // already in this teacher's directory in plain text, so the flag has
-    // nothing left to withhold (#419).
     mayBeTold:
-      unclaimed ||
-      (student.studentPrivacy.find((p) => p.teacherId === teacherId)?.shareEmail ?? false),
+      student.studentPrivacy.find((p) => p.teacherId === teacherId)?.shareEmail ?? false,
   };
 }
 

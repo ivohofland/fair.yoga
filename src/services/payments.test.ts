@@ -136,18 +136,9 @@ describe('Payment Service (DB)', () => {
     classId = cls.id;
 
     // Create student — claimed, with a privacy row that shares the email and
-    // not the surname.
+    // not the surname. Both flag choices are load-bearing.
     //
-    // All three of those are load-bearing, and none was here until #167's
-    // round-two review.
-    //
-    // Claimed: an unclaimed student trips `bypassesPrivacy`, which ungates
-    // every field before any flag is read. The projection then returns the
-    // same full profile for every teacher, so the `teacherId` threaded through
-    // `getOutstandingPayments`/`getPaymentsForClass` was inert — a reviewer
-    // substituted a foreign UUID for it and this file stayed 14/14 green.
-    //
-    // Shares the email: claiming alone does not fix that. With an all-false
+    // Shares the email: with an all-false
     // row, the owning teacher's read and a foreign teacher's read are
     // byte-identical — a row of all-false flags and *no row at all* both
     // project every field to `null`. Verified: with an all-false row the
@@ -156,7 +147,7 @@ describe('Payment Service (DB)', () => {
     //
     // Does not share the surname: a truncated display name is not a fixed
     // point of `formatStudentName`, so it can only appear if the flags were
-    // read — which is what pins that `bypassesPrivacy` did not fire.
+    // read.
     const studentEmail = `payment-student-${uniqueSuffix}@test.local`;
     const student = await prisma.student.create({
       data: {
@@ -336,21 +327,10 @@ describe('Payment Service (DB)', () => {
   /**
    * `teacherId` does two jobs in both queries below — it scopes the `where`,
    * and it selects which `StudentPrivacy` row the projection reads (see
-   * `getPaymentsForClass`'s docblock). The three tests below cover both:
-   * the two foreign-teacher reads falsify the `where` scope, and the
-   * truncated-name assertion falsifies the projection argument.
+   * `getPaymentsForClass`'s docblock). The tests below cover both: the
+   * foreign-teacher reads falsify the `where` scope, and the owning-teacher
+   * projection test falsifies the projection argument.
    *
-   * That last one is the addition from #167's round-two review, and the
-   * comment that used to stand here misdiagnosed why it was needed. It blamed
-   * "every fixture in this file happens to read as the owning teacher" — true,
-   * but not what made the projection argument inert. The cause was the
-   * fixture's *unclaimed* student: `bypassesPrivacy` returned true, so every
-   * field came back ungated no matter whose `teacherId` was passed, and
-   * substituting a foreign UUID at the call site left this file 14/14 green.
-   * The student is claimed now, with an all-false row for `teacherId`.
-   *
-   * The same comment also called the two foreign-teacher tests below a thing
-   * still to be added; they have been here since the previous review round.
    * `getPaymentsForClass` is the one that matters most, because it takes a
    * `classId` a caller could have got from anywhere.
    */
@@ -397,11 +377,9 @@ describe('Payment Service (DB)', () => {
    *   `projectStudentForTeacher` in `payments.ts` finds no row, withholds the
    *   email, and reddens this.
    * - the truncated `displayName` says it read the flags at all rather than
-   *   taking the `bypassesPrivacy` shortcut. Un-claiming the fixture student
-   *   ungates the surname and reddens this.
+   *   releasing the name unconditionally.
    *
-   * Neither alone is enough, which is how this file passed 14/14 with the
-   * argument inert.
+   * Neither alone is enough.
    */
   it('projects the student under the OWNING teacher\'s privacy flags', async () => {
     const [outstanding] = await getOutstandingPayments(prisma, teacherId);

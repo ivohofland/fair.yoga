@@ -129,8 +129,8 @@ describe('POST /api/account/student-profile — ticket authorization', () => {
     expect(student.lastName).toBe('Smith');
     expect(student.accountId).not.toBeNull();
 
-    // The two census columns. `claimedAt` null would drop this student into
-    // `bypassesPrivacy`, handing their teacher every field they never shared.
+    // The two census columns. `claimedAt` null would leave this signed-up
+    // student looking like one who has never signed in.
     expect(student.claimedAt).not.toBeNull();
     // A stamped `tierSelectedAt` would suppress the tier picker forever, so
     // they would be billed at the default without ever having chosen.

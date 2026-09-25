@@ -88,13 +88,9 @@ afterAll(async () => {
  * the row back exactly as it was.
  *
  * Every student this file seeds above is created without an `Account`, so all
- * of them are unclaimed — and an unclaimed student withholds nothing from
- * anyone: `bypassesPrivacy` (`src/lib/student-visibility.ts`) ungates every
- * privacy flag for them, which since #419 includes the `ALREADY_LINKED` gate.
- * Any assertion here that means to test a privacy FLAG has to claim its
- * student first, or it passes on the bypass and would pass with the flag
- * deleted. Measured: without this, removing the `shareEmail: true` row from
- * the 409 test below left the test green.
+ * of them are unclaimed. The `ALREADY_LINKED` cases below run claimed
+ * students through this and an unclaimed one without it, and the route
+ * answers both through `shareEmail` alone.
  *
  * `Student_claim_link_check` is `CHECK (("claimedAt" IS NULL) = ("accountId"
  * IS NULL))`, so the `Account` is mandatory on the way in and both columns
@@ -184,13 +180,16 @@ describe('GET /api/students', () => {
   // } } }`) had no end-to-end coverage — only the PATCH toggle that flips the
   // flag was tested, never that GET actually reads it. A dedicated student +
   // link, not one of the shared 25, so archiving it cannot shrink the
-  // full-list length asserted elsewhere in this describe block.
+  // full-list length asserted elsewhere in this describe block. It shares
+  // its full name with this teacher, which is what lets both lists be
+  // searched for 'Archived Fixture'.
   it('returns an archived student under archived=true, and excludes it from the default (unarchived) list', async () => {
     const archivedStudent = await prisma.student.create({
       data: {
         firstName: 'Archived',
         lastName: 'Fixture',
         email: `crm-archived-${suffix}@test.local`,
+        studentPrivacy: { create: { teacherId, shareFullName: true } },
       },
     });
     const link = await prisma.teacherStudent.create({
@@ -446,12 +445,8 @@ describe('POST /api/students', () => {
     // and carrying no invitation row, which is the "booked a class instead
     // of being invited" case. The privacy row is what entitles this teacher
     // to the refusal at all (#412) — without it the address is one they may
-    // not see, and the invite falls through instead.
-    //
-    // CLAIMED for the duration, which is what keeps that last sentence true:
-    // the seeded rows are unclaimed, and #419 entitles a teacher to the
-    // refusal for an unclaimed student regardless of any flag, so this test
-    // certified nothing about `shareEmail` until the claim was added.
+    // not see, and the invite falls through instead. CLAIMED for the
+    // duration; the unclaimed case is the next test.
     const linked = await prisma.student.findUniqueOrThrow({
       where: { id: studentIds[0]! },
       select: { email: true },
@@ -490,48 +485,46 @@ describe('POST /api/students', () => {
     });
   });
 
-  it('returns 409 ALREADY_LINKED for an UNCLAIMED student on the roster (#419)', async () => {
-    // The route-level half of #419. Until this existed, reverting the fix
-    // outright left every test in this file green — the behaviour the issue
-    // is actually about had no test at the tier that serves it.
+  it('invites, rather than confirming, an UNCLAIMED student on the roster who has not shared their email', async () => {
+    // The route-level half of the rule `rosterLinkState` shares with
+    // `projectStudentForTeacher`: an unclaimed student is gated by their
+    // `StudentPrivacy` row exactly like a claimed one, so a linked, unclaimed
+    // student with no row falls through to an ordinary invitation.
     //
     // `studentIds[2]` needs no fixture work: the seeded rows are unclaimed
-    // already, and this one carries no `StudentPrivacy`, so the ONLY thing
-    // that can produce a 409 here is the unclaimed bypass. Before #419 this
-    // fell through to a real `Invitation` that `notifyInvitee` then refused
-    // to deliver — a contact stuck in the teacher's list forever.
+    // already, and this one carries no `StudentPrivacy`.
     const unclaimed = await prisma.student.findUniqueOrThrow({
       where: { id: studentIds[2]! },
       select: { email: true, claimedAt: true },
     });
     expect(unclaimed.claimedAt).toBeNull();
 
-    const res = await fetch(`${BASE_URL}/api/students`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-      body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: unclaimed.email }),
-    });
+    try {
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: unclaimed.email }),
+      });
 
-    expect(res.status).toBe(409);
-    const json = await res.json();
-    expect(json.error.code).toBe('ALREADY_LINKED');
-    expect(
-      await prisma.invitation.findUnique({
+      expect(res.status).toBe(201);
+      const row = await prisma.invitation.findUniqueOrThrow({
         where: { teacherId_email: { teacherId, email: unclaimed.email } },
-      }),
-    ).toBeNull();
+        select: { status: true, delivered: true },
+      });
+      expect(row).toEqual({ status: 'pending', delivered: false });
+    } finally {
+      await prisma.invitation.deleteMany({ where: { teacherId, email: unclaimed.email } });
+    }
   });
 
   it('invites, rather than confirming, when the linked student has not shared their email (#412)', async () => {
     // The disclosure this closes: `ALREADY_LINKED` told a teacher that an
     // address they typed belongs to one of their own students, even one who
     // withheld it — a fact projectStudentForTeacher returns as null on every
-    // other surface, once that student is CLAIMED. A hit was free and
-    // silent, which is what made the targeted guess worth closing.
+    // other surface. A hit was free and silent, which is what made the
+    // targeted guess worth closing.
     //
-    // Claimed for the duration, and not as bookkeeping: the seeded rows are
-    // unclaimed, and an unclaimed student is fully visible to any teacher, so
-    // #419 answers 409 for them. Withholding is a claimed student's to do.
+    // Claimed for the duration; the unclaimed case is the test above.
     const linked = await prisma.student.findUniqueOrThrow({
       where: { id: studentIds[1]! },
       select: { email: true },
@@ -1033,9 +1026,9 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
   // #167 mutation check: other list assertions elsewhere in this file read a
   // returned `displayName` and fail if the route stops projecting at all —
   // but only because `displayName` goes missing, not because a
-  // privacy-restricted student's data leaked, since those fixtures
-  // (`Student00`..`Student24`) are unclaimed and legitimately show a full
-  // name either way. This is the assertion that actually exercises gating on
+  // privacy-restricted student's data leaked, since they find those fixtures
+  // (`Student00`..`Student24`) by name prefix, which a leaked surname
+  // satisfies too. This is the assertion that actually exercises gating on
   // the LIST route, mirroring the detail-route test just above.
   it('the list withholds a surname and an email the student did not share', async () => {
     const res = await as(dualToken, '/api/students');
@@ -1147,9 +1140,22 @@ describe('GET /api/students — overduePayments', () => {
     await createChargedRegistration(clsOther.id, studentIds[1]!, 'overdue');
     // Student02: pending (not overdue) with the requesting teacher.
     await createChargedRegistration(clsA.id, studentIds[2]!, 'pending');
+
+    // The full-list test below keys rows by full display name, which this
+    // teacher sees only for a student who shares it.
+    await prisma.studentPrivacy.createMany({
+      data: studentIds.slice(0, 4).map((studentId) => ({
+        studentId, teacherId, shareFullName: true,
+      })),
+    });
   });
 
   afterAll(async () => {
+    if (teacherId && studentIds.length > 0) {
+      await prisma.studentPrivacy.deleteMany({
+        where: { teacherId, studentId: { in: studentIds.slice(0, 4) } },
+      });
+    }
     // Guards: on a failed beforeAll roomId/otherTeacherId are undefined —
     // an undefined filter turns deleteMany into delete-all, and delete()
     // throws. overdueClassIds is safe unguarded: `in: []` matches nothing.

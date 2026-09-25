@@ -97,18 +97,8 @@ test.describe('Teacher journey', () => {
 
     // The walk-in picker is roster-only. This student never drives a browser,
     // but it is claimed and shares nothing — for the same reason the booking
-    // student is, and then some.
-    //
-    // Until #167's round-two review it was a genuinely unclaimed CRM row, and
-    // that made two guards inert. `bypassesPrivacy` returned true for it, so
-    // the full name rendered whether the projection ran or not: a raw
-    // `${firstName} ${lastName}` substituted into `settings/payments/page.tsx`
-    // left this spec green — the same defect 4f93343 fixed for the booking
-    // student, three lines away, and the reason /settings/payments was the one
-    // teacher surface this spec still could not falsify. It also fired the
-    // module's `log.warn` on every render that touched the walk-in, so the
-    // baseline was dozens of lines a run and the tripwire could not function
-    // as an alarm.
+    // student is: its truncated name is what lets this spec tell a projected
+    // name from a raw `${firstName} ${lastName}`, on /settings/payments too.
     //
     // `Student_claim_link_check` requires claimedAt and accountId to move
     // together, hence the account.
