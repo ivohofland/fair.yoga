@@ -18,6 +18,7 @@ describe('essential types', () => {
       'spot_available',
       'spot_taken',
       'waitlist_promoted',
+      'walk_in_added',
     ]);
   });
 
@@ -83,6 +84,19 @@ describe('isEmailEligible', () => {
 
   it('still respects age for a class that already started', () => {
     expect(isEmailEligible({ type: 'booking_confirmed', createdAt: minutes(-45), classStart: minutes(-10) }, now, 30)).toBe(true);
+  });
+});
+
+describe('walk-in', () => {
+  it('treats a walk-in as essential and emails it on the first sweep', () => {
+    expect(isEssential('walk_in_added')).toBe(true);
+    expect(
+      isEmailEligible(
+        { type: 'walk_in_added', createdAt: new Date(), classStart: null },
+        new Date(),
+        30,
+      ),
+    ).toBe(true);
   });
 });
 

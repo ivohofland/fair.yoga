@@ -22,6 +22,9 @@ export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new S
   // not be louder than the `booking_confirmed` it undoes, which is also
   // absent.
   'booking_removed',
+  // A booking someone else made for the student, the same reason as
+  // `booking_removed`.
+  'walk_in_added',
   'waitlist_promoted',
   'spot_available',
   'spot_taken',
@@ -38,9 +41,13 @@ export const URGENT_WINDOW_MINUTES = 120;
  * Types emailed on the first fallback sweep after they are created, not after
  * the unread threshold. A waitlist promotion is a booking the student did not
  * make at that moment, so it should reach them without waiting on the
- * ordinary unread threshold below.
+ * ordinary unread threshold below; a walk-in is a booking made for them at
+ * the door, so the same reasoning applies.
  */
-export const IMMEDIATE_EMAIL_TYPES: ReadonlySet<NotificationType> = new Set(['waitlist_promoted']);
+export const IMMEDIATE_EMAIL_TYPES: ReadonlySet<NotificationType> = new Set([
+  'waitlist_promoted',
+  'walk_in_added',
+]);
 
 export function isEmailEligible(
   input: { type: NotificationType; createdAt: Date; classStart: Date | null },
