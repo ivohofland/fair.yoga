@@ -93,8 +93,9 @@ by the walk-in window: it exists only while a class is running or about to.
 
 ### Eligibility is uniform
 
-Any non-archived `pending` invitation of this teacher, or any address typed as
-a new contact, can be walked in. If the address has a `Student`, that row is
+Any `pending` invitation of this teacher, or any address typed as a new
+contact, can be walked in. Archiving is list placement, not consent state: the
+picker omits archived rows, and the API accepts them. If the address has a `Student`, that row is
 used; if not, one is created. Refusals depend on the teacher's own rows and on
 refusal rows the student wrote, never on whether the address is on the
 platform.
@@ -152,13 +153,13 @@ Two exported steps, because the lock order puts the class work between them:
 
 **`resolveWalkInStudent(tx, { teacherId, subject })`** — before any lock.
 
-1. Resolve the subject to this teacher's `Invitation`. `invitationId`: the row
-   must have `teacherId` = the acting teacher, else `NOT_FOUND` (404, as
-   ownership answers elsewhere). `newContact`: find the teacher's row for the
-   normalised address, or create one (`status: pending`, `delivered: true`, no
-   notification sent — the walk-in notification replaces the invitation email).
-   An existing row for that address is used as found; its name is not
-   overwritten.
+1. Resolve the subject to an address and, where one exists, this teacher's
+   `Invitation`. `invitationId`: the row must have `teacherId` = the acting
+   teacher, else `NOT_FOUND` (404, as ownership answers elsewhere).
+   `newContact`: read the teacher's row for the normalised address, if any —
+   **read only**. A missing row is created in `completeWalkIn`, at the
+   `Invitation` position of the lock order, never here before the `Class`
+   lock.
 2. Refuse, in this order, on plain reads:
    - erased — the invitation's address is an erasure placeholder →
      `INVITATION_ERASED`. The teacher already sees "Deleted Student" on their
@@ -178,12 +179,14 @@ Two exported steps, because the lock order puts the class work between them:
 3. Find the `Student` by email. Found → the match branch. Not found → create
    it (the create branch): `firstName`/`lastName`/`email` from the invitation,
    schema-default tier, `tierSelectedAt: null`. If an `Account` already holds
-   the address (a teacher-only account), the row is created with `accountId`
-   and `claimedAt` set in the creating statement, as
-   `Student_claim_link_check` requires; otherwise both stay `null` and
+   the address and holds no live `Student` (a teacher-only account), the row
+   is created with `accountId` and `claimedAt` set in the creating statement,
+   as `Student_claim_link_check` requires — an account that already holds a
+   live profile cannot take a second (`Student_account_live_unique`, #623);
+   otherwise both stay `null` and
    `resolveOrClaimAccount` claims it on first sign-in. A `P2002` on the email
    (a concurrent create) is re-read and continues as the match branch.
-4. Return `{ studentId, invitationId, created: boolean }`. `created` never
+4. Return `{ studentId, email, firstName, lastName, created: boolean }`. `created` never
    leaves the server: it drives the privacy seed and nothing else.
 
 **The route** then runs its existing body with that `studentId`:
@@ -192,7 +195,7 @@ cancellation, the window refusal above, status, capacity (walk-ins may exceed
 it), `activateRegistration` with `isWalkIn: true` (`Registration`, claimable
 `WaitlistEntry`).
 
-**`completeWalkIn(tx, { teacherId, studentId, invitationId, created, classId })`**
+**`completeWalkIn(tx, { teacherId, classId, resolved, notice })`**
 — after `Registration`, in lock order:
 
 1. `created` only: create `StudentPrivacy { teacherId, studentId,
@@ -201,8 +204,13 @@ it), `activateRegistration` with `isWalkIn: true` (`Registration`, claimable
    phone, birthday or home address. The match branch seeds nothing: that
    person's own settings, or the default-deny absence of a row, govern.
 2. `linkTeacherStudent` (`TeacherStudent`).
-3. `Invitation` → `accepted`, `respondedAt: now`, compare-and-set on
-   `status: 'pending'` (a miss after a concurrent decline falls to step 5).
+3. `Invitation` → `accepted`. A missing row for `(teacherId, email)` is
+   inserted first (`createMany … skipDuplicates`, `status: pending`, the typed
+   name; no invitation email is sent — the walk-in notification replaces it);
+   an existing row keeps its name. Then a compare-and-set on
+   `status: 'pending'` → `accepted`, `respondedAt: now`. A miss is classified
+   by re-reading: `accepted` is what was asked for; `declined` (a concurrent
+   decline) → `DECLINED`; gone (a concurrent delete) → `NOT_FOUND`.
 4. `walk_in_added` notification to the student, linked to the class.
 5. **`TeacherBlock` re-check as the last statement** — the #537 pattern
    `acceptInvitation` uses. A decline landing between step 2 of
