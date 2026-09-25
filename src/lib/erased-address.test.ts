@@ -14,5 +14,8 @@ describe('erased addresses', () => {
   it('does not recognise an ordinary address, or one merely containing the domain', () => {
     expect(isErasedAddress('anna@example.com')).toBe(false);
     expect(isErasedAddress('deleted.invalid@example.com')).toBe(false);
+    // Ends with the domain's characters but with no `@` delimiter before
+    // them — not the shape erasure writes.
+    expect(isErasedAddress('notreallydeleted.invalid')).toBe(false);
   });
 });
