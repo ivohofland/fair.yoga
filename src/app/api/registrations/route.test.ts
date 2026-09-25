@@ -115,11 +115,9 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
     classId = cls.id;
 
     // CLAIMED, LINKED, and sharing nothing — the exact state the gate falls
-    // through for. Claimed because `rosterLinkState` (`services/invitations.ts`)
-    // hands an unclaimed student's address to any linked teacher regardless of
-    // `shareEmail`, so an unclaimed fixture would meet `ALREADY_LINKED` on the
-    // probe below and never produce a decoy at all. `shareEmail: false` is
-    // written out rather than left to the default for the same reason
+    // through for. Claimed because the booking below runs under this
+    // student's own session, which needs their account. `shareEmail: false`
+    // is written out rather than left to the default for the same reason
     // `link-consent.test.ts`'s `seedPair` writes it: the withheld address is
     // the precondition of the whole case.
     studentEmail = `reg-route-student-${suffix}@test.local`;

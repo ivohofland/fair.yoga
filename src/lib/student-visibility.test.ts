@@ -1,17 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { log } from './log';
+import { describe, it, expect } from 'vitest';
 import {
   teacherVisibleName,
   projectStudentForTeacher,
   type StudentProjectionInput,
 } from './student-visibility';
-
-// `student-visibility.ts` imports `./log`, so the specifier here must match
-// that one — same constraint `api-utils.test.ts` documents for its own
-// `@/lib/log` mock.
-vi.mock('./log', () => ({
-  log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
-}));
 
 const TEACHER = 'teacher-1';
 /** A second teacher, to whom this student shares everything. */
@@ -70,10 +62,8 @@ describe('teacherVisibleName', () => {
     );
   });
 
-  it('ungates a legacy unclaimed student', () => {
-    expect(teacherVisibleName(claimedStudent({ claimedAt: null }), TEACHER)).toBe(
-      'Anna Bakker',
-    );
+  it('gives an unclaimed student a last initial when the surname is not shared', () => {
+    expect(teacherVisibleName(claimedStudent({ claimedAt: null }), TEACHER)).toBe('Anna b.');
   });
 
   // Multi-row inputs. In production the nested `where: { teacherId }` on
@@ -130,12 +120,35 @@ describe('projectStudentForTeacher', () => {
     expect(result.address).toBeNull();
   });
 
-  it('ungates every field for a legacy unclaimed student', () => {
-    const result = projectStudentForTeacher(claimedStudent({ claimedAt: null }), TEACHER);
-    expect(result.email).toBe('anna@example.com');
-    expect(result.phone).toBe('+31612345678');
-    expect(result.birthday).toEqual(BIRTHDAY);
-    expect(result.address).toBe('Keizersgracht 1');
+  it('projects an unclaimed student through its privacy row like any other', () => {
+    const projected = projectStudentForTeacher(
+      {
+        id: 's1', firstName: 'Anna', lastName: 'Bergsma', email: 'anna@example.com',
+        phone: '0612345678', birthday: new Date('1990-01-01'), address: 'Straat 1',
+        claimedAt: null,
+        studentPrivacy: [{
+          teacherId: 't1', shareFullName: true, shareEmail: true,
+          sharePhone: false, shareBirthday: false, shareAddress: false,
+        }],
+      },
+      't1',
+    );
+    expect(projected).toMatchObject({
+      displayName: 'Anna Bergsma', email: 'anna@example.com',
+      phone: null, birthday: null, address: null, claimedAt: null,
+    });
+  });
+
+  it('masks an unclaimed student with no privacy row', () => {
+    const projected = projectStudentForTeacher(
+      {
+        id: 's2', firstName: 'Anna', lastName: 'Bergsma', email: 'anna@example.com',
+        phone: null, birthday: null, address: null, claimedAt: null, studentPrivacy: [],
+      },
+      't1',
+    );
+    expect(projected.displayName).toBe('Anna b.');
+    expect(projected.email).toBeNull();
   });
 
   it('releases exactly the fields whose flag is set, and no others', () => {
@@ -210,41 +223,5 @@ describe('projectStudentForTeacher', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER, ALL_FALSE] });
     expect(projectStudentForTeacher(s, TEACHER).email).toBeNull();
     expect(projectStudentForTeacher(s, OTHER_TEACHER).email).toBe('anna@example.com');
-  });
-});
-
-/**
- * `bypassesPrivacy`'s `log.warn` is the only runtime tripwire on this branch:
- * the argument that an unclaimed `Student` can no longer exist is a comment,
- * and comments do not run. It shipped with nothing asserting it, so deleting
- * the line left every suite green — the guard against a silent guard was
- * itself silent.
- *
- * Two directions, because one is not enough: a `log.warn` moved above the
- * `if (student.claimedAt) return false` would satisfy the firing test and fire
- * on every render in the app.
- */
-describe('the unclaimed-student tripwire', () => {
-  beforeEach(() => {
-    vi.mocked(log.warn).mockClear();
-  });
-
-  it('warns with both ids when an unclaimed student reaches the projection', () => {
-    projectStudentForTeacher(claimedStudent({ claimedAt: null }), TEACHER);
-
-    // Both ids: `studentId` says whose data was bypassed, `teacherId` says who
-    // received it. The payload carried only the student until #167's
-    // round-two review, which left the incident unanswerable.
-    expect(log.warn).toHaveBeenCalledWith(
-      { studentId: 'student-1', teacherId: TEACHER },
-      expect.stringContaining('unclaimed Student'),
-    );
-  });
-
-  it('stays silent for a claimed student', () => {
-    projectStudentForTeacher(claimedStudent(), TEACHER);
-    teacherVisibleName(claimedStudent(), TEACHER);
-
-    expect(log.warn).not.toHaveBeenCalled();
   });
 });
