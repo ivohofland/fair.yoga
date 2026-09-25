@@ -17,6 +17,8 @@ const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 /** The check-in test's new-person walk-in — no fixture, so `afterAll` reaps it by address. */
 const newcomerEmail = `e2e-journey-newcomer-${suffix}@test.local`;
+/** The check-in test's invitee pick — the `Invitation` row is a `beforeAll` fixture, but the `Student` `completeWalkIn` creates for it is not, so `afterAll` reaps that one by address too. */
+const inviteeEmail = `e2e-journey-invitee-${suffix}@test.local`;
 
 let teacherId: string;
 let teacherAccountId: string;
@@ -125,6 +127,16 @@ test.describe('Teacher journey', () => {
     await prisma.teacherStudent.create({
       data: { teacherId, studentId: walkInStudentId },
     });
+
+    // A pending invitee, picked from the merged picker's invitee half — spec
+    // §Testing requires an e2e proving this specific path (not just the
+    // roster pick and the new-person form). No `Student` row exists at this
+    // address yet, so `resolveWalkInStudent` creates one the same way it
+    // does for a brand-new person, and `completeWalkIn` accepts the
+    // invitation as part of the same write.
+    await prisma.invitation.create({
+      data: { teacherId, email: inviteeEmail, firstName: 'Ingrid', lastName: 'Invitee' },
+    });
   });
 
   test.afterAll(async () => {
@@ -162,15 +174,17 @@ test.describe('Teacher journey', () => {
     // The check-in test's new-person walk-in has no fixture id of its own —
     // `completeWalkIn` writes both rows, keyed by address, not by a variable
     // this file assigned. Unclaimed (no matching Account existed for a
-    // freshly-made e2e address), so no session/account cleanup for it.
-    const newcomer = await prisma.student.findUnique({
-      where: { email: newcomerEmail },
-      select: { id: true },
-    });
-    if (newcomer) {
-      await prisma.student.deleteMany({ where: { id: newcomer.id } });
+    // freshly-made e2e address), so no session/account cleanup for it. Same
+    // shape for the invitee pick's resulting `Student` — its `Invitation` IS
+    // a `beforeAll` fixture, but the `Student` `completeWalkIn` creates for
+    // it is not.
+    for (const email of [newcomerEmail, inviteeEmail]) {
+      const created = await prisma.student.findUnique({ where: { email }, select: { id: true } });
+      if (created) {
+        await prisma.student.deleteMany({ where: { id: created.id } });
+      }
+      await prisma.invitation.deleteMany({ where: { teacherId, email } });
     }
-    await prisma.invitation.deleteMany({ where: { teacherId, email: newcomerEmail } });
 
     const studentAccountIds: string[] = [];
     for (const sid of [bookingStudentId, walkInStudentId]) {
@@ -361,6 +375,21 @@ test.describe('Teacher journey', () => {
     await page.reload();
     await expect(page.getByText('Walkin g.')).toBeVisible({ timeout: 10_000 });
 
+    // A pending invitee, picked from the merged picker's invitee half —
+    // spec §Testing's own case, distinct from both the roster pick above
+    // and the new-person form below.
+    await page.getByRole('button', { name: 'Add walk-in' }).click();
+    await page
+      .getByLabel('Walk-in student')
+      .selectOption({ label: 'Ingrid Invitee · invited' });
+    await page.getByRole('button', { name: 'Add walk-in' }).click();
+    await expect(page.getByLabel('Walk-in student')).toBeHidden({ timeout: 10_000 });
+    await page.reload();
+    // No `Student` row existed at this address, so `resolveWalkInStudent`
+    // creates one the same way the new-person path does — `StudentPrivacy`
+    // is seeded `shareFullName: true`, so the full typed name renders.
+    await expect(page.getByText('Ingrid Invitee')).toBeVisible({ timeout: 10_000 });
+
     // A brand-new person, walked in straight from the form — no existing
     // student or invitation row for them at all.
     await page.getByRole('button', { name: 'Add walk-in' }).click();
@@ -396,19 +425,19 @@ test.describe('Teacher journey', () => {
     await page.getByRole('button', { name: 'Edit attendance' }).click();
     await expect(page.getByRole('button', { name: 'Mark Journey s. as no-show' })).toBeVisible();
 
-    // All three charged registrations start unpaid — the booking, the
-    // roster walk-in and the new-person walk-in the check-in test added;
-    // payment state is text, not a badge.
-    await expect(page.getByText('○ Unpaid')).toHaveCount(3);
+    // All four charged registrations start unpaid — the booking, the
+    // roster walk-in, the invitee pick and the new-person walk-in the
+    // check-in test added; payment state is text, not a badge.
+    await expect(page.getByText('○ Unpaid')).toHaveCount(4);
     await page
       .getByRole('button', { name: 'Mark paid — Journey s.' })
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
-    await expect(page.getByText('○ Unpaid')).toHaveCount(2);
+    await expect(page.getByText('○ Unpaid')).toHaveCount(3);
 
     // A mis-tap is recoverable: transient Undo restores the record.
     await page.getByRole('button', { name: 'Undo marking Journey s. as paid' }).click();
-    await expect(page.getByText('○ Unpaid')).toHaveCount(3, { timeout: 10_000 });
+    await expect(page.getByText('○ Unpaid')).toHaveCount(4, { timeout: 10_000 });
     await page
       .getByRole('button', { name: 'Mark paid — Journey s.' })
       .click();
