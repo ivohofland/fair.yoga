@@ -14,6 +14,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { erasedAddress } from '@/lib/erased-address';
+import { notificationBus, type NotificationEvent } from '@/lib/event-bus';
 import {
   resolveWalkInStudent,
   completeWalkIn,
@@ -319,15 +320,22 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     expect((await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe('pending');
   });
 
-  it('refuses a block that commits after resolve, at the last statement of complete', async () => {
+  it('refuses a block that commits after resolve, after the link and the compare-and-set, before notifying', async () => {
     const { teacherId, classId } = await seedTeacher('race');
     const email = `walkin-race-${suffix}@test.local`;
     const inv = await prisma.invitation.create({ data: { teacherId, email, firstName: 'Race', status: 'pending', delivered: false } });
     const other = new PrismaClient();
+    // The notification's payload reaches the bus before the transaction
+    // commits, so a refused walk-in must not have reached it.
+    const events: NotificationEvent[] = [];
+    const onEvent = (event: NotificationEvent): void => { events.push(event); };
+    notificationBus.onNotification(onEvent);
+    let resolvedId: string | null = null;
     try {
       await expectRefused(
         prisma.$transaction(async (tx) => {
           const resolved = await resolveWalkInStudent(tx, { teacherId, subject: { kind: 'invitation', invitationId: inv.id } });
+          resolvedId = resolved.studentId;
           // An unlink of an undelivered row: block committed, status untouched (#502).
           await other.teacherBlock.create({ data: { teacherId, email } });
           await completeWalkIn(tx, { teacherId, classId, resolved, notice });
@@ -335,8 +343,11 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
         'WALK_IN_REFUSED',
       );
     } finally {
+      notificationBus.offNotification(onEvent);
       await other.$disconnect();
     }
+    expect(resolvedId).not.toBeNull();
+    expect(events.filter((e) => e.recipientId === resolvedId)).toEqual([]);
     expect(await prisma.student.count({ where: { email } })).toBe(0);
     expect((await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe('pending');
     expect(await prisma.teacherBlock.count({ where: { teacherId, email } })).toBe(1);
@@ -370,8 +381,8 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
 
   /**
    * `completeWalkIn` re-reads both the status (its compare-and-set) and the
-   * block (its last statement), so a walk-in through both steps is refused
-   * whether or not `resolveWalkInStudent` checks first. These two call the
+   * block (after it), so a walk-in through both steps is refused whether or
+   * not `resolveWalkInStudent` checks first. These two call the
    * first step alone, so its own reads — which refuse before the `Student`
    * insert — each have a test that fails without them.
    */

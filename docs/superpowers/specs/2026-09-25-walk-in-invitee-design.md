@@ -213,12 +213,16 @@ claimable `WaitlistEntry`).
    an existing row keeps its name. Then a compare-and-set on
    `status: 'pending'` → `accepted`, `respondedAt: now`. A miss is classified
    by re-reading: `accepted` is what was asked for; `declined` (a concurrent
-   decline) → `DECLINED`; gone (a concurrent delete) → `NOT_FOUND`.
-4. `walk_in_added` notification to the student, linked to the class.
-5. **`TeacherBlock` re-check as the last statement** — the #537 pattern
-   `acceptInvitation` uses. A decline landing between step 2 of
-   `resolveWalkInStudent` and here writes a block; this read sees it and throws,
-   rolling the whole transaction back → `WALK_IN_REFUSED`.
+   decline) → `DECLINED`; gone (a concurrent delete) → `NOT_FOUND`; `pending`
+   again (moved away and back between the two statements) →
+   `CONCURRENT_MODIFICATION`, as `acceptInvitation` answers the same case.
+4. **`TeacherBlock` re-check after the roster link and the compare-and-set.**
+   A decline or unlink landing between step 2 of `resolveWalkInStudent` and
+   here writes a block; this read sees it and throws, rolling the whole
+   transaction back → `WALK_IN_REFUSED`. It precedes the notification because
+   `createBulkNotifications` hands the payload to the live-update bus before
+   the transaction commits.
+5. `walk_in_added` notification to the student, linked to the class.
 
 `resolveInvitationOnLink` is **never** called on this path: it deletes the
 `TeacherBlock`, and its docblock confines it to acts the student performs. In
@@ -247,6 +251,7 @@ Registered in `src/lib/api-error-codes.ts`, 409 each, asserted by code in tests:
 | `WALK_IN_REFUSED` | a `TeacherBlock` exists, before or after the race |
 | `INVITATION_ERASED` | the invitation's address is an erasure placeholder |
 | `DECLINED` (existing) | the invitation is `declined` |
+| `CONCURRENT_MODIFICATION` (existing) | the compare-and-set missed and the re-read finds the invitation `pending` again |
 
 `STUDENT_ERASED` (existing) continues to cover an erasure racing the walk-in
 via `lockLiveStudent`. `WALK_IN_REFUSED` must not share a message or a code

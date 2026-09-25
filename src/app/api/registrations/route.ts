@@ -67,6 +67,10 @@ const WALK_IN_REFUSALS: Record<WalkInRefusal, CodedRefusal> = {
   INVITATION_ERASED: codedRefusal('INVITATION_ERASED', "This contact's account has been deleted."),
   DECLINED: codedRefusal('DECLINED', 'This person declined your invitation.'),
   WALK_IN_REFUSED: codedRefusal('WALK_IN_REFUSED', "This person can't be added to your classes."),
+  CONCURRENT_MODIFICATION: codedRefusal(
+    'CONCURRENT_MODIFICATION',
+    'This contact changed while you were adding them — try again.',
+  ),
 };
 
 /** Who the body asks to book. Decided once, here; everything else reads it. */
