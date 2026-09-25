@@ -10,6 +10,7 @@
  */
 
 import crypto from 'crypto';
+import { erasedAddress } from '@/lib/erased-address';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, ClassStatus, WaitlistStatus } from '@prisma/client';
@@ -671,7 +672,7 @@ export async function deleteStudentAccount(
     // and every narrowing that would hide it leaves the erased person's real
     // address readable instead. `docs/data-model.md`'s Invitation-erasure
     // paragraph decides that trade-off; `gdpr.test.ts` pins it.
-    const anonymizedEmail = `deleted-${crypto.randomUUID()}@deleted.invalid`;
+    const anonymizedEmail = erasedAddress(crypto.randomUUID());
     await tx.invitation.updateMany({
       where: { email: student.email, lastNotifiedAt: null },
       data: {
@@ -727,7 +728,7 @@ export async function deleteStudentAccount(
         // Last live profile erased: the account email is PII too.
         await tx.account.update({
           where: { id: student.accountId },
-          data: { email: `deleted-${student.accountId}@deleted.invalid` },
+          data: { email: erasedAddress(student.accountId) },
         });
       }
     }
@@ -781,7 +782,7 @@ export async function deleteStudentAccount(
         // `studentId`-derived because a teacher reading it is already
         // scoped to that student (unlike `Invitation.email`, reachable via
         // a guessed address) — see the spec's Fix #1.
-        email: `deleted-${studentId}@deleted.invalid`,
+        email: erasedAddress(studentId),
         phone: null,
         birthday: null,
         address: null,
@@ -1467,7 +1468,7 @@ export async function deleteTeacherAccount(
           // Last live profile erased: the account email is PII too.
           await tx.account.update({
             where: { id: teacher.accountId },
-            data: { email: `deleted-${teacher.accountId}@deleted.invalid` },
+            data: { email: erasedAddress(teacher.accountId) },
           });
         }
       }
@@ -1512,7 +1513,7 @@ export async function deleteTeacherAccount(
         data: {
           firstName: 'Deleted',
           lastName: 'Teacher',
-          email: `deleted-${teacherId}@deleted.invalid`,
+          email: erasedAddress(teacherId),
           photoUrl: null,
           bio: '',
           pageSlug: `deleted-${teacherId}`,
