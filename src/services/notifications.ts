@@ -54,8 +54,9 @@ export interface CreateNotificationInput {
  * never break the write. Called inside a transaction, the emit precedes the
  * commit, so one for a transaction that later rolls back still delivers its
  * payload — title and body included — to the recipient's connected
- * EventSource. The client treats every event as a refresh hint only, so it
- * renders nothing the transaction did not commit.
+ * EventSource. The client (`src/components/layout/live-updates.tsx`) treats
+ * every event as a refresh hint only, so it renders nothing the transaction
+ * did not commit.
  */
 function emitToBus(input: CreateNotificationInput, id: string): void {
   try {

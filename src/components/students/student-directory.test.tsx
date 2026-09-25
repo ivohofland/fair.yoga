@@ -72,6 +72,20 @@ describe('StudentDirectory', () => {
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
   });
 
+  it('captions an unclaimed student as having no account yet, and a claimed one not at all', async () => {
+    stubStudents([
+      { ...student({ id: 'student-unclaimed', displayName: 'Walked In' }), claimedAt: null },
+      student({ id: 'student-claimed', displayName: 'Signed Up' }),
+    ]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Walked In')).toBeInTheDocument());
+
+    const caption = screen.getByText("hasn't created an account yet");
+    expect(caption.closest('a')).toHaveTextContent('Walked In');
+    expect(screen.getAllByText("hasn't created an account yet")).toHaveLength(1);
+    expect(screen.queryByText('unlinked')).not.toBeInTheDocument();
+  });
+
   /**
    * Two students who shared an email, one who did not.
    *
@@ -89,20 +103,6 @@ describe('StudentDirectory', () => {
    * joins the withholder's column), on the email span disappearing entirely,
    * and on the row recomposing the name it was handed.
    */
-  it('captions an unclaimed student as having no account yet, and a claimed one not at all', async () => {
-    stubStudents([
-      { ...student({ id: 'student-unclaimed', displayName: 'Walked In' }), claimedAt: null },
-      student({ id: 'student-claimed', displayName: 'Signed Up' }),
-    ]);
-    render(<StudentDirectory />);
-    await waitFor(() => expect(screen.getByText('Walked In')).toBeInTheDocument());
-
-    const caption = screen.getByText("hasn't created an account yet");
-    expect(caption.closest('a')).toHaveTextContent('Walked In');
-    expect(screen.getAllByText("hasn't created an account yet")).toHaveLength(1);
-    expect(screen.queryByText('unlinked')).not.toBeInTheDocument();
-  });
-
   it('renders an email row only for the students who shared one', async () => {
     stubStudents([
       {
