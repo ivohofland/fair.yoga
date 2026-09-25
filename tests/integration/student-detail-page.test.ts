@@ -17,7 +17,8 @@ const suffix = uniqueSuffix();
  *   - Full name vs truncated name (`shareFullName: false` -> `First l.`)
  *   - Contact field gating & `formatDateShort` birthday (`15 Jun`, no year)
  *   - "No contact information to show" empty state
- * - Unlinked students: caption notice, bypasses privacy on contact, no attendance/payments/archive
+ * - Unclaimed students: caption notice, contact through their privacy row, and the same
+ *   attendance, payment and archive sections as a claimed student
  * - Attendance & payment history: date/time formats (`formatDateWithYear · timeToHHmm`), humanized status
  * - Multi-teacher isolation: Teacher 1 never sees registrations or payments from Teacher 2
  * - Archive state: back link and button text for active vs archived students
@@ -97,32 +98,36 @@ describe('GET /students/[id] (student detail page)', () => {
   }, 20_000);
 
   afterAll(async () => {
-    await prisma.payment.deleteMany({
-      where: { registration: { class: { calendarEntry: { teacherId: { in: [teacherId, otherTeacherId] } } } } },
-    });
-    await prisma.registration.deleteMany({
-      where: { class: { calendarEntry: { teacherId: { in: [teacherId, otherTeacherId] } } } },
-    });
-    await prisma.calendarEntry.deleteMany({
-      where: { teacherId: { in: [teacherId, otherTeacherId] } },
-    });
-    await prisma.studentPrivacy.deleteMany({
-      where: { teacherId: { in: [teacherId, otherTeacherId] } },
-    });
-    await prisma.teacherStudent.deleteMany({
-      where: { teacherId: { in: [teacherId, otherTeacherId] } },
-    });
+    // Only the ids `beforeAll` got as far as assigning: a filter on an
+    // undefined id would delete the whole table.
+    const teacherIds = [teacherId, otherTeacherId].filter((id): id is string => id !== undefined);
+    const accountIds = [teacherAccountId, otherTeacherAccountId].filter(
+      (id): id is string => id !== undefined,
+    );
+    if (teacherIds.length) {
+      await prisma.payment.deleteMany({
+        where: { registration: { class: { calendarEntry: { teacherId: { in: teacherIds } } } } },
+      });
+      await prisma.registration.deleteMany({
+        where: { class: { calendarEntry: { teacherId: { in: teacherIds } } } },
+      });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.studentPrivacy.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    }
     await prisma.student.deleteMany({
       where: { email: { contains: `-${suffix}@test.local` } },
     });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [teacherId, otherTeacherId] } } });
+    if (teacherIds.length) {
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    }
     if (roomId) await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({
-      where: { accountId: { in: [teacherAccountId, otherTeacherAccountId] } },
-    });
-    await prisma.teacher.deleteMany({
-      where: { id: { in: [teacherId, otherTeacherId] } },
-    });
+    if (accountIds.length) {
+      await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    }
+    if (teacherIds.length) {
+      await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    }
     await prisma.account.deleteMany({
       where: { email: { contains: `-${suffix}@test.local` } },
     });
@@ -303,8 +308,8 @@ describe('GET /students/[id] (student detail page)', () => {
     });
   });
 
-  describe('unlinked / unclaimed student', () => {
-    it('displays unlinked caption notice, read-only contact, and no attendance, payment, or archive sections', async () => {
+  describe('unclaimed student', () => {
+    it('displays the caption, read-only contact, and the attendance, payment and archive sections', async () => {
       const email = `unlinked-${suffix}@test.local`;
       const birthday = new Date('1995-04-10T00:00:00.000Z');
       const student = await prisma.student.create({
@@ -334,12 +339,33 @@ describe('GET /students/[id] (student detail page)', () => {
       await prisma.teacherStudent.create({
         data: { teacherId, studentId: student.id },
       });
+      // A walk-in's history: what a teacher needs to see to collect or waive
+      // what this person owes, and to archive a mistyped address.
+      const cls = await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        classType: 'Unclaimed Walk-in Flow',
+        date: new Date('2026-06-19T00:00:00.000Z'),
+        startTime: hhmmToTime('08:30'),
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 10,
+        status: 'completed',
+      });
+      const registration = await prisma.registration.create({
+        data: { classId: cls.id, studentId: student.id, status: 'attended', isWalkIn: true, tierAtBooking: 3 },
+      });
+      await prisma.payment.create({
+        data: { registrationId: registration.id, amount: 17.25, status: 'pending' },
+      });
 
       const res = await studentPage(student.id);
       expect(res.status).toBe(200);
       const html = await res.text();
 
-      // Unlinked caption
       expect(html).toContain("This student hasn't created an account yet.");
 
       // Full name and contact info are shown, as its privacy row allows
@@ -349,11 +375,12 @@ describe('GET /students/[id] (student detail page)', () => {
       expect(html).toContain('10 Apr');
       expect(html).toContain('Singel 50, Amsterdam');
 
-      // Negative assertions: Attendance, Payments, and Archive sections do NOT render
-      expect(html).not.toContain('>Attendance</h2>');
-      expect(html).not.toContain('>Payments</h2>');
-      expect(html).not.toContain('Archive student');
-      expect(html).not.toContain('Unarchive student');
+      expect(html).toContain('>Attendance</h2>');
+      expect(html).toContain('Unclaimed Walk-in Flow');
+      expect(html).toMatch(/19 Jun 2026.*·.*08:30/);
+      expect(html).toContain('>Payments</h2>');
+      expect(html).toContain('17.25');
+      expect(html).toContain('Archive student');
     });
   });
 
