@@ -9,7 +9,7 @@
  * `resolveWalkInStudent` runs before the transaction's first lock and may
  * INSERT the `Student` (first in the order); `completeWalkIn` runs after
  * `Registration` and writes `StudentPrivacy → TeacherStudent → Invitation`,
- * then reads `TeacherBlock` last.
+ * then reads `TeacherBlock`, then notifies the person.
  *
  * `resolveInvitationOnLink` is never called here: it deletes the block, and a
  * teacher's act must not lift a student's refusal.
@@ -24,7 +24,12 @@ export type WalkInSubject =
   | { kind: 'invitation'; invitationId: string }
   | { kind: 'newContact'; firstName: string; lastName: string; email: string };
 
-export type WalkInRefusal = 'NOT_FOUND' | 'INVITATION_ERASED' | 'DECLINED' | 'WALK_IN_REFUSED';
+export type WalkInRefusal =
+  | 'NOT_FOUND'
+  | 'INVITATION_ERASED'
+  | 'DECLINED'
+  | 'WALK_IN_REFUSED'
+  | 'CONCURRENT_MODIFICATION';
 
 export class WalkInRefusedError extends Error {
   constructor(readonly refusal: WalkInRefusal) {
@@ -170,14 +175,37 @@ export async function completeWalkIn(
     data: { status: 'accepted', respondedAt: new Date() },
   });
   if (updated.count === 0) {
-    // A miss is classified by re-reading: `accepted` is what was asked for.
+    // A miss is classified by re-reading.
     const current = await tx.invitation.findUnique({
       where: { teacherId_email: { teacherId, email: resolved.email } },
       select: { status: true },
     });
     if (current === null) throw new WalkInRefusedError('NOT_FOUND');
-    if (current.status === 'declined') throw new WalkInRefusedError('DECLINED');
+    switch (current.status) {
+      case 'accepted':
+        // What was asked for.
+        break;
+      case 'declined':
+        throw new WalkInRefusedError('DECLINED');
+      case 'pending':
+        // The row moved away and back between the two statements.
+        throw new WalkInRefusedError('CONCURRENT_MODIFICATION');
+      default: {
+        const unhandled: never = current.status;
+        throw new Error(`unhandled invitation status after a walk-in miss: ${String(unhandled)}`);
+      }
+    }
   }
+
+  // After the roster link and the compare-and-set, so a block committed after
+  // `resolveWalkInStudent`'s read — an unlink of an undelivered row leaves the
+  // invitation `pending` — is seen; and before the notification, whose payload
+  // reaches the event bus before this transaction commits.
+  const blockedNow = await tx.teacherBlock.findUnique({
+    where: { teacherId_email: { teacherId, email: resolved.email } },
+    select: { id: true },
+  });
+  if (blockedNow) throw new WalkInRefusedError('WALK_IN_REFUSED');
 
   await createBulkNotifications(tx, [{
     recipientType: 'student',
@@ -187,13 +215,4 @@ export async function completeWalkIn(
     body: `${input.notice.teacherName} added you to ${input.notice.classType} on ${input.notice.dateLabel}. Your price is calculated after class.`,
     relatedClassId: input.classId,
   }]);
-
-  // LAST statement, the #537 pattern `acceptInvitation` uses: a block
-  // committed after `resolveWalkInStudent`'s read — an unlink of an
-  // undelivered row leaves the invitation `pending` — is caught here.
-  const blockedNow = await tx.teacherBlock.findUnique({
-    where: { teacherId_email: { teacherId, email: resolved.email } },
-    select: { id: true },
-  });
-  if (blockedNow) throw new WalkInRefusedError('WALK_IN_REFUSED');
 }

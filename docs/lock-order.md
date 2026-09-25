@@ -2617,8 +2617,9 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   INSERT by `resolveWalkInStudent` on the create branch, then
   `lockLiveStudent`), then `Class`, then `Registration`, `WaitlistEntry`, then
   `completeWalkIn` (`src/services/walk-ins.ts`): `StudentPrivacy` (create
-  branch only), `TeacherStudent` (`linkTeacherStudent`), `Invitation`, and
-  `TeacherBlock` last, as a plain read. `resolveWalkInStudent` also reads
+  branch only), `TeacherStudent` (`linkTeacherStudent`), `Invitation`, then
+  `TeacherBlock` as a plain read, then the `walk_in_added` notification
+  INSERT. `resolveWalkInStudent` also reads
   `Invitation` and `TeacherBlock` before its INSERT, both plain reads that
   take no row lock. From `StudentPrivacy` on, this conforms to the canonical
   line — `Invitation` before `TeacherBlock`, unlike the self-booking path
