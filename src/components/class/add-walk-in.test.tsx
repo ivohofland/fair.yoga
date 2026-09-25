@@ -7,8 +7,8 @@ import { routerRefresh } from '../../../tests/setup/components';
  * The picker fetches the whole roster and the whole pending-invitation list
  * and merges them locally — no pagination, no truncation notice, no server
  * round-trip on each keystroke. Both requests are stubbed on one
- * `fetchMock`, routed by URL, since the component now issues two GETs per
- * open. Same mocking idiom as `student-directory.test.tsx` otherwise: a
+ * `fetchMock`, routed by URL, since the component issues two GETs per open.
+ * Same mocking idiom as `student-directory.test.tsx` otherwise: a
  * shared mock, reset in `afterEach`.
  */
 describe('AddWalkIn', () => {
@@ -157,7 +157,7 @@ describe('AddWalkIn', () => {
     expect(alert).toHaveTextContent('This person can\'t be added to your classes.');
   });
 
-  it('no longer shows the "Not in your students yet?" caption', async () => {
+  it('does not show a "Not in your students yet?" caption', async () => {
     stubLists([], []);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
@@ -360,9 +360,9 @@ describe('AddWalkIn', () => {
    * student matches" condition also requires `query` to be truthy, so a
    * *bare* open (no filter typed) never reaches it regardless of the
    * `loaded` gate. Typing a filter before either fetch resolves is what
-   * forces the code down this branch and proves `loaded` — which now
-   * requires BOTH fetches to have settled — is what's keeping it from
-   * rendering early.
+   * forces the code down this branch and proves `loaded` — which requires
+   * BOTH fetches to have settled — is what's keeping it from rendering
+   * early.
    */
   it('does not show "No student matches" before both fetches resolve, even with a filter already typed', async () => {
     let resolveStudents!: (value: unknown) => void;

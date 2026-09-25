@@ -196,7 +196,7 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 
 ### 6.2 — Add Walk-In
 - Search the roster and pending invitees by name, or add a new person (first name, last name, email)
-- An invitee or new person can be added only once the class is about to start; a new person is booked at the default tier
+- An invitee or new person can be added only once the class is about to start; someone with no fair.yoga profile yet is booked at the default tier, anyone else at their own
 - Add to class — count updates, price estimate recalculates
 - Note: walk-in can exceed max capacity
 - *Leads back to:* 6.1 Class Day View

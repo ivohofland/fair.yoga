@@ -22,8 +22,8 @@ export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new S
   // not be louder than the `booking_confirmed` it undoes, which is also
   // absent.
   'booking_removed',
-  // A booking someone else made for the student, the same reason as
-  // `booking_removed`.
+  // A booking someone else made for the student, which carries a price they
+  // will owe.
   'walk_in_added',
   'waitlist_promoted',
   'spot_available',

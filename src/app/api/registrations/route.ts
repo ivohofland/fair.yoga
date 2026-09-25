@@ -182,9 +182,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   try {
     const result = await prisma.$transaction(async (tx): Promise<BookingOutcome> => {
-      // A walk-in's student is resolved before any lock is taken, because on
-      // the new-contact branch it may be INSERTed, and `Student` heads the
-      // lock order. A refusal here has written nothing.
+      // A walk-in's student is resolved before any lock is taken, because
+      // when the address has no Student it is INSERTed, and `Student` heads
+      // the lock order. A refusal here has written nothing.
       let resolved: ResolvedWalkIn | null = null;
       let booked: { id: string; incomeTier: number };
       if (target.kind === 'walkIn') {
@@ -272,8 +272,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // may still be added ahead of time. A class that is no longer bookable,
       // or a request outside the window, makes such a walk-in's goal moot, so
       // both refusals come before the `existing` check below: an address
-      // already booked here is refused exactly like any other, and no answer
-      // depends on whether a guessed address is registered.
+      // already booked here is refused exactly like any other, and a refused
+      // walk-in's answer does not depend on whether a guessed address is
+      // registered. A walk-in that passes both is answered `unchanged` for
+      // an address already booked here: `docs/data-model.md` (Invitation →
+      // Walk-ins, residual 5).
       if (resolved) {
         if (!bookable) throw new ClassStatusError('not_bookable');
         if (!isWalkIn) throw new WalkInWindowClosedError();
@@ -366,11 +369,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
         // #166: only the student's own booking is consent, so this call sits
         // in the self-booking branch on purpose: it clears a decline and
-        // lifts its block, which is one of the two routes back from one
-        // (joining a waitlist, `addToWaitlist` in services/waitlist.ts, is
-        // the other). A roster add resolves no invitation; a walk-in resolves
-        // its own in `completeWalkIn` above, without lifting a block. The
-        // rule: `docs/data-model.md` (Invitation, "Walk-ins").
+        // lifts its block. Which acts may do that: `docs/data-model.md`
+        // (Invitation, "What a student's own act resolves"). A roster add
+        // resolves no invitation; a walk-in resolves its own in
+        // `completeWalkIn` above, without lifting a block (Invitation,
+        // "Walk-ins").
         //
         // `linkOutcome` is what the link write above actually did, and it
         // decides the `pending` half: a booking by someone this teacher

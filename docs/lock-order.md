@@ -522,12 +522,14 @@ Against each, the class its notifications carry:
 | `deleteTeacherAccount` (`gdpr.ts`) | one — the loop's current class (the named exception above) |
 | `autoCancelClasses` (`class-transitions.ts`) | one — `cls.id`, and one transaction per class |
 | `completeClass` (`class-lifecycle.ts`) | one — `cls.id` |
+| `activateRegistration` `spot_taken` (`waitlist.ts`) | one — `input.classId`, under the `ClassLock` its caller passes |
 | `promoteNext` (`waitlist.ts`) | one — `classId` |
 | `claimSpot` (`waitlist.ts`) | one — `classId` |
 | `handleSpotFreed` broadcast (`waitlist.ts`) | one — `classId`, inside its own transaction under `lockClassRow` (#212) |
 | `sendPaymentReminder` (`payments.ts`) | one — the payment's registration's class |
 | `sendPaymentReminders` (`payment-reminders.ts`) | one — per-payment, one transaction each |
 | `POST /api/registrations` | one — the class being booked |
+| `completeWalkIn` (`walk-ins.ts`) | one — the class being walked into, under the `lockClassRow` `POST /api/registrations` already holds |
 | `POST /api/announcements` | one — the announcement's class, inside the dedupe transaction (#196; it ran outside any transaction until then) |
 | `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327; this is where the transition route's cancel branch went) |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |

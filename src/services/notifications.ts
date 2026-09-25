@@ -50,10 +50,12 @@ export interface CreateNotificationInput {
  * Defaults: isRead=false, emailSent=false.
  */
 /**
- * Publishes to the in-process SSE bus. Fire-and-forget: events are only
- * refresh hints for connected clients (server state stays the truth), so
- * an emit for a transaction that later rolls back is harmless, and a bus
- * failure must never break the write.
+ * Publishes to the in-process SSE bus. Fire-and-forget: a bus failure must
+ * never break the write. Called inside a transaction, the emit precedes the
+ * commit, so one for a transaction that later rolls back still delivers its
+ * payload — title and body included — to the recipient's connected
+ * EventSource. The client treats every event as a refresh hint only, so it
+ * renders nothing the transaction did not commit.
  */
 function emitToBus(input: CreateNotificationInput, id: string): void {
   try {
