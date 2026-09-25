@@ -32,6 +32,17 @@ const classIds: string[] = [];
 const roomIds: string[] = [];
 
 afterAll(async () => {
+  if (teacherIds.length) {
+    // A student a failing case created before it could record the id — the
+    // service links every student it creates, so the link names it.
+    const linked = await prisma.teacherStudent.findMany({
+      where: { teacherId: { in: teacherIds } },
+      select: { studentId: true },
+    });
+    for (const { studentId } of linked) {
+      if (!studentIds.includes(studentId)) studentIds.push(studentId);
+    }
+  }
   if (classIds.length) {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
   }
