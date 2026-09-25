@@ -560,10 +560,22 @@ export const updateStudioClassSchema = z.object({
 // REGISTRATIONS
 // ============================================================================
 
-export const createRegistrationSchema = z.object({
-  classId: z.string().uuid(),
-  studentId: z.string().uuid().optional(), // optional for student self-registration
-});
+const registrationClassId = { classId: z.string().uuid() };
+
+/**
+ * `POST /api/registrations`. At most one subject: a roster student
+ * (`studentId`), a pending invitee (`invitationId`) or a new person
+ * (`newContact`, with the CRM contact form's field rules); none means the
+ * caller books themselves. Each member is `.strict()`, so a body naming two
+ * subjects matches none and is a 400.
+ */
+export const createRegistrationSchema = z.union([
+  z.object({ ...registrationClassId, studentId: z.string().uuid() }).strict(),
+  z.object({ ...registrationClassId, invitationId: z.string().uuid() }).strict(),
+  z.object({ ...registrationClassId, newContact: createInvitationSchema }).strict(),
+  z.object(registrationClassId).strict(),
+]);
+export type CreateRegistrationBody = z.infer<typeof createRegistrationSchema>;
 
 export const updateRegistrationSchema = z.object({
   status: z.enum(['attended', 'no_show', 'late_cancel']),

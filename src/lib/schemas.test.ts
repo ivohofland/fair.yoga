@@ -24,6 +24,15 @@ import {
 } from './schemas';
 import type { NoneOf } from './type-pins';
 
+/**
+ * The top-level shapes an exported schema accepts: its own, or each member's
+ * for a `z.union`. An entry is `undefined` where no shape can be read.
+ */
+function memberShapes(schema: z.ZodType): Array<Record<string, z.ZodType> | undefined> {
+  const members = schema instanceof z.ZodUnion ? schema.options : [schema];
+  return members.map((member) => (member as { shape?: Record<string, z.ZodType> }).shape);
+}
+
 describe('transitionClassSchema', () => {
   it('accepts legal manual transitions', () => {
     for (const status of ['draft', 'open', 'in_progress']) {
@@ -676,27 +685,30 @@ describe('server-owned fields', () => {
       // Two different facts hide behind a missing `.shape`, and only one is
       // safe to skip: "this export is not a schema" (MAX_CLASS_SIZE,
       // isSafeRelativePath) versus "this export IS a schema whose top-level
-      // keys I cannot read" (anything wrapped in .transform(), z.union or
-      // z.array). Conflating them made this guard blind in exactly the way the
+      // keys I cannot read" (anything wrapped in .transform() or z.array).
+      // Conflating them made this guard blind in exactly the way the
       // three guards this repo has shipped were blind — measured: three
       // exported schemas declaring teacherId, studentId and templateId behind
       // those wrappers left the suite fully green. (`templateId` is no longer
       // a column anywhere; the measurement is a record of what the blindness
-      // cost, not a claim about today's register.)
+      // cost, not a claim about today's register.) A `z.union` is read member
+      // by member, and every member must have a shape.
       if (!(schema instanceof z.ZodType)) continue;
       if (FIELD_VALIDATOR_EXPORTS.has(name)) continue;
-      const shape = (schema as { shape?: Record<string, unknown> }).shape;
-      expect(
-        shape,
-        `${name} is a schema whose top-level keys this register cannot read — unwrap it or extend the register`,
-      ).toBeDefined();
-      // Unreachable — the assertion above throws first. Present so the compiler
-      // can narrow `shape` away from `undefined`.
-      if (!shape) continue;
-      const hits = Object.keys(shape)
-        .filter((k) => (SERVER_OWNED_FIELDS as readonly string[]).includes(k))
-        .sort();
-      if (hits.length > 0) actual[name] = hits;
+      const hits = new Set<string>();
+      for (const shape of memberShapes(schema)) {
+        expect(
+          shape,
+          `${name} is a schema whose top-level keys this register cannot read — unwrap it or extend the register`,
+        ).toBeDefined();
+        // Unreachable — the assertion above throws first. Present so the
+        // compiler can narrow `shape` away from `undefined`.
+        if (!shape) continue;
+        for (const k of Object.keys(shape)) {
+          if ((SERVER_OWNED_FIELDS as readonly string[]).includes(k)) hits.add(k);
+        }
+      }
+      if (hits.size > 0) actual[name] = [...hits].sort();
     }
 
     const expected = Object.fromEntries(
@@ -919,8 +931,7 @@ describe('classType and location whitespace trimming and validation (#311)', () 
  *
  * Scope: top-level fields. An array field's element schema is not walked
  * (`z.array(z.string())` accepting `['   ']` is outside what this proves),
- * a `z.union`/`z.discriminatedUnion` schema falls through to being treated
- * as a single bare field rather than having its branches walked, and
+ * a `z.union` has each member's top-level fields walked, and
  * `.trim()` strips JS whitespace, not every visually-blank character — a
  * lone zero-width space (`'​'`) is not covered.
  */
@@ -955,9 +966,12 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
     };
     for (const [name, schema] of Object.entries(schemas)) {
       if (!(schema instanceof z.ZodType)) continue;
-      const shape = shapeOf(schema);
-      if (shape) {
-        for (const [key, field] of Object.entries(shape)) visit(`${name}.${key}`, field);
+      const shapes = (schema instanceof z.ZodUnion ? schema.options : [schema]).map(shapeOf);
+      const readable = shapes.filter((s): s is Record<string, z.ZodType> => s !== undefined);
+      if (readable.length === shapes.length) {
+        for (const shape of readable) {
+          for (const [key, field] of Object.entries(shape)) visit(`${name}.${key}`, field);
+        }
       } else {
         bare.push(name);
         visit(name, schema); // a bare field export, e.g. `pageSlugField`
@@ -979,7 +993,8 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
    * `bare` — caught by naming representative fields the loop must still
    * reach, one from each family #405 fixed.
    *
-   * A schema `shapeOf` cannot read (a union, a `.transform()`) falls
+   * A schema `shapeOf` cannot read (a `.transform()`, or a union with a
+   * member it cannot read) falls
    * through to being visited as a single bare field, which still increments
    * `checked` silently — that field "passes" only because it rejects an
    * object outright. Caught by pinning which exports take that fallback

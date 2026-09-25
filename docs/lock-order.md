@@ -1173,7 +1173,7 @@ itself:
 |---|---|---|---|---|
 | `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | first lock of its transaction, right after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap aborts an erased one with the module-private `AlreadyErasedError`, and the function resolves `{ erased: false, reason: 'already-erased' }` (`DELETE /api/account` answers 200 `unchanged` when every half it attempted was already erased); an absent one fails before the transaction opens, at `findUniqueOrThrow` (`P2025`) |
 | `addToWaitlist` (`waitlist.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: `StudentErasedError`, surfaced as `WaitlistJoinError` `student_erased` (409 `STUDENT_ERASED` from `POST /api/waitlist`) |
-| `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first statement of its transaction, on the student's booking and the teacher's roster add alike | `FOR SHARE` | refuses: 409 `STUDENT_ERASED`, worded for the student or the teacher; an absent one is answered 404 `Student not found` before the transaction opens |
+| `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first lock of its transaction, on the student's booking, the teacher's roster add and a walk-in alike; a walk-in resolves its student (`resolveWalkInStudent`, which may INSERT it) in the same transaction just before | `FOR SHARE` | refuses: 409 `STUDENT_ERASED`, worded for the student or the teacher; on a booking or a roster add an absent one is answered 404 `Student not found` before the transaction opens, and a walk-in has no such 404, since its student is resolved, or created, inside the transaction |
 | `acceptInvitation` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its roster-link insert | `FOR SHARE` | refuses the raced case: 409 `STUDENT_ERASED` (`POST /api/invitations/[id]/respond`); a fully committed erasure is answered 404 `NOT_FOUND` instead, by the pre-transaction read — keyed by email, and `deleteStudentAccount` anonymizes `Invitation.email` unconditionally (#520) — before the gate is ever reached |
 | `unlinkTeacher` (`src/services/invitations.ts`) | `lockLiveStudent` | first statement of its transaction, before its `Class` locks and its `StudentPrivacy` upsert | `FOR SHARE` | refuses the raced case: 409 `STUDENT_ERASED` (`DELETE /api/teacher-links/[teacherId]`); a fully committed erasure is answered 404 `NOT_FOUND` instead, by the pre-transaction `TeacherStudent` read, which the erasure has already deleted, before the gate is ever reached |
 | `updateStudentPrivacy` (`src/services/student-privacy.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses the raced case: 409 `STUDENT_ERASED` (`PUT /api/students/[id]/privacy`); a fully committed erasure is answered 403 `TEACHER_NOT_LINKED` or 401 instead, by the route's `hasTeacherLink` check or by session validation — both plain, non-locking reads that run before the gate's transaction opens — before the gate is ever reached |
@@ -2612,6 +2612,17 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `resolveInvitationOnLink` — the same `TeacherBlock`-before-`Invitation`
   disagreement as `addToWaitlist`, not conformant on that sub-order for the
   same reason.
+  **The walk-in path** (an `invitationId` or `newContact` body, #255) takes a
+  different tail and never calls `resolveInvitationOnLink`: `Student` (an
+  INSERT by `resolveWalkInStudent` on the create branch, then
+  `lockLiveStudent`), then `Class`, then `Registration`, `WaitlistEntry`, then
+  `completeWalkIn` (`src/services/walk-ins.ts`): `StudentPrivacy` (create
+  branch only), `TeacherStudent` (`linkTeacherStudent`), `Invitation`, and
+  `TeacherBlock` last, as a plain read. `resolveWalkInStudent` also reads
+  `Invitation` and `TeacherBlock` before its INSERT, both plain reads that
+  take no row lock. From `StudentPrivacy` on, this conforms to the canonical
+  line — `Invitation` before `TeacherBlock`, unlike the self-booking path
+  above.
 - **`reapClosedWaitlistEntries`** (`src/services/waitlist-retention.ts`) —
   `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
   `lockClassRow`. **Deliberately a single-row-lock site**, like
