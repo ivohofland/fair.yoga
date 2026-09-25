@@ -133,8 +133,10 @@ plus the self-booking `{ classId }`. `newContact` reuses
 The teacher path is decided once — "a subject field is present" — and every
 consumer reads that single value: the `requireTeacher`-equivalent check, the
 roster 403 (roster subject only), `isWalkIn`, and the self-booking-only
-post-commit `tierSelectedAt` stamp. A walk-in never stamps `tierSelectedAt`:
-the person chooses their tier when they claim.
+post-commit `tierSelectedAt` stamp. A walk-in never stamps `tierSelectedAt`,
+so the person is still asked for their tier on their first own booking (or
+can set it at `/account/tier`); the walked-in registration keeps the tier it
+was booked at.
 
 Both new subjects **refuse outside the walk-in window** (`WALK_IN_WINDOW_CLOSED`,
 409). The roster subject keeps its current behaviour, where a teacher may add

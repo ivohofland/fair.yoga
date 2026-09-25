@@ -966,7 +966,7 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
       select: { isWalkIn: true, tierAtBooking: true, status: true },
     });
     expect(reg).toEqual({ isWalkIn: true, tierAtBooking: 2, status: 'registered' });
-    // The person chooses their tier when they claim, not when walked in.
+    // A walk-in is not the person's tier choice: their first own booking still asks.
     expect(
       await prisma.student.findUniqueOrThrow({ where: { id: invitee.id }, select: { tierSelectedAt: true } }),
     ).toEqual({ tierSelectedAt: null });
