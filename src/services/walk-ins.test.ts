@@ -34,8 +34,9 @@ const roomIds: string[] = [];
 
 afterAll(async () => {
   // A student a failing case created before it could record the id: every
-  // fixture address carries this run's suffix, and the service links every
-  // student it completes, so between them the two reads name it.
+  // address that can become a `Student` carries this run's suffix, and the
+  // service links every student it completes, so between them the two reads
+  // name it.
   const bySuffix = await prisma.student.findMany({
     where: { email: { endsWith: `-${suffix}@test.local` } },
     select: { id: true },
@@ -181,6 +182,12 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
       .toMatchObject({ shareFullName: true, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false });
     const n = await prisma.notification.findFirstOrThrow({ where: { recipientId: resolved.studentId, type: 'walk_in_added' } });
     expect(n).toMatchObject({ recipientType: 'student', relatedClassId: classId });
+    // Who added them, to what, when, and that the price comes later.
+    expect(n.title).toContain(notice.classType);
+    expect(n.body).toContain(notice.teacherName);
+    expect(n.body).toContain(notice.classType);
+    expect(n.body).toContain(notice.dateLabel);
+    expect(n.body).toContain('calculated after class');
   });
 
   it('uses the existing student for a known address and seeds no privacy row', async () => {
