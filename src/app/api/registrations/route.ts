@@ -245,6 +245,29 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         throw new ClassStatusError('cancelled');
       }
 
+      // Walk-ins are a class-time phenomenon: someone shows up at the door and
+      // the teacher lets them in — those may exceed max_students (the teacher
+      // rate stays capped at target; extra students lower prices). A teacher
+      // adding a student well before class is a normal registration and
+      // respects capacity like everyone else.
+      const classStart = classStartInstant(
+        cls.calendarEntry,
+        cls.calendarEntry.teacher.defaultTimezone,
+      );
+      const isWalkIn =
+        isTeacher &&
+        (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
+
+      // An invitee or a new person is booked only with them at the door —
+      // their presence is what stands for their acceptance. A roster student
+      // may still be added ahead of time. Outside the window such a request is
+      // not a walk-in at all, so this refusal makes its goal moot and comes
+      // before the `existing` check below: an address already booked here is
+      // refused exactly like any other, and answers nothing about who it is.
+      if (resolved && !isWalkIn) {
+        throw new WalkInWindowClosedError();
+      }
+
       // The booking this request asks for already exists. Checked before the
       // status and capacity refusals below, so a retry is never refused for a
       // state its own first attempt created. A cancelled registration keeps its
@@ -262,27 +285,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
       if (!allowedStatuses.includes(cls.status)) {
         throw new ClassStatusError('not_bookable');
-      }
-
-      // Walk-ins are a class-time phenomenon: someone shows up at the door and
-      // the teacher lets them in — those may exceed max_students (the teacher
-      // rate stays capped at target; extra students lower prices). A teacher
-      // adding a student well before class is a normal registration and
-      // respects capacity like everyone else.
-      const classStart = classStartInstant(
-        cls.calendarEntry,
-        cls.calendarEntry.teacher.defaultTimezone,
-      );
-      const isWalkIn =
-        isTeacher &&
-        (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
-
-      // An invitee or a new person is booked only with them at the door —
-      // their presence is what stands for their acceptance. A roster student
-      // may still be added ahead of time. After the `existing` check above,
-      // so a retry is never refused.
-      if (resolved && !isWalkIn) {
-        throw new WalkInWindowClosedError();
       }
 
       const { isFull } = await readSeatCount(tx, lock);

@@ -966,6 +966,10 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
       select: { isWalkIn: true, tierAtBooking: true, status: true },
     });
     expect(reg).toEqual({ isWalkIn: true, tierAtBooking: 2, status: 'registered' });
+    // The person chooses their tier when they claim, not when walked in.
+    expect(
+      await prisma.student.findUniqueOrThrow({ where: { id: invitee.id }, select: { tierSelectedAt: true } }),
+    ).toEqual({ tierSelectedAt: null });
   });
 
   it('walks in a new person without stamping their tier choice', async () => {
@@ -1021,6 +1025,28 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
       'WALK_IN_WINDOW_CLOSED',
     );
     expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
+  });
+
+  /**
+   * Outside the window the refusal comes before the "already booked" answer.
+   * Otherwise a teacher could post a guessed address into their own future
+   * class and read `unchanged` for one of their booked students, and a
+   * refusal for anyone else, with nothing written and nobody told.
+   */
+  it('refuses a walk-in of a student already booked in a class outside the window', async () => {
+    const booked = await seedClaimedStudent('booked-far', 3);
+    const classId = await seedClass(main, '2099-09-22', false);
+    expect((await post(booked.token, { classId })).status).toBe(201);
+    const invitation = await invite(main.id, 'booked-far');
+
+    await expectRefusal(
+      await post(token, { classId, newContact: { firstName: 'Guess', email: booked.email } }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+    await expectRefusal(
+      await post(token, { classId, invitationId: invitation.id }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
   });
 
   it("refuses a new person into another teacher's class, leaving nothing behind", async () => {
@@ -1079,6 +1105,12 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
     });
     expect(reg.studentId).toBe(invitee.id);
     expect(reg.studentId).not.toBe(teacherStudentId);
+    expect(
+      await prisma.student.findUniqueOrThrow({
+        where: { id: teacherStudentId },
+        select: { tierSelectedAt: true },
+      }),
+    ).toEqual({ tierSelectedAt: null });
   });
 
   it('refuses a student-only session posting an invitation', async () => {
