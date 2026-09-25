@@ -278,7 +278,8 @@ Open app → Schedule tab (see this week)
 
 ```
 Class detail (today) → "Add walk-in" button
-  → Search student → Select → Confirm
+  → Search student or invitee → Select → Confirm
+    (or add a new person: name + email → Add new person)
     → Back to class detail (student count updated, price recalculated)
 ```
 

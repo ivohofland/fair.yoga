@@ -11,7 +11,8 @@ export interface ResolvedAccount {
 
 /**
  * Email → account, for sign-in. When no account exists but an unclaimed
- * CRM-created student carries this email, this is the claim moment: the
+ * student carries this email (who creates one: `docs/data-model.md`,
+ * Invitation → Walk-ins), this is the claim moment: the
  * human just proved they own the address (magic link), so the account is
  * created, linked, and claimedAt stamped. Unknown emails resolve to null.
  *

@@ -139,16 +139,8 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
                     )}
                   </div>
                   {/*
-                    #166: unreachable for rows created after acceptance-gated
-                    linking — nothing creates an unclaimed Student any more.
-                    Kept because removing it means removing the claim path
-                    (lib/auth/account.ts:37-52), the Student_claim_link_check
-                    constraint and Student.claimedAt together — one decision,
-                    not several call sites deciding separately. Not filed as
-                    an issue: it is dead code with a complete explanation
-                    (see `lib/student-visibility.ts`'s `bypassesPrivacy` for
-                    the canonical version), not a defect anyone can reach.
-                    Do NOT treat this as a live UI affordance.
+                    An unclaimed student is someone a teacher walked in who
+                    has not signed in yet.
                   */}
                   {!student.claimedAt && (
                     <span className="type-caption">unlinked</span>
