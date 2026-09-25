@@ -87,11 +87,9 @@ void _visibilityFlagsAreExhaustive;
  *
  * The mutation that universally produces no-match-every-field-null is
  * dropping `teacherId: true` from the nested `select`. It cannot reach
- * runtime: `tsc` fails at every external call site fed by whichever fragment
- * lost it, because the row no longer satisfies `ScopedVisibilityFlags`.
- * Measured: 8 errors from `studentVisibilitySelect` alone, 4 from
- * `studentNameSelect` alone, 12 from both. That is this type's real
- * enforcement — the shape, not the `find`.
+ * runtime: `tsc` fails at every call site fed by either fragment that lost
+ * it, because the row no longer satisfies `ScopedVisibilityFlags`. That is
+ * this type's real enforcement — the shape, not the `find`.
  */
 export type ScopedVisibilityFlags = VisibilityFlags & Pick<StudentPrivacy, 'teacherId'>;
 
