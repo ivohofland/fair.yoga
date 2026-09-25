@@ -10,6 +10,7 @@ import { POST } from './route';
 import * as waitlistService from '@/services/waitlist';
 import * as rateLimit from '@/lib/rate-limit';
 import { erasedAddress } from '@/lib/erased-address';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
 
 /**
@@ -776,6 +777,8 @@ describe('POST /api/registrations — a booking that already exists', () => {
  */
 describe('POST /api/registrations — walk-ins (#255)', () => {
   const tag = `walkin-route-${suffix}`;
+  /** Every fixture teacher's `defaultTimezone`: a class's wall-clock start is read in it. */
+  const teacherTimezone = 'UTC';
   let main: { id: string; accountId: string; teacherRoomId: string };
   let teacherStudentId: string;
   let token: string;
@@ -808,7 +811,7 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
         account: { create: { email } },
         bio: '#255 registrations-route walk-in fixture teacher',
         pageSlug: `${tag}-${label}`,
-        defaultTimezone: 'UTC',
+        defaultTimezone: teacherTimezone,
       },
       select: { id: true, accountId: true },
     });
@@ -850,6 +853,41 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
     if (inProgress) {
       await prisma.class.update({ where: { id: cls.id }, data: { status: 'in_progress' } });
     }
+    return cls.id;
+  }
+
+  /**
+   * An `open` class of this teacher starting `minutes` from now, on the
+   * teacher's own wall clock. The start is stored to the minute, so it lands
+   * up to a minute earlier than asked. One minute long, so two of them a few
+   * minutes apart never share the teacher's slot.
+   */
+  async function seedClassStartingIn(
+    owner: { id: string; teacherRoomId: string },
+    minutes: number,
+  ): Promise<string> {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: teacherTimezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    })
+      .formatToParts(new Date(Date.now() + minutes * 60 * 1000))
+      .reduce<Record<string, string>>((acc, { type, value }) => {
+        if (type !== 'literal') acc[type] = value;
+        return acc;
+      }, {});
+    const cls = await createClassFixture(prisma, {
+      teacherId: owner.id, teacherRoomId: owner.teacherRoomId,
+      classType: 'Walk Route Soon',
+      date: new Date(`${parts.year}-${parts.month}-${parts.day}`),
+      startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
+      durationMinutes: 1,
+      roomCost: 25, minRate: 15, targetRate: 25,
+      // 0: a class this close to its start must never read as below minimum.
+      minStudents: 0, maxStudents: 8,
+      status: 'open',
+    });
+    classIds.push(cls.id);
     return cls.id;
   }
 
@@ -1024,6 +1062,43 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
       await post(token, { classId: farOffId, newContact: { firstName: 'Far', email } }),
       'WALK_IN_WINDOW_CLOSED',
     );
+    expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
+  });
+
+  /**
+   * The window's opening edge on an `open` class, the door case: each class
+   * starts several minutes to one side of `WALK_IN_WINDOW_MS`.
+   */
+  it('walks in both subjects to an open class starting in about ten minutes', async () => {
+    const classId = await seedClassStartingIn(main, 10);
+    const invitation = await invite(main.id, 'soon-invitee');
+    const email = address('soon-contact');
+
+    const byInvitation = await post(token, { classId, invitationId: invitation.id });
+    const byContact = await post(token, { classId, newContact: { firstName: 'Soon', email } });
+
+    expect([byInvitation.status, byContact.status]).toEqual([201, 201]);
+    const regs = await prisma.registration.findMany({ where: { classId }, select: { isWalkIn: true } });
+    expect(regs).toEqual([{ isWalkIn: true }, { isWalkIn: true }]);
+  });
+
+  it('refuses both subjects to an open class starting in about twenty minutes, leaving nothing behind', async () => {
+    const classId = await seedClassStartingIn(main, 20);
+    const invitation = await invite(main.id, 'later-invitee');
+    const email = address('later-contact');
+
+    await expectRefusal(
+      await post(token, { classId, invitationId: invitation.id }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+    await expectRefusal(
+      await post(token, { classId, newContact: { firstName: 'Later', email } }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+    expect(await prisma.registration.count({ where: { classId } })).toBe(0);
+    expect(
+      await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id }, select: { status: true } }),
+    ).toEqual({ status: 'pending' });
     expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
   });
 
