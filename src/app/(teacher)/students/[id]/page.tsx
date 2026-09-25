@@ -44,30 +44,19 @@ export default async function StudentDetailPage({
 
   const isArchived = student.teacherStudents[0]?.isArchived ?? false;
   const visible = projectStudentForTeacher(student, session.teacherId);
-  const isUnlinked = !visible.claimedAt;
+  const isUnclaimed = !visible.claimedAt;
   const displayName = visible.displayName;
 
   return (
     <>
       <PageHeader title={displayName} backHref={isArchived ? '/students/archived' : '/students'} backLabel={isArchived ? 'Archived students' : 'All students'} />
 
-      {isUnlinked && (
+      {isUnclaimed && (
         <p className="type-caption mb-6">
           This student hasn&apos;t created an account yet.
         </p>
       )}
 
-      {/*
-        Task 10 (#166) removed the editable-form branch that used to sit
-        here for unlinked students: `EditStudentForm` had no route to submit
-        to once the teacher branch of `PUT /api/students/[id]` was deleted,
-        and `RemoveStudentButton` already points at `DELETE
-        /api/invitations/[id]`, which has no row for a `Student.id` — Task
-        9's repoint is what would have made this call site 404 on every
-        legacy unclaimed row still in a live database. `isUnlinked` itself
-        stays (see its declaration above); this section now always renders
-        the read-only, privacy-filtered view.
-      */}
       <section className="mb-8">
         <h2 className="type-subtitle mb-3">Contact</h2>
         <div className="flex flex-col gap-2">
@@ -117,57 +106,48 @@ export default async function StudentDetailPage({
         </div>
       </section>
 
-      {/* Attendance history (claimed students only) */}
-      {!isUnlinked && (
-        <section className="mb-8">
-          <h2 className="type-subtitle mb-3">Attendance</h2>
-          {student.registrations.length === 0 ? (
-            <EmptyState title="No class history." />
-          ) : (
-            <div className="flex flex-col">
-              {student.registrations.map((reg) => (
-                <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border last:border-b-0">
-                  <div>
-                    <p className="text-base text-ink">{reg.class.calendarEntry.classType}</p>
-                    <p className="type-caption">
-                      {formatDateWithYear(reg.class.calendarEntry.date)}
-                      {' · '}{timeToHHmm(reg.class.calendarEntry.startTime)}
-                    </p>
-                  </div>
-                  <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-danger' : 'text-brown'}`}>
-                    {reg.status.replace('_', ' ')}
-                  </span>
+      <section className="mb-8">
+        <h2 className="type-subtitle mb-3">Attendance</h2>
+        {student.registrations.length === 0 ? (
+          <EmptyState title="No class history." />
+        ) : (
+          <div className="flex flex-col">
+            {student.registrations.map((reg) => (
+              <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border last:border-b-0">
+                <div>
+                  <p className="text-base text-ink">{reg.class.calendarEntry.classType}</p>
+                  <p className="type-caption">
+                    {formatDateWithYear(reg.class.calendarEntry.date)}
+                    {' · '}{timeToHHmm(reg.class.calendarEntry.startTime)}
+                  </p>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+                <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-danger' : 'text-brown'}`}>
+                  {reg.status.replace('_', ' ')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
-      {/* Payment history (claimed students only) */}
-      {!isUnlinked && (
-        <section className="mb-8">
-          <h2 className="type-subtitle mb-3">Payments</h2>
-          <StudentPaymentList
-            items={student.registrations
-              .filter((r) => r.payment)
-              .map((reg) => ({
-                paymentId: reg.payment!.id,
-                classType: reg.class.calendarEntry.classType,
-                classDate: formatDateWithYear(reg.class.calendarEntry.date),
-                amount: Number(reg.payment!.amount),
-                status: reg.payment!.status,
-              }))}
-          />
-        </section>
-      )}
+      <section className="mb-8">
+        <h2 className="type-subtitle mb-3">Payments</h2>
+        <StudentPaymentList
+          items={student.registrations
+            .filter((r) => r.payment)
+            .map((reg) => ({
+              paymentId: reg.payment!.id,
+              classType: reg.class.calendarEntry.classType,
+              classDate: formatDateWithYear(reg.class.calendarEntry.date),
+              amount: Number(reg.payment!.amount),
+              status: reg.payment!.status,
+            }))}
+        />
+      </section>
 
-      {/* Archive (claimed students) */}
-      {!isUnlinked && (
-        <section className="pt-6 border-t border-border">
-          <ArchiveStudentButton studentId={student.id} isArchived={isArchived} />
-        </section>
-      )}
+      <section className="pt-6 border-t border-border">
+        <ArchiveStudentButton studentId={student.id} isArchived={isArchived} />
+      </section>
     </>
   );
 }
