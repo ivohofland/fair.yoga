@@ -52,6 +52,7 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | last_name | string | Required |
 | email | string, unique | Required. Contact email; copies the account email once claimed. Lowercase by `Student_email_lowercase_check` (#170). |
 | income_tier | int (1-5) | Global tier, can change anytime |
+| tier_selected_at | datetime, nullable | Marks that the student has chosen a tier themselves: set by their own first booking or waitlist join, and on every tier change they make. While null, booking asks for a tier first and class cards show the anonymous price range rather than a personal one (`src/lib/price-line.ts`). A walk-in never sets it (Invitation → Walk-ins). |
 | *account_id* (FK), nullable | → Account | Null on an unclaimed row, which only a walk-in creates (Invitation → Walk-ins; the claim is in Design Notes). Bound to `claimed_at` by `Student_claim_link_check`. |
 | claimed_at | datetime, nullable | Set together with `account_id`, never independently — see `Student_claim_link_check` below. |
 | **Optional fields** | | |
