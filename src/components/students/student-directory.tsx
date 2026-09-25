@@ -139,11 +139,11 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
                     )}
                   </div>
                   {/*
-                    An unclaimed student is someone a teacher walked in who
-                    has not signed in yet.
+                    An unclaimed row: no account is linked to it. Who creates
+                    one: docs/data-model.md (Invitation → Walk-ins).
                   */}
                   {!student.claimedAt && (
-                    <span className="type-caption">unlinked</span>
+                    <span className="type-caption">hasn&apos;t created an account yet</span>
                   )}
                 </div>
                 <Icon name="chevron-right" size={20} className="text-brown-light" />
