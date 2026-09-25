@@ -8,6 +8,8 @@ import { prisma as appPrisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { POST } from './route';
 import * as waitlistService from '@/services/waitlist';
+import * as rateLimit from '@/lib/rate-limit';
+import { erasedAddress } from '@/lib/erased-address';
 import { expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
 
 /**
@@ -759,5 +761,406 @@ describe('POST /api/registrations — a booking that already exists', () => {
 
     expect(twin).toHaveBeenCalledTimes(1);
     await expectRefusal(res, 'UNIQUE_CONFLICT');
+  });
+});
+
+/**
+ * A teacher registering someone at the door who is not on their roster: a
+ * pending invitee by `invitationId`, or a new person by `newContact`. The
+ * service's own cases are `services/walk-ins.test.ts`; this block pins what
+ * the route decides around it — the discriminator, the window, the rate
+ * limit, the refusal codes, and that a refusal leaves nothing behind.
+ *
+ * The acting teacher's account also holds a student profile, so every case
+ * that books the invitee also proves the route did not book the teacher.
+ */
+describe('POST /api/registrations — walk-ins (#255)', () => {
+  const tag = `walkin-route-${suffix}`;
+  let main: { id: string; accountId: string; teacherRoomId: string };
+  let teacherStudentId: string;
+  let token: string;
+  let otherTeacherId: string;
+  let otherClassId: string;
+  let studentOnlyToken: string;
+  let inWindowId: string;
+  let farOffId: string;
+  const teacherIds: string[] = [];
+  const accountIds: string[] = [];
+  const roomIds: string[] = [];
+  const classIds: string[] = [];
+
+  const address = (label: string): string => `${tag}-${label}@test.local`;
+
+  async function post(sessionToken: string, body: unknown): Promise<Response> {
+    return POST(new NextRequest('http://localhost:3000/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  async function seedTeacher(label: string): Promise<{ id: string; accountId: string; teacherRoomId: string }> {
+    const email = address(`${label}-teacher`);
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Walk', lastName: label,
+        email,
+        account: { create: { email } },
+        bio: '#255 registrations-route walk-in fixture teacher',
+        pageSlug: `${tag}-${label}`,
+        defaultTimezone: 'UTC',
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherIds.push(teacher.id);
+    accountIds.push(teacher.accountId);
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Walk Route Studio', address: `${label} ${suffix} Walk St`, city: 'Amsterdam',
+        postcode: '1234WR', floor: '1', roomName: 'Main', maxCapacity: 20,
+        createdById: teacher.id,
+      },
+      select: { id: true },
+    });
+    roomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 20, rentalRate: 25 },
+      select: { id: true },
+    });
+    return { id: teacher.id, accountId: teacher.accountId, teacherRoomId: teacherRoom.id };
+  }
+
+  /** A class of this teacher; `inProgress` puts it inside the walk-in window. */
+  async function seedClass(
+    owner: { id: string; teacherRoomId: string },
+    date: string,
+    inProgress: boolean,
+  ): Promise<string> {
+    const cls = await createClassFixture(prisma, {
+      teacherId: owner.id, teacherRoomId: owner.teacherRoomId,
+      classType: 'Walk Route Vinyasa',
+      date: new Date(date),
+      startTime: new Date('1970-01-01T10:00:00Z'),
+      durationMinutes: 60,
+      roomCost: 25, minRate: 15, targetRate: 25,
+      minStudents: 1, maxStudents: 8,
+      status: 'open',
+    });
+    classIds.push(cls.id);
+    if (inProgress) {
+      await prisma.class.update({ where: { id: cls.id }, data: { status: 'in_progress' } });
+    }
+    return cls.id;
+  }
+
+  async function invite(owner: string, label: string): Promise<{ id: string; email: string }> {
+    const email = address(label);
+    const row = await prisma.invitation.create({
+      data: { teacherId: owner, email, firstName: 'Walk', lastName: label, status: 'pending' },
+      select: { id: true },
+    });
+    return { id: row.id, email };
+  }
+
+  /** A claimed student with a session of their own. */
+  async function seedClaimedStudent(
+    label: string,
+    incomeTier: number,
+  ): Promise<{ id: string; email: string; token: string }> {
+    const email = address(label);
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Walk', lastName: label,
+        email, incomeTier, claimedAt: new Date(),
+        account: { create: { email } },
+      },
+      select: { id: true, accountId: true },
+    });
+    const accountId = student.accountId;
+    if (!accountId) throw new Error('fixture: the claimed student has no account');
+    accountIds.push(accountId);
+    return { id: student.id, email, token: await seedSession(prisma, accountId) };
+  }
+
+  async function rowsFor(email: string): Promise<{ student: number; invitation: number; privacy: number }> {
+    return {
+      student: await prisma.student.count({ where: { email } }),
+      invitation: await prisma.invitation.count({ where: { email } }),
+      privacy: await prisma.studentPrivacy.count({ where: { student: { email } } }),
+    };
+  }
+
+  beforeAll(async () => {
+    main = await seedTeacher('main');
+    // The dual role: the same account holds a student profile.
+    const own = await prisma.student.create({
+      data: {
+        firstName: 'Walk', lastName: 'Main',
+        email: address('main-teacher'), incomeTier: 3, claimedAt: new Date(),
+        accountId: main.accountId,
+      },
+      select: { id: true },
+    });
+    teacherStudentId = own.id;
+    token = await seedSession(prisma, main.accountId);
+
+    inWindowId = await seedClass(main, '2099-09-01', true);
+    farOffId = await seedClass(main, '2099-09-08', false);
+
+    const other = await seedTeacher('other');
+    otherTeacherId = other.id;
+    otherClassId = await seedClass(other, '2099-09-01', true);
+
+    studentOnlyToken = (await seedClaimedStudent('student-only', 3)).token;
+  });
+
+  afterAll(async () => {
+    // Every address here carries this run's tag, so a student a failing case
+    // created without recording it is still found.
+    const students = await prisma.student.findMany({
+      where: { email: { startsWith: tag, endsWith: '@test.local' } },
+      select: { id: true },
+    });
+    const studentIds = students.map((s) => s.id);
+    if (classIds.length) {
+      await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
+      await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+    }
+    if (studentIds.length) {
+      await prisma.notification.deleteMany({
+        where: { recipientType: 'student', recipientId: { in: studentIds } },
+      });
+    }
+    if (teacherIds.length) {
+      await prisma.notification.deleteMany({
+        where: { recipientType: 'teacher', recipientId: { in: teacherIds } },
+      });
+      // Cascades to each entry's `Class`.
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.invitation.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.studentPrivacy.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    }
+    if (roomIds.length) await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
+    if (accountIds.length) {
+      await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    }
+    if (studentIds.length) await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    if (teacherIds.length) await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    // Last, and after both profiles: `Student.accountId` and
+    // `Teacher.accountId` are plain FKs with no cascade.
+    if (accountIds.length) await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  it('walks in a pending invitee, at their own tier', async () => {
+    const invitee = await seedClaimedStudent('invitee-tier', 2);
+    const invitation = await invite(main.id, 'invitee-tier');
+
+    const res = await post(token, { classId: inWindowId, invitationId: invitation.id });
+
+    expect(res.status).toBe(201);
+    const reg = await prisma.registration.findUnique({
+      where: { classId_studentId: { classId: inWindowId, studentId: invitee.id } },
+      select: { isWalkIn: true, tierAtBooking: true, status: true },
+    });
+    expect(reg).toEqual({ isWalkIn: true, tierAtBooking: 2, status: 'registered' });
+  });
+
+  it('walks in a new person without stamping their tier choice', async () => {
+    const email = address('new-person');
+
+    const res = await post(token, {
+      classId: inWindowId,
+      newContact: { firstName: 'New', lastName: 'Person', email },
+    });
+
+    expect(res.status).toBe(201);
+    const student = await prisma.student.findUniqueOrThrow({
+      where: { email },
+      select: { id: true, tierSelectedAt: true },
+    });
+    expect(student.tierSelectedAt).toBeNull();
+    const reg = await prisma.registration.findUnique({
+      where: { classId_studentId: { classId: inWindowId, studentId: student.id } },
+      select: { isWalkIn: true },
+    });
+    expect(reg).toEqual({ isWalkIn: true });
+  });
+
+  it('answers the two branches in the same shape', async () => {
+    const invitation = await invite(main.id, 'shape-invitee');
+    const byInvitation = await post(token, { classId: inWindowId, invitationId: invitation.id });
+    const byContact = await post(token, {
+      classId: inWindowId,
+      newContact: { firstName: 'Shape', email: address('shape-contact') },
+    });
+
+    expect([byInvitation.status, byContact.status]).toEqual([201, 201]);
+    const a = (await byInvitation.json()) as { data: Record<string, unknown> };
+    const b = (await byContact.json()) as { data: Record<string, unknown> };
+    expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
+    expect(Object.keys(a.data).sort()).toEqual(Object.keys(b.data).sort());
+  });
+
+  it('refuses both subjects outside the walk-in window, leaving nothing behind', async () => {
+    const invitation = await invite(main.id, 'far-invitee');
+    await expectRefusal(
+      await post(token, { classId: farOffId, invitationId: invitation.id }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+    expect(await prisma.registration.count({ where: { classId: farOffId } })).toBe(0);
+    expect(
+      await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id }, select: { status: true } }),
+    ).toEqual({ status: 'pending' });
+
+    const email = address('far-contact');
+    await expectRefusal(
+      await post(token, { classId: farOffId, newContact: { firstName: 'Far', email } }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+    expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
+  });
+
+  it("refuses a new person into another teacher's class, leaving nothing behind", async () => {
+    const email = address('foreign-class');
+
+    const res = await post(token, { classId: otherClassId, newContact: { firstName: 'Foreign', email } });
+
+    expect(res.status).toBe(403);
+    expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
+  });
+
+  it('refuses a blocked invitee, an erased one, a declined address and a foreign invitation by code', async () => {
+    const blocked = await invite(main.id, 'blocked');
+    await prisma.teacherBlock.create({ data: { teacherId: main.id, email: blocked.email } });
+    await expectRefusal(
+      await post(token, { classId: inWindowId, invitationId: blocked.id }),
+      'WALK_IN_REFUSED',
+    );
+
+    const erased = await prisma.invitation.create({
+      data: { teacherId: main.id, email: erasedAddress(crypto.randomUUID()), status: 'pending' },
+      select: { id: true },
+    });
+    await expectRefusal(
+      await post(token, { classId: inWindowId, invitationId: erased.id }),
+      'INVITATION_ERASED',
+    );
+
+    const declined = address('declined');
+    await prisma.invitation.create({
+      data: { teacherId: main.id, email: declined, status: 'declined', respondedAt: new Date() },
+    });
+    await expectRefusal(
+      await post(token, { classId: inWindowId, newContact: { firstName: 'Declined', email: declined } }),
+      'DECLINED',
+    );
+
+    const foreign = await invite(otherTeacherId, 'foreign-invitation');
+    await expectRefusal(
+      await post(token, { classId: inWindowId, invitationId: foreign.id }),
+      'NOT_FOUND',
+    );
+  });
+
+  it("books the invitee, not the dual-role teacher's own student profile", async () => {
+    const invitation = await invite(main.id, 'dual-role');
+
+    const res = await post(token, { classId: inWindowId, invitationId: invitation.id });
+
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    const reg = await prisma.registration.findUniqueOrThrow({ where: { id: data.id }, select: { studentId: true } });
+    const invitee = await prisma.student.findUniqueOrThrow({
+      where: { email: invitation.email },
+      select: { id: true },
+    });
+    expect(reg.studentId).toBe(invitee.id);
+    expect(reg.studentId).not.toBe(teacherStudentId);
+  });
+
+  it('refuses a student-only session posting an invitation', async () => {
+    const invitation = await invite(main.id, 'student-session');
+
+    const res = await post(studentOnlyToken, { classId: inWindowId, invitationId: invitation.id });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a body naming two subjects', async () => {
+    const invitation = await invite(main.id, 'two-subjects');
+
+    const res = await post(token, {
+      classId: inWindowId, studentId: teacherStudentId, invitationId: invitation.id,
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('matches a mixed-case new-contact address to the existing student', async () => {
+    const existing = await seedClaimedStudent('anna.case', 3);
+    const mixed = existing.email.replace('anna.case', 'Anna.Case').replace('test.local', 'Test.Local');
+    expect(mixed).not.toBe(existing.email);
+
+    const res = await post(token, {
+      classId: inWindowId,
+      newContact: { firstName: 'Anna', lastName: 'Case', email: mixed },
+    });
+
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    const reg = await prisma.registration.findUniqueOrThrow({ where: { id: data.id }, select: { studentId: true } });
+    expect(reg.studentId).toBe(existing.id);
+    expect(
+      await prisma.student.count({ where: { email: { equals: existing.email, mode: 'insensitive' } } }),
+    ).toBe(1);
+  });
+
+  it('answers a double-tapped new contact once as applied and once as unchanged', async () => {
+    const email = address('double-tap');
+    const body = { classId: inWindowId, newContact: { firstName: 'Double', lastName: 'Tap', email } };
+
+    const [first, second] = await Promise.all([post(token, body), post(token, body)]);
+
+    expect([first.status, second.status].sort()).toEqual([200, 201]);
+    expect(await prisma.student.count({ where: { email } })).toBe(1);
+  });
+
+  it('answers an invitee who already booked this class as unchanged, with no walk-in notice', async () => {
+    const invitee = await seedClaimedStudent('self-booked', 3);
+    const invitation = await invite(main.id, 'self-booked');
+    const classId = await seedClass(main, '2099-09-15', false);
+    expect((await post(invitee.token, { classId })).status).toBe(201);
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    const res = await post(token, { classId, invitationId: invitation.id });
+
+    await expectUnchanged(res);
+    expect(
+      await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: invitee.id, type: 'walk_in_added' },
+      }),
+    ).toBe(0);
+  });
+
+  it('spends the student-write budget on a new contact, not on an invitation', async () => {
+    const limit = vi
+      .spyOn(rateLimit, 'checkStudentWriteLimit')
+      .mockReturnValue({ allowed: false, retryAfterSeconds: 600 });
+    onTestFinished(() => limit.mockRestore());
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as unknown as void);
+    onTestFinished(() => warn.mockRestore());
+
+    const email = address('rate-limited');
+    const refused = await post(token, { classId: inWindowId, newContact: { firstName: 'Rate', email } });
+    expect(refused.status).toBe(429);
+    expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
+
+    const invitation = await invite(main.id, 'rate-invitee');
+    const allowed = await post(token, { classId: inWindowId, invitationId: invitation.id });
+    expect(allowed.status).toBe(201);
+    expect(limit).toHaveBeenCalledTimes(1);
   });
 });
