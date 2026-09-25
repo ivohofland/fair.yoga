@@ -437,7 +437,7 @@ async function dispatch(notification: CreateNotification): Promise<void> {
 
   // Layer 3: Schedule email fallback
   // If not read within 30 minutes, send email — on the next sweep regardless
-  // of age for a waitlist promotion (IMMEDIATE_EMAIL_TYPES, notification-policy.ts)
+  // of age for a waitlist promotion or a walk-in (IMMEDIATE_EMAIL_TYPES, notification-policy.ts)
   await scheduleEmailFallback(notification, { delayMinutes: 30 });
 }
 ```

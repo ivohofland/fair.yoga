@@ -195,8 +195,8 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 - *Leads to:* 6.2 Add Walk-In, 7.1 Post-Class Summary
 
 ### 6.2 — Add Walk-In
-- Search for existing student by name
-- Student must have an account with tier set
+- Search the roster and pending invitees by name, or add a new person (first name, last name, email)
+- An invitee or new person can be added only once the class is about to start; a new person is booked at the default tier
 - Add to class — count updates, price estimate recalculates
 - Note: walk-in can exceed max capacity
 - *Leads back to:* 6.1 Class Day View

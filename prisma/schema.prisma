@@ -202,11 +202,10 @@ model Teacher {
 /// coexist freely. Same visibility caveat as `Teacher`'s.
 model Student {
   id                 String              @id @default(uuid())
-  // Nullable for rows predating #166, which stopped the CRM creating a
-  // Student at all — it writes an Invitation, and the link forms on accept.
-  // The sole remaining create site sets this and `claimedAt` in one statement,
-  // so nothing produces an unclaimed row any more. What still READS for one,
-  // and why, is `docs/data-model.md` (StudentPrivacy).
+  // Nullable for an unclaimed row, which a walk-in creates
+  // (`services/walk-ins.ts`). Set together with `claimedAt`
+  // (`Student_claim_link_check`). What reads for an unclaimed row is
+  // `docs/data-model.md` (StudentPrivacy).
   accountId          String?
   firstName          String
   lastName           String
