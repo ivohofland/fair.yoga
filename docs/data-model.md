@@ -88,7 +88,7 @@ Nothing in the database requires an erased row to keep its `account_id`. A futur
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Not created on booking. Three sites write it. The student's own
+Not created by an ordinary booking. Three sites write it. The student's own
 `PUT /api/students/[id]/privacy`, where the student opts in to each field.
 `DELETE /api/teacher-links/[teacherId]` (`unlinkTeacher`), which force-sets
 every flag, including `receive_comms`, to `false` when a student severs a
@@ -113,7 +113,7 @@ the way the projection does: this teacher's `StudentPrivacy.shareEmail`,
 absence reading `false`. Neither consults `claimedAt` (#419's drift was the
 two answering that differently): an unclaimed student is projected through
 its `StudentPrivacy` row exactly like a claimed one, and a walk-in-created
-student is visible to its teacher by name and address because of the seed
+student is visible to its teacher by name and email address because of the seed
 above, not because it is unclaimed.
 
 Re-derive the writer set — one line per site, three today:
@@ -260,7 +260,7 @@ A teacher-only account is offered no decline: leaving the invitation unanswered 
 
 A teacher running a class can register someone standing at the door who is not on their roster (#255): a `pending` invitee of theirs (an `invitationId` body) or a person typed in there and then (a `newContact` body), through `POST /api/registrations` and `src/services/walk-ins.ts`. The picker lists only this teacher's unarchived `pending` invitations that are not erasure placeholders (`GET /api/invitations?status=pending`); the API also accepts an archived one, since archiving is filing, not consent state.
 
-**Presence is acceptance.** This is the one exception to "a teacher may not link a student unilaterally" (top of this section). The walk-in links the person (`linkTeacherStudent`) and moves this teacher's invitation for the address to `accepted` — inserting one first, with the typed name and no invitation email, where the teacher had none; an existing row keeps its name. Where the address has no `Student`, the walk-in creates one. That row is unclaimed unless an `Account` already holds the address with no live student profile, in which case it is created attached to that account and claimed in the same statement (`Student_claim_link_check`; one live profile per account, #623). The person is told by a `walk_in_added` notification, which is essential and emailed on the fallback's next sweep (`IMMEDIATE_EMAIL_TYPES`, `src/services/notification-policy.ts`) and is the only message a walk-in sends. The registration is booked at the student's current `income_tier` — the column default for a row the walk-in created — and a walk-in never sets `tier_selected_at`: the person chooses their tier when they sign in. A created row gets the privacy seed described under StudentPrivacy; a found row gets none.
+**Presence is acceptance.** This is the one exception to "a teacher may not link a student unilaterally" (top of this section). The walk-in links the person (`linkTeacherStudent`) and moves this teacher's invitation for the address to `accepted` — inserting one first, with the typed name and no invitation email, where the teacher had none; an existing row keeps its name. Where the address has no `Student`, the walk-in creates one. That row is unclaimed unless an `Account` already holds the address with no live student profile, in which case it is created attached to that account and claimed in the same statement (`Student_claim_link_check`; one live profile per account, #623). The person is told by a `walk_in_added` notification, which is essential and emailed on the fallback's next sweep (`IMMEDIATE_EMAIL_TYPES`, `src/services/notification-policy.ts`) and is the only message a walk-in sends. The registration is booked at the student's current `income_tier` — the column default for a row the walk-in created — and a walk-in never sets `tier_selected_at`, so the person is still asked for their tier on their first own booking (or can set it at `/account/tier`); the walked-in registration keeps the tier it was booked at. A created row gets the privacy seed described under StudentPrivacy; a found row gets none.
 
 **It never lifts a refusal.** `resolveInvitationOnLink` is never called on this path: it deletes the `TeacherBlock`, and #418's first bar — the act must be the student's own at this instant — is one a teacher's act cannot clear. So the walk-in resolves by its own hand (the roster census above), and only the `pending` → `accepted` half: a `declined` invitation refuses, and a block refuses.
 

@@ -204,7 +204,7 @@ model Student {
   id                 String              @id @default(uuid())
   // Nullable for an unclaimed row, which a walk-in creates
   // (`services/walk-ins.ts`). Set together with `claimedAt`
-  // (`Student_claim_link_check`). What reads for an unclaimed row is
+  // (`Student_claim_link_check`). How an unclaimed row is projected is
   // `docs/data-model.md` (StudentPrivacy).
   accountId          String?
   firstName          String
