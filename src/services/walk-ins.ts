@@ -15,14 +15,16 @@
  * teacher's act must not lift a student's refusal.
  */
 import type { InvitationStatus, Prisma } from '@prisma/client';
-import { requireNormalised } from '@/lib/schemas';
+import type { z } from 'zod';
+import { requireNormalised, type createInvitationSchema } from '@/lib/schemas';
 import { isErasedAddress } from '@/lib/erased-address';
 import { linkTeacherStudent } from './roster-link';
 import { createBulkNotifications } from './notifications';
 
+/** A new contact's fields are `createInvitationSchema`'s, derived so a field added there reaches here. */
 export type WalkInSubject =
   | { kind: 'invitation'; invitationId: string }
-  | { kind: 'newContact'; firstName: string; lastName: string; email: string };
+  | ({ kind: 'newContact' } & z.infer<typeof createInvitationSchema>);
 
 export type WalkInRefusal =
   | 'NOT_FOUND'
@@ -93,8 +95,8 @@ export async function resolveWalkInStudent(
 
   // Erased first: the teacher already reads "Deleted Student" on this row.
   if (isErasedAddress(contact.email)) throw new WalkInRefusedError('INVITATION_ERASED');
-  // Declined before blocked: a decline also writes a block (#522), and the
-  // teacher already reads `declined` on their own Contacts row.
+  // Declined before blocked, so a decline gets its own answer rather than the
+  // generic one: `docs/data-model.md` (Invitation → Walk-ins, "Refusal order").
   if (contact.status === 'declined') throw new WalkInRefusedError('DECLINED');
   const blocked = await tx.teacherBlock.findUnique({
     where: { teacherId_email: { teacherId: input.teacherId, email: contact.email } },
@@ -110,10 +112,10 @@ export async function resolveWalkInStudent(
     return { studentId: existing.id, incomeTier: existing.incomeTier, ...names(contact), created: false };
   }
 
-  // A teacher-only account holding this address gets the profile now; sign-in
-  // would never claim it (`resolveOrClaimAccount` returns early when an
-  // Account exists). One live profile per account (#623), so an account that
-  // already has one is left alone and the row stays unclaimed.
+  // An account holding this address gets the new row attached and claimed,
+  // because sign-in would not claim it: `docs/data-model.md` (Invitation →
+  // Walk-ins). Only one with no live student profile (#623); that guard is
+  // defensive, as residual 4 there explains.
   const account = await tx.account.findUnique({
     where: { email: contact.email },
     select: { id: true, students: { where: { deletedAt: null }, select: { id: true } } },
@@ -197,10 +199,10 @@ export async function completeWalkIn(
     }
   }
 
-  // After the roster link and the compare-and-set, so a block committed after
-  // `resolveWalkInStudent`'s read — an unlink of an undelivered row leaves the
-  // invitation `pending` — is seen; and before the notification, whose payload
-  // reaches the event bus before this transaction commits.
+  // After the roster link and the compare-and-set, so a block committed since
+  // `resolveWalkInStudent`'s read is seen; before the notification, so a
+  // refused walk-in emits nothing: `docs/data-model.md` (Invitation →
+  // Walk-ins, "Refusal order").
   const blockedNow = await tx.teacherBlock.findUnique({
     where: { teacherId_email: { teacherId, email: resolved.email } },
     select: { id: true },
