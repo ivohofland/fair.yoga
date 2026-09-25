@@ -32,16 +32,21 @@ const classIds: string[] = [];
 const roomIds: string[] = [];
 
 afterAll(async () => {
-  if (teacherIds.length) {
-    // A student a failing case created before it could record the id — the
-    // service links every student it creates, so the link names it.
-    const linked = await prisma.teacherStudent.findMany({
-      where: { teacherId: { in: teacherIds } },
-      select: { studentId: true },
-    });
-    for (const { studentId } of linked) {
-      if (!studentIds.includes(studentId)) studentIds.push(studentId);
-    }
+  // A student a failing case created before it could record the id: every
+  // fixture address carries this run's suffix, and the service links every
+  // student it completes, so between them the two reads name it.
+  const bySuffix = await prisma.student.findMany({
+    where: { email: { endsWith: `-${suffix}@test.local` } },
+    select: { id: true },
+  });
+  const linked = teacherIds.length
+    ? await prisma.teacherStudent.findMany({
+        where: { teacherId: { in: teacherIds } },
+        select: { studentId: true },
+      })
+    : [];
+  for (const id of [...bySuffix.map((s) => s.id), ...linked.map((l) => l.studentId)]) {
+    if (!studentIds.includes(id)) studentIds.push(id);
   }
   if (classIds.length) {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
