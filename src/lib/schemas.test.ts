@@ -685,14 +685,16 @@ describe('server-owned fields', () => {
       // Two different facts hide behind a missing `.shape`, and only one is
       // safe to skip: "this export is not a schema" (MAX_CLASS_SIZE,
       // isSafeRelativePath) versus "this export IS a schema whose top-level
-      // keys I cannot read" (anything wrapped in .transform() or z.array).
-      // Conflating them made this guard blind in exactly the way the
+      // keys I cannot read" (anything wrapped in .transform(), z.union or
+      // z.array). Conflating them made this guard blind in exactly the way the
       // three guards this repo has shipped were blind — measured: three
       // exported schemas declaring teacherId, studentId and templateId behind
       // those wrappers left the suite fully green. (`templateId` is no longer
       // a column anywhere; the measurement is a record of what the blindness
-      // cost, not a claim about today's register.) A `z.union` is read member
-      // by member, and every member must have a shape.
+      // cost, not a claim about today's register.)
+      //
+      // A `z.union` is read through `memberShapes`, member by member, and
+      // every member must have a readable shape.
       if (!(schema instanceof z.ZodType)) continue;
       if (FIELD_VALIDATOR_EXPORTS.has(name)) continue;
       const hits = new Set<string>();
@@ -737,14 +739,28 @@ describe('email fields normalise', () => {
   // Asserts against `shape.email` — the field schema — not the parent object,
   // because parsing the parent would need valid values for every sibling
   // required field and would test those instead.
+  //
+  // A `z.union` is read through `memberShapes`: it carries an address when any
+  // member does, and every member's `email` is asserted. A schema with a
+  // member this walk cannot read fails below rather than being skipped.
   const emailBearing: string[] = [];
+  const unreadable: string[] = [];
 
   for (const [name, schema] of Object.entries(schemas)) {
     if (!(schema instanceof z.ZodType)) continue;
-    const shape = (schema as { shape?: Record<string, unknown> }).shape;
-    if (!shape || !('email' in shape)) continue;
-    emailBearing.push(name);
+    if (FIELD_VALIDATOR_EXPORTS.has(name)) continue;
+    const shapes = memberShapes(schema);
+    const readable = shapes.filter((s): s is Record<string, z.ZodType> => s !== undefined);
+    if (readable.length !== shapes.length) {
+      unreadable.push(name);
+      continue;
+    }
+    if (readable.some((shape) => 'email' in shape)) emailBearing.push(name);
   }
+
+  it('reads every schema it walks', () => {
+    expect(unreadable).toEqual([]);
+  });
 
   it('covers exactly the schemas that carry an address', () => {
     expect([...emailBearing].sort()).toEqual([
@@ -757,10 +773,12 @@ describe('email fields normalise', () => {
   });
 
   it.each(emailBearing)('%s lowercases its email field', (name) => {
-    const schema = (schemas as Record<string, unknown>)[name];
-    const shape = (schema as { shape: Record<string, unknown> }).shape;
-    const field = shape.email as z.ZodType<unknown, unknown>;
-    expect(field.parse('Mixed@Example.COM')).toBe('mixed@example.com');
+    const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
+    for (const shape of memberShapes(schema)) {
+      const field = shape?.email;
+      if (field === undefined) continue;
+      expect(field.parse('Mixed@Example.COM')).toBe('mixed@example.com');
+    }
   });
 });
 
