@@ -225,6 +225,25 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     expect(await prisma.studentPrivacy.count({ where: { teacherId, studentId } })).toBe(0);
   });
 
+  it('walks in an already-accepted contact typed again as a new contact, leaving the invitation as it stood', async () => {
+    const { teacherId, classId } = await seedTeacher('accepted');
+    const email = `walkin-accepted-${suffix}@test.local`;
+    const studentId = await seedClaimedStudent(email);
+    await prisma.teacherStudent.create({ data: { teacherId, studentId } });
+    const respondedAt = new Date('2026-01-15T09:00:00Z');
+    const inv = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Came', lastName: 'Before', status: 'accepted', respondedAt },
+    });
+
+    const resolved = await walkIn(teacherId, classId, { kind: 'newContact', firstName: 'Came', lastName: 'Again', email });
+
+    expect(resolved).toMatchObject({ studentId, created: false });
+    expect(await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } }))
+      .toMatchObject({ status: 'accepted', respondedAt, firstName: 'Came', lastName: 'Before' });
+    expect(await prisma.teacherStudent.count({ where: { teacherId, studentId } })).toBe(1);
+    expect(await prisma.notification.count({ where: { recipientId: studentId, type: 'walk_in_added', relatedClassId: classId } })).toBe(1);
+  });
+
   it('attaches the new student to a teacher-only account holding the address', async () => {
     const { teacherId, classId } = await seedTeacher('attach');
     const email = `walkin-attach-${suffix}@test.local`;
@@ -332,8 +351,9 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     const email = `walkin-race-${suffix}@test.local`;
     const inv = await prisma.invitation.create({ data: { teacherId, email, firstName: 'Race', status: 'pending', delivered: false } });
     const other = new PrismaClient();
-    // The notification's payload reaches the bus before the transaction
-    // commits, so a refused walk-in must not have reached it.
+    // The emit precedes the commit, and a rolled-back one still delivers its
+    // payload to the recipient's connected client: a refused walk-in must not
+    // reach the bus.
     const events: NotificationEvent[] = [];
     const onEvent = (event: NotificationEvent): void => { events.push(event); };
     notificationBus.onNotification(onEvent);

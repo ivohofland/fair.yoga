@@ -140,36 +140,38 @@ test.describe('Teacher journey', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.studentPrivacy.deleteMany({ where: { teacherId } });
-    await prisma.notification.deleteMany({
-      where: {
-        OR: [
-          { recipientId: { in: [teacherId, bookingStudentId, walkInStudentId] } },
-          ...(classId ? [{ relatedClassId: classId }] : []),
-        ],
-      },
-    });
+    // Every id-filtered delete below is guarded: Prisma DROPS an `undefined`
+    // where-clause rather than matching nothing, and Playwright runs
+    // `afterAll` even when `beforeAll` threw before an id was assigned.
+    const fixtureStudentIds = [bookingStudentId, walkInStudentId].filter(Boolean);
+    const recipientIds = teacherId ? [teacherId, ...fixtureStudentIds] : fixtureStudentIds;
+    if (teacherId) {
+      await prisma.studentPrivacy.deleteMany({ where: { teacherId } });
+    }
+    if (recipientIds.length || classId) {
+      await prisma.notification.deleteMany({
+        where: {
+          OR: [
+            ...(recipientIds.length ? [{ recipientId: { in: recipientIds } }] : []),
+            ...(classId ? [{ relatedClassId: classId }] : []),
+          ],
+        },
+      });
+    }
     if (classId) {
       await prisma.payment.deleteMany({ where: { registration: { classId } } });
       await prisma.registration.deleteMany({ where: { classId } });
     }
-    // Guarded, because the delete widened at #327. `class.deleteMany({ where:
-    // { teacherId } })` used to sit here; the calendar identity moved, so it is
-    // the ENTRY that carries `teacherId` and the entry that has to go (the
-    // classes ride its cascade). Prisma DROPS an `undefined` where-clause
-    // rather than matching nothing, and Playwright runs `afterAll` even when
-    // `beforeAll` threw before this id was assigned — so the unguarded form
-    // used to empty `Class` and would now empty BOTH families' calendars for
-    // every teacher in the database.
     if (teacherId) {
+      // The entry carries `teacherId`; each class rides its cascade.
       await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      await prisma.room.deleteMany({ where: { createdById: teacherId } });
+      await prisma.session.deleteMany({
+        where: { accountId: await accountIdOfTeacher(prisma, teacherId) },
+      });
     }
-    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.deleteMany({ where: { createdById: teacherId } });
-    await prisma.session.deleteMany({
-      where: { accountId: await accountIdOfTeacher(prisma, teacherId) },
-    });
 
     // The check-in test's new-person walk-in has no fixture id of its own —
     // `completeWalkIn` writes both rows, keyed by address, not by a variable
@@ -183,11 +185,13 @@ test.describe('Teacher journey', () => {
       if (created) {
         await prisma.student.deleteMany({ where: { id: created.id } });
       }
-      await prisma.invitation.deleteMany({ where: { teacherId, email } });
+      if (teacherId) {
+        await prisma.invitation.deleteMany({ where: { teacherId, email } });
+      }
     }
 
     const studentAccountIds: string[] = [];
-    for (const sid of [bookingStudentId, walkInStudentId]) {
+    for (const sid of fixtureStudentIds) {
       const student = await prisma.student.findUnique({
         where: { id: sid },
         select: { accountId: true },
@@ -197,12 +201,14 @@ test.describe('Teacher journey', () => {
         studentAccountIds.push(student.accountId);
       }
     }
-    await prisma.student.deleteMany({
-      where: { id: { in: [bookingStudentId, walkInStudentId] } },
-    });
+    if (fixtureStudentIds.length) {
+      await prisma.student.deleteMany({ where: { id: { in: fixtureStudentIds } } });
+    }
     // Both students are claimed now, so both own an Account — delete them
     // after the Student rows that point at them.
-    await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
+    if (studentAccountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
+    }
     if (teacherId) {
       await prisma.teacher.delete({ where: { id: teacherId } });
     }
@@ -425,9 +431,8 @@ test.describe('Teacher journey', () => {
     await page.getByRole('button', { name: 'Edit attendance' }).click();
     await expect(page.getByRole('button', { name: 'Mark Journey s. as no-show' })).toBeVisible();
 
-    // All four charged registrations start unpaid — the booking, the
-    // roster walk-in, the invitee pick and the new-person walk-in the
-    // check-in test added; payment state is text, not a badge.
+    // Every charged registration starts unpaid, walked-in people included;
+    // payment state is text, not a badge.
     await expect(page.getByText('○ Unpaid')).toHaveCount(4);
     await page
       .getByRole('button', { name: 'Mark paid — Journey s.' })

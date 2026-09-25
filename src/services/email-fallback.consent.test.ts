@@ -31,6 +31,7 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
   let roomId: string;
   let soonClassId: string;
   const notificationIds: string[] = [];
+  const extraStudentIds: string[] = [];
 
   const savedApiKey = process.env.RESEND_API_KEY;
   const savedDryRun = process.env.EMAIL_DRY_RUN;
@@ -120,6 +121,9 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
 
   afterAll(async () => {
     await prisma.notification.deleteMany({ where: { id: { in: notificationIds } } });
+    if (extraStudentIds.length) {
+      await prisma.student.deleteMany({ where: { id: { in: extraStudentIds } } });
+    }
     if (soonClassId) await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: soonClassId } } } });
     if (roomId) {
       await prisma.teacherRoom.deleteMany({ where: { roomId } });
@@ -180,6 +184,40 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
     // the sweep doesn't reconsider it forever.
     const after = await prisma.notification.findUniqueOrThrow({ where: { id: urgentOptional.id } });
     expect(after.emailSent).toBe(true);
+  });
+
+  it('emails a walk-in notice to an unclaimed, opted-out student on the first sweep, and only once', async () => {
+    // Its own recipient, so no other case's notification can add to its count.
+    const email = `consent-walkin-${uniqueSuffix}@test.local`;
+    const student = await prisma.student.create({
+      data: { firstName: 'Walked', lastName: 'In', email, emailNotifications: false },
+      select: { id: true, accountId: true, claimedAt: true },
+    });
+    extraStudentIds.push(student.id);
+    expect(student).toMatchObject({ accountId: null, claimedAt: null });
+    // Created just now and tied to no class, so neither the unread threshold
+    // nor the urgent window makes it eligible: only its type does.
+    const notice = await prisma.notification.create({
+      data: {
+        recipientType: 'student',
+        recipientId: student.id,
+        type: 'walk_in_added',
+        title: "You're in Vinyasa",
+        body: 'Consent Teacher added you to Vinyasa. Your price is calculated after class.',
+        isRead: false,
+        emailSent: false,
+      },
+    });
+    notificationIds.push(notice.id);
+
+    await processEmailFallback(prisma);
+
+    expect(sendsTo(email)).toBe(1);
+    expect((await prisma.notification.findUniqueOrThrow({ where: { id: notice.id } })).emailSent).toBe(true);
+
+    await processEmailFallback(prisma);
+
+    expect(sendsTo(email)).toBe(1);
   });
 
   it('surfaces send failures instead of reporting a healthy run', async () => {
