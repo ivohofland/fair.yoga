@@ -64,6 +64,7 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   reminder: 'A gentle reminder.',
   announcement: 'A message from your teacher.',
   teacher_invitation: 'A teacher would like to connect with you.',
+  walk_in_added: 'Your teacher added you to a class.',
 };
 
 const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
@@ -86,11 +87,15 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
  *
  * Path only. The base URL is the caller's, so this stays renderable without
  * an environment.
+ *
+ * A walk-in points at `/login` rather than `/bookings`: the recipient may
+ * have no account yet, and signing in is what claims it.
  */
 const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
   teacher_invitation: { label: STUDENT_INVITATION_LABEL, path: STUDENT_INVITATION_PATH },
   waitlist_promoted: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
   spot_available: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
+  walk_in_added: { label: 'Sign in', path: '/login' },
 };
 
 /** The teacher reader's counterpart to `STUDENT_ACTION_LINKS` (#172). */

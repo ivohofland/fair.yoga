@@ -143,6 +143,15 @@ describe('email templates', () => {
     expect(html).toContain(`href="https://example.test${STUDENT_BOOKINGS_PATH}"`);
   });
 
+  it('gives a walk-in email a sign-in action', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'walk_in_added', title: 't', body: 'b' },
+      'https://example.test',
+    );
+    expect(html).toContain('href="https://example.test/login"');
+    expect(html).toContain('Sign in');
+  });
+
   it('magic-link email carries the link and the expiry note', () => {
     const { html, subject } = renderMagicLinkEmail('https://example.test/verify?token=abc');
     expect(subject).toBe('Sign in to fair.yoga');

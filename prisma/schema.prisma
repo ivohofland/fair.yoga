@@ -95,6 +95,7 @@ enum NotificationType {
   reminder
   announcement
   teacher_invitation
+  walk_in_added
 }
 
 enum InvitationStatus {
