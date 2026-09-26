@@ -15,6 +15,7 @@ import {
   updateClassTemplateSchema,
   updateStudioClassTemplateSchema,
   updateTeacherSchema,
+  teacherProfileSchema,
   updateStudentSchema,
   isSafeRelativePath,
   isLoginRedirectTarget,
@@ -430,6 +431,27 @@ describe('updateTeacherSchema.defaultTimezone', () => {
   it('rejects strings Intl cannot resolve', () => {
     expect(updateTeacherSchema.safeParse({ defaultTimezone: 'Not/AZone' }).success).toBe(false);
     expect(updateTeacherSchema.safeParse({ defaultTimezone: '' }).success).toBe(false);
+  });
+
+  it('stores a renamed zone under its current IANA name', () => {
+    const parsed = updateTeacherSchema.parse({ defaultTimezone: 'Europe/Kiev' });
+    expect(parsed.defaultTimezone).toBe('Europe/Kyiv');
+  });
+});
+
+describe('teacherProfileSchema.defaultTimezone', () => {
+  const base = { firstName: 'A', lastName: 'B', bio: '', pageSlug: 'zone-test' };
+
+  it('keeps a detected zone under its current IANA name', () => {
+    expect(teacherProfileSchema.parse({ ...base, defaultTimezone: 'Asia/Calcutta' }).defaultTimezone)
+      .toBe('Asia/Kolkata');
+    expect(teacherProfileSchema.parse({ ...base, defaultTimezone: 'Pacific/Auckland' }).defaultTimezone)
+      .toBe('Pacific/Auckland');
+  });
+
+  it('drops a detected zone the server cannot use, rather than refusing the signup', () => {
+    expect(teacherProfileSchema.parse({ ...base, defaultTimezone: 'Not/AZone' }).defaultTimezone)
+      .toBeUndefined();
   });
 });
 

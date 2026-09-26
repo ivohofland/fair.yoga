@@ -109,6 +109,17 @@ describe('PUT /api/teachers/[id]', () => {
     expect(after).toEqual(before);
   });
 
+  it('stores a renamed zone under its current IANA name', async () => {
+    const res = await putTeacher(teacherId, { defaultTimezone: 'Europe/Kiev' }, teacherToken);
+    expect(res.status).toBe(200);
+
+    const persisted = await prisma.teacher.findUniqueOrThrow({
+      where: { id: teacherId },
+      select: { defaultTimezone: true },
+    });
+    expect(persisted.defaultTimezone).toBe('Europe/Kyiv');
+  });
+
   it("rejects updating another teacher's profile", async () => {
     const res = await putTeacher(otherTeacherId, { bio: 'Hijacked' }, teacherToken);
     expect(res.status).toBe(403);
