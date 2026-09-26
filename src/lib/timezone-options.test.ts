@@ -10,7 +10,7 @@ const labelOf = (o: TimeZoneOptions, value: string): string | undefined =>
   [...o.standalone, ...o.groups.flatMap((g) => g.options)].find((opt) => opt.value === value)?.label;
 
 describe('timeZoneOptions', () => {
-  it('offers the zones the 26-item list could not', () => {
+  it('offers zones in Asia, Africa, South America and the Pacific', () => {
     const values = groupedValues(timeZoneOptions('Europe/Amsterdam', JANUARY));
     for (const zone of [
       'Pacific/Auckland', 'Asia/Tokyo', 'America/Sao_Paulo', 'Africa/Lagos', 'Asia/Kolkata', 'Asia/Dubai',
