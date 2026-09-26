@@ -24,6 +24,10 @@
  *
  * Each test file passes its own `prefix` so its afterAll sweep cannot delete
  * another file's rows.
+ *
+ * Distinct `daysAhead` (`addClass`) / `dayOfWeek` (`addTemplate`) values are how
+ * a single fixture holds more than one live row without tripping the two
+ * exclusions above (issue 259).
  */
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
@@ -76,11 +80,18 @@ export function fixtureRun(prefix: string) {
     return { teacherId: teacher.id, roomId: room.id, linkId: link.id };
   }
 
-  /** Always future-dated: a past date trips the STARTS_IN_PAST guard first. */
-  async function addClass(db: PrismaClient, f: RoomFixture, status: ClassFixtureStatus) {
+  /** Always future-dated: a past date trips the STARTS_IN_PAST guard first.
+   *  `daysAhead` (default 14) moves the date; give each uncancelled class on one
+   *  fixture its own, or `CalendarEntry_teacher_slot_excl` refuses the second. */
+  async function addClass(
+    db: PrismaClient,
+    f: RoomFixture,
+    status: ClassFixtureStatus,
+    opts: { daysAhead?: number } = {},
+  ) {
     const date = new Date();
     date.setUTCHours(0, 0, 0, 0);
-    date.setUTCDate(date.getUTCDate() + 14);
+    date.setUTCDate(date.getUTCDate() + (opts.daysAhead ?? 14));
     return createClassFixture(db, {
         teacherId: f.teacherId,
         teacherRoomId: f.linkId,
@@ -101,7 +112,7 @@ export function fixtureRun(prefix: string) {
   async function addTemplate(
     db: PrismaClient,
     f: RoomFixture,
-    opts: { isActive: boolean; isArchived: boolean },
+    opts: { isActive: boolean; isArchived: boolean; dayOfWeek?: number },
   ) {
     return db.classTemplate.create({
       data: {
@@ -110,7 +121,7 @@ export function fixtureRun(prefix: string) {
             teacherId: f.teacherId,
             kind: 'regular',
             classType: 'Hatha',
-            dayOfWeek: 2,
+            dayOfWeek: opts.dayOfWeek ?? 2,
             startTime: hhmmToTime('18:00'),
             durationMinutes: 60,
             isActive: opts.isActive,
@@ -123,6 +134,39 @@ export function fixtureRun(prefix: string) {
         targetRate: new Prisma.Decimal(25),
         minStudents: 2,
         maxStudents: 10,
+      },
+    });
+  }
+
+  /**
+   * A SHARED room with `f`'s identity (issue 259). `f`'s private room is first
+   * given a run-unique `roomName`, because two runs' twins would otherwise
+   * collide on `Room_public_identity_unique`. The twin's creator is `f`'s
+   * teacher, so `cleanup` sweeps it with the rest. `twinCase` varies case and
+   * whitespace on the twin's side only; `roomName` gives it a different
+   * identity outright.
+   */
+  async function addSharedTwin(
+    db: PrismaClient,
+    f: RoomFixture,
+    opts: { maxCapacity?: number; twinCase?: boolean; roomName?: string } = {},
+  ) {
+    const tag = `${suffix}-${crypto.randomBytes(3).toString('hex')}`;
+    const priv = await db.room.update({
+      where: { id: f.roomId },
+      data: { roomName: `Studio ${tag}` },
+    });
+    return db.room.create({
+      data: {
+        venueName: `Shared ${tag}`,
+        address: opts.twinCase ? `  ${priv.address.toUpperCase()} ` : priv.address,
+        floor: priv.floor,
+        roomName: opts.roomName ?? (opts.twinCase ? ` STUDIO ${tag.toUpperCase()}` : priv.roomName),
+        city: priv.city,
+        postcode: priv.postcode,
+        maxCapacity: opts.maxCapacity ?? 24,
+        isPublic: true,
+        createdById: f.teacherId,
       },
     });
   }
@@ -143,5 +187,5 @@ export function fixtureRun(prefix: string) {
     await db.account.deleteMany({ where: { email: { startsWith: suffix } } });
   }
 
-  return { suffix, makeFixture, addClass, addTemplate, cleanup };
+  return { suffix, makeFixture, addClass, addTemplate, addSharedTwin, cleanup };
 }
