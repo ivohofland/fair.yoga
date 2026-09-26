@@ -17,7 +17,8 @@ import type { RoomIdentity } from '@/lib/room-identity';
  * to coincide. It was already enforced, but only by `findIdentityMatch<T
  * extends RoomIdentity>` at one call site in `share-room-button.tsx` — so the
  * relation lived in the line that calls the function, not in either
- * declaration, and #259 is scheduled to rewrite exactly that line.
+ * declaration. That line now also drives the share panel's exact-match
+ * switch onto the shared room.
  *
  * `import type` only: this module is value-imported by `'use client'`
  * components, and `room-identity.ts` is import-free for the same reason.

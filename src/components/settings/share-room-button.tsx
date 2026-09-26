@@ -11,6 +11,7 @@ import { readError } from '@/lib/client-errors';
 
 interface ShareRoomButtonProps {
   roomId: string;
+  teacherRoomId: string;
   identity: RoomIdentity;
   postcode: string;
 }
@@ -41,14 +42,17 @@ type CheckState =
  * concurrent write can invalidate. The route's DUPLICATE_ROOM stays the
  * authority; this pre-check exists to replace an error with a branch.
  *
- * Switching to a room that already holds the identity is #259, not built —
- * which is why RoomMatchList is rendered without `onSelect` here.
+ * On an exact identity match the share is replaced by a switch onto the
+ * shared room (`POST /api/teacher-rooms/[id]/switch`, issue 259). The match
+ * list stays read-only: the exact match is one room, so the action belongs
+ * to the panel, not to a row.
  */
-export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonProps) {
+export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: ShareRoomButtonProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [check, setCheck] = useState<CheckState>({ phase: 'searching' });
   const [sharing, setSharing] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [error, setError] = useState('');
 
   // Which open a resolving search belongs to. Cancel-then-reopen leaves the
@@ -105,6 +109,36 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
     }
   }
 
+  async function handleSwitch(sharedRoomId: string) {
+    setSwitching(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/teacher-rooms/${teacherRoomId}/switch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: sharedRoomId }),
+      });
+      // Applied or unchanged: this room is archived now, so its page is not
+      // where the teacher belongs — the landing ArchiveRoomButton uses.
+      if (res.ok) {
+        router.push('/settings/rooms');
+        return;
+      }
+      const { code, message } = await readError(res, 'Failed to switch rooms.');
+      setError(message);
+      // These three mean the page describes a room that no longer looks the
+      // way it was rendered. ROOM_IN_USE does not: the teacher waits for the
+      // running class and tries again.
+      if (code === 'NOT_SAME_ROOM' || code === 'NOW_SHARED' || code === 'NOT_FOUND') {
+        router.refresh();
+      }
+    } catch {
+      setError('Network error. Please try again.');
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   if (!confirming) {
     return (
       <button type="button" onClick={handleOpen} className="text-teal text-sm text-left">
@@ -123,8 +157,8 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
           <p className="text-ink text-sm font-semibold">Already shared</p>
           <p className="text-brown text-sm">
             {exact.roomName || exact.venueName} at {exact.address} is already shared with all
-            teachers. You don&apos;t need to share yours — you can add it from
-            Settings › Rooms › Add room.
+            teachers. You can switch to it: your recurring classes and upcoming classes move
+            there, and this room is archived. Past classes stay with this room.
           </p>
         </>
       ) : (
@@ -168,6 +202,11 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
         {!exact && (
           <Button onClick={handleShare} disabled={sharing || check.phase === 'searching'}>
             {sharing ? 'Sharing...' : 'Share room'}
+          </Button>
+        )}
+        {exact && (
+          <Button onClick={() => handleSwitch(exact.id)} disabled={switching}>
+            {switching ? 'Switching...' : 'Switch to shared room'}
           </Button>
         )}
         <Button
