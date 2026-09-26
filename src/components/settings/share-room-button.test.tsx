@@ -6,11 +6,12 @@ import { ShareRoomButton } from './share-room-button';
 // Hoisted so the assertions below can see the same fn the component calls.
 // An inline `refresh: vi.fn()` mints a fresh spy per `useRouter()` call and
 // is unassertable — which is why the success path went untested at first.
-const { refreshMock } = vi.hoisted(() => ({ refreshMock: vi.fn() }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: refreshMock }) }));
+const { refreshMock, pushMock } = vi.hoisted(() => ({ refreshMock: vi.fn(), pushMock: vi.fn() }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: refreshMock, push: pushMock }) }));
 
 const identity = { address: 'Prinsengracht 42', floor: '2', roomName: 'Studio A' };
 const PUBLISH_URL = '/api/rooms/mine/publish';
+const SWITCH_URL = '/api/teacher-rooms/link-1/switch';
 
 function room(over: Partial<{ id: string; floor: string; roomName: string }> = {}) {
   return {
@@ -40,6 +41,20 @@ function mockSearchThenPublish(rooms: unknown[], publish: { ok: boolean; body?: 
   }) as unknown as typeof fetch;
 }
 
+/** Search succeeds with `rooms`; the switch POST answers `answer`. */
+function mockSearchThenSwitch(rooms: unknown[], answer: { ok: boolean; body?: unknown }) {
+  global.fetch = vi.fn(async (input: unknown, init?: { method?: string }) => {
+    const url = String(input);
+    if (url.startsWith('/api/rooms?')) {
+      return { ok: true, json: async () => ({ data: rooms }) };
+    }
+    if (url === SWITCH_URL && init?.method === 'POST') {
+      return { ok: answer.ok, json: async () => answer.body ?? {} };
+    }
+    throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+  }) as unknown as typeof fetch;
+}
+
 function calls() {
   return (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
 }
@@ -48,12 +63,12 @@ function openConfirm() {
   fireEvent.click(screen.getByRole('button', { name: /Share with other teachers/ }));
 }
 
-beforeEach(() => { vi.restoreAllMocks(); refreshMock.mockClear(); });
+beforeEach(() => { vi.restoreAllMocks(); refreshMock.mockClear(); pushMock.mockReset(); });
 
 describe('ShareRoomButton', () => {
   it('offers the confirm when nothing is shared at the address', async () => {
     mockSearch([]);
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     fireEvent.click(screen.getByRole('button', { name: /Share with other teachers/ }));
 
@@ -75,7 +90,7 @@ describe('ShareRoomButton', () => {
   // and shares the duplicate the pre-check existed to stop.
   it('asks the search endpoint for this room\'s own postcode and address', async () => {
     mockSearch([]);
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     openConfirm();
     await screen.findByText(/Sharing a room is permanent/);
@@ -89,7 +104,7 @@ describe('ShareRoomButton', () => {
   // blocks on ANY search result, and could not tell the two behaviours apart.
   it('warns but still allows when only a same-street neighbour is shared', async () => {
     mockSearch([room({ id: 'neighbour', floor: '9', roomName: 'Attic' })]);
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     fireEvent.click(screen.getByRole('button', { name: /Share with other teachers/ }));
 
@@ -102,13 +117,60 @@ describe('ShareRoomButton', () => {
       room({ id: 'neighbour', floor: '9', roomName: 'Attic' }),
       room({ id: 'exact' }),
     ]);
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     fireEvent.click(screen.getByRole('button', { name: /Share with other teachers/ }));
 
     expect(await screen.findByText(/Already shared/)).toBeDefined();
     // Absent, not disabled — there is no state that would enable it.
     expect(screen.queryByRole('button', { name: /^Share room$/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Switch to shared room' })).toBeDefined();
+    expect(screen.queryByText(/Settings › Rooms › Add room/)).toBeNull();
+  });
+
+  it('posts the exact match to the switch route and goes to the rooms list', async () => {
+    mockSearchThenSwitch([room({ id: 'exact' })], {
+      ok: true, body: { data: { teacherRoomId: 'shared-link', moved: { templates: 0, classes: 1 } } },
+    });
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch to shared room' }));
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/settings/rooms'));
+    const post = calls().find(([url]) => url === SWITCH_URL);
+    expect(JSON.parse(String((post?.[1] as { body?: string }).body))).toEqual({ roomId: 'exact' });
+  });
+
+  it('treats an unchanged answer as a successful switch', async () => {
+    mockSearchThenSwitch([room({ id: 'exact' })], {
+      ok: true, body: { data: { teacherRoomId: 'shared-link' }, outcome: 'unchanged' },
+    });
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch to shared room' }));
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/settings/rooms'));
+  });
+
+  it.each([
+    ['NOT_SAME_ROOM', true],
+    ['NOW_SHARED', true],
+    ['NOT_FOUND', true],
+    ['ROOM_IN_USE', false],
+  ] as const)('shows the %s refusal inline (refresh: %s)', async (code, refreshes) => {
+    const message = `refusal for ${code}`;
+    mockSearchThenSwitch([room({ id: 'exact' })], { ok: false, body: { error: { code, message } } });
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch to shared room' }));
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', message);
+    expect(pushMock).not.toHaveBeenCalled();
+    if (refreshes) await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+    else expect(refreshMock).not.toHaveBeenCalled();
   });
 
   // A failed pre-check must not read as an all-clear. Rendering it as "no
@@ -124,7 +186,7 @@ describe('ShareRoomButton', () => {
   // anything about why the current one failed.
   it('says the duplicate check could not run, and still offers the confirm', async () => {
     global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch')) as unknown as typeof fetch;
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     openConfirm();
 
@@ -134,7 +196,7 @@ describe('ShareRoomButton', () => {
 
   it('does not promise sharing works when the server refused the check', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as unknown as typeof fetch;
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     openConfirm();
 
@@ -147,7 +209,7 @@ describe('ShareRoomButton', () => {
   // mutation the component exists to perform.
   it('posts to the publish route and refreshes on success', async () => {
     mockSearchThenPublish([], { ok: true });
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     openConfirm();
     fireEvent.click(await screen.findByRole('button', { name: /^Share room$/ }));
@@ -170,7 +232,7 @@ describe('ShareRoomButton', () => {
         error: { code: 'DUPLICATE_ROOM', message: 'A shared room at this address already exists' },
       },
     });
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     openConfirm();
     fireEvent.click(await screen.findByRole('button', { name: /^Share room$/ }));
@@ -188,7 +250,7 @@ describe('ShareRoomButton', () => {
       ok: true,
       body: { data: { id: 'mine', isPublic: true }, outcome: 'unchanged' },
     });
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     openConfirm();
     fireEvent.click(await screen.findByRole('button', { name: /^Share room$/ }));
@@ -205,7 +267,7 @@ describe('ShareRoomButton', () => {
     ['NOT_FOUND', 'This room no longer exists.'],
   ])('shows the %s refusal and refreshes the page', async (code, message) => {
     mockSearchThenPublish([], { ok: false, body: { error: { code, message } } });
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
     openConfirm();
     fireEvent.click(await screen.findByRole('button', { name: /^Share room$/ }));
@@ -225,7 +287,7 @@ describe('ShareRoomButton', () => {
       return { ok: true, json: async () => ({ data: [room({ id: 'exact' })] }) };
     }) as unknown as typeof fetch;
 
-    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
     openConfirm();
     fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
 

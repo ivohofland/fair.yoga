@@ -131,6 +131,7 @@ export default async function EditRoomPage({
         {canEditRoom && (
           <ShareRoomButton
             roomId={room.id}
+            teacherRoomId={teacherRoom.id}
             identity={{ address: room.address, floor: room.floor, roomName: room.roomName }}
             postcode={room.postcode}
           />
