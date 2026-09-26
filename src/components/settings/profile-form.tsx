@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { readErrorMessage } from '@/lib/client-errors';
+import type { TimeZoneOptions } from '@/lib/timezone-options';
 
 interface ProfileFormProps {
   teacherId: string;
@@ -21,6 +22,7 @@ interface ProfileFormProps {
     bankIban: string | null;
     bankAccountName: string | null;
   };
+  timeZoneOptions: TimeZoneOptions;
 }
 
 const CURRENCY_OPTIONS = [
@@ -37,41 +39,13 @@ const CURRENCY_OPTIONS = [
   { value: 'AUD', label: 'AUD ($)' },
 ];
 
-const TIMEZONE_OPTIONS = [
-  { value: 'Europe/London', label: 'London (GMT/BST)' },
-  { value: 'Europe/Amsterdam', label: 'Amsterdam (CET)' },
-  { value: 'Europe/Berlin', label: 'Berlin (CET)' },
-  { value: 'Europe/Paris', label: 'Paris (CET)' },
-  { value: 'Europe/Brussels', label: 'Brussels (CET)' },
-  { value: 'Europe/Zurich', label: 'Zurich (CET)' },
-  { value: 'Europe/Vienna', label: 'Vienna (CET)' },
-  { value: 'Europe/Stockholm', label: 'Stockholm (CET)' },
-  { value: 'Europe/Copenhagen', label: 'Copenhagen (CET)' },
-  { value: 'Europe/Oslo', label: 'Oslo (CET)' },
-  { value: 'Europe/Madrid', label: 'Madrid (CET)' },
-  { value: 'Europe/Rome', label: 'Rome (CET)' },
-  { value: 'Europe/Lisbon', label: 'Lisbon (WET)' },
-  { value: 'Europe/Warsaw', label: 'Warsaw (CET)' },
-  { value: 'Europe/Prague', label: 'Prague (CET)' },
-  { value: 'Europe/Helsinki', label: 'Helsinki (EET)' },
-  { value: 'Europe/Athens', label: 'Athens (EET)' },
-  { value: 'America/New_York', label: 'New York (EST)' },
-  { value: 'America/Chicago', label: 'Chicago (CST)' },
-  { value: 'America/Denver', label: 'Denver (MST)' },
-  { value: 'America/Los_Angeles', label: 'Los Angeles (PST)' },
-  { value: 'America/Toronto', label: 'Toronto (EST)' },
-  { value: 'America/Vancouver', label: 'Vancouver (PST)' },
-  { value: 'Australia/Sydney', label: 'Sydney (AEST)' },
-  { value: 'Australia/Melbourne', label: 'Melbourne (AEST)' },
-];
-
 const REMINDER_OPTIONS = [
   { value: 'morning_of', label: 'Morning of class' },
   { value: 'evening_before', label: 'Evening before' },
   { value: 'one_hour_before', label: '1 hour before' },
 ];
 
-export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
+export function ProfileForm({ teacherId, initial, timeZoneOptions }: ProfileFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
   const [error, setError] = useState('');
@@ -199,8 +173,15 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
           value={form.defaultTimezone}
           onChange={(e) => update('defaultTimezone', e.target.value)}
         >
-          {TIMEZONE_OPTIONS.map((opt) => (
+          {timeZoneOptions.standalone.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+          {timeZoneOptions.groups.map((group) => (
+            <optgroup key={group.region} label={group.region}>
+              {group.options.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </optgroup>
           ))}
         </Select>
         <Select

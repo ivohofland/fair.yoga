@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { timeZoneOptions } from '@/lib/timezone-options';
 import { PageHeader } from '@/components/layout/page-header';
 import { ProfileForm } from '@/components/settings/profile-form';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
@@ -17,6 +18,7 @@ export default async function ProfilePage() {
       <PageHeader title="Profile" backHref="/settings" backLabel="Settings" />
       <ProfileForm
         teacherId={teacher.id}
+        timeZoneOptions={timeZoneOptions(teacher.defaultTimezone, new Date())}
         initial={{
           firstName: teacher.firstName,
           lastName: teacher.lastName,
