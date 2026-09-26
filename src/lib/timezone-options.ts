@@ -4,10 +4,11 @@ export interface TimeZoneOption { value: string; label: string }
 export interface TimeZoneGroup { region: string; options: TimeZoneOption[] }
 
 /**
- * The Settings timezone picker's contents. `standalone` renders before the
- * groups and holds anything that belongs to no region — above all the stored
- * zone when the list lacks it, so a controlled `<select>` never shows blank
- * and a first touch never replaces a correct zone.
+ * The Settings timezone picker's contents. `standalone` holds the options
+ * outside the region groups: an enumerated zone with no `Region/` prefix, and
+ * the stored zone when the list lacks it — which is what keeps a controlled
+ * `<select>` from showing blank and a first touch from replacing a correct
+ * zone.
  */
 export interface TimeZoneOptions { standalone: TimeZoneOption[]; groups: TimeZoneGroup[] }
 

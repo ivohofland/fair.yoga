@@ -11,10 +11,12 @@
  * Those two fallbacks now log at `error`; this sweep is what finds the bad
  * value without anyone having to be reading logs at the moment it is used.
  *
- * WHAT CAN PUT A BAD VALUE THERE. The HTTP write paths parse the column
- * through `isValidTimeZone` — `updateTeacherSchema` refuses a zone it fails,
- * `teacherProfileSchema` drops one — so validated traffic cannot. Two things can: a direct database edit, which
- * is a normal operation on the single VPS this project targets, and a writer
+ * WHAT CAN PUT A BAD VALUE THERE. Every HTTP write path parses the column
+ * through `isValidTimeZone`, refusing or dropping a zone it fails (the write
+ * paths are listed in `docs/data-model.md`, Design Notes → "Teacher timezones
+ * are stored under their current IANA name"), so validated traffic cannot.
+ * Two things can: a direct database edit, which is a normal operation on the
+ * single VPS this project targets, and a writer
  * that bypasses the schema — `prisma/seed.ts` already writes the column
  * straight through Prisma, so that is a demonstrated shape rather than a
  * hypothetical one. The column is a bare `String`, so neither gets a

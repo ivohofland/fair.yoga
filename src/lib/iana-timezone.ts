@@ -8,9 +8,9 @@
  *
  * ITS OWN MODULE, WITH NO IMPORTS, and that is the whole reason this file
  * exists rather than the function living beside its consumers in
- * `timezone.ts`. It is needed on both sides of the client boundary —
- * `schemas.ts`, which many `'use client'` components import, reaches it from
- * the client side. `timezone.ts` imports `@/lib/log` (pino), so
+ * `timezone.ts`. It is imported from both sides of the client boundary;
+ * `schemas.ts`, which many `'use client'` components import, is what puts it
+ * on the client side. `timezone.ts` imports `@/lib/log` (pino), so
  * hosting the probe there would pull a server-only logger into the client
  * bundle. Same split, same reason, as `tiers.ts` against `tiers.server.ts`.
  *
@@ -38,9 +38,10 @@ export function isValidTimeZone(tz: string): boolean {
  * Current IANA spelling for each zone V8 still enumerates under a name IANA
  * has since changed. Keys are what `Intl.supportedValuesOf('timeZone')` and a
  * browser's `resolvedOptions().timeZone` may report; values are what the
- * database stores. Which pairs, and the command that re-derives them:
- * `docs/data-model.md`, Design Notes → "Teacher timezones are stored under
- * their current IANA name".
+ * database stores. Why these pairs, and the command that re-derives both name
+ * sets: `docs/data-model.md`, Design Notes → "Teacher timezones are stored
+ * under their current IANA name". That each pair names one zone is pinned by
+ * `iana-timezone.test.ts`.
  */
 export const MODERN_ZONE_NAMES: ReadonlyMap<string, string> = new Map([
   ['Africa/Asmera', 'Africa/Asmara'],
@@ -64,7 +65,7 @@ export const MODERN_ZONE_NAMES: ReadonlyMap<string, string> = new Map([
   ['Pacific/Truk', 'Pacific/Chuuk'],
 ]);
 
-/** `tz` under its current IANA name, or `tz` itself when it has no other. */
+/** `tz` renamed per `MODERN_ZONE_NAMES`, or unchanged when it is not a key there. */
 export function modernTimeZone(tz: string): string {
   return MODERN_ZONE_NAMES.get(tz) ?? tz;
 }
