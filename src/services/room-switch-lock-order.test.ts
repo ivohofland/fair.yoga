@@ -18,9 +18,19 @@
  * holder's own transaction once its lock has landed, and a `release` mode.
  * `'after-body'` releases once `body` has settled — the probe case, which
  * needs the switch still waiting when it checks the private link is free.
- * `'after-start'` releases once `body` has *started*, so the switch can run
- * to completion while the holder's `onHeld` write is still uncommitted, and
- * hands back `body`'s own result.
+ * `'after-start'` releases once `body` has been STARTED, while the holder's
+ * `onHeld` write is still uncommitted; `body` itself finishes only after that
+ * write commits, once `waitUntilBlockedBy` below has confirmed `body` is
+ * actually blocked on the held row and `release` has let the holder commit.
+ *
+ * NEITHER wait is a fixed sleep. `waitUntilBlockedBy` is
+ * `route-race.test.ts`'s own poll (`src/app/api/teacher-rooms/[id]/route-race.test.ts`):
+ * it reads `pg_stat_activity` for a backend genuinely blocked on the holder's
+ * pid, and throws if none appears within its bound. A fixed sleep here would
+ * let a test pass without racing — if the switch had not yet reached its wait
+ * by the time a sleep elapsed, the assertions after it would see an
+ * already-committed write and pass for the wrong reason, and a broken lock
+ * order would go undetected.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
@@ -40,35 +50,62 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/** The current connection's own backend pid, for `waitUntilBlockedBy` below. */
+async function ownPid(tx: Prisma.TransactionClient): Promise<number> {
+  const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+  if (row === undefined) throw new Error('pg_backend_pid returned no row');
+  return row.pid;
+}
+
+/**
+ * Resolves once some backend is waiting on a lock `holderPid` holds — the
+ * same poll `route-race.test.ts` uses. Deliberately not who is waiting: only
+ * the holder's own row contends in these cases, so any backend blocked on it
+ * is the one under test.
+ */
+async function waitUntilBlockedBy(probe: PrismaClient, holderPid: number): Promise<void> {
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline) {
+    const [row] = await probe.$queryRaw<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+       WHERE wait_event_type = 'Lock'
+         AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+    if ((row?.n ?? 0) > 0) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`nothing waited behind backend ${holderPid} within 1500ms`);
+}
+
 /**
  * Holds the row `lockSql` selects `FOR UPDATE` on a connection of its own,
- * runs `onHeld` inside that transaction, then runs `body`. The hold ends when
- * `body` settles ('after-body') or as soon as `body` has been started and
- * `startDelayMs` has passed ('after-start'). The ceiling turns a missing
- * bound into a failed assertion rather than a vitest timeout.
+ * runs `onHeld` inside that transaction, then runs `body` with the holder's
+ * own backend pid. The hold ends when `body` settles ('after-body') or once
+ * `body` has been started AND `waitUntilBlockedBy` has confirmed it is
+ * genuinely blocked on the held row ('after-start'). The ceiling turns a
+ * missing bound into a failed assertion rather than a vitest timeout.
  */
 async function withHeld<T>(
   lockSql: Prisma.Sql,
-  body: () => Promise<T>,
+  body: (holderPid: number) => Promise<T>,
   opts: {
     onHeld?: (tx: Prisma.TransactionClient) => Promise<void>;
     release: 'after-body' | 'after-start';
-    startDelayMs?: number;
   },
 ): Promise<T> {
   const holder = new PrismaClient();
   await holder.$connect();
-  let acquired!: () => void;
+  let acquired!: (pid: number) => void;
   let release!: () => void;
-  const acquiredSignal = new Promise<void>((r) => { acquired = r; });
+  const acquiredSignal = new Promise<number>((r) => { acquired = r; });
   const releaseSignal = new Promise<void>((r) => { release = r; });
   let ceiling: ReturnType<typeof setTimeout> | undefined;
   try {
     const held = holder.$transaction(
       async (tx) => {
         await tx.$queryRaw(lockSql);
+        const holderPid = await ownPid(tx);
         if (opts.onHeld) await opts.onHeld(tx);
-        acquired();
+        acquired(holderPid);
         await Promise.race([
           releaseSignal,
           new Promise<void>((r) => { ceiling = setTimeout(r, HOLD_CEILING_MS); }),
@@ -78,19 +115,19 @@ async function withHeld<T>(
       { timeout: HOLD_CEILING_MS + 10_000 },
     );
     held.catch(() => {});
-    await acquiredSignal;
+    const holderPid = await acquiredSignal;
 
     let result: T;
     if (opts.release === 'after-start') {
-      const pending = body();
+      const pending = body(holderPid);
       pending.catch(() => {});
-      await new Promise((r) => setTimeout(r, opts.startDelayMs ?? 300));
+      await waitUntilBlockedBy(prisma, holderPid);
       release();
       expect(await held).toBe('released');
       result = await pending;
     } else {
       try {
-        result = await body();
+        result = await body(holderPid);
       } finally {
         release();
       }
@@ -116,11 +153,12 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
     const prober = new PrismaClient();
     await prober.$connect();
     try {
-      await withHeld(Prisma.sql`SELECT id FROM "ClassTemplate" WHERE id = ${tpl.id} FOR UPDATE`, async () => {
+      await withHeld(Prisma.sql`SELECT id FROM "ClassTemplate" WHERE id = ${tpl.id} FOR UPDATE`, async (holderPid) => {
         const switching = switchToSharedRoom(prisma, {
           teacherId: f.teacherId, teacherRoomId: f.linkId, sharedRoomId: shared.id,
         });
-        await new Promise((r) => setTimeout(r, 800));
+        switching.catch(() => {});
+        await waitUntilBlockedBy(prisma, holderPid);
         await expect(prober.$transaction(async (tx) => {
           await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '500ms'");
           await tx.$queryRaw`SELECT id FROM "TeacherRoom" WHERE id = ${f.linkId} FOR UPDATE`;
@@ -134,9 +172,11 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
     expect((await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } })).isArchived).toBe(false);
   }, HELD_CASE_TIMEOUT_MS);
 
-  // The generator's interleaving: it holds a template on the private link and
-  // inserts a class there, then commits. The switch waited on that template,
-  // so the class is visible to step 4 and moves.
+  // What this pins: step 4 reads the moving set AFTER the wait, not before
+  // it. The switch's own step 1 pre-lock always blocks on this held template
+  // row regardless of order, so this case is not a lock-order probe the way
+  // the one above is — a generator class inserted while step 1 waits is still
+  // visible once step 4 finally runs its own predicate.
   it('moves a class the generator inserted while the switch waited on its template', async () => {
     const f = await fx.makeFixture(prisma);
     const shared = await addSharedTwin(f);
@@ -170,8 +210,8 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
       .toBe(result.teacherRoomId);
   }, HELD_CASE_TIMEOUT_MS);
 
-  // Review Focus 1: a cancel that commits while the switch waits on the class
-  // row. `entryLive` is re-checked on the locked row, so the class stays.
+  // A cancel that commits while the switch waits on the class row. `entryLive`
+  // is re-checked on the locked row, so the class stays.
   it('leaves a class cancelled while the switch waited on its row', async () => {
     const f = await fx.makeFixture(prisma);
     const shared = await addSharedTwin(f);
