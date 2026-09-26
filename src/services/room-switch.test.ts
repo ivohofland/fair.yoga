@@ -251,6 +251,24 @@ describe('switchToSharedRoom — refusals and the unchanged answer', () => {
     expect(second).toEqual({ ok: true, action: 'unchanged', teacherRoomId: first.teacherRoomId });
     expect((await linkOn(f.teacherId, shared.id))?.updatedAt).toEqual(linkBefore?.updatedAt);
   });
+
+  // Pins the unchanged answer sitting AFTER the identity refusal (guard order,
+  // spec §3.2 rows 6-7): a repeat whose private room no longer matches the
+  // shared one must not read as "already switched" just because nothing is
+  // left on the private link. Mutation: move the unchanged block above the
+  // `sameRoomIdentity` guard, and this answers `unchanged` instead.
+  it('answers not_same_room on a repeat once the private room\'s address has diverged', async () => {
+    const f = await makeFixture();
+    const shared = await addSharedTwin(f);
+    const first = await run(f, shared.id);
+    if (!first.ok) throw new Error('first switch failed');
+
+    await prisma.room.update({ where: { id: f.roomId }, data: { address: `Diverged ${fx.suffix}` } });
+
+    const second = await run(f, shared.id);
+
+    expect(second).toEqual({ ok: false, reason: 'not_same_room' });
+  });
 });
 
 describe('switchToSharedRoom — atomicity', () => {
