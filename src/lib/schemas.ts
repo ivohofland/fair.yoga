@@ -412,6 +412,10 @@ export const updateTeacherRoomSchema = z.object({
   equipmentNotes: z.string().nullable().optional(),
 }).strict();
 
+export const switchRoomSchema = z.object({
+  roomId: z.string().uuid(),
+}).strict();
+
 // ============================================================================
 // CLASSES
 // ============================================================================
