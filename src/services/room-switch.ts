@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type ClassStatus, type PrismaClient } from '@prisma/client';
 import { lockClassRowsOrdered, setLockTimeout, statusInList } from '@/lib/db-locks';
 import { sameRoomIdentity } from '@/lib/room-identity';
 import { log } from '@/lib/log';
@@ -50,10 +50,16 @@ class SwitchRefused extends Error {
   }
 }
 
+/** The statuses that move: `in_progress` is a class already under way, kept
+ *  out by decision (spec §1.3) and refused separately at step 4. */
+const MOVING_STATUSES = ['draft', 'open'] as const satisfies readonly ClassStatus[];
+
 /** The classes that move: upcoming, not cancelled. `entryLive` is the
- *  cancellation mirror on the `Class` row (#339). */
+ *  cancellation mirror on the `Class` row (#339). This is what the unchanged
+ *  check (below) counts; what actually moves is step 4's lock set once it has
+ *  refused `in_progress`, which is this same predicate. */
 const MOVING_CLASS_WHERE = {
-  status: { in: ['draft', 'open'] },
+  status: { in: [...MOVING_STATUSES] },
   entryLive: true,
 } satisfies Prisma.ClassWhereInput;
 
@@ -142,7 +148,7 @@ export async function switchToSharedRoom(
       // not from a join, so a cancel that lands while this waits is re-checked.
       const lockedIds = await lockClassRowsOrdered(tx, {
         where: Prisma.sql`c."teacherRoomId" = ${teacherRoomId}
-          AND c.status IN (${statusInList(['draft', 'open', 'in_progress'])})
+          AND c.status IN (${statusInList([...MOVING_STATUSES, 'in_progress'])})
           AND c."entryLive"`,
       });
       const running = await tx.class.count({
@@ -188,7 +194,9 @@ export async function switchToSharedRoom(
   } catch (e) {
     if (e instanceof SwitchRefused) {
       // Not decoration: `respondError` does not log, so this line is the only
-      // record of a refusal (the reasoning `setTeacherRoomArchived` states).
+      // record of the refusals thrown inside this transaction (guards 2-7 and
+      // `class_in_progress`). The pre-transaction `not_found`/`forbidden`
+      // refusals above return directly and are unlogged.
       log.info({ teacherId, teacherRoomId, sharedRoomId, reason: e.result.reason }, 'room switch refused');
       return e.result;
     }
