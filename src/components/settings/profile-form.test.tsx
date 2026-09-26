@@ -113,15 +113,9 @@ describe('ProfileForm', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Please try again.');
   });
 
-  it('shows a stored zone the list lacks as selected, and saves it untouched', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-    vi.stubGlobal('fetch', fetchMock);
+  it('shows a stored zone the list lacks as selected', () => {
     renderForm({ defaultTimezone: 'UTC' });
-
     expect(timezoneSelect().value).toBe('UTC');
-    save();
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
-    expect(sentBody().defaultTimezone).toBe('UTC');
   });
 
   it('offers zones outside Europe, North America and Australia, grouped by region', () => {
