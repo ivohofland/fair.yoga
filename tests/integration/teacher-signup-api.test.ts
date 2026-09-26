@@ -1112,10 +1112,11 @@ describe('POST /api/account/teacher-profile — session mode', () => {
   });
 
   /**
-   * Why the rename lives in the schema rather than the create: the unchanged
-   * check compares the parsed request against the stored row. A resubmit
-   * whose browser still reports the old spelling must compare equal to the
-   * row the first submit created, not be refused as a different request.
+   * The rename must happen before the unchanged check, not in the create
+   * alone: the check compares the route's `requested` profile against the
+   * stored row. A resubmit whose browser still reports the old spelling must
+   * compare equal to the row the first submit created, not be refused as a
+   * different request.
    */
   it('stores a renamed zone under its current name, and a resubmit in the old spelling is unchanged', async () => {
     const email = `teacher-signup-tz-renamed-${suffix}@test.local`;

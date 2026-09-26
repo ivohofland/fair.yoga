@@ -241,17 +241,15 @@ export const PAGE_SLUG_TAKEN_MESSAGE = 'That page slug is already taken.';
 
 export const teacherSignupSchema = z.object({ email: emailField }).strict();
 
-// #258: every teacher was hardcoded to Europe/Amsterdam and never asked.
-// This is a correctness input, not a display preference — it decides the
-// schedule window, both #249 past-start guards, auto-cancel, the completion
-// sweep and the reporting cutoff. Optional here so a browser that cannot
-// report one still signs up. A zone the browser DID report degrades to the
-// same fallback whenever `isValidTimeZone` refuses it — one the server does
-// not recognise (the browser's ICU is newer), or an offset identifier the
-// server recognises but refuses — rather than 400ing the whole signup with
-// no retry path: this is passive detection, not a value the teacher typed
-// and can correct. A zone it keeps is stored under its current IANA name
-// (`modernTimeZone`), the same as a Settings save.
+// The zone the signup form's browser detected (#258) — a correctness input,
+// not a display preference. Optional here so a browser that cannot report one
+// still signs up, and the route applies its fallback. A zone the browser DID
+// report degrades to that same fallback whenever `isValidTimeZone` refuses
+// it — one the server does not recognise (the browser's ICU is newer), or an
+// offset identifier the server recognises but refuses — rather than 400ing
+// the whole signup with no retry path: this is passive detection, not a value
+// the teacher typed and can correct. A zone it keeps passes through
+// `modernTimeZone`, as `updateTeacherSchema`'s does.
 const detectedTimezoneField = z
   .string()
   .transform((s) => (isValidTimeZone(s) ? modernTimeZone(s) : undefined));
