@@ -498,9 +498,9 @@ model Class {
   /// `ClassTemplate.roomArchived`, because a `draft` may legally sit in an
   /// archived room. `updateClass` never moves a class between rooms
   /// (`updateClassSchema` carries no `teacherRoomId`), and cancellation writes
-  /// the entry. The one path that does move a class, `switchToSharedRoom`
-  /// (`src/services/room-switch.ts`, issue 259), writes `roomArchived` from
-  /// the target link in the same statement.
+  /// the entry. `switchToSharedRoom` (`src/services/room-switch.ts`, issue
+  /// 259) is a mover that does: it writes `roomArchived` from the target link
+  /// in the same statement.
   ///
   /// They exist so a predicate spanning three tables can be checked against
   /// one row. That check is `Class_live_needs_open_room`, hand-authored in the
