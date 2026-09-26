@@ -1110,6 +1110,56 @@ describe('POST /api/account/teacher-profile — session mode', () => {
       await prisma.teacher.findUnique({ where: { pageSlug: alreadyTeacherSlug } }),
     ).toBeNull();
   });
+
+  /**
+   * Why the rename lives in the schema rather than the create: the unchanged
+   * check compares the parsed request against the stored row. A resubmit
+   * whose browser still reports the old spelling must compare equal to the
+   * row the first submit created, not be refused as a different request.
+   */
+  it('stores a renamed zone under its current name, and a resubmit in the old spelling is unchanged', async () => {
+    const email = `teacher-signup-tz-renamed-${suffix}@test.local`;
+    const slug = `tz-renamed-${suffix}`;
+    let accountId: string | undefined;
+    try {
+      // A student hat, as `sessionModeAccount` has: a session on an account
+      // with no live profile is not a session at all.
+      const account = await prisma.account.create({
+        data: {
+          email,
+          students: {
+            create: { firstName: 'Zone', lastName: 'Renamed', email, claimedAt: new Date() },
+          },
+        },
+        select: { id: true },
+      });
+      accountId = account.id;
+      const token = await seedSession(prisma, accountId);
+      const submit = (): Promise<Response> =>
+        fetch(`${BASE_URL}/api/account/teacher-profile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(token), ...freshIp() },
+          body: JSON.stringify({
+            firstName: 'Zone', lastName: 'Renamed', bio: '', pageSlug: slug,
+            defaultTimezone: 'Europe/Kiev',
+          }),
+        });
+
+      expect((await submit()).status).toBe(201);
+      const teacher = await prisma.teacher.findUniqueOrThrow({
+        where: { pageSlug: slug },
+        select: { id: true, defaultTimezone: true },
+      });
+      expect(teacher.defaultTimezone).toBe('Europe/Kyiv');
+
+      expect(await expectUnchanged(await submit())).toEqual({ teacherId: teacher.id });
+    } finally {
+      if (accountId) await prisma.session.deleteMany({ where: { accountId } });
+      if (accountId) await prisma.teacher.deleteMany({ where: { accountId } });
+      if (accountId) await prisma.student.deleteMany({ where: { accountId } });
+      if (accountId) await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+  });
 });
 
 /**

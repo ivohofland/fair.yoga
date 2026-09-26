@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { OnboardingStep } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
-import { isValidTimeZone } from '@/lib/iana-timezone';
+import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations } from '@/lib/class-economics';
 
 // ---------------------------------------------------------------------------
@@ -250,10 +250,11 @@ export const teacherSignupSchema = z.object({ email: emailField }).strict();
 // not recognise (the browser's ICU is newer), or an offset identifier the
 // server recognises but refuses — rather than 400ing the whole signup with
 // no retry path: this is passive detection, not a value the teacher typed
-// and can correct.
+// and can correct. A zone it keeps is stored under its current IANA name
+// (`modernTimeZone`), the same as a Settings save.
 const detectedTimezoneField = z
   .string()
-  .transform((s) => (isValidTimeZone(s) ? s : undefined));
+  .transform((s) => (isValidTimeZone(s) ? modernTimeZone(s) : undefined));
 
 /**
  * Creates the teacher profile. No `email` field: it comes from the consumed
@@ -285,7 +286,7 @@ export const updateTeacherSchema = z.object({
   bio: z.string().max(250).optional(),
   pageSlug: pageSlugField.optional(),
   defaultCurrency: z.string().optional(),
-  defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').optional(),
+  defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').transform(modernTimeZone).optional(),
   defaultReminder: z.enum(['morning_of', 'evening_before', 'one_hour_before']).optional(),
   bankIban: z.string().nullable().optional(),
   bankAccountName: z.string().nullable().optional(),
