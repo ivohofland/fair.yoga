@@ -33,18 +33,15 @@ import { isRecordNotFound } from '@/lib/api-errors';
  * `class-template-lifecycle`, which is where they used to sit.
  *
  * The CLASS doors are narrower: a class has no resume, since nothing pauses
- * a `Class`, and `updateClass` has no move — `updateClassSchema` carries no
- * `teacherRoomId`. That is not the whole of what moves a class, though:
- * `switchToSharedRoom` (`src/services/room-switch.ts`, issue 259) is a mover
- * that repoints a class's `teacherRoomId`, and in the course of a switch it
- * also archives the private link and un-archives the shared one. It runs its
- * own transaction, separate from this module's. The CLASS doors this module
- * gates are publish (`transitionClass`, `class-lifecycle.ts`) and the two
- * create paths (`POST /api/classes`, `class-generator.ts`), and the create
- * paths are the one place this pattern is not symmetric with the template's:
- * they COPY the room's `isArchived` onto the new row rather than asserting it
- * false, because a `draft` in an archived room is legal where a live
- * template in one is not.
+ * a `Class`, and `updateClass` never moves a class — `updateClassSchema`
+ * carries no `teacherRoomId`. Other writers can: `switchToSharedRoom`
+ * (`src/services/room-switch.ts`, issue 259) is one. The CLASS doors this
+ * module gates are publish (`transitionClass`, `class-lifecycle.ts`) and the
+ * two create paths (`POST /api/classes`, `class-generator.ts`), and the
+ * create paths are the one place this pattern is not symmetric with the
+ * template's: they COPY the room's `isArchived` onto the new row rather than
+ * asserting it false, because a `draft` in an archived room is legal where a
+ * live template in one is not.
  *
  * Framework-agnostic per CLAUDE.md: no HTTP, no `next/*`. The route is a thin
  * wrapper.
