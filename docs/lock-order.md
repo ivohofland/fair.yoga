@@ -2999,6 +2999,16 @@ establish:
   it can hold one of those terminal rows while this transaction holds P, or
   the reverse. **Accepted**: `40P01` on one side, nothing half-applied, the
   same as every other cycle this section records.
+- **`setTeacherRoomArchived(S, 'archived')`, run after this transaction has
+  already committed.** Its own pre-lock reaches the templates this
+  transaction just moved onto S the ordinary way — they are simply S's
+  templates now — but a generator concurrently holding one of THOSE
+  templates `FOR UPDATE` and inserting a `Class` row that takes `KEY SHARE`
+  on S is the ordinary #272 shape (the archive holds S waiting on the
+  template, the generator holds the template waiting on S), not a new one
+  this transaction introduces. **Accepted**, on #272's own grounds: `40P01`
+  on one side if the archive gets there first; otherwise the generator's
+  insert commits first and the archive's own CHECK answers `in_use`.
 
 Re-derive the writer these shapes are about with:
 
@@ -3196,8 +3206,10 @@ transaction's own `Class` lock while it does: the `ON UPDATE CASCADE` that
 rewrites every mirroring `Class` row when a room's `isArchived` flips, and the
 `ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`. (#272 had a
 third path on the `ClassTemplate` side — the archive's own explicit pre-lock —
-and this door has no counterpart, because it takes no `Class` lock of its
-own.)
+and the archive (`setTeacherRoomArchived`, issue 339) has no counterpart on
+this side, because it takes no `Class` lock of its own. `switchToSharedRoom`
+(issue 259) does take one through this index, at its step 4 — see "Switching
+to a shared room (#259)" below.)
 
 Measured before adding, the same way #272's design §7.3 asked for. Scratch
 database (`ethical_yoga_scratch_339`) seeded with one target `TeacherRoom`

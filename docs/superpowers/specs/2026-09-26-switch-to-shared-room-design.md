@@ -245,8 +245,8 @@ every row valid on its own.
 | 3 | Shared link S: insert if absent (`ON CONFLICT DO NOTHING`), then lock it. If it is archived, un-archive it. | `FOR UPDATE` on `TeacherRoom` S |
 | 4 | Lock P's classes that are `draft`, `open` or `in_progress` with `entryLive` true (not cancelled). If any is `in_progress`, refuse with `ROOM_IN_USE` and roll back. | `lockClassRowsOrdered` (ascending `id`, `db-locks.ts:698`) |
 | 5 | Move the locked ones (all `draft`/`open` once step 4 has refused `in_progress`): `teacherRoomId = S`, `roomArchived = false`, keyed on the locked id set alone | — |
-| 6 | Move every template on P: `teacherRoomId = S`, `roomArchived = false` | already held (step 1) |
-| 7 | Archive P: `isArchived = true` | already held (step 2) |
+| 6 | Move every template on P: `teacherRoomId = S`, `roomArchived = false` | already held, for every template step 1 locked; a template moved onto P between steps 1 and 2 is locked here for the FIRST time, after P (§4.1) |
+| 7 | Archive P: `isArchived = true` | already held (step 2); its own cascade then locks every `Class` row still on P — the terminal ones step 4 excluded — for the FIRST time, also after P (§4.1) |
 
 Why each position:
 
@@ -306,9 +306,11 @@ reach it.
 | Start sweep (`open → in_progress`) on a class in P | Serialises on the `Class` row at step 4 (the sweep holds `lockClassRow`). Sweep first: step 4 sees `in_progress` and refuses with `ROOM_IN_USE`. Switch first: the class is on S when the sweep starts it. Either way nothing is left half-moved. |
 | `completeClass` / `updateClass` on a class in P | Serialises on the `Class` row at step 4. A class that completes first drops out of the predicate (`FOR UPDATE` re-evaluates the `WHERE` on the new row version) and stays on P. |
 | `setTeacherRoomArchived` on P | Same order (templates → P). Whichever commits second sees the other's result. |
-| `setTeacherRoomArchived` on S | Takes S's templates then S — the reverse of this transaction's order when it reuses an archived S (step 3 locks S before un-archiving cascades onto S's own templates). A cycle needs a narrow precondition. `setTeacherRoomArchived`'s `unchanged` early return reads `isArchived` before opening its transaction, so a concurrent call whose pre-read already sees S archived never reaches its pre-lock at all — it must have read S live. That is only possible if a second, distinct archive of S commits in the window between that pre-read and this transaction's own step 3, which is what sees S archived. And S must hold a paused or archived template for step 3's un-archive to cascade onto anything (legal under the CHECK, which forbids only a live one on an archived room). Given that window, it ends in `40P01` on one side, with nothing half-applied on either. **Accepted** — narrower than the general order this design otherwise proves, and named with its `Class`-side counterpart in `lock-order.md` ("Switching to a shared room (#259)"). Outside that window it never wants P or P's templates, so there is no cycle; after our commit it counts the moved classes and answers `ROOM_IN_USE`. |
+| `setTeacherRoomArchived` on S | Takes S's templates then S — the reverse of this transaction's order when it reuses an archived S (step 3 locks S before un-archiving cascades onto S's own templates). A cycle needs a narrow precondition. `setTeacherRoomArchived`'s `unchanged` early return reads `isArchived` before opening its transaction, so a concurrent call whose pre-read already sees S archived never reaches its pre-lock at all — it must have read S live. That is only possible if a second, distinct archive of S commits in the window between that pre-read and this transaction's own step 3, which is what sees S archived. And S must hold a paused or archived template for step 3's un-archive to cascade onto anything (legal under the CHECK, which forbids only a live one on an archived room). Given that window, it ends in `40P01` on one side, with nothing half-applied on either. **Accepted** — narrower than the general order this design otherwise proves, and named with its `Class`-side counterpart in `lock-order.md` ("Switching to a shared room (#259)"). Outside that window it never wants P or P's templates, so there is no cycle. After our commit, `setTeacherRoomArchived(S, 'archived')` reaches the templates we just moved onto S the ordinary way — they are simply S's templates now — but a generator concurrently holding one of THOSE templates and inserting a `Class` row on S is the ordinary #272 shape, not a new one this transaction introduces: `40P01` on one side, or the archive's own CHECK answers `in_use` if the generator's insert lands first. **Accepted**, on #272's own grounds; named in the same `lock-order.md` section. |
 | A teacher-wide multi-class locker (for example `withdrawWaitingEntriesForTeacher`) while S is being un-archived | Un-archiving S at step 3 cascades onto S's own `Class` rows before step 4 locks P's. That is two ascending runs, not one, so a locker taking the teacher's classes in one ascending run can in principle cross it. The shape is the same one `setTeacherRoomArchived(…, 'unarchived')` already has, and it exists only when the reused link is archived. Postgres resolves any cycle with `40P01` on one side, and nothing is half-applied. **Accepted**, and named in the `lock-order.md` section. |
 | The teacher edits P's `Room` address | Not locked. No path in `src/` locks a `Room` row, and adding one is a new lock node. The identity check reads the committed row at step 2. An edit landing after that read is the teacher's own concurrent edit, and the move still lands on a room that matched when checked. **Accepted**, and named here. |
+| A generator holding a template `FOR UPDATE` that arrives on P between steps 1 and 2, then inserting a `Class` row on P | Step 6 locks that template for the FIRST time, after P — the reverse of the templates-before-P order (1 → 2), for that one row. Against the generator holding the template and waiting on P, this transaction holds P and waits on the template: `40P01` on one side, nothing half-applied. **Accepted**, narrower than the general order — it exists only for a template arriving inside this transaction's own step 1-2 window. Named in `lock-order.md` ("Switching to a shared room (#259)"). |
+| `withdrawWaitingEntriesForTeacher` (or another teacher-wide multi-class locker) holding a terminal `Class` row still on P | Step 7's archive cascade locks every `Class` row still referencing P, not only the ones step 4 locked — a second, unfiltered `Class` run this transaction takes only after P. A locker holding one of those terminal rows while this transaction holds P (or the reverse) ends in `40P01` on one side, nothing half-applied. **Accepted**. Named in `lock-order.md` ("Switching to a shared room (#259)"). |
 
 `lock-order.md` gets one new section stating the order in §4 and the
 no-new-edge argument, with the statement shapes. Its race harness follows
@@ -337,9 +339,10 @@ its heading and gains the action:
   `RoomList` shows each link's capacity and rate, so a clamped capacity or a
   reused link's rate is in front of the teacher on arrival, on the shared room's
   row, and the private room has gone to *Archived rooms*.
-- `NOT_SAME_ROOM`, `NOW_SHARED` and `ROOM_IN_USE` show their message inline in
-  the existing `role="alert"` slot. `NOT_SAME_ROOM` and `NOW_SHARED` also call
-  `router.refresh()`, because the page's picture of the room is what went stale
+- `NOT_SAME_ROOM`, `NOW_SHARED`, `NOT_FOUND` and `ROOM_IN_USE` show their
+  message inline in the existing `role="alert"` slot. `NOT_SAME_ROOM`,
+  `NOW_SHARED` and `NOT_FOUND` also call `router.refresh()`, because the
+  page's picture of the room is what went stale
   (`server-snapshot-props-go-stale`). `ROOM_IN_USE` does not: nothing on the
   page is stale, and the teacher just tries again later.
 - The near-match (warn) branch is unchanged. A same-street room with a
@@ -364,9 +367,11 @@ Each guard is **mutation-tested**: break it, record the exact failure, restore.
 1a. **A running class refuses the switch.** Add an `in_progress` class to the
    same fixture: 409 `ROOM_IN_USE`, and every row is exactly where it was,
    P still unarchived and no S link created. Mutations: add `in_progress` to
-   the moved set, and the class moves where it should have refused. Drop the
-   refusal, and step 7 fails with a 23514 that surfaces as a 500. Both are
-   recorded.
+   the moved set (`MOVING_CLASS_WHERE`), and the class moves where it should
+   have refused. Drop the refusal instead: step 4's lock set already includes
+   `in_progress`, and step 5 moves every locked id, so with the refusal gone
+   the running class moves onto S along with the rest and the switch
+   succeeds — it does not fail with a 23514. Both are recorded.
 2. **Every template moves**: active, paused and archived. Mutation: filter the
    template move to live rules, and the archived one stays.
 3. **Atomic.** A failure injected after step 5 leaves P unarchived, no S link
@@ -395,8 +400,9 @@ Each is corrected by replacing it, not annotating it:
 - `schema.prisma` `Class` mirror docblock: "no path moves a class between rooms".
   One path does now, and it writes the mirror itself.
 - `room-archive.ts:35-37`: "a class never changes rooms".
-- `class-lifecycle.ts:1098`: the note on `teacherRoomId` as a column no edit
-  touches. Still true of `updateClass`, but the wording must not claim more.
+- `class-lifecycle.ts:1098`: measured — this is a column census (#270's
+  unclassified-column count, `teacherRoomId` among them) and makes no claim
+  about which paths move it. No change needed.
 - `share-room-button.tsx:44-45`, `room-match-list.tsx:11-13`,
   `room-search.ts:17-20`: each says "#259, not built".
 - `lock-order.md`, the `TeacherRoom → Class` counterparty section: restated
