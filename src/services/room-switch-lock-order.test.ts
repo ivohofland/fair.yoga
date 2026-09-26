@@ -38,11 +38,14 @@ import { fixtureRun } from '../../tests/room-fixtures';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { switchToSharedRoom } from './room-switch';
+import { claimTemplateForGeneration, generateInstancesForTemplate } from './class-generator';
+import type { GenerationResult } from '@/lib/generation';
 
 const prisma = new PrismaClient();
 const fx = fixtureRun('rswl');
 const HELD_CASE_TIMEOUT_MS = 20_000;
 const HOLD_CEILING_MS = 4_000;
+const BLOCKED_POLL_BOUND_MS = 1_500;
 
 beforeAll(async () => { await prisma.$connect(); });
 afterAll(async () => {
@@ -64,7 +67,7 @@ async function ownPid(tx: Prisma.TransactionClient): Promise<number> {
  * is the one under test.
  */
 async function waitUntilBlockedBy(probe: PrismaClient, holderPid: number): Promise<void> {
-  const deadline = Date.now() + 1_500;
+  const deadline = Date.now() + BLOCKED_POLL_BOUND_MS;
   while (Date.now() < deadline) {
     const [row] = await probe.$queryRaw<Array<{ n: number }>>`
       SELECT count(*)::int AS n FROM pg_stat_activity
@@ -73,7 +76,20 @@ async function waitUntilBlockedBy(probe: PrismaClient, holderPid: number): Promi
     if ((row?.n ?? 0) > 0) return;
     await new Promise((r) => setTimeout(r, 25));
   }
-  throw new Error(`nothing waited behind backend ${holderPid} within 1500ms`);
+  throw new Error(`nothing waited behind backend ${holderPid} within ${BLOCKED_POLL_BOUND_MS}ms`);
+}
+
+/**
+ * The backend pids currently blocked by `holderPid` — the same predicate
+ * `waitUntilBlockedBy` polls, returning the pids instead of a count. Used
+ * once a wait has already been confirmed, to name which backend it was.
+ */
+async function blockedPids(probe: PrismaClient, holderPid: number): Promise<number[]> {
+  const rows = await probe.$queryRaw<Array<{ pid: number }>>`
+    SELECT pid FROM pg_stat_activity
+     WHERE wait_event_type = 'Lock'
+       AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+  return rows.map((r) => r.pid);
 }
 
 /**
@@ -245,5 +261,80 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
 
     expect(result).toMatchObject({ ok: true, action: 'switched', moved: { classes: 0 } });
     expect((await prisma.class.findUniqueOrThrow({ where: { id: open.id } })).teacherRoomId).toBe(f.linkId);
+  }, HELD_CASE_TIMEOUT_MS);
+
+  // Spec §6 item 8, the SWITCH-FIRST half (the generator-first half is the
+  // "moves a class the generator inserted while the switch waited on its
+  // template" case above). The switch takes T's step-1 pre-lock, then P and
+  // S, then blocks at step 4 on a held class C — parking it with T still
+  // held. The REAL generator claim for T
+  // (`claimTemplateForGeneration`/`generateInstancesForTemplate`,
+  // `class-generator.ts`) is started while the switch is parked like that: it
+  // takes the same `FOR UPDATE OF tpl` the switch's step 1 already holds, so
+  // it blocks on the switch rather than on C — confirmed by
+  // `waitUntilBlockedBy` against the switch's own backend pid, not a fixed
+  // sleep. Only once that is confirmed does the holder release, letting the
+  // switch finish (steps 4-7) and commit; the generator's claim then
+  // unblocks, re-reads T under its own fresh lock, and generates into the
+  // window against the row the switch just moved.
+  //
+  // `dayOfWeek` is offset three days from today's weekday so the generated
+  // occurrence can never land on C's date (always today + 21 days, the same
+  // weekday as today) and be skipped as an overlap.
+  //
+  // Mutation to record: move room-switch.ts's step-1 template pre-lock to
+  // after step 4. The switch then takes P and S and blocks on C WITHOUT
+  // holding T, so the generator's claim for T proceeds immediately instead of
+  // blocking on the switch — this test's own `waitUntilBlockedBy(prisma,
+  // switchPid)` times out instead of resolving.
+  it('generates onto the shared room when the generator claims T while the switch is parked on it', async () => {
+    const f = await fx.makeFixture(prisma);
+    const shared = await addSharedTwin(f);
+    const dayOfWeek = (new Date().getUTCDay() + 3) % 7;
+    const tpl = await fx.addTemplate(prisma, f, { isActive: true, isArchived: false, dayOfWeek });
+    const open = await fx.addClass(prisma, f, 'open', { daysAhead: 21 });
+
+    let switching!: ReturnType<typeof switchToSharedRoom>;
+    let generating!: Promise<GenerationResult>;
+
+    const parked = await withHeld(
+      Prisma.sql`SELECT id FROM "Class" WHERE id = ${open.id} FOR UPDATE`,
+      async (holderPid) => {
+        switching = switchToSharedRoom(prisma, {
+          teacherId: f.teacherId, teacherRoomId: f.linkId, sharedRoomId: shared.id,
+        });
+        switching.catch(() => {});
+        await waitUntilBlockedBy(prisma, holderPid);
+        const [switchPid] = await blockedPids(prisma, holderPid);
+        if (switchPid === undefined) {
+          throw new Error('no backend found blocked on the held class — the switch is not parked');
+        }
+
+        generating = prisma.$transaction(async (tx) => {
+          const fresh = await claimTemplateForGeneration(tx, tpl.id);
+          if (!fresh) throw new Error('generator claim found the template ineligible');
+          return generateInstancesForTemplate(tx, fresh, new Date());
+        }, { timeout: 10_000 });
+        generating.catch(() => {});
+        await waitUntilBlockedBy(prisma, switchPid);
+        return 'both parked';
+      },
+      { release: 'after-body' },
+    );
+    expect(parked).toBe('both parked');
+
+    const switchResult = await switching;
+    expect(switchResult).toMatchObject({ ok: true, action: 'switched' });
+    if (!switchResult.ok) throw new Error('unreachable');
+
+    const genResult = await generating;
+    expect(genResult.created).toBeGreaterThan(0);
+
+    const created = await prisma.class.findMany({
+      where: { calendarEntry: { scheduleRuleId: tpl.scheduleRuleId } },
+      select: { teacherRoomId: true },
+    });
+    expect(created.length).toBeGreaterThan(0);
+    for (const c of created) expect(c.teacherRoomId).toBe(switchResult.teacherRoomId);
   }, HELD_CASE_TIMEOUT_MS);
 });
