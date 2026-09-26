@@ -2904,14 +2904,93 @@ edit catch in the `PUT` on the same file, which covers a template moved onto an
 archived room. The other two belong to different writes entirely, and are named
 here so this section is not mistaken for a census of the constraint: `POST
 /api/class-templates`, where a template is created live onto an archived room,
-and `archiveRoom` (`room-archive.ts`), where the room is the thing being
-archived out from under a live template. Neither is a further door onto a
-resume.
+and `setTeacherRoomArchived` (`room-archive.ts`), where the room is the thing
+being archived out from under a live template. Neither is a further door onto
+a resume.
 
 The unqualified `grep -rn 'ClassTemplate_live_needs_open_room' src/ prisma/`
 answers a different question: it returns 21 lines across 12 files — the
 migration, the schema comment, the tests, and the prose about all of it — which
 is the constraint's whole footprint rather than the set of sites that refuse.
+
+## Switching to a shared room (#259)
+
+`switchToSharedRoom` (`room-switch.ts`) moves a teacher off a private
+`TeacherRoom` P onto the already-shared `TeacherRoom` S with the same room
+identity. The guards are
+`docs/superpowers/specs/2026-09-26-switch-to-shared-room-design.md` §4; this
+section is the lock order alone. One `$transaction`, `setLockTimeout` first:
+
+| Step | What | Lock |
+|---|---|---|
+| 1 | Lock every `ClassTemplate` with `teacherRoomId = P` | `FOR UPDATE`, ascending `id` |
+| 2 | Lock P, re-read it and its room, re-run every guard against what is locked | `FOR UPDATE` on `TeacherRoom` P |
+| 3 | S: insert if absent (`ON CONFLICT DO NOTHING`), then lock it; un-archive it if it was archived | `FOR UPDATE` on `TeacherRoom` S |
+| 4 | Lock P's classes that are `draft`, `open` or `in_progress` and live (`entryLive`) | `lockClassRowsOrdered`, ascending `id` (`db-locks.ts`) |
+| 5–7 | Move the locked classes onto S, move every template on P onto S, archive P | already held (steps 2–4) |
+
+Two edges here are not new shapes — each is an existing edge this file already
+states, carried into a transaction that touches both a template family and a
+class family at once:
+
+- **`ClassTemplate` before `TeacherRoom` P (1 → 2)** is
+  `setTeacherRoomArchived`'s own pre-lock order ("The room mirror's foreign
+  keys are wait edges (#272)" above), against the same generator hold and for
+  the same reason: locking P before its templates would let the generator's
+  `ClassTemplate FOR UPDATE` → `Class` `KEY SHARE` on P close a cycle against
+  it.
+- **`TeacherRoom` S before `Class` (3 → 4)** is "creation's `TeacherRoom →
+  Class`" — the same order `POST /api/classes`'s `FOR KEY SHARE` pre-read
+  uses ahead of its own insert ("`TeacherRoom → Class` has one writer since
+  #259, and it adds no wait edge" above). Step 5 is the first `UPDATE`
+  anywhere in `src/` that writes `Class.teacherRoomId`, and its foreign-key
+  `KEY SHARE` on S is satisfied by the lock step 3 already holds, so it waits
+  on nothing new.
+
+Two shapes are accepted rather than closed. Both involve S rather than P, so
+neither is inside the templates-before-P order above, which is built for P
+alone:
+
+- **Un-archiving S (step 3) cascades onto S's own `Class` rows before step 4
+  locks P's** — two ascending `Class` runs in one transaction, not one, so a
+  teacher-wide multi-class locker taking its rows in a single ascending run
+  (`withdrawWaitingEntriesForTeacher`, for example) can in principle
+  interleave between them. The same shape `setTeacherRoomArchived(…,
+  'unarchived')` already has on its own.
+- **Un-archiving S also cascades onto S's own `ClassTemplate` rows, and does
+  so AFTER the `TeacherRoom` S lock (step 3) — the reverse of
+  `setTeacherRoomArchived`'s templates-then-link order.** A paused or
+  archived template may legally sit on an archived room —
+  `ClassTemplate_live_needs_open_room` only forbids a LIVE one on an archived
+  room — so a reused S that is archived can hold templates for this cascade
+  to reach. A concurrent `setTeacherRoomArchived(S, 'archived')` locks S's
+  templates first and S second; this transaction locks S first and S's
+  templates second when S is reused archived. Two transactions taking the
+  same two locks in opposite orders is exactly what Postgres's deadlock
+  detector exists for: it ends in `40P01` on one side, with nothing
+  half-applied on either. **Accepted**, on the same grounds as the `Class`
+  cascade above — it exists only when the reused link is archived and that
+  archived link also holds a paused or archived template, narrower than the
+  P-side order this section otherwise proves.
+
+Re-derive the writer these two edges are about with:
+
+    grep -n "data: { teacherRoomId: target.id" src/services/room-switch.ts
+
+which returns the `Class` `updateMany` (step 5) and the `ClassTemplate`
+`updateMany` (step 6) — the write the first bullet above reasons about and the
+write the templates-before-P order (1 → 2) already covers.
+
+Pinned by `room-switch-lock-order.test.ts`: one case shows P still free while
+the switch waits on one of its templates — moving the step-1 pre-lock to after
+step 2 makes the probe that checks this time out instead; a second shows a
+class the generator inserted onto P while the switch waited on that same
+template still gets moved, because the switch's own wait is what makes the
+insert visible to step 4; a third shows a class cancelled while the switch
+waits on its own row stays on P — `entryLive` is re-checked on the row this
+transaction holds, not read through a join evaluated before the wait, the same
+distinction "`CalendarEntry → Class` is backward, and safe because every
+writer takes `Class` first" above draws for a different writer.
 
 ## The class mirrors' foreign keys are wait edges (#339)
 
@@ -3009,13 +3088,16 @@ database, the same backward write resolves instead of rejecting — the
 assertion reddens, because there is no longer anything on the `Class` row for
 it to wait on.
 
-### `TeacherRoom → Class` has no live counterparty, and that was checked rather than assumed
+### `TeacherRoom → Class` has one writer since #259, and it adds no wait edge
 
-The archive's write now cascades into every `Class` row in the room as well as
+The archive's write cascades into every `Class` row in the room as well as
 every `ClassTemplate` row, so in principle a transaction holding a `Class` row
 lock that then waited on `TeacherRoom` would be the counterparty — the same
 shape #272 closed on the `ClassTemplate` side with the pre-lock in
-`setTeacherRoomArchived`. There is no such transaction:
+`setTeacherRoomArchived`. Until #259 there was no such transaction anywhere in
+`src/`; `switchToSharedRoom`'s own step 5 (`room-switch.ts`, "Switching to a
+shared room" below) is now exactly that shape, and it is why the claim is
+"adds no wait edge" rather than "no counterparty":
 
 - An `UPDATE` on `Class` triggers no referential check at all unless it
   touches an FK column, because Postgres only fires an FK trigger for the
@@ -3025,10 +3107,19 @@ shape #272 closed on the `ClassTemplate` side with the pre-lock in
   `status`; `completeClass`'s terminal write additionally sets
   `effectiveTeacherRate`, `totalStudents` and `totalRevenue`. Neither set
   touches the room mirror, so neither takes a room lock despite the hold.
-- The only statement taking `KEY SHARE` on a room via this key is a `Class`
-  **INSERT** (`api/classes/route.ts`, `class-generator.ts`), and an insert
-  holds no prior lock on the row it is creating — nothing for the archive to
-  wait behind. `api/classes/route.ts` reads the room with an explicit
+- `switchToSharedRoom`'s step 5 is the first `UPDATE` anywhere in `src/` that
+  writes `Class.teacherRoomId` — every other writer above only reads that
+  column or leaves it untouched. Writing it takes `KEY SHARE` on the shared
+  link S via the same foreign key, on rows this transaction already holds
+  `FOR UPDATE` from step 4. The KEY SHARE is not a new wait: step 3 already
+  holds S `FOR UPDATE`, ahead of step 4, so the write's own foreign-key check
+  is satisfied by a lock this transaction took on itself earlier in the same
+  transaction, not one it waits on now.
+- Besides that one case, the only statement taking `KEY SHARE` on a room via
+  this key is a `Class` **INSERT** (`api/classes/route.ts`,
+  `class-generator.ts`), and an insert holds no prior lock on the row it is
+  creating — nothing for the archive to wait behind. `api/classes/route.ts`
+  reads the room with an explicit
   `SELECT "isArchived" FROM "TeacherRoom" … FOR KEY SHARE` ahead of that
   insert — the only explicit `FOR KEY SHARE` anywhere in `src/` — held for the
   length of the create transaction and, deliberately, with no
