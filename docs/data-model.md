@@ -31,7 +31,7 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | custom_domain | string, nullable | |
 | **Defaults** | | |
 | default_currency | string, default 'EUR' | |
-| default_timezone | string | e.g. 'Europe/Amsterdam' |
+| default_timezone | string | IANA identifier, e.g. 'Europe/Amsterdam', stored under its current IANA name — see Design Notes |
 | default_reminder | enum: morning_of, evening_before, 1h_before | Pre-fills class reminder setting |
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
@@ -796,6 +796,18 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - **StudioClass** is intentionally disconnected from Room and Student entities. It's a simple log entry for the teacher's calendar and income reporting.
 - **Notification** uses a polymorphic recipient (teacher or student) so both user types share the same inbox infrastructure.
 - **rental_rate** on TeacherRoom is private to each teacher — never exposed to other teachers using the same room.
+- **Teacher timezones are stored under their current IANA name** (#258). V8 enumerates CLDR's identifiers, which never change once published; IANA renames. So `Intl.supportedValuesOf('timeZone')` and a browser's detected zone can spell one zone two ways (`Europe/Kiev`, `Europe/Kyiv`). Both write paths — signup's detected zone and `PUT /api/teachers/[id]` — pass the value through `modernTimeZone` (`src/lib/iana-timezone.ts`), so the column and the Settings picker hold one spelling. The pairs are the renames, **not** tzdata's link targets: IANA also links a zone to another country's when their clocks have agreed since 1970, and following those would file Asmara under Nairobi, Pohnpei under Guadalcanal, Chuuk under Port Moresby and Atikokan under Panama. Measured 2026-09-26, Node v22.22.2 against tzdata `2026c`: V8's 418 zones and `zone.tab`'s 418 differ in 19 names each way, one-for-one, and those 19 are `MODERN_ZONE_NAMES`. Re-derive:
+
+  ```sh
+  node -e "
+  const fs=require('fs');
+  const tab=new Set(fs.readFileSync('/usr/share/zoneinfo/zone.tab','utf8').split('\n')
+    .filter(l=>l&&!l.startsWith('#')).map(l=>l.split('\t')[2]));
+  const v8=Intl.supportedValuesOf('timeZone');
+  console.log(v8.filter(z=>!tab.has(z)));             // old spellings (the keys)
+  console.log([...tab].filter(z=>!v8.includes(z)));   // current names (the values)
+  "
+  ```
 - **Authentication** hangs off the Account entity: one Account per human owns the authenticated email, sessions, and passkeys. Teacher and Student are profiles optionally linked to it, each holding at most one LIVE profile per account — enforced by the partial unique indexes `Teacher_account_live_unique` and `Student_account_live_unique` (`ON ("accountId") WHERE "deletedAt" IS NULL`) — a dual-role person (a teacher who attends classes) has one account with both profiles. Student.account_id is nullable for an unclaimed Student, which only a walk-in creates (Invitation → Walk-ins); otherwise a CRM contact is an Invitation until accepted (#166), and accepting requires an already-signed-in account. An unclaimed row is claimed on first sign-in by `resolveOrClaimAccount` (`src/lib/auth/account.ts`) when no Account holds its address yet, or by an account adding the student hat (`api/account/student-profile`); the case neither reaches is unreachable today (Walk-ins, residual 4). Profile email fields are denormalized copies set at link time.
 - **The `20260916165852_live_profile_unique_per_account` migration's own header cites `20260811202634_teacher_slot_unique_indexes` as its precedent for `prisma migrate diff` not seeing a partial index** — correction recorded here because the migration file is immutable. That precedent no longer holds as stated: `20260811202634` declared six partial indexes, and the four SLOT ones among them are gone — folded into `ScheduleRule_teacher_slot_excl` (#298) and `CalendarEntry_teacher_slot_excl` (#327), see `docs/lock-order.md`. The live precedent is `Room_private_identity_unique` (#196, updated in #260 to `lower(trim(...))` expression keys) — one of the two `Room` identity indexes that migration also created, neither of which has since been dropped or folded into anything else.
 - **Both `accountId` columns lost their plain btree index when `Teacher_accountId_key`/`Student_accountId_key` were dropped for the partial indexes above.** `Teacher_account_live_unique`/`Student_account_live_unique` cover only `WHERE "deletedAt" IS NULL`, so a predicate on `accountId` without that clause seq-scans — including Postgres's own referential-integrity check when an `Account` row is hard-deleted. Production never hard-deletes an `Account`, and both `gdpr.ts` liveness reads carry the `deletedAt` filter, so the affected callers today are test teardowns and `prisma/seed.ts`.
