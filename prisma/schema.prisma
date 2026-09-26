@@ -384,6 +384,9 @@ model ClassTemplate {
   /// `ruleLive` is maintained by Postgres alone; `roomArchived` is written by
   /// the create and move paths in `class-template-lifecycle.ts`, which assert
   /// or copy the room's value, and Postgres is what refuses them if they lie.
+  /// `switchToSharedRoom` (`src/services/room-switch.ts`, issue 259) is
+  /// another writer: it moves every template on a link and writes
+  /// `roomArchived` from the target link in the same statement.
   ///
   /// `ruleLive` mirrors `ScheduleRule.live`; `roomArchived` mirrors
   /// `TeacherRoom.isArchived`. Neither can drift from what it mirrors, and that
@@ -425,11 +428,12 @@ model ClassTemplate {
   /// The REFERENCING side of `ClassTemplate_teacherRoomId_roomArchived_fkey`.
   /// PostgreSQL indexes the referenced side automatically and this one never,
   /// so without this every room archive and every room delete reads the whole
-  /// table. Three paths use it, two of them while holding locks: the archive's
-  /// pre-lock (`room-archive.ts`), the `ON UPDATE CASCADE` that rewrites the
-  /// mirrors when a room's `isArchived` flips, and the `ON DELETE RESTRICT`
-  /// check. Measured rather than added on principle (issue 272 design §7.3) —
-  /// the numbers are in `docs/lock-order.md`.
+  /// table. Used while holding locks by at least the archive's own pre-lock
+  /// (`room-archive.ts`) and the switch's step-1 pre-lock
+  /// (`src/services/room-switch.ts`, issue 259), plus the `ON UPDATE CASCADE`
+  /// that rewrites the mirrors when a room's `isArchived` flips and the
+  /// `ON DELETE RESTRICT` check. Measured rather than added on principle
+  /// (issue 272 design §7.3) — the numbers are in `docs/lock-order.md`.
   @@index([teacherRoomId, roomArchived])
 }
 
@@ -553,9 +557,11 @@ model Class {
   /// PostgreSQL indexes the referenced side automatically and this one never,
   /// so without this both the `ON UPDATE CASCADE` that rewrites the mirror
   /// when a room's `isArchived` flips and the `ON DELETE RESTRICT` check read
-  /// the whole table. This door has no explicit application pre-lock the way
-  /// `ClassTemplate`'s sibling index does — issue 339's archive takes no
-  /// `Class` lock of its own. Measured rather than added on principle (issue
+  /// the whole table. Issue 339's archive takes no explicit `Class` lock of
+  /// its own the way `ClassTemplate`'s sibling index has one —
+  /// `switchToSharedRoom` (`src/services/room-switch.ts`, issue 259) does
+  /// take one, through this index, at its step 4. Measured rather than added
+  /// on principle (issue
   /// 272 design §7.3, the same precedent) — the numbers are in
   /// `docs/lock-order.md`, the `#339` section.
   @@index([teacherRoomId, roomArchived])
