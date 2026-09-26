@@ -99,8 +99,17 @@ async function withHeld<T>(
   const acquiredSignal = new Promise<number>((r) => { acquired = r; });
   const releaseSignal = new Promise<void>((r) => { release = r; });
   let ceiling: ReturnType<typeof setTimeout> | undefined;
+  // Declared outside the `try` so the `finally` below can always reach them —
+  // `route-race.test.ts`'s own shape (`behindUncommittedDelete`): `release()`
+  // runs unconditionally there, and `holding`/`pending` are awaited via
+  // `Promise.allSettled` before the connection is dropped. Without that, a
+  // `body` that throws before calling `release()` itself — `waitUntilBlockedBy`
+  // timing out is exactly this path — leaves the holder's transaction still
+  // open when `$disconnect` runs, and its own promise still unawaited.
+  let held: Promise<string> | undefined;
+  let pending: Promise<T> | undefined;
   try {
-    const held = holder.$transaction(
+    held = holder.$transaction(
       async (tx) => {
         await tx.$queryRaw(lockSql);
         const holderPid = await ownPid(tx);
@@ -117,24 +126,26 @@ async function withHeld<T>(
     held.catch(() => {});
     const holderPid = await acquiredSignal;
 
-    let result: T;
     if (opts.release === 'after-start') {
-      const pending = body(holderPid);
+      pending = body(holderPid);
       pending.catch(() => {});
       await waitUntilBlockedBy(prisma, holderPid);
       release();
       expect(await held).toBe('released');
-      result = await pending;
-    } else {
-      try {
-        result = await body(holderPid);
-      } finally {
-        release();
-      }
-      expect(await held).toBe('released');
+      return await pending;
     }
+
+    pending = body(holderPid);
+    const result = await pending;
+    release();
+    expect(await held).toBe('released');
     return result;
   } finally {
+    // Unconditional, and first: whatever failed above — including
+    // `waitUntilBlockedBy`'s own timeout — must not leave the holder waiting
+    // on a release signal nobody sends.
+    release();
+    await Promise.allSettled([held, pending]);
     if (ceiling) clearTimeout(ceiling);
     await holder.$disconnect();
   }
