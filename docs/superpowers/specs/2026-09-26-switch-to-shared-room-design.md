@@ -243,8 +243,8 @@ every row valid on its own.
 | 1 | Lock every `ClassTemplate` with `teacherRoomId = P` | `FOR UPDATE`, ascending `id`. The same statement as `setTeacherRoomArchived`'s pre-lock (`room-archive.ts:231-234`). |
 | 2 | Lock the private link P, then re-read it with its room. Re-run guards 2-7 against what was read. | `FOR UPDATE` on `TeacherRoom` P |
 | 3 | Shared link S: insert if absent (`ON CONFLICT DO NOTHING`), then lock it. If it is archived, un-archive it. | `FOR UPDATE` on `TeacherRoom` S |
-| 4 | Lock P's classes that are `draft`, `open` or `in_progress` and not cancelled. If any is `in_progress`, refuse with `ROOM_IN_USE` and roll back. | `lockClassRowsOrdered` (ascending `id`, `db-locks.ts:698`) |
-| 5 | Move the locked `draft`/`open` ones: `teacherRoomId = S`, `roomArchived = false`, by the locked id set | — |
+| 4 | Lock P's classes that are `draft`, `open` or `in_progress` with `entryLive` true (not cancelled). If any is `in_progress`, refuse with `ROOM_IN_USE` and roll back. | `lockClassRowsOrdered` (ascending `id`, `db-locks.ts:698`) |
+| 5 | Move the locked ones (all `draft`/`open` once step 4 has refused `in_progress`): `teacherRoomId = S`, `roomArchived = false`, keyed on the locked id set alone | — |
 | 6 | Move every template on P: `teacherRoomId = S`, `roomArchived = false` | already held (step 1) |
 | 7 | Archive P: `isArchived = true` | already held (step 2) |
 
@@ -266,6 +266,19 @@ Why each position:
   and nothing switches the other way. A double-submitted switch serialises on P
   at step 2. The known two-room opposite-order shape (`lock-order.md`
   :2814-2819) needs a transaction that takes S before P, and none does.
+- **Step 4 filters on `Class.entryLive`, not on a join to `CalendarEntry`.**
+  `lockClassRowsOrdered`'s `where` docblock (`db-locks.ts`, `ClassLockSource`)
+  warns that a joined table's mutable column is evaluated against a pre-wait
+  snapshot `EvalPlanQual` does not re-fetch. A class cancelled while step 4
+  waits on its row would still read as uncancelled and enter the lock set.
+  Step 5 keys its write on the locked ids alone, so the write set is a
+  structural subset of the lock set, as that docblock recommends. The lock set
+  therefore has to be exact, and a joined predicate would move the cancelled
+  class.
+  `entryLive` is the cancellation mirror on the `Class` row itself (#339), kept
+  by `ON UPDATE CASCADE` from the entry. A cancellation therefore rewrites the
+  very row step 4 locks, and the re-check sees it. The transaction writes no
+  entry column, so its `VERDICT (#327)` is "classes only, no entries".
 - **Un-archive S before moving (3 → 5).** A live row moved onto an archived link
   fails the CHECK (23514).
 - **Move before archiving (5, 6 → 7).** Archiving P while a live row still
@@ -294,6 +307,7 @@ reach it.
 | `completeClass` / `updateClass` on a class in P | Serialises on the `Class` row at step 4. A class that completes first drops out of the predicate (`FOR UPDATE` re-evaluates the `WHERE` on the new row version) and stays on P. |
 | `setTeacherRoomArchived` on P | Same order (templates → P). Whichever commits second sees the other's result. |
 | `setTeacherRoomArchived` on S | Takes S's templates then S. It never wants P or P's templates, so there is no cycle. After our commit it counts the moved classes and answers `ROOM_IN_USE`. |
+| A teacher-wide multi-class locker (for example `withdrawWaitingEntriesForTeacher`) while S is being un-archived | Un-archiving S at step 3 cascades onto S's own `Class` rows before step 4 locks P's. That is two ascending runs, not one, so a locker taking the teacher's classes in one ascending run can in principle cross it. The shape is the same one `setTeacherRoomArchived(…, 'unarchived')` already has, and it exists only when the reused link is archived. Postgres resolves any cycle with `40P01` on one side, and nothing is half-applied. **Accepted**, and named in the `lock-order.md` section. |
 | The teacher edits P's `Room` address | Not locked. No path in `src/` locks a `Room` row, and adding one is a new lock node. The identity check reads the committed row at step 2. An edit landing after that read is the teacher's own concurrent edit, and the move still lands on a room that matched when checked. **Accepted**, and named here. |
 
 `lock-order.md` gets one new section stating the order in §4 and the
