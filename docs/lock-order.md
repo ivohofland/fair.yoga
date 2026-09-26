@@ -2822,7 +2822,7 @@ Probe results for both shapes are in PR #340.
 
 `ClassTemplate_teacherRoomId_roomArchived_fkey` is a foreign key, and
 PostgreSQL indexes a foreign key's REFERENCED side automatically and its
-referencing side never. Three paths read that side, two of them while holding
+referencing side never. Paths that read that side, most of them while holding
 locks:
 
 - the archive's pre-lock (`setTeacherRoomArchived`), inside the transaction
@@ -2830,6 +2830,9 @@ locks:
 - the `ON UPDATE CASCADE` that rewrites every mirroring child when a room's
   `isArchived` flips, in that same transaction
 - the `ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`
+- `switchToSharedRoom`'s own step-1 pre-lock (`src/services/room-switch.ts`,
+  issue 259), the same shape as the archive's pre-lock above, added after the
+  measurement below and not part of it
 
 Measured before adding the index rather than after, because the design asked
 for a measurement rather than an index on principle (#272 design §7.3).
