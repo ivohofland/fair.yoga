@@ -8,9 +8,9 @@
  *
  * ITS OWN MODULE, WITH NO IMPORTS, and that is the whole reason this file
  * exists rather than the function living beside its consumers in
- * `timezone.ts`. Two callers need it from opposite sides of the client
- * boundary: `schemas.ts`, which many `'use client'` components import, and the
- * server-only audit sweep. `timezone.ts` imports `@/lib/log` (pino), so
+ * `timezone.ts`. It is needed on both sides of the client boundary —
+ * `schemas.ts`, which many `'use client'` components import, reaches it from
+ * the client side. `timezone.ts` imports `@/lib/log` (pino), so
  * hosting the probe there would pull a server-only logger into the client
  * bundle. Same split, same reason, as `tiers.ts` against `tiers.server.ts`.
  *

@@ -1488,8 +1488,8 @@ export async function updateClass(
       // Logged, because a 409 with prose in it is all the teacher gets and
       // nothing else records why. The refusal has three causes that look
       // identical from outside — the start really has passed, the teacher's
-      // `defaultTimezone` is wrong (it is hardcoded to `Europe/Amsterdam` at
-      // signup, so it is wrong for most of the world), or `startTime` is
+      // `defaultTimezone` is wrong (signup stores the browser's zone, or
+      // `Europe/Amsterdam` when it reported none), or `startTime` is
       // unreadable and `startsInPast` failed closed. `timeZone` and
       // `startInstant` together separate all three by grep, which is the whole
       // of this VPS's observability.
