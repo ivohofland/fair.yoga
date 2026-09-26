@@ -86,9 +86,6 @@ export const LOCK_CONTENTION_TESTS = [
   // it true, and the membership test keeps the two from parting company. Only
   // what is NOT visible from a single file is recorded here.
   'src/services/room-archive-lock-order.test.ts',
-  // #259: the switch's own lock-timing race, staged the same way as
-  // `room-archive-lock-order.test.ts`, whose header carries the shared
-  // reasoning.
   'src/services/room-switch-lock-order.test.ts',
   'src/services/class-lifecycle-tier-guard.test.ts',
   'src/lib/db-locks-lock-order.test.ts',
