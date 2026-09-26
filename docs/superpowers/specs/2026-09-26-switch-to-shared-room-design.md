@@ -206,7 +206,7 @@ with a new `switchRoomSchema` in `schemas.ts`.
 | 7 | already switched: private link archived, no template or upcoming class on it, and an unarchived link on the shared room | 200 `respondUnchanged`, carrying the shared link |
 | 8 | a class on the private link is `in_progress` and not cancelled (§2 rule 2) | 409 `ROOM_IN_USE` |
 | 9 | lock timeout | the existing 503 path |
-| — | otherwise | 200 applied: `{ teacherRoom, moved: { templates, classes }, reusedLink, capacityClamped: { from, to } \| null }` |
+| — | otherwise | 200 applied: `{ teacherRoomId, moved: { templates, classes }, reusedLink, capacityClamped: { from, to } \| null }` |
 
 Row 4 reuses `NOW_SHARED` rather than adding a code. It already means "this room
 is shared now". The only way to get there is the teacher sharing the room in
