@@ -32,9 +32,11 @@ import { isRecordNotFound } from '@/lib/api-errors';
  * constraint that enforces it. Issue 272 moved resume and move OUT of
  * `class-template-lifecycle`, which is where they used to sit.
  *
- * The CLASS doors are narrower: a class has no resume and no move, since
- * nothing pauses a `Class` and `updateClassSchema` carries no
- * `teacherRoomId` — a class never changes rooms. They are publish
+ * The CLASS doors are narrower: a class has no resume, since nothing pauses
+ * a `Class`. `updateClass` has no move either — `updateClassSchema` carries
+ * no `teacherRoomId`. The one path that does move a class,
+ * `switchToSharedRoom` (`src/services/room-switch.ts`, issue 259), is its own
+ * transaction and archives no room itself. They are publish
  * (`transitionClass`, `class-lifecycle.ts`) and the two create paths
  * (`POST /api/classes`, `class-generator.ts`), and the create paths are the
  * one place this pattern is not symmetric with the template's: they COPY the
