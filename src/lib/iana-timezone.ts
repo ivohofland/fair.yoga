@@ -33,3 +33,38 @@ export function isValidTimeZone(tz: string): boolean {
     return false;
   }
 }
+
+/**
+ * Current IANA spelling for each zone V8 still enumerates under a name IANA
+ * has since changed. Keys are what `Intl.supportedValuesOf('timeZone')` and a
+ * browser's `resolvedOptions().timeZone` may report; values are what the
+ * database stores. Which pairs, and the command that re-derives them:
+ * `docs/data-model.md`, Design Notes → "Teacher timezones are stored under
+ * their current IANA name".
+ */
+export const MODERN_ZONE_NAMES: ReadonlyMap<string, string> = new Map([
+  ['Africa/Asmera', 'Africa/Asmara'],
+  ['America/Buenos_Aires', 'America/Argentina/Buenos_Aires'],
+  ['America/Catamarca', 'America/Argentina/Catamarca'],
+  ['America/Coral_Harbour', 'America/Atikokan'],
+  ['America/Cordoba', 'America/Argentina/Cordoba'],
+  ['America/Godthab', 'America/Nuuk'],
+  ['America/Indianapolis', 'America/Indiana/Indianapolis'],
+  ['America/Jujuy', 'America/Argentina/Jujuy'],
+  ['America/Louisville', 'America/Kentucky/Louisville'],
+  ['America/Mendoza', 'America/Argentina/Mendoza'],
+  ['Asia/Calcutta', 'Asia/Kolkata'],
+  ['Asia/Katmandu', 'Asia/Kathmandu'],
+  ['Asia/Rangoon', 'Asia/Yangon'],
+  ['Asia/Saigon', 'Asia/Ho_Chi_Minh'],
+  ['Atlantic/Faeroe', 'Atlantic/Faroe'],
+  ['Europe/Kiev', 'Europe/Kyiv'],
+  ['Pacific/Enderbury', 'Pacific/Kanton'],
+  ['Pacific/Ponape', 'Pacific/Pohnpei'],
+  ['Pacific/Truk', 'Pacific/Chuuk'],
+]);
+
+/** `tz` under its current IANA name, or `tz` itself when it has no other. */
+export function modernTimeZone(tz: string): string {
+  return MODERN_ZONE_NAMES.get(tz) ?? tz;
+}

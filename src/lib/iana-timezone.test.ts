@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidTimeZone } from './iana-timezone';
+import { isValidTimeZone, modernTimeZone, MODERN_ZONE_NAMES } from './iana-timezone';
 
 describe('isValidTimeZone', () => {
   it('accepts a current IANA identifier', () => {
@@ -52,6 +52,41 @@ describe('isValidTimeZone', () => {
   it('accepts the IANA zones at both ends of the offset range', () => {
     for (const zone of ['Etc/GMT+12', 'Etc/GMT-14', 'Pacific/Kiritimati', 'Europe/Amsterdam', 'UTC']) {
       expect(isValidTimeZone(zone)).toBe(true);
+    }
+  });
+});
+
+const resolve = (tz: string): string =>
+  new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
+
+describe('modernTimeZone', () => {
+  it('renames an old spelling to its current IANA name', () => {
+    expect(modernTimeZone('Europe/Kiev')).toBe('Europe/Kyiv');
+    expect(modernTimeZone('Asia/Calcutta')).toBe('Asia/Kolkata');
+    expect(modernTimeZone('America/Buenos_Aires')).toBe('America/Argentina/Buenos_Aires');
+  });
+
+  it('returns every other zone unchanged, including valid aliases it does not rename', () => {
+    for (const zone of ['Europe/Amsterdam', 'Europe/Kyiv', 'UTC', 'CET', 'US/Eastern', 'Not/AZone']) {
+      expect(modernTimeZone(zone)).toBe(zone);
+    }
+  });
+
+  /**
+   * A rename, not a tzdata link: IANA links some zones to another country's
+   * (Asmera → Nairobi), and following one would move a teacher across a
+   * border. `Intl` resolving both sides to one zone is what a rename is.
+   */
+  it('pairs each old spelling with a name Intl treats as the same zone', () => {
+    for (const [old, current] of MODERN_ZONE_NAMES) {
+      expect(isValidTimeZone(current), current).toBe(true);
+      expect(resolve(current), `${old} → ${current}`).toBe(resolve(old));
+    }
+  });
+
+  it('never maps to a name it would rename again', () => {
+    for (const current of MODERN_ZONE_NAMES.values()) {
+      expect(MODERN_ZONE_NAMES.has(current), current).toBe(false);
     }
   });
 });
