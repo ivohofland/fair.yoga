@@ -2935,8 +2935,8 @@ being archived out from under a live template. Neither is a further door onto
 a resume.
 
 The unqualified `grep -rn 'ClassTemplate_live_needs_open_room' src/ prisma/`
-answers a different question: it returns 21 lines across 12 files — the
-migration, the schema comment, the tests, and the prose about all of it — which
+answers a different question: it returns 24 lines across 13 files — the
+two migrations, the schema comment, the tests, and the prose about all of it — which
 is the constraint's whole footprint rather than the set of sites that refuse.
 
 ## Switching to a shared room (#259)
