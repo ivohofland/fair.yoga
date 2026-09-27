@@ -236,4 +236,46 @@ describe('every act that makes something live un-archives the roster link (#265)
     await expectApplied(acceptRes, 200);
     await expectReactivated(studentId);
   });
+
+  it('a teacher roster add un-archives the link', async () => {
+    const { studentId } = await makeArchivedStudent();
+    const classId = await makeClass(5);
+
+    const res = await fetch(`${BASE_URL}/api/registrations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken), ...freshIp() },
+      body: JSON.stringify({ classId, studentId }),
+    });
+    await expectApplied(res, 201);
+    await expectReactivated(studentId);
+  });
+
+  // Today's pre-transaction check (`route.ts`'s `targetOf`) — stays green
+  // throughout this plan; the in-transaction `'missing'` branch it guards
+  // against is reachable only by an unlink landing between that check and
+  // the lock, which an integration test cannot pause the server to force.
+  it('a roster add for a student not on the roster refuses, no registration', async () => {
+    const classId = await makeClass(5);
+    studentCounter += 1;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Unlinked',
+        lastName: `Student${studentCounter}`,
+        email: `archive-reactivate-unlinked-${suffix}-${studentCounter}@test.local`,
+        incomeTier: 3,
+      },
+      select: { id: true },
+    });
+    fillerStudentIds.push(student.id);
+
+    const res = await fetch(`${BASE_URL}/api/registrations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken), ...freshIp() },
+      body: JSON.stringify({ classId, studentId: student.id }),
+    });
+    expect(res.status).toBe(403);
+    expect(
+      await prisma.registration.count({ where: { classId, studentId: student.id } }),
+    ).toBe(0);
+  });
 });

@@ -20,7 +20,7 @@ import { formatDayHeader } from '@/lib/format';
 import { createBulkNotifications } from '@/services/notifications';
 import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
 import { resolveInvitationOnLink } from '@/services/link-consent';
-import { linkTeacherStudent } from '@/services/roster-link';
+import { activateTeacherStudentLink, linkTeacherStudent } from '@/services/roster-link';
 import {
   resolveWalkInStudent,
   completeWalkIn,
@@ -61,6 +61,12 @@ class ClassStatusError extends Error {
  * the walk-in window.
  */
 class WalkInWindowClosedError extends Error {}
+
+/**
+ * Thrown inside the transaction when a roster add's link, found by the
+ * pre-transaction check, is gone by the time this call locks it.
+ */
+class NotInRosterError extends Error {}
 
 const WALK_IN_REFUSALS: Record<WalkInRefusal, CodedRefusal> = {
   NOT_FOUND: codedRefusal('NOT_FOUND', 'Contact not found.'),
@@ -359,6 +365,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         });
       }
 
+      // A roster add links no one — the teacher may not create a link — but it
+      // makes the pair live, so it takes the link's lock and un-archives it like
+      // every linking act. `'missing'`: the student unlinked after the check
+      // above; the registration rolls back.
+      if (target.kind === 'roster') {
+        const activation = await activateTeacherStudentLink(tx, {
+          teacherId: cls.calendarEntry.teacherId,
+          studentId,
+        });
+        if (activation === 'missing') throw new NotInRosterError();
+      }
+
       // A self-booking student joins the teacher's roster: this link is how
       // the CRM sees them and how per-teacher privacy gets its scope.
       if (target.kind === 'self') {
@@ -487,6 +505,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
     if (err instanceof WalkInWindowClosedError) {
       return respondError('Walk-ins can be added once the class is about to start.', 409, 'WALK_IN_WINDOW_CLOSED');
+    }
+    if (err instanceof NotInRosterError) {
+      return respondError('Student is not in your roster', 403);
     }
     // This check matches the column set of `Registration @@unique([classId,
     // studentId])`, met when a twin request booked this student into this
