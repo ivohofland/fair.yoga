@@ -16,6 +16,7 @@ import {
 import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
+import { lockTeacherStudentLink } from './roster-link';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -218,28 +219,60 @@ export async function markPaymentOverdue(
  *
  * One function for both settled states because they reverse identically: both
  * mean "this is no longer owed", and undoing either means "it is owed again".
+ *
+ * Reopening makes the payment outstanding again, so it un-archives the
+ * student's link with this teacher too (`docs/data-model.md`, TeacherStudent)
+ * — an outstanding payment is not "nothing live". The link's row lock is
+ * taken before the payment's CAS, the lock order this plan fixes
+ * (`docs/lock-order.md`). A missing link (student never on the roster, or
+ * unlinked since) writes nothing; an `unchanged` reopen leaves the link
+ * exactly as it was, since nothing about the payment newly became live.
  */
 export async function reopenPayment(
   db: PrismaClient,
   paymentId: string,
 ): Promise<PaymentOutcome> {
-  const result = await db.payment.updateMany({
-    where: { id: paymentId, status: { in: ['paid', 'not_charged'] } },
-    data: { status: 'pending', method: null, paidAt: null, notChargedAt: null },
+  return db.$transaction(async (tx): Promise<PaymentOutcome> => {
+    const found = await tx.payment.findUnique({
+      where: { id: paymentId },
+      select: {
+        registration: {
+          select: {
+            studentId: true,
+            class: { select: { calendarEntry: { select: { teacherId: true } } } },
+          },
+        },
+      },
+    });
+    if (!found) return { kind: 'refused', refusal: PAYMENT_GONE };
+
+    const link = await lockTeacherStudentLink(tx, {
+      teacherId: found.registration.class.calendarEntry.teacherId,
+      studentId: found.registration.studentId,
+    });
+
+    const result = await tx.payment.updateMany({
+      where: { id: paymentId, status: { in: ['paid', 'not_charged'] } },
+      data: { status: 'pending', method: null, paidAt: null, notChargedAt: null },
+    });
+
+    if (result.count === 0) {
+      const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+      if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
+      // Both outstanding statuses are "unpaid" to the teacher, and
+      // `markOverduePayments` may have turned a reopened 'pending' into
+      // 'overdue' before this call arrived.
+      if (isOutstanding(payment.status)) return { kind: 'unchanged', payment };
+      return { kind: 'refused', refusal: PAYMENT_CHANGED };
+    }
+
+    if (link?.isArchived) {
+      await tx.teacherStudent.update({ where: { id: link.id }, data: { isArchived: false } });
+    }
+
+    const updated = await tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    return { kind: 'applied', payment: updated };
   });
-
-  if (result.count === 0) {
-    const payment = await db.payment.findUnique({ where: { id: paymentId } });
-    if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
-    // Both outstanding statuses are "unpaid" to the teacher, and
-    // `markOverduePayments` may have turned a reopened 'pending' into
-    // 'overdue' before this call arrived.
-    if (isOutstanding(payment.status)) return { kind: 'unchanged', payment };
-    return { kind: 'refused', refusal: PAYMENT_CHANGED };
-  }
-
-  const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
-  return { kind: 'applied', payment: updated };
 }
 
 /**
