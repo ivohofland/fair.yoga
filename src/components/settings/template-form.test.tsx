@@ -57,24 +57,47 @@ describe('TemplateForm', () => {
 
   const ROOM_A = '11111111-1111-4111-8111-111111111111';
   const ROOM_B = '22222222-2222-4222-8222-222222222222';
+  const ROOM_C = '33333333-3333-4333-8333-333333333333';
 
   /**
-   * Two offerable rooms, so a test can change the selection. `rentalRate`
-   * equals `initial.roomCost`, so `handleRoomChange` leaves the cost alone and
-   * a body assertion stays about the room.
+   * One `GET /api/teacher-rooms` row. The defaults — `rentalRate` equal to
+   * `initial.roomCost`, `capacityOverride` above `initial.maxStudents` — make
+   * `handleRoomChange` change nothing but the room, so a body assertion stays
+   * about the room unless a test overrides them.
    */
-  function stubFetchTwoRooms() {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        data: [
-          { id: ROOM_A, isArchived: false, capacityOverride: 30, rentalRate: 20, room: { roomName: 'Studio A', venueName: 'Main Venue' } },
-          { id: ROOM_B, isArchived: false, capacityOverride: 30, rentalRate: 20, room: { roomName: 'Studio B', venueName: 'Main Venue' } },
-        ],
-      }),
-    });
+  function roomRow(id: string, name: string, extra: { isArchived?: boolean; capacityOverride?: number; rentalRate?: number } = {}) {
+    return { id, isArchived: false, capacityOverride: 30, rentalRate: 20, room: { roomName: name, venueName: 'Main Venue' }, ...extra };
+  }
+
+  function roomsResponse(rows: ReturnType<typeof roomRow>[]) {
+    return { ok: true, json: async () => ({ data: rows }) };
+  }
+
+  /** Every fetch answers with `rows`, so a test can change the selection. */
+  function stubRooms(rows: ReturnType<typeof roomRow>[]) {
+    fetchMock.mockResolvedValue(roomsResponse(rows));
     vi.stubGlobal('fetch', fetchMock);
   }
+
+  function stubFetchTwoRooms() {
+    stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B')]);
+  }
+
+  /** What an edit of `initial` sends when the room is left alone. */
+  const EDIT_BODY_WITHOUT_ROOM = {
+    classType: 'Vinyasa',
+    description: 'Bring a mat.',
+    dayOfWeek: 2,
+    startTime: '09:30',
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 4,
+    maxStudents: 12,
+    cancelDeadline: 'HOURS_24',
+    autoCancelCheck: 'HOURS_2',
+  };
 
   /**
    * Returns the URL and method alongside the parsed body — not just the body
@@ -96,11 +119,10 @@ describe('TemplateForm', () => {
   }
 
   /**
-   * #685. An edit carries the room only when the teacher changed it. A room
-   * switch in another tab can move the template after this form loaded, and
-   * resending the loaded id would move it back — onto a room the switch
-   * archived. Every other field is still sent, which is what this `toEqual`
-   * pins for #85.
+   * #685. An edit leaves `teacherRoomId` out while the room field matches the
+   * stored room, so a tab loaded before a room switch cannot send the
+   * pre-switch room back. Every other field is sent; this `toEqual` pins that
+   * for #85.
    */
   it('leaves the room out of an edit whose room field was not changed', async () => {
     stubFetch();
@@ -108,20 +130,7 @@ describe('TemplateForm', () => {
     const { url, method, body } = await submit();
     expect(url).toBe('/api/class-templates/tpl-1');
     expect(method).toBe('PUT');
-    expect(body).toEqual({
-      classType: 'Vinyasa',
-      description: 'Bring a mat.',
-      dayOfWeek: 2,
-      startTime: '09:30',
-      durationMinutes: 60,
-      roomCost: 20,
-      minRate: 15,
-      targetRate: 25,
-      minStudents: 4,
-      maxStudents: 12,
-      cancelDeadline: 'HOURS_24',
-      autoCancelCheck: 'HOURS_2',
-    });
+    expect(body).toEqual(EDIT_BODY_WITHOUT_ROOM);
   });
 
   it('sends the room when the teacher changed it', async () => {
@@ -159,10 +168,10 @@ describe('TemplateForm', () => {
     expect(body).not.toHaveProperty('teacherRoomId');
   });
 
-  // The other direction: the server moved the room (a switch, seen through
-  // the refresh after this tab's own save) while the teacher left the field
-  // alone. The form adopts the new room, so the next save neither resends the
-  // old one nor shows a blank select where the old option was filtered out.
+  // The other direction: the stored room moved (a switch, seen through a
+  // refresh) while the teacher left the field alone. The form adopts it — the
+  // select shows the new room, and the next save leaves the room out instead
+  // of sending the old one back.
   it('adopts a room the server moved while the field was untouched', async () => {
     stubFetchTwoRooms();
     const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
@@ -183,12 +192,77 @@ describe('TemplateForm', () => {
       <TemplateForm
         mode="edit"
         templateId="tpl-1"
-        initial={{ ...initial, teacherRoomId: '33333333-3333-4333-8333-333333333333' }}
+        initial={{ ...initial, teacherRoomId: ROOM_C }}
       />,
     );
     const { method, body } = await submit();
     expect(method).toBe('PUT');
     expect(body.teacherRoomId).toBe(ROOM_B);
+  });
+
+  // Adoption compares against the PREVIOUS prop, not the one the tab mounted
+  // with: after the teacher's own room change is saved and refreshed in, a
+  // later server move is adopted like any other.
+  it("adopts a server move that follows the teacher's own saved room change", async () => {
+    stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B'), roomRow(ROOM_C, 'Studio C')]);
+    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio C/ });
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
+    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_C }} />);
+    expect(screen.getByLabelText('Room')).toHaveValue(ROOM_C);
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
+    expect(body).not.toHaveProperty('teacherRoomId');
+  });
+
+  // "Untouched" means the room still equals the previous prop, not that the
+  // select was never used: changed and changed back counts as untouched.
+  it('adopts a server move after the teacher changed the room and changed it back', async () => {
+    stubFetchTwoRooms();
+    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    const select = screen.getByLabelText('Room');
+    fireEvent.change(select, { target: { value: ROOM_B } });
+    fireEvent.change(select, { target: { value: ROOM_A } });
+    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    expect(select).toHaveValue(ROOM_B);
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
+    expect(body).not.toHaveProperty('teacherRoomId');
+  });
+
+  // Adoption moves the room id only. The template's cost and capacity are its
+  // own and a switch leaves them alone, so running `handleRoomChange`'s
+  // rewrite of them here would change fields the teacher never touched.
+  it("adopts the room without applying the new room's rate or capacity", async () => {
+    stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B', { rentalRate: 35, capacityOverride: 8 })]);
+    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
+    expect(body).toEqual(EDIT_BODY_WITHOUT_ROOM);
+  });
+
+  // The stale-tab shape: the tab loaded only the private room, and the switch
+  // archived it and created the shared link. The adopted room is offered only
+  // through the refetch the new `initial` triggers, which also drops the
+  // archived one.
+  it('refetches the rooms when the stored room moves, offering the new one and dropping the archived one', async () => {
+    fetchMock
+      .mockResolvedValueOnce(roomsResponse([roomRow(ROOM_A, 'Studio A')]))
+      .mockResolvedValue(roomsResponse([roomRow(ROOM_A, 'Studio A', { isArchived: true }), roomRow(ROOM_B, 'Studio B')]));
+    vi.stubGlobal('fetch', fetchMock);
+    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio A/ });
+    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    expect(screen.queryByRole('option', { name: /Studio A/ })).toBeNull();
+    expect(screen.getByLabelText('Room')).toHaveValue(ROOM_B);
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
+    expect(body).not.toHaveProperty('teacherRoomId');
   });
 
   it('trims classType and description before sending', async () => {

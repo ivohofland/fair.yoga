@@ -156,11 +156,11 @@ export const PUT = withErrorHandler(async (
   // `invalid_room` and cannot be outranked by the archived check, matching the
   // service's own ordering.
   //
-  // Gated on a CHANGE of room, not mere presence: a caller may send an
-  // unchanged `teacherRoomId` beside a pure description change — and an
-  // active template whose own room is archived (a pre-branch snapshot, spec
-  // section 10) would otherwise answer this 409 about a move the teacher did
-  // not make.
+  // Gated on a CHANGE of room, not mere presence: a caller may send the
+  // template's current `teacherRoomId` beside other edits, and staying on a
+  // room is not a move. A live template cannot sit on an archived room
+  // (`ClassTemplate_live_needs_open_room`), so the probe would not refuse that
+  // no-op today either; the gate keeps this refusal about moves regardless.
   if (data.teacherRoomId !== undefined) {
     const moving = await prisma.classTemplate.findUnique({
       where: { id },
