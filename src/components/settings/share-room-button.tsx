@@ -61,6 +61,13 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
   // already abandoned.
   const openId = useRef(0);
 
+  // Invalidates any search in flight, so it cannot land in a later open.
+  function closePanel() {
+    openId.current++;
+    setConfirming(false);
+    setCheck({ phase: 'searching' });
+  }
+
   async function handleOpen() {
     const id = ++openId.current;
     setConfirming(true);
@@ -126,10 +133,14 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
       }
       const { code, message } = await readError(res, 'Failed to switch rooms.');
       setError(message);
-      // These three mean the page describes a room that no longer looks the
-      // way it was rendered. ROOM_IN_USE does not: the teacher waits for the
-      // running class and tries again.
+      // These three mean something the panel was rendered from, this room or
+      // the match, has changed. The refresh replaces the props but not the
+      // cached search, so the panel closes as well: only a fresh search, run
+      // against the refreshed props, may offer a switch again. The message
+      // stays, rendered in the closed state. ROOM_IN_USE changes neither: the
+      // teacher waits for the running class and tries the same switch again.
       if (code === 'NOT_SAME_ROOM' || code === 'NOW_SHARED' || code === 'NOT_FOUND') {
+        closePanel();
         router.refresh();
       }
     } catch {
@@ -141,9 +152,12 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
 
   if (!confirming) {
     return (
-      <button type="button" onClick={handleOpen} className="text-teal text-sm text-left">
-        Share with other teachers
-      </button>
+      <div className="flex flex-col gap-3">
+        <button type="button" onClick={handleOpen} className="text-teal text-sm text-left">
+          Share with other teachers
+        </button>
+        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      </div>
     );
   }
 
@@ -158,7 +172,7 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
           <p className="text-brown text-sm">
             {exact.roomName || exact.venueName} at {exact.address} is already shared with all
             teachers. You can switch to it: your recurring classes and upcoming classes move
-            there, and this room is archived. Past classes stay with this room.
+            there, and this room is archived. Past and cancelled classes stay with this room.
           </p>
         </>
       ) : (
@@ -211,7 +225,7 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
         )}
         <Button
           variant="secondary"
-          onClick={() => { openId.current++; setConfirming(false); setCheck({ phase: 'searching' }); }}
+          onClick={() => { closePanel(); setError(''); }}
         >
           Cancel
         </Button>

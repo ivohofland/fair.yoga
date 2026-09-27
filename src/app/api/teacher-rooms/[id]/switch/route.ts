@@ -13,9 +13,9 @@ import { switchRoomSchema } from '@/lib/schemas';
 import { switchToSharedRoom } from '@/services/room-switch';
 import { ROOM_IN_USE_CODE } from '@/services/room-deletion';
 
-export const SWITCH_NOT_SAME_ROOM_MESSAGE =
+const SWITCH_NOT_SAME_ROOM_MESSAGE =
   "This room's address no longer matches the shared room. Check its details and try again.";
-export const SWITCH_CLASS_RUNNING_MESSAGE =
+const SWITCH_CLASS_RUNNING_MESSAGE =
   'A class is running in this room right now. You can switch once it has finished.';
 
 /**
@@ -44,13 +44,15 @@ export const POST = withErrorHandler(async (
     switch (result.action) {
       case 'switched':
         return respondOk({
-          teacherRoomId: result.teacherRoomId,
+          sharedTeacherRoomId: result.sharedTeacherRoomId,
           moved: result.moved,
           reusedLink: result.reusedLink,
           capacityClamped: result.capacityClamped,
         });
       case 'unchanged':
-        return respondUnchanged<{ teacherRoomId: string }>({ teacherRoomId: result.teacherRoomId });
+        return respondUnchanged<{ sharedTeacherRoomId: string }>({
+          sharedTeacherRoomId: result.sharedTeacherRoomId,
+        });
       default: {
         const unhandledSuccess: never = result;
         return unhandledSuccess;

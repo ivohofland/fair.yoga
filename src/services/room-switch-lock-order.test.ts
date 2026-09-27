@@ -234,7 +234,7 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
     expect(result).toMatchObject({ ok: true, action: 'switched' });
     if (!result.ok) throw new Error('unreachable');
     expect((await prisma.class.findUniqueOrThrow({ where: { id: generatedId } })).teacherRoomId)
-      .toBe(result.teacherRoomId);
+      .toBe(result.sharedTeacherRoomId);
   }, HELD_CASE_TIMEOUT_MS);
 
   // A cancel that commits while the switch waits on the class row. `entryLive`
@@ -335,6 +335,6 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
       select: { teacherRoomId: true },
     });
     expect(created.length).toBeGreaterThan(0);
-    for (const c of created) expect(c.teacherRoomId).toBe(switchResult.teacherRoomId);
+    for (const c of created) expect(c.teacherRoomId).toBe(switchResult.sharedTeacherRoomId);
   }, HELD_CASE_TIMEOUT_MS);
 });

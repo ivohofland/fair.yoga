@@ -74,9 +74,9 @@ describe('POST /api/teacher-rooms/[id]/switch', () => {
     });
 
     const first = await post(owner.token, link.id, { roomId: shared.id });
-    const body = (await expectApplied(first, 200)) as { teacherRoomId: string; moved: { classes: number } };
+    const body = (await expectApplied(first, 200)) as { sharedTeacherRoomId: string; moved: { classes: number } };
     expect(body.moved.classes).toBe(1);
-    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).teacherRoomId).toBe(body.teacherRoomId);
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).teacherRoomId).toBe(body.sharedTeacherRoomId);
 
     await expectUnchanged(await post(owner.token, link.id, { roomId: shared.id }));
   });

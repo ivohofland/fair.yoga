@@ -130,7 +130,7 @@ describe('ShareRoomButton', () => {
 
   it('posts the exact match to the switch route and goes to the rooms list', async () => {
     mockSearchThenSwitch([room({ id: 'exact' })], {
-      ok: true, body: { data: { teacherRoomId: 'shared-link', moved: { templates: 0, classes: 1 } } },
+      ok: true, body: { data: { sharedTeacherRoomId: 'shared-link', moved: { templates: 0, classes: 1 } } },
     });
     render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
@@ -144,7 +144,7 @@ describe('ShareRoomButton', () => {
 
   it('treats an unchanged answer as a successful switch', async () => {
     mockSearchThenSwitch([room({ id: 'exact' })], {
-      ok: true, body: { data: { teacherRoomId: 'shared-link' }, outcome: 'unchanged' },
+      ok: true, body: { data: { sharedTeacherRoomId: 'shared-link' }, outcome: 'unchanged' },
     });
     render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
 
@@ -169,8 +169,50 @@ describe('ShareRoomButton', () => {
 
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', message);
     expect(pushMock).not.toHaveBeenCalled();
-    if (refreshes) await waitFor(() => expect(refreshMock).toHaveBeenCalled());
-    else expect(refreshMock).not.toHaveBeenCalled();
+    if (refreshes) {
+      await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+      // `router.refresh()` replaces the props but not this component's state,
+      // so the cached match would survive it. The refused match must not stay
+      // on offer; the reason must stay on screen.
+      expect(screen.queryByRole('button', { name: 'Switch to shared room' })).toBeNull();
+      expect(screen.getByRole('alert')).toHaveProperty('textContent', message);
+    } else {
+      expect(refreshMock).not.toHaveBeenCalled();
+      // A running class changes nothing the panel was rendered from: the
+      // teacher waits and tries the same switch again.
+      expect(screen.getByRole('button', { name: 'Switch to shared room' })).toBeDefined();
+    }
+  });
+
+  // After a refusal that refreshes, the only way back to a switch is a fresh
+  // search, run against the refreshed props. Here the shared room has gone, so
+  // the new search finds nothing and the panel offers a share instead.
+  it('offers a switch again only from a fresh search after a refreshing refusal', async () => {
+    let searchRooms: unknown[] = [room({ id: 'exact' })];
+    global.fetch = vi.fn(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input);
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: searchRooms }) };
+      if (url === SWITCH_URL && init?.method === 'POST') {
+        return {
+          ok: false,
+          json: async () => ({ error: { code: 'NOT_FOUND', message: 'That shared room no longer exists.' } }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    }) as unknown as typeof fetch;
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch to shared room' }));
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+
+    searchRooms = [];
+    openConfirm();
+
+    expect(await screen.findByRole('button', { name: /^Share room$/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Switch to shared room' })).toBeNull();
+    // Reopening clears the old refusal: it answered a switch no longer on offer.
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   // A failed pre-check must not read as an all-clear. Rendering it as "no
