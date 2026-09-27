@@ -589,9 +589,54 @@ describe('Payment Service (DB)', () => {
       });
     }
 
+    /**
+     * A payment like `makePayment`, for a student already linked to the
+     * fixture teacher (`teacherId`, the outer fixture) — archived or not —
+     * so a test can assert `reopenPayment`'s effect on that link.
+     */
+    async function makePaymentWithLink(
+      status: PaymentStatus,
+      isArchived: boolean,
+    ): Promise<{ payment: Payment; studentId: string }> {
+      const tag = fixtureTag++;
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'NotCharged',
+          lastName: `Linked${tag}`,
+          email: `payment-notcharged-linked-${tag}-${uniqueSuffix}@test.local`,
+          incomeTier: 3,
+        },
+        select: { id: true },
+      });
+      fixtureStudentIds.push(student.id);
+      await prisma.teacherStudent.create({ data: { teacherId, studentId: student.id, isArchived } });
+      const registration = await prisma.registration.create({
+        data: { classId, studentId: student.id, status: 'attended', tierAtBooking: 3, price: 12.5 },
+      });
+      const payment = await prisma.payment.create({
+        data: {
+          registrationId: registration.id,
+          amount: 12.5,
+          status,
+          ...(status === 'paid' ? { method: 'cash', paidAt: new Date() } : {}),
+          ...(status === 'not_charged' ? { notChargedAt: new Date() } : {}),
+        },
+      });
+      return { payment, studentId: student.id };
+    }
+
+    /** The fixture teacher's link to this student, read fresh. */
+    async function readLink(studentId: string) {
+      return prisma.teacherStudent.findUniqueOrThrow({
+        where: { teacherId_studentId: { teacherId, studentId } },
+      });
+    }
+
     afterAll(async () => {
       // Nested `afterAll`s run before their parent's, and Registration and
       // Payment both cascade off Student, so this is the whole cleanup.
+      // TeacherStudent cascades off Student too, so `makePaymentWithLink`'s
+      // link rows need no cleanup of their own.
       await prisma.student.deleteMany({ where: { id: { in: fixtureStudentIds } } });
     });
 
@@ -664,6 +709,29 @@ describe('Payment Service (DB)', () => {
           expect(row.updatedAt).toEqual(payment.updatedAt);
         },
       );
+
+      it('un-archives a not_charged payment\'s student link', async () => {
+        const { payment, studentId } = await makePaymentWithLink('not_charged', true);
+        paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+        expect((await readLink(studentId)).isArchived).toBe(false);
+      });
+
+      it('un-archives a paid payment\'s student link', async () => {
+        const { payment, studentId } = await makePaymentWithLink('paid', true);
+        paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+        expect((await readLink(studentId)).isArchived).toBe(false);
+      });
+
+      it('an already-pending payment with an archived link answers unchanged, leaving the link archived', async () => {
+        const { payment, studentId } = await makePaymentWithLink('pending', true);
+        paymentOf(await reopenPayment(prisma, payment.id), 'unchanged');
+        expect((await readLink(studentId)).isArchived).toBe(true);
+      });
+
+      it('applies for a not_charged payment whose student has no link at all', async () => {
+        const payment = await makePayment('not_charged');
+        paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+      });
     });
 
     /**
