@@ -884,6 +884,22 @@ describe('promoteNext (DB)', () => {
       await prisma.student.delete({ where: { id: extra.id } });
     }
   });
+
+  it('reactivates the promoted student\'s archived roster link (#265)', async () => {
+    const seeded = await seedPromotable('2099-07-15', 'Archived');
+    await prisma.teacherStudent.update({
+      where: { teacherId_studentId: { teacherId, studentId: seeded.waiterId } },
+      data: { isArchived: true },
+    });
+
+    const promoted = await promoteNext(prisma, seeded.classId);
+    expect(promoted).not.toBeNull();
+
+    const link = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId, studentId: seeded.waiterId } },
+    });
+    expect(link.isArchived).toBe(false);
+  });
 });
 
 // ===========================================================================
@@ -1414,6 +1430,31 @@ describe('claimSpot (DB)', () => {
     expect(
       await prisma.notification.count({ where: { relatedClassId: classId, type: 'spot_taken' } }),
     ).toBe(0);
+  });
+
+  it('reactivates the claimant\'s archived roster link (#265)', async () => {
+    // `makeFullClass` hands every call after the first a fresh teacher (its
+    // own docblock, above) — read the class's actual owner back rather than
+    // assuming it is the describe's fixture `teacherId`.
+    const classId = await makeFullClass();
+    const cls = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntry: { select: { teacherId: true } } },
+    });
+    const classTeacherId = cls.calendarEntry.teacherId;
+    await prisma.teacherStudent.update({
+      where: { teacherId_studentId: { teacherId: classTeacherId, studentId: waiterId } },
+      data: { isArchived: true },
+    });
+    await freeTheSpot(classId);
+
+    const result = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+    expect(result.outcome).toBe('claimed');
+
+    const link = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId: classTeacherId, studentId: waiterId } },
+    });
+    expect(link.isArchived).toBe(false);
   });
 });
 

@@ -50,11 +50,58 @@ export type LinkOutcome = 'created' | 'already-linked';
  * for an invitation standing on that pair is `docs/data-model.md`
  * (Invitation, "What a student's own act resolves"), which owns that rule for
  * both files.
+ *
+ * Also un-archives the pair, under the link row's own lock — see
+ * `activateTeacherStudentLink` below.
  */
 export async function linkTeacherStudent(
   tx: Prisma.TransactionClient,
   pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
 ): Promise<LinkOutcome> {
   const { count } = await tx.teacherStudent.createMany({ data: [pair], skipDuplicates: true });
-  return count === 1 ? 'created' : 'already-linked';
+  const outcome = count === 1 ? 'created' : 'already-linked';
+  // Un-archives the pair under the link's own row lock, whichever outcome
+  // this call got — see `activateTeacherStudentLink` for why the lock.
+  await activateTeacherStudentLink(tx, pair);
+  return outcome;
+}
+
+/** A `TeacherStudent` row, locked for this transaction. `null` when the pair has none. Writes nothing. */
+export type LockedLink = { id: string; isArchived: boolean };
+
+/** What `activateTeacherStudentLink` did to the pair's link row. */
+export type LinkActivation = 'active' | 'reactivated' | 'missing';
+
+/**
+ * Lock this pair's link row and make sure it is not archived. Never inserts:
+ * a teacher may not create a link on their own (`docs/data-model.md`,
+ * TeacherStudent), so a missing row is reported, not repaired.
+ *
+ * The `FOR UPDATE` is the point. `archiveStudent` takes the same lock before
+ * checking that the pair has nothing live, so a transaction that makes
+ * something live and calls this serialises against an archive in either
+ * order (`docs/lock-order.md`, "The `TeacherStudent` row is the archive's
+ * gate").
+ */
+export async function activateTeacherStudentLink(
+  tx: Prisma.TransactionClient,
+  pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
+): Promise<LinkActivation> {
+  const row = await lockTeacherStudentLink(tx, pair);
+  if (!row) return 'missing';
+  if (!row.isArchived) return 'active';
+  await tx.teacherStudent.update({ where: { id: row.id }, data: { isArchived: false } });
+  return 'reactivated';
+}
+
+/** The link row, locked for this transaction; `null` when the pair has none. Writes nothing. */
+export async function lockTeacherStudentLink(
+  tx: Prisma.TransactionClient,
+  pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
+): Promise<LockedLink | null> {
+  const rows = await tx.$queryRaw<LockedLink[]>`
+    SELECT id, "isArchived" FROM "TeacherStudent"
+    WHERE "teacherId" = ${pair.teacherId} AND "studentId" = ${pair.studentId}
+    FOR UPDATE`;
+  return rows[0] ?? null;
 }

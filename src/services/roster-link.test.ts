@@ -7,7 +7,12 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { linkTeacherStudent, type LinkOutcome } from './roster-link';
+import {
+  linkTeacherStudent,
+  activateTeacherStudentLink,
+  lockTeacherStudentLink,
+  type LinkOutcome,
+} from './roster-link';
 
 const prisma = new PrismaClient();
 
@@ -63,6 +68,13 @@ async function makeUnlinkedPair() {
   return { teacherId: teacher.id, studentId: student.id };
 }
 
+/** An existing link row, seeded directly at the given `isArchived` value. */
+async function makeLinkedPair(isArchived: boolean) {
+  const pair = await makeUnlinkedPair();
+  await prisma.teacherStudent.create({ data: { ...pair, isArchived } });
+  return pair;
+}
+
 describe('linkTeacherStudent', () => {
   it('creates the link when there is none', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
@@ -91,6 +103,18 @@ describe('linkTeacherStudent', () => {
     });
     expect(second.id).toBe(first.id);
     expect(second.createdAt).toEqual(first.createdAt);
+  });
+
+  it('un-archives an existing archived link, and still reports it as already-linked', async () => {
+    const { teacherId, studentId } = await makeLinkedPair(true);
+
+    const outcome = await linkTeacherStudent(prisma, { teacherId, studentId });
+
+    expect(outcome).toBe('already-linked');
+    const link = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+    expect(link.isArchived).toBe(false);
   });
 
   /**
@@ -137,4 +161,67 @@ describe('linkTeacherStudent', () => {
     const links = await prisma.teacherStudent.findMany({ where: { teacherId, studentId } });
     expect(links).toHaveLength(1);
   }, 30_000);
+});
+
+describe('activateTeacherStudentLink', () => {
+  it('reactivates an archived link and reports it', async () => {
+    const { teacherId, studentId } = await makeLinkedPair(true);
+
+    const result = await activateTeacherStudentLink(prisma, { teacherId, studentId });
+
+    expect(result).toBe('reactivated');
+    const link = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+    expect(link.isArchived).toBe(false);
+  });
+
+  it('leaves an active link alone and reports it', async () => {
+    const { teacherId, studentId } = await makeLinkedPair(false);
+    const before = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+
+    const result = await activateTeacherStudentLink(prisma, { teacherId, studentId });
+
+    expect(result).toBe('active');
+    const after = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+    expect(after.isArchived).toBe(false);
+    expect(after.createdAt).toEqual(before.createdAt);
+  });
+
+  it('reports a missing pair and creates no row', async () => {
+    const { teacherId, studentId } = await makeUnlinkedPair();
+
+    const result = await activateTeacherStudentLink(prisma, { teacherId, studentId });
+
+    expect(result).toBe('missing');
+    const count = await prisma.teacherStudent.count({ where: { teacherId, studentId } });
+    expect(count).toBe(0);
+  });
+});
+
+describe('lockTeacherStudentLink', () => {
+  it('returns the row for an existing pair, and never changes isArchived', async () => {
+    const { teacherId, studentId } = await makeLinkedPair(true);
+
+    const locked = await lockTeacherStudentLink(prisma, { teacherId, studentId });
+
+    expect(locked).not.toBeNull();
+    expect(locked!.isArchived).toBe(true);
+    const after = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+    expect(after.isArchived).toBe(true);
+  });
+
+  it('returns null for a pair with no row', async () => {
+    const { teacherId, studentId } = await makeUnlinkedPair();
+
+    const locked = await lockTeacherStudentLink(prisma, { teacherId, studentId });
+
+    expect(locked).toBeNull();
+  });
 });
