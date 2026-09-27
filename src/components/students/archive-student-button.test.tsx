@@ -88,6 +88,23 @@ describe('ArchiveStudentButton', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('names a single payment in the singular', () => {
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={{ ids: ['p1'], total: 20 }}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+
+      expect(
+        screen.getByText('Dana still owes €20.00 across 1 payment. Archiving waives it.'),
+      ).toBeInTheDocument();
+    });
+
     it('Keep closes the confirm with no request', () => {
       render(
         <ArchiveStudentButton
@@ -166,6 +183,43 @@ describe('ArchiveStudentButton', () => {
       expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Archive student' })).toBeInTheDocument();
     });
+  });
+
+  it('a prop stale in the other direction: nothing outstanding sends the plain PATCH, and a 409 STUDENT_HAS_OUTSTANDING_PAYMENTS back still refreshes', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'STUDENT_HAS_OUTSTANDING_PAYMENTS',
+          message: 'This student still owes €20.00 across 1 payment. Waive it to archive.',
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ArchiveStudentButton
+        studentId="st-1"
+        studentName="Dana"
+        isArchived={false}
+        outstanding={noneOutstanding}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+
+    // outstanding.ids is empty, so this is the plain PATCH, not a waive —
+    // the prop said nothing was owed, and the server found otherwise.
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/students/st-1?state=archived', {
+        method: 'PATCH',
+      }),
+    );
+    expect(
+      await screen.findByText('This student still owes €20.00 across 1 payment. Waive it to archive.'),
+    ).toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
   it('STUDENT_HAS_UNBILLED_CLASSES shows the server message with no confirm and no refresh', async () => {

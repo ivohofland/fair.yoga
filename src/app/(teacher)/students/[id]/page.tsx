@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { formatDateWithYear, formatDateShort } from '@/lib/format';
@@ -52,7 +53,12 @@ export default async function StudentDetailPage({
   const outstandingRegistrations = paymentRegistrations.filter((reg) => isOutstanding(reg.payment!.status));
   const outstanding = {
     ids: outstandingRegistrations.map((reg) => reg.payment!.id),
-    total: outstandingRegistrations.reduce((sum, reg) => sum + Number(reg.payment!.amount), 0),
+    // Summed as Prisma.Decimal, like the service's owedPhrase, so no cent is
+    // lost to float addition; converted to a number once, at the end, for
+    // the prop's type.
+    total: outstandingRegistrations
+      .reduce((sum, reg) => sum.plus(reg.payment!.amount), new Prisma.Decimal(0))
+      .toNumber(),
   };
 
   return (
