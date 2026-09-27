@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ArchiveStudentButton } from './archive-student-button';
-import { routerPush } from '../../../tests/setup/components';
+import { routerPush, routerRefresh } from '../../../tests/setup/components';
+
+const noneOutstanding = { ids: [], total: 0 };
 
 /**
  * This button renders no confirmation on success, only a `router.push` — but
@@ -23,11 +25,18 @@ describe('ArchiveStudentButton', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
-  it('sends state=archived when the student is not archived', async () => {
+  it('sends state=archived with no body when nothing is outstanding', async () => {
     stubOk();
-    render(<ArchiveStudentButton studentId="st-1" isArchived={false} />);
+    render(
+      <ArchiveStudentButton
+        studentId="st-1"
+        studentName="Dana"
+        isArchived={false}
+        outstanding={noneOutstanding}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('/api/students/st-1?state=archived', {
@@ -39,15 +48,157 @@ describe('ArchiveStudentButton', () => {
 
   it('sends state=unarchived when the student is archived', async () => {
     stubOk();
-    render(<ArchiveStudentButton studentId="st-1" isArchived={true} />);
+    render(
+      <ArchiveStudentButton
+        studentId="st-1"
+        studentName="Dana"
+        isArchived={true}
+        outstanding={noneOutstanding}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Unarchive student' }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('/api/students/st-1?state=unarchived', {
         method: 'PATCH',
       }),
     );
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/students'));
+  });
+
+  describe('something outstanding', () => {
+    const outstanding = { ids: ['p1', 'p2'], total: 45 };
+
+    it('opens an inline confirm naming the total and count, sending no request yet', () => {
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+
+      expect(
+        screen.getByText('Dana still owes €45.00 across 2 payments. Archiving waives them.'),
+      ).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('Keep closes the confirm with no request', () => {
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
+
+      expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Archive student' })).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('Waive and archive sends the waive ids and navigates on success', async () => {
+      stubOk();
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Waive and archive' }));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/students/st-1?state=archived', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ waivePaymentIds: ['p1', 'p2'] }),
+        }),
+      );
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/students'));
+    });
+
+    it('a stale STUDENT_HAS_OUTSTANDING_PAYMENTS refusal shows the server message and refreshes, without navigating', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: {
+            code: 'STUDENT_HAS_OUTSTANDING_PAYMENTS',
+            message: 'What this student owes has changed — now €50.00 across 2 payments. Check it and try again.',
+          },
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Waive and archive' }));
+
+      expect(
+        await screen.findByText(
+          'What this student owes has changed — now €50.00 across 2 payments. Check it and try again.',
+        ),
+      ).toBeInTheDocument();
+      expect(routerRefresh).toHaveBeenCalled();
+      expect(routerPush).not.toHaveBeenCalled();
+      // The confirm closes rather than retrying the stale ids — it reopens
+      // with fresh numbers on the next tap of the main button.
+      expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Archive student' })).toBeInTheDocument();
+    });
+  });
+
+  it('STUDENT_HAS_UNBILLED_CLASSES shows the server message with no confirm and no refresh', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'STUDENT_HAS_UNBILLED_CLASSES',
+          message: "This student is booked on 1 class that hasn't been billed yet. Remove them from it, or archive once it's completed.",
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ArchiveStudentButton
+        studentId="st-1"
+        studentName="Dana"
+        isArchived={false}
+        outstanding={noneOutstanding}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+
+    expect(
+      await screen.findByText(
+        "This student is booked on 1 class that hasn't been billed yet. Remove them from it, or archive once it's completed.",
+      ),
+    ).toBeInTheDocument();
+    expect(routerRefresh).not.toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
   });
 
   /**
@@ -64,9 +215,16 @@ describe('ArchiveStudentButton', () => {
       json: async () => ({ error: { message: 'This student has an unpaid class.' } }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ArchiveStudentButton studentId="st-1" isArchived={false} />);
+    render(
+      <ArchiveStudentButton
+        studentId="st-1"
+        studentName="Dana"
+        isArchived={false}
+        outstanding={noneOutstanding}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
 
     expect(await screen.findByText('This student has an unpaid class.')).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
@@ -75,9 +233,16 @@ describe('ArchiveStudentButton', () => {
   it('falls back to copy naming the direction when the server sends no message', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ArchiveStudentButton studentId="st-1" isArchived={true} />);
+    render(
+      <ArchiveStudentButton
+        studentId="st-1"
+        studentName="Dana"
+        isArchived={true}
+        outstanding={noneOutstanding}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Unarchive student' }));
 
     expect(
       await screen.findByText('Could not unarchive this student. Try again.'),
@@ -87,13 +252,22 @@ describe('ArchiveStudentButton', () => {
   it('reports a thrown fetch instead of swallowing it', async () => {
     fetchMock.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<ArchiveStudentButton studentId="st-1" isArchived={false} />);
+    render(
+      <ArchiveStudentButton
+        studentId="st-1"
+        studentName="Dana"
+        isArchived={false}
+        outstanding={noneOutstanding}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
 
     expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
     // Re-enabled, not stuck mid-flight: `finally` still has to run on the
     // throw path.
-    await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Archive student' })).not.toBeDisabled(),
+    );
   });
 });

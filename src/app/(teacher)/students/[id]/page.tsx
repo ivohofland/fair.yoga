@@ -3,6 +3,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { formatDateWithYear, formatDateShort } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
+import { isOutstanding } from '@/lib/payment-status';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -46,6 +47,13 @@ export default async function StudentDetailPage({
   const visible = projectStudentForTeacher(student, session.teacherId);
   const isUnclaimed = !visible.claimedAt;
   const displayName = visible.displayName;
+
+  const paymentRegistrations = student.registrations.filter((r) => r.payment);
+  const outstandingRegistrations = paymentRegistrations.filter((reg) => isOutstanding(reg.payment!.status));
+  const outstanding = {
+    ids: outstandingRegistrations.map((reg) => reg.payment!.id),
+    total: outstandingRegistrations.reduce((sum, reg) => sum + Number(reg.payment!.amount), 0),
+  };
 
   return (
     <>
@@ -133,20 +141,23 @@ export default async function StudentDetailPage({
       <section className="mb-8">
         <h2 className="type-subtitle mb-3">Payments</h2>
         <StudentPaymentList
-          items={student.registrations
-            .filter((r) => r.payment)
-            .map((reg) => ({
-              paymentId: reg.payment!.id,
-              classType: reg.class.calendarEntry.classType,
-              classDate: formatDateWithYear(reg.class.calendarEntry.date),
-              amount: Number(reg.payment!.amount),
-              status: reg.payment!.status,
-            }))}
+          items={paymentRegistrations.map((reg) => ({
+            paymentId: reg.payment!.id,
+            classType: reg.class.calendarEntry.classType,
+            classDate: formatDateWithYear(reg.class.calendarEntry.date),
+            amount: Number(reg.payment!.amount),
+            status: reg.payment!.status,
+          }))}
         />
       </section>
 
       <section className="pt-6 border-t border-border">
-        <ArchiveStudentButton studentId={student.id} isArchived={isArchived} />
+        <ArchiveStudentButton
+          studentId={student.id}
+          studentName={displayName}
+          isArchived={isArchived}
+          outstanding={outstanding}
+        />
       </section>
     </>
   );
