@@ -140,7 +140,8 @@ describe('TemplateForm', () => {
     const select = screen.getByLabelText('Room');
     fireEvent.change(select, { target: { value: ROOM_B } });
     fireEvent.change(select, { target: { value: ROOM_A } });
-    const { body } = await submit();
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
     expect(body).not.toHaveProperty('teacherRoomId');
   });
 
@@ -153,8 +154,41 @@ describe('TemplateForm', () => {
     await screen.findByRole('option', { name: /Studio B/ });
     fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
     rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
-    const { body } = await submit();
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
     expect(body).not.toHaveProperty('teacherRoomId');
+  });
+
+  // The other direction: the server moved the room (a switch, seen through
+  // the refresh after this tab's own save) while the teacher left the field
+  // alone. The form adopts the new room, so the next save neither resends the
+  // old one nor shows a blank select where the old option was filtered out.
+  it('adopts a room the server moved while the field was untouched', async () => {
+    stubFetchTwoRooms();
+    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    expect(screen.getByLabelText('Room')).toHaveValue(ROOM_B);
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
+    expect(body).not.toHaveProperty('teacherRoomId');
+  });
+
+  it('keeps a room the teacher picked when the stored room moves underneath it', async () => {
+    stubFetchTwoRooms();
+    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
+    rerender(
+      <TemplateForm
+        mode="edit"
+        templateId="tpl-1"
+        initial={{ ...initial, teacherRoomId: '33333333-3333-4333-8333-333333333333' }}
+      />,
+    );
+    const { method, body } = await submit();
+    expect(method).toBe('PUT');
+    expect(body.teacherRoomId).toBe(ROOM_B);
   });
 
   it('trims classType and description before sending', async () => {

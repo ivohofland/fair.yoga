@@ -156,11 +156,11 @@ export const PUT = withErrorHandler(async (
   // `invalid_room` and cannot be outranked by the archived check, matching the
   // service's own ordering.
   //
-  // Gated on a CHANGE of room, not mere presence: `TemplateForm` posts the
-  // whole form on every edit, so an unchanged `teacherRoomId` rides along with
-  // a pure description change — and an active template whose own room is
-  // archived (a pre-branch snapshot, spec section 10) would otherwise answer
-  // this 409 about a move the teacher did not make.
+  // Gated on a CHANGE of room, not mere presence: a caller may send an
+  // unchanged `teacherRoomId` beside a pure description change — and an
+  // active template whose own room is archived (a pre-branch snapshot, spec
+  // section 10) would otherwise answer this 409 about a move the teacher did
+  // not make.
   if (data.teacherRoomId !== undefined) {
     const moving = await prisma.classTemplate.findUnique({
       where: { id },
