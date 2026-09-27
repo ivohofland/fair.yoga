@@ -153,6 +153,9 @@ export const LOCK_CONTENTION_TESTS = [
   'src/app/api/teachers/[id]/route-lock-order.test.ts',
   'src/app/api/students/route-lock-order.test.ts',
   'src/app/api/invitations/[id]/route-lock-order.test.ts',
+  // #265: the `invitations-lock-order.test.ts` shape, for archiving; its
+  // header carries the reason.
+  'src/services/student-archive-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
