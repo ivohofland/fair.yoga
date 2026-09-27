@@ -192,6 +192,8 @@ Lightweight teacher-facing tools for managing their student community.
 
 **CRM contact invitations:** Adding someone to the CRM (e.g., migrating existing students) sends them a platform invitation — the ordinary way a contact becomes a student. A teacher cannot link themselves to a student unilaterally: the contact stays a pending invitation, visible only to the teacher, until the invitee accepts it on their own account (or books one of the teacher's classes, which accepts implicitly). The exception is a walk-in: a teacher who registers the person at the door links them there and then, their presence standing for acceptance (`docs/data-model.md`, Invitation → Walk-ins). Declining is final short of booking a class.
 
+**Archiving a student:** the teacher's way of saying "no longer an active student of mine" — it files them out of the student list, and never restricts what the student can do. A student can be archived only once nothing is live between them: no class booked that has not been billed yet, and nothing owed. What is owed the teacher can waive in the same step, as lenience (see Payments). Any act that makes something live again — the student booking, joining a waitlist, accepting an invitation, the teacher adding them to a class or reopening a payment — makes them active again on its own (`docs/data-model.md`, TeacherStudent).
+
 ### 6. Communication
 
 Three-layer communication model, same content, different delivery:

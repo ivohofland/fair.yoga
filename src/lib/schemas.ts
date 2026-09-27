@@ -633,3 +633,12 @@ export const templateStateQuerySchema = z.object({
 export const archiveStateQuerySchema = z.object({
   state: z.enum(['archived', 'unarchived']),
 });
+
+/**
+ * `PATCH /api/students/[id]?state=archived`'s optional body: the open payments
+ * the teacher confirmed waiving. `archiveStudent` compares them to the pair's
+ * open set as a whole, so the bounds here only cap what a request can send.
+ */
+export const archiveStudentBodySchema = z.object({
+  waivePaymentIds: z.array(z.string().min(1).max(64)).max(500).optional(),
+}).strict();
