@@ -1405,20 +1405,33 @@ export async function acceptInvitation(
     // invisible to the CAS above as well, because `unlinkTeacher`'s own
     // Invitation write is scoped to `delivered: true` (#502) and so commits a
     // block on a `delivered: false` row while leaving that row's status
-    // untouched (#537).
+    // untouched (#537). This re-check is what catches that case: `a
+    // TeacherBlock unlinkTeacher commits after the outside pre-check is not
+    // missed inside the transaction` (`invitations-lock-order.test.ts`).
     //
-    // LAST statement before the commit, deliberately — and it NARROWS that
-    // window rather than closing it. This is a plain non-locking `SELECT`, so
-    // under READ COMMITTED it can only ever say "no block as of now": a block
-    // committing between it and this transaction's own commit is still missed,
-    // at any position. Every earlier position is worse by whatever follows it,
-    // which is measured rather than argued — with this read sitting between the
-    // roster-link write and the CAS, a block committing in that gap left the
-    // row `accepted` and answered `{ ok: true }`, which is what
-    // 'a block committed between the roster-link write and the CAS is not missed'
-    // (`invitations-lock-order.test.ts`) now pins. Reading `TeacherBlock` after
-    // the `Invitation` write is also the direction `docs/lock-order.md` names,
-    // though a plain `SELECT` takes no lock and joins no wait graph either way.
+    // LAST statement before the commit, deliberately — and it NARROWS the
+    // remaining window rather than closing it. This is a plain non-locking
+    // `SELECT`, so under READ COMMITTED it can only ever say "no block as of
+    // now": a block committing between it and this transaction's own commit
+    // is still missed, at any position. Since #265 task 1 that remaining
+    // window is smaller than it used to be: `linkTeacherStudent`
+    // (`services/roster-link.ts`) now takes the `TeacherStudent` row's `FOR
+    // UPDATE` lock unconditionally and holds it for the rest of this
+    // transaction, so `unlinkTeacher`'s own delete of that row can no longer
+    // land between the roster-link write and this re-check — it blocks on
+    // the lock instead, and only proceeds once this transaction has
+    // committed or rolled back (`the roster-link lock now closes this window
+    // — a concurrent unlink blocks until accept commits (#265)`, same file).
+    // What the lock cannot close is the narrower gap inside
+    // `linkTeacherStudent` itself, before that lock is taken: its own
+    // `createMany` (`INSERT … ON CONFLICT DO NOTHING`) takes no lock against
+    // an already-committed row, so a block landing in exactly that gap still
+    // reaches this far — which is this re-check's remaining job, pinned by
+    // `a block committed inside the open transaction, after the roster-link
+    // write, is not missed` (same file). Reading `TeacherBlock` after the
+    // `Invitation` write is also the direction `docs/lock-order.md` names,
+    // though a plain `SELECT` takes no lock and joins no wait graph either
+    // way.
     const blockedNow = await tx.teacherBlock.findUnique({
       where: { teacherId_email: { teacherId: invitation.teacherId, email } },
       select: { id: true },

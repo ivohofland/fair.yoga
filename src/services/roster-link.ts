@@ -60,13 +60,11 @@ export async function linkTeacherStudent(
 ): Promise<LinkOutcome> {
   const { count } = await tx.teacherStudent.createMany({ data: [pair], skipDuplicates: true });
   const outcome = count === 1 ? 'created' : 'already-linked';
-  // Un-archives the pair under the link's own row lock, whichever outcome
-  // this call got — see `activateTeacherStudentLink` for why the lock.
   await activateTeacherStudentLink(tx, pair);
   return outcome;
 }
 
-/** A `TeacherStudent` row, locked for this transaction. `null` when the pair has none. Writes nothing. */
+/** The shape `lockTeacherStudentLink` returns for an existing row: its id and whether it is archived. */
 export type LockedLink = { id: string; isArchived: boolean };
 
 /** What `activateTeacherStudentLink` did to the pair's link row. */
@@ -77,11 +75,9 @@ export type LinkActivation = 'active' | 'reactivated' | 'missing';
  * a teacher may not create a link on their own (`docs/data-model.md`,
  * TeacherStudent), so a missing row is reported, not repaired.
  *
- * The `FOR UPDATE` is the point. `archiveStudent` takes the same lock before
- * checking that the pair has nothing live, so a transaction that makes
- * something live and calls this serialises against an archive in either
- * order (`docs/lock-order.md`, "The `TeacherStudent` row is the archive's
- * gate").
+ * The `FOR UPDATE` is the point: any caller that must serialise against
+ * linking takes this same lock too (`docs/lock-order.md`, "The
+ * `TeacherStudent` row is the archive's gate").
  */
 export async function activateTeacherStudentLink(
   tx: Prisma.TransactionClient,
