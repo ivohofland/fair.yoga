@@ -1,13 +1,16 @@
 /**
- * Every act that puts something live on a `(teacher, student)` pair
- * un-archives the pair's `TeacherStudent` link — the read side of the
- * invariant `docs/superpowers/specs/2026-09-27-student-archive-semantics-design.md`
- * states for #265. This file drives the four acts that reach
- * `linkTeacherStudent` (`services/roster-link.ts`) through the API: a
- * self-booking, a walk-in of a person already on the roster, a waitlist
- * join, and an invitation accept. `promoteNext` and `claimSpot` — the other
- * two `linkTeacherStudent` callers — are covered at the service level in
- * `src/services/waitlist.test.ts`, alongside their own fixtures.
+ * Every act that makes a `(teacher, student)` pair live un-archives the
+ * pair's `TeacherStudent` link — the read side of the invariant
+ * `docs/superpowers/specs/2026-09-27-student-archive-semantics-design.md`
+ * states for #265. This file drives that through the API: the acts that
+ * reach `linkTeacherStudent` (`services/roster-link.ts`) — a self-booking, a
+ * walk-in of a person already on the roster, a waitlist join, and an
+ * invitation accept — plus the teacher roster add, which un-archives via
+ * `activateTeacherStudentLink` directly rather than through
+ * `linkTeacherStudent` (a teacher may not create a link). `promoteNext` and
+ * `claimSpot`, the other `linkTeacherStudent` callers, are covered at the
+ * service level in `src/services/waitlist.test.ts`, alongside their own
+ * fixtures.
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient } from '@prisma/client';

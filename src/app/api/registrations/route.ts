@@ -365,10 +365,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         });
       }
 
-      // A roster add links no one — the teacher may not create a link — but it
-      // makes the pair live, so it takes the link's lock and un-archives it like
-      // every linking act. `'missing'`: the student unlinked after the check
-      // above; the registration rolls back.
+      // The roster add makes the pair live, so it takes the link's lock and
+      // un-archives it via `activateTeacherStudentLink`, which never inserts
+      // — who may create a link is `docs/data-model.md` (TeacherStudent).
+      // `'missing'`: the student unlinked after the check above; the
+      // registration rolls back.
       if (target.kind === 'roster') {
         const activation = await activateTeacherStudentLink(tx, {
           teacherId: cls.calendarEntry.teacherId,
