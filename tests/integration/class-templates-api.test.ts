@@ -2625,9 +2625,8 @@ describe('PUT /api/class-templates/[id]', () => {
   });
 
   // The `!== template.teacherRoomId` half of door 5, proven directly: without
-  // it, this case 409s. `TemplateForm` posts the whole form on every edit, so
-  // an unchanged `teacherRoomId` rides along with a pure description change —
-  // and a template on an archived room (post-272 necessarily PAUSED — the
+  // it, this case 409s. A caller may send an unchanged `teacherRoomId` beside
+  // a pure description change — and a template on an archived room (post-272 necessarily PAUSED — the
   // active-on-archived snapshot spec section 10 described is now refused by
   // the constraint itself, at the archive write) would otherwise answer this
   // 409 about a move the teacher did not make. The no-op must never write the

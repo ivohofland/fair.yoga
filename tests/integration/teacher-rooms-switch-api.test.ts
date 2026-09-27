@@ -123,11 +123,11 @@ describe('POST /api/teacher-rooms/[id]/switch', () => {
     await expectRefusal(await post(owner.token, link.id, { roomId: shared.id }), 'ROOM_IN_USE');
   });
 
-  // #685. The PUT a stale edit tab sends now that the form leaves an untouched
-  // room out: the template stays on the shared link the switch moved it to.
-  // This passes against the server as it was before #685 too — the fix is in
-  // what the client omits, and `template-form.test.tsx` is what goes red if
-  // the form resends the room. This test is the issue's scenario at the wire.
+  // #685, at the wire: an edit that leaves the room out keeps the template on
+  // the shared link the switch moved it to. The server needs nothing for this
+  // — an edit that resends the private link still moves the template back —
+  // so the guard is the client leaving an untouched room out; this is the
+  // acceptance record for the scenario, not that guard.
   it('keeps a paused template on the shared room when a later edit omits the room', async () => {
     const { link, shared } = await makePair(owner.id, 'stale');
     const template = await prisma.classTemplate.create({
