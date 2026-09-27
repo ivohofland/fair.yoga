@@ -123,6 +123,42 @@ describe('POST /api/teacher-rooms/[id]/switch', () => {
     await expectRefusal(await post(owner.token, link.id, { roomId: shared.id }), 'ROOM_IN_USE');
   });
 
+  // #685. The PUT a stale edit tab sends now that the form leaves an untouched
+  // room out: the template stays on the shared link the switch moved it to.
+  // This passes against the server as it was before #685 too — the fix is in
+  // what the client omits, and `template-form.test.tsx` is what goes red if
+  // the form resends the room. This test is the issue's scenario at the wire.
+  it('keeps a paused template on the shared room when a later edit omits the room', async () => {
+    const { link, shared } = await makePair(owner.id, 'stale');
+    const template = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: owner.id, kind: 'regular', classType: 'Stale Tab', dayOfWeek: 3,
+            startTime: hhmmToTime('07:00'), durationMinutes: 60, isActive: false,
+          },
+        },
+        teacherRoom: { connect: { id: link.id } },
+        roomCost: 20, minRate: 15, targetRate: 25, minStudents: 2, maxStudents: 10,
+      },
+    });
+
+    const switched = (await expectApplied(await post(owner.token, link.id, { roomId: shared.id }), 200)) as {
+      sharedTeacherRoomId: string;
+    };
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+      method: 'PUT',
+      headers: { ...cookie(owner.token), ...freshIp(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: 'Edited in a tab opened before the switch' }),
+    });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.teacherRoomId).toBe(switched.sharedTeacherRoomId);
+    expect(after.roomArchived).toBe(false);
+  });
+
   it('answers 400 for a body without a uuid roomId', async () => {
     const { link } = await makePair(owner.id, 'badbody');
     expect((await post(owner.token, link.id, { roomId: 'nope' })).status).toBe(400);
