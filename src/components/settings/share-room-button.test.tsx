@@ -173,7 +173,7 @@ describe('ShareRoomButton', () => {
       await waitFor(() => expect(refreshMock).toHaveBeenCalled());
       // `router.refresh()` replaces the props but not this component's state,
       // so the cached match would survive it. The refused match must not stay
-      // on offer; the reason must stay on screen.
+      // on offer; the reason must stay rendered.
       expect(screen.queryByRole('button', { name: 'Switch to shared room' })).toBeNull();
       expect(screen.getByRole('alert')).toHaveProperty('textContent', message);
     } else {
@@ -209,9 +209,33 @@ describe('ShareRoomButton', () => {
     searchRooms = [];
     openConfirm();
 
-    expect(await screen.findByRole('button', { name: /^Share room$/ })).toBeDefined();
+    // `Share room` renders, disabled, while the search is still running, so
+    // finding it proves nothing about the search. Enabled means it has landed.
+    const share = await screen.findByRole('button', { name: /^Share room$/ });
+    await waitFor(() => expect((share as HTMLButtonElement).disabled).toBe(false));
+    const searches = vi.mocked(global.fetch).mock.calls.filter(([u]) => String(u).startsWith('/api/rooms?'));
+    expect(searches).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'Switch to shared room' })).toBeNull();
     // Reopening clears the old refusal: it answered a switch no longer on offer.
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // The closed state renders the error too, so Cancel has to clear it, or a
+  // refusal the teacher just dismissed would reappear under the closed control.
+  it('clears a refusal when the teacher cancels', async () => {
+    mockSearchThenSwitch([room({ id: 'exact' })], {
+      ok: false,
+      body: { error: { code: 'ROOM_IN_USE', message: 'refusal for ROOM_IN_USE' } },
+    });
+    render(<ShareRoomButton roomId="mine" teacherRoomId="link-1" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch to shared room' }));
+    expect(await screen.findByRole('alert')).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByRole('button', { name: 'Share with other teachers' })).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
