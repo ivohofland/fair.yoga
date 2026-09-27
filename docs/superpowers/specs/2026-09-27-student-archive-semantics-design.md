@@ -93,7 +93,10 @@ Order of checks — gates first, then "already done", then refusals:
       yet. Remove them from those classes, or archive after they're completed.").
       Checked before payments, because waiving cannot resolve it.
    2. Read the open payment set `S`.
-      - No `waivePaymentIds` in the body and `S` empty → archive.
+      - `S` empty → archive, with or without `waivePaymentIds` — nothing is
+        waived, so there is no money the teacher did not see (ruled during the
+        build: a teacher whose shown payments were all paid meanwhile still
+        gets the archive they asked for).
       - No `waivePaymentIds` and `S` non-empty → **409
         `STUDENT_HAS_OUTSTANDING_PAYMENTS`**, message naming count and total.
       - `waivePaymentIds = W` and `W = S` as sets → mark every payment in `S`
