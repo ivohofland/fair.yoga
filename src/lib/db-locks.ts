@@ -267,10 +267,10 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * `CalendarEntry` row lock in `src/` is one of this file's own statements —
  * this helper's two and `lockClassRowsOrdered`'s two. A hit in another file is
  * a site that took one of those locks without going through either helper,
- * bar one standing exception that this line-by-line filter cannot exclude and
- * that is not a `Class` lock at all. The expected line count and that
- * exception both live in `docs/lock-order.md`, "Ordering BETWEEN `Class` and
- * its `CalendarEntry`", which runs the identical command and owns its figures.
+ * bar standing exceptions that this line-by-line filter cannot exclude and
+ * that are not `Class` locks at all. The expected line count and those
+ * exceptions live in `docs/lock-order.md`, "Ordering BETWEEN `Class` and its
+ * `CalendarEntry`", which runs the identical command and owns its figures.
  * Deliberately not a list of the CALL SITES, which is what went stale the last
  * time this paragraph carried one.
  *

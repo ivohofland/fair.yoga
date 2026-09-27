@@ -87,7 +87,8 @@ export async function switchToSharedRoom(
         ORDER BY ct."id"
         FOR UPDATE`;
 
-      // 2. The private link, then every guard again against what is locked.
+      // 2. Lock the private link, re-read it, and run the guards against it.
+      //    The two `Room` rows are read, not locked (spec §4.1).
       await tx.$queryRaw`
         SELECT "id" FROM "TeacherRoom" WHERE "id" = ${teacherRoomId} FOR UPDATE`;
       const priv = await tx.teacherRoom.findUnique({
@@ -199,9 +200,9 @@ export async function switchToSharedRoom(
   } catch (e) {
     if (e instanceof SwitchRefused) {
       // Not decoration: `respondError` does not log, so this line is the only
-      // record of the refusals thrown inside this transaction (guards 2-7 and
-      // `class_in_progress`). The pre-transaction `not_found`/`forbidden`
-      // refusals above return directly and are unlogged.
+      // record of every `SwitchRefused` thrown inside the transaction. The
+      // pre-transaction `not_found`/`forbidden` answers above return directly
+      // and are unlogged.
       log.info({ teacherId, teacherRoomId, sharedRoomId, reason: e.result.reason }, 'room switch refused');
       return e.result;
     }

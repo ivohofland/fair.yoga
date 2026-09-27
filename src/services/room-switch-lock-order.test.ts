@@ -16,8 +16,9 @@
  * widened into `withHeld` with two additions this file needs and that one
  * does not: an `onHeld` callback that runs a second write inside the
  * holder's own transaction once its lock has landed, and a `release` mode.
- * `'after-body'` releases once `body` has settled — the probe case, which
- * needs the switch still waiting when it checks the private link is free.
+ * `'after-body'` releases once `body` has settled — for the cases whose
+ * `body` must observe the switch still waiting: the probe that checks the
+ * private link is free, and the generator claim parked behind the switch.
  * `'after-start'` releases once `body` has been STARTED, while the holder's
  * `onHeld` write is still uncommitted; `body` itself finishes only after that
  * write commits, once `waitUntilBlockedBy` below has confirmed `body` is
@@ -282,11 +283,12 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
   // occurrence can never land on C's date (always today + 21 days, the same
   // weekday as today) and be skipped as an overlap.
   //
-  // Mutation to record: move room-switch.ts's step-1 template pre-lock to
-  // after step 4. The switch then takes P and S and blocks on C WITHOUT
-  // holding T, so the generator's claim for T proceeds immediately instead of
-  // blocking on the switch — this test's own `waitUntilBlockedBy(prisma,
-  // switchPid)` times out instead of resolving.
+  // Mutation recorded: move room-switch.ts's step-1 template pre-lock to
+  // after step 4. The switch then parks on C holding P and S but not T. The
+  // generator claims T, and its `Class` insert blocks on P (`KEY SHARE`
+  // against the switch's `FOR UPDATE`), so the poll above still resolves.
+  // Once C is released the switch wants T at the moved pre-lock, and the pair
+  // ends in `40P01`: the generator's insert fails with "deadlock detected".
   it('generates onto the shared room when the generator claims T while the switch is parked on it', async () => {
     const f = await fx.makeFixture(prisma);
     const shared = await addSharedTwin(f);

@@ -147,7 +147,14 @@ in the same statement, which is the pattern the class move copies.
    `floor`, `roomName` after trim and lowercase, mirroring
    `Room_public_identity_unique`). Without this rule the operation would be a
    general "move all my classes to any shared room" tool, and that changes
-   where students go. The rule guarantees the same physical room.
+   where students go. The rule guarantees the same room as the database's
+   public-identity index defines one, not the same physical room: `city` and
+   `postcode` are not compared, so two rooms at the same address string in
+   different cities count as one here, exactly as they do for
+   `Room_public_identity_unique`. The UI only offers matches its
+   postcode-filtered search found. Adding a postcode comparison to the guard
+   is declined: a teacher whose room collides on the index but differs in
+   postcode could then neither switch nor share (`DUPLICATE_ROOM`).
 
 ### 2.1 What students see change
 
@@ -203,10 +210,10 @@ with a new `switchRoomSchema` in `schemas.ts`.
 | 4 | the link's room is shared | 409 `NOW_SHARED` |
 | 5 | `roomId` not found, or not shared | 404 `NOT_FOUND`. A private room is not something this caller may know exists. |
 | 6 | the two rooms are not the same room (§2 rule 6) | 409 **`NOT_SAME_ROOM`** (new) |
-| 7 | already switched: private link archived, no template or upcoming class on it, and an unarchived link on the shared room | 200 `respondUnchanged`, carrying the shared link |
+| 7 | already switched: private link archived, no template or upcoming class on it, and an unarchived link on the shared room | 200 `respondUnchanged`, carrying the shared link: `{ sharedTeacherRoomId }` |
 | 8 | a class on the private link is `in_progress` and not cancelled (§2 rule 2) | 409 `ROOM_IN_USE` |
 | 9 | lock timeout | the existing 503 path |
-| — | otherwise | 200 applied: `{ teacherRoomId, moved: { templates, classes }, reusedLink, capacityClamped: { from, to } \| null }` |
+| — | otherwise | 200 applied: `{ sharedTeacherRoomId, moved: { templates, classes }, reusedLink, capacityClamped: { from, to } \| null }` |
 
 Row 4 reuses `NOW_SHARED` rather than adding a code. It already means "this room
 is shared now". The only way to get there is the teacher sharing the room in
@@ -240,8 +247,8 @@ every row valid on its own.
 
 | Step | What | Lock |
 |---|---|---|
-| 1 | Lock every `ClassTemplate` with `teacherRoomId = P` | `FOR UPDATE`, ascending `id`. The same statement as `setTeacherRoomArchived`'s pre-lock (`room-archive.ts:231-234`). |
-| 2 | Lock the private link P, then re-read it with its room. Re-run guards 2-7 against what was read. | `FOR UPDATE` on `TeacherRoom` P |
+| 1 | Lock every `ClassTemplate` with `teacherRoomId = P` | `FOR UPDATE`, ascending `id`. The same shape as `setTeacherRoomArchived`'s pre-lock (`room-archive.ts:232-235`), ordered by `id`. |
+| 2 | Lock the private link P, then re-read it with its room. Run rows 2 and 4-7 of §3.2 against what was read; row 3 (ownership) is checked once, before the transaction opens. The two `Room` rows are read, not locked (§4.1). | `FOR UPDATE` on `TeacherRoom` P |
 | 3 | Shared link S: insert if absent (`ON CONFLICT DO NOTHING`), then lock it. If it is archived, un-archive it. | `FOR UPDATE` on `TeacherRoom` S |
 | 4 | Lock P's classes that are `draft`, `open` or `in_progress` with `entryLive` true (not cancelled). If any is `in_progress`, refuse with `ROOM_IN_USE` and roll back. | `lockClassRowsOrdered` (ascending `id`, `db-locks.ts:698`) |
 | 5 | Move the locked ones (all `draft`/`open` once step 4 has refused `in_progress`): `teacherRoomId = S`, `roomArchived = false`, keyed on the locked id set alone | — |
@@ -290,7 +297,7 @@ Why each position:
   step 3) in the same statement, or it fails with 23503.
 
 **Why not call `setTeacherRoomArchived`?** It takes a `PrismaClient` and opens
-its own transaction (`room-archive.ts:125, :200`), so it cannot run inside this
+its own transaction (`room-archive.ts:126, :201`), so it cannot run inside this
 one. Its blocker count is also redundant here: after steps 5-6 the CHECK
 guarantees the archive either succeeds or fails with 23514. The service archives
 with one `UPDATE` and treats a 23514 at step 7 as a defect (500). No path should
@@ -310,7 +317,7 @@ reach it.
 | A teacher-wide multi-class locker (for example `withdrawWaitingEntriesForTeacher`) while S is being un-archived | Un-archiving S at step 3 cascades onto S's own `Class` rows before step 4 locks P's. That is two ascending runs, not one, so a locker taking the teacher's classes in one ascending run can in principle cross it. The shape is the same one `setTeacherRoomArchived(…, 'unarchived')` already has, and it exists only when the reused link is archived. Postgres resolves any cycle with `40P01` on one side, and nothing is half-applied. **Accepted**, and named in the `lock-order.md` section. |
 | The teacher edits P's `Room` address | Not locked. No path in `src/` locks a `Room` row, and adding one is a new lock node. The identity check reads the committed row at step 2. An edit landing after that read is the teacher's own concurrent edit, and the move still lands on a room that matched when checked. **Accepted**, and named here. |
 | A generator holding a template `FOR UPDATE` that arrives on P between steps 1 and 2, then inserting a `Class` row on P | Step 6 locks that template for the FIRST time, after P — the reverse of the templates-before-P order (1 → 2), for that one row. Against the generator holding the template and waiting on P, this transaction holds P and waits on the template: `40P01` on one side, nothing half-applied. **Accepted**, narrower than the general order — it exists only for a template arriving inside this transaction's own step 1-2 window. Named in `lock-order.md` ("Switching to a shared room (#259)"). |
-| `withdrawWaitingEntriesForTeacher` (or another teacher-wide multi-class locker) holding a terminal `Class` row still on P | Step 7's archive cascade locks every `Class` row still referencing P, not only the ones step 4 locked — a second, unfiltered `Class` run this transaction takes only after P. A locker holding one of those terminal rows while this transaction holds P (or the reverse) ends in `40P01` on one side, nothing half-applied. **Accepted**. Named in `lock-order.md` ("Switching to a shared room (#259)"). |
+| `withdrawWaitingEntriesForTeacher` (or another teacher-wide multi-class locker) holding a terminal `Class` row still on P | Step 7's archive cascade locks every `Class` row still referencing P, not only the ones step 4 locked — a second, unfiltered `Class` run this transaction takes only after P. `withdrawWaitingEntriesForTeacher` locks `Class` rows only, never `TeacherRoom`: holding one of those terminal rows while it waits on a class this transaction holds (a step-4 row, or a terminal row the cascade reached first), against this transaction's step-7 cascade waiting on the row it holds, is two `Class` runs out of order and ends in `40P01` on one side, nothing half-applied. **Accepted**. Named in `lock-order.md` ("Switching to a shared room (#259)"). |
 
 `lock-order.md` gets one new section stating the order in §4 and the
 no-new-edge argument, with the statement shapes. Its race harness follows
@@ -326,7 +333,7 @@ its heading and gains the action:
 > **Already shared**
 > {name} at {address} is already shared with all teachers. You can switch to
 > it: your recurring classes and upcoming classes move there, and this room is
-> archived. Past classes stay with this room.
+> archived. Past and cancelled classes stay with this room.
 > `[Switch to shared room]` `[Cancel]`
 
 - The button gets a new prop, `teacherRoomId`, from the page, which already has it.
@@ -343,8 +350,12 @@ its heading and gains the action:
   message inline in the existing `role="alert"` slot. `NOT_SAME_ROOM`,
   `NOW_SHARED` and `NOT_FOUND` also call `router.refresh()`, because the
   page's picture of the room is what went stale
-  (`server-snapshot-props-go-stale`). `ROOM_IN_USE` does not: nothing on the
-  page is stale, and the teacher just tries again later.
+  (`server-snapshot-props-go-stale`). The refresh replaces the props but not
+  the panel's cached search, so those three also close the panel and drop
+  that search: the message stays, shown under the closed control, and only a
+  fresh search against the refreshed props may offer a switch again.
+  `ROOM_IN_USE` does neither: nothing on the page is stale, and the teacher
+  just tries the same switch again later.
 - The near-match (warn) branch is unchanged. A same-street room with a
   different floor or room name is a human judgement (#73 §3), and the switch
   refuses it on the server anyway.
