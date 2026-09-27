@@ -2624,14 +2624,12 @@ describe('PUT /api/class-templates/[id]', () => {
     }
   });
 
-  // The `!== template.teacherRoomId` half of door 5, proven directly: without
-  // it, this case 409s. A caller may send an unchanged `teacherRoomId` beside
-  // a pure description change — and a template on an archived room (post-272 necessarily PAUSED — the
-  // active-on-archived snapshot spec section 10 described is now refused by
-  // the constraint itself, at the archive write) would otherwise answer this
-  // 409 about a move the teacher did not make. The no-op must never write the
-  // mirror either: the move gates on the CHANGE, so this edit touches only the
-  // description, and it answers 200.
+  // A caller may send the template's current `teacherRoomId` beside a
+  // description change. On a template whose room is archived — necessarily
+  // paused, since `ClassTemplate_live_needs_open_room` refuses a live one at
+  // the archive write — that no-op answers 200 and writes the description.
+  // This does not pin door 5's `!== template.teacherRoomId` half: the probe
+  // refuses only a live template, so this case passes with or without it.
   it('allows a no-op room field on a template whose room is archived', async () => {
     const owner = await seedTeacher('move-archived-noop');
     try {

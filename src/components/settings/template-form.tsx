@@ -58,8 +58,8 @@ type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
 type CreateTemplateWire = z.infer<typeof createClassTemplateSchema>;
 
 /**
- * #85. Both schemas, both directions — four pins, because this form sends one
- * body to both endpoints.
+ * #85. Both schemas, both directions — four pins, because this form builds one
+ * body for both endpoints.
  *
  * The issue warned that a pin "has to target the right schema per branch"
  * because create and update differ — they do differ, in optionality and
@@ -164,33 +164,35 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
   // The filter below keys off this prop rather than `form.teacherRoomId` so
-  // the effect only refires when the *seeded* room changes, not on every
+  // the effect only refires when the *stored* room changes, not on every
   // dropdown change a teacher makes while the form is open — keying off
   // `form` state would refetch on each selection.
   //
-  // It does refire on one real path: `handleSubmit`'s edit branch calls
-  // `router.refresh()` (below) after a save, which re-renders the server
-  // parent (`settings/recurring/[id]/page.tsx`) with a freshly-queried
-  // `initial`. If the stored room is no longer the one this tab last saw —
-  // this save changed it, or the room was moved while the tab was open —
-  // this value changes and the effect runs again. That is accepted, not a bug
-  // to route around: `GET /api/teacher-rooms` is idempotent, `loading` is not
-  // reset so there is no flash, and the refetched list is only more current
-  // for it.
+  // It does refire whenever the server parent re-renders with a
+  // freshly-queried `initial` whose room differs from the last one. A
+  // `router.refresh()` does that — `handleSubmit`'s edit branch (below) calls
+  // one after each successful save — and the stored room differs when that
+  // save changed it or when the room was moved while the tab was open. The
+  // refetch is required, not merely tolerated: a moved-to room may be a link
+  // created after this tab loaded, and the adoption below selects it, so only
+  // the refetched list offers it — and drops the archived room it replaced.
+  // `GET /api/teacher-rooms` is idempotent and `loading` is not reset, so
+  // there is no flash.
   const initialTeacherRoomId = initial?.teacherRoomId;
 
   // #685. `form` is seeded once, so a refreshed `initial` would leave it on
   // the room this tab loaded. Where the teacher has not touched the room —
-  // the form still holds the previous prop — the form adopts the stored one.
-  // Otherwise the next save sends the old room as a change, and the select
-  // shows a blank where the refetch above filtered an archived option out.
+  // the form still holds the previous prop — the form adopts the stored one;
+  // a room the teacher picked is kept. Without this, the next save would send
+  // the old room back as a change, and once the refetch below drops that
+  // room's archived option the select falls back to "Select a room".
   // Adjusted during render: React's pattern for state that follows a prop.
-  const [seededRoomId, setSeededRoomId] = useState(initialTeacherRoomId);
-  if (initialTeacherRoomId !== seededRoomId) {
-    setSeededRoomId(initialTeacherRoomId);
+  const [prevInitialRoomId, setPrevInitialRoomId] = useState(initialTeacherRoomId);
+  if (initialTeacherRoomId !== prevInitialRoomId) {
+    setPrevInitialRoomId(initialTeacherRoomId);
     if (initialTeacherRoomId !== undefined) {
       setForm((prev) =>
-        prev.teacherRoomId === seededRoomId ? { ...prev, teacherRoomId: initialTeacherRoomId } : prev,
+        prev.teacherRoomId === prevInitialRoomId ? { ...prev, teacherRoomId: initialTeacherRoomId } : prev,
       );
     }
   }
@@ -307,12 +309,11 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       // `durationMinutes` to a string) would change what the route expects
       // while this file kept compiling. `withoutRoom` inherits its types.
       //
-      // #685. An edit carries the room only when the teacher changed it: the
-      // stored room can change while this tab is open, and resending the id it
-      // loaded would move the template back. The comparison reads the
-      // `initial` prop, which `router.refresh()` updates after each save, and
-      // the render-time adoption above keeps an untouched `form` room equal
-      // to it.
+      // #685. An edit carries the room only when it differs from the stored
+      // room in `initial`: the stored room can change while this tab is open,
+      // and resending the one this tab loaded would ask the server to move the
+      // template back. `initial` follows the server on every refresh, and the
+      // render-time adoption above keeps an untouched `form` room equal to it.
       const full: CreateTemplateWire & UpdateTemplateWire = {
         ...form,
         classType: form.classType.trim(),

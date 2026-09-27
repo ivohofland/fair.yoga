@@ -123,11 +123,13 @@ describe('POST /api/teacher-rooms/[id]/switch', () => {
     await expectRefusal(await post(owner.token, link.id, { roomId: shared.id }), 'ROOM_IN_USE');
   });
 
-  // #685, at the wire: an edit that leaves the room out keeps the template on
-  // the shared link the switch moved it to. The server needs nothing for this
-  // — an edit that resends the private link still moves the template back —
-  // so the guard is the client leaving an untouched room out; this is the
-  // acceptance record for the scenario, not that guard.
+  // #685, at the wire: a PUT without `teacherRoomId` leaves a template on the
+  // shared link the switch moved it to. Paused, because that is where a
+  // resent private link does its damage silently: a paused template may move
+  // onto an archived room, so resending the link the switch archived moves the
+  // template back (a live one is refused `ROOM_ARCHIVED` instead). This pins
+  // the server's half — an absent room is no move — not the client's choice
+  // to leave an untouched room out.
   it('keeps a paused template on the shared room when a later edit omits the room', async () => {
     const { link, shared } = await makePair(owner.id, 'stale');
     const template = await prisma.classTemplate.create({
@@ -157,6 +159,7 @@ describe('POST /api/teacher-rooms/[id]/switch', () => {
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
     expect(after.teacherRoomId).toBe(switched.sharedTeacherRoomId);
     expect(after.roomArchived).toBe(false);
+    expect(after.description).toBe('Edited in a tab opened before the switch');
   });
 
   it('answers 400 for a body without a uuid roomId', async () => {
