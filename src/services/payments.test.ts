@@ -563,7 +563,10 @@ describe('Payment Service (DB)', () => {
     const fixtureStudentIds: string[] = [];
     let fixtureTag = 0;
 
-    async function makePayment(status: PaymentStatus): Promise<Payment> {
+    /** A fresh student, a registration for them under `classId`, and a payment on it. */
+    async function createPaymentFixture(
+      status: PaymentStatus,
+    ): Promise<{ payment: Payment; studentId: string }> {
       const tag = fixtureTag++;
       const student = await prisma.student.create({
         data: {
@@ -578,7 +581,7 @@ describe('Payment Service (DB)', () => {
       const registration = await prisma.registration.create({
         data: { classId, studentId: student.id, status: 'attended', tierAtBooking: 3, price: 12.5 },
       });
-      return prisma.payment.create({
+      const payment = await prisma.payment.create({
         data: {
           registrationId: registration.id,
           amount: 12.5,
@@ -587,6 +590,11 @@ describe('Payment Service (DB)', () => {
           ...(status === 'not_charged' ? { notChargedAt: new Date() } : {}),
         },
       });
+      return { payment, studentId: student.id };
+    }
+
+    async function makePayment(status: PaymentStatus): Promise<Payment> {
+      return (await createPaymentFixture(status)).payment;
     }
 
     /**
@@ -598,31 +606,9 @@ describe('Payment Service (DB)', () => {
       status: PaymentStatus,
       isArchived: boolean,
     ): Promise<{ payment: Payment; studentId: string }> {
-      const tag = fixtureTag++;
-      const student = await prisma.student.create({
-        data: {
-          firstName: 'NotCharged',
-          lastName: `Linked${tag}`,
-          email: `payment-notcharged-linked-${tag}-${uniqueSuffix}@test.local`,
-          incomeTier: 3,
-        },
-        select: { id: true },
-      });
-      fixtureStudentIds.push(student.id);
-      await prisma.teacherStudent.create({ data: { teacherId, studentId: student.id, isArchived } });
-      const registration = await prisma.registration.create({
-        data: { classId, studentId: student.id, status: 'attended', tierAtBooking: 3, price: 12.5 },
-      });
-      const payment = await prisma.payment.create({
-        data: {
-          registrationId: registration.id,
-          amount: 12.5,
-          status,
-          ...(status === 'paid' ? { method: 'cash', paidAt: new Date() } : {}),
-          ...(status === 'not_charged' ? { notChargedAt: new Date() } : {}),
-        },
-      });
-      return { payment, studentId: student.id };
+      const { payment, studentId } = await createPaymentFixture(status);
+      await prisma.teacherStudent.create({ data: { teacherId, studentId, isArchived } });
+      return { payment, studentId };
     }
 
     /** The fixture teacher's link to this student, read fresh. */
