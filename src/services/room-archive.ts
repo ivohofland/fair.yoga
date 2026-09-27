@@ -33,10 +33,9 @@ import { isRecordNotFound } from '@/lib/api-errors';
  * `class-template-lifecycle`, which is where they used to sit.
  *
  * The CLASS doors are narrower: a class has no resume, since nothing pauses
- * a `Class`, and `updateClass` never moves a class — `updateClassSchema`
- * carries no `teacherRoomId`. Other writers can: `switchToSharedRoom`
- * (`src/services/room-switch.ts`, issue 259) is one. The CLASS doors this
- * module gates are publish (`transitionClass`, `class-lifecycle.ts`) and the
+ * a `Class`. Any path that repoints a class writes the mirror in the same
+ * statement and meets `Class_live_needs_open_room` like the others. The
+ * CLASS doors are publish (`transitionClass`, `class-lifecycle.ts`) and the
  * two create paths (`POST /api/classes`, `class-generator.ts`), and the
  * create paths are the one place this pattern is not symmetric with the
  * template's: they COPY the room's `isArchived` onto the new row rather than

@@ -79,14 +79,16 @@ that suffix.
 ## Ordering WITHIN `Class`
 
 The list above orders the *tables*. It says nothing about the order of two rows
-of the SAME table, and `Class` is the one table where that matters: **four**
+of the SAME table, and `Class` is the one table where that matters: **five**
 sites lock more than one `Class` row inside a single transaction, and two of
 them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
 
 **Five until #194**, which deleted the template edit's propagation and with it
-the fifth site. Re-derived by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
-helper's definition plus four callers — rather than decremented, because this
+the fifth site; five again since #259, whose `switchToSharedRoom`
+(`room-switch.ts`) locks every upcoming class on the private link. Re-derived
+by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
+helper's definition plus five callers — rather than incremented, because this
 document's own history is of counts that stayed plausible while their
 membership moved. Since #464 a test holds the other half:
 `src/lib/db-locks-verdict-census.test.ts` requires every production call site
@@ -156,8 +158,9 @@ Three things take both, and all three take them in this order:
   snapshot (`EvalPlanQual` re-fetches locked rows only). Measured 6/6 during
   stage A.
 - **`lockClassRowsOrdered` with `entries: true`** — every `Class` row first,
-  ascending by `c.id`; then their entries, ascending by `e.id`. Two of its four
-  callers pass the flag; each carries its own written verdict at the call site.
+  ascending by `c.id`; then their entries, ascending by `e.id`. Two of its
+  callers pass the flag (the callers are re-derived under "Ordering WITHIN
+  `Class`" above); each carries its own written verdict at the call site.
 - **`class_sync_entry_completed`**, the trigger function that stamps
   `CalendarEntry.classCompletedAt`. Two triggers fire it — `AFTER UPDATE OF
   status ON "Class"` and, since
@@ -201,16 +204,26 @@ grep the section above prescribes, minus the template tables:
       | grep -vE ':[0-9]+: *(\*|//)' \
       | grep -vE 'OF (ct|sct|tpl)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
 
-**Expect FIVE lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
-and `lockClassRowsOrdered`'s two — plus `src/services/room-archive.ts:235`,
-which is not a `Class` lock at all.** That fifth is a false positive this
-command cannot suppress: it locks `ClassTemplate` rows, but its `"ClassTemplate"`
-sits on the line ABOVE its `FOR UPDATE`, and every filter here matches line by
-line. Both copies of this census share the blind spot, so both return five;
-neither can be "fixed" by tightening the filter, only by rewriting the
-statement onto one line, which nothing else wants. Any SIXTH line is the real
-signal — a site that took a `Class` or `CalendarEntry` row lock without going
-through either helper.
+**Expect EIGHT lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
+and `lockClassRowsOrdered`'s two — plus four that are not `Class` or
+`CalendarEntry` locks at all:**
+
+- `src/services/room-archive.ts:235` and `src/services/room-switch.ts:88`, the
+  archive's and the switch's step-1 pre-locks, both on `ClassTemplate` rows;
+- `src/services/room-switch.ts:93` and `:138`, the switch's step-2 and step-3
+  locks on the private and the shared `TeacherRoom` (#259).
+
+Three of the four are false positives this command cannot suppress: the
+table name (`"ClassTemplate"` at `room-archive.ts:235` and `room-switch.ts:88`,
+`"TeacherRoom"` at `:138`) sits on a line ABOVE its `FOR UPDATE`, and every
+filter here matches line by line. The fourth, `room-switch.ts:93`, carries
+`"TeacherRoom"` on its own line and passes only because this command filters
+the template tables, not every table that is not `Class` or `CalendarEntry`.
+Both copies of this census share these lines, so both return eight; the
+three blind-spot lines cannot be "fixed" by tightening the filter, only by
+rewriting each statement onto one line, which nothing else wants. Any NINTH
+line is the real signal — a site that took a `Class` or `CalendarEntry` row
+lock without going through either helper.
 
 The last alternative, `family\.childTable`, is the one this command was missing
 until issue 336. `archiveOrUnarchiveRule` and `pauseOrResumeRule`
@@ -240,8 +253,8 @@ per-family claims used before the merge, still issued by `gdpr.ts`'s bulk
 archive.
 
 The third filter is not optional, and leaving it off is how this check shipped
-broken. Drop it and the same command returns **85** lines across sixteen files
-where it returns five with it — this codebase discusses `FOR UPDATE` far more
+broken. Drop it and the same command returns **96** lines across twenty files
+where it returns eight with it — this codebase discusses `FOR UPDATE` far more
 often than it issues it, so a reader running the unfiltered version concludes
 on first use that the convention is already abandoned. Caught by #239's
 review, which is to say: after it shipped. The two figures are the same command
@@ -409,7 +422,7 @@ a call):
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
    **It returned four hits when this check was first written, and returns
-   twelve when re-run today** — re-derived for issue 284, not carried
+   fourteen when re-run today** — re-derived for issue 259, not carried
    forward. Of the original four, two were never `Class` locks at all — the
    two generators' template claims, then written per family as
    `FOR UPDATE OF ct` / `FOR UPDATE OF sct` on a `ClassTemplate` /
@@ -420,32 +433,38 @@ a call):
    (`entry-generation.ts`), whose single `FOR UPDATE OF tpl` splices its table
    name from the family descriptor and serves either family.
 
-   That accounts for three of today's twelve: the two `db-locks.ts` `Class`
+   That accounts for three of today's fourteen: the two `db-locks.ts` `Class`
    helpers, plus the merged claim standing where two lines used to. The other
-   nine were added since, and are of three kinds. Six come from the split
+   eleven were added since, and are of four kinds. Five come from the split
    "The child row is the lock node for the template families" below describes:
-   four single-id plain `FOR UPDATE`s on a child
-   template row — one each in `updateClassTemplate` and
-   `updateStudioClassTemplate`, plus two in `rule-lifecycle.ts` whose table
-   name is likewise spliced rather than written literally,
-   `archiveOrUnarchiveRule` and `pauseOrResumeRule`, each serving BOTH of its
-   verb's entry points (issue 332 merged the two archive lines into the first,
-   issue 336 the two pause lines into the second) — plus two ordered
-   `FOR UPDATE OF` locks in `deleteTeacherAccount`'s bulk archive (`gdpr.ts`),
-   one per template family, which the `FOR UPDATE OF` census one section up
-   counts alongside the merged claim. Two more are
-   #327's `FOR UPDATE OF e` companions inside `lockClassRow` and
-   `lockClassRowsOrdered`, which now take two lines each. The ninth is
-   `room-archive.ts`'s cascade pre-lock, which holds every `ClassTemplate` row
-   of the room being archived; it belongs to no convention on this page and is
-   the line the two `Class`-scoped censuses above cannot filter out, because
-   its table name sits on the preceding line. Two plus one plus nine is the
-   twelve the command returns, and that sum is the only reconciliation this
-   paragraph offers. Cut a different way: eight of the twelve lock a
-   `ClassTemplate` or `StudioClassTemplate` row — the merged claim, the four
-   single-id lifecycle locks, the two ordered bulk-archive locks and the room
-   archive's pre-lock — and the remaining four are in `db-locks.ts`, which is
-   where every `Class` and `CalendarEntry` row lock still lives. A
+   three single-id plain `FOR UPDATE`s on a child template row, all in
+   `rule-lifecycle.ts` with the table name spliced rather than written
+   literally — `archiveOrUnarchiveRule`, `pauseOrResumeRule` and `updateRule`,
+   each serving BOTH of its verb's entry points (issue 332 merged the two
+   archive lines into the first, issue 336 the two pause lines into the
+   second, and `updateClassTemplate` and `updateStudioClassTemplate` both run
+   on the third) — plus two ordered `FOR UPDATE OF` locks in
+   `deleteTeacherAccount`'s bulk archive (`gdpr.ts`), one per template family,
+   which the `FOR UPDATE OF` census one section up counts alongside the merged
+   claim. Two more are #327's `FOR UPDATE OF e` companions inside
+   `lockClassRow` and `lockClassRowsOrdered`, which now take two lines each.
+   One is `room-archive.ts`'s cascade pre-lock, which holds every
+   `ClassTemplate` row of the room being archived. The last three are
+   `switchToSharedRoom`'s (`room-switch.ts`, issue 259): its step-1 pre-lock,
+   the same shape as the archive's, and its step-2 and step-3 locks on the
+   private and the shared `TeacherRoom`. None of those four belongs to a
+   convention on this page, and they are the four non-`Class` lines the
+   `Class`-scoped census above returns. Three plus five plus two plus one plus three is
+   the fourteen the command returns, and that sum is the only reconciliation
+   this paragraph offers. Cut a different way: eight of the fourteen lock a
+   `ClassTemplate` or `StudioClassTemplate` row — the merged claim, the three
+   single-id lifecycle locks, the two ordered bulk-archive locks, and the
+   archive's and the switch's pre-locks — two lock a `TeacherRoom` row, and
+   the remaining four are in `db-locks.ts`, which is where every `Class` and
+   `CalendarEntry` row lock still lives. Re-derived for issue 259, this
+   paragraph's previous figure (twelve) had already drifted to eleven before
+   the switch arrived: `updateClassTemplate`'s and
+   `updateStudioClassTemplate`'s two locks had become `updateRule`'s one. A
    count that stays right while the membership changes is the one error
    nothing that counts can catch, and this document has already made that
    mistake once (`db-locks.ts`'s register named `deleteStudentAccount` as a
@@ -937,6 +956,10 @@ arming it, spread over `db-locks.ts` (four helpers now: `lockClassRow`,
 transaction that takes a contended row lock without arming the bound does not
 appear here at all, so a count that has not moved is not on its own evidence
 that nothing was missed. Re-derive the list, not the total.
+
+Re-run for issue 259 it returns 19: `switchToSharedRoom`'s own transaction
+arming it (`room-switch.ts`) is new, and every other line sits in one of the
+files listed above.
 
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
@@ -2660,11 +2683,11 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   batches**. An earlier version of this bullet credited one-class-at-a-time with
   removing the cycle; it does not, and a future site copying that reasoning
   without also pre-locking its parents would inherit a deadlock this sweep does
-  not have. What one class at a time actually buys is the "**four** sites lock
-  more than one `Class` row" count under **Ordering WITHIN `Class`** — above,
-  not below — staying true, and a bound on how long the sweep holds locks
-  against live traffic. (Five until #194 deleted the template edit's
-  propagation; the count moved, this bullet's argument did not.)
+  not have. What one class at a time actually buys is keeping this sweep out
+  of the "sites lock more than one `Class` row" count under **Ordering WITHIN
+  `Class`** — above, not below — and a bound on how long the sweep holds locks
+  against live traffic. (That count has moved with #194 and #259; this
+  bullet's argument did not.)
 
 ## Known safe by accident, not by order — not fixed here
 
@@ -2822,8 +2845,8 @@ Probe results for both shapes are in PR #340.
 
 `ClassTemplate_teacherRoomId_roomArchived_fkey` is a foreign key, and
 PostgreSQL indexes a foreign key's REFERENCED side automatically and its
-referencing side never. Paths that read that side, most of them while holding
-locks:
+referencing side never. Paths that read that side (the cascade and the
+RESTRICT check do so while holding the room row):
 
 - the archive's pre-lock (`setTeacherRoomArchived`), inside the transaction
   that holds the room row
@@ -2852,8 +2875,8 @@ The scan alone, which is the part that scales: `Seq Scan … actual time
 size 752 kB against a 13 MB table.
 
 The case for it is the SLOPE and the LOCK HOLD, not the latency: without the
-index the cost grows linearly with the table, and two of the three paths spend
-it while holding the room row against the generator. On a small table the
+index the cost grows linearly with the table, and the cascade and the RESTRICT
+check spend it while holding the room row against the generator. On a small table the
 planner will still choose a sequential scan, which is correct — the index earns
 its place as the table grows, not today. Re-derive with:
 
@@ -2919,15 +2942,15 @@ is the constraint's whole footprint rather than the set of sites that refuse.
 ## Switching to a shared room (#259)
 
 `switchToSharedRoom` (`room-switch.ts`) moves a teacher off a private
-`TeacherRoom` P onto the already-shared `TeacherRoom` S with the same room
-identity. The guards are
-`docs/superpowers/specs/2026-09-26-switch-to-shared-room-design.md` §4; this
+`TeacherRoom` P onto S, the teacher's link to the already-shared `Room` with
+the same identity (created at step 3 if absent). The guards are
+`docs/superpowers/specs/2026-09-26-switch-to-shared-room-design.md` §3.2; this
 section is the lock order alone. One `$transaction`, `setLockTimeout` first:
 
 | Step | What | Lock |
 |---|---|---|
 | 1 | Lock every `ClassTemplate` with `teacherRoomId = P` | `FOR UPDATE`, ascending `id` |
-| 2 | Lock P, re-read it and its room, re-run every guard against what is locked | `FOR UPDATE` on `TeacherRoom` P |
+| 2 | Lock P, re-read it and its room, and run the guards against it; the two `Room` rows are read unlocked (spec §4.1) | `FOR UPDATE` on `TeacherRoom` P |
 | 3 | S: insert if absent (`ON CONFLICT DO NOTHING`), then lock it; un-archive it if it was archived | `FOR UPDATE` on `TeacherRoom` S |
 | 4 | Lock P's classes that are `draft`, `open` or `in_progress` and live (`entryLive`) | `lockClassRowsOrdered`, ascending `id` (`db-locks.ts`) |
 | 5 | Move the locked classes onto S | already held (steps 3–4) |
@@ -2944,10 +2967,10 @@ class family at once:
   the same reason: locking P before its templates would let the generator's
   `ClassTemplate FOR UPDATE` → `Class` `KEY SHARE` on P close a cycle against
   it.
-- **`TeacherRoom` S before `Class` (3 → 4)** is "creation's `TeacherRoom →
-  Class`" — the same order `POST /api/classes`'s `FOR KEY SHARE` pre-read
-  uses ahead of its own insert ("`TeacherRoom → Class`: `switchToSharedRoom`'s
-  step 5 writes it, and adds no wait edge"). Step 5 writes
+- **`TeacherRoom` S before `Class` (3 → 4)** is the same order
+  `POST /api/classes`'s `FOR KEY SHARE` pre-read uses ahead of its own insert
+  ("`TeacherRoom → Class`: `switchToSharedRoom`'s step 5 writes it, and adds
+  no wait edge"). Step 5 writes
   `Class.teacherRoomId`, and its foreign-key `KEY SHARE` on S is satisfied by
   the lock step 3 already holds, so it waits on nothing new.
 
@@ -2998,10 +3021,13 @@ establish:
   locks those terminal rows for the first time, after P — a second `Class`
   run in this transaction, outside the ascending order step 4 alone keeps.
   `withdrawWaitingEntriesForTeacher` (`waitlist.ts:1213-1217`) locks a
-  teacher's classes with a waiting entry with no status filter of its own, so
-  it can hold one of those terminal rows while this transaction holds P, or
-  the reverse. **Accepted**: `40P01` on one side, nothing half-applied, the
-  same as every other cycle this section records.
+  teacher's classes with a waiting entry — `Class` rows only, with no status
+  filter of its own — so it can hold one of those terminal rows while waiting
+  on a class this transaction holds (a step-4 row, or a terminal row the
+  cascade reached first), while this transaction's step-7 cascade waits on
+  the row it holds. That is two `Class` runs out of order, the same shape as
+  the S-cascade bullet above. **Accepted**: `40P01` on one side, nothing
+  half-applied, the same as every other cycle this section records.
 - **`setTeacherRoomArchived(S, 'archived')`, run after this transaction has
   already committed.** Its own pre-lock reaches the templates this
   transaction just moved onto S the ordinary way — they are simply S's
@@ -3013,27 +3039,48 @@ establish:
   on one side if the archive gets there first; otherwise the generator's
   insert commits first and the archive's own CHECK answers `in_use`.
 
-Re-derive the writer these shapes are about with:
+Re-derive the writes these edges and shapes are about with:
 
-    grep -n "data: { teacherRoomId: target.id" src/services/room-switch.ts
+    grep -nE 'teacherRoom\.update\(|\.updateMany\(' src/services/room-switch.ts
 
-which returns the `Class` `updateMany` (step 5), covered by the "`TeacherRoom`
-S before `Class` (3 → 4)" bullet, and the `ClassTemplate` `updateMany`
-(step 6), covered by the templates-before-P order (1 → 2) for every template
-step 1 already locked, and by step 6's own accepted-shape bullet for one that
-arrives on P inside this transaction's own step 1–2 window.
+which returns four lines, in step order:
 
-Pinned by `room-switch-lock-order.test.ts`: one case shows P still free while
-the switch waits on one of its templates — moving the step-1 pre-lock to after
-step 2 makes the probe that checks this time out instead; a second shows a
-class the generator inserted onto P while the switch waited still gets moved —
-not itself a lock-order probe, since the switch's own step 1 pre-lock always
-blocks on the held template regardless of order; what it pins is that step 4
-reads the moving set AFTER the wait; a third shows a class cancelled while the
-switch waits on its own row stays on P — `entryLive` is re-checked on the row
-this transaction holds, not read through a join evaluated before the wait, the
-same distinction the "`CalendarEntry → Class` is backward, and safe because
-every writer takes `Class` first" subsection draws for a different writer.
+- step 3's un-archive of S (`teacherRoom.update`, `isArchived: false`), whose
+  cascades are the first two accepted-shape bullets;
+- step 5's `Class` `updateMany`, covered by the "`TeacherRoom` S before
+  `Class` (3 → 4)" edge;
+- step 6's `ClassTemplate` `updateMany`, covered by the templates-before-P
+  edge (1 → 2) for every template step 1 already locked, and by step 6's own
+  accepted-shape bullet for one that arrives on P inside this transaction's
+  own step 1–2 window;
+- step 7's archive of P (`teacherRoom.update`, `isArchived: true`), whose
+  cascade is the step-7 bullet.
+
+The last bullet, an archive of S after this transaction commits, is a write
+of `setTeacherRoomArchived`'s rather than of this file's.
+
+Pinned by `room-switch-lock-order.test.ts`, one case per property — re-derive
+the cases with `grep -n "^  it(" src/services/room-switch-lock-order.test.ts`:
+
+- **Templates before the private link.** While the switch waits on one of
+  P's templates, P is still free: a probe takes it under a short
+  `lock_timeout`. Moving the step-1 pre-lock after step 2 makes that probe
+  time out instead.
+- **The moving set is read after the wait.** A class the generator inserted
+  onto P while the switch waited on its template still moves. Not a
+  lock-order probe — the step-1 pre-lock blocks on the held template in any
+  order — but it pins that step 4 reads the set AFTER the wait.
+- **Cancellation is re-checked on the locked row.** A class cancelled while
+  the switch waits on its own row stays on P: `entryLive` is read on the row
+  this transaction holds, not through a join evaluated before the wait — the
+  same distinction the "`CalendarEntry → Class` is backward, and safe because
+  every writer takes `Class` first" subsection draws for a different writer.
+- **A generator that claims a template while the switch is parked generates
+  onto S.** The switch holds P's templates, P and S and waits on one of P's
+  classes; the generator's claim on a template blocks on the switch, and once
+  the switch commits the generator re-reads the template and generates onto
+  S. Moving the step-1 pre-lock to after step 4 turns this case into a
+  `40P01` between the two.
 
 ## The class mirrors' foreign keys are wait edges (#339)
 
@@ -3137,9 +3184,10 @@ The archive's write cascades into every `Class` row in the room as well as
 every `ClassTemplate` row, so in principle a transaction holding a `Class` row
 lock that then waited on `TeacherRoom` would be the counterparty — the same
 shape #272 closed on the `ClassTemplate` side with the pre-lock in
-`setTeacherRoomArchived`. `switchToSharedRoom`'s own step 5 (`room-switch.ts`,
-"Switching to a shared room") is exactly that shape, which is why this section
-states what step 5 does rather than that no such transaction exists:
+`setTeacherRoomArchived`. `switchToSharedRoom`'s step 5 (`room-switch.ts`,
+"Switching to a shared room") is a transaction that holds `Class` rows and
+then touches this foreign key; it adds no wait, because the link the key
+reaches is one it already holds (the second bullet below):
 
 - An `UPDATE` on `Class` triggers no referential check at all unless it
   touches an FK column, because Postgres only fires an FK trigger for the
@@ -3203,16 +3251,17 @@ in "The room mirror's foreign keys are wait edges" above and detailed in PR
 
 ### The referencing side is indexed, and that was measured (#339)
 
-`Class` had no index on `teacherRoomId`. Two paths read the referencing side
-of `Class_teacherRoomId_roomArchived_fkey`, neither of them holding this
-transaction's own `Class` lock while it does: the `ON UPDATE CASCADE` that
-rewrites every mirroring `Class` row when a room's `isArchived` flips, and the
-`ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`. (#272 had a
-third path on the `ClassTemplate` side — the archive's own explicit pre-lock —
-and the archive (`setTeacherRoomArchived`, issue 339) has no counterpart on
-this side, because it takes no `Class` lock of its own. `switchToSharedRoom`
-(issue 259) does take one through this index, at its step 4 — see "Switching
-to a shared room (#259)" below.)
+`Class` had no index on `teacherRoomId`. The referencing side of
+`Class_teacherRoomId_roomArchived_fkey` is read by the `ON UPDATE CASCADE`
+that rewrites every mirroring `Class` row when a room's `isArchived` flips,
+and by the `ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`; in the
+archive and the delete, neither runs under a `Class` lock of its own
+transaction. (#272 had a third path on the `ClassTemplate` side — the
+archive's own explicit pre-lock — and the archive (`setTeacherRoomArchived`,
+issue 339) has no counterpart on this side, because it takes no `Class` lock
+of its own. `switchToSharedRoom` (issue 259) does take `Class` locks, at its
+step 4, ahead of its own step-7 cascade — see "Switching to a shared room
+(#259)" above.)
 
 Measured before adding, the same way #272's design §7.3 asked for. Scratch
 database (`ethical_yoga_scratch_339`) seeded with one target `TeacherRoom`

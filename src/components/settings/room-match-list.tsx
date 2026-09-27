@@ -8,9 +8,8 @@ interface RoomMatchListProps {
 }
 
 /**
- * Rooms already shared at an address. Selectable when adding a room (pick one
- * instead of creating), read-only when sharing one (the share panel's switch
- * acts on the exact match, not on a row).
+ * Rooms already shared at an address. Selectable when given `onSelect` (pick
+ * one instead of creating), read-only when rendered without it.
  */
 export function RoomMatchList({ rooms, onSelect }: RoomMatchListProps) {
   return (

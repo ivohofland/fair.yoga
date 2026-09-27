@@ -381,12 +381,12 @@ model ClassTemplate {
 
   /// MIRRORS. Neither column is state this row owns, and neither may disagree
   /// with the parent it mirrors — but they are not written the same way.
-  /// `ruleLive` is maintained by Postgres alone; `roomArchived` is written by
-  /// the create and move paths in `class-template-lifecycle.ts`, which assert
-  /// or copy the room's value, and Postgres is what refuses them if they lie.
-  /// `switchToSharedRoom` (`src/services/room-switch.ts`, issue 259) is
-  /// another writer: it moves every template on a link and writes
-  /// `roomArchived` from the target link in the same statement.
+  /// `ruleLive` is maintained by Postgres alone. `roomArchived` is the
+  /// application's to write: a statement that sets or repoints
+  /// `teacherRoomId` must leave it equal to the new link's `isArchived`
+  /// (written, or by the column default), because `ON UPDATE CASCADE` fires
+  /// only when the parent changes, and the foreign key refuses a pair that
+  /// disagrees.
   ///
   /// `ruleLive` mirrors `ScheduleRule.live`; `roomArchived` mirrors
   /// `TeacherRoom.isArchived`. Neither can drift from what it mirrors, and that
@@ -428,12 +428,9 @@ model ClassTemplate {
   /// The REFERENCING side of `ClassTemplate_teacherRoomId_roomArchived_fkey`.
   /// PostgreSQL indexes the referenced side automatically and this one never,
   /// so without this every room archive and every room delete reads the whole
-  /// table. Used while holding locks by at least the archive's own pre-lock
-  /// (`room-archive.ts`) and the switch's step-1 pre-lock
-  /// (`src/services/room-switch.ts`, issue 259), plus the `ON UPDATE CASCADE`
-  /// that rewrites the mirrors when a room's `isArchived` flips and the
-  /// `ON DELETE RESTRICT` check. Measured rather than added on principle
-  /// (issue 272 design §7.3) — the numbers are in `docs/lock-order.md`.
+  /// table. Measured rather than added on principle (issue 272 design §7.3);
+  /// which paths read it, and the numbers, are in `docs/lock-order.md` ("The
+  /// referencing side is indexed, and that was measured (#272)").
   @@index([teacherRoomId, roomArchived])
 }
 
@@ -497,14 +494,12 @@ model Class {
   /// They are not written the same way. `entryLive` is maintained by Postgres
   /// alone: a class is created with a fresh, uncancelled entry, so the
   /// column's default is the only value it can start with, and nothing writes
-  /// it afterwards. `roomArchived` is written by the two create paths, which
-  /// COPY the room's value — copy rather than assert, unlike
-  /// `ClassTemplate.roomArchived`, because a `draft` may legally sit in an
-  /// archived room. `updateClass` never moves a class between rooms
-  /// (`updateClassSchema` carries no `teacherRoomId`), and cancellation writes
-  /// the entry. `switchToSharedRoom` (`src/services/room-switch.ts`, issue
-  /// 259) is a mover that does: it writes `roomArchived` from the target link
-  /// in the same statement.
+  /// it afterwards. `roomArchived` is COPIED from the room when a class is
+  /// created — copy rather than assert, unlike `ClassTemplate.roomArchived`,
+  /// because a `draft` may legally sit in an archived room. A statement that
+  /// repoints `teacherRoomId` must leave it equal to the new link's
+  /// `isArchived`, because `ON UPDATE CASCADE` fires only when the parent
+  /// changes, and the foreign key refuses a pair that disagrees.
   ///
   /// They exist so a predicate spanning three tables can be checked against
   /// one row. That check is `Class_live_needs_open_room`, hand-authored in the
@@ -557,13 +552,10 @@ model Class {
   /// PostgreSQL indexes the referenced side automatically and this one never,
   /// so without this both the `ON UPDATE CASCADE` that rewrites the mirror
   /// when a room's `isArchived` flips and the `ON DELETE RESTRICT` check read
-  /// the whole table. Issue 339's archive takes no explicit `Class` lock of
-  /// its own the way `ClassTemplate`'s sibling index has one —
-  /// `switchToSharedRoom` (`src/services/room-switch.ts`, issue 259) does
-  /// take one, through this index, at its step 4. Measured rather than added
-  /// on principle (issue
-  /// 272 design §7.3, the same precedent) — the numbers are in
-  /// `docs/lock-order.md`, the `#339` section.
+  /// the whole table. Measured rather than added on principle (issue 272
+  /// design §7.3, the same precedent); which paths read this side, and the
+  /// numbers, are in `docs/lock-order.md` ("The referencing side is indexed,
+  /// and that was measured (#339)").
   @@index([teacherRoomId, roomArchived])
   /// Plain, never partial — see `docs/data-model.md` (Design Notes, status
   /// indexes) for why a `WHERE status = ...` predicate would serve no Prisma query.

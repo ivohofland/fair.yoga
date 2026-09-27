@@ -1,33 +1,23 @@
 /**
- * Shared fixtures for the room-archive unit tests (issue 76).
+ * Shared fixtures for the room services' unit tests.
  *
- * A FRESH teacher, room and link per case. Two constraints make shared-teacher
- * fixtures collide, and since #327 they are the same shape at both layers —
- * an `EXCLUDE USING gist` matching on RANGE OVERLAP rather than an exact start
- * time, spanning both families of its layer:
- * `ScheduleRule_teacher_slot_excl` (issue 298) over (teacherId, dayOfWeek,
+ * A FRESH teacher, room and link per `makeFixture`. Two constraints make
+ * shared-teacher fixtures collide, each an `EXCLUDE USING gist` matching on
+ * RANGE OVERLAP rather than an exact start time and spanning both families of
+ * its layer: `ScheduleRule_teacher_slot_excl` over (teacherId, dayOfWeek,
  * slot) WHERE isArchived = false, and `CalendarEntry_teacher_slot_excl` over
- * (teacherId, span) WHERE "cancelledAt" IS NULL. A fresh teacher per case
- * sidesteps both — but only ACROSS fixtures, not within one.
+ * (teacherId, span) WHERE "cancelledAt" IS NULL. A fresh teacher per fixture
+ * sidesteps both across fixtures, not within one.
  *
- * `addClass` derives `startTime` from `seq`, and `seq` advances only in
- * `makeFixture`, never in `addClass` itself; `date` is fixed at today+14. So
- * two `addClass` calls against the SAME fixture produce the identical span,
- * which the constraint refuses — this file just doesn't vary the columns that
- * span is generated from per call. The existing `completed` + `cancelled`
- * two-class case (`room-archive.test.ts`) survives only because the constraint
- * is partial on `"cancelledAt" IS NULL`, not because two classes on one
- * fixture are safe in general. An obvious-looking "two upcoming classes on one
- * fixture" case — `open` + `open`, or `draft` + `open` — hits the live
- * constraint and raises `23P01`; if you need that, pass distinct fixtures, not
- * distinct `addClass` calls on the same one.
+ * Within one fixture, `addClass` derives `startTime` from the run's `seq`,
+ * which advances only in `makeFixture`, and `date` defaults to today+14;
+ * `addTemplate` always starts at 18:00 and `dayOfWeek` defaults to 2. So give
+ * each live row on one fixture its own `daysAhead` (`addClass`) or `dayOfWeek`
+ * (`addTemplate`), or the exclusion refuses the second with `23P01`. A
+ * cancelled class and an archived template take no part in it.
  *
  * Each test file passes its own `prefix` so its afterAll sweep cannot delete
  * another file's rows.
- *
- * Distinct `daysAhead` (`addClass`) / `dayOfWeek` (`addTemplate`) values are how
- * a single fixture holds more than one live row without tripping the two
- * exclusions above (issue 259).
  */
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
