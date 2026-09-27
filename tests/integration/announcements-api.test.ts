@@ -390,6 +390,7 @@ describe('POST /api/announcements', () => {
     let archivedLinkClassId: string;
     let activeStudentId: string;
     let archivedStudentId: string;
+    let crossTeacherArchivedStudentId: string;
 
     beforeAll(async () => {
       const date = new Date();
@@ -429,6 +430,15 @@ describe('POST /api/announcements', () => {
         },
       });
       archivedStudentId = archived.id;
+      const crossTeacherArchived = await prisma.student.create({
+        data: {
+          firstName: 'CrossArchived',
+          lastName: 'Student',
+          email: `announce-cross-archived-${suffix}@test.local`,
+          incomeTier: 3,
+        },
+      });
+      crossTeacherArchivedStudentId = crossTeacherArchived.id;
 
       await prisma.registration.create({
         data: { classId: archivedLinkClassId, studentId: activeStudentId, status: 'registered', tierAtBooking: 3 },
@@ -436,18 +446,32 @@ describe('POST /api/announcements', () => {
       await prisma.registration.create({
         data: { classId: archivedLinkClassId, studentId: archivedStudentId, status: 'registered', tierAtBooking: 3 },
       });
+      await prisma.registration.create({
+        data: { classId: archivedLinkClassId, studentId: crossTeacherArchivedStudentId, status: 'registered', tierAtBooking: 3 },
+      });
       // Archiving means no longer this teacher's active student
       // (docs/data-model.md, TeacherStudent).
       await prisma.teacherStudent.create({
         data: { teacherId, studentId: archivedStudentId, isArchived: true },
       });
+      // Realistic shape: registering normally links the student to THIS
+      // teacher too, and that link is active.
+      await prisma.teacherStudent.create({
+        data: { teacherId, studentId: crossTeacherArchivedStudentId, isArchived: false },
+      });
+      // Archived with a DIFFERENT teacher. The exclusion in route.ts is
+      // scoped to `teacherId: session.teacherId`, so an archived link with
+      // someone else must not hide this student from THIS teacher's send.
+      await prisma.teacherStudent.create({
+        data: { teacherId: otherTeacherId, studentId: crossTeacherArchivedStudentId, isArchived: true },
+      });
     });
 
     afterAll(async () => {
-      // The TeacherStudent row above cascades off either FK
+      // The TeacherStudent rows above cascade off either FK
       // (prisma/schema.prisma, TeacherStudent) when the student rows below
       // are deleted — no explicit delete needed.
-      const studentIds = [activeStudentId, archivedStudentId].filter(Boolean);
+      const studentIds = [activeStudentId, archivedStudentId, crossTeacherArchivedStudentId].filter(Boolean);
       if (studentIds.length) {
         await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
       }
@@ -470,6 +494,9 @@ describe('POST /api/announcements', () => {
       const recipientIds = rows.map((r) => r.recipientId);
       expect(recipientIds).toContain(activeStudentId);
       expect(recipientIds).not.toContain(archivedStudentId);
+      // Archived with a different teacher: the exclusion must not reach
+      // across teachers, so this teacher's send still notifies them.
+      expect(recipientIds).toContain(crossTeacherArchivedStudentId);
     });
   });
 });
