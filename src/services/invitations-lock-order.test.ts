@@ -9,7 +9,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { acceptInvitation, declineInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';
-import { linkTeacherStudent } from './roster-link';
+import * as rosterLink from './roster-link';
 import { deleteStudentAccount } from './gdpr';
 import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -616,7 +616,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       await tx.registration.create({
         data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
       });
-      const linkOutcome = await linkTeacherStudent(tx, { teacherId, studentId });
+      const linkOutcome = await rosterLink.linkTeacherStudent(tx, { teacherId, studentId });
       bookingHasLink();
       await new Promise((r) => setTimeout(r, 300));
       // The real call, not a hand-rolled stand-in: TeacherBlock then
@@ -1695,61 +1695,58 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
   }, 15_000);
 
   /**
-   * The narrowest interleaving in this describe, and the one that pins the
-   * re-check's POSITION rather than which side of the transaction boundary
-   * it sits on: the block commits after the roster-link write and before the
-   * CAS's own statement reaches Postgres. A re-check between those two —
-   * where #537's first attempt put it — has already read "no block" by the
-   * time this block lands, so the CAS goes on to flip the row to `accepted`
-   * over a standing block and the call answers `{ ok: true }`. Measured in
-   * exactly that arrangement before the statement was moved; with the
-   * re-check as the last statement before the transaction returns, this
-   * answers NOT_PENDING and the CAS's write rolls back with everything else,
-   * leaving the row `pending`.
+   * The narrowest interleaving in this describe, and the one that used to pin
+   * the #537 re-check's POSITION rather than which side of the transaction
+   * boundary it sits on — until #265 task 1 closed the window this test
+   * raced instead. `linkTeacherStudent` (`services/roster-link.ts`) now calls
+   * `activateTeacherStudentLink`, which takes the `TeacherStudent` row's `FOR
+   * UPDATE` lock unconditionally and holds it for the rest of
+   * `acceptInvitation`'s transaction — covering the CAS this test used to
+   * land a concurrent `unlinkTeacher`'s block inside of. `unlinkTeacher`'s
+   * own delete of that row (`docs/lock-order.md`, "The `TeacherStudent` row
+   * is the archive's gate") now blocks behind that lock instead of racing in
+   * ahead of it, so the block this test fires can no longer land between the
+   * roster-link write and the CAS — only after `acceptInvitation` has
+   * already committed.
    *
-   * Hooking `invitation.updateMany` BEFORE delegating to `query(args)` is
-   * what fixes that ordering — the unlink commits first, and only then does
-   * the real CAS run. `unlinkTeacher`'s own `invitation.updateMany` cannot
-   * re-enter this hook: it runs on the plain `prisma` client, not this
-   * extended one, and `handshakeFired` would stop it anyway.
+   * Reproduced directly, not merely asserted: the pause below spies on
+   * `linkTeacherStudent` (a cross-module call from `acceptInvitation`, the
+   * same shape `pauseErasureAtGate` above spies `lockStudentForErasure`) to
+   * learn `accepting`'s own backend pid the instant that lock is taken, then
+   * confirms via `pg_stat_activity` that a concurrently-fired `unlinkTeacher`
+   * is genuinely BLOCKED behind it before letting `accepting` proceed.
    */
-  it('a block committed between the roster-link write and the CAS is not missed', async () => {
+  it('the roster-link lock now closes this window — a concurrent unlink blocks until accept commits (#265)', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
 
-    let handshakeFired = false;
-    const accepting = prisma.$extends({
-      query: {
-        invitation: {
-          async updateMany({ args, query }) {
-            if (!handshakeFired) {
-              handshakeFired = true;
-              const unlinkResult = await unlinkTeacher(prisma, {
-                teacherId, studentId, accountEmail: email,
-              });
-              expect(unlinkResult).toEqual({ ok: true });
-            }
-            return query(args);
-          },
-        },
-      },
-      // Same cast rationale as the tests above.
-    }) as unknown as PrismaClient;
+    const lock = pauseAcceptAfterRosterLink(teacherId, studentId);
+    const accepting = acceptInvitation(prisma, { invitationId, studentId, accountEmail: email });
 
-    const acceptResult = await acceptInvitation(accepting, {
-      invitationId, studentId, accountEmail: email,
-    });
+    let unlinking: Promise<unknown> | undefined;
+    try {
+      await awaitHandshake(lock.reached, 'roster-link lock');
+      unlinking = unlinkTeacher(prisma, { teacherId, studentId, accountEmail: email });
+      await waitUntilBlockedBy(lock.pid());
+    } finally {
+      lock.release();
+      await Promise.all([accepting, unlinking]);
+    }
 
-    expect(handshakeFired).toBe(true);
-    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
-    expect(await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId, studentId } },
-    })).toBeNull();
+    expect(await accepting).toEqual({ ok: true, outcome: 'applied' });
+    expect(await unlinking).toEqual({ ok: true });
+    // The unlink's effects land only after accept committed: the invitation
+    // is `accepted` (accept's own CAS, uncontested by the now-late block),
+    // and the link accept reactivated is gone again (unlink's delete, run
+    // only once accept released the row).
     const row = await prisma.invitation.findUniqueOrThrow({
       where: { id: invitationId },
       select: { status: true },
     });
-    expect(row.status).toBe('pending');
-  }, 15_000);
+    expect(row.status).toBe('accepted');
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    })).toBeNull();
+  }, 20_000);
 });
 
 /**
@@ -1848,6 +1845,42 @@ async function cleanupGateFixture(fx: GateFixture): Promise<void> {
   await prisma.student.deleteMany({ where: { id: fx.studentId } });
   await prisma.teacher.deleteMany({ where: { id: fx.teacherId } });
   await prisma.account.deleteMany({ where: { id: { in: [fx.teacherAccountId, fx.studentAccountId] } } });
+}
+
+/**
+ * Pauses `acceptInvitation` right after its `linkTeacherStudent` call
+ * returns — meaning `activateTeacherStudentLink` (`services/roster-link.ts`,
+ * #265 task 1) has already taken the `TeacherStudent` row's `FOR UPDATE` lock
+ * — before any of the transaction's later statements. Spies the CROSS-MODULE
+ * call `acceptInvitation` makes into `roster-link.ts`, the same shape
+ * `pauseErasureAtGate` below spies `lockStudentForErasure`; a same-module
+ * call from `linkTeacherStudent` to `activateTeacherStudentLink` itself
+ * would not be interceptable this way.
+ */
+function pauseAcceptAfterRosterLink(teacherId: string, studentId: string): {
+  reached: Promise<void>;
+  pid: () => number;
+  release: () => void;
+} {
+  let atLock!: () => void;
+  const reached = new Promise<void>((r) => { atLock = r; });
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  let pid = 0;
+  let paused = false;
+  const original = rosterLink.linkTeacherStudent;
+  const spy = vi.spyOn(rosterLink, 'linkTeacherStudent').mockImplementation(async (tx, pair) => {
+    const result = await original(tx, pair);
+    if (!paused && pair.teacherId === teacherId && pair.studentId === studentId) {
+      paused = true;
+      pid = await ownPid(tx);
+      atLock();
+      await held;
+    }
+    return result;
+  });
+  onTestFinished(() => spy.mockRestore());
+  return { reached, pid: () => pid, release };
 }
 
 /**
