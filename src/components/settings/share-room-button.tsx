@@ -136,8 +136,9 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
       // These three mean something the panel was rendered from, this room or
       // the match, has changed. The refresh replaces the props but not the
       // cached search, so the panel closes as well: only a fresh search, run
-      // against the refreshed props, may offer a switch again. The message
-      // stays, rendered in the closed state. ROOM_IN_USE changes neither: the
+      // against the refreshed props, may offer a switch again. The message is
+      // rendered in the closed state, for as long as the refreshed page still
+      // renders this component. ROOM_IN_USE changes neither: the
       // teacher waits for the running class and tries the same switch again.
       if (code === 'NOT_SAME_ROOM' || code === 'NOW_SHARED' || code === 'NOT_FOUND') {
         closePanel();

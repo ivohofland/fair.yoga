@@ -208,13 +208,13 @@ grep the section above prescribes, minus the template tables:
 and `lockClassRowsOrdered`'s two — plus four that are not `Class` or
 `CalendarEntry` locks at all:**
 
-- `src/services/room-archive.ts:235` and `src/services/room-switch.ts:88`, the
+- `src/services/room-archive.ts:236` and `src/services/room-switch.ts:88`, the
   archive's and the switch's step-1 pre-locks, both on `ClassTemplate` rows;
 - `src/services/room-switch.ts:93` and `:138`, the switch's step-2 and step-3
   locks on the private and the shared `TeacherRoom` (#259).
 
 Three of the four are false positives this command cannot suppress: the
-table name (`"ClassTemplate"` at `room-archive.ts:235` and `room-switch.ts:88`,
+table name (`"ClassTemplate"` at `room-archive.ts:236` and `room-switch.ts:88`,
 `"TeacherRoom"` at `:138`) sits on a line ABOVE its `FOR UPDATE`, and every
 filter here matches line by line. The fourth, `room-switch.ts:93`, carries
 `"TeacherRoom"` on its own line and passes only because this command filters
@@ -1677,7 +1677,7 @@ independent cycle.
 `DELETE`. The wait is bounded well below the sweep's `{ timeout: 10_000 }`
 envelope (`class-generator.ts:408`): Postgres's `deadlock_timeout` breaks the
 cycle at its 1 s default, which this repo does not override, and the sweep's
-own `LOCK_TIMEOUT_SQL` is `SET LOCAL lock_timeout = '2s'` (`db-locks.ts:94`).
+own `LOCK_TIMEOUT_SQL` is `SET LOCAL lock_timeout = '2s'` (`db-locks.ts`).
 Both outcomes are legible — `40P01` is in `TRANSIENT_SQLSTATE_KIND`
 (`api-errors.ts`) and answers 503 retryable, and the far likelier `P2003`
 is answered 409 by the catch, which logs at `warn` because reaching it means
@@ -2849,7 +2849,7 @@ referencing side never. Paths that read that side (the cascade and the
 RESTRICT check do so while holding the room row):
 
 - the archive's pre-lock (`setTeacherRoomArchived`), inside the transaction
-  that holds the room row
+  that later takes the room row
 - the `ON UPDATE CASCADE` that rewrites every mirroring child when a room's
   `isArchived` flips, in that same transaction
 - the `ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`

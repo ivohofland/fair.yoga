@@ -45,7 +45,8 @@ export function normalizeRoomField(value: string): string {
 }
 
 /**
- * True when two room identities describe the same physical room in the commons.
+ * True when two room identities describe the same room as
+ * `Room_public_identity_unique` defines one (`city`/`postcode` not compared).
  * Derives from `normalizeRoomField`, matching Postgres's `lower(trim(...))` index.
  */
 export function sameRoomIdentity(a: RoomIdentity, b: RoomIdentity): boolean {
