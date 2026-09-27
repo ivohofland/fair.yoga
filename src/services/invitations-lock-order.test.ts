@@ -410,13 +410,20 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
 
   /**
    * Kept, but demoted to what it actually is: a smoke test that the real
-   * `acceptInvitation` and a real-shaped unlink coexist. It cannot fail on
-   * the write order, and the four-specialist review of #174 proved that by
-   * reverting the reorder in `invitations.ts` and watching it stay green.
-   * The fixture is `linked`, so `linkTeacherStudent`'s `ON CONFLICT DO
-   * NOTHING` resolves against the row already there without requesting the
-   * lock the cycle needs — in EITHER order. The falsifiable version is the
-   * test below it.
+   * `acceptInvitation` and a real-shaped unlink coexist. The fixture is
+   * `linked`, so `linkTeacherStudent`'s `createMany` resolves against the
+   * row already there via `ON CONFLICT DO NOTHING`, taking no lock on that
+   * already-committed tuple — but `activateTeacherStudentLink`
+   * (`services/roster-link.ts`, #265 task 1) runs right after it and DOES
+   * take that row's `FOR UPDATE` lock unconditionally, on this already-linked
+   * path too. That still cannot deadlock against `b`'s hand-rolled unlink
+   * below: both sides reach for `TeacherStudent` before `Invitation` —
+   * `acceptInvitation`'s real order (`linkTeacherStudent`, then the CAS) and
+   * `b`'s (`deleteMany` on `TeacherStudent`, then `updateMany` on
+   * `Invitation`) agree — which is the same order-consistency argument the
+   * docblock above makes for a different transaction pair, and is what
+   * actually decides this regardless of which statement takes a lock. The
+   * falsifiable version is the test below it.
    */
   it('the real accept and a real-shaped unlink coexist on an existing link', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedStudentWithPendingInvite();
@@ -458,14 +465,18 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * /api/registrations` puts it. See the test below for the reproduction.)
    *
    * What remains true and is worth keeping: with a link already present,
-   * `linkTeacherStudent`'s `createMany({...,skipDuplicates:true})` resolves
-   * via `ON CONFLICT DO NOTHING` without asking for a `TeacherStudent` lock
-   * in either order — that is why the tests above hand-roll a synthetic
-   * upsert with a non-empty `update` to force the lock-taking path Prisma's
-   * OLD compilation could reach, and why the previous version of THIS test
-   * passed with the reorder reverted. The fixture here is unlinked so the
-   * recorded write is the lock-taking `INSERT` path, the write whose
-   * position actually matters.
+   * `linkTeacherStudent`'s own `createMany({...,skipDuplicates:true})`
+   * resolves via `ON CONFLICT DO NOTHING` without taking a lock on that
+   * already-committed row — only `activateTeacherStudentLink`'s `FOR UPDATE`
+   * right after it does (`services/roster-link.ts`, #265 task 1). That is
+   * still why the tests above hand-roll a synthetic upsert with a non-empty
+   * `update` rather than call the real `linkTeacherStudent`: it reproduces
+   * the lock-taking shape Prisma's OLD upsert compilation reached on its
+   * own, on a fixture that predates task 1's lock, so those tests pin the
+   * `#181`/`#179` write-order property in isolation from it. The fixture
+   * here is unlinked so the recorded write is the lock-taking `INSERT` path
+   * regardless of era — the write whose position actually matters, both
+   * then and now.
    *
    * The result assertion is `{ ok: true }`, not "did not reject". The
    * previous version only checked that nothing threw, which a version of
@@ -1729,7 +1740,12 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
       await waitUntilBlockedBy(lock.pid());
     } finally {
       lock.release();
-      await Promise.all([accepting, unlinking]);
+      // `allSettled`, not `all`: a rejection here would throw INSIDE this
+      // `finally`, which replaces whatever the `try` block was already
+      // failing with — the real failure the test should report. The
+      // `expect(await …)` calls below still surface either promise's
+      // rejection, just without masking a different one first.
+      await Promise.allSettled([accepting, unlinking]);
     }
 
     expect(await accepting).toEqual({ ok: true, outcome: 'applied' });

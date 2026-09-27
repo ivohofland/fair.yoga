@@ -127,19 +127,35 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.invitation.deleteMany({ where: { teacherId } });
+  // Every filter below is guarded on its own id having been assigned: an
+  // unguarded `deleteMany({ where: { teacherId } })` with `teacherId` still
+  // `undefined` (a `beforeAll` that threw before reaching its assignment)
+  // drops the filter entirely and wipes the whole table (#669).
+  if (teacherId) {
+    await prisma.invitation.deleteMany({ where: { teacherId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+  }
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   if (fillerStudentIds.length) {
     await prisma.student.deleteMany({ where: { id: { in: fillerStudentIds } } });
   }
-  await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-  await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
-  await prisma.room.deleteMany({ where: { id: roomId } });
-  await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
-  await prisma.teacher.deleteMany({ where: { id: teacherId } });
-  await prisma.account.deleteMany({ where: { id: teacherAccountId } });
+  if (teacherRoomId) {
+    await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
+  }
+  if (roomId) {
+    await prisma.room.deleteMany({ where: { id: roomId } });
+  }
+  if (teacherAccountId) {
+    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+  }
+  if (teacherId) {
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+  }
+  if (teacherAccountId) {
+    await prisma.account.deleteMany({ where: { id: teacherAccountId } });
+  }
   await prisma.$disconnect();
 });
 
