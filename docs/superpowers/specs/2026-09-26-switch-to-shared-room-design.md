@@ -143,7 +143,7 @@ in the same statement, which is the pattern the class move copies.
    its own `maxStudents`, exactly as it does today when a teacher lowers a
    link's capacity. Nothing ties the two (§1.2).
 6. **Same room only.** The server refuses unless the two rooms match on the
-   identity `sameRoomIdentity` defines (`room-identity.ts:51-57`: `address`,
+   identity `sameRoomIdentity` defines (`room-identity.ts:52-58`: `address`,
    `floor`, `roomName` after trim and lowercase, mirroring
    `Room_public_identity_unique`). Without this rule the operation would be a
    general "move all my classes to any shared room" tool, and that changes
@@ -247,7 +247,7 @@ every row valid on its own.
 
 | Step | What | Lock |
 |---|---|---|
-| 1 | Lock every `ClassTemplate` with `teacherRoomId = P` | `FOR UPDATE`, ascending `id`. The same shape as `setTeacherRoomArchived`'s pre-lock (`room-archive.ts:232-235`), ordered by `id`. |
+| 1 | Lock every `ClassTemplate` with `teacherRoomId = P` | `FOR UPDATE`, ascending `id`. The same shape as `setTeacherRoomArchived`'s pre-lock (`room-archive.ts:233-236`), ordered by `id`. |
 | 2 | Lock the private link P, then re-read it with its room. Run rows 2 and 4-7 of §3.2 against what was read; row 3 (ownership) is checked once, before the transaction opens. The two `Room` rows are read, not locked (§4.1). | `FOR UPDATE` on `TeacherRoom` P |
 | 3 | Shared link S: insert if absent (`ON CONFLICT DO NOTHING`), then lock it. If it is archived, un-archive it. | `FOR UPDATE` on `TeacherRoom` S |
 | 4 | Lock P's classes that are `draft`, `open` or `in_progress` with `entryLive` true (not cancelled). If any is `in_progress`, refuse with `ROOM_IN_USE` and roll back. | `lockClassRowsOrdered` (ascending `id`, `db-locks.ts:698`) |
@@ -327,7 +327,7 @@ no-new-edge argument, with the statement shapes. Its race harness follows
 
 ## 5. The UI
 
-`ShareRoomButton`'s exact-match branch (`share-room-button.tsx:121-129`) keeps
+`ShareRoomButton`'s exact-match branch (the `exact ?` render in `share-room-button.tsx`) keeps
 its heading and gains the action:
 
 > **Already shared**
@@ -352,8 +352,12 @@ its heading and gains the action:
   page's picture of the room is what went stale
   (`server-snapshot-props-go-stale`). The refresh replaces the props but not
   the panel's cached search, so those three also close the panel and drop
-  that search: the message stays, shown under the closed control, and only a
-  fresh search against the refreshed props may offer a switch again.
+  that search: only a fresh search against the refreshed props may offer a
+  switch again. The message is shown under the closed control after
+  `NOT_SAME_ROOM` and a shared-room `NOT_FOUND`, where the refreshed page still
+  renders the panel. After `NOW_SHARED` the room page renders no share panel
+  for a public room (`canEditRoom`), so the message goes with it. After a
+  private-link `NOT_FOUND` the page redirects to *Rooms*.
   `ROOM_IN_USE` does neither: nothing on the page is stale, and the teacher
   just tries the same switch again later.
 - The near-match (warn) branch is unchanged. A same-street room with a

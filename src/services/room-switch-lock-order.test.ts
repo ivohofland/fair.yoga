@@ -288,7 +288,8 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
   // generator claims T, and its `Class` insert blocks on P (`KEY SHARE`
   // against the switch's `FOR UPDATE`), so the poll above still resolves.
   // Once C is released the switch wants T at the moved pre-lock, and the pair
-  // ends in `40P01`: the generator's insert fails with "deadlock detected".
+  // ends in `40P01` (measured once on the generator's insert; which side the
+  // detector aborts depends on timing).
   it('generates onto the shared room when the generator claims T while the switch is parked on it', async () => {
     const f = await fx.makeFixture(prisma);
     const shared = await addSharedTwin(f);

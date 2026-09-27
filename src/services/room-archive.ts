@@ -33,8 +33,9 @@ import { isRecordNotFound } from '@/lib/api-errors';
  * `class-template-lifecycle`, which is where they used to sit.
  *
  * The CLASS doors are narrower: a class has no resume, since nothing pauses
- * a `Class`. Any path that repoints a class writes the mirror in the same
- * statement and meets `Class_live_needs_open_room` like the others. The
+ * a `Class`. Any path that repoints a class must leave the mirror equal to
+ * the new link's `isArchived` (the composite FK refuses otherwise), and meets
+ * `Class_live_needs_open_room` like the others. The
  * CLASS doors are publish (`transitionClass`, `class-lifecycle.ts`) and the
  * two create paths (`POST /api/classes`, `class-generator.ts`), and the
  * create paths are the one place this pattern is not symmetric with the
