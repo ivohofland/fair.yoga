@@ -13,6 +13,7 @@ let teacherAccountId: string;
 let teacherToken: string;
 let otherTeacherId: string;
 let roomId: string;
+let teacherRoomId: string;
 let class1Id: string;
 let class2Id: string;
 let class3Id: string;
@@ -79,6 +80,7 @@ describe('POST /api/announcements', () => {
     const teacherRoom = await prisma.teacherRoom.create({
       data: { teacherId, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
     });
+    teacherRoomId = teacherRoom.id;
     const otherTeacherRoom = await prisma.teacherRoom.create({
       data: { teacherId: otherTeacherId, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
     });
@@ -377,6 +379,97 @@ describe('POST /api/announcements', () => {
 
       expect(second.status).toBe(200);
       expect((await second.json()).data.duplicateSuppressed).toBe(true);
+    });
+  });
+
+  describe('all-students send and an archived link', () => {
+    // Own class and students, isolated from the outer fixtures: an
+    // all-students send fans out across every class this teacher owns, so a
+    // student registered here would otherwise inflate `recipientCount` in
+    // every other test in this file.
+    let archivedLinkClassId: string;
+    let activeStudentId: string;
+    let archivedStudentId: string;
+
+    beforeAll(async () => {
+      const date = new Date();
+      date.setDate(date.getDate() + 28);
+      date.setUTCHours(0, 0, 0, 0);
+      const cls = await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        classType: 'Vinyasa',
+        date,
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'open',
+      });
+      archivedLinkClassId = cls.id;
+
+      const active = await prisma.student.create({
+        data: {
+          firstName: 'Active',
+          lastName: 'Student',
+          email: `announce-active-${suffix}@test.local`,
+          incomeTier: 3,
+        },
+      });
+      activeStudentId = active.id;
+      const archived = await prisma.student.create({
+        data: {
+          firstName: 'Archived',
+          lastName: 'Student',
+          email: `announce-archived-${suffix}@test.local`,
+          incomeTier: 3,
+        },
+      });
+      archivedStudentId = archived.id;
+
+      await prisma.registration.create({
+        data: { classId: archivedLinkClassId, studentId: activeStudentId, status: 'registered', tierAtBooking: 3 },
+      });
+      await prisma.registration.create({
+        data: { classId: archivedLinkClassId, studentId: archivedStudentId, status: 'registered', tierAtBooking: 3 },
+      });
+      // Archiving means no longer this teacher's active student
+      // (docs/data-model.md, TeacherStudent).
+      await prisma.teacherStudent.create({
+        data: { teacherId, studentId: archivedStudentId, isArchived: true },
+      });
+    });
+
+    afterAll(async () => {
+      // The TeacherStudent row above cascades off either FK
+      // (prisma/schema.prisma, TeacherStudent) when the student rows below
+      // are deleted — no explicit delete needed.
+      const studentIds = [activeStudentId, archivedStudentId].filter(Boolean);
+      if (studentIds.length) {
+        await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+      }
+      if (archivedLinkClassId) {
+        await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: archivedLinkClassId } } } });
+      }
+      if (studentIds.length) {
+        await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+      }
+    });
+
+    it('notifies the active student and skips the archived one', async () => {
+      const before = new Date();
+      const res = await sendAnnouncement({ message: `Archived skip ${suffix}` });
+      expect(res.status).toBe(201);
+
+      const rows = await prisma.notification.findMany({
+        where: { type: 'announcement', createdAt: { gt: before } },
+      });
+      const recipientIds = rows.map((r) => r.recipientId);
+      expect(recipientIds).toContain(activeStudentId);
+      expect(recipientIds).not.toContain(archivedStudentId);
     });
   });
 });

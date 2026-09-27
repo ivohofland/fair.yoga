@@ -41,11 +41,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     studentIds = registrations.map((r) => r.studentId);
   } else {
-    // Get ALL students who have any registration with this teacher
+    // Get ALL students who have any registration with this teacher, minus
+    // anyone this teacher has archived — archiving means no longer this
+    // teacher's active student (docs/data-model.md, TeacherStudent).
     const registrations = await prisma.registration.findMany({
       where: {
         class: { calendarEntry: { teacherId: session.teacherId } },
         status: { not: 'cancelled' },
+        student: { teacherStudents: { none: { teacherId: session.teacherId, isArchived: true } } },
       },
       select: { studentId: true },
       distinct: ['studentId'],
