@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor, teardownStudent } from '../helpers';
+import { BASE_URL, cookie, freshIp, uniqueSuffix, seedSession, waitFor, teardownStudent } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { createClassFixture } from '../class-fixtures';
+import { createClassFixture, slotDate } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
@@ -1229,8 +1229,31 @@ describe('PATCH /api/students/[id]', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
   let otherToken: string;
+  let roomId: string | undefined;
+  let teacherRoomId: string;
+  // Students and class entries made by the archive-refusal cases, collected
+  // as they are made so teardown deletes by `in: [...]`.
+  const archiveStudentIds: string[] = [];
+  const archiveEntryIds: string[] = [];
 
   beforeAll(async () => {
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Patch Studio',
+        address: `${suffix} Patch St`,
+        city: 'Amsterdam',
+        postcode: '1111PA',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    teacherRoomId = (
+      await prisma.teacherRoom.create({
+        data: { teacherId, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+      })
+    ).id;
+
     const student = await prisma.student.create({
       data: {
         firstName: 'Patch',
@@ -1264,18 +1287,92 @@ describe('PATCH /api/students/[id]', () => {
   });
 
   afterAll(async () => {
-    await prisma.teacherStudent.deleteMany({ where: { id: linkId } });
-    await prisma.student.delete({ where: { id: patchStudentId } });
-    await prisma.session.deleteMany({ where: { accountId: otherAccountId } });
-    await prisma.teacher.delete({ where: { id: otherTeacherId } });
-    await prisma.account.delete({ where: { id: otherAccountId } });
+    // Guards: on a failed beforeAll these ids are undefined, and an undefined
+    // filter turns deleteMany into delete-all. The two lists are safe
+    // unguarded: `in: []` matches nothing.
+    await prisma.calendarEntry.deleteMany({ where: { id: { in: archiveEntryIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: archiveStudentIds } } });
+    if (linkId) await prisma.teacherStudent.deleteMany({ where: { id: linkId } });
+    if (patchStudentId) await prisma.student.delete({ where: { id: patchStudentId } });
+    if (roomId) {
+      await prisma.teacherRoom.deleteMany({ where: { roomId } });
+      await prisma.room.delete({ where: { id: roomId } });
+    }
+    if (otherAccountId) await prisma.session.deleteMany({ where: { accountId: otherAccountId } });
+    if (otherTeacherId) await prisma.teacher.delete({ where: { id: otherTeacherId } });
+    if (otherAccountId) await prisma.account.delete({ where: { id: otherAccountId } });
   });
 
   const patch = (query = '', token = teacherToken) =>
     fetch(`${BASE_URL}/api/students/${patchStudentId}${query}`, {
       method: 'PATCH',
-      headers: cookie(token),
+      headers: { ...cookie(token), ...freshIp() },
     });
+
+  const archiveWith = (studentId: string, body?: unknown) =>
+    fetch(`${BASE_URL}/api/students/${studentId}?state=archived`, {
+      method: 'PATCH',
+      headers: { ...cookie(teacherToken), ...freshIp(), 'Content-Type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+  async function linkedStudent(): Promise<string> {
+    const n = archiveStudentIds.length;
+    const student = await prisma.student.create({
+      data: { firstName: 'Archive', lastName: `Case${n}`, email: `stuapi-archive-${suffix}-${n}@test.local` },
+    });
+    archiveStudentIds.push(student.id);
+    await prisma.teacherStudent.create({ data: { teacherId, studentId: student.id } });
+    return student.id;
+  }
+
+  /** A class of this teacher with `studentId` registered on it. Returns the registration id. */
+  async function registeredOn(studentId: string, status: 'open' | 'completed'): Promise<string> {
+    const n = archiveEntryIds.length;
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Hatha',
+      date: slotDate(status === 'completed' ? '2025-03-01' : '2030-03-01', n),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 30,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 2,
+      maxStudents: 10,
+      status,
+      settingsLocked: true,
+    });
+    archiveEntryIds.push(cls.calendarEntry.id);
+    const reg = await prisma.registration.create({
+      data: {
+        classId: cls.id,
+        studentId,
+        status: status === 'completed' ? 'attended' : 'registered',
+        tierAtBooking: 3,
+        price: 12.1,
+        tierRatio: 1.0,
+      },
+    });
+    return reg.id;
+  }
+
+  /** A completed class `studentId` attended and has not paid for. Returns the payment id. */
+  async function owedPayment(studentId: string): Promise<string> {
+    const registrationId = await registeredOn(studentId, 'completed');
+    const payment = await prisma.payment.create({
+      data: { registrationId, amount: 12.1, status: 'pending' },
+    });
+    return payment.id;
+  }
+
+  async function linkArchived(studentId: string): Promise<boolean> {
+    const link = await prisma.teacherStudent.findUniqueOrThrow({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+    return link.isArchived;
+  }
 
   it('rejects a missing state rather than falling back to a toggle', async () => {
     const res = await patch();
@@ -1316,10 +1413,7 @@ describe('PATCH /api/students/[id]', () => {
     expect(firstBody.data.action).toBe('archived');
 
     const second = await patch('?state=archived');
-    expect(second.status).toBe(200);
-    const secondBody = (await second.json()) as { data: { isArchived: boolean; action: string } };
-    expect(secondBody.data.isArchived).toBe(true);
-    expect(secondBody.data.action).toBe('unchanged');
+    expect(await expectUnchanged(second)).toEqual({ isArchived: true });
 
     const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
     expect(after.isArchived).toBe(true);
@@ -1339,13 +1433,62 @@ describe('PATCH /api/students/[id]', () => {
     expect(firstBody.data.action).toBe('unarchived');
 
     const second = await patch('?state=unarchived');
-    expect(second.status).toBe(200);
-    const secondBody = (await second.json()) as { data: { isArchived: boolean; action: string } };
-    expect(secondBody.data.isArchived).toBe(false);
-    expect(secondBody.data.action).toBe('unchanged');
+    expect(await expectUnchanged(second)).toEqual({ isArchived: false });
 
     const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
     expect(after.isArchived).toBe(false);
+  });
+
+  it('refuses to archive while a payment is open', async () => {
+    const studentId = await linkedStudent();
+    const paymentId = await owedPayment(studentId);
+
+    await expectRefusal(await archiveWith(studentId), 'STUDENT_HAS_OUTSTANDING_PAYMENTS');
+    expect(await linkArchived(studentId)).toBe(false);
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(payment.status).toBe('pending');
+  });
+
+  it('waives the open payments it names, and archives', async () => {
+    const studentId = await linkedStudent();
+    const paymentId = await owedPayment(studentId);
+
+    const data = (await expectApplied(await archiveWith(studentId, { waivePaymentIds: [paymentId] }))) as {
+      isArchived: boolean;
+      action: string;
+      waivedCount: number;
+    };
+    expect(data).toEqual({ isArchived: true, action: 'archived', waivedCount: 1 });
+    expect(await linkArchived(studentId)).toBe(true);
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(payment.status).toBe('not_charged');
+  });
+
+  it('refuses to archive while the student is booked on a class not yet billed', async () => {
+    const studentId = await linkedStudent();
+    await registeredOn(studentId, 'open');
+
+    await expectRefusal(await archiveWith(studentId), 'STUDENT_HAS_UNBILLED_CLASSES');
+    expect(await linkArchived(studentId)).toBe(false);
+  });
+
+  it.each([
+    ['a waive list that is not a list', { waivePaymentIds: 'x' }],
+    ['a field the body does not take', { waiveAll: true }],
+    ['malformed JSON', '{'],
+  ])('answers 400 for %s, archiving nothing', async (_label, body) => {
+    const studentId = await linkedStudent();
+    const res =
+      typeof body === 'string'
+        ? await fetch(`${BASE_URL}/api/students/${studentId}?state=archived`, {
+            method: 'PATCH',
+            headers: { ...cookie(teacherToken), ...freshIp(), 'Content-Type': 'application/json' },
+            body,
+          })
+        : await archiveWith(studentId, body);
+
+    expect(res.status).toBe(400);
+    expect(await linkArchived(studentId)).toBe(false);
   });
 });
 

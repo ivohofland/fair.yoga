@@ -3,13 +3,20 @@ import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondRefusal,
+  respondUnchanged,
   requireSession,
   parseBody,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
 import { isRecordNotFound } from '@/lib/api-errors';
-import { updateStudentSchema, archiveStateQuerySchema } from '@/lib/schemas';
+import {
+  updateStudentSchema,
+  archiveStateQuerySchema,
+  archiveStudentBodySchema,
+} from '@/lib/schemas';
+import { archiveStudent } from '@/services/student-archive';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 
 export const GET = withErrorHandler(async (
@@ -121,26 +128,67 @@ export const PATCH = withErrorHandler(async (
   if (!parsed.success) {
     return respondError('A state of archived or unarchived is required', 400);
   }
-  const archiving = parsed.data.state === 'archived';
+  const teacherId = session.teacherId;
+
+  if (parsed.data.state === 'archived') {
+    const body = await readArchiveBody(request);
+    if (!body) return respondError('Invalid request body', 400);
+
+    const outcome = await archiveStudent(prisma, {
+      teacherId,
+      studentId: id,
+      waivePaymentIds: body.waivePaymentIds,
+    });
+    switch (outcome.kind) {
+      case 'not-linked':
+        return respondError('Student not in your contacts', 403);
+      case 'unchanged':
+        return respondUnchanged<{ isArchived: boolean }>({ isArchived: true });
+      case 'refused':
+        return respondRefusal(outcome.refusal);
+      case 'archived':
+        return respondOk({ isArchived: true, action: 'archived', waivedCount: outcome.waivedCount });
+      default: {
+        const unhandled: never = outcome;
+        throw new Error(`unhandled archive outcome: ${JSON.stringify(unhandled)}`);
+      }
+    }
+  }
 
   const link = await prisma.teacherStudent.findUnique({
-    where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
+    where: { teacherId_studentId: { teacherId, studentId: id } },
   });
   if (!link) return respondError('Student not in your contacts', 403);
 
   // Already there: no write. The point of #98 — a retry after a lost response
   // must not undo what the first attempt did.
-  if (link.isArchived === archiving) {
-    return respondOk({ isArchived: link.isArchived, action: 'unchanged' });
+  if (!link.isArchived) {
+    return respondUnchanged<{ isArchived: boolean }>({ isArchived: false });
   }
 
-  const updated = await prisma.teacherStudent.update({
+  await prisma.teacherStudent.update({
     where: { id: link.id },
-    data: { isArchived: archiving },
+    data: { isArchived: false },
   });
 
-  return respondOk({
-    isArchived: updated.isArchived,
-    action: archiving ? 'archived' : 'unarchived',
-  });
+  return respondOk({ isArchived: false, action: 'unarchived' });
 });
+
+/**
+ * The archive body, or `null` for one that is not valid JSON or fails the
+ * schema. An empty body is `{}`: the plain archive, with nothing to waive.
+ */
+async function readArchiveBody(
+  request: NextRequest,
+): Promise<{ waivePaymentIds?: string[] } | null> {
+  const text = await request.text();
+  if (text.trim() === '') return {};
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const result = archiveStudentBodySchema.safeParse(raw);
+  return result.success ? result.data : null;
+}

@@ -157,6 +157,40 @@ OWN address only; no teacher's request can reach this predicate, so there is
 no party for it to disclose the match to. The general rule still holds for
 every teacher-facing route.
 
+### TeacherStudent (a teacher's roster link, #265)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *teacher_id* (FK) | → Teacher | Cascades on delete |
+| *student_id* (FK) | → Student | Cascades on delete |
+| is_archived | boolean, default false | The teacher's filing: "no longer an active student of mine". Never restricts the student |
+| **Timestamps** | | |
+| created_at | datetime | |
+| **Constraints** | | |
+| unique | (teacher_id, student_id) | One link per pair; `linkTeacherStudent`'s `ON CONFLICT DO NOTHING` relies on it |
+
+**Who creates a link.** Never the teacher alone. The rule, and its one exception, are stated under Invitation (below) — "A teacher may not link themselves to a student unilaterally" and Walk-ins — and nothing in this section adds a writer. Every insert goes through `linkTeacherStudent` (`src/services/roster-link.ts`); `activateTeacherStudentLink` beside it never inserts, so a path that must not create a link (the teacher's own roster add) calls that one instead.
+
+**The invariant: an archived link has nothing live.** For the pair `(teacher, student)`, nothing is live when neither of these exists:
+
+- a **live registration** — `status` in `CHARGED_STATUSES` (`src/services/class-lifecycle.ts`), on a class whose `status` is not `completed` and whose `CalendarEntry` has `cancelled_at IS NULL` and belongs to this teacher. The charged set, not `ACTIVE_REGISTRATION_STATUSES`: the question is "will completion still bill this?", and a `late_cancel` frees its seat but is still billed;
+- an **open payment** — `status` in `OUTSTANDING_STATUSES` (`src/lib/payment-status.ts`), on a registration of this student, on a class of this teacher. The same predicate as `countOutstandingPaymentsForStudent` (`src/services/payments.ts`).
+
+Waitlist entries are not live: they carry no money, and every way from a waitlist onto a roster links, and so un-archives. A debt to a different teacher is outside the pair and does not block.
+
+**Archiving refuses rather than breaks it.** `PATCH /api/students/[id]?state=archived` (`archiveStudent`, `src/services/student-archive.ts`) answers 409 `STUDENT_HAS_UNBILLED_CLASSES` while a live registration exists — checked first, since waiving cannot resolve it — and 409 `STUDENT_HAS_OUTSTANDING_PAYMENTS` while an open payment exists. The teacher clears the second by confirming a waive: the body names the open payments they were shown (`waivePaymentIds`), and the archive marks them `not_charged` (the grace-policy waiver, Payment below) in the same transaction only when those ids are exactly the pair's open set. Any difference — a payment added by a completion, one paid since, one of another pair — refuses with the same code and writes nothing. The set equality is the waive's ownership check as well as its staleness check: no id from the body reaches a write except as a member of that set. An already archived link answers `unchanged`, whatever the body carries.
+
+**Every act that makes something live un-archives.** Each takes the link's row lock and clears `is_archived` in the same transaction as the act:
+
+- every `linkTeacherStudent` call — a student's own booking, joining a waitlist, a promotion or claim off one, accepting an invitation, and a walk-in;
+- the teacher's roster add (`POST /api/registrations`), through `activateTeacherStudentLink`, refusing if the link is gone;
+- reopening a payment (`reopenPayment`), which makes it outstanding again. A missing link there does not refuse the reopen, and no link is created: money can be owed without one.
+
+The teacher can also un-archive directly, `PATCH ?state=unarchived`. `completeClass` needs no call: under the invariant it never bills an archived pair. Why every one of these takes the row lock, and where it sits in the lock order, is `docs/lock-order.md` ("The `TeacherStudent` row is the archive's gate").
+
+The student still sees an archived link on their own privacy page ("Archived by {teacher} in their records") and keeps every control over it (StudentPrivacy, above).
+
 ### Invitation (teacher → student contact, #166)
 
 | Field | Type | Notes |
@@ -777,6 +811,7 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - Class → has many WaitlistEntries
 - Student → has many Registrations
 - Student → has many StudentPrivacy records (one per teacher)
+- Teacher ↔ Student → at most one TeacherStudent link per pair
 - Teacher → has many Invitations
 - Teacher → has many TeacherBlocks
 - Registration → has one Payment
