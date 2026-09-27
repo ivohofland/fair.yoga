@@ -284,8 +284,9 @@ un-archived.
 
 Guards to break (plan records exact error text for each):
 
-- Remove the `FOR UPDATE` from `activateTeacherStudentLink` → the race test
-  goes red.
+- Remove the `FOR UPDATE` from the link-lock query (the plan splits it into
+  `lockTeacherStudentLink`, which `activateTeacherStudentLink`, `reopenPayment`
+  and `archiveStudent` all use) → the race test goes red.
 - Drop `late_cancel` from the live predicate (switch to
   `ACTIVE_REGISTRATION_STATUSES`) → the `late_cancel` refusal test goes red.
 - Replace `W = S` with `W ⊆ S` → the `W ⊂ S` test goes red.
