@@ -55,6 +55,27 @@ describe('TemplateForm', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
+  const ROOM_A = '11111111-1111-4111-8111-111111111111';
+  const ROOM_B = '22222222-2222-4222-8222-222222222222';
+
+  /**
+   * Two offerable rooms, so a test can change the selection. `rentalRate`
+   * equals `initial.roomCost`, so `handleRoomChange` leaves the cost alone and
+   * a body assertion stays about the room.
+   */
+  function stubFetchTwoRooms() {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: ROOM_A, isArchived: false, capacityOverride: 30, rentalRate: 20, room: { roomName: 'Studio A', venueName: 'Main Venue' } },
+          { id: ROOM_B, isArchived: false, capacityOverride: 30, rentalRate: 20, room: { roomName: 'Studio B', venueName: 'Main Venue' } },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
   /**
    * Returns the URL and method alongside the parsed body — not just the body
    * — so a test can pin `calls.at(-1)` to the request it means. Without that,
@@ -74,14 +95,20 @@ describe('TemplateForm', () => {
     };
   }
 
-  it('sends all thirteen fields when editing', async () => {
+  /**
+   * #685. An edit carries the room only when the teacher changed it. A room
+   * switch in another tab can move the template after this form loaded, and
+   * resending the loaded id would move it back — onto a room the switch
+   * archived. Every other field is still sent, which is what this `toEqual`
+   * pins for #85.
+   */
+  it('leaves the room out of an edit whose room field was not changed', async () => {
     stubFetch();
     render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     const { url, method, body } = await submit();
     expect(url).toBe('/api/class-templates/tpl-1');
     expect(method).toBe('PUT');
     expect(body).toEqual({
-      teacherRoomId: '11111111-1111-4111-8111-111111111111',
       classType: 'Vinyasa',
       description: 'Bring a mat.',
       dayOfWeek: 2,
@@ -95,6 +122,39 @@ describe('TemplateForm', () => {
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
     });
+  });
+
+  it('sends the room when the teacher changed it', async () => {
+    stubFetchTwoRooms();
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
+    const { body } = await submit();
+    expect(body.teacherRoomId).toBe(ROOM_B);
+  });
+
+  it('leaves the room out when the teacher changed it and changed it back', async () => {
+    stubFetchTwoRooms();
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    const select = screen.getByLabelText('Room');
+    fireEvent.change(select, { target: { value: ROOM_B } });
+    fireEvent.change(select, { target: { value: ROOM_A } });
+    const { body } = await submit();
+    expect(body).not.toHaveProperty('teacherRoomId');
+  });
+
+  // `router.refresh()` after a room-changing save re-renders the server parent
+  // with a fresh `initial`, while `form` keeps its state. The comparison must
+  // read the prop, or the second save resends a room the server already holds.
+  it('compares against the current initial prop, not the one it mounted with', async () => {
+    stubFetchTwoRooms();
+    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
+    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    const { body } = await submit();
+    expect(body).not.toHaveProperty('teacherRoomId');
   });
 
   it('trims classType and description before sending', async () => {

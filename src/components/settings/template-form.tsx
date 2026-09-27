@@ -282,17 +282,27 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         : `/api/class-templates/${templateId}`;
       const method = mode === 'create' ? 'POST' : 'PUT';
 
-      // The intersection, not either half: one body goes to both endpoints, so
+      // The intersection, not either half: `full` goes to both endpoints, so
       // it has to satisfy both schemas. The pins above hold the *key sets*
       // against both; this annotation is what holds the *value types* — without
       // it the literal is inferred, and retyping a schema field (say
       // `durationMinutes` to a string) would change what the route expects
-      // while this file kept compiling.
-      const payload: CreateTemplateWire & UpdateTemplateWire = {
+      // while this file kept compiling. `withoutRoom` inherits its types.
+      //
+      // #685. An edit carries the room only when the teacher changed it. A room
+      // switch (`POST /api/teacher-rooms/[id]/switch`) can move the template
+      // after this tab loaded, and resending the loaded id is a move back —
+      // onto the room the switch archived. The comparison reads the `initial`
+      // prop, not a snapshot: `router.refresh()` after a save re-renders it, so
+      // a room this tab already saved is not resent over a later switch.
+      const full: CreateTemplateWire & UpdateTemplateWire = {
         ...form,
         classType: form.classType.trim(),
         description: form.description.trim() || null,
       };
+      const { teacherRoomId, ...withoutRoom } = full;
+      const payload =
+        mode === 'edit' && teacherRoomId === initial?.teacherRoomId ? withoutRoom : full;
 
       let res: Response;
       try {
