@@ -28,12 +28,12 @@ export type SwitchRoomResult =
       ok: true;
       action: 'switched';
       /** The shared room's link — created, or the one the teacher already had. */
-      teacherRoomId: string;
+      sharedTeacherRoomId: string;
       moved: { templates: number; classes: number };
       reusedLink: boolean;
       capacityClamped: { from: number; to: number } | null;
     }
-  | { ok: true; action: 'unchanged'; teacherRoomId: string }
+  | { ok: true; action: 'unchanged'; sharedTeacherRoomId: string }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'now_shared' }
@@ -114,7 +114,7 @@ export async function switchToSharedRoom(
         const templatesLeft = await tx.classTemplate.count({ where: { teacherRoomId } });
         const classesLeft = await tx.class.count({ where: { teacherRoomId, ...MOVING_CLASS_WHERE } });
         if (templatesLeft === 0 && classesLeft === 0) {
-          return { ok: true, action: 'unchanged', teacherRoomId: existing.id };
+          return { ok: true, action: 'unchanged', sharedTeacherRoomId: existing.id };
         }
       }
 
@@ -135,7 +135,12 @@ export async function switchToSharedRoom(
         SELECT "id", "isArchived" FROM "TeacherRoom"
         WHERE "teacherId" = ${teacherId} AND "roomId" = ${sharedRoomId}
         FOR UPDATE`;
-      if (!target) throw new Error('room switch: shared link missing after insert-if-absent');
+      if (!target) {
+        throw new Error(
+          `switchToSharedRoom: no link from teacher ${teacherId} to shared room ${sharedRoomId} ` +
+            `right after this transaction's insert-if-absent (private link ${teacherRoomId})`,
+        );
+      }
       if (target.isArchived) {
         await tx.teacherRoom.update({ where: { id: target.id }, data: { isArchived: false } });
       }
@@ -182,7 +187,7 @@ export async function switchToSharedRoom(
       return {
         ok: true,
         action: 'switched',
-        teacherRoomId: target.id,
+        sharedTeacherRoomId: target.id,
         moved: { templates: movedTemplates.count, classes: movedClasses.count },
         reusedLink,
         capacityClamped:

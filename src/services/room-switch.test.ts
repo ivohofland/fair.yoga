@@ -56,8 +56,8 @@ describe('switchToSharedRoom — what moves and what stays', () => {
       select: { id: true, teacherRoomId: true, roomArchived: true },
     });
     const byId = new Map(after.map((c) => [c.id, c]));
-    expect(byId.get(draft.id)).toMatchObject({ teacherRoomId: result.teacherRoomId, roomArchived: false });
-    expect(byId.get(open.id)).toMatchObject({ teacherRoomId: result.teacherRoomId, roomArchived: false });
+    expect(byId.get(draft.id)).toMatchObject({ teacherRoomId: result.sharedTeacherRoomId, roomArchived: false });
+    expect(byId.get(open.id)).toMatchObject({ teacherRoomId: result.sharedTeacherRoomId, roomArchived: false });
     expect(byId.get(completed.id)).toMatchObject({ teacherRoomId: f.linkId, roomArchived: true });
     expect(byId.get(cancelled.id)).toMatchObject({ teacherRoomId: f.linkId, roomArchived: true });
 
@@ -81,7 +81,7 @@ describe('switchToSharedRoom — what moves and what stays', () => {
       select: { teacherRoomId: true, roomArchived: true },
     });
     expect(onShared).toHaveLength(3);
-    for (const t of onShared) expect(t).toEqual({ teacherRoomId: result.teacherRoomId, roomArchived: false });
+    for (const t of onShared) expect(t).toEqual({ teacherRoomId: result.sharedTeacherRoomId, roomArchived: false });
   });
 
   it('refuses while a class is in progress, and changes nothing', async () => {
@@ -160,11 +160,41 @@ describe('switchToSharedRoom — the shared link', () => {
     const result = await run(f, shared.id);
 
     expect(result).toMatchObject({
-      ok: true, action: 'switched', teacherRoomId: existing.id, reusedLink: true, capacityClamped: null,
+      ok: true, action: 'switched', sharedTeacherRoomId: existing.id, reusedLink: true, capacityClamped: null,
     });
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: existing.id } });
     expect(after.capacityOverride).toBe(12);
     expect(after.rentalRate.equals(new Prisma.Decimal(55))).toBe(true);
+  });
+
+  it('creates the link carrying the private link\'s equipment notes', async () => {
+    const f = await makeFixture();
+    await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { equipmentNotes: 'Bring your own mat' } });
+    const shared = await addSharedTwin(f);
+
+    expect(await run(f, shared.id)).toMatchObject({ ok: true, action: 'switched', reusedLink: false });
+    expect((await linkOn(f.teacherId, shared.id))?.equipmentNotes).toBe('Bring your own mat');
+  });
+
+  // The shared room's maximum (5) is below the private capacity (15), so a
+  // freshly created link would be clamped. A reused link keeps its own value
+  // (20, above that maximum): nothing is clamped, and nothing reports a clamp.
+  it('reports no clamp on a reused link, even where a created one would clamp', async () => {
+    const f = await makeFixture();
+    const shared = await addSharedTwin(f, { maxCapacity: 5 });
+    const existing = await prisma.teacherRoom.create({
+      data: {
+        teacherId: f.teacherId, roomId: shared.id,
+        capacityOverride: 20, rentalRate: new Prisma.Decimal(55),
+      },
+    });
+
+    const result = await run(f, shared.id);
+
+    expect(result).toMatchObject({
+      ok: true, action: 'switched', sharedTeacherRoomId: existing.id, reusedLink: true, capacityClamped: null,
+    });
+    expect((await prisma.teacherRoom.findUniqueOrThrow({ where: { id: existing.id } })).capacityOverride).toBe(20);
   });
 
   it('un-archives an archived existing link before moving live rows onto it', async () => {
@@ -180,7 +210,7 @@ describe('switchToSharedRoom — the shared link', () => {
 
     const result = await run(f, shared.id);
 
-    expect(result).toMatchObject({ ok: true, action: 'switched', teacherRoomId: existing.id, reusedLink: true });
+    expect(result).toMatchObject({ ok: true, action: 'switched', sharedTeacherRoomId: existing.id, reusedLink: true });
     expect((await prisma.teacherRoom.findUniqueOrThrow({ where: { id: existing.id } })).isArchived).toBe(false);
     expect(await prisma.class.findUniqueOrThrow({ where: { id: open.id } }))
       .toMatchObject({ teacherRoomId: existing.id, roomArchived: false });
@@ -204,9 +234,9 @@ describe('switchToSharedRoom — refusals and the unchanged answer', () => {
   it('answers now_shared when the private link\'s room has been shared', async () => {
     const f = await makeFixture();
     const other = await makeFixture();
-    // Ruling R1: give the room a run-unique roomName before publishing it, or
-    // the fixture identity (empty floor and roomName) could collide with
-    // another public room on `Room_public_identity_unique`.
+    // Give the room a run-unique roomName before publishing it, or the fixture
+    // identity (empty floor and roomName) could collide with another public
+    // room on `Room_public_identity_unique`.
     await prisma.room.update({ where: { id: f.roomId }, data: { roomName: `Now shared ${fx.suffix}` } });
     await prisma.room.update({ where: { id: f.roomId }, data: { isPublic: true } });
     const shared = await addSharedTwin(other);
@@ -248,7 +278,7 @@ describe('switchToSharedRoom — refusals and the unchanged answer', () => {
 
     const second = await run(f, shared.id);
 
-    expect(second).toEqual({ ok: true, action: 'unchanged', teacherRoomId: first.teacherRoomId });
+    expect(second).toEqual({ ok: true, action: 'unchanged', sharedTeacherRoomId: first.sharedTeacherRoomId });
     expect((await linkOn(f.teacherId, shared.id))?.updatedAt).toEqual(linkBefore?.updatedAt);
   });
 
