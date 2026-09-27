@@ -374,15 +374,19 @@ Each guard is **mutation-tested**: break it, record the exact failure, restore.
    `open`, a `completed`, and a cancelled `open` class. After the switch,
    exactly the first two are on S and the last two are on P. This fails under A
    (which moves all four) and under C (which moves none). Mutation: drop
-   `cancelledAt: null` from the predicate, and the cancelled class moves.
+   `AND c."entryLive"` from step 4's lock predicate, and the cancelled class
+   moves (`moved.classes` is 3, not 2).
 1a. **A running class refuses the switch.** Add an `in_progress` class to the
    same fixture: 409 `ROOM_IN_USE`, and every row is exactly where it was,
-   P still unarchived and no S link created. Mutations: add `in_progress` to
-   the moved set (`MOVING_CLASS_WHERE`), and the class moves where it should
-   have refused. Drop the refusal instead: step 4's lock set already includes
-   `in_progress`, and step 5 moves every locked id, so with the refusal gone
-   the running class moves onto S along with the rest and the switch
-   succeeds — it does not fail with a 23514. Both are recorded.
+   P still unarchived and no S link created. Mutations: drop `in_progress`
+   from step 4's lock set, and the refusal never sees the running class — the
+   move goes ahead and step 7's archive of P fails with 23514
+   (`Class_live_needs_open_room`), a 500 where a 409 was due. Drop the refusal
+   instead: step 4's lock set includes `in_progress`, and step 5 moves every
+   locked id, so with the refusal gone the running class moves onto S along
+   with the rest and the switch succeeds — it does not fail with a 23514.
+   Both are recorded. Adding `in_progress` to `MOVING_CLASS_WHERE` changes
+   nothing here: that predicate feeds only the row-7 unchanged count.
 2. **Every template moves**: active, paused and archived. Mutation: filter the
    template move to live rules, and the archived one stays.
 3. **Atomic.** A failure injected after step 5 leaves P unarchived, no S link
