@@ -39,9 +39,15 @@ const WAIT_MS = 1_500;
 const HANDSHAKE_MS = 2_000;
 
 /**
- * The budget of each held transaction: the hold lasts at most `WAIT_MS` past
- * the handshake, so the holder always commits on its own release rather than
- * being aborted by Prisma, which would free the row for the wrong reason.
+ * The Prisma budget of the transactions this file opens itself: `holdAfter`'s
+ * holders and the archive-first booking. A hold lasts at most `WAIT_MS` past
+ * the handshake, so such a holder always commits on its own release rather
+ * than being aborted by Prisma, which would free the row for the wrong reason.
+ *
+ * It does not govern a holder paused by `pauseAtLink`: that one is the
+ * service's own `$transaction` (`archiveStudent`, `reopenPayment`) on Prisma's
+ * 5s default. Its worst case is `HANDSHAKE_MS + WAIT_MS` from that
+ * transaction's start to its release — 3.5s, inside the 5s.
  */
 const HOLD_BUDGET_MS = 10_000;
 
@@ -123,11 +129,13 @@ function holdAfter(body: (tx: Prisma.TransactionClient) => Promise<void>): Pause
 }
 
 /**
- * Pauses `archiveStudent` right after its `lockTeacherStudentLink` for this
- * pair returns, before its counts: the archive holds the link row and has
- * written nothing.
+ * Pauses the FIRST caller of `lockTeacherStudentLink` for this pair right
+ * after the lock returns — `archiveStudent` before its counts, or
+ * `reopenPayment` before its compare-and-swap — holding the link row with
+ * nothing written. Later callers for the pair pass straight through to the
+ * real lock, and so queue behind the paused one.
  */
-function pauseArchiveAtLink(pair: { teacherId: string; studentId: string }): Pause {
+function pauseAtLink(pair: { teacherId: string; studentId: string }): Pause {
   const reached = latch();
   const held = latch();
   let pid = 0;
@@ -320,7 +328,7 @@ describe('the TeacherStudent row serialises archiving against what makes a pair 
   it('archive first: the booking waits for the archive to commit, then clears the flag it set', async () => {
     const fx = await makeFixture();
     try {
-      const archivePause = pauseArchiveAtLink(fx);
+      const archivePause = pauseAtLink(fx);
       const archiving = archiveStudent(prisma, { teacherId: fx.teacherId, studentId: fx.studentId });
       let booking: Tracked<void> | undefined;
       let bookingWaited = false;
@@ -357,7 +365,7 @@ describe('the TeacherStudent row serialises archiving against what makes a pair 
     const fx = await makeFixture();
     try {
       const paymentId = await paymentFor(fx, 'not_charged');
-      const archivePause = pauseArchiveAtLink(fx);
+      const archivePause = pauseAtLink(fx);
       const archiving = archiveStudent(prisma, { teacherId: fx.teacherId, studentId: fx.studentId });
       let reopen: Tracked<Awaited<ReturnType<typeof reopenPayment>>> | undefined;
       let reopenWaited = false;
@@ -380,6 +388,39 @@ describe('the TeacherStudent row serialises archiving against what makes a pair 
       const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { status: true } });
       expect(payment.status).toBe('pending');
       expect(reopenWaited).toBe(true);
+      expect(settledDuringHold).toBe(false);
+    } finally {
+      await cleanup(fx);
+    }
+  }, 30_000);
+
+  it('reopen first: the archive waits for the reopen to commit, then refuses on the payment it made owed', async () => {
+    const fx = await makeFixture();
+    try {
+      const paymentId = await paymentFor(fx, 'not_charged');
+      const reopenPause = pauseAtLink(fx);
+      const reopening = reopenPayment(prisma, paymentId);
+      let archive: Tracked<ArchiveOutcome> | undefined;
+      let archiveWaited = false;
+      let settledDuringHold = true;
+      try {
+        await handshake(reopenPause.reached, 'reopen link lock', reopening);
+        // The reopen holds the link and has not yet made the payment owed,
+        // so an archive that did not wait would read it `not_charged`.
+        archive = track(archiveStudent(racer, { teacherId: fx.teacherId, studentId: fx.studentId }));
+        archiveWaited = (await waiterOf(reopenPause.pid(), archive.settled)) !== null;
+        settledDuringHold = archive.settled();
+      } finally {
+        reopenPause.release();
+        await joinOrThrow(reopening, archive?.racer);
+      }
+
+      expect((await reopening).kind).toBe('applied');
+      expect(refusalCode(await archive?.racer)).toBe('STUDENT_HAS_OUTSTANDING_PAYMENTS');
+      expect(await linkArchived(fx)).toBe(false);
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { status: true } });
+      expect(payment.status).toBe('pending');
+      expect(archiveWaited).toBe(true);
       expect(settledDuringHold).toBe(false);
     } finally {
       await cleanup(fx);
