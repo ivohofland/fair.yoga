@@ -1500,11 +1500,19 @@ compare-and-swap. The two sides then queue on the one row in either order:
 were live and visible before it ran, so an archive concurrent with it refuses
 on the registration (before completion commits) or on the new payment (after).
 
-The teacher's own un-archive (`PATCH /api/students/[id]?state=unarchived`) is
-a single `teacherStudent.update`, whose `UPDATE` takes the same row lock.
+The teacher's own un-archive (`PATCH /api/students/[id]?state=unarchived`,
+`src/app/api/students/[id]/route.ts`) is an unlocked `findUnique` of the link
+followed, only when it read `isArchived = true`, by a `teacherStudent.update`.
+That `UPDATE` takes the same row lock. The read does not, so an un-archive
+racing an archive that holds the lock reads the row still active, answers
+`unchanged`, and the archive then commits — the un-archive serialised before
+the archive, a valid order: the teacher asked for "active" and got the answer
+true when it was given.
+
 `unlinkTeacher`'s `teacherStudent.delete` and the erasures'
-`teacherStudent.deleteMany` take it too, so a `DELETE` of the link now queues
-behind a linking transaction's `FOR UPDATE` instead of landing between its roster-link write and what follows it —
+`teacherStudent.deleteMany` take the row lock too, so a `DELETE` of the link
+now queues behind a linking transaction's `FOR UPDATE` instead of landing
+between its roster-link write and what follows it —
 `src/services/invitations-lock-order.test.ts` pins that for
 `acceptInvitation` ("the roster-link lock now closes this window").
 
@@ -1582,9 +1590,9 @@ transaction opens. So no erasure transaction holds `Payment` and
 
     git grep -n -E '(lockTeacherStudentLink|activateTeacherStudentLink|linkTeacherStudent)\(' -- src ':!*.test.ts'
 
-On 2026-09-28 it returned 13 lines = 3 definitions + 2 calls inside
+On 2026-09-28 it returned 14 lines = 3 definitions + 2 calls inside
 `roster-link.ts` (`linkTeacherStudent` → `activateTeacherStudentLink` →
-`lockTeacherStudentLink`) + 8 call sites:
+`lockTeacherStudentLink`) + 9 call sites:
 
 - `lockTeacherStudentLink` directly: `archiveStudent`, `reopenPayment`;
 - `activateTeacherStudentLink` directly: the roster add in `POST
