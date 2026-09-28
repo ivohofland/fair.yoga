@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { PrismaClient, type Payment, type PaymentStatus } from '@prisma/client';
 import {
   markPaymentPaid,
@@ -15,6 +15,7 @@ import {
 } from './payments';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
+import { log } from '@/lib/log';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -714,9 +715,26 @@ describe('Payment Service (DB)', () => {
         expect((await readLink(studentId)).isArchived).toBe(true);
       });
 
-      it('applies for a not_charged payment whose student has no link at all', async () => {
-        const payment = await makePayment('not_charged');
+      it('applies for a not_charged payment whose student has no link at all, and logs the pair', async () => {
+        const info = vi.spyOn(log, 'info');
+        onTestFinished(() => info.mockRestore());
+        const { payment, studentId } = await createPaymentFixture('not_charged');
         paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+        expect(info).toHaveBeenCalledWith(
+          { paymentId: payment.id, teacherId, studentId },
+          expect.any(String),
+        );
+      });
+
+      it('logs nothing for a reopen whose student is linked', async () => {
+        const info = vi.spyOn(log, 'info');
+        onTestFinished(() => info.mockRestore());
+        const { payment } = await makePaymentWithLink('not_charged', false);
+        paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+        expect(info).not.toHaveBeenCalledWith(
+          expect.objectContaining({ paymentId: payment.id }),
+          expect.any(String),
+        );
       });
     });
 
