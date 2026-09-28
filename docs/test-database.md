@@ -247,24 +247,31 @@ benefit from an empty database — assertion scoping becomes trivial.
   example cancelling or deleting a registration), therefore builds one of:
   a **full** class (fill `maxStudents` before the write), a **claim-window
   class with a standing broadcast** (`spotBroadcastAt` set to now — at or
-  after the claim window's start), a class that is **not open, is
-  cancelled, or has started**, or, where the test itself drives
-  `promoteNext`, a fixture where the entry-beside-a-free-seat state is made
-  reachable only in the statement immediately before that call (write the
-  entry there, or free the seat there). A site that keeps a reachable free
+  after the claim window's start — before whichever write, the seat-free or
+  the entry, first puts a `waiting` entry beside a free seat), a class that is **not open, is cancelled, or has started**, or,
+  where the test itself drives `promoteNext`, a fixture where the
+  entry-beside-a-free-seat state is made reachable only in the statement
+  immediately before that call (write the entry there, or free the seat
+  there) and the promotion is asserted from the stored entry rather than
+  from that call's return, since a sweep promotion runs the same
+  `promoteNext`. A site that keeps a reachable free
   seat because the sweep's action there changes nothing it asserts says so
   beside the fixture. `expectReconciliationSkips`
   (`tests/waitlist-fixtures.ts`) forces a tick scoped to the test's own
   classes and asserts they were skipped. Scoped because CI runs integration
-  files in parallel. Re-derive the direct writes with
-  `grep -rn "waitlistEntry\.\(create\|createMany\|upsert\|update\|updateMany\)" tests/integration`
+  files in parallel. Find the direct writes with
+  `grep -rn "waitlistEntry\.\(create\|createMany\|upsert\|update\|updateMany\)" tests/integration tests/e2e`
   and, for a direct seat-freeing write,
-  `grep -rn "registration\.\(update\|updateMany\|delete\|deleteMany\)(" tests/integration`
+  `grep -rn "registration\.\(update\|updateMany\|delete\|deleteMany\)(" tests/integration tests/e2e`
   — the second lists candidates to read, since most hits are teardown. Neither
   command sees a seat freed by deleting `fillSeats` students, whose
-  registrations go with them by cascade: re-derive those with
-  `grep -rn "fillSeats\|FillerIds\|fillerIds" tests/integration` and read the
-  deletion sites among the hits.
+  registrations go with them by cascade: find those with
+  `grep -rn "fillSeats\|FillerIds\|fillerIds" tests/integration tests/e2e` and
+  follow each hit to where its fillers are deleted. These commands find
+  candidates; they are not a complete census. A seat freed by a
+  `class.update` raising `maxStudents`, by deleting a student who is not a
+  filler, or by raw SQL shows up in none of them and is found only by
+  reading.
 - **Playwright e2e** — same coupling, same targeted-fixture pattern.
 
 Accepted trade-off: these two tiers can still *see* seed rows (they
