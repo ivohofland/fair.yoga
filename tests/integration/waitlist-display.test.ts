@@ -31,16 +31,17 @@ const suffix = uniqueSuffix();
  * - `autoCompleteClasses` — EVERY `in_progress` class, no date filter; only the
  *   computed end instant holds it off.
  *
+ * These class-transition sweeps all live in `src/services/class-transitions.ts`;
+ * grep the predicate rather than trusting a line number, which is what rotted
+ * last time.
+ *
+ * Any of them rewrites a status underneath an assertion, and the absence
+ * assertions below would still pass — from a status the fixture never set.
+ * That is #138's failure mode: a check that runs when both paths agree.
+ *
  * The date does not stop `waitlist-reconciliation`, whose candidate query has
  * no date bound; the open classes are filled for that instead
  * (`docs/test-database.md` §3.4).
- *
- * (All three live in `src/services/class-transitions.ts`; grep the predicate
- * rather than trusting a line number, which is what rotted last time.)
- *
- * Any of the three rewrites a status underneath an assertion, and the absence
- * assertions below would still pass — from a status the fixture never set.
- * That is #138's failure mode: a check that runs when both paths agree.
  */
 
 // Distinct `startTime` per class: `CalendarEntry_teacher_slot_excl` is
