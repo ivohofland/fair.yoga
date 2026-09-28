@@ -17,6 +17,7 @@ import {
   updateTeacherSchema,
   teacherProfileSchema,
   updateStudentSchema,
+  archiveStudentBodySchema,
   isSafeRelativePath,
   isLoginRedirectTarget,
   MAX_CLASS_SIZE,
@@ -1052,5 +1053,32 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
 
   it('falls through to a bare visit for nothing but pageSlugField', () => {
     expect(sweep().bare).toEqual(['pageSlugField']);
+  });
+});
+
+describe('archiveStudentBodySchema bounds (#265)', () => {
+  const ids = (n: number, length = 36): string[] =>
+    Array.from({ length: n }, (_, i) => String(i).padStart(length, 'p'));
+
+  it('accepts an absent list and an empty object', () => {
+    expect(archiveStudentBodySchema.safeParse({}).success).toBe(true);
+  });
+
+  it('accepts 500 ids and refuses 501', () => {
+    expect(archiveStudentBodySchema.safeParse({ waivePaymentIds: ids(500) }).success).toBe(true);
+    expect(archiveStudentBodySchema.safeParse({ waivePaymentIds: ids(501) }).success).toBe(false);
+  });
+
+  it('accepts a 64-character id and refuses 65', () => {
+    expect(archiveStudentBodySchema.safeParse({ waivePaymentIds: ids(1, 64) }).success).toBe(true);
+    expect(archiveStudentBodySchema.safeParse({ waivePaymentIds: ids(1, 65) }).success).toBe(false);
+  });
+
+  it('refuses an empty-string id', () => {
+    expect(archiveStudentBodySchema.safeParse({ waivePaymentIds: [''] }).success).toBe(false);
+  });
+
+  it('refuses a key it does not know', () => {
+    expect(archiveStudentBodySchema.safeParse({ waivePaymentIds: [], extra: true }).success).toBe(false);
   });
 });
