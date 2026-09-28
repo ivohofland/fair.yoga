@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { formatEuro } from '@/lib/format';
@@ -28,6 +28,29 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
   const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const waiveRef = useRef<HTMLButtonElement>(null);
+  const mainRef = useRef<HTMLButtonElement>(null);
+  // Set when the confirm closes, so focus goes back to the main button
+  // rather than dropping to the page once the confirm's buttons unmount.
+  const returnFocus = useRef(false);
+
+  // Opening the confirm focuses its action; closing it returns focus to the
+  // main button once that button is enabled again.
+  useEffect(() => {
+    if (confirming) {
+      waiveRef.current?.focus();
+      return;
+    }
+    if (returnFocus.current && !loading) {
+      returnFocus.current = false;
+      mainRef.current?.focus();
+    }
+  }, [confirming, loading]);
+
+  function closeConfirm() {
+    returnFocus.current = true;
+    setConfirming(false);
+  }
 
   async function handleUnarchive() {
     setLoading(true);
@@ -66,7 +89,7 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
       // confirm here rather than retrying with the same stale ids means the
       // next tap of the main button reopens it with fresh numbers, once
       // `router.refresh()` has re-read them.
-      setConfirming(false);
+      closeConfirm();
       if (code === 'STUDENT_HAS_OUTSTANDING_PAYMENTS') {
         router.refresh();
       }
@@ -101,17 +124,18 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
         </p>
         <div className="flex gap-3">
           <Button
+            ref={waiveRef}
             variant="primary"
             onClick={() => void handleArchive({ waivePaymentIds: outstanding.ids })}
             disabled={loading}
           >
             {loading ? 'Archiving...' : 'Waive and archive'}
           </Button>
-          <Button variant="secondary" onClick={() => setConfirming(false)} disabled={loading}>
-            Keep
+          <Button variant="secondary" onClick={closeConfirm} disabled={loading}>
+            Cancel
           </Button>
         </div>
-        {error && <p className="text-sm text-danger">{error}</p>}
+        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       </div>
     );
   }
@@ -119,6 +143,7 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
   return (
     <div>
       <button
+        ref={mainRef}
         type="button"
         onClick={handleClick}
         disabled={loading}
@@ -128,7 +153,7 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
           ? (isArchived ? 'Unarchiving...' : 'Archiving...')
           : (isArchived ? 'Unarchive student' : 'Archive student')}
       </button>
-      {error && <p className="text-sm text-danger mt-2">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger mt-2">{error}</p>}
     </div>
   );
 }

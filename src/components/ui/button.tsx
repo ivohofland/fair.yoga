@@ -1,9 +1,11 @@
-import type { ButtonHTMLAttributes } from 'react';
+import type { ButtonHTMLAttributes, Ref } from 'react';
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'destructive';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
+  /** Forwarded to the `<button>`, for a caller that moves focus onto it. */
+  ref?: Ref<HTMLButtonElement>;
 }
 
 // Pill buttons, 48px tall. One primary per screen; destructive is never filled.
