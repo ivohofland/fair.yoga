@@ -5,19 +5,20 @@
  * `docs/data-model.md` (TeacherStudent).
  */
 
-import { Prisma, type PrismaClient } from '@prisma/client';
-import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
-import { formatEuro } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import { lockTeacherStudentLink } from './roster-link';
+import {
+  outstandingChangedRefusal,
+  outstandingRefusal,
+  unbilledRefusal,
+  type ArchiveRefusal,
+  type OpenPayment,
+} from './student-archive-copy';
 
-/** Why an archive is refused. Each message is shown to the teacher verbatim. */
-export type ArchiveRefusal = Extract<
-  CodedRefusal,
-  { code: 'STUDENT_HAS_UNBILLED_CLASSES' | 'STUDENT_HAS_OUTSTANDING_PAYMENTS' }
->;
+export type { ArchiveRefusal } from './student-archive-copy';
 
 /**
  * What `archiveStudent` did. `not-linked`: the pair has no link, so there is
@@ -31,7 +32,6 @@ export type ArchiveOutcome =
   | { kind: 'refused'; refusal: ArchiveRefusal };
 
 type Pair = { teacherId: string; studentId: string };
-type OpenPayment = { id: string; amount: Prisma.Decimal };
 
 /**
  * Thrown inside the transaction when the waive wrote fewer rows than it read
@@ -56,42 +56,6 @@ function sameIdSet(given: readonly string[], open: readonly string[]): boolean {
   const givenSet = new Set(given);
   const openSet = new Set(open);
   return givenSet.size === openSet.size && [...givenSet].every((id) => openSet.has(id));
-}
-
-/** "€x across n payment(s)", summed as decimals so no cent is lost to float addition. */
-function owedPhrase(open: readonly OpenPayment[]): string {
-  const total = open.reduce((sum, p) => sum.plus(p.amount), new Prisma.Decimal(0));
-  const n = open.length;
-  return `${formatEuro(total.toNumber())} across ${n} ${n === 1 ? 'payment' : 'payments'}`;
-}
-
-function unbilledRefusal(n: number): ArchiveRefusal {
-  return codedRefusal(
-    'STUDENT_HAS_UNBILLED_CLASSES',
-    `This student is booked on ${n} ${n === 1 ? 'class' : 'classes'} that ${n === 1 ? "hasn't" : "haven't"} been billed yet. Remove them from ${n === 1 ? 'it' : 'those classes'}, or archive once ${n === 1 ? "it's" : "they're"} completed.`,
-  );
-}
-
-function outstandingRefusal(open: readonly OpenPayment[]): ArchiveRefusal {
-  const n = open.length;
-  return codedRefusal(
-    'STUDENT_HAS_OUTSTANDING_PAYMENTS',
-    `This student still owes ${owedPhrase(open)}. Waive ${n === 1 ? 'it' : 'them'} to archive.`,
-  );
-}
-
-/**
- * The answer to a waive whose ids no longer match what is owed. An empty set
- * is reachable only through `OutstandingChangedError`'s re-read, when every
- * payment the waive named was settled meanwhile.
- */
-function outstandingChangedRefusal(open: readonly OpenPayment[]): ArchiveRefusal {
-  return codedRefusal(
-    'STUDENT_HAS_OUTSTANDING_PAYMENTS',
-    open.length === 0
-      ? 'What this student owes has changed — nothing is outstanding now. Try again.'
-      : `What this student owes has changed — now ${owedPhrase(open)}. Check it and try again.`,
-  );
 }
 
 /**
