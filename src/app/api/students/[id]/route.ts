@@ -46,9 +46,8 @@ export const GET = withErrorHandler(async (
   // disclosure the link check exists to prevent. Once linked, the projection
   // decides which of email, phone, birthday and address come back.
   //
-  // Not income tiers, whatever this comment used to say: #167 dropped
-  // `incomeTier` from the teacher-facing shape entirely, and
-  // `students-api.test.ts` pins that it stays gone.
+  // Never income tiers: `incomeTier` is not in the teacher-facing shape
+  // (#167), and `students-api.test.ts` pins that it stays out.
   if (session.teacherId) {
     const link = await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
