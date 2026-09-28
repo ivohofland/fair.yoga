@@ -24,12 +24,14 @@ export function DeleteRoomButton({ roomId, roomName }: DeleteRoomButtonProps) {
       if (res.ok) {
         deleted = true;
       } else {
-        const { code, message } = await readError(res, 'Failed to delete room.');
+        const { code, message } = await readError(res, 'Failed to delete room. Please try again.');
         // The room being gone is what this delete asked for, whoever removed it.
         if (code === 'NOT_FOUND') deleted = true;
         else setError(message);
       }
-    } catch {
+    } catch (err) {
+      // `readError` never throws, so what lands here is `fetch` itself rejecting.
+      console.error('Room delete request failed', err);
       setError('Network error. Please try again.');
     }
 
