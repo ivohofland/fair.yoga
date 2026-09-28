@@ -4,6 +4,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 import { expectUnchanged, expectApplied } from '../api-assertions';
+import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -605,13 +606,19 @@ describe('DELETE /api/account', () => {
         minRate: 10,
         targetRate: 20,
         minStudents: 1,
-        maxStudents: 8,
+        maxStudents: 1,
         status: 'open',
       });
     seededClassIds.push(cls.id);
+    // Full before the waiting write below: the running app's own scheduler
+    // ticks waitlist-reconciliation against this dev database and would
+    // otherwise promote the entry through the free seat this test's 4s lock
+    // hold leaves open (`docs/test-database.md` §3.4).
+    seededStudentIds.push(...(await fillSeats(prisma, cls.id, 1, `acc-busy-${suffix}`)));
     await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: acc.studentId, position: 1, status: 'waiting' },
     });
+    await expectReconciliationSkips(prisma, [cls.id], 'full');
 
     // Held for 4s — comfortably past the erasure's own 2s bound, so what this
     // observes is the timeout and not merely a wait.
@@ -841,7 +848,7 @@ describe('DELETE /api/account', () => {
       data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
     });
     seededTeacherRoomIds.push(teacherRoom.id);
-    const makeClass = async (date: string) => {
+    const makeClass = async (date: string, maxStudents = 8) => {
       const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
@@ -853,14 +860,27 @@ describe('DELETE /api/account', () => {
         minRate: 10,
         targetRate: 20,
         minStudents: 1,
-        maxStudents: 8,
+        maxStudents,
         status: 'open',
       });
       seededClassIds.push(cls.id);
       return cls.id;
     };
     const bookedClassId = await makeClass('2099-07-01');
-    const lateClassId = await makeClass('2099-07-02');
+    const lateClassId = await makeClass('2099-07-02', 1);
+    // Full before any waiting entry ever lands here. The entry the test
+    // writes below has to appear only inside the lock race's held window (it
+    // is what "outside the erasure lock set" means), so it cannot carry its
+    // own forced tick without running one there — prove the mitigation now
+    // instead, with a throwaway entry written and cleared before the race
+    // starts (`docs/test-database.md` §3.4).
+    seededStudentIds.push(...(await fillSeats(prisma, lateClassId, 1, `acc-lockset-${suffix}`)));
+    await prisma.waitlistEntry.create({
+      data: { classId: lateClassId, studentId: acc.studentId, position: 1, status: 'waiting' },
+    });
+    await expectReconciliationSkips(prisma, [lateClassId], 'full');
+    await prisma.waitlistEntry.deleteMany({ where: { classId: lateClassId } });
+
     const registration = await prisma.registration.create({
       data: { classId: bookedClassId, studentId: acc.studentId, status: 'registered', tierAtBooking: 3 },
     });
