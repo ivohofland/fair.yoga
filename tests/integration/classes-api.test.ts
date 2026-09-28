@@ -6,6 +6,7 @@ import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { economicsViolations, formatEconomicsViolations } from '@/lib/class-economics';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -156,7 +157,12 @@ beforeAll(async () => {
   // `state` is `ClassStatus` plus `'cancelled'` (#327): a cancelled class
   // keeps a live status and carries `cancelledAt` on its entry, so the fixture
   // takes the freeze the test wants and decides which row holds it.
-  function makeClass(classType: string, state: ClassStatus | 'cancelled', startTime: string) {
+  function makeClass(
+    classType: string,
+    state: ClassStatus | 'cancelled',
+    startTime: string,
+    maxStudents = 8,
+  ) {
     return createClassFixture(prisma, {
         teacherId: ownerId,
         teacherRoomId: teacherRoom.id,
@@ -172,7 +178,7 @@ beforeAll(async () => {
         minRate: 10,
         targetRate: 20,
         minStudents: 1,
-        maxStudents: 8,
+        maxStudents,
         status: state === 'cancelled' ? 'open' : state,
         cancelledAt: state === 'cancelled' ? new Date() : null,
       });
@@ -272,7 +278,7 @@ beforeAll(async () => {
   // by the same student the lock fixture uses — `Registration` is unique on
   // (classId, studentId), so a second class is fine, and reusing the student
   // avoids a second account/session/teardown chain.
-  const noticeCls = await makeClass('Classes API Notice', 'open', '10:00');
+  const noticeCls = await makeClass('Classes API Notice', 'open', '10:00', 1);
   noticeClassId = noticeCls.id;
 
   const noticeRes = await fetch(`${BASE_URL}/api/registrations`, {
@@ -286,11 +292,12 @@ beforeAll(async () => {
     );
   }
 
-  // A second recipient, on the waitlist rather than registered. Written
-  // directly rather than through `POST /api/waitlist`: the route under test
-  // only reads the row, and `addToWaitlist` would refuse to queue anyone on a
-  // class that is not full (`maxStudents` is 8 here). No session needed —
-  // this student never makes a request, they only receive a notification.
+  // A second recipient, on the waitlist rather than registered. `noticeCls`
+  // has `maxStudents: 1`, and the notice registration above fills it, so this
+  // entry is one `addToWaitlist` itself would accept. Written directly rather
+  // than through `POST /api/waitlist` anyway: the route under test only reads
+  // the row, and no session is needed — this student never makes a request,
+  // they only receive a notification.
   const waitStudentEmail = `classesapi-waitstudent-${suffix}@test.local`;
   const waitStudent = await prisma.student.create({
     data: { firstName: 'Wait', lastName: 'Student', email: waitStudentEmail, incomeTier: 3 },
@@ -299,6 +306,7 @@ beforeAll(async () => {
   await prisma.waitlistEntry.create({
     data: { classId: noticeClassId, studentId: waitStudentId, position: 1, status: 'waiting' },
   });
+  await expectReconciliationSkips(prisma, [noticeClassId], 'full');
 });
 
 afterAll(async () => {
@@ -1024,13 +1032,18 @@ describe('POST /api/classes/[id]/transition', () => {
         roomCost: 30,
         minRate: 15,
         targetRate: 25,
-        minStudents: 2,
-        maxStudents: 4,
+        // Minimum capacity: the fixture needs a full class (see the
+        // `expectReconciliationSkips` call below), and one seat is the
+        // smallest `fillSeats` has to fill.
+        minStudents: 1,
+        maxStudents: 1,
         status: 'open',
       });
+    const fillerIds = await fillSeats(prisma, cls.id, 1, `queue-close-${suffix}`);
     const entry = await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: waitStudentId, position: 1, status: 'waiting' },
     });
+    await expectReconciliationSkips(prisma, [cls.id], 'full');
 
     const res = await transition(ownerToken, cls.id, { status: 'in_progress' });
     expect(res.status).toBe(200);
@@ -1039,6 +1052,7 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(after.status).toBe('expired');
 
     await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+    await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 });

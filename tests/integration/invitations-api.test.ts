@@ -15,6 +15,7 @@ import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions
 import { hhmmToTime } from '@/lib/time-of-day';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
 import { createClassFixture } from '../class-fixtures';
+import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 import { erasedAddress } from '@/lib/erased-address';
 import { randomUUID } from 'crypto';
 
@@ -3215,6 +3216,10 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
         where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
         data: { status: 'pending', respondedAt: null },
       });
+      // `promoteClassId` holds a free seat here (no filler registration), which
+      // `promoteNext` below requires — the write sits directly before the
+      // call because a free seat in the auto-promote window is what the
+      // reconciliation sweep promotes on (`docs/test-database.md` §3.4).
       await prisma.waitlistEntry.create({
         data: { classId: promoteClassId, studentId: promoteStudentId, position: 1, status: 'waiting' },
       });
@@ -3250,7 +3255,13 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   });
 
   it('a promotion cannot erase a decline the student made after joining the queue (whole-branch C2)', async () => {
+    let promoteFillerIds: string[] = [];
     try {
+      // Fills both of `promoteClassId`'s seats, so the entry below is not a
+      // free seat the reconciliation sweep would promote out from under the
+      // decline in between the write and the route call.
+      promoteFillerIds = await fillSeats(prisma, promoteClassId, 2, `promote-decline-${suffix}`);
+
       // The student's older act: a place in the queue. Written by hand, so
       // this models a row from before joining created the link — a real join
       // today would have accepted the invitation on the spot, and this
@@ -3262,6 +3273,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
           position: 1, status: 'waiting',
         },
       });
+      await expectReconciliationSkips(prisma, [promoteClassId], 'full');
 
       // Their newer act, through the real route: no.
       const declineRes = await fetch(
@@ -3281,6 +3293,12 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       expect((await prisma.waitlistEntry.findUniqueOrThrow({
         where: { classId_studentId: { classId: promoteClassId, studentId: promoteDeclineStudentId } },
       })).status).toBe('waiting');
+
+      // Free the seat the write above required — a free seat in the
+      // auto-promote window is what the reconciliation sweep promotes on
+      // (`docs/test-database.md` §3.4), and `promoteNext` needs that same
+      // free seat now that the sweep has been kept off it.
+      await prisma.student.deleteMany({ where: { id: { in: promoteFillerIds } } });
 
       // The teacher's move, at a moment of their choosing.
       const entry = await promoteNext(prisma, promoteClassId);
@@ -3305,6 +3323,9 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       });
       expect(inv.status).toBe('declined');
     } finally {
+      if (promoteFillerIds.length > 0) {
+        await prisma.student.deleteMany({ where: { id: { in: promoteFillerIds } } });
+      }
       await prisma.waitlistEntry.deleteMany({
         where: { classId: promoteClassId, studentId: promoteDeclineStudentId },
       });
@@ -3740,6 +3761,7 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
   let lockRoomId: string;
   let lockTeacherRoomId: string;
   let lockClassId: string;
+  let lockFillerIds: string[] = [];
 
   const lockStudentEmail = `lock-student-${suffix}@test.local`;
   let lockStudentId: string;
@@ -3802,12 +3824,16 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
     await prisma.teacherStudent.create({
       data: { teacherId: lockTeacherId, studentId: lockStudentId },
     });
-    // The waiting entry is what makes the withdrawal reach for the lock at
-    // all — with no entry to withdraw, nothing is locked and there is
-    // nothing to observe.
+    // `maxStudents` is 1, so this filler leaves no free seat: the entry below
+    // is one `addToWaitlist` would itself write, and withdrawing it frees no
+    // seat for the reconciliation sweep to act on. The waiting entry is what
+    // makes the withdrawal reach for the lock at all — with no entry to
+    // withdraw, nothing is locked and there is nothing to observe.
+    lockFillerIds = await fillSeats(prisma, lockClassId, 1, `lock-${suffix}`);
     await prisma.waitlistEntry.create({
       data: { classId: lockClassId, studentId: lockStudentId, position: 1, status: 'waiting' },
     });
+    await expectReconciliationSkips(prisma, [lockClassId], 'full');
   });
 
   afterAll(async () => {
@@ -3820,6 +3846,9 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
     await prisma.teacherStudent.deleteMany({ where: { teacherId: lockTeacherId } });
     await prisma.invitation.deleteMany({ where: { teacherId: lockTeacherId } });
     await prisma.teacherBlock.deleteMany({ where: { teacherId: lockTeacherId } });
+    if (lockFillerIds.length > 0) {
+      await prisma.student.deleteMany({ where: { id: { in: lockFillerIds } } });
+    }
     await prisma.student.deleteMany({ where: { id: lockStudentId } });
     await prisma.session.deleteMany({ where: { accountId: lockStudentAccountId } });
     await prisma.account.deleteMany({ where: { id: lockStudentAccountId } });

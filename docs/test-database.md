@@ -236,6 +236,22 @@ benefit from an empty database — assertion scoping becomes trivial.
   database, so fixtures must live there. Their operations are targeted
   (own teacher/class/student rows, cleaned in `afterAll`), never global
   sweeps; residual risk is limited to their own fixture rows.
+
+  **The app's scheduler runs against these fixtures.** Locally the running
+  app ticks `waitlist-reconciliation` every minute (CI sets
+  `CRON_SCHEDULER=off`), and that job promotes or broadcasts on any `open`,
+  uncancelled class that has not started and holds a `waiting` entry beside
+  a free seat. A fixture that writes a `waiting` entry directly therefore
+  builds one of: a **full** class (fill `maxStudents` before the write), a
+  **claim-window class with a standing broadcast** (`spotBroadcastAt` set),
+  a class that is **not open or has started**, or, where the test itself
+  drives `promoteNext`, a seat freed in the statement immediately before
+  that call. A site that keeps a reachable free seat because the sweep's
+  action there changes nothing it asserts says so beside the fixture.
+  `expectReconciliationSkips` (`tests/waitlist-fixtures.ts`) forces a tick
+  scoped to the test's own classes and asserts they were skipped. Scoped
+  because CI runs integration files in parallel. Re-derive the direct
+  writes with `grep -rn "waitlistEntry\.\(create\|createMany\|upsert\|update\|updateMany\)" tests/integration`.
 - **Playwright e2e** — same coupling, same targeted-fixture pattern.
 
 Accepted trade-off: these two tiers can still *see* seed rows (they
