@@ -5,6 +5,7 @@ import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { formatInstantInZone } from '@/lib/timezone';
+import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -929,10 +930,6 @@ describe('GET /bookings (page) — waitlist section, viewer has not chosen a tie
     studentAccountId = student.accountId as string;
     studentToken = await seedSession(prisma, studentAccountId);
 
-    await prisma.waitlistEntry.create({
-      data: { classId, studentId, position: 1, status: 'waiting' },
-    });
-
     // A registered student, filling the pool the anonymous estimate is
     // built from.
     const activeEmail = `bookings-wl-active-${suffix4}@test.local`;
@@ -967,6 +964,20 @@ describe('GET /bookings (page) — waitlist section, viewer has not chosen a tie
     await prisma.registration.create({
       data: { classId, studentId: lateCancelStudent.id, tierAtBooking: 5, status: 'late_cancel' },
     });
+
+    // FULL, before the entry below: the active registration above fills one
+    // of five seats and `late_cancel` fills none — the remaining four are
+    // filled here so the entry the waiting student holds never stands beside
+    // a free seat, which is what the reconciliation sweep promotes on
+    // (`docs/test-database.md` §3.4). Cleaned up by this block's own
+    // `email: { contains: suffix4 }` sweep below — the tag carries the same
+    // suffix.
+    await fillSeats(prisma, classId, 4, `bookings-wl-filler-${suffix4}`);
+
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId, position: 1, status: 'waiting' },
+    });
+    await expectReconciliationSkips(prisma, [classId], 'full');
 
     // Warm the route before the assertions score anything.
     await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) }).catch(() => {});
@@ -1003,10 +1014,11 @@ describe('GET /bookings (page) — waitlist section, viewer has not chosen a tie
     expect(html).toContain('depending on your income tier');
     expect(html).not.toContain('depending on how many join');
 
-    // One active registration (the other student's) against a min of 2 —
-    // the late-cancelled row must not count toward it. Same structural
-    // anchor as the Upcoming section's count test above.
-    expect(html).toMatch(/<span[^>]*>1<\/span><span[^>]*>\/ 2–5<\/span>/);
+    // Five active registrations (the other student's, plus the fillers that
+    // bring the class to capacity) against a min of 2 and a max of 5 — the
+    // late-cancelled row must not count toward it, which would read 6. Same
+    // structural anchor as the Upcoming section's count test above.
+    expect(html).toMatch(/<span[^>]*>5<\/span><span[^>]*>\/ 2–5<\/span>/);
   });
 });
 

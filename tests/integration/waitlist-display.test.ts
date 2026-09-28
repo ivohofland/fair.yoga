@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -229,14 +230,27 @@ beforeAll(async () => {
     const classId = await makeClass(classType, status, i);
     if (status === 'open') openClassId = classId;
     if (status === 'completed') completedClassId = classId;
+    // FULL, and only for `open`: it is the one status among these four the
+    // reconciliation sweep's own candidate query can see (`class: { status:
+    // 'open', calendarEntry: { cancelledAt: null } }`) — the others are
+    // excluded by their status or, for the `cancelled` fixture, by
+    // `cancelledAt` before a free seat would matter. A `waiting` entry beside
+    // a free seat on the open class is exactly what the sweep promotes on
+    // (`docs/test-database.md` §3.4).
+    if (status === 'open') {
+      const openFillerIds = await fillSeats(prisma, classId, 2, `w199-open-seat-${suffix}`);
+      studentIds.push(...openFillerIds);
+    }
     // Written directly, not via `addToWaitlist`: that service throws on a
-    // non-`open` class — the invariant under test one layer down — and on this
-    // fixture's `open` class too, since `class_not_full` rejects a join while
-    // the class has seats and these classes carry zero registrations.
+    // non-`open` class — the invariant under test one layer down — and on the
+    // open class here too, now that its seats are filled: a full class hits
+    // `class_full` the same way an unfilled one would have hit
+    // `class_not_full`.
     await prisma.waitlistEntry.create({
       data: { classId, studentId: strip.id, position: 1, status: 'waiting' },
     });
   }
+  await expectReconciliationSkips(prisma, [openClassId], 'full');
 
   // The `only-dead` student's two entries. `removed` on the OPEN class and
   // `waiting` on the COMPLETED one, so each of the predicate's two halves is
@@ -286,6 +300,14 @@ beforeAll(async () => {
   // `Registration`s would add entities to this graph to assert nothing.
   // `promotedAt` is set so the rows are not obviously synthetic.
   countClassId = await makeClass(`w199-count-${suffix}`, 'open', 4);
+
+  // FULL, before the entries below: `open`, uncancelled and dated 2099, this
+  // class's `waiting` row beside a free seat is exactly what the
+  // reconciliation sweep promotes on (`docs/test-database.md` §3.4), and a
+  // promotion here would collapse the count this fixture is built to pin.
+  const countFillerIds = await fillSeats(prisma, countClassId, 2, `w199-count-seat-${suffix}`);
+  studentIds.push(...countFillerIds);
+
   const waiting = await makeStudent('count-waiting');
   const seated = await makeStudent('count-promoted');
   const booked = await makeStudent('count-claimed');
@@ -318,6 +340,7 @@ beforeAll(async () => {
       },
     ],
   });
+  await expectReconciliationSkips(prisma, [countClassId], 'full');
 });
 
 afterAll(async () => {

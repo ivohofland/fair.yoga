@@ -6,6 +6,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 import { expectRefusal, expectUnchanged } from '../api-assertions';
+import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -18,6 +19,7 @@ let studentId: string;
 let roomId: string;
 let teacherRoomId: string;
 let farFutureClassId: string;
+let farFutureFillerIds: string[] = [];
 let freedSpotClassId: string;
 let rivalId: string;
 let rivalToken: string;
@@ -115,9 +117,18 @@ beforeAll(async () => {
       status: 'open',
     });
   farFutureClassId = farFutureClass.id;
+
+  // FULL, before the entry below: this class is `open`, uncancelled and
+  // nowhere near its start, so a `waiting` entry beside a free seat is
+  // exactly what the reconciliation sweep promotes on
+  // (`docs/test-database.md` §3.4). `claimSpot` would answer `wrong_window`
+  // ahead of `class_full` regardless, but filling first keeps the sweep from
+  // promoting the seat out from under this fixture before that refusal runs.
+  farFutureFillerIds = await fillSeats(prisma, farFutureClassId, 2, `waitlistapi-409-${suffix}`);
   await prisma.waitlistEntry.create({
     data: { classId: farFutureClassId, studentId, position: 1, status: 'waiting' },
   });
+  await expectReconciliationSkips(prisma, [farFutureClassId], 'full');
 
   // --- 201 fixture -------------------------------------------------------
   // The claim window is exactly one hour wide (#236: `[start − 1h, start)`),
@@ -222,6 +233,12 @@ beforeAll(async () => {
     status: 'open',
   });
   soonClaimClassId = soonClaimClass.id;
+
+  // Sweep-reachable: inside the claim window with a free seat, so the tick
+  // may broadcast on it before the claim below runs — a broadcast only sets
+  // `Class.spotBroadcastAt` and leaves this entry `waiting`, and the test
+  // below claims the seat either way, so nothing there depends on whether it
+  // already fired (`docs/test-database.md` §3.4).
   await prisma.waitlistEntry.create({
     data: { classId: soonClaimClassId, studentId: rivalId, position: 1, status: 'waiting' },
   });
@@ -278,6 +295,9 @@ afterAll(async () => {
   ];
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+  if (farFutureFillerIds.length > 0) {
+    await prisma.student.deleteMany({ where: { id: { in: farFutureFillerIds } } });
+  }
   await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
@@ -534,6 +554,12 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         status: 'open',
       });
     promoteClassId = promoteClass.id;
+
+    // Sweep-reachable: auto_promote window with a free seat, so the tick may
+    // promote this entry before this describe block's own `promoteNext` call
+    // does — the same promotion, landing the same link either way, so the
+    // link assertion below does not depend on which one ran
+    // (`docs/test-database.md` §3.4).
     await prisma.waitlistEntry.create({
       data: { classId: promoteClassId, studentId: waitlistStudentId, position: 1, status: 'waiting' },
     });
@@ -592,6 +618,12 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         status: 'open',
       });
     claimClassId = claimClass.id;
+
+    // Sweep-reachable like freedSpotClassId above: inside the claim window
+    // with a free seat, so the tick may broadcast on it before the claim
+    // below runs — a broadcast leaves this entry `waiting`, and the claim
+    // and the link it creates succeed either way, so neither depends on it
+    // (`docs/test-database.md` §3.4).
     await prisma.waitlistEntry.create({
       data: { classId: claimClassId, studentId: claimStudentId, position: 1, status: 'waiting' },
     });
@@ -839,6 +871,12 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         status: 'open',
       });
     lockClaimClassId = lockClaimClass.id;
+
+    // Sweep-reachable like freedSpotClassId above: inside the claim window
+    // with a free seat, so the tick may broadcast on it during the hold
+    // below — a broadcast only sets `Class.spotBroadcastAt`, leaving this
+    // entry `waiting` and creating no registration, so the state asserted
+    // after the 503 does not depend on it (`docs/test-database.md` §3.4).
     await prisma.waitlistEntry.create({
       data: {
         classId: lockClaimClassId,
