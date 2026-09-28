@@ -1405,6 +1405,26 @@ describe('PATCH /api/students/[id]', () => {
     expect(after.isArchived).toBe(false);
   });
 
+  // The archive half of the ownership gate: `?state=archived` goes through
+  // `archiveStudent`, a different path from the un-archive above. A waive
+  // naming the student's real open payment, sent by a teacher they are not
+  // linked to, writes nothing either.
+  it("refuses an archive from a teacher not in the student's contacts, waiving nothing", async () => {
+    const studentId = await linkedStudent();
+    const paymentId = await owedPayment(studentId);
+
+    const res = await fetch(`${BASE_URL}/api/students/${studentId}?state=archived`, {
+      method: 'PATCH',
+      headers: { ...cookie(otherToken), ...freshIp(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ waivePaymentIds: [paymentId] }),
+    });
+    expect(res.status).toBe(403);
+
+    expect(await linkArchived(studentId)).toBe(false);
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { status: true } });
+    expect(payment.status).toBe('pending');
+  });
+
   it('sets the state it names, and repeating it is a no-op that reports unchanged', async () => {
     const first = await patch('?state=archived');
     expect(first.status).toBe(200);
