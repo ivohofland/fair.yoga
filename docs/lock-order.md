@@ -1511,10 +1511,10 @@ true when it was given.
 
 `unlinkTeacher`'s `teacherStudent.delete` and the erasures'
 `teacherStudent.deleteMany` take the row lock too, so a `DELETE` of the link
-now queues behind a linking transaction's `FOR UPDATE` instead of landing
+queues behind a linking transaction's `FOR UPDATE` instead of landing
 between its roster-link write and what follows it —
 `src/services/invitations-lock-order.test.ts` pins that for
-`acceptInvitation` ("the roster-link lock now closes this window").
+`acceptInvitation` ("the roster-link lock closes this window").
 
 `src/services/student-archive-lock-order.test.ts` pins each order against the
 real functions, observing the waiter in `pg_stat_activity` /
@@ -1557,8 +1557,8 @@ so none holds a `Payment` row while waiting on one.
 `Payment` row lock, which is the position the canonical line gives it. The
 booking paths are unchanged in order (`… → Registration → TeacherStudent`, then
 `Invitation`/`TeacherBlock` on the paths that reach them);
-`TeacherStudent` is now an actual lock on them where, for an existing link, it
-used to be none.
+`TeacherStudent` is an actual lock on them, for an existing link as much as
+for a new one.
 
 The census that placement was checked against — every `Payment` writer, and
 which of them also locks `TeacherStudent`:
@@ -2541,13 +2541,13 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   review moved it — it is a DB-invariant suite with no HTTP surface, and the
   `integration` project deliberately runs against dev.
 
-  Since #265 that insert is no longer the whole of the roster-link write: its
-  `INSERT ... ON CONFLICT DO NOTHING` still takes no lock on a committed
-  conflict, but `linkTeacherStudent` now follows it with
+  That insert is not the whole of the roster-link write: its
+  `INSERT ... ON CONFLICT DO NOTHING` takes no lock on a committed
+  conflict, but `linkTeacherStudent` follows it with
   `activateTeacherStudentLink`'s explicit `FOR UPDATE` of the same row. So
   `acceptInvitation` holds the `TeacherStudent` row lock from its roster-link
   write to commit on both branches — created or already linked — and the
-  order above, `TeacherStudent` then `Invitation`, is now a held lock on the
+  order above, `TeacherStudent` then `Invitation`, is a held lock on the
   already-linked branch too, not only on the inserting one. Why the lock is
   there: "The `TeacherStudent` row is the archive's gate (#265)" above.
 

@@ -96,7 +96,10 @@ Order of checks — gates first, then "already done", then refusals:
       - `S` empty → archive, with or without `waivePaymentIds` — nothing is
         waived, so there is no money the teacher did not see (ruled during the
         build: a teacher whose shown payments were all paid meanwhile still
-        gets the archive they asked for).
+        gets the archive they asked for). The exception is the race-only path:
+        a waive that matched `S` but wrote fewer rows (a payment settled
+        between the read and the write) rolls back, and its re-read finding
+        nothing owed refuses rather than archiving; a retry then archives.
       - No `waivePaymentIds` and `S` non-empty → **409
         `STUDENT_HAS_OUTSTANDING_PAYMENTS`**, message naming count and total.
       - `waivePaymentIds = W` and `W = S` as sets → mark every payment in `S`
@@ -112,8 +115,9 @@ Order of checks — gates first, then "already done", then refusals:
 an id belonging to anyone else is never in `S` and fails equality. No payment id
 from the body reaches a write except as a member of `S`.
 
-The body is JSON `{ waivePaymentIds?: string[] }`, validated with zod (unique
-cuid strings, bounded length). Un-archiving (`state=unarchived`) is unchanged
+The body is JSON `{ waivePaymentIds?: string[] }`, validated with zod: each id
+a non-empty string of at most 64 characters, at most 500 of them. Duplicates are
+not rejected by the schema; the `W = S` comparison de-duplicates (`sameIdSet`). Un-archiving (`state=unarchived`) is unchanged
 apart from also answering `respondUnchanged` when already active.
 
 ### Why the ids, not a flag
@@ -210,8 +214,8 @@ not grepped, per *A new lock node needs every mode*.
 (`route.ts:44-53`) excludes students whose link with this teacher is archived
 (`student: { teacherStudents: { none: { teacherId, isArchived: true } } }`).
 Students with no link at all keep today's behaviour. The class-scoped send is
-unchanged — under the invariant an archived student holds no live registration
-on a class that can still be announced to.
+unchanged: it is about that class, so it reaches whoever was registered on it,
+archived or not.
 
 ## UI: `ArchiveStudentButton`
 
