@@ -137,8 +137,10 @@ export async function archiveStudent(
         if (!sameIdSet(waivePaymentIds, openIds)) {
           return { kind: 'refused', refusal: outstandingChangedRefusal(open) };
         }
-        // Status-filtered: `markPaymentPaid` does not take the link lock, so a
-        // payment read open above can be settled before this write lands.
+        // Status-filtered: a payment read open above can be settled before
+        // this write lands — which payment writers skip the link lock is
+        // `docs/lock-order.md` ("The `TeacherStudent` row is the archive's
+        // gate", What the archive does not lock).
         const { count } = await tx.payment.updateMany({
           where: { id: { in: openIds }, status: { in: OUTSTANDING_STATUSES } },
           data: { status: 'not_charged', notChargedAt: new Date() },

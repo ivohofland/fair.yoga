@@ -4,7 +4,7 @@ Nothing enforces this. It is a convention, and the only defence against a
 deadlock is that every transaction taking two of these rows takes them in this
 order:
 
-    Student → Class → WaitlistEntry → Registration → StudentPrivacy → TeacherStudent → Invitation → TeacherBlock
+    Student → Class → WaitlistEntry → Registration → StudentPrivacy → TeacherStudent → Payment → Invitation → TeacherBlock
 
 `Student` binds the sites that lock it explicitly and any transaction that
 updates or deletes a `Student` row — "The `Student` row is the erasure's gate"
@@ -70,8 +70,9 @@ sites reach `StudentPrivacy`, `TeacherStudent`, `Invitation` or `TeacherBlock`
 for a (teacher, student) or (teacher, email) pair with **no** `Class` row in
 scope at all (`unlinkTeacher` when the student is not waiting in any of that
 teacher's classes; `acceptInvitation`; `deleteStudentAccount` erasing links to
-teachers whose classes the student never joined a waitlist for). For that
-suffix of the list — `StudentPrivacy → TeacherStudent → Invitation →
+teachers whose classes the student never joined a waitlist for;
+`archiveStudent` and `reopenPayment`, #265). For that
+suffix of the list — `StudentPrivacy → TeacherStudent → Payment → Invitation →
 TeacherBlock` — the order is the *only* thing preventing a cycle, not a
 side-effect of a shared lock elsewhere. Both of #174 task 7's fixes are in
 that suffix.
@@ -1450,6 +1451,149 @@ and one call each in `gdpr.ts`, `waitlist.ts`,
 `src/app/api/registrations/route.ts`, and `student-privacy.ts`, and two in
 `invitations.ts` (`acceptInvitation` and `unlinkTeacher`).
 
+## The `TeacherStudent` row is the archive's gate (#265)
+
+Archiving a student (`archiveStudent`, `src/services/student-archive.ts`)
+keeps one invariant — an archived link has nothing live — and
+`docs/data-model.md` (TeacherStudent) states it with its "live" predicate and
+every act that clears the flag again. This section is why those acts and the
+archive all take the pair's link row lock, and where that lock sits in the
+canonical line.
+
+### The race it closes
+
+Without a lock on the link row:
+
+1. A booking inserts its `Registration`, uncommitted. The pair is already
+   linked, so `linkTeacherStudent`'s `INSERT … ON CONFLICT DO NOTHING` finds
+   the conflict committed and takes no lock on the row.
+2. An archive counts live registrations — the booking's is invisible to it —
+   finds none, archives, commits.
+3. The booking commits. Archived link, live registration: the state the
+   invariant forbids.
+
+### The lock, and both orders it serialises
+
+`lockTeacherStudentLink` (`src/services/roster-link.ts`) is a `SELECT … FOR
+UPDATE` of the pair's row and writes nothing. `archiveStudent` takes it as the
+first statement of its transaction. Every act that makes the pair live takes
+it too, through `activateTeacherStudentLink`, which clears `isArchived` under
+it: `linkTeacherStudent` calls that after its insert, so every linking path
+inherits the lock, and the teacher's roster add calls it directly.
+`reopenPayment` (`src/services/payments.ts`) takes it before its
+compare-and-swap. The two sides then queue on the one row in either order:
+
+- **Booking first.** The archive's lock waits until the booking commits. Its
+  registration count is a fresh statement under READ COMMITTED, so it sees
+  the booking's registration and refuses `STUDENT_HAS_UNBILLED_CLASSES`.
+- **Archive first.** The booking's `activateTeacherStudentLink` waits until
+  the archive commits, re-reads the row with `isArchived = true`, and clears
+  it in the booking's own transaction.
+- **Reopen against archive** is the same argument with a payment for the
+  registration: an archive holding the lock goes through (a `not_charged`
+  payment is not outstanding), and the reopen, let through after it, makes
+  the payment owed and un-archives; a reopen holding the lock commits a
+  `pending` payment the archive's read then sees, and the archive refuses
+  `STUDENT_HAS_OUTSTANDING_PAYMENTS`.
+
+`completeClass` takes no link lock and needs none: the registrations it bills
+were live and visible before it ran, so an archive concurrent with it refuses
+on the registration (before completion commits) or on the new payment (after).
+
+The teacher's own un-archive (`PATCH /api/students/[id]?state=unarchived`) is
+a single `teacherStudent.update`, whose `UPDATE` takes the same row lock.
+`unlinkTeacher`'s `teacherStudent.delete` and the erasures'
+`teacherStudent.deleteMany` take it too, so a `DELETE` of the link now queues
+behind a linking transaction's `FOR UPDATE` instead of landing between its roster-link write and what follows it —
+`src/services/invitations-lock-order.test.ts` pins that for
+`acceptInvitation` ("the roster-link lock now closes this window").
+
+`src/services/student-archive-lock-order.test.ts` pins each order against the
+real functions, observing the waiter in `pg_stat_activity` /
+`pg_blocking_pids` before releasing the holder: "booking first", "archive
+first" and "reopen vs archive". Measured on 2026-09-28 by removing `FOR
+UPDATE` from `lockTeacherStudentLink`: all three fail, the booking-first case
+with `expected a refusal, got {"kind":"archived","waivedCount":0}` — the
+forbidden state. Replacing only `reopenPayment`'s lock with a plain
+`findUnique` fails the reopen case alone.
+
+### What the archive does not lock: the payment it waives
+
+`markPaymentPaid`, `markPaymentNotCharged`, `markPaymentOverdue` and the
+reminder writers (`src/services/payments.ts`,
+`src/services/payment-reminders.ts`) write a `Payment` row without taking the
+link lock. So a payment the archive read as open can be settled between that
+read and the waive. The waive is therefore a status-filtered `updateMany`, and
+a row count short of what the archive read open throws
+`OutstandingChangedError`, rolling back the waive and the archive together;
+the teacher is answered `STUDENT_HAS_OUTSTANDING_PAYMENTS` with the re-read
+amount. Pinned by the lock-order file's "a payment settled between the archive
+reading it open and waiving it refuses the whole archive", which holds a copy
+of `markPaymentPaid`'s `updateMany` uncommitted while the archive queues on
+the payment row. Measured on 2026-09-28 by deleting the `count !== open.length`
+throw: that case fails with `expected a refusal, got
+{"kind":"archived","waivedCount":1}`.
+
+No cycle follows from the archive waiting on a `Payment` row while holding
+`TeacherStudent`: none of those payment writers ever requests the link lock,
+so none holds a `Payment` row while waiting on one.
+
+### Where `Payment` sits: after `TeacherStudent`
+
+`archiveStudent` takes `TeacherStudent` (lock), reads `Registration` and
+`Payment` unlocked, writes `Payment` (the waive), then writes
+`TeacherStudent`. `reopenPayment` reads the payment unlocked, then takes
+`TeacherStudent`, then writes `Payment`. Both take the link before any
+`Payment` row lock, which is the position the canonical line gives it. The
+booking paths are unchanged in order (`… → Registration → TeacherStudent`, then
+`Invitation`/`TeacherBlock` on the paths that reach them);
+`TeacherStudent` is now an actual lock on them where, for an existing link, it
+used to be none.
+
+The census that placement was checked against — every `Payment` writer, and
+which of them also locks `TeacherStudent`:
+
+    grep -rnE "payment\.(create|update|updateMany|delete|deleteMany|upsert)\(" src | grep -v "\.test\."
+
+On 2026-09-28 (branch `fix/265-student-archive-semantics`) it returned 9
+lines = 5 in `payments.ts` (`markPaymentPaid`, `markPaymentOverdue`,
+`reopenPayment`, `markPaymentNotCharged`, `sendPaymentReminder`) + 2 in
+`payment-reminders.ts` (`markOverduePayments`, `sendPaymentReminders`) + 1 in
+`class-lifecycle.ts` (`completeClass`'s `create`) + 1 in `student-archive.ts`
+(`archiveStudent`'s waive). The spec's count before this issue was 8; the
+archive's waive is the ninth. Two of the nine also lock `TeacherStudent` —
+`reopenPayment` and `archiveStudent`, both link-first — and none touches
+`Invitation` or `TeacherBlock`. A wider pattern,
+`payment\.[a-zA-Z]+\(` minus the `find*`/`count`/`aggregate`/`groupBy`
+readers, returned the same nine.
+
+The erasures, read rather than grepped (`src/services/gdpr.ts`): neither
+`deleteStudentAccount`'s nor `deleteTeacherAccount`'s transaction writes a
+`Payment` row. Both anonymise rather than delete — the student erasure
+cancels upcoming `Registration` rows with an `updateMany`, the teacher erasure
+cancels `CalendarEntry` rows — so no `ON DELETE CASCADE` from `Registration`
+reaches `Payment` either, and no trigger on `Payment` exists. The one
+`Payment` write the teacher erasure causes is `completeClass` on each
+in-progress class, and that runs in its own transaction before the erasure's
+transaction opens. So no erasure transaction holds `Payment` and
+`TeacherStudent` together, and neither constrains the position.
+
+### Every caller of the lock
+
+    git grep -n -E '(lockTeacherStudentLink|activateTeacherStudentLink|linkTeacherStudent)\(' -- src ':!*.test.ts'
+
+On 2026-09-28 it returned 13 lines = 3 definitions + 2 calls inside
+`roster-link.ts` (`linkTeacherStudent` → `activateTeacherStudentLink` →
+`lockTeacherStudentLink`) + 8 call sites:
+
+- `lockTeacherStudentLink` directly: `archiveStudent`, `reopenPayment`;
+- `activateTeacherStudentLink` directly: the roster add in `POST
+  /api/registrations` (`'missing'` rolls the registration back);
+- `linkTeacherStudent`: the self-booking branch of `POST /api/registrations`,
+  `acceptInvitation`, `addToWaitlist`, `promoteNext`, `claimSpot`, and
+  `completeWalkIn` (`src/services/walk-ins.ts`, the walk-in path of the same
+  route).
+
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
 `lockAnnouncementSlot` (`src/services/announcements.ts`) is the first and so far only
@@ -2387,6 +2531,16 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   review moved it — it is a DB-invariant suite with no HTTP surface, and the
   `integration` project deliberately runs against dev.
 
+  Since #265 that insert is no longer the whole of the roster-link write: its
+  `INSERT ... ON CONFLICT DO NOTHING` still takes no lock on a committed
+  conflict, but `linkTeacherStudent` now follows it with
+  `activateTeacherStudentLink`'s explicit `FOR UPDATE` of the same row. So
+  `acceptInvitation` holds the `TeacherStudent` row lock from its roster-link
+  write to commit on both branches — created or already linked — and the
+  order above, `TeacherStudent` then `Invitation`, is now a held lock on the
+  already-linked branch too, not only on the inserting one. Why the lock is
+  there: "The `TeacherStudent` row is the archive's gate (#265)" above.
+
   Two tests, not one, and the split is deliberate. The deadlock reproduction
   needs a handshake to widen a window one round trip wide; unforced it is a
   race, not a reproduction — with the reorder reverted and the handshake
@@ -2396,6 +2550,21 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   entry claimed no reproduction was possible at all; that was wrong, and
   wrong because it generalised from a counterparty whose roster-link write
   came first — which is not where the registration route puts it.
+- **`archiveStudent`** (`src/services/student-archive.ts`, #265) —
+  `TeacherStudent` via `lockTeacherStudentLink`, first statement of its
+  transaction; then `Registration` and `Payment` read unlocked; then
+  `Payment` written (the waive, a status-filtered `updateMany`, only when the
+  teacher confirmed exactly the open set); then the `TeacherStudent` row it
+  already holds. `TeacherStudent` before `Payment`, as the canonical line
+  names. It never takes `Class`, `Invitation` or `TeacherBlock`. "The
+  `TeacherStudent` row is the archive's gate (#265)" above has the race and
+  the tests.
+- **`reopenPayment`** (`src/services/payments.ts`, #265) — `Payment` read
+  unlocked (to learn the pair), then `TeacherStudent` via
+  `lockTeacherStudentLink`, then the `Payment` compare-and-swap, then the
+  `TeacherStudent` un-archive when the link was archived. `TeacherStudent`
+  before `Payment`; conformant. The only `Payment` writer in `payments.ts`
+  that takes the link lock — the others take `Payment` alone.
 - **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Student`, via
   `lockStudentForErasure` (#183; "The `Student` row is the erasure's gate"
   above), then `Class`, via a single ordered `SELECT … FOR UPDATE OF c` joined
