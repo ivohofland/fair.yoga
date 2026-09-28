@@ -3384,6 +3384,10 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
         data: { status: 'declined', respondedAt: new Date() },
       });
 
+      // Frees this claim-window seat directly beside the standing waiting
+      // entry above; the running scheduler can only broadcast on it before
+      // the claim below runs, never promote it, and nothing here asserts on
+      // that broadcast (`docs/test-database.md` §3.4).
       await prisma.registration.update({
         where: {
           classId_studentId: { classId: claimClassId, studentId: claimHolderStudentId },
