@@ -276,7 +276,11 @@ Integration (`--project integration`):
 - Un-archive: one test per act — self-booking, walk-in, waitlist join, promote,
   claim, invitation accept, teacher roster add, `reopenPayment`.
 - Teacher roster add after the student unlinked mid-request → 403, no
-  registration.
+  registration. Forced for real: a second client holds an uncommitted
+  `DELETE` of the link row, the request's `FOR UPDATE` parks behind it
+  (seen in `pg_stat_activity`), and the delete commits — so the request's
+  pre-transaction check saw the link and only the in-transaction `'missing'`
+  guard can refuse.
 - Announcements: all-students skips an archived student, reaches an active one.
 
 Race (a lock-order test beside `route-lock-order.test.ts`, same

@@ -1,25 +1,20 @@
 /**
  * Every act that makes a `(teacher, student)` pair live un-archives the
- * pair's `TeacherStudent` link — the read side of the invariant
- * `docs/superpowers/specs/2026-09-27-student-archive-semantics-design.md`
- * states for #265. This file drives that through the API: the acts that
- * reach `linkTeacherStudent` (`services/roster-link.ts`) — a self-booking, a
- * walk-in of a person already on the roster, a waitlist join, and an
- * invitation accept — plus the teacher roster add, which un-archives via
- * `activateTeacherStudentLink` directly rather than through
- * `linkTeacherStudent` (a teacher may not create a link). `promoteNext` and
- * `claimSpot`, the other `linkTeacherStudent` callers, are covered at the
- * service level in `src/services/waitlist.test.ts`, alongside their own
- * fixtures.
+ * pair's `TeacherStudent` link. The rule, and which acts it covers, is
+ * `docs/data-model.md` (TeacherStudent); this file drives the acts through
+ * the API; acts it does not drive are covered at the service level,
+ * beside their own fixtures (`src/services/waitlist.test.ts`).
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { BASE_URL, cookie, freshIp, seedSession, teardownStudent, uniqueSuffix } from '../helpers';
 import { createClassFixture, slotTime } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { expectApplied } from '../api-assertions';
 
 const prisma = new PrismaClient();
+/** Holds a transaction open while `prisma` observes and seeds. */
+const holder = new PrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;
@@ -160,6 +155,7 @@ afterAll(async () => {
     await prisma.account.deleteMany({ where: { id: teacherAccountId } });
   }
   await prisma.$disconnect();
+  await holder.$disconnect();
 });
 
 describe('every act that makes something live un-archives the roster link (#265)', () => {
@@ -253,10 +249,8 @@ describe('every act that makes something live un-archives the roster link (#265)
     await expectReactivated(studentId);
   });
 
-  // Today's pre-transaction check (`route.ts`'s `targetOf`) — stays green
-  // throughout this plan; the in-transaction `'missing'` branch it guards
-  // against is reachable only by an unlink landing between that check and
-  // the lock, which an integration test cannot pause the server to force.
+  // Refused by the pre-transaction check (`route.ts`'s `targetOf`). The
+  // in-transaction `'missing'` branch is the next test's.
   it('a roster add for a student not on the roster refuses, no registration', async () => {
     const classId = await makeClass(5);
     studentCounter += 1;
@@ -281,4 +275,65 @@ describe('every act that makes something live un-archives the roster link (#265)
       await prisma.registration.count({ where: { classId, studentId: student.id } }),
     ).toBe(0);
   });
+  // The unlink lands after `targetOf` read the committed link but before the
+  // transaction locks it: an uncommitted `DELETE` of the link row, held on a
+  // second client, parks the request's `FOR UPDATE` behind it. Committing
+  // once the request is seen waiting leaves the lock returning no row. The
+  // hold ends within `WAIT_MS` of the request parking, inside the 2s
+  // `lock_timeout` the booking runs under (`lockClassRow`).
+  it('a roster add whose student unlinks while it waits on the link refuses, no registration', async () => {
+    const { studentId } = await makeArchivedStudent();
+    const classId = await makeClass(5);
+    const WAIT_MS = 1_500;
+
+    let holderPid = 0;
+    let parked!: () => void;
+    const isParked = new Promise<void>((r) => { parked = r; });
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const holding = holder.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const [own] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+        if (own === undefined) throw new Error('pg_backend_pid returned no row');
+        holderPid = own.pid;
+        await tx.$executeRaw`
+          DELETE FROM "TeacherStudent"
+           WHERE "teacherId" = ${teacherId} AND "studentId" = ${studentId}`;
+        parked();
+        await released;
+      },
+      { timeout: 10_000 },
+    );
+    await isParked;
+
+    const adding = fetch(`${BASE_URL}/api/registrations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken), ...freshIp() },
+      body: JSON.stringify({ classId, studentId }),
+    });
+    let waited = false;
+    try {
+      const deadline = Date.now() + WAIT_MS;
+      while (!waited && Date.now() < deadline) {
+        const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock'
+             AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+        waited = (row?.n ?? 0) > 0;
+        if (!waited) await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      release();
+      await holding;
+    }
+
+    const res = await adding;
+    // One assertion over all three, so a failure shows whether the request
+    // ever parked alongside what it answered and wrote.
+    expect({
+      waited,
+      status: res.status,
+      registrations: await prisma.registration.count({ where: { classId, studentId } }),
+    }).toEqual({ waited: true, status: 403, registrations: 0 });
+  }, 30_000);
 });
