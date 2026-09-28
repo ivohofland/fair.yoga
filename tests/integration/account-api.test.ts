@@ -870,10 +870,8 @@ describe('DELETE /api/account', () => {
     const lateClassId = await makeClass('2099-07-02', 1);
     // Full before the waiting entry the race writes below lands: that entry
     // has to appear only inside the lock race's held window (it is what
-    // "outside the erasure lock set" means), so it cannot carry its own tick
-    // at the point it is written. The tick lands later instead, once the
-    // race is over and the entry is confirmed still there (`docs/test-database.md`
-    // §3.4).
+    // "outside the erasure lock set" means), so its tick lands after the race
+    // instead (`docs/test-database.md` §3.4).
     seededStudentIds.push(...(await fillSeats(prisma, lateClassId, 1, `acc-lockset-${suffix}`)));
 
     const registration = await prisma.registration.create({
@@ -929,10 +927,12 @@ describe('DELETE /api/account', () => {
     const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
     expect(student.deletedAt).toBeNull();
 
-    // The lock race is over and the erasure's own request/response cycle has
-    // finished, so nothing in this test still holds the `Class` row — the
-    // tick promised above lands here, against the entry the race actually
-    // wrote, still `waiting` because the erasure it evaded never ran.
+    // The race and its held window are over, and the erasure's own
+    // request/response cycle has finished — the tick promised above lands
+    // here, against the entry the race actually wrote. The tick is itself the
+    // check that the entry is still `waiting` (the sweep's candidate query
+    // only sees a class holding one): the erasure it evaded ran and rolled
+    // back whole.
     await expectReconciliationSkips(prisma, [lateClassId], 'full');
 
     // The retry the message promises: its pre-lock now covers `lateClassId`.
