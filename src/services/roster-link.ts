@@ -59,9 +59,8 @@ export type LinkOutcome = 'created' | 'already-linked';
  * above met a committed link and so took no lock on it, and the link was
  * deleted before the lock was taken. The caller's transaction rolls back
  * rather than committing its act with no link beside it. It does not
- * re-insert: the delete is an unlink or an erasure, and a link recreated
- * here would override it (`docs/lock-order.md`, "The `TeacherStudent` row is
- * the archive's gate").
+ * re-insert, since a link recreated here would override the delete
+ * (`docs/lock-order.md`, "The gap before the lock").
  */
 export async function linkTeacherStudent(
   tx: TransactionClientOnly,
@@ -77,8 +76,8 @@ export async function linkTeacherStudent(
 
 /**
  * The pair's link was deleted between `linkTeacherStudent`'s insert and its
- * row lock. Thrown to roll the caller's transaction back; each route that
- * reaches `linkTeacherStudent` answers it `CONCURRENT_MODIFICATION`.
+ * row lock. Thrown to roll the caller's transaction back; how each caller
+ * answers it is `docs/lock-order.md` ("The gap before the lock").
  */
 export class RosterLinkVanishedError extends Error {
   constructor(readonly pair: { teacherId: string; studentId: string }) {
