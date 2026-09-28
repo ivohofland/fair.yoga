@@ -8,6 +8,7 @@ import { formatDayHeader } from '@/lib/format';
 import { isEssential } from '@/services/notification-policy';
 import { cancelDeadlineInstant } from '@/services/waitlist';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -152,6 +153,59 @@ async function makeOtherTeacherClass(maxStudents: number, startTime: string): Pr
       minRate: 15,
       targetRate: 25,
       minStudents: 1,
+      maxStudents,
+      status: 'open',
+    });
+  classIds.push(cls.id);
+  return cls.id;
+}
+
+/**
+ * A class inside the waitlist's first-come-first-claimed window (#236:
+ * `[start − 1h, start)`), for BROADCAST STANDING fixtures — a `spotBroadcastAt`
+ * set by hand must sit on a class the live reconciliation sweep can read as
+ * genuinely broadcasting, not one parked in 2099 where `getWaitlistWindow`
+ * never leaves `auto_promote` and the broadcast gate (`already_broadcast`)
+ * never applies.
+ *
+ * `minutesUntilStart` must be at most `CLAIM_WINDOW_MINUTES` (60) so the
+ * window has already opened by the time the fixture runs, and callers pass
+ * distinct values so `CalendarEntry_teacher_slot_excl` never refuses two of
+ * these against the same teacher. `date`/`startTime` are derived from the
+ * owner teacher's timezone (Europe/Amsterdam, unset here) the same way
+ * `makeLateCancelClass` above does, since `classStartInstant` interprets them
+ * as local wall time in that zone. `minStudents: 0`: the class sits inside
+ * the live scheduler's auto-cancel check window, so an active count that
+ * dips to zero mid-test must not read as below minimum.
+ */
+async function makeClaimWindowClass(maxStudents: number, minutesUntilStart: number): Promise<string> {
+  const target = new Date(Date.now() + minutesUntilStart * 60 * 1000);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Amsterdam',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+    .formatToParts(target)
+    .reduce<Record<string, string>>((acc, { type, value }) => {
+      if (type !== 'literal') acc[type] = value;
+      return acc;
+    }, {});
+
+  const cls = await createClassFixture(prisma, {
+      teacherId: ownerId,
+      teacherRoomId,
+      classType: 'Reg API Claim Window',
+      date: new Date(`${parts.year}-${parts.month}-${parts.day}`),
+      startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
+      durationMinutes: 1,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 0,
       maxStudents,
       status: 'open',
     });
@@ -623,7 +677,7 @@ describe('POST /api/registrations', () => {
   });
 
   it('booking directly resolves the caller\'s waiting waitlist entry', async () => {
-    const classId = await makeClass(1);
+    const classId = await makeClaimWindowClass(1, 45);
     const fill = await post(studentTokens[0]!, { classId });
     expect(fill.status).toBe(201);
 
@@ -632,12 +686,16 @@ describe('POST /api/registrations', () => {
       data: { classId, studentId: studentIds[1]!, position: 1, status: 'waiting' },
     });
 
-    // The spot frees without the waitlist hook running (e.g. GDPR erasure
-    // path before the fix, or a crashed hook) — student 1 books directly.
+    // The seat frees and its broadcast goes out (first_come_first_claimed
+    // window) — student 1 books directly rather than claiming through
+    // POST /api/waitlist/claim.
     await prisma.registration.updateMany({
       where: { classId, studentId: studentIds[0]! },
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
+    await prisma.class.update({ where: { id: classId }, data: { spotBroadcastAt: new Date() } });
+    await expectReconciliationSkips(prisma, [classId], 'already_broadcast');
+
     const book = await post(studentTokens[1]!, { classId });
     expect(book.status).toBe(201);
     const bookJson = (await book.json()) as { data: { id: string } };
@@ -902,10 +960,22 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
       headers: cookie(token),
     });
 
+  // `makeClass(1)` fixtures land here with zero registrations, and the live
+  // reconciliation sweep reads a queue on a class that isn't full as a
+  // candidate to promote or broadcast — filling the one seat first keeps the
+  // entry `waiting` until each test's own DELETE acts on it. See
+  // `docs/test-database.md` §3.4.
+  let makeEntryCounter = 0;
   async function makeEntry(classId: string, studentId: string) {
-    return prisma.waitlistEntry.create({
+    const fillerIds = await fillSeats(prisma, classId, 1, `waitlist-del-${suffix}-${makeEntryCounter++}`);
+    onTestFinished(async () => {
+      await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
+    });
+    const entry = await prisma.waitlistEntry.create({
       data: { classId, studentId, position: 1, status: 'waiting' },
     });
+    await expectReconciliationSkips(prisma, [classId], 'full');
+    return entry;
   }
 
   it('the class teacher can remove any entry', async () => {
@@ -966,12 +1036,17 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
 
   it('answers leaving a queue already left as unchanged, and renumbers nothing twice', async () => {
     const classId = await makeClass(1);
+    const fillerIds = await fillSeats(prisma, classId, 1, `waitlist-unchanged-${suffix}`);
+    onTestFinished(async () => {
+      await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
+    });
     const mine = await prisma.waitlistEntry.create({
       data: { classId, studentId: studentIds[0]!, position: 1, status: 'waiting' },
     });
     const theirs = await prisma.waitlistEntry.create({
       data: { classId, studentId: studentIds[1]!, position: 2, status: 'waiting' },
     });
+    await expectReconciliationSkips(prisma, [classId], 'full');
 
     await expectApplied(await del(studentTokens[0]!, mine.id));
     const renumbered = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: theirs.id } });
@@ -2362,7 +2437,7 @@ describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-p
  */
 describe('POST /api/registrations — the last seat taken under a standing broadcast (#236)', () => {
   it('sends spot_taken to each waiting student and none to the booker', async () => {
-    const classId = await makeClass(1);
+    const classId = await makeClaimWindowClass(1, 50);
     onTestFinished(async () => {
       await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
     });
@@ -2373,6 +2448,7 @@ describe('POST /api/registrations — the last seat taken under a standing broad
         data: { classId, studentId, position: i + 1, status: 'waiting' },
       });
     }
+    await expectReconciliationSkips(prisma, [classId], 'already_broadcast');
 
     await expectApplied(await post(studentTokens[0]!, { classId }), 201);
 
