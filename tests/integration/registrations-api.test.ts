@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { PrismaClient, type CancelDeadline } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
-import { createClassFixture, slotTime } from '../class-fixtures';
+import { createClassFixture, slotTime, wallSlotAt } from '../class-fixtures';
 import { formatDayHeader } from '@/lib/format';
 import { isEssential } from '@/services/notification-policy';
 import { cancelDeadlineInstant } from '@/services/waitlist';
@@ -25,6 +25,9 @@ let otherAccountIdForCleanup: string;
 let otherTeacherId: string;
 let teacherRoomId: string;
 let otherTeacherRoomId: string;
+let claimWindowTeacherId: string;
+let claimWindowAccountId: string;
+let claimWindowTeacherRoomId: string;
 let roomId: string;
 const studentIds: string[] = [];
 let unlinkedStudentId: string;
@@ -69,18 +72,15 @@ async function makeClass(maxStudents: number): Promise<string> {
 
 /**
  * A class starting a few hours from now — inside the default 24h cancel
- * deadline (`Class.cancelDeadline` defaults to `HOURS_24`) — so `DELETE`
- * takes the late-cancel branch instead of the before-deadline branch every
- * `makeClass` fixture takes (those sit in 2099). `date`/`startTime` are
- * derived from the *wall-clock* date and time in the owner teacher's
- * timezone (Europe/Amsterdam — `Teacher.defaultTimezone`'s default, unset
- * here), because `classStartInstant` interprets them as local wall time in
- * that zone: building them from UTC getters directly would skew the
- * resulting instant by the zone's UTC offset.
- */
-/**
- * A class close enough that its cancel deadline has already passed, so a
- * student's DELETE takes the `late_cancel` branch.
+ * deadline (`Class.cancelDeadline` defaults to `HOURS_24`) — so its cancel
+ * deadline has already passed and a student's DELETE takes the `late_cancel`
+ * branch instead of the before-deadline branch every `makeClass` fixture takes
+ * (those sit in 2099). `date`/`startTime` are derived from the *wall-clock*
+ * date and time in the owner teacher's timezone (Europe/Amsterdam —
+ * `Teacher.defaultTimezone`'s default, unset here), because
+ * `classStartInstant` interprets them as local wall time in that zone:
+ * building them from UTC getters directly would skew the resulting instant by
+ * the zone's UTC offset.
  *
  * `minuteOffset` is required and must differ per caller:
  * `CalendarEntry_teacher_slot_excl` (#327, which replaced #196's per-family
@@ -162,8 +162,8 @@ async function makeOtherTeacherClass(maxStudents: number, startTime: string): Pr
 }
 
 /**
- * A class inside the waitlist's first-come-first-claimed window (#236:
- * `[start − 1h, start)`), for claim-window-class-with-a-standing-broadcast
+ * A class inside the waitlist's first-come-first-claimed window (#236), which
+ * ends at the class's start, for claim-window-class-with-a-standing-broadcast
  * fixtures (`docs/test-database.md` §3.4) — a `spotBroadcastAt` set by hand
  * must sit on a class the live reconciliation sweep can read as genuinely
  * broadcasting, not one parked in 2099 where `getWaitlistWindow` never
@@ -172,14 +172,22 @@ async function makeOtherTeacherClass(maxStudents: number, startTime: string): Pr
  *
  * `minutesUntilStart` must sit in `(0, CLAIM_WINDOW_MINUTES]` so the window
  * has already opened by the time the fixture runs — enforced below rather
- * than stated as a number here — and callers pass distinct values so
- * `CalendarEntry_teacher_slot_excl` never refuses two of these against the
- * same teacher. `date`/`startTime` are derived from the owner teacher's
- * timezone (Europe/Amsterdam, unset here) the same way `makeLateCancelClass`
- * above does, since `classStartInstant` interprets them as local wall time in
- * that zone. `minStudents: 0`: the class sits inside the live scheduler's
- * auto-cancel check window, so an active count that dips to zero mid-test
- * must not read as below minimum.
+ * than stated as a number here.
+ *
+ * Owned by `claimWindowTeacherId`, whose zone is UTC, so the wall slot below
+ * names exactly one instant. On the owner teacher's Europe/Amsterdam the
+ * fall-back night repeats an hour, `classStartInstant` resolves a repeated
+ * wall time to its later instant, and a class built in that hour would start
+ * an hour later than asked, outside the claim window.
+ *
+ * Two of these must land on different start minutes, since the fixture is one
+ * minute long and `CalendarEntry_teacher_slot_excl` refuses an overlap on the
+ * same teacher. Each call reads its own `Date.now()`, so a caller that runs
+ * later than another must pass a larger `minutesUntilStart` than it did.
+ *
+ * `minStudents: 0`: the class sits inside the live scheduler's auto-cancel
+ * check window, so an active count that dips to zero mid-test must not read
+ * as below minimum.
  */
 async function makeClaimWindowClass(maxStudents: number, minutesUntilStart: number): Promise<string> {
   if (minutesUntilStart <= 0 || minutesUntilStart > CLAIM_WINDOW_MINUTES) {
@@ -187,28 +195,14 @@ async function makeClaimWindowClass(maxStudents: number, minutesUntilStart: numb
       `minutesUntilStart must be in (0, ${CLAIM_WINDOW_MINUTES}], got ${minutesUntilStart}`,
     );
   }
-  const target = new Date(Date.now() + minutesUntilStart * 60 * 1000);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Amsterdam',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  })
-    .formatToParts(target)
-    .reduce<Record<string, string>>((acc, { type, value }) => {
-      if (type !== 'literal') acc[type] = value;
-      return acc;
-    }, {});
+  const { date, startTime } = wallSlotAt(new Date(Date.now() + minutesUntilStart * 60 * 1000), 'UTC');
 
   const cls = await createClassFixture(prisma, {
-      teacherId: ownerId,
-      teacherRoomId,
+      teacherId: claimWindowTeacherId,
+      teacherRoomId: claimWindowTeacherRoomId,
       classType: 'Reg API Claim Window',
-      date: new Date(`${parts.year}-${parts.month}-${parts.day}`),
-      startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
+      date,
+      startTime,
       durationMinutes: 1,
       roomCost: 20,
       minRate: 15,
@@ -287,6 +281,26 @@ beforeAll(async () => {
   });
   otherTeacherRoomId = otherTeacherRoom.id;
 
+  // `makeClaimWindowClass`'s teacher: UTC, so a class placed minutes from now
+  // has one start instant whatever the date (see that helper's docblock).
+  const claimWindowTeacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Claim',
+      lastName: 'Window',
+      email: `regapi-claimwindow-${suffix}@test.local`,
+      account: { create: { email: `regapi-claimwindow-${suffix}@test.local` } },
+      bio: 'Registration API tests',
+      pageSlug: `regapi-claimwindow-${suffix}`,
+      defaultTimezone: 'UTC',
+    },
+  });
+  claimWindowTeacherId = claimWindowTeacher.id;
+  claimWindowAccountId = claimWindowTeacher.accountId;
+  const claimWindowTeacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId: claimWindowTeacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+  });
+  claimWindowTeacherRoomId = claimWindowTeacherRoom.id;
+
   // Two students linked to the owner, one unlinked
   for (let i = 0; i < 2; i++) {
     const student = await prisma.student.create({
@@ -322,6 +336,14 @@ afterAll(async () => {
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [ownerId, otherTeacherId] } } });
+  // Guarded: assigned in `beforeAll`, and a filter on an unassigned id would
+  // be dropped by Prisma and match every row.
+  if (claimWindowTeacherId) {
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: claimWindowTeacherId } });
+    // A self-booking links the booker to this teacher and notifies them.
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: claimWindowTeacherId } });
+    await prisma.notification.deleteMany({ where: { recipientId: claimWindowTeacherId } });
+  }
   await prisma.room.delete({ where: { id: roomId } });
   await prisma.teacherStudent.deleteMany({ where: { teacherId: ownerId } });
   const studentAccounts = await prisma.student.findMany({
@@ -331,6 +353,7 @@ afterAll(async () => {
   const allAccountIds = [
     ownerAccountIdForCleanup,
     otherAccountIdForCleanup,
+    claimWindowAccountId,
     ...studentAccounts.map((a) => a.accountId),
   ].filter((id): id is string => Boolean(id));
 
@@ -340,7 +363,9 @@ afterAll(async () => {
     });
   }
   await prisma.student.deleteMany({ where: { id: { in: [...studentIds, unlinkedStudentId] } } });
-  await prisma.teacher.deleteMany({ where: { id: { in: [ownerId, otherTeacherId] } } });
+  await prisma.teacher.deleteMany({
+    where: { id: { in: [ownerId, otherTeacherId, claimWindowTeacherId].filter((id): id is string => Boolean(id)) } },
+  });
   // Issue 177: Account must be deleted after Student/Teacher due to FK reference
   if (allAccountIds.length > 0) {
     await prisma.account.deleteMany({
@@ -696,9 +721,9 @@ describe('POST /api/registrations', () => {
 
     // The broadcast stands BEFORE the seat frees, so no statement in between
     // leaves a free seat beside a waiting entry with no broadcast yet up —
-    // exactly the state the sweep would promote on. The seat frees and its
-    // broadcast goes out (first_come_first_claimed window) — student 1 books
-    // directly rather than claiming through POST /api/waitlist/claim.
+    // exactly the state the sweep would broadcast on in the claim window. The
+    // broadcast is stamped, then the seat frees — student 1 books directly
+    // rather than claiming through POST /api/waitlist/claim.
     await prisma.class.update({ where: { id: classId }, data: { spotBroadcastAt: new Date() } });
     await prisma.registration.updateMany({
       where: { classId, studentId: studentIds[0]! },
@@ -716,6 +741,14 @@ describe('POST /api/registrations', () => {
     });
     expect(entry.status).toBe('claimed');
     expect(entry.registrationId).toBe(bookJson.data.id);
+    // Taking the last seat under a standing broadcast sends `spot_taken` to
+    // everyone still waiting, and the booker's own entry is still `waiting`
+    // when that runs: the booker must be left out.
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: classId, recipientId: studentIds[1]!, type: 'spot_taken' },
+      }),
+    ).toBe(0);
   });
 
   /**
@@ -1823,6 +1856,11 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
    * real tick, and the fixture starts inside its check window, so zero
    * active registrations must not read as below minimum once the
    * canceller's registration is cancelled.
+   *
+   * Full until a test's own DELETE frees the seat. Local-only residual: the
+   * running app's sweep can read the class between that route's cancel commit
+   * and its hook's broadcast commit and send a second `spot_available` set —
+   * the production race #691, which no fixture can design out.
    */
   async function makeBroadcastFixture(minuteOffset: number) {
     const target = new Date(Date.now() + (30 + minuteOffset) * 60 * 1000);
