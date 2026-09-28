@@ -1231,12 +1231,33 @@ describe('PATCH /api/students/[id]', () => {
   let otherToken: string;
   let roomId: string | undefined;
   let teacherRoomId: string;
+  // The archive cases' own teacher, so the students they link and archive
+  // never touch the file-level teacher's roster, whose GET asserts an exact
+  // length.
+  let archiveTeacherId: string | undefined;
+  let archiveAccountId: string | undefined;
+  let archiveToken: string;
   // Students and class entries made by the archive-refusal cases, collected
   // as they are made so teardown deletes by `in: [...]`.
   const archiveStudentIds: string[] = [];
   const archiveEntryIds: string[] = [];
 
   beforeAll(async () => {
+    const archiveEmail = `stuapi-archive-teacher-${suffix}@test.local`;
+    const archiveTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Archive',
+        lastName: 'Teacher',
+        email: archiveEmail,
+        account: { create: { email: archiveEmail } },
+        bio: 'Archive-case fixture for PATCH /api/students/[id]',
+        pageSlug: `stuapi-archive-teacher-${suffix}`,
+      },
+    });
+    archiveTeacherId = archiveTeacher.id;
+    archiveAccountId = archiveTeacher.accountId;
+    archiveToken = await seedSession(prisma, archiveTeacher.accountId);
+
     const room = await prisma.room.create({
       data: {
         venueName: 'Patch Studio',
@@ -1244,13 +1265,13 @@ describe('PATCH /api/students/[id]', () => {
         city: 'Amsterdam',
         postcode: '1111PA',
         maxCapacity: 10,
-        createdById: teacherId,
+        createdById: archiveTeacher.id,
       },
     });
     roomId = room.id;
     teacherRoomId = (
       await prisma.teacherRoom.create({
-        data: { teacherId, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+        data: { teacherId: archiveTeacher.id, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
       })
     ).id;
 
@@ -1301,6 +1322,9 @@ describe('PATCH /api/students/[id]', () => {
     if (otherAccountId) await prisma.session.deleteMany({ where: { accountId: otherAccountId } });
     if (otherTeacherId) await prisma.teacher.delete({ where: { id: otherTeacherId } });
     if (otherAccountId) await prisma.account.delete({ where: { id: otherAccountId } });
+    if (archiveAccountId) await prisma.session.deleteMany({ where: { accountId: archiveAccountId } });
+    if (archiveTeacherId) await prisma.teacher.delete({ where: { id: archiveTeacherId } });
+    if (archiveAccountId) await prisma.account.delete({ where: { id: archiveAccountId } });
   });
 
   const patch = (query = '', token = teacherToken) =>
@@ -1312,9 +1336,15 @@ describe('PATCH /api/students/[id]', () => {
   const archiveWith = (studentId: string, body?: unknown) =>
     fetch(`${BASE_URL}/api/students/${studentId}?state=archived`, {
       method: 'PATCH',
-      headers: { ...cookie(teacherToken), ...freshIp(), 'Content-Type': 'application/json' },
+      headers: { ...cookie(archiveToken), ...freshIp(), 'Content-Type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+
+  /** The archive teacher's id; throws if `beforeAll` never assigned it. */
+  function archiveTeacherOf(): string {
+    if (archiveTeacherId === undefined) throw new Error('archive teacher fixture missing');
+    return archiveTeacherId;
+  }
 
   async function linkedStudent(): Promise<string> {
     const n = archiveStudentIds.length;
@@ -1322,7 +1352,7 @@ describe('PATCH /api/students/[id]', () => {
       data: { firstName: 'Archive', lastName: `Case${n}`, email: `stuapi-archive-${suffix}-${n}@test.local` },
     });
     archiveStudentIds.push(student.id);
-    await prisma.teacherStudent.create({ data: { teacherId, studentId: student.id } });
+    await prisma.teacherStudent.create({ data: { teacherId: archiveTeacherOf(), studentId: student.id } });
     return student.id;
   }
 
@@ -1330,7 +1360,7 @@ describe('PATCH /api/students/[id]', () => {
   async function registeredOn(studentId: string, status: 'open' | 'completed'): Promise<string> {
     const n = archiveEntryIds.length;
     const cls = await createClassFixture(prisma, {
-      teacherId,
+      teacherId: archiveTeacherOf(),
       teacherRoomId,
       classType: 'Hatha',
       date: slotDate(status === 'completed' ? '2025-03-01' : '2030-03-01', n),
@@ -1369,7 +1399,7 @@ describe('PATCH /api/students/[id]', () => {
 
   async function linkArchived(studentId: string): Promise<boolean> {
     const link = await prisma.teacherStudent.findUniqueOrThrow({
-      where: { teacherId_studentId: { teacherId, studentId } },
+      where: { teacherId_studentId: { teacherId: archiveTeacherOf(), studentId } },
     });
     return link.isArchived;
   }
@@ -1502,7 +1532,7 @@ describe('PATCH /api/students/[id]', () => {
       typeof body === 'string'
         ? await fetch(`${BASE_URL}/api/students/${studentId}?state=archived`, {
             method: 'PATCH',
-            headers: { ...cookie(teacherToken), ...freshIp(), 'Content-Type': 'application/json' },
+            headers: { ...cookie(archiveToken), ...freshIp(), 'Content-Type': 'application/json' },
             body,
           })
         : await archiveWith(studentId, body);
