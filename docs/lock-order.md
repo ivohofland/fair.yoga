@@ -1519,11 +1519,13 @@ between its roster-link write and what follows it —
 `src/services/student-archive-lock-order.test.ts` pins each order against the
 real functions, observing the waiter in `pg_stat_activity` /
 `pg_blocking_pids` before releasing the holder: "booking first", "archive
-first" and "reopen vs archive". Measured on 2026-09-28 by removing `FOR
-UPDATE` from `lockTeacherStudentLink`: all three fail, the booking-first case
-with `expected a refusal, got {"kind":"archived","waivedCount":0}` — the
-forbidden state. Replacing only `reopenPayment`'s lock with a plain
-`findUnique` fails the reopen case alone.
+first", "reopen vs archive" (the archive holds) and "reopen first" (the
+reopen holds). Measured on 2026-09-28 by removing `FOR UPDATE` from
+`lockTeacherStudentLink`: all four fail, and the booking-first and
+reopen-first cases both with `expected a refusal, got
+{"kind":"archived","waivedCount":0}` — the forbidden state, an archived link
+beside a live registration or an owed payment. Replacing only
+`reopenPayment`'s lock with a plain `findUnique` fails "reopen vs archive".
 
 ### What the archive does not lock: the payment it waives
 
