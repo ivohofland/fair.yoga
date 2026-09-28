@@ -965,10 +965,10 @@ describe('GET /bookings (page) — waitlist section, viewer has not chosen a tie
       data: { classId, studentId: lateCancelStudent.id, tierAtBooking: 5, status: 'late_cancel' },
     });
 
-    // FULL, before the entry below: the active registration above fills one
-    // of five seats and `late_cancel` fills none — the remaining four are
-    // filled here so the entry the waiting student holds never stands beside
-    // a free seat, which is what the reconciliation sweep promotes on
+    // FULL, before the entry below: the active registration above takes one
+    // seat and `late_cancel` none; `fillSeats` takes the rest, so the entry
+    // the waiting student holds never stands beside a free seat, which is
+    // what the reconciliation sweep promotes on
     // (`docs/test-database.md` §3.4). Cleaned up by this block's own
     // `email: { contains: suffix4 }` sweep below — the tag carries the same
     // suffix.
@@ -1014,10 +1014,12 @@ describe('GET /bookings (page) — waitlist section, viewer has not chosen a tie
     expect(html).toContain('depending on your income tier');
     expect(html).not.toContain('depending on how many join');
 
-    // Five active registrations (the other student's, plus the fillers that
+    // The active registrations (the other student's, plus the fillers that
     // bring the class to capacity) against a min of 2 and a max of 5 — the
-    // late-cancelled row must not count toward it, which would read 6. Same
-    // structural anchor as the Upcoming section's count test above.
+    // late-cancelled row must not count toward it, which would read one past
+    // capacity. That relies on `RegistrationProgress` rendering the count
+    // unclamped. Same structural anchor as the Upcoming section's count test
+    // above.
     expect(html).toMatch(/<span[^>]*>5<\/span><span[^>]*>\/ 2–5<\/span>/);
   });
 });

@@ -31,6 +31,10 @@ const suffix = uniqueSuffix();
  * - `autoCompleteClasses` — EVERY `in_progress` class, no date filter; only the
  *   computed end instant holds it off.
  *
+ * The date does not stop `waitlist-reconciliation`, whose candidate query has
+ * no date bound; the open classes are filled for that instead
+ * (`docs/test-database.md` §3.4).
+ *
  * (All three live in `src/services/class-transitions.ts`; grep the predicate
  * rather than trusting a line number, which is what rotted last time.)
  *
@@ -228,7 +232,7 @@ beforeAll(async () => {
     const classId = await makeClass(classType, status, i);
     if (status === 'open') openClassId = classId;
     if (status === 'completed') completedClassId = classId;
-    // FULL, and only for `open`: it is the one status among these four the
+    // FULL, and only for `open`: it is the only `statuses` entry the
     // reconciliation sweep's own candidate query can see — the others are
     // excluded by their status or, for the `cancelled` fixture, by
     // `cancelledAt` before a free seat would matter. A `waiting` entry beside
@@ -240,8 +244,8 @@ beforeAll(async () => {
     }
     // Written directly, not via `addToWaitlist`: that service throws on a
     // non-`open` class — the invariant under test one layer down. On the
-    // now-full open class here, `addToWaitlist` would accept the entry
-    // instead of throwing.
+    // full open class here, `addToWaitlist` would accept the entry instead of
+    // throwing.
     await prisma.waitlistEntry.create({
       data: { classId, studentId: strip.id, position: 1, status: 'waiting' },
     });
@@ -292,8 +296,9 @@ beforeAll(async () => {
   //
   // The closed rows deliberately carry no `registrationId`: in production
   // `promoteNext` and `claimSpot` write one (`activateRegistration`, linked on
-  // the entry update), but the count query never reads it, and fixture
-  // `Registration`s would add entities to this graph to assert nothing.
+  // the entry update), but the count query never reads it, and a
+  // `Registration` behind each closed row would add entities to this graph to
+  // assert nothing. The filler registrations below exist only for the sweep.
   // `promotedAt` is set so the rows are not obviously synthetic.
   countClassId = await makeClass(`w199-count-${suffix}`, 'open', 4);
 

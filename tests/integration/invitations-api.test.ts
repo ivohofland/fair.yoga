@@ -3219,14 +3219,18 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       // `promoteClassId` already holds a free seat (no filler registration),
       // so this write is what makes the entry-beside-a-free-seat state
       // reachable, right before `promoteNext` below needs it — the same
-      // state the reconciliation sweep promotes on (`docs/test-database.md`
-      // §3.4).
+      // state the reconciliation sweep promotes on, through the same
+      // `promoteNext` (`docs/test-database.md` §3.4). The promotion is
+      // therefore asserted from the stored entry, not from the call's return,
+      // so it and everything after it hold whichever caller promoted.
       await prisma.waitlistEntry.create({
         data: { classId: promoteClassId, studentId: promoteStudentId, position: 1, status: 'waiting' },
       });
 
-      const entry = await promoteNext(prisma, promoteClassId);
-      expect(entry).not.toBeNull();
+      await promoteNext(prisma, promoteClassId);
+      expect((await prisma.waitlistEntry.findUniqueOrThrow({
+        where: { classId_studentId: { classId: promoteClassId, studentId: promoteStudentId } },
+      })).status).toBe('promoted');
 
       // The backstop ran.
       expect(await prisma.teacherStudent.findUnique({
@@ -3258,9 +3262,10 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   it('a promotion cannot erase a decline the student made after joining the queue (whole-branch C2)', async () => {
     let promoteFillerIds: string[] = [];
     try {
-      // Fills `promoteClassId`'s seats, so the entry below is not a free
-      // seat the reconciliation sweep would promote out from under the
-      // decline in between the write and the route call.
+      // Fills `promoteClassId`'s seats, so the entry below never stands
+      // beside a free seat until the filler delete right before
+      // `promoteNext` — the reconciliation sweep cannot promote it ahead of
+      // the decline.
       promoteFillerIds = await fillSeats(prisma, promoteClassId, 2, `promote-decline-${suffix}`);
 
       // The student's older act: a place in the queue. Written by hand, so
@@ -3296,14 +3301,17 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       })).status).toBe('waiting');
 
       // Frees the fillers' seats in the statement directly before
-      // `promoteNext`, which needs one: a free seat in the auto-promote
-      // window is what the sweep promotes on (`docs/test-database.md` §3.4).
+      // `promoteNext`, which needs one. A free seat in the auto-promote
+      // window is what the sweep promotes on, through the same `promoteNext`
+      // (`docs/test-database.md` §3.4), so the promotion is asserted from the
+      // stored entry below and holds whichever caller promoted.
       await prisma.student.deleteMany({ where: { id: { in: promoteFillerIds } } });
 
       // The teacher's move, at a moment of their choosing.
-      const entry = await promoteNext(prisma, promoteClassId);
-      expect(entry).not.toBeNull();
-      expect(entry!.studentId).toBe(promoteDeclineStudentId);
+      await promoteNext(prisma, promoteClassId);
+      expect((await prisma.waitlistEntry.findUniqueOrThrow({
+        where: { classId_studentId: { classId: promoteClassId, studentId: promoteDeclineStudentId } },
+      })).status).toBe('promoted');
 
       // The promotion really ran and really did its other work — the roster
       // link is there, repaired by the upsert `promoteNext` keeps as a
