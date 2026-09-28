@@ -962,6 +962,14 @@ Re-run for issue 259 it returns 19: `switchToSharedRoom`'s own transaction
 arming it (`room-switch.ts`) is new, and every other line sits in one of the
 files listed above.
 
+Re-run for issue 265 on 2026-09-28 it returns 22 = the 19 above + 3 new
+transactions arming it, each before its `TeacherStudent` row lock:
+`reopenPayment` (`payments.ts`), and `archiveStudent`'s two
+(`student-archive.ts` — its own transaction, and the re-read after a waive
+miss). Pinned by `src/services/student-archive-lock-order.test.ts`'s
+"archiving and reopening bound their wait on the link row" describe, which
+holds the link row past the bound and expects `55P03` inside the hold.
+
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
 A slot key is a lock in every sense that matters here. Two transactions
@@ -1476,7 +1484,7 @@ Without a lock on the link row:
 
 `lockTeacherStudentLink` (`src/services/roster-link.ts`) is a `SELECT … FOR
 UPDATE` of the pair's row and writes nothing. `archiveStudent` takes it as the
-first statement of its transaction. Every act that makes the pair live takes
+first lock of its transaction, right after arming the lock timeout. Every act that makes the pair live takes
 it too, through `activateTeacherStudentLink`, which clears `isArchived` under
 it: `linkTeacherStudent` calls that after its insert, so every linking path
 inherits the lock, and the teacher's roster add calls it directly.
@@ -1514,7 +1522,48 @@ true when it was given.
 queues behind a linking transaction's `FOR UPDATE` instead of landing
 between its roster-link write and what follows it —
 `src/services/invitations-lock-order.test.ts` pins that for
-`acceptInvitation` ("the roster-link lock closes this window").
+`acceptInvitation` ("the roster-link lock closes this window"). The linking
+transaction holds that lock to its end, so an unlink that queued on it
+proceeds only once the linker has committed or rolled back.
+
+### The gap before the lock: a link deleted under the linker
+
+`linkTeacherStudent` is two statements, the insert and then the lock. On a
+pair already linked, the insert (`INSERT … ON CONFLICT DO NOTHING`) meets a
+committed row and takes no lock on it, so an unlink or erasure can delete
+the row and commit in between. The `FOR UPDATE` then returns no row and
+`activateTeacherStudentLink` reports `'missing'`. `linkTeacherStudent` throws
+`RosterLinkVanishedError` on that, and the caller's transaction rolls back
+rather than committing its booking, waitlist entry, claim, promotion, walk-in
+or acceptance with no link beside it. It does not re-insert: the delete is
+the student's unlink (with its `TeacherBlock`) or an erasure, and recreating
+the link would override it.
+
+Each route whose transaction reaches `linkTeacherStudent` answers the error
+409 `CONCURRENT_MODIFICATION`, so a retry meets the pair as it now stands:
+`POST /api/registrations` (self-booking and walk-in), `POST /api/waitlist`,
+`POST /api/waitlist/claim`, and `POST /api/invitations/[id]/respond`, where
+`acceptInvitation` maps it to its own `CONCURRENT_MODIFICATION` reason.
+`promoteNext` runs in no request of its own, behind `handleSpotFreed`, whose
+callers — the cancel route's `promoteAfterCancel`, the erasure's post-commit
+loop and the waitlist-reconciliation sweep — log a failure per class and
+carry on.
+
+`acceptInvitation`'s `TeacherBlock` re-check is the last statement of its
+transaction and so still narrows what is left: a block committed after the
+roster-link write without deleting the link, which neither the lock nor
+this error can see.
+
+Pinned in `src/services/roster-link.test.ts` ("throws
+RosterLinkVanishedError, rolling the caller back, when the link is deleted
+before its lock": a holder takes the row's lock so the linker's insert
+passes and its `FOR UPDATE` parks, then deletes the row and commits); over
+HTTP in `tests/integration/student-archive-reactivation.test.ts` ("a
+self-booking whose link is deleted while it waits on the link answers
+CONCURRENT_MODIFICATION, no registration"); and for `acceptInvitation` in
+`src/services/invitations-lock-order.test.ts` ("an unlink committed between
+the roster-link insert and its lock rolls the accept back"), which commits a
+real `unlinkTeacher` from a hook on the insert.
 
 `src/services/student-archive-lock-order.test.ts` pins each order against the
 real functions, observing the waiter in `pg_stat_activity` /
@@ -1537,7 +1586,10 @@ read and the waive. The waive is therefore a status-filtered `updateMany`, and
 a row count short of what the archive read open throws
 `OutstandingChangedError`, rolling back the waive and the archive together;
 the teacher is answered `STUDENT_HAS_OUTSTANDING_PAYMENTS` with the re-read
-amount. Pinned by the lock-order file's "a payment settled between the archive
+amount. That re-read is a transaction of its own that takes the link lock
+again, since the rollback released it: a pair unlinked in between answers
+`not-linked` instead (the lock-order file's "a pair unlinked after a waive
+miss answers not-linked, not a refusal"). Pinned by the lock-order file's "a payment settled between the archive
 reading it open and waiving it refuses the whole archive", which holds a copy
 of `markPaymentPaid`'s `updateMany` uncommitted while the archive queues on
 the payment row. Measured on 2026-09-28 by deleting the `count !== open.length`
@@ -1570,8 +1622,7 @@ lines = 5 in `payments.ts` (`markPaymentPaid`, `markPaymentOverdue`,
 `reopenPayment`, `markPaymentNotCharged`, `sendPaymentReminder`) + 2 in
 `payment-reminders.ts` (`markOverduePayments`, `sendPaymentReminders`) + 1 in
 `class-lifecycle.ts` (`completeClass`'s `create`) + 1 in `student-archive.ts`
-(`archiveStudent`'s waive). The spec's count before this issue was 8; the
-archive's waive is the ninth. Two of the nine also lock `TeacherStudent` —
+(`archiveStudent`'s waive). Two of the nine also lock `TeacherStudent` —
 `reopenPayment` and `archiveStudent`, both link-first — and none touches
 `Invitation` or `TeacherBlock`. A wider pattern,
 `payment\.[a-zA-Z]+\(` minus the `find*`/`count`/`aggregate`/`groupBy`
@@ -1592,11 +1643,12 @@ transaction opens. So no erasure transaction holds `Payment` and
 
     git grep -n -E '(lockTeacherStudentLink|activateTeacherStudentLink|linkTeacherStudent)\(' -- src ':!*.test.ts'
 
-On 2026-09-28 it returned 14 lines = 3 definitions + 2 calls inside
+On 2026-09-28 it returned 15 lines = 3 definitions + 2 calls inside
 `roster-link.ts` (`linkTeacherStudent` → `activateTeacherStudentLink` →
-`lockTeacherStudentLink`) + 9 call sites:
+`lockTeacherStudentLink`) + 10 call sites:
 
-- `lockTeacherStudentLink` directly: `archiveStudent`, `reopenPayment`;
+- `lockTeacherStudentLink` directly: `archiveStudent` (twice — its
+  transaction, and the re-read after a waive miss), `reopenPayment`;
 - `activateTeacherStudentLink` directly: the roster add in `POST
   /api/registrations` (`'missing'` rolls the registration back);
 - `linkTeacherStudent`: the self-booking branch of `POST /api/registrations`,
@@ -2503,8 +2555,8 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   via `withdrawWaitingEntriesForTeacher` (must run first; its own docblock
   in `waitlist.ts` explains why — a deadlock question, not a preference),
   then `StudentPrivacy`, `TeacherStudent`, `Invitation`,
-  `TeacherBlock`. `StudentPrivacy` used to come after `TeacherStudent`; fixed
-  in #174 task 7 after a direct reproduction (see below).
+  `TeacherBlock`. `StudentPrivacy` before `TeacherStudent` is the canonical
+  line's order, and #174 reproduced the reverse order deadlocking (see below).
 - **`declineInvitation`** (`src/services/invitations.ts`) — `Invitation` then
   `TeacherBlock` (#522), the same direction `unlinkTeacher` takes and the one
   the canonical line names. Conformant by order, and separately safe by the
