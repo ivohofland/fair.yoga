@@ -189,6 +189,12 @@ beforeAll(async () => {
       status: 'open',
     });
   freedSpotClassId = freedSpotClass.id;
+
+  // Sweep-reachable: inside the claim window with a free seat, so the tick
+  // may broadcast on it before the tests below run — see "answers the
+  // claimant’s own second claim as unchanged, and writes nothing" for the
+  // one assertion that's narrowed by type against it (`docs/test-database.md`
+  // §3.4).
   await prisma.waitlistEntry.create({
     data: { classId: freedSpotClassId, studentId, position: 1, status: 'waiting' },
   });
