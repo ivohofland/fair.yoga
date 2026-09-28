@@ -16,6 +16,7 @@ import { reopenPayment } from './payments';
 import { activateRegistration } from './waitlist';
 import * as rosterLink from './roster-link';
 import { lockClassRow } from '@/lib/db-locks';
+import { isLockTimeout } from '@/lib/api-errors';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
@@ -462,6 +463,111 @@ describe('the TeacherStudent row serialises archiving against what makes a pair 
       expect(payment.status).toBe('paid');
       expect(archiveWaited).toBe(true);
       expect(settledDuringHold).toBe(false);
+    } finally {
+      await cleanup(fx);
+    }
+  }, 30_000);
+
+  // The waive misses as in the case above, and the link is deleted after the
+  // rollback releases it and before the re-read locks it again: the second
+  // `lockTeacherStudentLink` call for the pair commits the delete first.
+  it('a pair unlinked after a waive miss answers not-linked, not a refusal', async () => {
+    const fx = await makeFixture();
+    try {
+      const paymentId = await paymentFor(fx, 'pending');
+      let calls = 0;
+      const original = rosterLink.lockTeacherStudentLink;
+      const spy = vi.spyOn(rosterLink, 'lockTeacherStudentLink').mockImplementation(async (tx, p) => {
+        if (p.teacherId === fx.teacherId && p.studentId === fx.studentId && ++calls === 2) {
+          await prisma.teacherStudent.delete({
+            where: { teacherId_studentId: { teacherId: fx.teacherId, studentId: fx.studentId } },
+          });
+        }
+        return original(tx, p);
+      });
+      onTestFinished(() => spy.mockRestore());
+      const marking = holdAfter(async (tx) => {
+        const { count } = await tx.payment.updateMany({
+          where: { id: paymentId, status: { in: ['pending', 'overdue'] } },
+          data: { status: 'paid', method: 'cash', paidAt: new Date() },
+        });
+        if (count !== 1) throw new Error(`mark-paid fixture wrote ${count} rows`);
+      });
+      let archive: Tracked<ArchiveOutcome> | undefined;
+      let archiveWaited = false;
+      try {
+        await handshake(marking.reached, 'mark-paid payment lock', marking.done);
+        archive = track(
+          archiveStudent(racer, { teacherId: fx.teacherId, studentId: fx.studentId, waivePaymentIds: [paymentId] }),
+        );
+        archiveWaited = (await waiterOf(marking.pid(), archive.settled)) !== null;
+      } finally {
+        marking.release();
+        await joinOrThrow(marking.done, archive?.racer);
+      }
+
+      expect({ outcome: await archive?.racer, archiveWaited, calls }).toEqual({
+        outcome: { kind: 'not-linked' },
+        archiveWaited: true,
+        calls: 2,
+      });
+    } finally {
+      await cleanup(fx);
+    }
+  }, 30_000);
+});
+
+/**
+ * Each side opens its transaction with `setLockTimeout`, so a link row held
+ * past the bound fails the call with `55P03` — which `withErrorHandler`
+ * answers 503 — instead of waiting unbounded. The hold outlasts the 2s bound
+ * and ends inside Prisma's 5s default, so the rejection is Postgres's, not
+ * Prisma's transaction timeout.
+ */
+describe('archiving and reopening bound their wait on the link row (#265)', () => {
+  const HOLD_MS = 3_500;
+
+  async function rejectsWithinHold(fx: Fixture, run: () => Promise<unknown>): Promise<{ settledDuringHold: boolean; lockTimeout: boolean }> {
+    const holding = holdAfter(async (tx) => {
+      if ((await rosterLink.lockTeacherStudentLink(tx, fx)) === null) throw new Error('fixture link missing');
+    });
+    let call: Tracked<unknown> | undefined;
+    let settledDuringHold = false;
+    try {
+      await handshake(holding.reached, 'link lock', holding.done);
+      // Settled into a value at once, so the rejection has a handler while it waits.
+      call = track(run().then(() => null, (e: unknown) => e));
+      const deadline = Date.now() + HOLD_MS;
+      while (Date.now() < deadline && !call.settled()) await new Promise((r) => setTimeout(r, 25));
+      settledDuringHold = call.settled();
+    } finally {
+      holding.release();
+      await holding.done;
+    }
+    const err: unknown = await call?.racer;
+    return { settledDuringHold, lockTimeout: isLockTimeout(err) };
+  }
+
+  it('archiveStudent', async () => {
+    const fx = await makeFixture();
+    try {
+      const result = await rejectsWithinHold(fx, () =>
+        archiveStudent(racer, { teacherId: fx.teacherId, studentId: fx.studentId }));
+      expect(result).toEqual({ settledDuringHold: true, lockTimeout: true });
+      expect(await linkArchived(fx)).toBe(false);
+    } finally {
+      await cleanup(fx);
+    }
+  }, 30_000);
+
+  it('reopenPayment', async () => {
+    const fx = await makeFixture();
+    try {
+      const paymentId = await paymentFor(fx, 'not_charged');
+      const result = await rejectsWithinHold(fx, () => reopenPayment(racer, paymentId));
+      expect(result).toEqual({ settledDuringHold: true, lockTimeout: true });
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { status: true } });
+      expect(payment.status).toBe('not_charged');
     } finally {
       await cleanup(fx);
     }

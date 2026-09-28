@@ -9,6 +9,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
 import { formatEuro } from '@/lib/format';
+import { setLockTimeout } from '@/lib/db-locks';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import { lockTeacherStudentLink } from './roster-link';
 
@@ -114,6 +115,7 @@ export async function archiveStudent(
   const pair: Pair = { teacherId, studentId };
   try {
     return await db.$transaction(async (tx): Promise<ArchiveOutcome> => {
+      await setLockTimeout(tx);
       const link = await lockTeacherStudentLink(tx, pair);
       if (!link) return { kind: 'not-linked' };
       if (link.isArchived) return { kind: 'unchanged' };
@@ -153,6 +155,12 @@ export async function archiveStudent(
     });
   } catch (err) {
     if (!(err instanceof OutstandingChangedError)) throw err;
-    return { kind: 'refused', refusal: outstandingChangedRefusal(await readOpenPayments(db, pair)) };
+    // Re-read under the link lock again: the rollback released it, so the
+    // pair may have been unlinked since, and then there is nothing to archive.
+    return db.$transaction(async (tx): Promise<ArchiveOutcome> => {
+      await setLockTimeout(tx);
+      if (!(await lockTeacherStudentLink(tx, pair))) return { kind: 'not-linked' };
+      return { kind: 'refused', refusal: outstandingChangedRefusal(await readOpenPayments(tx, pair)) };
+    });
   }
 }
