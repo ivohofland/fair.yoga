@@ -295,9 +295,10 @@ beforeAll(async () => {
   // A second recipient, on the waitlist rather than registered. `noticeCls`
   // has `maxStudents: 1`, and the notice registration above fills it, so this
   // entry is one `addToWaitlist` itself would accept. Written directly rather
-  // than through `POST /api/waitlist` anyway: the route under test only reads
-  // the row, and no session is needed — this student never makes a request,
-  // they only receive a notification.
+  // than through `POST /api/waitlist` anyway: the route under test only needs
+  // the row to exist, not any particular path that wrote it, and no session
+  // is needed — this student never makes a request, they only receive a
+  // notification.
   const waitStudentEmail = `classesapi-waitstudent-${suffix}@test.local`;
   const waitStudent = await prisma.student.create({
     data: { firstName: 'Wait', lastName: 'Student', email: waitStudentEmail, incomeTier: 3 },
@@ -1017,9 +1018,10 @@ describe('POST /api/classes/[id]/transition', () => {
    * `class-lifecycle.test.ts`'s `transitionClass (DB)` block never reach
    * `POST /api/classes/[id]/transition`. A fresh class, not `classId` or
    * `noticeClassId`: both are asserted against by other tests in this file.
-   * Cleaned up inline on the happy path; the file-level `afterAll`'s
-   * teacher-scoped sweep is the backstop for a run that fails before reaching
-   * this tail.
+   * Cleaned up in its own `finally` — the file's `afterAll` is teacher-scoped
+   * (`calendarEntry` by `ownerId`), which would cascade this class's
+   * registrations but leaves the filler `Student` rows behind, so cleanup
+   * here cannot depend on it.
    */
   it('closes the waitlist when a teacher moves a class to in_progress', async () => {
     const cls = await createClassFixture(prisma, {
@@ -1039,21 +1041,26 @@ describe('POST /api/classes/[id]/transition', () => {
         maxStudents: 1,
         status: 'open',
       });
-    const fillerIds = await fillSeats(prisma, cls.id, 1, `queue-close-${suffix}`);
-    const entry = await prisma.waitlistEntry.create({
-      data: { classId: cls.id, studentId: waitStudentId, position: 1, status: 'waiting' },
-    });
-    await expectReconciliationSkips(prisma, [cls.id], 'full');
+    let fillerIds: string[] = [];
+    try {
+      fillerIds = await fillSeats(prisma, cls.id, 1, `queue-close-${suffix}`);
+      const entry = await prisma.waitlistEntry.create({
+        data: { classId: cls.id, studentId: waitStudentId, position: 1, status: 'waiting' },
+      });
+      await expectReconciliationSkips(prisma, [cls.id], 'full');
 
-    const res = await transition(ownerToken, cls.id, { status: 'in_progress' });
-    expect(res.status).toBe(200);
+      const res = await transition(ownerToken, cls.id, { status: 'in_progress' });
+      expect(res.status).toBe(200);
 
-    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
-    expect(after.status).toBe('expired');
-
-    await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
-    await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      expect(after.status).toBe('expired');
+    } finally {
+      await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+      if (fillerIds.length > 0) {
+        await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
+      }
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
   });
 });
 

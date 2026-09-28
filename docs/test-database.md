@@ -240,18 +240,27 @@ benefit from an empty database — assertion scoping becomes trivial.
   **The app's scheduler runs against these fixtures.** Locally the running
   app ticks `waitlist-reconciliation` every minute (CI sets
   `CRON_SCHEDULER=off`), and that job promotes or broadcasts on any `open`,
-  uncancelled class that has not started and holds a `waiting` entry beside
-  a free seat. A fixture that writes a `waiting` entry directly therefore
-  builds one of: a **full** class (fill `maxStudents` before the write), a
-  **claim-window class with a standing broadcast** (`spotBroadcastAt` set),
-  a class that is **not open or has started**, or, where the test itself
-  drives `promoteNext`, a seat freed in the statement immediately before
-  that call. A site that keeps a reachable free seat because the sweep's
-  action there changes nothing it asserts says so beside the fixture.
-  `expectReconciliationSkips` (`tests/waitlist-fixtures.ts`) forces a tick
-  scoped to the test's own classes and asserts they were skipped. Scoped
-  because CI runs integration files in parallel. Re-derive the direct
-  writes with `grep -rn "waitlistEntry\.\(create\|createMany\|upsert\|update\|updateMany\)" tests/integration`.
+  uncancelled, not-yet-started class that holds a `waiting` entry beside a
+  free seat — except, in the claim window, a class whose broadcast already
+  stands, which it leaves alone. A fixture that writes a `waiting` entry
+  directly, or that frees a seat directly beside one already waiting (for
+  example cancelling or deleting a registration), therefore builds one of:
+  a **full** class (fill `maxStudents` before the write), a **claim-window
+  class with a standing broadcast** (`spotBroadcastAt` set to now — at or
+  after the claim window's start), a class that is **not open, is
+  cancelled, or has started**, or, where the test itself drives
+  `promoteNext`, a fixture where the entry-beside-a-free-seat state is made
+  reachable only in the statement immediately before that call (write the
+  entry there, or free the seat there). A site that keeps a reachable free
+  seat because the sweep's action there changes nothing it asserts says so
+  beside the fixture. `expectReconciliationSkips`
+  (`tests/waitlist-fixtures.ts`) forces a tick scoped to the test's own
+  classes and asserts they were skipped. Scoped because CI runs integration
+  files in parallel. Re-derive the direct writes with
+  `grep -rn "waitlistEntry\.\(create\|createMany\|upsert\|update\|updateMany\)" tests/integration`
+  and, for a direct seat-freeing write,
+  `grep -rn "registration\.\(update\|updateMany\|delete\|deleteMany\)(" tests/integration`
+  — the second lists candidates to read, since most hits are teardown.
 - **Playwright e2e** — same coupling, same targeted-fixture pattern.
 
 Accepted trade-off: these two tiers can still *see* seed rows (they
