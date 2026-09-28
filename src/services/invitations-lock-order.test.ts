@@ -1699,6 +1699,74 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
   }, 15_000);
 
   /**
+   * The case only the in-transaction `TeacherBlock` re-check catches. The
+   * hook sits on `linkTeacherStudent`'s `teacherStudent.createMany`, but runs
+   * a real `unlinkTeacher` to commit BEFORE letting the insert through — so
+   * the unlink lands inside the open transaction, after the outside
+   * pre-check and before the roster-link write. The insert then genuinely
+   * creates the link (`'created'`, no `RosterLinkVanishedError`), the link
+   * lock holds a row, and the CAS succeeds on the `delivered: false` row the
+   * unlink left `pending` (#502). Only a `TeacherBlock` read inside the
+   * transaction sees the block; one read before `$transaction` opens would
+   * not, and the accept would commit a link over the block.
+   *
+   * `blockReads` pins that read's count: the outside pre-check and the
+   * in-transaction re-check.
+   */
+  it('an unlink committed inside the transaction before the roster-link insert is refused by the in-transaction block re-check', async () => {
+    const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
+
+    let handshakeFired = false;
+    let blockReads = 0;
+    const accepting = prisma.$extends({
+      query: {
+        teacherStudent: {
+          async createMany({ args, query }) {
+            if (!handshakeFired) {
+              handshakeFired = true;
+              const unlinkResult = await unlinkTeacher(prisma, {
+                teacherId, studentId, accountEmail: email,
+              });
+              expect(unlinkResult).toEqual({ ok: true });
+            }
+            return query(args);
+          },
+        },
+        teacherBlock: {
+          async findUnique({ args, query }) {
+            blockReads += 1;
+            return query(args);
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const acceptResult = await acceptInvitation(accepting, {
+      invitationId, studentId, accountEmail: email,
+    });
+
+    expect({
+      handshakeFired,
+      acceptResult,
+      link: await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId, studentId } },
+      }),
+      status: (await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitationId },
+        select: { status: true },
+      })).status,
+      blockReads,
+    }).toEqual({
+      handshakeFired: true,
+      acceptResult: { ok: false, reason: 'NOT_PENDING' },
+      link: null,
+      status: 'pending',
+      blockReads: 2,
+    });
+  }, 15_000);
+
+  /**
    * The narrowest interleaving in this describe: a concurrent `unlinkTeacher`
    * fired while `acceptInvitation` sits between its roster-link write and its
    * CAS. `linkTeacherStudent` (`services/roster-link.ts`) calls
