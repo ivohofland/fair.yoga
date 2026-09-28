@@ -7,12 +7,14 @@ import { scopeSweep } from './scoped-sweep';
  * Runs the production reconciliation tick narrowed to `classIds` (must be
  * non-empty) and asserts it skipped every one of them for `reason`.
  *
- * Call this after building a fixture that writes a `waiting` `WaitlistEntry`
- * directly and before the test's own action. A class the running app's own
+ * Call it once the fixture holds the state it needs — after any direct
+ * `waiting` write or direct seat-free (`docs/test-database.md` §3.4) — and
+ * before any span the sweep could act in; where the entry only appears inside
+ * the test's action, once that action is over. A class the running app's own
  * scheduler would otherwise promote or broadcast on at some unpredictable
  * point mid-test does so here instead, under this call's own tick — and the
  * assertion below fails loudly, rather than the fixture being silently
- * mutated later by the live app. See `docs/test-database.md` §3.4.
+ * mutated later by the live app.
  */
 export async function expectReconciliationSkips(
   prisma: PrismaClient,
@@ -30,8 +32,9 @@ export async function expectReconciliationSkips(
 
 /**
  * Creates `count` students with an active (`registered`) registration on
- * `classId`. Emails are `${tag}-filler-${i}@test.local`. Returns their ids for
- * teardown. Deleting the students cascades their registrations.
+ * `classId`, in one transaction, so a failure part-way creates none of them.
+ * Emails are `${tag}-filler-${i}@test.local`. Returns their ids for teardown.
+ * Deleting the students cascades their registrations.
  */
 export async function fillSeats(
   prisma: PrismaClient,
@@ -39,20 +42,22 @@ export async function fillSeats(
   count: number,
   tag: string,
 ): Promise<string[]> {
-  const ids: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const student = await prisma.student.create({
-      data: {
-        firstName: 'Filler',
-        lastName: tag,
-        email: `${tag}-filler-${i}@test.local`,
-        incomeTier: 3,
-        registrations: {
-          create: { classId, status: 'registered', tierAtBooking: 3 },
+  return prisma.$transaction(async (tx) => {
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const student = await tx.student.create({
+        data: {
+          firstName: 'Filler',
+          lastName: tag,
+          email: `${tag}-filler-${i}@test.local`,
+          incomeTier: 3,
+          registrations: {
+            create: { classId, status: 'registered', tierAtBooking: 3 },
+          },
         },
-      },
-    });
-    ids.push(student.id);
-  }
-  return ids;
+      });
+      ids.push(student.id);
+    }
+    return ids;
+  });
 }
