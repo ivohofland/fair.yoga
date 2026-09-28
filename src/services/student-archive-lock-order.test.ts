@@ -1,9 +1,9 @@
 /**
  * @serial-tier lock-contention — each case holds a real `TeacherStudent` or
- * `Payment` row lock open while a second transaction queues behind it, and the
- * booking side of two of them runs under `lockClassRow`'s 2s `lock_timeout`.
- * A neighbour's lock noise stretching that wait would land a `55P03` on the
- * booking, which reads as the serialisation failing.
+ * `Payment` row lock open while a second transaction queues behind it, and a
+ * booking side runs under `lockClassRow`'s 2s `lock_timeout`. A neighbour's
+ * lock noise stretching that wait would land a `55P03` on the booking, which
+ * reads as the serialisation failing.
  *
  * What each ordering means, and which case pins it: `docs/lock-order.md`,
  * "The `TeacherStudent` row is the archive's gate".
