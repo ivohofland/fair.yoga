@@ -17,6 +17,7 @@ export async function expectReconciliationSkips(
   classIds: readonly string[],
   reason: SkipReason,
 ): Promise<void> {
+  expect(classIds.length).toBeGreaterThan(0);
   const scoped = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [...classIds] } } });
   const summary = await runWaitlistReconciliationTick(scoped.db);
   for (const classId of classIds) {
