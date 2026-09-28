@@ -30,8 +30,9 @@ export function DeleteRoomButton({ roomId, roomName }: DeleteRoomButtonProps) {
         else setError(message);
       }
     } catch (err) {
-      // `readError` never throws, so what lands here is `fetch` itself rejecting.
-      console.error('Room delete request failed', err);
+      // Only a request that never got a response lands here; an unreadable
+      // error body is answered above with the fallback.
+      console.error('[delete-room-button] request failed', { roomId, err });
       setError('Network error. Please try again.');
     }
 

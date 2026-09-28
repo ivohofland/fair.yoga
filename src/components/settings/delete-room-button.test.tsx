@@ -183,7 +183,11 @@ describe('DeleteRoomButton', () => {
     );
     expect(assign).not.toHaveBeenCalled();
     // The rejection is the only record of why the request never landed.
-    expect(consoleError).toHaveBeenCalledWith(expect.any(String), offline);
+    expect(consoleError).toHaveBeenCalledWith('[delete-room-button] request failed', {
+      roomId: 'room-1',
+      err: offline,
+    });
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
   });
 
   // A proxy's HTML 502 or a truncated body is a server failure, not a network
@@ -210,9 +214,32 @@ describe('DeleteRoomButton', () => {
     expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalledWith(
-      'API error response body could not be read',
+      expect.any(String),
       expect.objectContaining({ status: 502 }),
     );
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  // Only the server's registered code says the room is gone. A proxy's HTML 404
+  // names nothing, so it is a failure, not a completed delete.
+  it('does not read a non-JSON 404 as a room that is already gone', async () => {
+    const assign = stubLocation();
+    fetchMock.mockResolvedValue(
+      new Response('<html><body>404 Not Found</body></html>', {
+        status: 404,
+        headers: { 'Content-Type': 'text/html' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(<DeleteRoomButton roomId="room-1" roomName="Sunrise Studio" />);
+    openConfirm();
+    confirmDelete();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Failed to delete room. Please try again.',
+    );
+    expect(assign).not.toHaveBeenCalled();
   });
 });
