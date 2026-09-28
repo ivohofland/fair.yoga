@@ -7,6 +7,7 @@ import { createClassFixture, slotTime } from '../class-fixtures';
 import { formatDayHeader } from '@/lib/format';
 import { isEssential } from '@/services/notification-policy';
 import { cancelDeadlineInstant } from '@/services/waitlist';
+import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
@@ -162,23 +163,30 @@ async function makeOtherTeacherClass(maxStudents: number, startTime: string): Pr
 
 /**
  * A class inside the waitlist's first-come-first-claimed window (#236:
- * `[start − 1h, start)`), for BROADCAST STANDING fixtures — a `spotBroadcastAt`
- * set by hand must sit on a class the live reconciliation sweep can read as
- * genuinely broadcasting, not one parked in 2099 where `getWaitlistWindow`
- * never leaves `auto_promote` and the broadcast gate (`already_broadcast`)
- * never applies.
+ * `[start − 1h, start)`), for claim-window-class-with-a-standing-broadcast
+ * fixtures (`docs/test-database.md` §3.4) — a `spotBroadcastAt` set by hand
+ * must sit on a class the live reconciliation sweep can read as genuinely
+ * broadcasting, not one parked in 2099 where `getWaitlistWindow` never
+ * leaves `auto_promote` and the broadcast gate (`already_broadcast`) never
+ * applies.
  *
- * `minutesUntilStart` must be at most `CLAIM_WINDOW_MINUTES` (60) so the
- * window has already opened by the time the fixture runs, and callers pass
- * distinct values so `CalendarEntry_teacher_slot_excl` never refuses two of
- * these against the same teacher. `date`/`startTime` are derived from the
- * owner teacher's timezone (Europe/Amsterdam, unset here) the same way
- * `makeLateCancelClass` above does, since `classStartInstant` interprets them
- * as local wall time in that zone. `minStudents: 0`: the class sits inside
- * the live scheduler's auto-cancel check window, so an active count that
- * dips to zero mid-test must not read as below minimum.
+ * `minutesUntilStart` must sit in `(0, CLAIM_WINDOW_MINUTES]` so the window
+ * has already opened by the time the fixture runs — enforced below rather
+ * than stated as a number here — and callers pass distinct values so
+ * `CalendarEntry_teacher_slot_excl` never refuses two of these against the
+ * same teacher. `date`/`startTime` are derived from the owner teacher's
+ * timezone (Europe/Amsterdam, unset here) the same way `makeLateCancelClass`
+ * above does, since `classStartInstant` interprets them as local wall time in
+ * that zone. `minStudents: 0`: the class sits inside the live scheduler's
+ * auto-cancel check window, so an active count that dips to zero mid-test
+ * must not read as below minimum.
  */
 async function makeClaimWindowClass(maxStudents: number, minutesUntilStart: number): Promise<string> {
+  if (minutesUntilStart <= 0 || minutesUntilStart > CLAIM_WINDOW_MINUTES) {
+    throw new Error(
+      `minutesUntilStart must be in (0, ${CLAIM_WINDOW_MINUTES}], got ${minutesUntilStart}`,
+    );
+  }
   const target = new Date(Date.now() + minutesUntilStart * 60 * 1000);
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Europe/Amsterdam',
@@ -686,14 +694,16 @@ describe('POST /api/registrations', () => {
       data: { classId, studentId: studentIds[1]!, position: 1, status: 'waiting' },
     });
 
-    // The seat frees and its broadcast goes out (first_come_first_claimed
-    // window) — student 1 books directly rather than claiming through
-    // POST /api/waitlist/claim.
+    // The broadcast stands BEFORE the seat frees, so no statement in between
+    // leaves a free seat beside a waiting entry with no broadcast yet up —
+    // exactly the state the sweep would promote on. The seat frees and its
+    // broadcast goes out (first_come_first_claimed window) — student 1 books
+    // directly rather than claiming through POST /api/waitlist/claim.
+    await prisma.class.update({ where: { id: classId }, data: { spotBroadcastAt: new Date() } });
     await prisma.registration.updateMany({
       where: { classId, studentId: studentIds[0]! },
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
-    await prisma.class.update({ where: { id: classId }, data: { spotBroadcastAt: new Date() } });
     await expectReconciliationSkips(prisma, [classId], 'already_broadcast');
 
     const book = await post(studentTokens[1]!, { classId });
@@ -965,12 +975,21 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
   // candidate to promote or broadcast — filling the one seat first keeps the
   // entry `waiting` until each test's own DELETE acts on it. See
   // `docs/test-database.md` §3.4.
+  //
+  // Teardown order matters the same way: freeing the seat by deleting the
+  // fillers beside a waitlist entry still `waiting` rebuilds the exact state
+  // above, so the entries go first.
+  function teardownFillers(classId: string, fillerIds: string[]) {
+    onTestFinished(async () => {
+      await prisma.waitlistEntry.deleteMany({ where: { classId } });
+      await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
+    });
+  }
+
   let makeEntryCounter = 0;
   async function makeEntry(classId: string, studentId: string) {
     const fillerIds = await fillSeats(prisma, classId, 1, `waitlist-del-${suffix}-${makeEntryCounter++}`);
-    onTestFinished(async () => {
-      await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
-    });
+    teardownFillers(classId, fillerIds);
     const entry = await prisma.waitlistEntry.create({
       data: { classId, studentId, position: 1, status: 'waiting' },
     });
@@ -1037,9 +1056,7 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
   it('answers leaving a queue already left as unchanged, and renumbers nothing twice', async () => {
     const classId = await makeClass(1);
     const fillerIds = await fillSeats(prisma, classId, 1, `waitlist-unchanged-${suffix}`);
-    onTestFinished(async () => {
-      await prisma.student.deleteMany({ where: { id: { in: fillerIds } } });
-    });
+    teardownFillers(classId, fillerIds);
     const mine = await prisma.waitlistEntry.create({
       data: { classId, studentId: studentIds[0]!, position: 1, status: 'waiting' },
     });

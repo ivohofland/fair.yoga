@@ -229,8 +229,7 @@ beforeAll(async () => {
     if (status === 'open') openClassId = classId;
     if (status === 'completed') completedClassId = classId;
     // FULL, and only for `open`: it is the one status among these four the
-    // reconciliation sweep's own candidate query can see (`class: { status:
-    // 'open', calendarEntry: { cancelledAt: null } }`) — the others are
+    // reconciliation sweep's own candidate query can see — the others are
     // excluded by their status or, for the `cancelled` fixture, by
     // `cancelledAt` before a free seat would matter. A `waiting` entry beside
     // a free seat on the open class is exactly what the sweep promotes on
@@ -240,10 +239,9 @@ beforeAll(async () => {
       studentIds.push(...openFillerIds);
     }
     // Written directly, not via `addToWaitlist`: that service throws on a
-    // non-`open` class — the invariant under test one layer down — and on the
-    // open class here too, now that its seats are filled: a full class hits
-    // `class_full` the same way an unfilled one would have hit
-    // `class_not_full`.
+    // non-`open` class — the invariant under test one layer down. On the
+    // now-full open class here, `addToWaitlist` would accept the entry
+    // instead of throwing.
     await prisma.waitlistEntry.create({
       data: { classId, studentId: strip.id, position: 1, status: 'waiting' },
     });

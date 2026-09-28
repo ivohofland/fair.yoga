@@ -260,7 +260,11 @@ benefit from an empty database — assertion scoping becomes trivial.
   `grep -rn "waitlistEntry\.\(create\|createMany\|upsert\|update\|updateMany\)" tests/integration`
   and, for a direct seat-freeing write,
   `grep -rn "registration\.\(update\|updateMany\|delete\|deleteMany\)(" tests/integration`
-  — the second lists candidates to read, since most hits are teardown.
+  — the second lists candidates to read, since most hits are teardown. Neither
+  command sees a seat freed by deleting `fillSeats` students, whose
+  registrations go with them by cascade: re-derive those with
+  `grep -rn "fillSeats\|FillerIds\|fillerIds" tests/integration` and read the
+  deletion sites among the hits.
 - **Playwright e2e** — same coupling, same targeted-fixture pattern.
 
 Accepted trade-off: these two tiers can still *see* seed rows (they

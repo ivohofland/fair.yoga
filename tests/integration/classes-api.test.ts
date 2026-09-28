@@ -340,11 +340,13 @@ afterAll(async () => {
   //
   // The waitlist-entry and class sweep below is the same guard applied to a
   // teacher-scoped backstop rather than a single id: the queue-close test
-  // above (#216) creates its own class + waitlist entry outside
-  // `allClassIds`, cleaning up after itself on the happy path — but a failing
-  // run (mutation-tested ones included) can exit before reaching that inline
-  // cleanup, leaving a class that still references `teacherRoomId` and would
-  // fail the `teacherRoom.deleteMany` below on an FK violation. Same shape as
+  // below (#216) creates its own class + waitlist entry outside
+  // `allClassIds`, cleaning up after itself in its own `finally` — but a
+  // `finally` that itself throws partway (say, the `waitlistEntry.deleteMany`
+  // succeeds and the `student.deleteMany` after it does not) can still exit
+  // before reaching its own `calendarEntry.deleteMany`, leaving a class that
+  // still references `teacherRoomId` and would fail the `teacherRoom.deleteMany`
+  // below on an FK violation. Same shape as
   // `class-lifecycle.test.ts`'s `transitionClass (DB)` afterAll guards
   // against. The waitlist entries are deleted too, but not because they
   // FK-reference the class: `WaitlistEntry.class` is `onDelete: Cascade`

@@ -3323,12 +3323,16 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       });
       expect(inv.status).toBe('declined');
     } finally {
-      if (promoteFillerIds.length > 0) {
-        await prisma.student.deleteMany({ where: { id: { in: promoteFillerIds } } });
-      }
+      // Entries before fillers: a throw earlier in the try can reach here
+      // with the fillers still seated and the entry still `waiting` — freeing
+      // their seats first would rebuild the sweep-reachable state this test's
+      // own fixture comment guards against.
       await prisma.waitlistEntry.deleteMany({
         where: { classId: promoteClassId, studentId: promoteDeclineStudentId },
       });
+      if (promoteFillerIds.length > 0) {
+        await prisma.student.deleteMany({ where: { id: { in: promoteFillerIds } } });
+      }
       await prisma.registration.deleteMany({
         where: { classId: promoteClassId, studentId: promoteDeclineStudentId },
       });
