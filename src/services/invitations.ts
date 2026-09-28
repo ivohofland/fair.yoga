@@ -1315,16 +1315,13 @@ export async function acceptInvitation(
     // round, which is a genuine cycle on paper — two transactions, each
     // holding what the other wants next.
     //
-    // The write below is `linkTeacherStudent` (services/roster-link.ts), one
-    // atomic statement — `createMany` with `skipDuplicates`, which compiles
-    // to `INSERT ... ON CONFLICT DO NOTHING` (#181). That closed a real 409
-    // (a caller that lost the race used to get Prisma's `P2002`), but it did
-    // NOT make the cycle above go away: measured directly (#181 task 1), the
-    // wait edge survives the statement change — `ON CONFLICT DO NOTHING`
-    // still asks Postgres for the row lock against an uncommitted
-    // conflicting tuple, and that wait still participates in deadlock
-    // detection. #179's reorder is what closes this cycle; the new statement
-    // does not close it by itself.
+    // The write below is `linkTeacherStudent`; what it writes and locks is
+    // its own docblock's (`services/roster-link.ts`). Its insert tolerates a
+    // concurrent duplicate rather than answering `P2002` (#181), but that
+    // does NOT remove the cycle above: an insert conflicting with an
+    // uncommitted tuple still waits on it, and that wait still participates
+    // in deadlock detection (measured, #181). #179's reorder is what closes
+    // this cycle.
     //
     // On a pair with no link yet, this call genuinely `INSERT`s, and so does
     // `POST /api/registrations`'s — which reaches the roster link and then
@@ -1413,15 +1410,14 @@ export async function acceptInvitation(
     // remaining window rather than closing it. This is a plain non-locking
     // `SELECT`, so under READ COMMITTED it can only ever say "no block as of
     // now": a block committing between it and this transaction's own commit
-    // is still missed, at any position. Since #265 task 1 that remaining
-    // window is smaller than it used to be: `linkTeacherStudent`
-    // (`services/roster-link.ts`) now takes the `TeacherStudent` row's `FOR
-    // UPDATE` lock unconditionally and holds it for the rest of this
-    // transaction, so `unlinkTeacher`'s own delete of that row can no longer
-    // land between the roster-link write and this re-check — it blocks on
-    // the lock instead, and only proceeds once this transaction has
-    // committed or rolled back (`the roster-link lock now closes this window
-    // — a concurrent unlink blocks until accept commits (#265)`, same file).
+    // is still missed, at any position. The roster-link write narrows it
+    // further: `linkTeacherStudent` (`services/roster-link.ts`) takes the
+    // `TeacherStudent` row's `FOR UPDATE` lock and this transaction holds it
+    // to the end, so `unlinkTeacher`'s own delete of that row cannot land
+    // between the roster-link write and this re-check — it blocks on the
+    // lock and proceeds only once this transaction has committed or rolled
+    // back (`the roster-link lock closes this window — a concurrent unlink
+    // blocks until accept commits (#265)`, same file).
     // What the lock cannot close is the narrower gap inside
     // `linkTeacherStudent` itself, before that lock is taken: its own
     // `createMany` (`INSERT … ON CONFLICT DO NOTHING`) takes no lock against

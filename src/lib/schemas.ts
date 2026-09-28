@@ -635,9 +635,10 @@ export const archiveStateQuerySchema = z.object({
 });
 
 /**
- * `PATCH /api/students/[id]?state=archived`'s optional body: the open payments
- * the teacher confirmed waiving. `archiveStudent` compares them to the pair's
- * open set as a whole, so the bounds here only cap what a request can send.
+ * `PATCH /api/students/[id]?state=archived`'s optional body: the payment ids
+ * the teacher confirmed waiving. Bounds only how many ids a request may send
+ * and how long each may be; which ids a waive accepts is the rule in
+ * `docs/data-model.md` (TeacherStudent).
  */
 export const archiveStudentBodySchema = z.object({
   waivePaymentIds: z.array(z.string().min(1).max(64)).max(500).optional(),

@@ -223,8 +223,7 @@ export async function markPaymentOverdue(
  * Reopening makes the payment outstanding again, so it un-archives the
  * student's link with this teacher too (`docs/data-model.md`, TeacherStudent)
  * — an outstanding payment is not "nothing live". The link's row lock is
- * taken before the payment's CAS, the lock order this plan fixes
- * (`docs/lock-order.md`). A missing link (student never on the roster, or
+ * taken before the payment's CAS, in the order `docs/lock-order.md` fixes. A missing link (student never on the roster, or
  * unlinked since) writes nothing; an `unchanged` reopen leaves the link
  * exactly as it was, since nothing about the payment newly became live.
  */

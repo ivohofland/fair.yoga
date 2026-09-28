@@ -12,7 +12,7 @@ import { formatEuro } from '@/lib/format';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import { lockTeacherStudentLink } from './roster-link';
 
-/** The two reasons an archive is refused. Each message is shown to the teacher verbatim. */
+/** Why an archive is refused. Each message is shown to the teacher verbatim. */
 export type ArchiveRefusal = Extract<
   CodedRefusal,
   { code: 'STUDENT_HAS_UNBILLED_CLASSES' | 'STUDENT_HAS_OUTSTANDING_PAYMENTS' }

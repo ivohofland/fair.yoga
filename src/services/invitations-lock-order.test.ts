@@ -414,9 +414,8 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * `linked`, so `linkTeacherStudent`'s `createMany` resolves against the
    * row already there via `ON CONFLICT DO NOTHING`, taking no lock on that
    * already-committed tuple — but `activateTeacherStudentLink`
-   * (`services/roster-link.ts`, #265 task 1) runs right after it and DOES
-   * take that row's `FOR UPDATE` lock unconditionally, on this already-linked
-   * path too. That still cannot deadlock against `b`'s hand-rolled unlink
+   * (`services/roster-link.ts`) runs right after it and DOES take that
+   * row's `FOR UPDATE` lock, on this already-linked path too. That still cannot deadlock against `b`'s hand-rolled unlink
    * below: both sides reach for `TeacherStudent` before `Invitation` —
    * `acceptInvitation`'s real order (`linkTeacherStudent`, then the CAS) and
    * `b`'s (`deleteMany` on `TeacherStudent`, then `updateMany` on
@@ -468,15 +467,13 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * `linkTeacherStudent`'s own `createMany({...,skipDuplicates:true})`
    * resolves via `ON CONFLICT DO NOTHING` without taking a lock on that
    * already-committed row — only `activateTeacherStudentLink`'s `FOR UPDATE`
-   * right after it does (`services/roster-link.ts`, #265 task 1). That is
-   * still why the tests above hand-roll a synthetic upsert with a non-empty
-   * `update` rather than call the real `linkTeacherStudent`: it reproduces
-   * the lock-taking shape Prisma's OLD upsert compilation reached on its
-   * own, on a fixture that predates task 1's lock, so those tests pin the
-   * `#181`/`#179` write-order property in isolation from it. The fixture
-   * here is unlinked so the recorded write is the lock-taking `INSERT` path
-   * regardless of era — the write whose position actually matters, both
-   * then and now.
+   * right after it does (`services/roster-link.ts`). That is why the tests
+   * above hand-roll a synthetic upsert with a non-empty `update` rather than
+   * call the real `linkTeacherStudent`: it takes the row lock as the write
+   * itself, with no separate `FOR UPDATE` beside it, so those tests pin the
+   * `#181`/`#179` write-order property in isolation from that lock. The
+   * fixture here is unlinked so the recorded write is the lock-taking
+   * `INSERT` path — the write whose position actually matters.
    *
    * The result assertion is `{ ok: true }`, not "did not reject". The
    * previous version only checked that nothing threw, which a version of
@@ -1706,19 +1703,16 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
   }, 15_000);
 
   /**
-   * The narrowest interleaving in this describe, and the one that used to pin
-   * the #537 re-check's POSITION rather than which side of the transaction
-   * boundary it sits on — until #265 task 1 closed the window this test
-   * raced instead. `linkTeacherStudent` (`services/roster-link.ts`) now calls
+   * The narrowest interleaving in this describe: a concurrent `unlinkTeacher`
+   * fired while `acceptInvitation` sits between its roster-link write and its
+   * CAS. `linkTeacherStudent` (`services/roster-link.ts`) calls
    * `activateTeacherStudentLink`, which takes the `TeacherStudent` row's `FOR
-   * UPDATE` lock unconditionally and holds it for the rest of
-   * `acceptInvitation`'s transaction — covering the CAS this test used to
-   * land a concurrent `unlinkTeacher`'s block inside of. `unlinkTeacher`'s
-   * own delete of that row (`docs/lock-order.md`, "The `TeacherStudent` row
-   * is the archive's gate") now blocks behind that lock instead of racing in
-   * ahead of it, so the block this test fires can no longer land between the
+   * UPDATE` lock and holds it for the rest of `acceptInvitation`'s
+   * transaction. `unlinkTeacher`'s own delete of that row
+   * (`docs/lock-order.md`, "The `TeacherStudent` row is the archive's gate")
+   * blocks behind that lock, so the block it writes cannot land between the
    * roster-link write and the CAS — only after `acceptInvitation` has
-   * already committed.
+   * committed.
    *
    * Reproduced directly, not merely asserted: the pause below spies on
    * `linkTeacherStudent` (a cross-module call from `acceptInvitation`, the
@@ -1727,7 +1721,7 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
    * confirms via `pg_stat_activity` that a concurrently-fired `unlinkTeacher`
    * is genuinely BLOCKED behind it before letting `accepting` proceed.
    */
-  it('the roster-link lock now closes this window — a concurrent unlink blocks until accept commits (#265)', async () => {
+  it('the roster-link lock closes this window — a concurrent unlink blocks until accept commits (#265)', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
 
     const lock = pauseAcceptAfterRosterLink(teacherId, studentId);
@@ -1865,8 +1859,8 @@ async function cleanupGateFixture(fx: GateFixture): Promise<void> {
 
 /**
  * Pauses `acceptInvitation` right after its `linkTeacherStudent` call
- * returns — meaning `activateTeacherStudentLink` (`services/roster-link.ts`,
- * #265 task 1) has already taken the `TeacherStudent` row's `FOR UPDATE` lock
+ * returns — meaning `activateTeacherStudentLink` (`services/roster-link.ts`)
+ * has already taken the `TeacherStudent` row's `FOR UPDATE` lock
  * — before any of the transaction's later statements. Spies the CROSS-MODULE
  * call `acceptInvitation` makes into `roster-link.ts`, the same shape
  * `pauseErasureAtGate` below spies `lockStudentForErasure`; a same-module
