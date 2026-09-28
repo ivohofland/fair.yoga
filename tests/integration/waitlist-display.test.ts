@@ -25,15 +25,9 @@ const suffix = uniqueSuffix();
  *
  * - `autoTransitionToInProgress` — its query filters `date: { lte: now + 24h }`,
  *   so a 2099 row is never even fetched.
- * - `autoCancelClasses` — **its query has no date filter either**
- *   (`where: { status: 'open' }`), so these five open rows ARE fetched every 60
- *   seconds and skipped per-class. The `minStudents` pre-filter
- *   (`activeRegistrations >= minStudents → continue`) now saves a fixture
- *   class here once it is filled to capacity, before `inCancelWindow` is even
- *   reached; for one that carries no registrations, `inCancelWindow` — 2099,
- *   nowhere near it — is the backstop instead. Either way nothing here gets
- *   cancelled, and `inCancelWindow` is still the check most likely to bite if
- *   a fixture's date ever drifted toward now.
+ * - `autoCancelClasses` — its query is windowed by `cancelCandidateDates` too
+ *   (`calendarEntry.date` bounded to a span near `now`), so a 2099 row is
+ *   never fetched here either.
  * - `autoCompleteClasses` — EVERY `in_progress` class, no date filter; only the
  *   computed end instant holds it off.
  *
