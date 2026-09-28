@@ -4,13 +4,15 @@ import { runWaitlistReconciliationTick, type SkipReason } from '@/services/waitl
 import { scopeSweep } from './scoped-sweep';
 
 /**
- * Runs the production reconciliation tick narrowed to `classIds` and asserts
- * it skipped every one of them for `reason`.
+ * Runs the production reconciliation tick narrowed to `classIds` (must be
+ * non-empty) and asserts it skipped every one of them for `reason`.
  *
  * Call this after building a fixture that writes a `waiting` `WaitlistEntry`
- * directly and before the test's own action, so a class the running app's
- * scheduler would otherwise promote or broadcast on is caught here instead of
- * silently mutated mid-test. See `docs/test-database.md` §3.4.
+ * directly and before the test's own action. A class the running app's own
+ * scheduler would otherwise promote or broadcast on at some unpredictable
+ * point mid-test does so here instead, under this call's own tick — and the
+ * assertion below fails loudly, rather than the fixture being silently
+ * mutated later by the live app. See `docs/test-database.md` §3.4.
  */
 export async function expectReconciliationSkips(
   prisma: PrismaClient,

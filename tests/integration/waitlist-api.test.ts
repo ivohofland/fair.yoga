@@ -879,10 +879,12 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
     lockClaimClassId = lockClaimClass.id;
 
     // Sweep-reachable like freedSpotClassId above: inside the claim window
-    // with a free seat, so the tick may broadcast on it during the hold
-    // below — a broadcast only sets `Class.spotBroadcastAt`, leaving this
-    // entry `waiting` and creating no registration, so the state asserted
-    // after the 503 does not depend on it (`docs/test-database.md` §3.4).
+    // with a free seat, so the tick may broadcast on it before or after the
+    // hold below (it cannot during: `handleSpotFreed` takes the same `Class`
+    // row lock the hold owns) — a broadcast only sets `Class.spotBroadcastAt`,
+    // leaving this entry `waiting` and creating no registration, so the state
+    // asserted after the 503 does not depend on it (`docs/test-database.md`
+    // §3.4).
     await prisma.waitlistEntry.create({
       data: {
         classId: lockClaimClassId,
