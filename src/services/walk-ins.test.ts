@@ -19,12 +19,26 @@ import {
   resolveWalkInStudent,
   completeWalkIn,
   WalkInRefusedError,
+  type ResolvedWalkIn,
   type WalkInRefusal,
   type WalkInSubject,
 } from './walk-ins';
 
 const prisma = new PrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+/**
+ * `completeWalkIn`'s brand, pinned the way `db-locks.test.ts`'s
+ * `_theBrandRejectsABareClient` pins its own: it passes `tx` straight on to
+ * `linkTeacherStudent`, whose link-row `FOR UPDATE` a bare client would
+ * release at once.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _completeWalkInRejectsABareClient(client: PrismaClient, resolved: ResolvedWalkIn): Promise<void> {
+  const notice = { teacherName: 'x', classType: 'x', dateLabel: 'x' };
+  // @ts-expect-error A bare PrismaClient must never satisfy the brand.
+  await completeWalkIn(client, { teacherId: 'never-called', classId: 'never-called', resolved, notice });
+}
 
 const teacherIds: string[] = [];
 const studentIds: string[] = [];

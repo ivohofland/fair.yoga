@@ -11,7 +11,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { withdrawWaitingEntriesForTeacher } from './waitlist';
-import { linkTeacherStudent } from './roster-link';
+import { linkTeacherStudent, RosterLinkVanishedError } from './roster-link';
 import { lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
@@ -1244,9 +1244,10 @@ export type ResponseOutcome = 'applied' | 'unchanged';
  * for is the ANSWER, not the rollback: the more conservative `NOT_FOUND`
  * for a `pending` row nobody has answered (see the paragraph above).
  * Rolling the roster-link write back is done inside the transaction, by
- * whichever statement gets there first — the CAS and its re-read, for a
- * row whose status has moved, or the re-check, for a block — and neither
- * depends on this guard having run. `declineInvitation` cannot reach this
+ * whichever statement gets there first — the roster-link write itself, for
+ * a link deleted under it; the CAS and its re-read, for a row whose status
+ * has moved; or the re-check, for a block — and none depends on this guard
+ * having run. `declineInvitation` cannot reach this
  * hole at all: its own `TeacherBlock` write is gated behind its own CAS
  * moving this same row to `declined` in the same transaction, so a block
  * it writes is never visible without that status change alongside it —
@@ -1410,21 +1411,13 @@ export async function acceptInvitation(
     // remaining window rather than closing it. This is a plain non-locking
     // `SELECT`, so under READ COMMITTED it can only ever say "no block as of
     // now": a block committing between it and this transaction's own commit
-    // is still missed, at any position. The roster-link write narrows it
-    // further: `linkTeacherStudent` (`services/roster-link.ts`) takes the
-    // `TeacherStudent` row's `FOR UPDATE` lock and this transaction holds it
-    // to the end, so `unlinkTeacher`'s own delete of that row cannot land
-    // between the roster-link write and this re-check — it blocks on the
-    // lock and proceeds only once this transaction has committed or rolled
-    // back (`the roster-link lock closes this window — a concurrent unlink
-    // blocks until accept commits (#265)`, same file).
-    // What the lock cannot close is the narrower gap inside
-    // `linkTeacherStudent` itself, before that lock is taken: its own
-    // `createMany` (`INSERT … ON CONFLICT DO NOTHING`) takes no lock against
-    // an already-committed row, so a block landing in exactly that gap still
-    // reaches this far — which is this re-check's remaining job, pinned by
-    // `a block committed inside the open transaction, after the roster-link
-    // write, is not missed` (same file). Reading `TeacherBlock` after the
+    // is still missed, at any position. How the roster-link write's own lock
+    // narrows it further, and the gap before that lock, are
+    // `docs/lock-order.md` ("The `TeacherStudent` row is the archive's
+    // gate"), pinned in `invitations-lock-order.test.ts` by `the roster-link
+    // lock closes this window — a concurrent unlink blocks until accept
+    // commits (#265)` and `an unlink committed between the roster-link insert
+    // and its lock rolls the accept back`. Reading `TeacherBlock` after the
     // `Invitation` write is also the direction `docs/lock-order.md` names,
     // though a plain `SELECT` takes no lock and joins no wait graph either
     // way.
@@ -1439,6 +1432,9 @@ export async function acceptInvitation(
     if (err instanceof StudentErasedError) return 'STUDENT_ERASED';
     if (err instanceof AcceptMissError) return err.reason;
     if (err instanceof NotPendingError) return 'NOT_PENDING';
+    // The link was deleted between the roster-link write's insert and its
+    // lock; the accept rolled back, and a retry meets the pair as it is now.
+    if (err instanceof RosterLinkVanishedError) return 'CONCURRENT_MODIFICATION';
     throw err;
   });
   if (settled === 'applied' || settled === 'unchanged') return { ok: true, outcome: settled };

@@ -1645,25 +1645,21 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
   }, 15_000);
 
   /**
-   * The same refusal, staged without touching the outside pre-check at all —
-   * which is what makes this a different proof from the tests above that hook
-   * `teacherBlock.findUnique`. In those, the pre-check has fully resolved
-   * before `$transaction` even opens, so an implementation that merely read
-   * `TeacherBlock` a second time on the OUTSIDE would satisfy every one of
-   * them. Here the hook sits on `linkTeacherStudent`'s own
-   * `teacherStudent.createMany` (`roster-link.ts`), a statement that runs
-   * inside the transaction — so the block commits, on a second connection,
-   * while this transaction is open. Only a read that is itself inside can
-   * see it.
-   *
-   * `unlinkTeacher` gets to commit from in there because the roster-link
-   * write ahead of it met the fixture's ALREADY-COMMITTED link row: `INSERT
-   * ... ON CONFLICT DO NOTHING` (#181) takes no lock on a committed
-   * conflicting tuple, so the unlink's own delete of that row waits on
-   * nothing this transaction holds. (Against an UNCOMMITTED one it would
+   * An unlink committed inside the open transaction, in the one gap the
+   * roster-link lock does not cover: the hook sits on `linkTeacherStudent`'s
+   * own `teacherStudent.createMany` (`roster-link.ts`), after the insert and
+   * before its `FOR UPDATE`. The insert met the fixture's ALREADY-COMMITTED
+   * link row, and `INSERT ... ON CONFLICT DO NOTHING` (#181) takes no lock on
+   * a committed conflicting tuple, so the unlink's delete of that row waits
+   * on nothing this transaction holds. (Against an UNCOMMITTED one it would
    * wait — see `acceptInvitation`'s own comment on that statement.)
+   *
+   * The lock then finds no row, `linkTeacherStudent` throws
+   * `RosterLinkVanishedError`, and the accept rolls back before its CAS or
+   * its block re-check run: `CONCURRENT_MODIFICATION`, the invitation still
+   * `pending`, no link.
    */
-  it('a block committed inside the open transaction, after the roster-link write, is not missed', async () => {
+  it('an unlink committed between the roster-link insert and its lock rolls the accept back', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
 
     let handshakeFired = false;
@@ -1691,7 +1687,7 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
     });
 
     expect(handshakeFired).toBe(true);
-    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
+    expect(acceptResult).toEqual({ ok: false, reason: 'CONCURRENT_MODIFICATION' });
     expect(await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId, studentId } },
     })).toBeNull();

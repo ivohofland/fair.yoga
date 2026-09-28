@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { TransactionClientOnly } from '@/lib/db-locks';
 
 /**
  * What a `linkTeacherStudent` call did to the roster.
@@ -53,15 +54,37 @@ export type LinkOutcome = 'created' | 'already-linked';
  *
  * Also un-archives the pair, under the link row's own lock — see
  * `activateTeacherStudentLink` below.
+ *
+ * Throws `RosterLinkVanishedError` when that lock finds no row: the insert
+ * above met a committed link and so took no lock on it, and the link was
+ * deleted before the lock was taken. The caller's transaction rolls back
+ * rather than committing its act with no link beside it. It does not
+ * re-insert: the delete is an unlink or an erasure, and a link recreated
+ * here would override it (`docs/lock-order.md`, "The `TeacherStudent` row is
+ * the archive's gate").
  */
 export async function linkTeacherStudent(
-  tx: Prisma.TransactionClient,
+  tx: TransactionClientOnly,
   pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
 ): Promise<LinkOutcome> {
   const { count } = await tx.teacherStudent.createMany({ data: [pair], skipDuplicates: true });
   const outcome = count === 1 ? 'created' : 'already-linked';
-  await activateTeacherStudentLink(tx, pair);
+  if ((await activateTeacherStudentLink(tx, pair)) === 'missing') {
+    throw new RosterLinkVanishedError(pair);
+  }
   return outcome;
+}
+
+/**
+ * The pair's link was deleted between `linkTeacherStudent`'s insert and its
+ * row lock. Thrown to roll the caller's transaction back; each route that
+ * reaches `linkTeacherStudent` answers it `CONCURRENT_MODIFICATION`.
+ */
+export class RosterLinkVanishedError extends Error {
+  constructor(readonly pair: { teacherId: string; studentId: string }) {
+    super(`roster link for teacher ${pair.teacherId} and student ${pair.studentId} was deleted while being linked`);
+    this.name = 'RosterLinkVanishedError';
+  }
 }
 
 /** The shape `lockTeacherStudentLink` returns for an existing row: its id and whether it is archived. */
@@ -80,7 +103,7 @@ export type LinkActivation = 'active' | 'reactivated' | 'missing';
  * `TeacherStudent` row is the archive's gate").
  */
 export async function activateTeacherStudentLink(
-  tx: Prisma.TransactionClient,
+  tx: TransactionClientOnly,
   pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
 ): Promise<LinkActivation> {
   const row = await lockTeacherStudentLink(tx, pair);
@@ -92,7 +115,7 @@ export async function activateTeacherStudentLink(
 
 /** The link row, locked for this transaction; `null` when the pair has none. Writes nothing. */
 export async function lockTeacherStudentLink(
-  tx: Prisma.TransactionClient,
+  tx: TransactionClientOnly,
   pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
 ): Promise<LockedLink | null> {
   const rows = await tx.$queryRaw<LockedLink[]>`

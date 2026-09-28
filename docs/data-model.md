@@ -170,7 +170,7 @@ every teacher-facing route.
 | **Constraints** | | |
 | unique | (teacher_id, student_id) | One link per pair; `linkTeacherStudent`'s `ON CONFLICT DO NOTHING` relies on it |
 
-**Who creates a link.** Never the teacher alone. The rule, and its one exception, are stated under Invitation (below) — "A teacher may not link themselves to a student unilaterally" and Walk-ins — and nothing in this section adds a writer. Every application insert goes through `linkTeacherStudent` (`src/services/roster-link.ts`); `activateTeacherStudentLink` beside it never inserts, so a path that must not create a link (the teacher's own roster add) calls that one instead.
+**Who creates a link.** Never the teacher alone. The rule, and its one exception, are stated under Invitation (below) — "A teacher may not link themselves to a student unilaterally" and Walk-ins — and nothing in this section adds a writer. Every application insert goes through `linkTeacherStudent` (`src/services/roster-link.ts`); `activateTeacherStudentLink` beside it never inserts, so a path that must not create a link (the teacher's own roster add) calls that one instead. A `linkTeacherStudent` call whose link is deleted between its insert and its row lock throws `RosterLinkVanishedError` and its act rolls back rather than re-inserting over the unlink (`docs/lock-order.md`, "The gap before the lock").
 
 **The invariant: an archived link has nothing live.** For the pair `(teacher, student)`, nothing is live when neither of these exists:
 

@@ -20,7 +20,7 @@ import { formatDayHeader } from '@/lib/format';
 import { createBulkNotifications } from '@/services/notifications';
 import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
 import { resolveInvitationOnLink } from '@/services/link-consent';
-import { activateTeacherStudentLink, linkTeacherStudent } from '@/services/roster-link';
+import { activateTeacherStudentLink, linkTeacherStudent, RosterLinkVanishedError } from '@/services/roster-link';
 import {
   resolveWalkInStudent,
   completeWalkIn,
@@ -509,6 +509,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
     if (err instanceof NotInRosterError) {
       return respondError('Student is not in your roster', 403);
+    }
+    // The link was deleted while this booking linked the pair; the booking
+    // rolled back. A walk-in is the teacher's request, a self-booking the
+    // student's own.
+    if (err instanceof RosterLinkVanishedError) {
+      return target.kind === 'walkIn'
+        ? respondRefusal(WALK_IN_REFUSALS.CONCURRENT_MODIFICATION)
+        : respondError(
+            'Your link with this teacher changed while you were booking — try again.',
+            409,
+            'CONCURRENT_MODIFICATION',
+          );
     }
     // This check matches the column set of `Registration @@unique([classId,
     // studentId])`, met when a twin request booked this student into this

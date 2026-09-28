@@ -136,7 +136,7 @@ A new function in `services/roster-link.ts`, alongside `linkTeacherStudent`:
 ```ts
 export type LinkActivation = 'active' | 'reactivated' | 'missing';
 export async function activateTeacherStudentLink(
-  tx: Prisma.TransactionClient,
+  tx: TransactionClientOnly,
   pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
 ): Promise<LinkActivation>
 ```
@@ -149,7 +149,7 @@ Callers:
 
 | Act | Where | How |
 |---|---|---|
-| Self-booking, walk-in, waitlist join/promote/claim, invitation accept | the six `linkTeacherStudent` callers | `linkTeacherStudent` calls `activateTeacherStudentLink` after its insert; its own return value (`LinkOutcome`) is unchanged, so `resolveInvitationOnLink` is untouched |
+| Self-booking, walk-in, waitlist join/promote/claim, invitation accept | the six `linkTeacherStudent` callers | `linkTeacherStudent` calls `activateTeacherStudentLink` after its insert; its own return value (`LinkOutcome`) is unchanged, so `resolveInvitationOnLink` is untouched. `'missing'` there (the link deleted between the insert and the lock) throws `RosterLinkVanishedError`, rolling the act back; each route answers it 409 `CONCURRENT_MODIFICATION` (`docs/lock-order.md`, "The gap before the lock") |
 | Teacher roster add | `POST /api/registrations`, roster subject, inside the transaction after the registration write | calls `activateTeacherStudentLink` directly; `'missing'` refuses 403 `Student is not in your roster` and rolls back. The pre-transaction check stays as the cheap early answer |
 | Reopening a payment | `reopenPayment` (`services/payments.ts:222`) | becomes a transaction: read the payment's `(teacher, student)`, lock the link, then the existing CAS; on `applied`, the link is reactivated. `'missing'` (student unlinked) does not refuse — money can be owed without a link (`unlinkTeacher`'s docblock) |
 

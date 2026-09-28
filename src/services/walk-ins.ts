@@ -18,6 +18,7 @@ import type { InvitationStatus, Prisma } from '@prisma/client';
 import type { z } from 'zod';
 import { requireNormalised, type createInvitationSchema } from '@/lib/schemas';
 import { isErasedAddress } from '@/lib/erased-address';
+import type { TransactionClientOnly } from '@/lib/db-locks';
 import { linkTeacherStudent } from './roster-link';
 import { createBulkNotifications } from './notifications';
 
@@ -151,7 +152,7 @@ function names(c: { email: string; firstName: string; lastName: string }) {
 }
 
 export async function completeWalkIn(
-  tx: Prisma.TransactionClient,
+  tx: TransactionClientOnly,
   input: { teacherId: string; classId: string; resolved: ResolvedWalkIn; notice: WalkInNotice },
 ): Promise<void> {
   const { teacherId, resolved } = input;

@@ -12,6 +12,7 @@ import {
 import type { CodeWithStatus } from '@/lib/api-error-codes';
 import { claimWaitlistSchema } from '@/lib/schemas';
 import { claimSpot, WaitlistPromotionError } from '@/services/waitlist';
+import { RosterLinkVanishedError } from '@/services/roster-link';
 
 /** The code each claim refusal is sent with. The message is the service's own. */
 const CLAIM_REFUSAL_CODE = {
@@ -61,6 +62,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   } catch (err) {
     if (err instanceof WaitlistPromotionError) {
       return respondError(err.message, 409, CLAIM_REFUSAL_CODE[err.reason]);
+    }
+    // The link was deleted while the claim linked the pair; the claim rolled back.
+    if (err instanceof RosterLinkVanishedError) {
+      return respondError(
+        'Your link with this teacher changed while you were claiming this spot — try again.',
+        409,
+        'CONCURRENT_MODIFICATION',
+      );
     }
     throw err;
   }

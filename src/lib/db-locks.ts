@@ -42,6 +42,13 @@ import { ClassStatus, Prisma } from '@prisma/client';
  *          `transitionClass`). On a bare client that trust is silently void —
  *          the close would commit in its own autocommit transaction, separate
  *          from the status flip it must be atomic with.
+ *   adopt  `lockTeacherStudentLink`, `activateTeacherStudentLink` and
+ *          `linkTeacherStudent` (`roster-link.ts`) — each issues, or calls
+ *          the function that issues, a `FOR UPDATE` of the pair's
+ *          `TeacherStudent` row (#265).
+ *   adopt  `completeWalkIn` (`walk-ins.ts`) — issues nothing itself and
+ *          passes `tx` straight on to `linkTeacherStudent`, the same reason
+ *          the per-family claim names above are branded.
  *   skip   `activateRegistration`, `hasActiveRegistration` and
  *          `reorderWaitingEntries` (`waitlist.ts`), and
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a

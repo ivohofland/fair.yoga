@@ -2,7 +2,8 @@
  * @serial-tier lock-contention — its insert-race test holds a transaction open
  * on an external release signal, for 200ms+, while a concurrent
  * `linkTeacherStudent` contends for the same uncommitted
- * `(teacherId, studentId)` tuple.
+ * `(teacherId, studentId)` tuple; its vanished-link test holds the link row's
+ * lock while a linker queues behind it.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
@@ -11,10 +12,29 @@ import {
   linkTeacherStudent,
   activateTeacherStudentLink,
   lockTeacherStudentLink,
+  RosterLinkVanishedError,
   type LinkOutcome,
 } from './roster-link';
 
 const prisma = new PrismaClient();
+/** Holds the link row's lock while `prisma` runs the linker and observes. */
+const holder = new PrismaClient();
+
+/**
+ * The brand's compile-time pin, one directive per function, in the pattern
+ * `db-locks.test.ts`'s `_theBrandRejectsABareClient` sets out: each takes the
+ * link row's `FOR UPDATE`, which a bare client would release at once.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _rosterLinkRejectsABareClient(client: PrismaClient): Promise<void> {
+  const pair = { teacherId: 'never-called', studentId: 'never-called' };
+  // @ts-expect-error `FOR UPDATE` on the link row, released at once off a bare client.
+  await lockTeacherStudentLink(client, pair);
+  // @ts-expect-error Takes that lock, then clears `isArchived` under it.
+  await activateTeacherStudentLink(client, pair);
+  // @ts-expect-error Its insert, then the lock above.
+  await linkTeacherStudent(client, pair);
+}
 
 const teacherIds: string[] = [];
 const studentIds: string[] = [];
@@ -34,6 +54,7 @@ afterAll(async () => {
     await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   }
   await prisma.$disconnect();
+  await holder.$disconnect();
 });
 
 async function makeUnlinkedPair() {
@@ -79,7 +100,7 @@ describe('linkTeacherStudent', () => {
   it('creates the link when there is none', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
 
-    const outcome = await linkTeacherStudent(prisma, { teacherId, studentId });
+    const outcome = await prisma.$transaction((tx) => linkTeacherStudent(tx, { teacherId, studentId }));
 
     expect(outcome).toBe('created');
     const link = await prisma.teacherStudent.findUnique({
@@ -90,12 +111,12 @@ describe('linkTeacherStudent', () => {
 
   it('is a no-op when the link already exists, and does not disturb it', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
-    await linkTeacherStudent(prisma, { teacherId, studentId });
+    await prisma.$transaction((tx) => linkTeacherStudent(tx, { teacherId, studentId }));
     const first = await prisma.teacherStudent.findUniqueOrThrow({
       where: { teacherId_studentId: { teacherId, studentId } },
     });
 
-    const outcome = await linkTeacherStudent(prisma, { teacherId, studentId });
+    const outcome = await prisma.$transaction((tx) => linkTeacherStudent(tx, { teacherId, studentId }));
 
     expect(outcome).toBe('already-linked');
     const second = await prisma.teacherStudent.findUniqueOrThrow({
@@ -108,7 +129,7 @@ describe('linkTeacherStudent', () => {
   it('un-archives an existing archived link, and still reports it as already-linked', async () => {
     const { teacherId, studentId } = await makeLinkedPair(true);
 
-    const outcome = await linkTeacherStudent(prisma, { teacherId, studentId });
+    const outcome = await prisma.$transaction((tx) => linkTeacherStudent(tx, { teacherId, studentId }));
 
     expect(outcome).toBe('already-linked');
     const link = await prisma.teacherStudent.findUniqueOrThrow({
@@ -150,7 +171,7 @@ describe('linkTeacherStudent', () => {
     }, { timeout: 15_000 });
 
     await inserted;
-    const loser = linkTeacherStudent(prisma, { teacherId, studentId });
+    const loser = prisma.$transaction((tx) => linkTeacherStudent(tx, { teacherId, studentId }));
     await new Promise((r) => setTimeout(r, 200));
     releaseHolder();
 
@@ -161,13 +182,79 @@ describe('linkTeacherStudent', () => {
     const links = await prisma.teacherStudent.findMany({ where: { teacherId, studentId } });
     expect(links).toHaveLength(1);
   }, 30_000);
+
+  /**
+   * The link is deleted between the linker's insert and its row lock. A
+   * holder takes the row's `FOR UPDATE` first: the linker's `INSERT … ON
+   * CONFLICT DO NOTHING` meets a committed row whose lock is only a lock, so
+   * it passes without waiting, and the linker parks on its own `FOR UPDATE`.
+   * The holder then deletes the row and commits, which leaves the lock
+   * returning nothing. The caller's earlier write in the same transaction
+   * must roll back with it.
+   */
+  it('throws RosterLinkVanishedError, rolling the caller back, when the link is deleted before its lock', async () => {
+    const { teacherId, studentId } = await makeLinkedPair(false);
+    const WAIT_MS = 1_500;
+
+    let holderPid = 0;
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => { locked = r; });
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const holding = holder.$transaction(async (tx) => {
+      const [own] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+      if (own === undefined) throw new Error('pg_backend_pid returned no row');
+      holderPid = own.pid;
+      if ((await lockTeacherStudentLink(tx, { teacherId, studentId })) === null) {
+        throw new Error('fixture link missing');
+      }
+      locked();
+      await released;
+      await tx.teacherStudent.delete({ where: { teacherId_studentId: { teacherId, studentId } } });
+    }, { timeout: 10_000 });
+    await isLocked;
+
+    const linking = prisma.$transaction(async (tx) => {
+      await tx.student.update({ where: { id: studentId }, data: { firstName: 'Written' } });
+      return linkTeacherStudent(tx, { teacherId, studentId });
+    }, { timeout: 10_000 });
+    const linked = linking.then(
+      (value) => ({ kind: 'resolved' as const, value }),
+      (err: unknown) => ({ kind: 'rejected' as const, err }),
+    );
+
+    let waited = false;
+    try {
+      const deadline = Date.now() + WAIT_MS;
+      while (!waited && Date.now() < deadline) {
+        const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock'
+             AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+        waited = (row?.n ?? 0) > 0;
+        if (!waited) await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      release();
+      await holding;
+    }
+
+    const result = await linked;
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: studentId }, select: { firstName: true } });
+    expect({
+      waited,
+      threw: result.kind === 'rejected' && result.err instanceof RosterLinkVanishedError,
+      firstName: student.firstName,
+      links: await prisma.teacherStudent.count({ where: { teacherId, studentId } }),
+    }).toEqual({ waited: true, threw: true, firstName: 'Roster', links: 0 });
+  }, 30_000);
 });
 
 describe('activateTeacherStudentLink', () => {
   it('reactivates an archived link and reports it', async () => {
     const { teacherId, studentId } = await makeLinkedPair(true);
 
-    const result = await activateTeacherStudentLink(prisma, { teacherId, studentId });
+    const result = await prisma.$transaction((tx) => activateTeacherStudentLink(tx, { teacherId, studentId }));
 
     expect(result).toBe('reactivated');
     const link = await prisma.teacherStudent.findUniqueOrThrow({
@@ -182,7 +269,7 @@ describe('activateTeacherStudentLink', () => {
       where: { teacherId_studentId: { teacherId, studentId } },
     });
 
-    const result = await activateTeacherStudentLink(prisma, { teacherId, studentId });
+    const result = await prisma.$transaction((tx) => activateTeacherStudentLink(tx, { teacherId, studentId }));
 
     expect(result).toBe('active');
     const after = await prisma.teacherStudent.findUniqueOrThrow({
@@ -195,7 +282,7 @@ describe('activateTeacherStudentLink', () => {
   it('reports a missing pair and creates no row', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
 
-    const result = await activateTeacherStudentLink(prisma, { teacherId, studentId });
+    const result = await prisma.$transaction((tx) => activateTeacherStudentLink(tx, { teacherId, studentId }));
 
     expect(result).toBe('missing');
     const count = await prisma.teacherStudent.count({ where: { teacherId, studentId } });
@@ -207,7 +294,7 @@ describe('lockTeacherStudentLink', () => {
   it('returns the row for an existing pair, and never changes isArchived', async () => {
     const { teacherId, studentId } = await makeLinkedPair(true);
 
-    const locked = await lockTeacherStudentLink(prisma, { teacherId, studentId });
+    const locked = await prisma.$transaction((tx) => lockTeacherStudentLink(tx, { teacherId, studentId }));
 
     expect(locked).not.toBeNull();
     expect(locked!.isArchived).toBe(true);
@@ -220,7 +307,7 @@ describe('lockTeacherStudentLink', () => {
   it('returns null for a pair with no row', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
 
-    const locked = await lockTeacherStudentLink(prisma, { teacherId, studentId });
+    const locked = await prisma.$transaction((tx) => lockTeacherStudentLink(tx, { teacherId, studentId }));
 
     expect(locked).toBeNull();
   });
