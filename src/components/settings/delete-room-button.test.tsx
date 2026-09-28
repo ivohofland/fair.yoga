@@ -36,6 +36,7 @@ describe('DeleteRoomButton', () => {
 
   afterEach(() => {
     fetchMock.mockReset();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     Object.defineProperty(window, 'location', { value: realLocation, writable: true });
   });
@@ -166,10 +167,12 @@ describe('DeleteRoomButton', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('reports a network failure rather than falling silent', async () => {
+  it('reports a network failure rather than falling silent, and keeps the error', async () => {
     const assign = stubLocation();
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     render(<DeleteRoomButton roomId="room-1" roomName="Sunrise Studio" />);
     openConfirm();
@@ -179,5 +182,37 @@ describe('DeleteRoomButton', () => {
       expect(screen.getByText('Network error. Please try again.')).toBeInTheDocument(),
     );
     expect(assign).not.toHaveBeenCalled();
+    // The rejection is the only record of why the request never landed.
+    expect(consoleError).toHaveBeenCalledWith(expect.any(String), offline);
+  });
+
+  // A proxy's HTML 502 or a truncated body is a server failure, not a network
+  // one: the request reached a server, so "check your connection" sends the
+  // teacher retrying against something retrying cannot fix.
+  it('does not call a non-JSON server failure a network error', async () => {
+    const assign = stubLocation();
+    fetchMock.mockResolvedValue(
+      new Response('<html><body>502 Bad Gateway</body></html>', {
+        status: 502,
+        headers: { 'Content-Type': 'text/html' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(<DeleteRoomButton roomId="room-1" roomName="Sunrise Studio" />);
+    openConfirm();
+    confirmDelete();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Failed to delete room. Please try again.',
+    );
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      'API error response body could not be read',
+      expect.objectContaining({ status: 502 }),
+    );
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
   });
 });
