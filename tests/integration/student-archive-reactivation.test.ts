@@ -10,7 +10,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { BASE_URL, cookie, freshIp, seedSession, teardownStudent, uniqueSuffix } from '../helpers';
 import { createClassFixture, slotTime } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { expectApplied } from '../api-assertions';
+import { expectApplied, expectRefusal } from '../api-assertions';
 
 const prisma = new PrismaClient();
 /** Holds a transaction open while `prisma` observes and seeds. */
@@ -335,5 +335,66 @@ describe('every act that makes something live un-archives the roster link (#265)
       status: res.status,
       registrations: await prisma.registration.count({ where: { classId, studentId } }),
     }).toEqual({ waited: true, status: 403, registrations: 0 });
+  }, 30_000);
+
+  // `linkTeacherStudent`'s own gap: the holder takes the link row's lock, so
+  // the booking's `INSERT … ON CONFLICT DO NOTHING` passes the committed row
+  // and the request parks on its `FOR UPDATE`. Deleting the row and
+  // committing leaves that lock returning none. Same timing bound as the
+  // roster-add case above.
+  it('a self-booking whose link is deleted while it waits on the link answers CONCURRENT_MODIFICATION, no registration', async () => {
+    const { studentId, token } = await makeArchivedStudent();
+    const classId = await makeClass(5);
+    const WAIT_MS = 1_500;
+
+    let holderPid = 0;
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => { locked = r; });
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const holding = holder.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const [own] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+        if (own === undefined) throw new Error('pg_backend_pid returned no row');
+        holderPid = own.pid;
+        await tx.$queryRaw`
+          SELECT id FROM "TeacherStudent"
+           WHERE "teacherId" = ${teacherId} AND "studentId" = ${studentId}
+           FOR UPDATE`;
+        locked();
+        await released;
+        await tx.$executeRaw`
+          DELETE FROM "TeacherStudent"
+           WHERE "teacherId" = ${teacherId} AND "studentId" = ${studentId}`;
+      },
+      { timeout: 10_000 },
+    );
+    await isLocked;
+
+    const booking = fetch(`${BASE_URL}/api/registrations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token), ...freshIp() },
+      body: JSON.stringify({ classId }),
+    });
+    let waited = false;
+    try {
+      const deadline = Date.now() + WAIT_MS;
+      while (!waited && Date.now() < deadline) {
+        const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock'
+             AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+        waited = (row?.n ?? 0) > 0;
+        if (!waited) await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      release();
+      await holding;
+    }
+
+    const res = await booking;
+    expect(waited).toBe(true);
+    await expectRefusal(res, 'CONCURRENT_MODIFICATION');
+    expect(await prisma.registration.count({ where: { classId, studentId } })).toBe(0);
   }, 30_000);
 });

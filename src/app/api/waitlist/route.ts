@@ -11,6 +11,7 @@ import {
 } from '@/lib/api-utils';
 import type { CodeWithStatus } from '@/lib/api-error-codes';
 import { addToWaitlist, WaitlistJoinError } from '@/services/waitlist';
+import { RosterLinkVanishedError } from '@/services/roster-link';
 import { createWaitlistSchema } from '@/lib/schemas';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
@@ -76,6 +77,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   } catch (err) {
     if (err instanceof WaitlistJoinError) {
       return respondError(err.message, 409, JOIN_REFUSAL_CODE[err.reason]);
+    }
+    // The link was deleted while the join linked the pair; the join rolled back.
+    if (err instanceof RosterLinkVanishedError) {
+      return respondError(
+        'Your link with this teacher changed while you were joining the waitlist — try again.',
+        409,
+        'CONCURRENT_MODIFICATION',
+      );
     }
     throw err;
   }
