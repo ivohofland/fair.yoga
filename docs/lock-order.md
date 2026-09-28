@@ -1549,10 +1549,23 @@ callers — the cancel route's `promoteAfterCancel`, the erasure's post-commit
 loop and the waitlist-reconciliation sweep — log a failure per class and
 carry on.
 
-`acceptInvitation`'s `TeacherBlock` re-check is the last statement of its
-transaction and so still narrows what is left: a block committed after the
-roster-link write without deleting the link, which neither the lock nor
-this error can see.
+What neither the lock nor this error can see is an unlink committed before
+the insert: after `acceptInvitation`'s outside `TeacherBlock` pre-check, and
+either before its transaction opens or inside it ahead of the roster-link
+write. The link is gone by then, so the insert genuinely creates it
+(`'created'`, no throw), the lock finds that new row, and on a `delivered:
+false` invitation the unlink leaves `pending` (#502) the CAS succeeds too.
+`acceptInvitation`'s in-transaction `TeacherBlock` re-check, the last
+statement of its transaction, is what refuses that accept — it must read
+inside the transaction; a read before `$transaction` opens misses an unlink
+landing inside it. Pinned by `src/services/invitations-lock-order.test.ts`'s
+"an unlink committed inside the transaction before the roster-link insert
+is refused by the in-transaction block re-check", which commits a real
+`unlinkTeacher` from a hook on the insert before letting it run. Measured on
+2026-09-28 by moving the re-check to a read just before `$transaction`:
+that case fails with `{ ok: true, outcome: 'applied' }`, a link and an
+`accepted` invitation; the two cases that commit the unlink from the
+pre-check's own read stay green, since both reads come after it.
 
 Pinned in `src/services/roster-link.test.ts` ("throws
 RosterLinkVanishedError, rolling the caller back, when the link is deleted

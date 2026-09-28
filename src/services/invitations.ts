@@ -1411,13 +1411,12 @@ export async function acceptInvitation(
     // remaining window rather than closing it. This is a plain non-locking
     // `SELECT`, so under READ COMMITTED it can only ever say "no block as of
     // now": a block committing between it and this transaction's own commit
-    // is still missed, at any position. How the roster-link write's own lock
-    // narrows it further, and the gap before that lock, are
-    // `docs/lock-order.md` ("The `TeacherStudent` row is the archive's
-    // gate"), pinned in `invitations-lock-order.test.ts` by `the roster-link
-    // lock closes this window — a concurrent unlink blocks until accept
-    // commits (#265)` and `an unlink committed between the roster-link insert
-    // and its lock rolls the accept back`. Reading `TeacherBlock` after the
+    // is still missed, at any position. It must read inside the transaction:
+    // an unlink committed in here before the roster-link insert is caught by
+    // nothing else. Which unlinks the roster-link write's own lock and
+    // `RosterLinkVanishedError` catch instead, and which reach this re-check,
+    // are `docs/lock-order.md` ("The gap before the lock"), with the tests
+    // that pin each. Reading `TeacherBlock` after the
     // `Invitation` write is also the direction `docs/lock-order.md` names,
     // though a plain `SELECT` takes no lock and joins no wait graph either
     // way.
