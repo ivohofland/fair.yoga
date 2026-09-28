@@ -177,8 +177,8 @@ async function makeOtherTeacherClass(maxStudents: number, startTime: string): Pr
  * Owned by `claimWindowTeacherId`, whose zone is UTC, so the wall slot below
  * names exactly one instant. On the owner teacher's Europe/Amsterdam the
  * fall-back night repeats an hour, `classStartInstant` resolves a repeated
- * wall time to its later instant, and a class built in that hour would start
- * an hour later than asked, outside the claim window.
+ * wall time to its later instant, and a class asked for inside the first pass
+ * of that hour would start an hour later than asked, outside the claim window.
  *
  * Two of these must land on different start minutes, since the fixture is one
  * minute long and `CalendarEntry_teacher_slot_excl` refuses an overlap on the
@@ -336,16 +336,16 @@ afterAll(async () => {
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [ownerId, otherTeacherId] } } });
-  // Guarded: assigned in `beforeAll`, and a filter on an unassigned id would
-  // be dropped by Prisma and match every row.
+  // Guarded, like `ownerId` below: assigned in `beforeAll`, and a filter on
+  // an unassigned id would be dropped by Prisma and match every row.
   if (claimWindowTeacherId) {
     await prisma.teacherRoom.deleteMany({ where: { teacherId: claimWindowTeacherId } });
-    // A self-booking links the booker to this teacher and notifies them.
+    // A self-booking links the booker to this teacher and notifies the teacher.
     await prisma.teacherStudent.deleteMany({ where: { teacherId: claimWindowTeacherId } });
     await prisma.notification.deleteMany({ where: { recipientId: claimWindowTeacherId } });
   }
   await prisma.room.delete({ where: { id: roomId } });
-  await prisma.teacherStudent.deleteMany({ where: { teacherId: ownerId } });
+  if (ownerId) await prisma.teacherStudent.deleteMany({ where: { teacherId: ownerId } });
   const studentAccounts = await prisma.student.findMany({
     where: { id: { in: studentIds } },
     select: { accountId: true },
