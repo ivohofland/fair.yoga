@@ -88,6 +88,21 @@ describe('ArchiveStudentButton', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('moves focus to Waive and archive when the confirm opens', () => {
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+
+      expect(screen.getByRole('button', { name: 'Waive and archive' })).toHaveFocus();
+    });
+
     it('names a single payment in the singular', () => {
       render(
         <ArchiveStudentButton
@@ -105,7 +120,7 @@ describe('ArchiveStudentButton', () => {
       ).toBeInTheDocument();
     });
 
-    it('Keep closes the confirm with no request', () => {
+    it('Cancel closes the confirm with no request, returning focus to the main button', () => {
       render(
         <ArchiveStudentButton
           studentId="st-1"
@@ -116,10 +131,10 @@ describe('ArchiveStudentButton', () => {
       );
 
       fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
       expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Archive student' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Archive student' })).toHaveFocus();
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -181,7 +196,10 @@ describe('ArchiveStudentButton', () => {
       // The confirm closes rather than retrying the stale ids — it reopens
       // with fresh numbers on the next tap of the main button.
       expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Archive student' })).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Archive student' })).toHaveFocus());
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'What this student owes has changed — now €50.00 across 2 payments. Check it and try again.',
+      );
     });
 
     it('reopening the confirm after a refusal clears the old error', async () => {
@@ -211,7 +229,26 @@ describe('ArchiveStudentButton', () => {
       expect(screen.queryByText(staleMessage)).not.toBeInTheDocument();
     });
 
-    it('Keep is disabled while the waive is in flight', async () => {
+    it('a network error keeps the confirm open and announces itself', async () => {
+      fetchMock.mockRejectedValue(new Error('offline'));
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Waive and archive' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
+      expect(screen.getByRole('button', { name: 'Waive and archive' })).toBeInTheDocument();
+    });
+
+    it('Cancel is disabled while the waive is in flight', async () => {
       let answer!: (res: { ok: boolean }) => void;
       fetchMock.mockReturnValue(new Promise((r) => { answer = r; }));
       vi.stubGlobal('fetch', fetchMock);
@@ -228,7 +265,7 @@ describe('ArchiveStudentButton', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Waive and archive' }));
 
       expect(await screen.findByRole('button', { name: 'Archiving...' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Keep' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 
       answer({ ok: true });
       await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/students'));
@@ -242,7 +279,7 @@ describe('ArchiveStudentButton', () => {
       json: async () => ({
         error: {
           code: 'STUDENT_HAS_OUTSTANDING_PAYMENTS',
-          message: 'This student still owes €20.00 across 1 payment. Waive it to archive.',
+          message: 'This student still owes €20.00 across 1 payment. Tap Archive student again to waive it and archive.',
         },
       }),
     });
@@ -266,7 +303,7 @@ describe('ArchiveStudentButton', () => {
       }),
     );
     expect(
-      await screen.findByText('This student still owes €20.00 across 1 payment. Waive it to archive.'),
+      await screen.findByText('This student still owes €20.00 across 1 payment. Tap Archive student again to waive it and archive.'),
     ).toBeInTheDocument();
     expect(routerRefresh).toHaveBeenCalled();
     expect(routerPush).not.toHaveBeenCalled();
@@ -303,6 +340,9 @@ describe('ArchiveStudentButton', () => {
     expect(routerRefresh).not.toHaveBeenCalled();
     expect(routerPush).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "This student is booked on 1 class that hasn't been billed yet. Remove them from it, or archive once it's completed.",
+    );
   });
 
   /**
