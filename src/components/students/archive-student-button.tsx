@@ -87,6 +87,8 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
       void handleArchive();
       return;
     }
+    // A fresh confirm: the last refusal's message was about the offer it closed.
+    setError('');
     setConfirming(true);
   }
 
@@ -105,7 +107,7 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
           >
             {loading ? 'Archiving...' : 'Waive and archive'}
           </Button>
-          <Button variant="secondary" onClick={() => setConfirming(false)}>
+          <Button variant="secondary" onClick={() => setConfirming(false)} disabled={loading}>
             Keep
           </Button>
         </div>
