@@ -183,6 +183,56 @@ describe('ArchiveStudentButton', () => {
       expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Archive student' })).toBeInTheDocument();
     });
+
+    it('reopening the confirm after a refusal clears the old error', async () => {
+      const staleMessage = 'What this student owes has changed — now €50.00 across 2 payments. Check it and try again.';
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 'STUDENT_HAS_OUTSTANDING_PAYMENTS', message: staleMessage } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Waive and archive' }));
+      expect(await screen.findByText(staleMessage)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+
+      expect(screen.getByRole('button', { name: 'Waive and archive' })).toBeInTheDocument();
+      expect(screen.queryByText(staleMessage)).not.toBeInTheDocument();
+    });
+
+    it('Keep is disabled while the waive is in flight', async () => {
+      let answer!: (res: { ok: boolean }) => void;
+      fetchMock.mockReturnValue(new Promise((r) => { answer = r; }));
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={outstanding}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Waive and archive' }));
+
+      expect(await screen.findByRole('button', { name: 'Archiving...' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Keep' })).toBeDisabled();
+
+      answer({ ok: true });
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/students'));
+    });
   });
 
   it('a prop stale in the other direction: nothing outstanding sends the plain PATCH, and a 409 STUDENT_HAS_OUTSTANDING_PAYMENTS back still refreshes', async () => {
