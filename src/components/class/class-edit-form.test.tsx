@@ -4,6 +4,7 @@ import { renderToStaticMarkup, renderToString } from 'react-dom/server';
 import { hydrateRoot } from 'react-dom/client';
 import { act } from 'react';
 import { todayLocal } from '@/lib/format';
+import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { routerRefresh } from '../../../tests/setup/components';
 import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
 
@@ -179,6 +180,70 @@ describe('ClassEditForm', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent(copy);
     },
   );
+
+  /**
+   * #702. The number inputs store `Number(value)`, so a cleared one is `0`.
+   * Every bound `updateClassSchema` puts on a number field is refused before
+   * the request leaves. Duration is a detail, sent and checked at any lock
+   * state. Room cost and the student counts are economics, checked only while
+   * unlocked, since locked economics are never sent.
+   */
+  it.each([
+    ['a cleared duration', 'Duration (minutes)', '', false, /^Duration must be positive$/],
+    ['a cleared duration, settings locked', 'Duration (minutes)', '', true, /^Duration must be positive$/],
+    ['a fractional duration', 'Duration (minutes)', '60.5', false, /^Duration must be whole minutes$/],
+    ['a negative room cost', 'Room cost (€)', '-5', false, /^Room cost cannot be negative$/],
+    ['a cleared min students', 'Min students', '', false, /^Min students must be at least 1$/],
+    ['a fractional min students', 'Min students', '2.5', false, /^Min students must be a whole number$/],
+    ['a cleared max students', 'Max students', '', false, /^Max students must be at least 1$/],
+    ['a fractional max students', 'Max students', '12.5', false, /^Max students must be a whole number$/],
+    [
+      'a max students over the class size limit',
+      'Max students',
+      String(MAX_CLASS_SIZE + 1),
+      false,
+      new RegExp(`^Max students cannot exceed ${MAX_CLASS_SIZE}$`),
+    ],
+  ] as const)(
+    'refuses %s before any request, with product copy',
+    async (_label, fieldName, value, settingsLocked, copy) => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<ClassEditForm classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+
+      fireEvent.change(screen.getByLabelText(fieldName), { target: { value } });
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(await screen.findByRole('alert')).toHaveTextContent(copy);
+    },
+  );
+
+  /** #702. Each bound is inclusive: every field at its edge still saves. */
+  it.each([
+    ['the lower edges', { durationMinutes: 1, roomCost: 0, minStudents: 1, maxStudents: 1 }],
+    ['the class size limit', { maxStudents: MAX_CLASS_SIZE }],
+  ] as const)('saves every number field at %s, with no alert', async (_label, edges) => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={{ ...initial, ...edges }} />);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  /**
+   * #702. The count checks sit inside the unlocked branch. A locked class's
+   * stored counts are never sent, so a stored zero min must not block a save.
+   */
+  it('locked settings: saves despite a stored zero min students, with no alert', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm classId="cls-1" settingsLocked={true} initial={{ ...initial, minStudents: 0 }} />);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 
   /**
    * `updateClassSchema` itself has no cross-field refine — it accepts each
