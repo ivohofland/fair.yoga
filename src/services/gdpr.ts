@@ -1533,7 +1533,7 @@ export async function deleteTeacherAccount(
       // After the anonymising UPDATE, never before it: that UPDATE is what
       // waits out an upload holding the teacher row (`lockLiveTeacher`), and
       // this DELETE's own snapshot then sees the row that upload wrote.
-      // `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate".
+      // `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate (#46)".
       await tx.teacherPhoto.deleteMany({ where: { teacherId } });
 
       return skipped;

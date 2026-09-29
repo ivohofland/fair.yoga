@@ -399,7 +399,7 @@ export async function lockLiveStudent(
  * upload and an erasure serialise on it whichever columns the erasure rewrites;
  * `FOR KEY SHARE` conflicts only with an `UPDATE` that changes a key column.
  * Answers whether the teacher is live, read under the lock.
- * `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate".
+ * `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate (#46)".
  */
 export async function lockLiveTeacher(
   tx: TransactionClientOnly,
