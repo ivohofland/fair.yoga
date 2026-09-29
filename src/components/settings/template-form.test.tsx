@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TemplateForm } from './template-form';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { UNREADABLE_CONFIRMATION_MESSAGE } from './template-action-messages';
+import { MAX_CLASS_SIZE } from '@/lib/schemas';
 
 /**
  * #85. This form enumerated its thirteen fields three times — the `initial`
@@ -544,6 +545,16 @@ describe('TemplateForm', () => {
 
     expect(screen.getByLabelText('Min students')).toHaveValue(4);
     expect(screen.getByLabelText('Max students')).toHaveValue(2);
+  });
+
+  /** #318. Typing into Max students clamps against the class-size limit too, not just the room's capacity. */
+  it('clamps a typed max students to the class size limit in a room with a larger capacity', async () => {
+    stubRooms([roomRow(ROOM_A, 'Studio A', { capacityOverride: MAX_CLASS_SIZE + 50 })]);
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    const max = await screen.findByLabelText('Max students');
+    fireEvent.change(max, { target: { value: String(MAX_CLASS_SIZE + 10) } });
+
+    expect(max).toHaveValue(MAX_CLASS_SIZE);
   });
 
   /** #318. A room switch clamps Min students against the room's capacity, not just against a lowered Max. */

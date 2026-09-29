@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
+import { MAX_CLASS_SIZE, type createClassTemplateSchema, type updateClassTemplateSchema } from '@/lib/schemas';
 import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
@@ -244,7 +244,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
     const room = teacherRooms.find((tr) => tr.id === teacherRoomId);
     setForm((prev) => {
       const maxStudents = room
-        ? Math.min(prev.maxStudents, room.capacityOverride)
+        ? Math.min(prev.maxStudents, room.capacityOverride, MAX_CLASS_SIZE)
         : prev.maxStudents;
       return {
         ...prev,
@@ -652,7 +652,9 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
           label="Max students"
           type="number"
           value={String(form.maxStudents)}
-          onChange={(e) => update('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
+          onChange={(e) =>
+            update('maxStudents', Math.min(Number(e.target.value), roomCapacity, MAX_CLASS_SIZE))
+          }
         />
       </div>
 
