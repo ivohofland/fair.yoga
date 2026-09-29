@@ -259,7 +259,10 @@ rather than leaving it silently wrong.
 - **`@/lib/log` imports `server-only`** — `next build` fails on any `'use client'`
   module that value-imports it, through any chain. Share a type across that
   line with `import type`, which erases. `pnpm run verify` does not run the
-  build; this only surfaces in CI, or locally with `pnpm run build`.
+  build; this only surfaces in CI, or locally with `pnpm run build`. Runners
+  outside Next — vitest, Playwright — resolve `server-only` to its throwing
+  default, so each aliases it to `empty.js` in its own config; a new runner
+  importing `src/` needs the same.
 - **Quote paths with parentheses when staging** — `(public)`, `(teacher)`, `(student)`; an
   unquoted variable over one silently matches nothing.
 - **Migrations:** hand-author CHECK constraints (Prisma can't express them) following
