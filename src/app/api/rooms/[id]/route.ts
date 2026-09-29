@@ -46,9 +46,9 @@ export const DELETE = withErrorHandler(async (
   // Across every link on the room, since the delete takes them all. The 400
   // this replaced implied a clearable condition and named no way out; a room
   // with class history is permanently undeletable BY DESIGN — archiving is the
-  // end state (issue 76). A template blocker is equally permanent, because a
-  // ClassTemplate is never hard-deleted (issue 103), which is why one message
-  // serves both. 409, a conflict with current state rather than a malformed
+  // end state (issue 76). A template blocker is clearable, since a paused or
+  // archived ClassTemplate can be moved to another room, but a ClassTemplate
+  // is never hard-deleted (issue 103); one message serves both. 409, a conflict with current state rather than a malformed
   // request.
   const blockers = await countRoomDeleteBlockers(prisma, id);
   if (blockers.classes > 0 || blockers.templates > 0) {

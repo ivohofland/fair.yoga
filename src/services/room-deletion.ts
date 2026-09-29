@@ -55,10 +55,12 @@ export const ROOM_DELETE_RESTRICT_FKS = [
  * One refusal for both blockers, deliberately naming neither.
  *
  * A `ClassTemplate` is never hard-deleted anywhere in `src/` — there is no
- * `DELETE` verb on `/api/class-templates/[id]` — so a template blocker is as
- * permanent as class history and has the identical remedy. Same reasoning
- * `classifyApiError` states for the two terminality triggers ("any wording
- * that names one column is wrong half the time").
+ * `DELETE` verb on `/api/class-templates/[id]` — but `PUT
+ * /api/class-templates/[id]` can move a paused or archived one to another
+ * room, so a template blocker is clearable where class history is not; the
+ * remedy for both is the same. Same reasoning `classifyApiError` states for
+ * the two terminality triggers ("any wording that names one column is wrong
+ * half the time").
  *
  * "STILL IN USE", NOT "CLASS HISTORY" — the noun was corrected in PR review.
  * The earlier wording was accurate only when a class was the blocker. A room
@@ -74,10 +76,9 @@ export const ROOM_DELETE_RESTRICT_FKS = [
  * classes read "3 unfinished classes still use this room" — the same defect
  * in a different word.
  *
- * The remedy is named unconditionally and is not always available in one
- * step: a LIVE template blocks archiving too (`ACTIVE_TEMPLATE_WHERE`), so
- * that teacher must pause or archive the template first. Same is already true
- * of an `open` class, and predates this issue. Tracked separately.
+ * The room detail page offers this door only when `countRoomDeleteBlockers`
+ * and `countTeacherRoomDeleteBlockers` are zero, so the refusal reaches a
+ * teacher only through a change between render and click.
  */
 export const ROOM_DELETE_BLOCKED_MESSAGE =
   'This room is still in use and cannot be deleted. Archive it instead.';
