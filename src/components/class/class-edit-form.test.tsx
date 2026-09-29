@@ -147,6 +147,42 @@ describe('ClassEditForm', () => {
   });
 
   /**
+   * #700. `classType`, `date` and `startTime` are plain string fields on
+   * `updateClassSchema`, not `.optional()` — a cleared `type="date"`/`type="time"`
+   * input reports `''`, which fails the schema's own shape rather than a
+   * refinement, and the route's raw Zod copy reached the banner in its place.
+   * `handleSave` now refuses each in field order (class type, then date, then
+   * start time) before the request ever leaves, with this form's own prose.
+   *
+   * Ahead of the `if (!settingsLocked)` economics block, and unconditionally:
+   * these three are DETAILS, always editable and always sent regardless of
+   * lock state (see the file-level comment above the component), unlike the
+   * five economic fields the block below strips when locked. The final case
+   * pins exactly that — clearing start time with `settingsLocked={true}`
+   * still refuses, which a guard placed inside the unlocked branch would
+   * fail to do.
+   */
+  it.each([
+    ['class type', 'Class type', '   ', false, /^Class type is required$/],
+    ['date', 'Date', '', false, /^Select a date$/],
+    ['start time', 'Start time', '', false, /^Enter a start time$/],
+    ['start time, settings locked', 'Start time', '', true, /^Enter a start time$/],
+  ] as const)(
+    'refuses a cleared %s before any request, with product copy',
+    async (_label, fieldName, clearedValue, settingsLocked, copy) => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<ClassEditForm classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+
+      fireEvent.change(screen.getByLabelText(fieldName), { target: { value: clearedValue } });
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(await screen.findByRole('alert')).toHaveTextContent(copy);
+    },
+  );
+
+  /**
    * `updateClassSchema` itself has no cross-field refine — it accepts each
    * economic field independently, and `updateClass` (class-lifecycle.ts)
    * checks this rule on the merged row instead, through
