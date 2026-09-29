@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import type { Notification } from '@prisma/client';
+import type { NotificationPage } from '@/services/notifications';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
 import { NotificationList } from './notification-list';
@@ -68,20 +69,12 @@ describe('NotificationList — retention note (#223)', () => {
   });
 });
 
+/** A `NotificationPage` put through the same JSON round-trip `NextResponse.json` applies. */
 function olderResponse(notifications: Notification[], nextCursor: string | null, hrefById: Record<string, string | null> = {}) {
+  const page: NotificationPage = { notifications, hrefById, nextCursor };
   return {
     ok: true,
-    json: async () => ({
-      data: {
-        notifications: notifications.map((n) => ({
-          ...n,
-          createdAt: n.createdAt.toISOString(),
-          updatedAt: n.updatedAt.toISOString(),
-        })),
-        hrefById,
-        nextCursor,
-      },
-    }),
+    json: async (): Promise<unknown> => JSON.parse(JSON.stringify({ data: page })),
   };
 }
 const rowIds = (container: HTMLElement) =>
