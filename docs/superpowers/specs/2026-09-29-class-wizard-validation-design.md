@@ -97,10 +97,11 @@ In the wizard:
   it by raising the target rate, not only when Min rate itself is edited.
 
 In `template-form.tsx`: remove only the drag (`minStudents: Math.min(prev.minStudents,
-max)` in the Max students `onChange`, and its twin in `handleRoomChange`, which now
-clamps Min students against the room as the wizard's does). A max below min then
-reaches the form's existing `students_order` refusal on submit. Its capacity and min clamps stay: that form has no
-capacity message to fall back on, and its min clamp rewrites only its own field.
+max)` in the Max students `onChange`, and its twin in `handleRoomChange`, which clamps
+Min students against the room as the wizard's does). A max below min then reaches the
+form's existing `students_order` refusal on submit. Its capacity and min clamps stay:
+that form has no capacity message to fall back on, and its min clamp rewrites only its
+own field.
 
 Chosen over:
 
