@@ -66,7 +66,7 @@ describe('startOfLocalDay', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     startOfLocalDay(new Date('2026-07-26T13:45:00Z'), 'Not/AZone');
     expect(error).toHaveBeenCalledWith(
-      expect.objectContaining({ timeZone: 'Not/AZone' }),
+      expect.objectContaining({ timeZone: 'Not/AZone', err: expect.any(Error) }),
       expect.stringContaining('falling back to UTC'),
     );
   });
@@ -152,7 +152,7 @@ describe('classStartInstant', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     classStartInstant({ date: day('2026-07-26'), startTime: hhmmToTime('09:00') }, 'Not/AZone');
     expect(error).toHaveBeenCalledWith(
-      expect.objectContaining({ timeZone: 'Not/AZone' }),
+      expect.objectContaining({ timeZone: 'Not/AZone', err: expect.any(Error) }),
       expect.stringContaining('falling back to UTC interpretation'),
     );
   });
@@ -486,7 +486,10 @@ describe('formatInstantInZone', () => {
     expect(formatInstantInZone(new Date('2026-06-04T12:15:00Z'), 'Not/AZone')).toBe(
       'Thu 4 Jun 12:15 (UTC)',
     );
-    expect(spy).toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      expect.any(String),
+    );
     spy.mockRestore();
   });
 

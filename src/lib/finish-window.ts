@@ -55,8 +55,8 @@ export function formatClockInZone(instant: Date, timeZone: string): string {
     }).format(instant);
   try {
     return format(timeZone);
-  } catch {
-    log.error({ timeZone }, 'invalid timezone, falling back to UTC formatting');
+  } catch (err) {
+    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC formatting');
     return `${format('UTC')} (UTC)`;
   }
 }
