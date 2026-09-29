@@ -265,6 +265,31 @@ describe('StudioTemplateForm', () => {
     expect(screen.getByText('Location is required.')).toBeInTheDocument();
   });
 
+  it.each(['create', 'edit'] as const)(
+    'refuses a cleared start time before any request, with product copy (%s)',
+    async (mode) => {
+      stubFetch();
+      render(
+        mode === 'create' ? (
+          <StudioTemplateForm mode="create" />
+        ) : (
+          <StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />
+        ),
+      );
+      // Create mode starts with blank text fields; edit mode is prefilled from
+      // EDIT_INITIAL. Filling both in either mode isolates start time as the
+      // only field missing.
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '' } });
+      fireEvent.click(await screen.findByRole('button', { name: /save|create/i }));
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(screen.getByText('Pick a start time.')).toBeInTheDocument();
+    },
+  );
+
   /**
    * #40, the studio twin of the class-template guard. POST
    * /api/studio-class-templates is not idempotent: a second request creates a
