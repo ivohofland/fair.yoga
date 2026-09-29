@@ -589,4 +589,66 @@ describe('NewClassPage', () => {
       });
     });
   });
+
+  describe('step 1 validation (#318)', () => {
+    async function renderAtStep1() {
+      stubFetch();
+      render(<CreateClassPage />);
+      await screen.findByLabelText('Room');
+    }
+
+    /**
+     * `Select` (unlike `Input`) renders its error as a bare sibling `<span>`
+     * with no `aria-describedby` link, so `toHaveAccessibleDescription` reads
+     * empty for it; and a page-wide text search would also match the
+     * identically-worded placeholder `<option value="">Select a room</option>`.
+     * This walks the field's own wrapper for a `<span>` sibling by tag, which
+     * the option — nested inside the `<select>`, never a sibling of it —
+     * cannot be, so it stays tied to this one field.
+     */
+    function selectFieldError(labelText: string): string | undefined {
+      const field = screen.getByLabelText(labelText);
+      const sibling = Array.from(field.parentElement?.children ?? []).find(
+        (el) => el.tagName === 'SPAN',
+      );
+      return sibling?.textContent ?? undefined;
+    }
+
+    /** The step-1 fields render every message in the same pass. */
+    it('refuses an empty step 1 with every field message at once, and does not advance', async () => {
+      await renderAtStep1();
+      fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '0' } });
+      const callsBefore = fetchMock.mock.calls.length;
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+      expect(selectFieldError('Room')).toBe('Select a room');
+      expect(screen.getByLabelText('Class type')).toHaveAccessibleDescription('Enter a class type');
+      expect(screen.getByLabelText('Date')).toHaveAccessibleDescription('Select a date');
+      expect(screen.getByLabelText('Start time')).toHaveAccessibleDescription('Enter a start time');
+      expect(screen.getByLabelText('Duration (minutes)')).toHaveAccessibleDescription('Duration must be positive');
+      expect(screen.queryByLabelText('Room cost')).not.toBeInTheDocument();
+      expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    });
+
+    it('refuses a whitespace-only class type', async () => {
+      await renderAtStep1();
+      fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_ID } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+      expect(screen.getByLabelText('Class type')).toHaveAccessibleDescription('Enter a class type');
+      expect(screen.queryByLabelText('Room cost')).not.toBeInTheDocument();
+    });
+
+    it('clears a field message when that field is edited', async () => {
+      await renderAtStep1();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Yin' } });
+
+      expect(screen.getByLabelText('Class type')).not.toHaveAccessibleDescription();
+      expect(screen.getByLabelText('Date')).toHaveAccessibleDescription('Select a date');
+    });
+  });
 });
