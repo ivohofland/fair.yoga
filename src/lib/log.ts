@@ -10,6 +10,11 @@
  * of imports. Client code logs with console.*. A client component that
  * needs a type from a module that reaches this one uses `import type`,
  * which erases.
+ *
+ * Runners outside Next — vitest, Playwright — resolve `server-only` to its
+ * throwing default rather than Next's `react-server` condition, so each
+ * aliases it to `empty.js` in its own config. A new runner that imports
+ * from `src/` needs the same alias.
  */
 
 import 'server-only';
