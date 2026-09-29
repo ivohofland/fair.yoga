@@ -361,7 +361,7 @@ describe('StudioTemplateForm', () => {
 
     expect(
       await screen.findByText(
-        /2 classes on your schedule\. 1 cancelled class still holds that date\./i,
+        '2 classes on your schedule. 1 cancelled class still holds that date.',
       ),
     ).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
