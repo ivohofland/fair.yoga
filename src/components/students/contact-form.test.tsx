@@ -209,7 +209,9 @@ describe('ArchiveContactButton', () => {
   });
 
   it('reports a thrown fetch instead of swallowing it', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<ArchiveContactButton invitationId="inv-1" isArchived={false} />);
 
@@ -217,6 +219,12 @@ describe('ArchiveContactButton', () => {
 
     expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());
+    expect(consoleError).toHaveBeenCalledWith('[archive-contact-button] request failed', {
+      invitationId: 'inv-1',
+      isArchived: false,
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });
 
@@ -276,7 +284,9 @@ describe('ResendInvitationButton', () => {
   });
 
   it('reports a thrown fetch instead of swallowing it', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<ResendInvitationButton invitationId="inv-1" />);
 
@@ -284,5 +294,10 @@ describe('ResendInvitationButton', () => {
 
     expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());
+    expect(consoleError).toHaveBeenCalledWith('[resend-invitation-button] request failed', {
+      invitationId: 'inv-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

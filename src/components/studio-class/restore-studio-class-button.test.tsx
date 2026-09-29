@@ -67,7 +67,9 @@ describe('RestoreStudioClassButton', () => {
   });
 
   it('says something when the request never reaches the server', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<RestoreStudioClassButton studioClassId="sc-1" />);
 
@@ -76,5 +78,10 @@ describe('RestoreStudioClassButton', () => {
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
     const button = screen.getByRole('button', { name: 'Restore class' });
     expect(button).not.toBeDisabled();
+    expect(consoleError).toHaveBeenCalledWith('[restore-studio-class-button] request failed', {
+      studioClassId: 'sc-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

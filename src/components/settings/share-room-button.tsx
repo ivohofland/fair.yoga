@@ -7,7 +7,7 @@ import { PublicRoomNotice } from './public-room-notice';
 import { RoomMatchList } from './room-match-list';
 import { searchPublicRooms, type RoomResult } from '@/lib/room-search';
 import { findIdentityMatch, type RoomIdentity } from '@/lib/room-identity';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 
 interface ShareRoomButtonProps {
   roomId: string;
@@ -109,7 +109,8 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
       if (code === 'NOT_ROOM_CREATOR' || code === 'NOT_FOUND') {
         router.refresh();
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('share-room-button-share', { roomId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSharing(false);
@@ -144,7 +145,8 @@ export function ShareRoomButton({ roomId, teacherRoomId, identity, postcode }: S
         closePanel();
         router.refresh();
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('share-room-button-switch', { teacherRoomId, sharedRoomId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSwitching(false);

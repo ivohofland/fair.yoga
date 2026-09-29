@@ -91,12 +91,19 @@ describe('CancelBookingButton', () => {
   });
 
   it('says so when the request never reaches the server', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     confirmCancel();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
     expect(routerRefresh).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith('[cancel-booking-button] request failed', {
+      registrationId: 'reg-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });
 

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface PendingInvitationCardProps {
   invitationId: string;
@@ -53,7 +53,8 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
       }
       setError(await readErrorMessage(res, 'Could not respond. Try again.'));
       setSubmitting(false);
-    } catch {
+    } catch (err) {
+      logRequestFailure('pending-invitation-card', { invitationId, response }, err);
       setError('Network error. Try again.');
       setSubmitting(false);
     }

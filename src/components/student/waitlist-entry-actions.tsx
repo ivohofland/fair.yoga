@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readError, readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readError, readErrorMessage } from '@/lib/client-errors';
 
 interface WaitlistEntryActionsProps {
   entryId: string;
@@ -35,7 +35,8 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
         return;
       }
       setError(await readErrorMessage(res, 'Could not claim the spot. Try again.'));
-    } catch {
+    } catch (err) {
+      logRequestFailure('waitlist-entry-actions-claim', { classId, entryId }, err);
       setError('Network error. Try again.');
     } finally {
       setBusy(null);
@@ -58,7 +59,8 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
         return;
       }
       setError(message);
-    } catch {
+    } catch (err) {
+      logRequestFailure('waitlist-entry-actions-leave', { entryId }, err);
       setError('Network error. Try again.');
     } finally {
       setBusy(null);

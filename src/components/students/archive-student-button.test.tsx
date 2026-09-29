@@ -230,7 +230,9 @@ describe('ArchiveStudentButton', () => {
     });
 
     it('a network error keeps the confirm open and announces itself', async () => {
-      fetchMock.mockRejectedValue(new Error('offline'));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const offline = new Error('offline');
+      fetchMock.mockRejectedValue(offline);
       vi.stubGlobal('fetch', fetchMock);
       render(
         <ArchiveStudentButton
@@ -246,6 +248,12 @@ describe('ArchiveStudentButton', () => {
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
       expect(screen.getByRole('button', { name: 'Waive and archive' })).toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalledWith('[archive-student-button-archive] request failed', {
+        studentId: 'st-1',
+        waivedCount: 2,
+        err: offline,
+      });
+      consoleError.mockRestore();
     });
 
     it('Cancel is disabled while the waive is in flight', async () => {
@@ -394,7 +402,9 @@ describe('ArchiveStudentButton', () => {
   });
 
   it('reports a thrown fetch instead of swallowing it', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(
       <ArchiveStudentButton
@@ -413,5 +423,11 @@ describe('ArchiveStudentButton', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Archive student' })).not.toBeDisabled(),
     );
+    expect(consoleError).toHaveBeenCalledWith('[archive-student-button-archive] request failed', {
+      studentId: 'st-1',
+      waivedCount: undefined,
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

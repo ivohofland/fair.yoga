@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface RestoreStudioClassButtonProps {
   studioClassId: string;
@@ -27,7 +27,8 @@ export function RestoreStudioClassButton({ studioClassId }: RestoreStudioClassBu
       } else {
         setError(await readErrorMessage(res, 'Could not restore the class. Please try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('restore-studio-class-button', { studioClassId }, err);
       setError('Network error. Please try again.');
     } finally {
       setRestoring(false);

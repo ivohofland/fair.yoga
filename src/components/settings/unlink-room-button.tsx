@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 
 interface UnlinkRoomButtonProps {
   teacherRoomId: string;
@@ -29,7 +29,8 @@ export function UnlinkRoomButton({ teacherRoomId, roomName }: UnlinkRoomButtonPr
         if (code === 'NOT_FOUND') router.push('/settings/rooms');
         else setError(message);
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('unlink-room-button', { teacherRoomId }, err);
       setError('Network error. Please try again.');
     } finally {
       setRemoving(false);

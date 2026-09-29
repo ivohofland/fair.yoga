@@ -7,7 +7,7 @@ import type { updatePrivacySchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 
 export interface TeacherPrivacyValues {
   shareFullName: boolean;
@@ -101,7 +101,8 @@ export function TeacherPrivacyCard({
       } else {
         setError('Could not save. Try again.');
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('teacher-privacy-card-save', { studentId, teacherId }, err);
       setError('Network error. Try again.');
     } finally {
       setSaving(false);
@@ -143,7 +144,8 @@ export function TeacherPrivacyCard({
       }
       setUnlinkError(failure.message);
       setUnlinking(false);
-    } catch {
+    } catch (err) {
+      logRequestFailure('teacher-privacy-card-unlink', { teacherId }, err);
       setUnlinkError('Network error. Try again.');
       setUnlinking(false);
     }

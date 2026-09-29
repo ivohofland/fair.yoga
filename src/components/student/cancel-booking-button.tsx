@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 import { isPastCancelDeadline } from '@/lib/cancel-deadline';
 
 interface CancelBookingButtonProps {
@@ -55,7 +55,8 @@ export function CancelBookingButton({
         return;
       }
       setError(message);
-    } catch {
+    } catch (err) {
+      logRequestFailure('cancel-booking-button', { registrationId }, err);
       setError('Network error. Try again.');
     } finally {
       setCancelling(false);

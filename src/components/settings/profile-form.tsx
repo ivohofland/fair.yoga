@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 
 interface ProfileFormProps {
@@ -101,7 +101,8 @@ export function ProfileForm({ teacherId, initial, timeZoneOptions }: ProfileForm
 
       setSuccess('Saved');
       router.refresh();
-    } catch {
+    } catch (err) {
+      logRequestFailure('profile-form', { teacherId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

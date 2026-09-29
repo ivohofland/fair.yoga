@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
+import { logRequestFailure } from '@/lib/client-errors';
 import { pageSlugField } from '@/lib/schemas';
 
 /**
@@ -102,7 +103,8 @@ export function PageAddressField({ value, onChange, error }: PageAddressFieldPro
         );
         const json: { data?: { available?: boolean } } = res.ok ? await res.json() : {};
         available = res.ok ? json.data?.available === true : null;
-      } catch {
+      } catch (err) {
+        logRequestFailure('page-address-field', { value }, err);
         available = null;
       }
       if (!cancelled) setAnswer({ slug: value, available });

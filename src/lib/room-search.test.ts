@@ -52,10 +52,15 @@ describe('searchPublicRooms', () => {
     expect(await searchPublicRooms('1015DX', 'X')).toEqual({ ok: false, reason: 'http' });
   });
 
-  it('reports network when the request never lands', async () => {
-    stubFetch(() => { throw new TypeError('Failed to fetch'); });
+  it('reports network when the request never lands, and logs why', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failed = new TypeError('Failed to fetch');
+    stubFetch(() => { throw failed; });
 
     expect(await searchPublicRooms('1015DX', 'X')).toEqual({ ok: false, reason: 'network' });
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('[room-search-request] request failed', { err: failed });
+    consoleError.mockRestore();
   });
 
   // The branches below are why this file exists. Each one used to produce
@@ -65,7 +70,6 @@ describe('searchPublicRooms', () => {
   // `findIdentityMatch`. A throw in render is the one failure this module was
   // built to make impossible.
   it.each([
-    ['a body that is not JSON', () => { throw new SyntaxError('Unexpected token'); }],
     ['a body with no data key', () => ({})],
     ['a body whose data is null', () => ({ data: null })],
     ['a body whose data is not an array', () => ({ data: { rooms: [] } })],
@@ -74,8 +78,26 @@ describe('searchPublicRooms', () => {
   ])('reports network for %s, rather than an ok with a hole in it', async (_label, makeBody) => {
     stubFetch(async () => ({ ok: true, json: async () => makeBody() }));
 
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
     const outcome = await searchPublicRooms('1015DX', 'X');
 
     expect(outcome).toEqual({ ok: false, reason: 'network' });
+    // A wrong shape is the server's answer, not a transport failure.
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('reports network for a body that is not JSON, and logs why', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const unreadable = new SyntaxError('Unexpected token');
+    stubFetch(async () => ({ ok: true, json: async () => { throw unreadable; } }));
+
+    const outcome = await searchPublicRooms('1015DX', 'X');
+
+    expect(outcome).toEqual({ ok: false, reason: 'network' });
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('[room-search-body] request failed', { err: unreadable });
+    consoleError.mockRestore();
   });
 });

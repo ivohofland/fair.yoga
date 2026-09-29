@@ -105,12 +105,19 @@ describe('ProfileForm', () => {
   });
 
   it('reports a thrown fetch', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     renderForm();
     save();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Please try again.');
+    expect(consoleError).toHaveBeenCalledWith('[profile-form] request failed', {
+      teacherId: 't-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 
   it('shows a stored zone the list lacks as selected', () => {

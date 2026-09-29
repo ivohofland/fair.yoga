@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
+import { logRequestFailure } from '@/lib/client-errors';
 import { formatStudentName } from '@/lib/format';
 
 interface InvitationApiRow {
@@ -100,10 +101,10 @@ export function ContactList({ archived = false }: ContactListProps) {
           setContacts(json.data.invitations.filter(isContact));
           setFailed(false);
         }
-      } catch {
-        // A rejected `fetch` (offline, DNS, a torn-down connection) used to
-        // propagate straight out of the `try` with only the `finally` running,
-        // which left the same "No contacts yet." on screen.
+      } catch (err) {
+        // A rejected `fetch` (offline, DNS, a torn-down connection) reads as a
+        // failed load, never as "No contacts yet."
+        logRequestFailure('contact-list', { archived }, err);
         if (!cancelled) setFailed(true);
       } finally {
         if (!cancelled) setLoading(false);
