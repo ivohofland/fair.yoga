@@ -165,7 +165,7 @@ describe('ClassEditForm', () => {
    * fail to do.
    */
   it.each([
-    ['class type', 'Class type', '   ', false, /^Class type is required$/],
+    ['class type', 'Class type', '   ', false, /^Enter a class type$/],
     ['date', 'Date', '', false, /^Select a date$/],
     ['start time', 'Start time', '', false, /^Enter a start time$/],
     ['start time, settings locked', 'Start time', '', true, /^Enter a start time$/],
