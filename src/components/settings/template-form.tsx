@@ -280,6 +280,10 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       setError('Class type is required');
       return;
     }
+    if (!form.startTime) {
+      setError('Enter a start time');
+      return;
+    }
     // The cross-field rules of `economicsViolations` (class-economics.ts),
     // which the server checks in `createClassTemplateSchema` on create and in
     // `updateClassTemplate` on edit. Checked here through the same function so
