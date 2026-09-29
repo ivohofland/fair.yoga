@@ -131,12 +131,18 @@ describe('saveTeacherPhoto / readTeacherPhoto / removeTeacherPhoto', () => {
     const first = await saveTeacherPhoto(prisma, teacherId, bytes);
     if (!first.saved) throw new Error('first save refused');
     expect(Buffer.from((await readTeacherPhoto(prisma, first.photoId)) ?? [])).toEqual(bytes);
+    const firstRow = await prisma.teacherPhoto.findUniqueOrThrow({ where: { teacherId }, select: { createdAt: true } });
+
+    // A tick, so a replace landing in the same millisecond still moves createdAt forward.
+    await new Promise((r) => setTimeout(r, 5));
 
     const second = await saveTeacherPhoto(prisma, teacherId, Buffer.from('replacement'));
     if (!second.saved) throw new Error('second save refused');
     expect(second.photoId).not.toBe(first.photoId);
     expect(await readTeacherPhoto(prisma, first.photoId)).toBeNull();
     expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(1);
+    const secondRow = await prisma.teacherPhoto.findUniqueOrThrow({ where: { teacherId }, select: { createdAt: true } });
+    expect(secondRow.createdAt.getTime()).toBeGreaterThan(firstRow.createdAt.getTime());
   });
 
   it('two concurrent saves for one teacher leave one row and no error', async () => {
