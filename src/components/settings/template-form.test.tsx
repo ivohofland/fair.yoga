@@ -557,6 +557,25 @@ describe('TemplateForm', () => {
     expect(max).toHaveValue(MAX_CLASS_SIZE);
   });
 
+  /** #318. A room switch clamps Max students against the class size limit too, not just the room's capacity. */
+  it('clamps max students to the class size limit when switching to a larger room', async () => {
+    stubRooms([
+      roomRow(ROOM_A, 'Studio A'),
+      roomRow(ROOM_B, 'Studio B', { capacityOverride: MAX_CLASS_SIZE + 50 }),
+    ]);
+    render(
+      <TemplateForm
+        mode="edit"
+        templateId="tpl-1"
+        initial={{ ...initial, maxStudents: MAX_CLASS_SIZE + 20 }}
+      />,
+    );
+    await screen.findByRole('option', { name: /Studio B/ });
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
+
+    expect(screen.getByLabelText('Max students')).toHaveValue(MAX_CLASS_SIZE);
+  });
+
   /** #318. A room switch clamps Min students against the room's capacity, not just against a lowered Max. */
   it('clamps min students to the room capacity when the room changes', async () => {
     stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B', { capacityOverride: 8 })]);
