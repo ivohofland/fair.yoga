@@ -10,6 +10,7 @@ import { timeAgo } from '@/lib/format';
 import { postMarkRead } from '@/lib/mark-notification-read';
 import { teacherNotificationHref } from '@/lib/notification-links';
 import { NOTIFICATION_PAGE_SIZE, mergeNotifications } from '@/lib/notification-paging';
+import type { NotificationPage } from '@/services/notifications';
 
 interface NotificationListProps {
   notifications: Notification[];
@@ -22,11 +23,10 @@ interface NotificationListProps {
 
 type Serialized<T> = { [K in keyof T]: T[K] extends Date ? string : T[K] };
 
-interface OlderPageBody {
-  notifications: Serialized<Notification>[];
-  hrefById: Record<string, string | null>;
-  nextCursor: string | null;
-}
+/** `NotificationPage` as `GET /api/notifications` sends it: the row dates arrive as strings. */
+type OlderPageBody = Pick<NotificationPage, 'hrefById' | 'nextCursor'> & {
+  notifications: Serialized<NotificationPage['notifications'][number]>[];
+};
 
 interface Loaded {
   rows: Notification[];
