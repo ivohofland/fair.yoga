@@ -507,6 +507,22 @@ describe('TemplateForm', () => {
     expect(screen.getByLabelText('Max students')).toHaveValue(2);
   });
 
+  /** #318. A room switch clamps Min students against the room's capacity, not just against a lowered Max. */
+  it('clamps min students to the room capacity when the room changes', async () => {
+    stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B', { capacityOverride: 8 })]);
+    render(
+      <TemplateForm
+        mode="edit"
+        templateId="tpl-1"
+        initial={{ ...initial, minStudents: 10, maxStudents: 12 }}
+      />,
+    );
+    await screen.findByRole('option', { name: /Studio B/ });
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
+
+    expect(screen.getByLabelText('Min students')).toHaveValue(8);
+  });
+
   /**
    * Dispatched as a submit, as the Review F4 test does: in jsdom, native
    * constraint validation blocks the click on a range input a browser would
