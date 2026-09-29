@@ -432,6 +432,47 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * #700. The startTime refusal guard in handleSubmit was wholly unpinned — a
+   * cleared start time reached the route as `''`, which `.optional()` does not
+   * skip, surfacing the schema's raw `Must be HH:mm (00:00-23:59)` copy instead
+   * of product prose.
+   *
+   * Parameterised over both modes: create fills the room and class type first
+   * so a cleared start time is demonstrably the sole reason the request never
+   * leaves; edit starts from `initial`, which already has both, and waits for
+   * the Room field (the mount `/api/teacher-rooms` fetch settling) before
+   * clearing start time. Uses the `callsBeforeSubmit` delta shape like the
+   * #317 test above, since this form fetches on mount.
+   */
+  it.each(['create', 'edit'] as const)(
+    'refuses a cleared start time before any request, with product copy (%s)',
+    async (mode) => {
+      stubFetch();
+      render(
+        mode === 'create' ? (
+          <TemplateForm mode="create" />
+        ) : (
+          <TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />
+        ),
+      );
+      await screen.findByLabelText('Room');
+      if (mode === 'create') {
+        fireEvent.change(screen.getByLabelText('Room'), {
+          target: { value: '11111111-1111-4111-8111-111111111111' },
+        });
+        fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      }
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '' } });
+
+      const callsBeforeSubmit = fetchMock.mock.calls.length;
+      fireEvent.click(await screen.findByRole('button', { name: /save|create/i }));
+
+      expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+      expect(screen.getByRole('alert')).toHaveTextContent(/^Enter a start time$/);
+    },
+  );
+
+  /**
    * #590. The minStudents > maxStudents refusal guard in handleSubmit was unpinned.
    *
    * While the edit UI prevents typing minStudents > maxStudents directly through
