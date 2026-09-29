@@ -495,6 +495,18 @@ describe('TemplateForm', () => {
     expect(max).toHaveValue(20);
   });
 
+  /** #318. A room switch clamps Min students against the room, so a max typed below min does not drag it down. */
+  it('does not drag min students down to a lowered max when the room changes', async () => {
+    stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B', { capacityOverride: 8 })]);
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    await screen.findByRole('option', { name: /Studio B/ });
+    fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
+
+    expect(screen.getByLabelText('Min students')).toHaveValue(4);
+    expect(screen.getByLabelText('Max students')).toHaveValue(2);
+  });
+
   /**
    * Dispatched as a submit, as the Review F4 test does: in jsdom, native
    * constraint validation blocks the click on a range input a browser would
