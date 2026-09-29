@@ -315,7 +315,7 @@ describe('StudioTemplateForm', () => {
 
     const callsAfterFirstSubmit = fetchMock.mock.calls.length;
     expect(screen.queryByRole('button', { name: /^create$/i })).toBeNull();
-    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+    expect(screen.getByText('Created')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /go to studio classes/i }));
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
@@ -761,7 +761,9 @@ describe('StudioTemplateForm', () => {
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(
-      await screen.findByText(/2 dates overlap other classes on your schedule\./i),
+      await screen.findByText(
+        'Nothing is scheduled from this template. 2 dates overlap other classes on your schedule.',
+      ),
     ).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
   });
