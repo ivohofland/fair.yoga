@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { resolveOrClaimAccount } from './account';
+import { uniqueSuffix } from '../../../tests/helpers';
 
 const db = new PrismaClient();
-const uniqueSuffix = Date.now();
+const suffix = uniqueSuffix();
 
 let teacherAccountId: string;
 let teacherId: string;
@@ -11,9 +12,9 @@ let claimedAccountId: string;
 let claimedStudentId: string;
 let unclaimedStudentId: string;
 
-const teacherEmail = `account-teacher-${uniqueSuffix}@test.local`;
-const claimedEmail = `account-claimed-${uniqueSuffix}@test.local`;
-const unclaimedEmail = `account-unclaimed-${uniqueSuffix}@test.local`;
+const teacherEmail = `account-teacher-${suffix}@test.local`;
+const claimedEmail = `account-claimed-${suffix}@test.local`;
+const unclaimedEmail = `account-unclaimed-${suffix}@test.local`;
 
 beforeAll(async () => {
   await db.$connect();
@@ -24,7 +25,7 @@ beforeAll(async () => {
       lastName: 'Teacher',
       email: teacherEmail,
       bio: 'Account resolution fixtures',
-      pageSlug: `account-teacher-${uniqueSuffix}`,
+      pageSlug: `account-teacher-${suffix}`,
       account: { create: { email: teacherEmail } },
     },
     include: { account: true },
@@ -60,7 +61,9 @@ afterAll(async () => {
     where: { id: { in: [claimedStudentId, unclaimedStudentId] } },
   });
   await db.teacher.delete({ where: { id: teacherId } });
-  await db.account.deleteMany({ where: { email: { contains: `${uniqueSuffix}` } } });
+  await db.account.deleteMany({
+    where: { email: { in: [teacherEmail, claimedEmail, unclaimedEmail] } },
+  });
   await db.$disconnect();
 });
 
@@ -127,6 +130,6 @@ describe('resolveOrClaimAccount', () => {
   });
 
   it('returns null for an unknown email', async () => {
-    expect(await resolveOrClaimAccount(db, `nobody-${uniqueSuffix}@test.local`)).toBeNull();
+    expect(await resolveOrClaimAccount(db, `nobody-${suffix}@test.local`)).toBeNull();
   });
 });
