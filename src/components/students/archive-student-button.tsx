@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { formatEuro } from '@/lib/format';
-import { readError, readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readError, readErrorMessage } from '@/lib/client-errors';
 
 interface ArchiveStudentButtonProps {
   studentId: string;
@@ -66,7 +66,8 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
       // re-enables and the page is unchanged. Same handling as
       // `toggle-template-button.tsx`, the other caption-styled PATCH toggle.
       setError(await readErrorMessage(res, 'Could not unarchive this student. Try again.'));
-    } catch {
+    } catch (err) {
+      logRequestFailure('archive-student-button-unarchive', { studentId }, err);
       setError('Network error. Try again.');
     } finally {
       setLoading(false);
@@ -94,7 +95,12 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
         router.refresh();
       }
       setError(message);
-    } catch {
+    } catch (err) {
+      logRequestFailure(
+        'archive-student-button-archive',
+        { studentId, waivedCount: body?.waivePaymentIds.length },
+        err,
+      );
       setError('Network error. Try again.');
     } finally {
       setLoading(false);

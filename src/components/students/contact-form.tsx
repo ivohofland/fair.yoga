@@ -7,7 +7,7 @@ import type { updateInvitationSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface ContactFormProps {
   invitationId: string;
@@ -74,7 +74,8 @@ export function ContactForm({
       }
 
       router.refresh();
-    } catch {
+    } catch (err) {
+      logRequestFailure('contact-form', { invitationId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);
@@ -155,7 +156,8 @@ export function ArchiveContactButton({ invitationId, isArchived }: ArchiveContac
           ),
         );
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('archive-contact-button', { invitationId, isArchived }, err);
       setError('Network error. Try again.');
     } finally {
       setLoading(false);
@@ -206,7 +208,8 @@ export function ResendInvitationButton({ invitationId }: ResendInvitationButtonP
       } else {
         setError(await readErrorMessage(res, 'Could not resend this invitation. Try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('resend-invitation-button', { invitationId }, err);
       setError('Network error. Try again.');
     } finally {
       setLoading(false);

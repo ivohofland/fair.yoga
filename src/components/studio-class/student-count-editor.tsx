@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface StudentCountEditorProps {
   studioClassId: string;
@@ -39,7 +39,8 @@ export function StudentCountEditor({ studioClassId, initialCount }: StudentCount
         // invisible, it reads as a different state entirely.
         setError(await readErrorMessage(res, 'Could not save. Please try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('student-count-editor', { studioClassId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSaving(false);

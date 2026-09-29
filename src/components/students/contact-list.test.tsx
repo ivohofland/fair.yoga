@@ -158,12 +158,19 @@ describe('ContactList', () => {
   });
 
   it('shows the error state when fetch itself throws', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<ContactList />);
 
     expect(await screen.findByText('Could not load your contacts.')).toBeInTheDocument();
     expect(screen.queryByText('No contacts yet.')).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith('[contact-list] request failed', {
+      archived: false,
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 
   it('refetches when Try again is clicked, and clears the error on success', async () => {

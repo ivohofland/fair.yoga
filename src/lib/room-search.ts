@@ -7,6 +7,7 @@
  * `src/lib/room-identity.ts`. This one finds neighbours for a human to judge;
  * that one decides whether the database will accept the write.
  */
+import { logRequestFailure } from './client-errors';
 import type { RoomIdentity } from '@/lib/room-identity';
 
 /**
@@ -87,7 +88,8 @@ export async function searchPublicRooms(
   let res: Response;
   try {
     res = await fetch(`/api/rooms?${params}`);
-  } catch {
+  } catch (err) {
+    logRequestFailure('room-search-request', {}, err);
     return { ok: false, reason: 'network' };
   }
 
@@ -101,7 +103,8 @@ export async function searchPublicRooms(
   let body: unknown;
   try {
     body = await res.json();
-  } catch {
+  } catch (err) {
+    logRequestFailure('room-search-body', {}, err);
     return { ok: false, reason: 'network' };
   }
 

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 
 interface SignupFormProps {
@@ -48,7 +48,8 @@ export function SignupForm({ title, intro, sentMessage, initialEmail = '' }: Sig
       }
       setErrorMessage(await readErrorMessage(res, 'Something went wrong. Please try again.'));
       setStatus('error');
-    } catch {
+    } catch (err) {
+      logRequestFailure('signup-form', {}, err);
       setErrorMessage('Network error. Please try again.');
       setStatus('error');
     }

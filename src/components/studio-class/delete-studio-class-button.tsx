@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 
 interface DeleteStudioClassButtonProps {
   studioClassId: string;
@@ -77,7 +77,8 @@ export function DeleteStudioClassButton({
         if (code === 'NOT_FOUND') removed = true;
         else setError(message);
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('delete-studio-class-button', { studioClassId }, err);
       setError('Network error. Please try again.');
     }
 

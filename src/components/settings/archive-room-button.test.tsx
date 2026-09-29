@@ -110,13 +110,21 @@ describe('ArchiveRoomButton', () => {
   });
 
   it('reports a thrown fetch instead of swallowing it', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<ArchiveRoomButton teacherRoomId="tr-1" isArchived={false} />);
 
     fireEvent.click(screen.getByRole('button'));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[archive-room-button] request failed', {
+      teacherRoomId: 'tr-1',
+      isArchived: false,
+      err: offline,
+    });
+    consoleError.mockRestore();
     // Re-enabled, not stuck mid-flight: `finally` still has to run on the
     // throw path.
     await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 
 interface RemoveStudentButtonProps {
   invitationId: string;
@@ -43,7 +43,8 @@ export function RemoveStudentButton({ invitationId, studentName }: RemoveStudent
         return;
       }
       setError(message);
-    } catch {
+    } catch (err) {
+      logRequestFailure('remove-student-button', { invitationId }, err);
       setError('Network error. Try again.');
     } finally {
       setRemoving(false);

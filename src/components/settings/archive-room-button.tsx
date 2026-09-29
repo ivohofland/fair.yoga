@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface ArchiveRoomButtonProps {
   teacherRoomId: string;
@@ -38,7 +38,8 @@ export function ArchiveRoomButton({ teacherRoomId, isArchived }: ArchiveRoomButt
         // which differ from the student/contact pair's direction-naming copy.
         setError(await readErrorMessage(res, 'Failed to update. Please try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('archive-room-button', { teacherRoomId, isArchived }, err);
       setError('Network error. Please try again.');
     } finally {
       setLoading(false);

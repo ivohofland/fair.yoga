@@ -146,7 +146,9 @@ describe('DeleteStudioClassButton', () => {
   });
 
   it('says something when the request never reaches the server', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
 
@@ -154,5 +156,10 @@ describe('DeleteStudioClassButton', () => {
     confirmRemove();
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[delete-studio-class-button] request failed', {
+      studioClassId: 'sc-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

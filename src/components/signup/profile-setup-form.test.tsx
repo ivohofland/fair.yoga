@@ -313,12 +313,14 @@ describe('ProfileSetupForm', () => {
   });
 
   it('shows a network-error message and does not lose the draft', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
     const mock = vi.fn((input: unknown) => {
       const url = String(input);
       if (url.startsWith('/api/teachers/slug-available')) {
         return Promise.resolve({ ok: true, json: async () => ({ data: { available: true } }) });
       }
-      return Promise.reject(new Error('offline'));
+      return Promise.reject(offline);
     });
     vi.stubGlobal('fetch', mock);
     render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
@@ -328,5 +330,10 @@ describe('ProfileSetupForm', () => {
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
     expect(screen.getByLabelText('First name')).toHaveValue('Anna');
+    expect(consoleError).toHaveBeenCalledWith('[profile-setup-form-submit] request failed', {
+      mode: 'ticket',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

@@ -220,10 +220,9 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         setTeacherRooms(
           json.data.filter((tr) => !tr.isArchived || tr.id === initialTeacherRoomId),
         );
-      } catch {
-        // There was no `catch` here at all, so a thrown `fetch` escaped
-        // `void fetchRooms()` as an unhandled rejection and still rendered
-        // "No rooms configured."
+      } catch (err) {
+        // A thrown load reads as a failed load, never as an empty room list.
+        logRequestFailure('template-form-rooms', { initialTeacherRoomId }, err);
         setRoomsFailed(true);
       } finally {
         setLoading(false);

@@ -75,12 +75,16 @@ describe('SignupForm', () => {
   });
 
   it('reports a network failure distinctly from a server error', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(offline));
     render(<SignupForm {...PROPS} />);
 
     submit();
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[signup-form] request failed', { err: offline });
+    consoleError.mockRestore();
   });
 
   it('clears a prior error once the teacher edits the email again', async () => {

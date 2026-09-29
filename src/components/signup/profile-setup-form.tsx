@@ -9,7 +9,7 @@ import { PageAddressField, slugFromName } from './page-address-field';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { AlreadyTeachingPanel } from './already-teaching-panel';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 const BIO_MAX = 250;
@@ -254,7 +254,8 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
           ...(timeZone ? { defaultTimezone: timeZone } : {}),
         }),
       });
-    } catch {
+    } catch (err) {
+      logRequestFailure('profile-setup-form-submit', { mode }, err);
       setStatus('idle');
       setFormError('Network error. Please try again.');
       return;
@@ -290,7 +291,10 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
         body: JSON.stringify({ email }),
       })
         .then((r) => r.ok)
-        .catch(() => false);
+        .catch((err: unknown) => {
+          logRequestFailure('profile-setup-form-resend', {}, err);
+          return false;
+        });
       setStatus(resent ? 'expired' : 'expired-stuck');
       return;
     }

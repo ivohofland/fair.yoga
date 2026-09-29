@@ -65,7 +65,9 @@ describe('StudentCountEditor', () => {
   });
 
   it('says something when the request never reaches the server', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<StudentCountEditor studioClassId="sc-1" initialCount={4} />);
 
@@ -74,6 +76,11 @@ describe('StudentCountEditor', () => {
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[student-count-editor] request failed', {
+      studioClassId: 'sc-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 
   it('clears a stale error when the teacher edits the field again', async () => {

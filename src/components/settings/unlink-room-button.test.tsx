@@ -76,12 +76,19 @@ describe('UnlinkRoomButton', () => {
   });
 
   it('reports a network failure rather than falling silent', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
 
     confirmUnlink();
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[unlink-room-button] request failed', {
+      teacherRoomId: 'tr-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
     expect(routerPush).not.toHaveBeenCalled();
   });
 });

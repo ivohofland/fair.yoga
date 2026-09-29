@@ -7,7 +7,7 @@ import type { createInvitationSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface FormErrors {
   firstName?: string;
@@ -100,7 +100,8 @@ export function CreateStudentForm() {
       // the new contact shows up, in the Contacts section `contact-list.tsx`
       // renders there. So the body goes unread.
       setInvitedEmail(payload.email);
-    } catch {
+    } catch (err) {
+      logRequestFailure('create-student-form', {}, err);
       setSubmitError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

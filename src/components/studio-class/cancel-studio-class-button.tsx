@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface CancelStudioClassButtonProps {
   studioClassId: string;
@@ -34,7 +34,8 @@ export function CancelStudioClassButton({ studioClassId }: CancelStudioClassButt
         // stays in their schedule and their income figures.
         setError(await readErrorMessage(res, 'Could not cancel the class. Please try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('cancel-studio-class-button', { studioClassId }, err);
       setError('Network error. Please try again.');
     } finally {
       setCancelling(false);
