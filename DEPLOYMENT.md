@@ -51,9 +51,10 @@ The proxy config sets `X-Forwarded-For` (the rate limiter keys on it) and
 disables buffering for the SSE endpoint.
 
 The teacher photo upload route gets its own `location` block with a raised
-`client_max_body_size` (10m) — the app already refuses anything over 8 MB, in
-JSON, so this only has to be large enough to let a request through to the app
-for it to answer. Everything else keeps nginx's 1 MB default.
+`client_max_body_size` (10m) — the app already refuses anything above
+`MAX_PHOTO_BYTES` (`src/lib/teacher-photo-limits.ts`; 8 MB today), in JSON, so
+this only has to be large enough to let a request through to the app for it to
+answer. Everything else keeps nginx's 1 MB default.
 
 `GET /api/teacher-photos/*` answers `Cache-Control: public, max-age=31536000,
 immutable`, so a shared cache or CDN placed in front of this app must not

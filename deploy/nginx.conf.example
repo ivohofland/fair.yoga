@@ -19,13 +19,16 @@ server {
     # ssl_certificate     /etc/letsencrypt/live/yourdomain.example/fullchain.pem;
     # ssl_certificate_key /etc/letsencrypt/live/yourdomain.example/privkey.pem;
 
-    # Security headers (the app itself sets none — nginx is the boundary)
+    # Security headers. next.config.ts already sets these (plus CSP and
+    # Permissions-Policy) on every response the app serves; kept here too as
+    # nginx's own copies at the edge, in front of the app.
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # Teacher photo uploads. The app refuses above 8 MB itself, in JSON; this
+    # Teacher photo uploads. The app refuses above `MAX_PHOTO_BYTES`
+    # (`src/lib/teacher-photo-limits.ts`; 8 MB today) itself, in JSON; this
     # limit sits above that so the app, not nginx, is the one answering.
     location ~ ^/api/teachers/[^/]+/photo$ {
         client_max_body_size 10m;
