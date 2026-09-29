@@ -164,6 +164,17 @@ describe('StudioClassEditForm', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a cleared start time in prose, not in Zod\'s words', async () => {
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '' } });
+    save();
+
+    expect(await screen.findByText('Pick a start time.')).toBeInTheDocument();
+    expect(screen.queryByText(/HH:mm/)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('refuses a whitespace-only class type rather than blanking the heading', async () => {
     renderForm();
 
