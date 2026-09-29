@@ -4,10 +4,11 @@ import { routerRefresh } from '../../../tests/setup/components';
 import { ProfileForm } from './profile-form';
 import { timeZoneOptions, type TimeZoneOptions } from '@/lib/timezone-options';
 
+const email = 'anna@example.com';
+
 const initial = {
   firstName: 'Anna',
   lastName: 'de Vries',
-  email: 'anna@example.com',
   bio: 'Slow flow on Tuesdays.',
   pageSlug: 'anna',
   defaultCurrency: 'EUR',
@@ -36,6 +37,7 @@ describe('ProfileForm', () => {
     render(
       <ProfileForm
         teacherId="t-1"
+        email={email}
         initial={props}
         timeZoneOptions={options ?? timeZoneOptions(props.defaultTimezone, NOW)}
       />,

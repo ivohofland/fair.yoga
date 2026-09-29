@@ -25,7 +25,6 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | first_name | string | |
 | last_name | string | |
 | email | string, unique | Denormalized copy of the account email. Lowercase by `Teacher_email_lowercase_check` (#170). |
-| photo_url | string, nullable | |
 | bio | string(250) | |
 | page_slug | string, unique | Public booking page URL |
 | custom_domain | string, nullable | |
@@ -42,6 +41,17 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
+
+### TeacherPhoto (avatar, #46)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | Regenerated on every upload — nothing else references it, so a new one per upload is free. It IS the photo's URL (`GET /api/teacher-photos/[id]`): a replaced or erased photo's old URL then answers 404 rather than serving a stale image. |
+| *teacher_id* (FK), unique | → Teacher, `onDelete: Cascade` | 1:1 — at most one photo per teacher. Cascade because tests hard-delete `Teacher` rows; production erasure never deletes the row, it anonymises and deletes this row itself (`deleteTeacherAccount`). |
+| bytes | bytea | Always 400×400 WebP — downscaled and re-encoded on upload by `src/services/teacher-photo.ts`; there is no `content_type` column because the format never varies. |
+| created_at | datetime | |
+
+Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after the `Teacher` row's own `updateMany` — see that service for the race this ordering closes.
 
 ### Student (core)
 

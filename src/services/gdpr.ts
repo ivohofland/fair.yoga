@@ -1514,7 +1514,6 @@ export async function deleteTeacherAccount(
           firstName: 'Deleted',
           lastName: 'Teacher',
           email: erasedAddress(teacherId),
-          photoUrl: null,
           bio: '',
           pageSlug: `deleted-${teacherId}`,
           bankIban: null,

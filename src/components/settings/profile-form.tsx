@@ -2,26 +2,44 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { updateTeacherSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 
+type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
+
+/** Every field this form edits and sends. `email` is shown, not edited, so it is a separate prop. */
+export interface ProfileFormValues {
+  firstName: string;
+  lastName: string;
+  bio: string;
+  pageSlug: string;
+  defaultCurrency: string;
+  defaultTimezone: string;
+  defaultReminder: string;
+  bankIban: string | null;
+  bankAccountName: string | null;
+}
+
+/**
+ * Forward: a field added to `updateTeacherSchema` with no input here fails the
+ * build, naming it. Reverse: a field this form sends that the schema dropped —
+ * `.strict()` would 400 it at runtime; this catches it at compile time.
+ */
+const _formCoversSchema: NoneOf<Exclude<keyof UpdateTeacherWire, keyof ProfileFormValues>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof ProfileFormValues, keyof UpdateTeacherWire>> = true;
+void _formCoversSchema;
+void _formHasNoExtras;
+
 interface ProfileFormProps {
   teacherId: string;
-  initial: {
-    firstName: string;
-    lastName: string;
-    email: string;
-    bio: string;
-    pageSlug: string;
-    defaultCurrency: string;
-    defaultTimezone: string;
-    defaultReminder: string;
-    bankIban: string | null;
-    bankAccountName: string | null;
-  };
+  email: string;
+  initial: ProfileFormValues;
   timeZoneOptions: TimeZoneOptions;
 }
 
@@ -45,7 +63,7 @@ const REMINDER_OPTIONS = [
   { value: 'one_hour_before', label: '1 hour before' },
 ];
 
-export function ProfileForm({ teacherId, initial, timeZoneOptions }: ProfileFormProps) {
+export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: ProfileFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
   const [error, setError] = useState('');
@@ -125,7 +143,7 @@ export function ProfileForm({ teacherId, initial, timeZoneOptions }: ProfileForm
         />
         <div className="flex flex-col gap-1">
           <span className="text-brown">Email</span>
-          <p className="text-base text-ink py-3">{initial.email}</p>
+          <p className="text-base text-ink py-3">{email}</p>
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="bio" className="text-brown">Bio (max 250 characters)</label>
