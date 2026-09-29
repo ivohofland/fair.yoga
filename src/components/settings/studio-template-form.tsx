@@ -125,6 +125,10 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       setError('Location is required.');
       return;
     }
+    if (!form.startTime) {
+      setError('Pick a start time.');
+      return;
+    }
 
     const duration = Number(form.durationMinutes);
     if (!form.durationMinutes.trim() || !Number.isInteger(duration) || duration <= 0) {
