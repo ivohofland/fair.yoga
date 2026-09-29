@@ -21,9 +21,11 @@ interface NotificationListProps {
   paging?: { audience: RecipientType; nextCursor: string | null };
 }
 
-type Serialized<T> = { [K in keyof T]: T[K] extends Date ? string : T[K] };
+/** A naked type parameter distributes over a union, so `Date | null` becomes `string | null`. */
+type Wire<V> = V extends Date ? string : V;
+type Serialized<T> = { [K in keyof T]: Wire<T[K]> };
 
-/** `NotificationPage` as `GET /api/notifications` sends it: the row dates arrive as strings. */
+/** The `data` of `GET /api/notifications` — a `NotificationPage` — with row dates as strings. */
 type OlderPageBody = Pick<NotificationPage, 'hrefById' | 'nextCursor'> & {
   notifications: Serialized<NotificationPage['notifications'][number]>[];
 };
