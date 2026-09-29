@@ -275,8 +275,8 @@ export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZon
  * for free. `date` and `startTime` are absent from `ECONOMIC_FIELDS`
  * (`lib/class-fields.ts`), so a class can be rescheduled after its settings
  * lock — which opens a NEW claim window while a flag from the old one still
- * stands. Without the bound the gate would be permanently shut for such a
- * class, which would silence every later broadcast for a rescheduled class.
+ * stands. Without the bound, a flag from the old window would keep the new
+ * window silent until the class next fills.
  */
 export function broadcastStillStands(cls: {
   spotBroadcastAt: Date | null;
@@ -961,9 +961,9 @@ export class SpotFreedError extends Error {
  * #220), the sweep that re-invokes this on every tick for any open class holding
  * a free seat and a waiting queue. It is the one caller that READS the returned
  * `SpotFreedResult`, using it to tell an invocation that repaired something
- * from one that did not. Its signature did not change for it. The broadcast
- * branch's under-lock gate on a standing broadcast is what keeps this sweep
- * and a live caller from both announcing one freed seat (#691).
+ * from one that did not. The broadcast branch's under-lock gate on a standing
+ * broadcast is what keeps this sweep and a live caller from both announcing
+ * one freed seat (#691).
  */
 export async function handleSpotFreed(
   db: PrismaClient,
@@ -1060,6 +1060,9 @@ export async function handleSpotFreed(
       // either. The lock alone orders two callers for one freed seat; this is
       // what tells the second about the first. Why declining loses no
       // recipient: `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md` §2.
+      // The schedule half of this re-read is, by that same §2 argument, an
+      // equivalent mutant too: a stale one could only turn this into a
+      // decline, and §2 covers why a decline loses no current waiter.
       const current = await tx.class.findUniqueOrThrow({
         where: { id: classId },
         select: {

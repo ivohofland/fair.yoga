@@ -10,12 +10,14 @@ import {
   getWaitlistWindow,
   handleSpotFreed,
   SpotFreedError,
+  type SpotFreedResult,
 } from './waitlist';
 import {
   ReconciliationFailedError,
   createReconciliationStreaks,
   reconcileWaitlists,
   runWaitlistReconciliationTick,
+  type ReconcileSummary,
 } from './waitlist-reconciliation';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
@@ -671,8 +673,11 @@ describe('reconcileWaitlists (DB)', () => {
 
     /**
      * The sweep broadcasts first, then the route's hook arrives for the same
-     * seat. Sequential is enough here: the hook has no pre-lock gate, so a
-     * race and a sequence reach the lock with the same state.
+     * seat. This pins that the hook applies the gate at all; that reading the
+     * flag under the lock is what makes it correct under a genuine race is
+     * pinned by the staged race at the end of this describe (`'announces one
+     * freed seat once when the $first holds the lock and the other caller
+     * parks behind it'`).
      */
     it('does not re-announce from the live hook a seat the sweep already announced', async () => {
       const cls = await makeFreedSeat('SweepFirst', { waiters: 2 });
@@ -736,16 +741,49 @@ describe('reconcileWaitlists (DB)', () => {
 
         // Installed after the fixture, whose `addToWaitlist` calls take this lock too.
         const pause = pauseFirstLockOn(cls.id);
+        let hookResult: SpotFreedResult | undefined;
+        let sweepResult: ReconcileSummary | undefined;
         let firstRun: Promise<unknown> | undefined;
         let secondRun: Promise<unknown> | undefined;
         try {
-          firstRun = first === 'hook' ? hook() : sweep();
+          firstRun =
+            first === 'hook'
+              ? hook().then((r) => (hookResult = r))
+              : sweep().then((r) => (sweepResult = r));
           await within(pause.reached, 2_000, `the ${first} holding the class row`);
-          secondRun = first === 'hook' ? sweep() : hook();
+          secondRun =
+            first === 'hook'
+              ? sweep().then((r) => (sweepResult = r))
+              : hook().then((r) => (hookResult = r));
           await parkedBehind(pause.pid());
         } finally {
           pause.release();
           await joinOrThrow(firstRun, secondRun);
+        }
+
+        // `joinOrThrow` already rethrew if either caller rejected, so both are
+        // assigned here. Checked rather than asserted past, so a caller that
+        // silently swallowed its own outcome (the failure mode below) fails
+        // loudly here instead of passing on an `undefined`.
+        if (hookResult === undefined || sweepResult === undefined) {
+          throw new Error('hookResult/sweepResult unset after joinOrThrow settled both callers');
+        }
+
+        // Closes the vacuous-green path on the hook-first order: if the
+        // sweep's own `lockClassRow` had hit `55P03` parking behind the
+        // hook's held lock, `reconcileOne` swallows that into
+        // `failedClassIds` and returns a summary that still satisfies the
+        // notification counts below. Naming which list `cls.id` landed in is
+        // what tells that outcome apart from the sweep actually reconciling a
+        // class it found already broadcast.
+        if (first === 'hook') {
+          expect(hookResult).toEqual({ action: 'broadcast', notified: 2 });
+          expect(sweepResult.reconciledClassIds).toContain(cls.id);
+          expect(sweepResult.failedClassIds).not.toContain(cls.id);
+          expect(sweepResult.repairedClassIds).not.toContain(cls.id);
+        } else {
+          expect(sweepResult.repairedClassIds).toContain(cls.id);
+          expect(hookResult).toEqual({ action: 'none' });
         }
 
         for (const waiter of cls.waiters) {

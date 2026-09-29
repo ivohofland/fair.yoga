@@ -416,7 +416,8 @@ async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
   }
 
   // first_come_first_claimed: under the Class row lock, counts free seats
-  // (#212 — it used to notify without checking), then notifies everyone
+  // (#212 — it used to notify without checking), declines if a broadcast
+  // already stands for this claim window (#691), then notifies everyone
   // waiting. The first claim wins; claimSpot re-checks capacity.
   return ...;
 }
