@@ -150,7 +150,7 @@ describe('StudioTemplateForm', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Class type is required.');
+    expect(alert).toHaveTextContent(/^Class type is required\.$/);
 
     // Editing the field immediately clears the complaint banner before the next submit (#313)
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
@@ -159,14 +159,14 @@ describe('StudioTemplateForm', () => {
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent('Class type is required.');
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Class type is required\.$/);
   });
 
   it('clears error banner when any input field is edited', async () => {
     stubFetch();
     render(<StudioTemplateForm mode="create" />);
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Class type is required.');
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Class type is required\.$/);
 
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio B' } });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
