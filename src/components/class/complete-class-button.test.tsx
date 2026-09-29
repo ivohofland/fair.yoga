@@ -124,7 +124,9 @@ describe('CompleteClassButton', () => {
   });
 
   it('says something when the request never reaches the server', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<CompleteClassButton classId="c-9" chargedCount={2} />);
 
@@ -132,5 +134,10 @@ describe('CompleteClassButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[complete-class-button] request failed', {
+      classId: 'c-9',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

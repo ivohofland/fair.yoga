@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface HandoffCodeEntryProps {
   className?: string;
@@ -47,7 +47,8 @@ export function HandoffCodeEntry({ className = '' }: HandoffCodeEntryProps) {
         await readErrorMessage(res, 'That code did not work. Ask for a new link.'),
       );
       setStatus('error');
-    } catch {
+    } catch (err) {
+      logRequestFailure('handoff-code-entry', {}, err);
       setErrorMessage('Network error. Please try again.');
       setStatus('error');
     }

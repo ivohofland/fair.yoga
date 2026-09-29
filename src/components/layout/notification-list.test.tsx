@@ -200,6 +200,7 @@ describe('NotificationList — show older (#663)', () => {
   });
 
   it('says so on a failed fetch, keeps the cursor, and succeeds on retry', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
       .mockResolvedValueOnce(olderResponse([notification({ id: 'b', createdAt: at(5) })], null));
@@ -208,14 +209,21 @@ describe('NotificationList — show older (#663)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Show older messages' }));
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load older messages.");
+    expect(consoleError).toHaveBeenCalledWith('[notification-list-older] request failed', {
+      audience: 'teacher',
+      nextCursor: 'c1',
+      err: expect.objectContaining({ message: 'HTTP 500' }),
+    });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Show older messages' }));
     await vi.waitFor(() => expect(rowIds(container)).toEqual(['a', 'b']));
     expect(new URL(String(fetchMock.mock.calls[1]?.[0]), 'http://x').searchParams.get('before')).toBe('c1');
     expect(screen.queryByRole('alert')).toBeNull();
+    consoleError.mockRestore();
   });
 
   it('refreshes the page when the fetch answers 401, and not on any other failure', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
       .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
@@ -229,6 +237,17 @@ describe('NotificationList — show older (#663)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Show older messages' }));
     await vi.waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load older messages.");
+    expect(consoleError).toHaveBeenCalledWith('[notification-list-older] request failed', {
+      audience: 'teacher',
+      nextCursor: 'c1',
+      err: expect.objectContaining({ message: 'HTTP 500' }),
+    });
+    expect(consoleError).toHaveBeenCalledWith('[notification-list-older] request failed', {
+      audience: 'teacher',
+      nextCursor: 'c1',
+      err: expect.objectContaining({ message: 'HTTP 401' }),
+    });
+    consoleError.mockRestore();
   });
 
   it('follows the cursor the page renders with until a fetch has replaced it', async () => {

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface JoinAsStudentProps {
   /** The signed-in teacher's first name — this is their account. */
@@ -32,7 +32,8 @@ export function JoinAsStudent({ firstName }: JoinAsStudentProps) {
       // The refreshed page unmounts this panel; if the refresh round-trip
       // fails, don't leave a forever-disabled button behind.
       setTimeout(() => setState('idle'), 4000);
-    } catch {
+    } catch (err) {
+      logRequestFailure('join-as-student', {}, err);
       setMessage('Network error. Try again.');
       setState('error');
     }

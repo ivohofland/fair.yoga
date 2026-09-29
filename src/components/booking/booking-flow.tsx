@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
 import { FREE_CANCEL_GRACE_MINUTES } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
@@ -97,7 +97,8 @@ export function BookingFlow({
       } else {
         setError(await readErrorMessage(res, 'Could not book the class. Try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('booking-flow', { classId, studentId, isFull }, err);
       setError('Network error. Try again.');
     } finally {
       setSubmitting(false);

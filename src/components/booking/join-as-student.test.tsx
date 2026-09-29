@@ -63,9 +63,15 @@ describe('JoinAsStudent', () => {
   });
 
   it('reports a thrown fetch', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(offline));
     join();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
+    expect(consoleError).toHaveBeenCalledWith('[join-as-student] request failed', {
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

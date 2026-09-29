@@ -49,7 +49,9 @@ describe('SignOutButton', () => {
   });
 
   it('still leaves for the login page when the DELETE itself fails', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<SignOutButton />);
 
@@ -57,6 +59,10 @@ describe('SignOutButton', () => {
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
     await waitFor(() => expect(screen.getByRole('button')).toBeEnabled());
+    expect(consoleError).toHaveBeenCalledWith('[sign-out-button] request failed', {
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 
   // #431. The signup flow mounts this button to open a door, and landing on

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { RegistrationStatus } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 /** A registration this list can show: every status but `cancelled`. */
 export type AttendanceStatus = Exclude<RegistrationStatus, 'cancelled'>;
@@ -121,7 +121,8 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
         // judged against what is actually true.
         router.refresh();
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('attendance-list', { registrationId, newStatus }, err);
       setError('Network error. Please check your connection and try again.');
     } finally {
       setUpdating(null);

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { SettledNotice } from '@/components/ui/settled-notice';
 
 interface MarkUnpaidButtonProps {
@@ -47,7 +47,8 @@ export function MarkUnpaidButton({
       }
       setError(await readErrorMessage(res, 'Could not update. Try again.'));
       setBusy(false);
-    } catch {
+    } catch (err) {
+      logRequestFailure('mark-unpaid-button', { paymentId }, err);
       setError('Network error. Try again.');
       setBusy(false);
     }

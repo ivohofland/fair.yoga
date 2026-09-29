@@ -88,12 +88,19 @@ describe('PublishClassButton', () => {
   });
 
   it('says something when the request never reaches the server', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<PublishClassButton classId="c-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[publish-class-button] request failed', {
+      classId: 'c-1',
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

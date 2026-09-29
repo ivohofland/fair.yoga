@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
+import { logRequestFailure } from '@/lib/client-errors';
 import { isLoginRedirectTarget } from '@/lib/schemas';
 
 function LoginForm() {
@@ -32,7 +33,8 @@ function LoginForm() {
       } else {
         setStatus('error');
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('login', {}, err);
       setStatus('error');
     }
   }

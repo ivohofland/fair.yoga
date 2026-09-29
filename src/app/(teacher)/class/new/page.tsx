@@ -187,7 +187,8 @@ export default function CreateClassPage() {
         // (`transitionClass`) is what actually refuses publishing into an
         // archived room.
         setTeacherRooms(json.data.filter((tr) => !tr.isArchived));
-      } catch {
+      } catch (err) {
+        logRequestFailure('class-new-rooms', {}, err);
         setRoomsFailed(true);
       } finally {
         setLoading(false);

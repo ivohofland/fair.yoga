@@ -115,13 +115,20 @@ describe('CancelClassButton', () => {
   });
 
   it('says something when the request never reaches the server', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(<CancelClassButton classId="c-7" registrationCount={0} />);
 
     confirm();
 
     expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[cancel-class-button] request failed', {
+      classId: 'c-7',
+      err: offline,
+    });
+    consoleError.mockRestore(); // this file's afterEach does not restore spies
   });
 
   // The confirm copy the teacher reads before answering, and the only thing
