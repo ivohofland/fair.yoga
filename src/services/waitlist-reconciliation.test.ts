@@ -558,6 +558,91 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
+   * The gate `handleSpotFreed` applies under the class row lock (#691). The
+   * sweep's own gate reads `spotBroadcastAt` unlocked, and the live hook has
+   * none, so without this the lock orders two callers for one freed seat
+   * without telling the second that the first already announced it. Spec:
+   * `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md`.
+   */
+  describe('the broadcast gate under the class row lock', () => {
+    /**
+     * Two route cancels in one claim window, the first broadcast unclaimed.
+     * Every waiter was told at the first; a second "A spot opened up" tells
+     * them nothing (spec §2 has the argument that no one is left out).
+     */
+    it('announces a second freed seat to nobody while the first broadcast stands', async () => {
+      const cls = await makeFreedSeat('SecondCancel', { waiters: 2 });
+      const clocks = windowClocks(cls.startTime);
+      const debug = vi.spyOn(log, 'debug').mockImplementation(() => undefined);
+      onTestFinished(() => debug.mockRestore());
+
+      const first = await handleSpotFreed(prisma, cls.id, clocks.inClaimWindow);
+      expect(first).toEqual({ action: 'broadcast', notified: 2 });
+
+      // A second cancel frees the surviving seat too; nobody has claimed the first.
+      await prisma.registration.updateMany({
+        where: { classId: cls.id, status: 'registered' },
+        data: { status: 'cancelled', cancelledAt: new Date() },
+      });
+      const second = await handleSpotFreed(prisma, cls.id, clocks.inClaimWindow);
+
+      expect(second).toEqual({ action: 'none' });
+      for (const waiter of cls.waiters) {
+        expect(await spotNotifications(cls.id, waiter)).toBe(1);
+      }
+      expect(debug).toHaveBeenCalledWith(
+        expect.objectContaining({ classId: cls.id }),
+        'waitlist broadcast suppressed — a broadcast already stands for this claim window',
+      );
+    });
+
+    /**
+     * The sweep broadcasts first, then the route's hook arrives for the same
+     * seat. Sequential is enough here: the hook has no pre-lock gate, so a
+     * race and a sequence reach the lock with the same state.
+     */
+    it('does not re-announce from the live hook a seat the sweep already announced', async () => {
+      const cls = await makeFreedSeat('SweepFirst', { waiters: 2 });
+      const clocks = windowClocks(cls.startTime);
+      const scoped = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [cls.id] } } });
+
+      const summary = await reconcileWaitlists(scoped.db, {
+        now: clocks.inClaimWindow,
+        streaks: createReconciliationStreaks(),
+      });
+      expect(summary.repairedClassIds).toEqual([cls.id]);
+
+      const hook = await handleSpotFreed(prisma, cls.id, clocks.inClaimWindow);
+
+      expect(hook).toEqual({ action: 'none' });
+      for (const waiter of cls.waiters) {
+        expect(await spotNotifications(cls.id, waiter)).toBe(1);
+      }
+    });
+
+    /**
+     * The claim-window bound, on the hook's side of the gate. A flag from an
+     * earlier window (a rescheduled class) must not silence this one.
+     */
+    it('broadcasts from the live hook despite a flag stamped before the claim window', async () => {
+      const cls = await makeFreedSeat('HookOldFlag');
+      const clocks = windowClocks(cls.startTime);
+
+      // Thirty-one hours before class start; `claimWindowStart` is classStart − 1h.
+      await prisma.class.update({
+        where: { id: cls.id },
+        data: { spotBroadcastAt: new Date(clocks.classStart.getTime() - 31 * H) },
+      });
+
+      const hook = await handleSpotFreed(prisma, cls.id, clocks.inClaimWindow);
+
+      expect(hook).toEqual({ action: 'broadcast', notified: 1 });
+      expect(await spotNotifications(cls.id, cls.waiter)).toBe(1);
+      expect(await broadcastFlag(cls.id)).toEqual(clocks.inClaimWindow);
+    });
+  });
+
+  /**
    * Two candidates, the first held past `lockClassRow`'s 2 s bound so its
    * invocation throws `55P03`. The second must still be reconciled.
    *
