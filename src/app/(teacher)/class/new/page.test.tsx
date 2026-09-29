@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CreateClassPage from './page';
+import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { routerPush } from '../../../../../tests/setup/components';
 
 const ROOM_ID = '11111111-1111-4111-8111-111111111111';
@@ -630,6 +631,19 @@ describe('NewClassPage', () => {
       expect(screen.queryByLabelText('Room cost')).not.toBeInTheDocument();
     });
 
+    it('refuses a duration that is not whole minutes', async () => {
+      await renderAtStep1();
+      fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_ID } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+      fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '60.5' } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+      expect(screen.getByLabelText('Duration (minutes)')).toHaveAccessibleDescription('Duration must be whole minutes');
+      expect(screen.queryByLabelText('Room cost')).not.toBeInTheDocument();
+    });
+
     it('clears a field message when that field is edited', async () => {
       await renderAtStep1();
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
@@ -663,24 +677,29 @@ describe('NewClassPage', () => {
       capacityOverride: 24,
     };
 
-    function stubFetchStep2Room() {
+    function stubRooms(rooms: readonly (typeof ROOM)[]) {
       fetchMock.mockResolvedValue({
         ok: true,
-        json: async () => ({ data: [STEP2_ROOM] }),
+        json: async () => ({ data: rooms }),
       });
       vi.stubGlobal('fetch', fetchMock);
     }
 
-    /** Step 1 filled validly with the 24-capacity room; defaults then read room cost 20, min rate 15, target 25, min 4, max 12. */
-    async function renderAtStep2() {
-      stubFetchStep2Room();
+    /** Renders the wizard over `rooms` and fills step 1 validly with `roomId`, then presses Next. */
+    async function renderAndPassStep1(rooms: readonly (typeof ROOM)[], roomId: string) {
+      stubRooms(rooms);
       render(<CreateClassPage />);
-      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: STEP2_ROOM_ID } });
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: roomId } });
       fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
       fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
       fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
       await screen.findByLabelText('Room cost');
+    }
+
+    /** Step 1 filled validly with the 24-capacity room; defaults then read room cost 20, min rate 15, target 25, min 4, max 12. */
+    async function renderAtStep2() {
+      await renderAndPassStep1([STEP2_ROOM], STEP2_ROOM_ID);
     }
 
     function set(label: string, value: string) {
@@ -727,6 +746,44 @@ describe('NewClassPage', () => {
       next();
       expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Cannot exceed room capacity (24)');
       expectStillOnStep2();
+    });
+
+    it('refuses a min students that is not a whole number', async () => {
+      await renderAtStep2();
+      set('Min students', '2.5');
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students must be a whole number');
+      expectStillOnStep2();
+    });
+
+    it('refuses a max students that is not a whole number', async () => {
+      await renderAtStep2();
+      set('Max students', '12.5');
+      next();
+      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Max students must be a whole number');
+      expectStillOnStep2();
+    });
+
+    describe('in a room whose capacity exceeds the class size limit', () => {
+      const LARGE_ROOM_ID = '44444444-4444-4444-8444-444444444444';
+      const LARGE_ROOM = { ...ROOM, id: LARGE_ROOM_ID, capacityOverride: MAX_CLASS_SIZE + 50 };
+
+      it('refuses max students above the class size limit', async () => {
+        await renderAndPassStep1([LARGE_ROOM], LARGE_ROOM_ID);
+        set('Max students', String(MAX_CLASS_SIZE + 1));
+        next();
+        expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription(
+          `Max students cannot exceed ${MAX_CLASS_SIZE}`,
+        );
+        expectStillOnStep2();
+      });
+
+      it('advances with max students at the class size limit', async () => {
+        await renderAndPassStep1([LARGE_ROOM], LARGE_ROOM_ID);
+        set('Max students', String(MAX_CLASS_SIZE));
+        next();
+        expect(await screen.findByLabelText('Cancellation deadline')).toBeInTheDocument();
+      });
     });
 
     it('refuses min students above max students, on Min students, with the class family copy', async () => {
@@ -805,17 +862,7 @@ describe('NewClassPage', () => {
         capacityOverride: 16,
         room: { roomName: 'Studio B', venueName: 'Main Venue' },
       };
-      fetchMock.mockResolvedValue({
-        ok: true,
-        json: async () => ({ data: [STEP2_ROOM, OTHER_ROOM] }),
-      });
-      vi.stubGlobal('fetch', fetchMock);
-      render(<CreateClassPage />);
-      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: STEP2_ROOM_ID } });
-      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
-      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
-      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
-      next();
+      await renderAndPassStep1([STEP2_ROOM, OTHER_ROOM], STEP2_ROOM_ID);
       set('Min students', '10');
       set('Max students', '8');
       next();
