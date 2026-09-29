@@ -434,9 +434,9 @@ describe('TemplateForm', () => {
   /**
    * #590. The minStudents > maxStudents refusal guard in handleSubmit was unpinned.
    *
-   * While the edit UI prevents typing minStudents > maxStudents directly through
-   * clamp-on-change, an initial state (or future UI variation) where minStudents
-   * exceeds maxStudents must be rejected before sending a request.
+   * The guard is reachable from the edit UI itself by lowering Max students below
+   * Min (see "refuses a max typed below min students on submit" below), and also
+   * from an initial state where minStudents already exceeds maxStudents.
    *
    * Also verifies banner recovery when Max students is edited.
    */
