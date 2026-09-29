@@ -80,9 +80,13 @@ In the wizard:
   clamp against the room's capacity; Min students is never clamped against Max, so a
   refused min above max survives a room change and is refused again on Next.
 - `validateStep(2)` runs the single-field checks (room cost ≥ 0, min ≥ 1, max ≥ 1,
-  max ≤ room capacity), then `economicsViolations` for the cross-field rules, each
-  placed on the violation's `path` field. A single-field message on a field wins over
-  a cross-field one there, and the first violation per field wins, in rule order.
+  max ≤ room capacity, and the schema bounds in the next bullet), then
+  `economicsViolations` for the cross-field rules, each placed on the violation's
+  `path` field. A single-field message on a field wins over a cross-field one there,
+  and the first violation per field wins, in rule order.
+- The wizard also refuses a duration or student count that is not a whole number, and
+  a max over `MAX_CLASS_SIZE`, as `createClassSchema` does, so neither reaches step 4
+  to be refused there in the server's developer copy.
 - The cross-field copy is the class family's existing bare wording, the same strings
   as `template-form.tsx` and `class-edit-form.tsx`, held in the wizard's own
   `ECONOMICS_COPY … satisfies Record<EconomicsRule, string>`, per the per-form pattern.

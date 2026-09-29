@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { createClassSchema } from '@/lib/schemas';
+import { MAX_CLASS_SIZE, type createClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Button } from '@/components/ui/button';
@@ -269,14 +269,19 @@ export default function CreateClassPage() {
       if (!form.date) errs.date = 'Select a date';
       if (!form.startTime) errs.startTime = 'Enter a start time';
       if (form.durationMinutes <= 0) errs.durationMinutes = 'Duration must be positive';
+      else if (!Number.isInteger(form.durationMinutes)) errs.durationMinutes = 'Duration must be whole minutes';
     }
 
     if (s === 2) {
       if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
       if (form.minStudents <= 0) errs.minStudents = 'Min students must be at least 1';
+      else if (!Number.isInteger(form.minStudents)) errs.minStudents = 'Min students must be a whole number';
       if (form.maxStudents <= 0) errs.maxStudents = 'Max students must be at least 1';
+      else if (!Number.isInteger(form.maxStudents)) errs.maxStudents = 'Max students must be a whole number';
       else if (form.maxStudents > roomCapacity)
         errs.maxStudents = `Cannot exceed room capacity (${roomCapacity})`;
+      else if (form.maxStudents > MAX_CLASS_SIZE)
+        errs.maxStudents = `Max students cannot exceed ${MAX_CLASS_SIZE}`;
       // The shared cross-field rules (#221), each on the field it names. A
       // single-field message already on that field wins, and so does the first
       // rule to claim it.
