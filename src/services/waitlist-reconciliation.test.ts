@@ -7,6 +7,7 @@ import * as dbLocks from '@/lib/db-locks';
 import {
   addToWaitlist,
   claimSpot,
+  claimWindowStart,
   getWaitlistWindow,
   handleSpotFreed,
   SpotFreedError,
@@ -563,9 +564,11 @@ describe('reconcileWaitlists (DB)', () => {
 
   /**
    * The gate `handleSpotFreed` applies under the class row lock (#691). The
-   * sweep's own gate reads `spotBroadcastAt` unlocked, and the live hook has
-   * none, so without this the lock orders two callers for one freed seat
-   * without telling the second that the first already announced it. Spec:
+   * sweep's own gate reads `spotBroadcastAt` unlocked, and the live callers
+   * of the hook — the DELETE registration route and `deleteStudentAccount`
+   * — have no gate of their own, so without this the lock orders two callers
+   * for one freed seat without telling the second that the first already
+   * announced it. Spec:
    * `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md`.
    */
   describe('the broadcast gate under the class row lock', () => {
@@ -720,6 +723,64 @@ describe('reconcileWaitlists (DB)', () => {
     });
 
     /**
+     * Mirrors `re-broadcasts once a claim has consumed the seat and another
+     * frees` above, but drives the hook directly instead of the sweep. That
+     * test pins the sweep's route through this state; this one pins the
+     * hook's own — over-suppression would show up here as the second call
+     * returning `{ action: 'none' }` instead of a second broadcast.
+     */
+    it('re-broadcasts once a claim has consumed the seat and another frees, from the live hook', async () => {
+      const cls = await makeFreedSeat('HookSecondSeat', { waiters: 2 });
+      const clocks = windowClocks(cls.startTime);
+      const [first, second] = cls.waiters as [string, string];
+
+      const opened = await handleSpotFreed(prisma, cls.id, clocks.inClaimWindow);
+      expect(opened).toEqual({ action: 'broadcast', notified: 2 });
+
+      // The first waiter claims the seat — the class is full again, and the
+      // broadcast that announced that seat no longer stands for anything.
+      await claimSpot(prisma, cls.id, first, clocks.inClaimWindow);
+      expect(await broadcastFlag(cls.id)).toBeNull();
+
+      // A second seat frees, staged the same way the sweep-path sibling test
+      // stages it above.
+      await prisma.registration.updateMany({
+        where: { classId: cls.id, studentId: first },
+        data: { status: 'cancelled', cancelledAt: new Date() },
+      });
+      await prisma.waitlistEntry.updateMany({
+        where: { classId: cls.id, studentId: second },
+        data: { status: 'waiting' },
+      });
+
+      const repaired = await handleSpotFreed(prisma, cls.id, clocks.inClaimWindow);
+
+      expect(repaired).toEqual({ action: 'broadcast', notified: 1 });
+      // The second waiter was told at the first broadcast and again at the
+      // second — the same total the sweep-path sibling test asserts.
+      expect(await spotNotifications(cls.id, second)).toBe(2);
+    });
+
+    /**
+     * The window opens inclusively in `getWaitlistWindow`, so a broadcast
+     * stamped at the opening instant stands.
+     */
+    it('does not re-broadcast from the live hook when the standing flag sits exactly at the claim window boundary', async () => {
+      const cls = await makeFreedSeat('HookBoundary');
+      const boundary = claimWindowStart({ date: CLASS_DATE, startTime: hhmmToTime(cls.startTime) }, TZ);
+
+      await prisma.class.update({
+        where: { id: cls.id },
+        data: { spotBroadcastAt: boundary },
+      });
+
+      const hook = await handleSpotFreed(prisma, cls.id, boundary);
+
+      expect(hook).toEqual({ action: 'none' });
+      expect(await spotNotifications(cls.id, cls.waiter)).toBe(0);
+    });
+
+    /**
      * The race the issue describes, staged rather than hoped for, in both
      * orders. The first caller holds the class row lock and is paused before it
      * reads anything under it. The second then does all of its pre-lock
@@ -761,10 +822,11 @@ describe('reconcileWaitlists (DB)', () => {
           await joinOrThrow(firstRun, secondRun);
         }
 
-        // `joinOrThrow` already rethrew if either caller rejected, so both are
-        // assigned here. Checked rather than asserted past, so a caller that
-        // silently swallowed its own outcome (the failure mode below) fails
-        // loudly here instead of passing on an `undefined`.
+        // `joinOrThrow` already rethrew any rejection, so both results are
+        // assigned by this point — this check only narrows the types past the
+        // `| undefined` the outer `let`s declare. A caller that swallowed its
+        // own failure into a result rather than rejecting is what the
+        // assertions below catch, not this one.
         if (hookResult === undefined || sweepResult === undefined) {
           throw new Error('hookResult/sweepResult unset after joinOrThrow settled both callers');
         }

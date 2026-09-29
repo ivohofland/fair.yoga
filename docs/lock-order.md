@@ -271,9 +271,9 @@ the derivation below it. The table is gone rather than corrected a fifth time.
 `archiveOrUnarchiveTemplate`'s (`class-template-lifecycle.ts`) call covers
 `date > today`, so a same-day instance rescheduled into the future by
 `updateClass` (`class-lifecycle.ts`) — which takes the `Class` row lock via
-`lockClassRow`, but only for its own transaction, and never the template lock
-— between that call and the `deleteMany` is deleted without ever having been
-held. The AB-BA cycle against
+`lockClassRow`, holds it only until its own commit, and never takes the
+template lock — between that call and the `deleteMany` is deleted without
+ever having been held. The AB-BA cycle against
 `deleteStudentAccount` can still form through that window. It is narrow (it
 needs a concurrent reschedule *and* an erasure of a student waitlisted across
 both classes, timed into the same gap), it is measured rather than theorised,
