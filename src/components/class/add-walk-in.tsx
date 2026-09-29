@@ -154,7 +154,7 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
     return () => {
       cancelled = true;
     };
-  }, [open, registeredStudentIds]);
+  }, [open, registeredStudentIds, classId]);
 
   async function submit(subject: WalkInSubject): Promise<void> {
     setSubmitting(true);
