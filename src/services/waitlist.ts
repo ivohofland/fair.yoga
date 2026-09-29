@@ -246,6 +246,48 @@ export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZon
 }
 
 /**
+ * True when a first-come-first-claimed broadcast already stands for the seat
+ * that is currently free. The one gate both the reconciliation sweep and
+ * `handleSpotFreed`'s broadcast branch apply (#691).
+ *
+ * Two conditions, and they answer different questions.
+ *
+ * `spotBroadcastAt !== null` is the real gate. It is set inside
+ * `handleSpotFreed`'s broadcast transaction and cleared by
+ * `activateRegistration` — but only on the fill that leaves the class full
+ * (#236); a fill that leaves a seat open does not touch it, because that seat
+ * is still the one the broadcast announced. What invalidates a broadcast is
+ * not time passing but every seat it announced being taken, so that is where
+ * the clear belongs.
+ *
+ * The gate is this flag, not "does a `spot_available` notification exist in
+ * the current claim window", because a claim window is `CLAIM_WINDOW_MINUTES`
+ * wide and can hold more than one seat-freeing event. Seat frees, live
+ * broadcast succeeds, a waiter claims, the seat frees AGAIN, and the live hook
+ * drops the second broadcast: a notification gate would find the first
+ * notification still inside the window and suppress the sweep for the rest of
+ * it, so the remaining waiters would never be told — precisely the loss the
+ * reconciliation sweep exists to repair. A flag cleared by the fill that takes
+ * the last seat cannot make that mistake. It also costs no extra query: it is
+ * a column on the row each caller already reads.
+ *
+ * The claim-window lower bound survives as a secondary check, in memory and
+ * for free. `date` and `startTime` are absent from `ECONOMIC_FIELDS`
+ * (`lib/class-fields.ts`), so a class can be rescheduled after its settings
+ * lock — which opens a NEW claim window while a flag from the old one still
+ * stands. Without the bound the gate would be permanently shut for such a
+ * class, which would silence every later broadcast for a rescheduled class.
+ */
+export function broadcastStillStands(cls: {
+  spotBroadcastAt: Date | null;
+  calendarEntry: { date: Date; startTime: Date; teacher: { defaultTimezone: string } };
+}): boolean {
+  if (cls.spotBroadcastAt === null) return false;
+
+  return cls.spotBroadcastAt >= claimWindowStart(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone);
+}
+
+/**
  * Which promotion window the waitlist is in, anchored on class start (#236):
  * - before `claimWindowStart` → 'auto_promote'
  * - from `claimWindowStart` until start → 'first_come_first_claimed'
@@ -898,9 +940,11 @@ export class SpotFreedError extends Error {
  * - before the final hour before class: auto-promote the queue head
  * - final hour before class: **check capacity under the class row
  *   lock**, then broadcast to all waiting students (first to claim gets the
- *   spot). A class refilled between the cancel and this call is announced to
- *   nobody — `{ action: 'none' }` — which is #212; see the comment at that
- *   branch for why the lock is what makes the check mean anything.
+ *   spot) unless a broadcast already stands for this claim window (#691),
+ *   which covers the new seat too. A class refilled between the cancel and
+ *   this call is announced to nobody — `{ action: 'none' }` — which is #212;
+ *   see the comment at that branch for why the lock is what makes the check
+ *   mean anything.
  * - from class start: frozen — nothing happens
  *
  * Three callers. The two LIVE ones (`DELETE /api/registrations/[id]`,
@@ -917,8 +961,9 @@ export class SpotFreedError extends Error {
  * #220), the sweep that re-invokes this on every tick for any open class holding
  * a free seat and a waiting queue. It is the one caller that READS the returned
  * `SpotFreedResult`, using it to tell an invocation that repaired something
- * from one that did not. Nothing about this function's signature or behaviour
- * changed for it; it is a caller, not a coupling.
+ * from one that did not. Its signature did not change for it. The broadcast
+ * branch's under-lock gate on a standing broadcast is what keeps this sweep
+ * and a live caller from both announcing one freed seat (#691).
  */
 export async function handleSpotFreed(
   db: PrismaClient,
@@ -1007,6 +1052,27 @@ export async function handleSpotFreed(
         return { kind: 'suppressed' as const, seats, waiting };
       }
 
+      // A broadcast already standing for this claim window covers this seat
+      // too, so a second one would tell every waiter what they were already
+      // told. Read here, not from `cls` above: `spotBroadcastAt` is written
+      // under this row lock, and so is any reschedule that moves the window
+      // (`docs/lock-order.md`), so only a read taken after the lock sees
+      // either. The lock alone orders two callers for one freed seat; this is
+      // what tells the second about the first. Why declining loses no
+      // recipient: `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md` §2.
+      const current = await tx.class.findUniqueOrThrow({
+        where: { id: classId },
+        select: {
+          spotBroadcastAt: true,
+          calendarEntry: {
+            select: { date: true, startTime: true, teacher: { select: { defaultTimezone: true } } },
+          },
+        },
+      });
+      if (broadcastStillStands(current)) {
+        return { kind: 'already_broadcast' as const, spotBroadcastAt: current.spotBroadcastAt };
+      }
+
       const waiting = await tx.waitlistEntry.findMany({
         where: { classId, status: 'waiting' },
       });
@@ -1063,6 +1129,15 @@ export async function handleSpotFreed(
           waiting: outcome.waiting,
         },
         'waitlist broadcast suppressed — class refilled before the spot-freed hook ran',
+      );
+    }
+
+    if (outcome.kind === 'already_broadcast') {
+      // `debug` for the reason the `suppressed` line above gives: both
+      // outcomes are correct, and neither live caller reads the result.
+      log.debug(
+        { classId, spotBroadcastAt: outcome.spotBroadcastAt },
+        'waitlist broadcast suppressed — a broadcast already stands for this claim window',
       );
     }
 

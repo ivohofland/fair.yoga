@@ -55,7 +55,7 @@ import { log } from '@/lib/log';
 import { readInPages } from '@/lib/read-in-pages';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import {
-  claimWindowStart,
+  broadcastStillStands,
   getWaitlistWindow,
   handleSpotFreed,
   SpotFreedError,
@@ -584,6 +584,9 @@ async function reconcileOne(
     // `lockClassRow` before it acts. Stale in either direction costs almost
     // nothing: reads full when free, the seat waits one more tick; reads free
     // when full, the hook's locked count suppresses it, as designed.
+    // `spotBroadcastAt` on the same pre-read is stale in the same harmless
+    // way: read as unset while another caller's broadcast commits, the call
+    // re-checks it under the lock and declines.
     //
     // "Almost", because there is one seat this loses: a class read as full on
     // the last tick before its start is `frozen` on the next one and never
@@ -599,7 +602,8 @@ async function reconcileOne(
 
     // Only the broadcast needs a gate. A promotion fills one seat, so the
     // auto-promote branch consumes its own trigger; a broadcast leaves the
-    // seat free and would go out again every tick.
+    // seat free and would go out again every tick. `handleSpotFreed` applies
+    // the same gate again under the lock; this one only saves the round-trip.
     if (window === 'first_come_first_claimed' && broadcastStillStands(cls)) {
       return { kind: 'skipped', reason: 'already_broadcast' };
     }
@@ -675,46 +679,6 @@ async function reconcileOne(
     );
     return { kind: 'failed', transient };
   }
-}
-
-/**
- * True when a first-come-first-claimed broadcast already stands for the seat
- * that is currently free.
- *
- * Two conditions, and they answer different questions.
- *
- * `spotBroadcastAt !== null` is the real gate. It is set inside
- * `handleSpotFreed`'s broadcast transaction and cleared by
- * `activateRegistration` — but only on the fill that leaves the class full
- * (#236); a fill that leaves a seat open does not touch it, because that seat
- * is still the one the broadcast announced. What invalidates a broadcast is
- * not time passing but every seat it announced being taken, so that is where
- * the clear belongs.
- *
- * The gate is this flag, not "does a `spot_available` notification exist in
- * the current claim window", because a claim window is `CLAIM_WINDOW_MINUTES`
- * wide and can hold more than one seat-freeing event. Seat frees, live
- * broadcast succeeds, a waiter claims, the seat frees AGAIN, and the live hook
- * drops the second broadcast: a notification gate would find the first
- * notification still inside the window and suppress the sweep for the rest of
- * it, so the remaining waiters would never be told — precisely the loss this
- * module exists to repair. A flag cleared by the fill that takes the last seat
- * cannot make that mistake. It also costs no query: this is a column on a row
- * the sweep has already loaded, where a notification gate would be a
- * round-trip per gated class per tick.
- *
- * The claim-window lower bound survives as a secondary check, in memory and
- * for free. `date` and `startTime` are absent from `ECONOMIC_FIELDS`
- * (`lib/class-fields.ts`), so a class can be rescheduled after its settings
- * lock — which opens a NEW claim window while a flag from the old one still
- * stands. Without the bound the gate would be permanently shut for such a
- * class, which is this branch's own defect reintroduced for rescheduled
- * classes.
- */
-function broadcastStillStands(cls: CandidateClass): boolean {
-  if (cls.spotBroadcastAt === null) return false;
-
-  return cls.spotBroadcastAt >= claimWindowStart(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone);
 }
 
 /** The single pass that turns per-class outcomes into the summary. */
