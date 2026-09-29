@@ -161,6 +161,17 @@ a rate limit has only the status to read, and several do. Tests assert
 it with `expectRefusal` (`tests/api-assertions.ts`), never the message, so
 copy can change without touching a test.
 
+A client `catch` binds its error, and a failed request logs through
+`logRequestFailure` (`src/lib/client-errors.ts`). Its `context` carries
+identifiers only — never an email, a name, a sign-in code or anything else the
+user typed, which the type cannot tell from an ID. `err` itself can quote the
+start of a response body, which matters if a client error sink is ever plugged
+in. `src/components` and `src/app` refuse a bare `catch` and a parameterless
+`.catch` handler by lint (`bareCatchSelector` and `discardedRejectionSelector`
+in `eslint.config.mjs`); a catch that is correct as bare says why in its
+`eslint-disable-next-line`. The design is in
+`docs/superpowers/specs/2026-09-29-bare-catch-logging-design.md`.
+
 **The one exception is comparing a message against its own exported
 constant, never a literal — and only where several doors share one code and
 the sentence is the only thing that says which door answered.**

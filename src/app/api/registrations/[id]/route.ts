@@ -580,6 +580,7 @@ async function promoteAfterCancel(classId: string): Promise<void> {
       // of a documentation-only pass on purpose, not by oversight.
       const waiting = await prisma.waitlistEntry
         .count({ where: { classId, status: 'waiting' } })
+        // eslint-disable-next-line no-restricted-syntax -- the dropped error is a known gap, see the comment above
         .catch(() => -1);
       const failure = transientDbFailure(err);
       const transient = failure !== null;

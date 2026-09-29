@@ -20,18 +20,17 @@ export function ShareBookingLink({ pageSlug }: ShareBookingLinkProps) {
       try {
         await navigator.share({ title: 'Book a class', url });
         return;
+        // eslint-disable-next-line no-restricted-syntax -- the share sheet was dismissed (or is unsupported); fall through to the clipboard
       } catch {
-        // user dismissed the sheet — fall through to clipboard
+        // Fall through to the clipboard.
       }
     }
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      // eslint-disable-next-line no-restricted-syntax -- the clipboard is blocked (permissions, insecure context); the link is shown for copying by hand
     } catch {
-      // Clipboard can be blocked (permissions, insecure context) — an
-      // unhandled rejection here would fail silently. Show the link so the
-      // teacher can copy it by hand.
       setFallbackUrl(url);
     }
   }

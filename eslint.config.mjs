@@ -32,6 +32,32 @@ const classLockCastSelector = {
     'Only lockClassRow (src/lib/db-locks.ts) mints a ClassLock — take the lock instead of casting one (#219).',
 };
 
+// The roster-link create/upsert refusal (#181), a named constant for the same
+// reason as `classLockCastSelector`: every block that sets `no-restricted-syntax`
+// for a file it applies to has to repeat it.
+const teacherStudentWriteSelector = {
+  selector:
+    "CallExpression[callee.object.property.name='teacherStudent'][callee.property.name=/^(create|createMany|createManyAndReturn|upsert)$/]",
+  message:
+    'Create the roster link with linkTeacherStudent (src/services/roster-link.ts) — a direct create/upsert here reopens the #181 race.',
+};
+
+// A `catch` with no binding discards the error it caught (#692).
+const bareCatchSelector = {
+  selector: 'CatchClause[param=null]',
+  message:
+    'Bind the error — catch (err) — and log it: logRequestFailure (src/lib/client-errors.ts) in client code, log.error({ err }) on the server. A catch that is correct as bare says why in an eslint-disable-next-line as the last line of the try block (#692).',
+};
+
+// The promise-chain spelling of the same discard: a `.catch` handler that
+// takes no parameter, or one named with a leading underscore (#692).
+const discardedRejectionSelector = {
+  selector:
+    "CallExpression[callee.property.name='catch'] > :function:matches([params.length=0], [params.0.name=/^_/])",
+  message:
+    'A .catch handler that takes no parameter (or an _-named one) drops the rejection — take (err: unknown) and log it: logRequestFailure (src/lib/client-errors.ts) in client code, log.error({ err }) on the server (#692).',
+};
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -42,12 +68,13 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
-  // Two unrelated `no-restricted-syntax` protections share this one block
-  // rather than each getting its own: in ESLint flat config, a later config
-  // object that sets `no-restricted-syntax` for a file already matched by an
-  // earlier one REPLACES that rule's options for that file rather than
-  // merging them — so a second `src/**` block here would have silently
-  // switched the other one off wherever the two overlapped.
+  // In ESLint flat config, a later config object that sets
+  // `no-restricted-syntax` for a file already matched by an earlier one
+  // REPLACES that rule's options for that file rather than merging them. So
+  // every block below that matches a file this `src/**` block also matches
+  // repeats its selectors (`teacherStudentWriteSelector`,
+  // `classLockCastSelector`) beside its own; a second `src/**` block here
+  // would have silently switched the others off wherever they overlapped.
   //
   // `TeacherStudent` rows are created in exactly one place —
   // `linkTeacherStudent` (src/services/roster-link.ts) — and
@@ -68,15 +95,24 @@ const eslintConfig = defineConfig([
     files: ['src/**/*.ts', 'src/**/*.tsx'],
     ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     rules: {
+      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector],
+    },
+  },
+  // Client and route code refuses an unbound `catch` and a parameterless
+  // `.catch` handler (#692). It repeats the two selectors from the `src/**`
+  // block because this block's `no-restricted-syntax` replaces that one for
+  // these files — see the comment above it. `src/lib` is outside: its bare
+  // catches are tooling and server probes that are correct as bare.
+  {
+    files: ['src/components/**/*.{ts,tsx}', 'src/app/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    rules: {
       'no-restricted-syntax': [
         'error',
-        {
-          selector:
-            "CallExpression[callee.object.property.name='teacherStudent'][callee.property.name=/^(create|createMany|createManyAndReturn|upsert)$/]",
-          message:
-            'Create the roster link with linkTeacherStudent (src/services/roster-link.ts) — a direct create/upsert here reopens the #181 race.',
-        },
+        teacherStudentWriteSelector,
         classLockCastSelector,
+        bareCatchSelector,
+        discardedRejectionSelector,
       ],
     },
   },
