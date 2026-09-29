@@ -237,13 +237,30 @@ describe('ClassEditForm', () => {
   });
 
   /**
-   * #702. The count checks sit inside the unlocked branch. A locked class's
-   * stored counts are never sent, so a stored zero min must not block a save.
+   * #702, #708. Room cost and the student-count checks in `numberFieldError`
+   * sit behind `if (settingsLocked) return undefined;` — a locked class's
+   * stored economics are never sent, so none of the checks below that line
+   * may block a save. Each row here stores one out-of-range value behind the
+   * gate and saves anyway, pinning the gate's position against a mutation
+   * that moves it past any one of the checks it is meant to skip.
    */
-  it('locked settings: saves despite a stored zero min students, with no alert', async () => {
+  it.each([
+    ['a negative room cost', { roomCost: -5 }],
+    ['a stored zero min students', { minStudents: 0 }],
+    ['a stored fractional min students', { minStudents: 2.5 }],
+    ['a stored zero max students', { maxStudents: 0 }],
+    ['a stored fractional max students', { maxStudents: 12.5 }],
+    ['a stored max students over the class size limit', { maxStudents: MAX_CLASS_SIZE + 1 }],
+  ] as const)('locked settings: saves despite %s, with no alert', async (_label, overrides) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm classId="cls-1" settingsLocked={true} initial={{ ...initial, minStudents: 0 }} />);
+    render(
+      <ClassEditForm
+        classId="cls-1"
+        settingsLocked={true}
+        initial={{ ...initial, ...overrides }}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
