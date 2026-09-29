@@ -80,28 +80,31 @@ In the wizard:
   clamp against the room's capacity; Min students is never clamped against Max, so a
   refused min above max survives a room change and is refused again on Next.
 - `validateStep(2)` runs the single-field checks (room cost ≥ 0, min ≥ 1, max ≥ 1,
-  max ≤ room capacity, and the schema bounds in the next bullet), then
+  max ≤ room capacity, and the student-count schema bounds in the next bullet), then
   `economicsViolations` for the cross-field rules, each placed on the violation's
   `path` field. A single-field message on a field wins over a cross-field one there,
   and the first violation per field wins, in rule order.
-- The wizard also refuses a duration or student count that is not a whole number, and
-  a max over `MAX_CLASS_SIZE`, as `createClassSchema` does, so neither reaches step 4
-  to be refused there in the server's developer copy.
+- The wizard also refuses what `createClassSchema` refuses: a duration that is not a
+  whole number, checked in `validateStep(1)` alongside duration's other checks, and a
+  student count that is not a whole number or a max over `MAX_CLASS_SIZE`, checked in
+  `validateStep(2)`. None of those reaches step 4 to be refused there in the server's
+  developer copy.
 - The cross-field copy is the class family's existing bare wording, the same strings
   as `template-form.tsx` and `class-edit-form.tsx`, held in the wizard's own
   `ECONOMICS_COPY … satisfies Record<EconomicsRule, string>`, per the per-form pattern.
   `'Max must be >= min students'` goes away: no teacher could ever reach it, so
   replacing it changes nothing anyone has seen.
 - Editing a field clears a cross-field message once its rule no longer holds; a
-  refusal still true stays. So a refusal shown on Min rate goes when the teacher fixes
-  it by raising the target rate, not only when Min rate itself is edited.
+  refusal still true on a field other than the one edited stays. So a refusal shown on
+  Min rate goes when the teacher fixes it by raising the target rate, not only when Min
+  rate itself is edited.
 
 In `template-form.tsx`: remove only the drag (`minStudents: Math.min(prev.minStudents,
 max)` in the Max students `onChange`, and its twin in `handleRoomChange`, which clamps
 Min students against the room as the wizard's does). A max below min then reaches the
-form's existing `students_order` refusal on submit. Its capacity and min clamps stay:
-that form has no capacity message to fall back on, and its min clamp rewrites only its
-own field.
+form's existing `students_order` refusal on submit. Its capacity and min clamps stay,
+the capacity one now bounded by `MAX_CLASS_SIZE` too: that form has no capacity message
+to fall back on, and its min clamp rewrites only its own field.
 
 Chosen over:
 
