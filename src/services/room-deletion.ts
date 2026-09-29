@@ -52,20 +52,16 @@ export const ROOM_DELETE_RESTRICT_FKS = [
 ] as const;
 
 /**
- * One refusal for both blockers, deliberately naming neither.
+ * One refusal for both blockers, deliberately naming neither: one message
+ * serves both because it names no blocker, so it is right whichever holds.
+ * A `ClassTemplate` is never hard-deleted here. Same reasoning
+ * `classifyApiError` states for the two terminality triggers ("any wording
+ * that names one column is wrong half the time").
  *
- * A `ClassTemplate` is never hard-deleted anywhere in `src/`, though a
- * template can be moved to another room, so a template blocker is clearable
- * where class history is not; the remedy the message names is the same for
- * either. Same reasoning `classifyApiError` states for the two terminality
- * triggers ("any wording that names one column is wrong half the time").
- *
- * "STILL IN USE", NOT "CLASS HISTORY" — the noun was corrected in PR review.
- * The earlier wording was accurate only when a class was the blocker. A room
- * blocked solely by a template has ZERO classes (that is the state issue 103
- * reproduced), so it sent the teacher to a schedule showing nothing — the
- * exact failure `describeRoomBlockers`'s "unfinished, not upcoming" comment
- * documents for its own choice of noun.
+ * "STILL IN USE", NOT "CLASS HISTORY": a room blocked only by a template has
+ * ZERO classes (the state issue 103 reproduced), so a noun that says "class"
+ * sends the teacher to a schedule showing nothing — the same failure a wrong
+ * noun causes in `describeRoomBlockers` (`"unfinished", not "upcoming"`).
  *
  * AND DO NOT REACH FOR `describeRoomBlockers` TO SAY IT BETTER. The two doors
  * count different things: it says "unfinished class", meaning
@@ -78,12 +74,12 @@ export const ROOM_DELETE_BLOCKED_MESSAGE =
   'This room is still in use and cannot be deleted. Archive it instead.';
 
 /**
- * The same refusal at the door that removes one teacher's link rather than
- * the room. That door's action is unlinking, so the sentence names it; the
- * reasoning above about naming neither blocker applies unchanged.
+ * The refusal at the door that removes one teacher's link rather than the
+ * room. Worded for unlinking, and it names both kinds of blocker by noun:
+ * classes and recurring classes.
  */
 export const TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE =
-  "This room is used by your classes, so it can't be unlinked. Archive it instead.";
+  "This room is used by your classes or recurring classes, so it can't be unlinked. Archive it instead.";
 
 /**
  * True when a room-delete statement was refused by one of the foreign keys

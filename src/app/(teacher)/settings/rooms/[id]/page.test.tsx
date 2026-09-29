@@ -1,19 +1,9 @@
 /**
- * The room detail page's `canEditRoom` gate, on the control that opens a
- * one-way door.
- *
- * `canEditRoom` is `!room.isPublic && room.createdById === session.teacherId`,
- * and it decides three things at once: whether the room fields are editable,
- * whether Delete is offered, and — since #73 — whether `ShareRoomButton`
- * renders at all. Nothing tested the third. Dropping the gate offers "Share
- * with other teachers" on rooms the teacher did not create and on rooms that
- * are already shared; the route refuses both, so the damage is confined to
- * offering an action that cannot succeed — but this is the affordance for an
- * irreversible act, and an affordance that lies is its own defect.
- *
- * Both false arms are here on purpose. The gate is a conjunction, so a test
- * that only exercised one of them would pass against a gate that had lost the
- * other.
+ * The room detail page's gates on the controls that open one-way doors: share,
+ * delete and unlink. Share renders only where `canEditRoom` holds (#73); both
+ * false arms are tested because the gate is a conjunction. Delete and Unlink
+ * are offered only where the door's own counts would let the request through;
+ * otherwise, on an archived room, the page says why.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -129,6 +119,12 @@ describe('EditRoomPage — Delete is offered only where the door will accept it'
     expect(screen.queryByText(DELETE_CAPTION)).toBeNull();
   });
 
+  it('offers neither Delete nor a caption on an unarchived private room a class points at', async () => {
+    render(await renderPage({}, { isArchived: false, classes: 1 }));
+    expect(screen.queryByRole('button', { name: DELETE })).toBeNull();
+    expect(screen.queryByText(DELETE_CAPTION)).toBeNull();
+  });
+
   it('counts room-wide for a private room', async () => {
     render(await renderPage({}, { isArchived: true }));
     expect(count).toHaveBeenCalledWith({ where: { teacherRoom: { roomId: 'room-1' } } });
@@ -143,10 +139,26 @@ describe('EditRoomPage — Unlink is offered only where the door will accept it'
     expect(screen.queryByText(UNLINK_CAPTION)).toBeNull();
   });
 
-  it('says why, and offers no Unlink, when a template points at the link', async () => {
-    render(await renderPage({ isPublic: true }, { templates: 1 }));
+  it('says why, and offers no Unlink, when a template points at an archived shared room', async () => {
+    render(await renderPage({ isPublic: true }, { isArchived: true, templates: 1 }));
     expect(screen.queryByRole('button', { name: UNLINK })).toBeNull();
+    expect(screen.queryByRole('button', { name: DELETE })).toBeNull();
     expect(screen.getByText(UNLINK_CAPTION)).toBeDefined();
+    expect(screen.queryByText(DELETE_CAPTION)).toBeNull();
+  });
+
+  it('offers neither Unlink nor a caption on a shared room that is not archived and in use', async () => {
+    render(await renderPage({ isPublic: true }, { isArchived: false, templates: 1 }));
+    expect(screen.queryByRole('button', { name: UNLINK })).toBeNull();
+    expect(screen.queryByText(UNLINK_CAPTION)).toBeNull();
+  });
+
+  it('offers Unlink but never Delete on an archived shared room nothing points at', async () => {
+    render(await renderPage({ isPublic: true }, { isArchived: true }));
+    expect(screen.getByRole('button', { name: UNLINK })).toBeDefined();
+    expect(screen.queryByRole('button', { name: DELETE })).toBeNull();
+    expect(screen.queryByText(UNLINK_CAPTION)).toBeNull();
+    expect(screen.queryByText(DELETE_CAPTION)).toBeNull();
   });
 
   it('counts by link for a shared room', async () => {
