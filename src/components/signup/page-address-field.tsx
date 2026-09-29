@@ -104,7 +104,7 @@ export function PageAddressField({ value, onChange, error }: PageAddressFieldPro
         const json: { data?: { available?: boolean } } = res.ok ? await res.json() : {};
         available = res.ok ? json.data?.available === true : null;
       } catch (err) {
-        logRequestFailure('page-address-field', { value }, err);
+        logRequestFailure('page-address-field', {}, err);
         available = null;
       }
       if (!cancelled) setAnswer({ slug: value, available });
