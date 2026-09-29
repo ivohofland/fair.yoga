@@ -723,7 +723,7 @@ describe('TemplateForm', () => {
     const callsBeforeSubmit = fetchMock.mock.calls.length;
     fireEvent.click(button);
     expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
-    expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+    expect(await screen.findByText('Min rate cannot exceed target rate')).toBeInTheDocument();
   });
 
   /**
@@ -840,7 +840,7 @@ describe('TemplateForm', () => {
 
     const callsAfterFirstSubmit = fetchMock.mock.calls.length;
     expect(screen.queryByRole('button', { name: /^create$/i })).toBeNull();
-    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+    expect(screen.getByText('Created')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /go to recurring classes/i }));
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
@@ -922,8 +922,8 @@ describe('TemplateForm', () => {
 
     render(<TemplateForm mode="create" />);
 
-    expect(await screen.findByText(/all your rooms are archived/i)).toBeInTheDocument();
-    expect(screen.getByText(/unarchive one in settings/i)).toBeInTheDocument();
+    expect(await screen.findByText('All your rooms are archived.')).toBeInTheDocument();
+    expect(screen.getByText('Unarchive one in Settings to schedule here.')).toBeInTheDocument();
     expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
   });
 
@@ -940,7 +940,7 @@ describe('TemplateForm', () => {
 
     render(<TemplateForm mode="create" />);
 
-    expect(await screen.findByText(/couldn't load your rooms/i)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load your rooms.")).toBeInTheDocument();
     expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
   });
 
@@ -949,7 +949,7 @@ describe('TemplateForm', () => {
 
     render(<TemplateForm mode="create" />);
 
-    expect(await screen.findByText(/couldn't load your rooms/i)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load your rooms.")).toBeInTheDocument();
     expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
   });
 
@@ -1012,7 +1012,7 @@ describe('TemplateForm', () => {
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(
-      await screen.findByText(/3 classes on your schedule\. 1 date already had a class\./i),
+      await screen.findByText('3 classes on your schedule. 1 date already had a class.'),
     ).toBeInTheDocument();
     // `created` still latches — the settled guard is not conditional on the
     // window being full — but no navigation happened: the teacher stays here
@@ -1091,7 +1091,9 @@ describe('TemplateForm', () => {
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(
-      await screen.findByText(/4 dates overlap other classes on your schedule\./i),
+      await screen.findByText(
+        'Nothing is scheduled from this template. 4 dates overlap other classes on your schedule.',
+      ),
     ).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
   });
