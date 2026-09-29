@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - `MAX_CONSECUTIVE_CONTENDED_SWEEPS = 3`.
-- The sweeps' `opts` parameter has **no default value**. A default would let a memoryless sweep fit `SchedulerSweeps`' `(db) => Promise<unknown>` slot.
+- The sweeps' `opts` parameter has **no default value and is not optional** (`opts?:`). Either would let a memoryless sweep fit `SchedulerSweeps`' `(db) => Promise<unknown>` slot.
 - A genuine error still wins the rethrow over `GenerationContendedError`.
 - Skip predicate stays "lock timeout only". `isLockTimeout` becomes `transientDbFailure(error)?.kind === 'lock_timeout'`.
 - Comment Discipline (CLAUDE.md): no counts or rosters in comments, no correction history, and no claims about other files beyond a link.
@@ -24,7 +24,7 @@
 1. **A template contended, then free, then contended again**: the streak must restart from 1, not resume. Pinned in Task 1 (reset test).
 2. **A wedged template alongside a productive sibling**: must still escalate (the issue's own scenario). Pinned in Task 2 stub tests.
 3. **The job stays red while the lock stands**: every sweep past the threshold throws again, so `lastError` is never wiped. Pinned in Task 1 (streak `MAX+1` still returns an error).
-4. **The manual cron route**: its fresh tracker must never escalate, and its response shape is unchanged. Pinned in Task 2 ("fresh tracker per call never rejects").
+4. **The manual cron route**: a fresh tracker per call must never escalate. The sweep-level behaviour is pinned in Task 2 ("fresh tracker per call never rejects"). The route's own choice of a fresh tracker is NOT pinned by a test: the route has no test file, and if it used the production tick instead, manual runs would only add ticks to the scheduler's streak. That is judged not worth a route harness, and the PR body states it.
 5. **A real `55P03` from Postgres** (not a hand-built error) feeds the streak. Pinned in Task 3.
 
 ---
@@ -240,17 +240,19 @@ export function recordSweepContention(
     expect(isLockTimeout(new Error('wrapped', { cause: inner }))).toBe(true);
   });
 
-  it('agrees with transientDbFailure on a deadlock (not a lock timeout)', () => {
-    const deadlock = new Prisma.PrismaClientKnownRequestError('Transaction failed due to a write conflict or a deadlock', {
-      code: 'P2034',
-      clientVersion: 'test',
-    });
-    expect(transientDbFailure(deadlock)?.kind).toBe('deadlock');
-    expect(isLockTimeout(deadlock)).toBe(false);
+  it('defers to the Prisma code, as transientDbFailure does, when both are present', () => {
+    // A transaction-budget expiry whose message quotes a 55P03 framing: one
+    // matcher means one answer, and the code is checked first.
+    const budget = new Prisma.PrismaClientKnownRequestError(
+      'Transaction already closed: ... PostgresError { code: "55P03" }',
+      { code: 'P2028', clientVersion: 'test' },
+    );
+    expect(transientDbFailure(budget)?.kind).toBe('tx_budget');
+    expect(isLockTimeout(budget)).toBe(false);
   });
 ```
 
-Run `pnpm exec vitest run --project unit src/lib/api-errors.test.ts -t isLockTimeout`. Expect the cause test to FAIL; the deadlock test already passes and pins the non-widening direction.
+Run `pnpm exec vitest run --project unit src/lib/api-errors.test.ts -t isLockTimeout`. Expect BOTH new tests to FAIL on the old message-only matcher: the first because it does not walk `cause`, the second because it matches the quoted framing regardless of the code.
 
 - [ ] **Step 7: Implement.** Replace the body of `isLockTimeout` with `return transientDbFailure(error)?.kind === 'lock_timeout';` and rewrite its docblock to say what is true now: it is `transientDbFailure`'s `lock_timeout` kind, so it shares that function's framing rules and walks the same `cause` chain. Keep the two-shapes explanation only as a pointer to `transientDbFailure`'s docblock. Run the whole `api-errors.test.ts`; expect PASS.
 
@@ -292,7 +294,7 @@ export async function generateStudioClassInstances(db: PrismaClient, opts: Studi
 export function runStudioClassGenerationTick(db: PrismaClient): Promise<number>;
 ```
 
-- [ ] **Step 1: Failing tests, class family.** In `src/services/class-generator.test.ts`, inside `describe('generateClassInstances (per-template isolation)'`, extract the existing lock-timeout test's stub into a local factory, `contendedStub(contended: ReadonlySet<string>, failing: ReadonlySet<string> = new Set())`. It builds the same object as that test: templates `A` and `B`, with `createManyAndReturn` throwing `lockTimeoutError` for `rule-X` when `X ∈ contended` and `new Error('boom-X')` when `X ∈ failing`. Use it in the existing test and add:
+- [ ] **Step 1: Failing tests, class family.** In `src/services/class-generator.test.ts`, inside `describe('generateClassInstances (per-template isolation)'`, extract the existing lock-timeout test's stub into a local factory, `contendedStub(contended: ReadonlySet<string>, failing: ReadonlySet<string> = new Set())`, returning `{ stub, created }` so the existing test keeps its `created` assertions. It builds the same object as that test: templates `A` and `B`, with `createManyAndReturn` throwing `lockTimeoutError` for `rule-X` when `X ∈ contended` and `new Error('boom-X')` when `X ∈ failing`. Use it in the existing test and add:
 
 ```ts
   it('reports a template contended on MAX consecutive sweeps, even while a sibling generates', async () => {
@@ -325,9 +327,14 @@ export function runStudioClassGenerationTick(db: PrismaClient): Promise<number>;
       await generateClassInstances(contendedOnly, { streaks, from });
     }
     const both = contendedStub(new Set(['A']), new Set(['B']));
-    await expect(generateClassInstances(both, { streaks, from })).rejects.toThrow('boom-B');
+    const rejection = generateClassInstances(both, { streaks, from });
+    // The genuine failure, not the contention error: assert the kind, not message text.
+    await expect(rejection).rejects.not.toBeInstanceOf(GenerationContendedError);
+    await expect(rejection).rejects.toBeInstanceOf(Error);
   });
 ```
+
+(Adapt the destructuring: `const { stub } = contendedStub(...)`. Where the snippets above write `contendedStub(...)` as the stub, use its `.stub`.)
 
 Use `const from = new Date('2099-01-05T00:00:00Z');` as the neighbouring tests do. Restore the spies in an `afterEach(() => vi.restoreAllMocks())` if the describe block has none. Import `createContentionStreaks`, `GenerationContendedError`, `MAX_CONSECUTIVE_CONTENDED_SWEEPS` from `./generation-contention`.
 
@@ -368,7 +375,7 @@ export function runClassGenerationTick(db: PrismaClient): Promise<number> {
 
 - [ ] **Step 6: Implement the studio sweep** with the identical shape: `STUDIO_GENERATOR.logNoun`, its own module-level tracker, and `runStudioClassGenerationTick`. Update its docblock the same way, including the paragraph about what a throw means to both callers. A throw can now also mean "a template stayed contended".
 
-- [ ] **Step 7: Scheduler.** In `SchedulerSweeps`, rename the two fields to `runClassGenerationTick` / `runStudioClassGenerationTick` (same type). Import the tick wrappers in `startScheduler` and pass them. In `buildJobs`, wire `isolatedSweeps('class-generation', [runClassGenerationTick, runStudioClassGenerationTick])`. Give the `class-generation` job entry a short comment in the style of the `waitlist-reconciliation` one: the sweeps skip a contended template, and report the job degraded only when one stays contended across `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs. That count is a duration only because of this `intervalMs`.
+- [ ] **Step 7: Scheduler.** In `SchedulerSweeps`, rename the two fields to `runClassGenerationTick` / `runStudioClassGenerationTick` (same type). Give them a docblock in the style of `runWaitlistReconciliationTick`'s: the WRAPPER, never the sweep itself, because the sweep's required `opts` makes it unassignable to this slot. Import the tick wrappers in `startScheduler` and pass them. In `buildJobs`, wire `isolatedSweeps('class-generation', [runClassGenerationTick, runStudioClassGenerationTick])`. Give the `class-generation` job entry a short comment in the style of the `waitlist-reconciliation` one: the sweeps skip a contended template, and report the job degraded only when one stays contended across `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs. That count is a duration only because of this `intervalMs`.
 
 - [ ] **Step 8: Cron route.** Pass a fresh tracker per call:
 
@@ -408,13 +415,13 @@ git commit -m "fix(generation): report a template stuck behind a lock across swe
 
 **Interfaces — Consumes:** `generateClassInstances(db, { streaks, teacherId })`, `createContentionStreaks`, `GenerationContendedError`, `MAX_CONSECUTIVE_CONTENDED_SWEEPS`.
 
-- [ ] **Step 1: Write the test.** Use the file's existing fixture (`teacherId`, `templateId`) and the hold pattern its "edit mid-sweep" test uses: a second `prisma.$transaction` that takes `SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE` and awaits a promise released in a `finally`. The holder's `{ timeout }` must be comfortably above `MAX_CONSECUTIVE_CONTENDED_SWEEPS × 2s` plus overhead (use `30_000`). Otherwise the holder's own `P2028` releases the lock mid-test. With one tracker and `teacherId` scoping, run the sweep `MAX − 1` times, expecting each to resolve, then once more, expecting `rejects.toBeInstanceOf(GenerationContendedError)` with `templateIds` equal to `[templateId]`. Spy on `log.warn` and assert that each resolved sweep warned with `templateId`. This shows the skip really came from a real `55P03` claim timeout, not some other path. Clean up any calendar entries created, following the neighbouring `afterEach`. Set the `it` timeout to `30_000`.
+- [ ] **Step 1: Write the test.** Use the file's existing fixture (`teacherId`, `templateId`) and the hold pattern its "edit mid-sweep" test uses: a second `prisma.$transaction` that takes `SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE` and awaits a promise released in a `finally`. Do not rely on a sleep for the hold being in place: the holder resolves a `locked` promise right after its `SELECT … FOR UPDATE` returns, and the test awaits `locked` before the first sweep. The holder's `{ timeout }` must be comfortably above `MAX_CONSECUTIVE_CONTENDED_SWEEPS × 2s` plus overhead (use `30_000`). Otherwise the holder's own `P2028` releases the lock mid-test. With one tracker and `teacherId` scoping, run the sweep `MAX − 1` times, expecting each to resolve, then once more, expecting `rejects.toBeInstanceOf(GenerationContendedError)` with `templateIds` equal to `[templateId]`. Spy on `log.warn` and assert that each resolved sweep warned with `templateId`. This shows the skip really came from a real `55P03` claim timeout, not some other path. Clean up any calendar entries created, following the neighbouring `afterEach`. Set the `it` timeout to `30_000`.
 
 - [ ] **Step 2: Run it:** `pnpm exec vitest run --project unit-sweeps src/services/class-generator-lock-order.test.ts -t "<your describe name>"`. Expect PASS, since Task 2's code exists.
 
 - [ ] **Step 3: Prove it bites.** Temporarily set `MAX_CONSECUTIVE_CONTENDED_SWEEPS = 99` in `generation-contention.ts`. The test's final expectation must fail because the last sweep resolved. Record the text and restore. Then check the other direction: temporarily make `isLockTimeout` return `false`. The first sweep must now reject with the raw 55P03 error, not `GenerationContendedError`. Record and restore. `git status` must end clean apart from this task's files.
 
-- [ ] **Step 4: DEPLOYMENT.md.** After the `waitlist-reconciliation` bullet in §7, add a `class-generation` bullet. The hourly job skips a recurring or studio template whose row is locked, since a teacher saving an edit at that moment is routine. It reports the job unhealthy only when the same template has been skipped on `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs (`src/services/generation-contention.ts`), roughly two to three hours of an unbroken hold, and stays unhealthy until that row is released. Each such run logs an `error` line naming the `templateId`, `teacherId` and `streak`. The usual cause is an idle-in-transaction session: find it in `pg_stat_activity`. The manual `POST /api/cron/generate-classes` never escalates this on its own.
+- [ ] **Step 4: DEPLOYMENT.md.** After the `waitlist-reconciliation` bullet in §7, add a `class-generation` bullet. The hourly job skips a recurring or studio template whose row is locked, since a teacher saving an edit at that moment is routine. It reports the job unhealthy only when the same template has been skipped on `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs (`src/services/generation-contention.ts`), roughly two to three hours of an unbroken hold, and stays unhealthy until that row is released. Each such run logs an `error` line naming the `templateId`, `teacherId` and `streak`. The usual cause is an idle-in-transaction session: find it in `pg_stat_activity`. The manual `POST /api/cron/generate-classes` never escalates this on its own. The streak lives in memory, so a process restart resets it to zero.
 
 - [ ] **Step 5: Commit.**
 

@@ -24,9 +24,10 @@ callers of either sweep are `lib/scheduler.ts` (`class-generation` job) and
 
 **"`skipped > 0 && totalCreated === 0` → escalate" would bring back #122's
 false alarm.** A sweep creates a class only when a new candidate date enters the
-rolling 4-week window. That happens about once a day per template, so for a
-single-template teacher about 23 of 24 hourly sweeps create **zero** classes
-even when everything works. In those hours one benign skip — a teacher saving an
+rolling 4-week window, and a template has one `dayOfWeek`, so that happens
+about once a **week** per template (`getNextOccurrences(…).slice(0, 4)` in
+`entry-generation.ts`). For a single-template teacher, about 167 of 168 hourly
+sweeps create **zero** classes even when everything works. In those hours one benign skip — a teacher saving an
 edit at the moment of the sweep — would satisfy the predicate and turn the job red.
 
 **It is also blind to the issue's own harm scenario.** The scenario is ONE
@@ -106,7 +107,8 @@ generateClassInstances(db, opts: { streaks: ContentionStreaks; from?: Date; teac
 generateStudioClassInstances(db, opts: { streaks: ContentionStreaks; from?: Date })
 ```
 
-`opts` has **no default**, and that is load-bearing, for the reason
+`opts` has **no default and is not optional** (`opts?:` would compile in the
+slot just as a default would), and that is load-bearing, for the reason
 `ReconcileOptions` states. `SchedulerSweeps` types each sweep as
 `(db) => Promise<unknown>`. A two-parameter function with a required second
 parameter is not assignable to that type, so the scheduler cannot be wired to a
@@ -139,10 +141,14 @@ reconciled by redefining
 isLockTimeout(error) === (transientDbFailure(error)?.kind === 'lock_timeout')
 ```
 
-so there is one matcher, not two parallel ones. For every error the old
-function matched this is the same answer (the `55P03` framings are the same
-two strings, and no Prisma code maps to `lock_timeout`). It additionally
-matches a lock timeout carried as `cause`.
+so there is one matcher, not two parallel ones. It uses the same two `55P03`
+framings, and it additionally matches a lock timeout carried as `cause`. One
+theoretical difference: `transientDbFailure` checks the Prisma code first, so
+an error carrying a transient Prisma code (`P2024`/`P2028`/`P2034`) whose
+message also quotes `55P03` is now classified by its code, not as a lock
+timeout. That is the safe direction, since the sweep reddens instead of
+skipping. The only production callers are the two sweeps, whose `err` comes
+straight from `$transaction`.
 
 The skip stays narrow (lock timeout only). `tx_budget` (`P2028`) is also a
 `warn`-level kind, but the transaction's 10s budget is set well above the
