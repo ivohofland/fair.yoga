@@ -136,19 +136,11 @@ describe('StudioTemplateForm', () => {
    * validated client-side before any request, refusing invalid values with
    * product copy rather than letting raw Zod developer copy return from the server.
    *
-   * The two assertions pin different things — the request not being sent, and
-   * the exact copy. On the realistic continuing-guard mutant (the guard fires
-   * but its `return` is dropped) both go red: `handleSubmit` clears `error`
-   * just before the request, so this banner assertion finds nothing and
-   * throws — a red that would read as a missing guard, where the spy's red
-   * names the outgoing request. Asserted against a stubbed `fetch` because
-   * `tests/setup/components.ts` does not mock it — "not called" must be a spy
-   * fact, not an inference from absent network noise.
+   * The spy carries "not sent"; the banner assertion carries the copy.
    *
    * A second submit fills `'   '` — whitespace-only is the boundary the
    * guard's `.trim()` exists for: drop the trim and `''` still refuses while
-   * `'   '` reaches the wire schema's `min(1)` and raw Zod returns. The edit
-   * form's test (`studio-class-edit-form.test.tsx`) pins the same boundary.
+   * `'   '` passes it and the request goes out.
    */
   it('refuses a blank class type before any request, with product copy and alert role', async () => {
     stubFetch();
@@ -279,9 +271,10 @@ describe('StudioTemplateForm', () => {
    * second template and a second generated window, double-counting studio
    * income. Asserted on the fetch count, not on rendered text.
    *
-   * `handleSubmit` also guards `classType` before the request (#282), so the
-   * inline setup fills it alongside `location` — an empty class type would now
-   * refuse the very POST whose count this test audits.
+   * The inline setup fills `classType` alongside `location` to match the
+   * create-mode setup of the tests above — and since `handleSubmit` guards
+   * `classType` (#282), an empty one would refuse the very POST whose count
+   * this test audits.
    */
   // G9
   it('cannot submit twice when the create push commits nothing', async () => {
