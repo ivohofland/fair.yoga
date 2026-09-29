@@ -9,6 +9,7 @@ import { ArchiveRoomButton } from '@/components/settings/archive-room-button';
 import { UnlinkRoomButton } from '@/components/settings/unlink-room-button';
 import { DeleteRoomButton } from '@/components/settings/delete-room-button';
 import { ShareRoomButton } from '@/components/settings/share-room-button';
+import { countRoomDeleteBlockers, countTeacherRoomDeleteBlockers } from '@/services/room-deletion';
 
 export default async function EditRoomPage({
   params,
@@ -28,18 +29,20 @@ export default async function EditRoomPage({
   }
 
   const { room } = teacherRoom;
-  // KNOWN-OPEN (issue 76): a server-render snapshot. BOTH buttons below gate
-  // on it — `UnlinkRoomButton` (:135) and `DeleteRoomButton` (:141) — and the
-  // reasoning holds for each, since both meet a route-level 409. The earlier
-  // wording named one, which is the enumeration shape that goes stale here.
-  // The buttons gate on
-  // it, so a class created on this room after render leaves `Delete room`
-  // offered; the click then meets the route's own refusal, which is the
-  // authority. Recorded rather than locked, for the same reason as the archive
-  // race in `services/room-archive.ts` — see spec section 8.
-  const classCount = await prisma.class.count({ where: { teacherRoomId: teacherRoom.id } });
-  const isArchived = teacherRoom.isArchived;
+  // KNOWN-OPEN (issue 76): a server-render snapshot. The counts are the delete
+  // door's own (`room-deletion.ts`), taken here at render: room-wide for a
+  // private room, whose delete removes every link, and by link for a shared
+  // one, whose unlink removes only this teacher's. A class or template landing
+  // on the room after render leaves the button offered, and the click meets
+  // the route's 409, which stays the authority. Recorded rather than locked,
+  // for the same reason as the archive race in `services/room-archive.ts` —
+  // see spec section 8.
   const canEditRoom = !room.isPublic && room.createdById === session.teacherId;
+  const blockers = canEditRoom
+    ? await countRoomDeleteBlockers(prisma, room.id)
+    : await countTeacherRoomDeleteBlockers(prisma, teacherRoom.id);
+  const inUse = blockers.classes > 0 || blockers.templates > 0;
+  const isArchived = teacherRoom.isArchived;
   const equipmentLabels: Record<string, string> = {
     mats: 'Mats',
     blocks: 'Blocks',
@@ -137,17 +140,23 @@ export default async function EditRoomPage({
           />
         )}
         <ArchiveRoomButton teacherRoomId={teacherRoom.id} isArchived={isArchived} />
-        {classCount === 0 && !canEditRoom && (
+        {!canEditRoom && !inUse && (
           <UnlinkRoomButton
             teacherRoomId={teacherRoom.id}
             roomName={formatRoomLocation(room.roomName, room.venueName)}
           />
         )}
-        {classCount === 0 && canEditRoom && isArchived && (
+        {!canEditRoom && inUse && (
+          <p className="type-caption">This room is used by your classes, so it can&apos;t be unlinked.</p>
+        )}
+        {canEditRoom && isArchived && !inUse && (
           <DeleteRoomButton
             roomId={room.id}
             roomName={formatRoomLocation(room.roomName, room.venueName)}
           />
+        )}
+        {canEditRoom && isArchived && inUse && (
+          <p className="type-caption">This room is used by your classes, so it can&apos;t be deleted.</p>
         )}
       </section>
     </>
