@@ -363,6 +363,25 @@ describe('NewStudioClassPage', () => {
   });
 
   /**
+   * The network copy invites a retry with nothing edited, so this second click
+   * is a submit that starts with `error` still set — no field change has
+   * cleared it. It must send again, not sit on the banner.
+   */
+  it('sends again when the teacher retries after a network error without editing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch();
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  /**
    * A 2xx means the server accepted the create, so an unreadable body must
    * not read as a failure that invites a resend. The page has no id to
    * settle on or push to, so it neither settles nor navigates; "Log class"
