@@ -256,8 +256,10 @@ rather than leaving it silently wrong.
   opportunistic reap on the next `pnpm test` anywhere cleans it up.
   `docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md` has
   the mechanism.
-- **`@/lib/log` is pino and server-only** — check the whole transitive import chain before it
-  reaches a `'use client'` component; `import type` is safe, it erases completely.
+- **`@/lib/log` imports `server-only`** — `next build` fails on any `'use client'`
+  module that value-imports it, through any chain. Share a type across that
+  line with `import type`, which erases. `pnpm run verify` does not run the
+  build; this only surfaces in CI, or locally with `pnpm run build`.
 - **Quote paths with parentheses when staging** — `(public)`, `(teacher)`, `(student)`; an
   unquoted variable over one silently matches nothing.
 - **Migrations:** hand-author CHECK constraints (Prisma can't express them) following
