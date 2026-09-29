@@ -243,8 +243,9 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         }
 
         let handled = false;
-        // `null` is the one parsed payload whose `.data` throws; every other
-        // non-object reads `undefined` and fails the shape check below.
+        // Only an object is read for `.data`: `null` would throw on it, and a
+        // non-object has nothing to read. Anything else falls through to the
+        // shape check below.
         const result =
           typeof rawJson === 'object' && rawJson !== null
             ? (rawJson as { data?: { added: StudioTemplateCreateResponse['added']; counts?: unknown } }).data

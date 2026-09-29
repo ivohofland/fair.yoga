@@ -46,16 +46,15 @@ export async function readErrorMessage(res: Response, fallback: string): Promise
   return (await readError(res, fallback)).message;
 }
 
-/** Identifiers only; primitives, and never an `err` key — the real one is the third argument. */
+/** Ids, flags and enum-like values; primitives only, and never an `err` key — the real one is the third argument. Not a place for anything the user typed. */
 export type RequestFailureContext = Readonly<
   Record<string, string | number | boolean | null | undefined>
 > & { err?: never };
 
 /**
- * The one line a client writes when a request never produced a response it
- * could read — a rejected `fetch`, an unreadable body, or a bug thrown inside
- * the same `try`. The user sees the caller's own message; this is what leaves
- * a trace of why. `context` carries identifiers only — never an email, a
+ * The one line a client writes when a request threw — a rejected `fetch`, an
+ * unreadable body, or a bug inside the same `try`. The user sees the caller's own message; this is what leaves
+ * a trace of why. `context` carries ids, flags and enum-like values — never an email, a
  * name, a sign-in code or anything the user typed.
  */
 export function logRequestFailure(tag: string, context: RequestFailureContext, err: unknown): void {

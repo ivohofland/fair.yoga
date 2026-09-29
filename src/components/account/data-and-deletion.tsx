@@ -41,12 +41,17 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
       setExporting(false);
     }
     if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `fair-yoga-export-${new Date().toISOString().slice(0, 10)}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    try {
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `fair-yoga-export-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('[data-and-deletion-export] download failed', { role, err });
+      setExportError('Could not build the export. Try again.');
+    }
   }
 
   async function handleDelete() {

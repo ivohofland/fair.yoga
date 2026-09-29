@@ -567,9 +567,9 @@ async function promoteAfterCancel(classId: string): Promise<void> {
     await handleSpotFreed(prisma, classId);
   } catch (err) {
     try {
-      // `-1`, not `0`, and not a second silent failure: this runs inside a
-      // handler that must not throw, and a count no real queue can take keeps
-      // the line honest about not knowing rather than claiming nobody waited.
+      // `-1`, not `0`: this runs inside a handler that must not throw, and a
+      // count no real queue can take keeps the line honest about not knowing
+      // rather than claiming nobody waited.
       //
       // `-1` alone does not say WHY the count failed — pool exhaustion and a
       // second `lock_timeout` on the count itself look the same — so the

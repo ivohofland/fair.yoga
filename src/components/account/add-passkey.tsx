@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
 import { Button } from '@/components/ui/button';
+import { logRequestFailure } from '@/lib/client-errors';
 
 // Adds a passkey to the signed-in account: next sign-in is Face ID /
 // fingerprint / device PIN instead of waiting for an email.
@@ -40,6 +41,7 @@ export function AddPasskey() {
         setState('done');
         return;
       }
+      logRequestFailure('add-passkey', {}, err);
       setState('error');
       setMessage('Could not add a passkey on this device.');
     }

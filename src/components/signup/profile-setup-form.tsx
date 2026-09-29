@@ -109,7 +109,7 @@ interface SlugRejection {
 function detectTimeZone(): string | undefined {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
-    // eslint-disable-next-line no-restricted-syntax -- no zone is a supported answer: the route applies its own fallback
+    // eslint-disable-next-line no-restricted-syntax -- an undefined zone is a supported answer (see the docblock)
   } catch {
     return undefined;
   }

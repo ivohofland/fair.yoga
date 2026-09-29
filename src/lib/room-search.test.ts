@@ -86,7 +86,7 @@ describe('searchPublicRooms', () => {
     const outcome = await searchPublicRooms('1015DX', 'X');
 
     expect(outcome).toEqual({ ok: false, reason: 'network' });
-    // A wrong shape is the server's answer, not a transport failure.
+    // A body that parses but has the wrong shape throws nothing, so there is no error to log.
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });

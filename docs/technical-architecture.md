@@ -193,8 +193,8 @@ in. `src/components` and `src/app` refuse a bare `catch` and a parameterless
 `.catch` handler (or one whose parameter is `_`-named) by lint
 (`bareCatchSelector` and `discardedRejectionSelector` in `eslint.config.mjs`);
 a catch that is correct as bare says why in its `eslint-disable-next-line`.
-`src/lib` is outside the rule; its client helpers log through the same helper,
-held by review rather than lint. The design is in
+`src/lib` is outside the rule and held by review; `grep -rn 'catch *{' src/lib`
+re-lists the bare ones. The design is in
 `docs/superpowers/specs/2026-09-29-bare-catch-logging-design.md`.
 
 **Already done is not an error.** A request whose goal the server can prove
