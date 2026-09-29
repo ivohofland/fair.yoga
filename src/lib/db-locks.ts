@@ -395,10 +395,11 @@ export async function lockLiveStudent(
 
 /**
  * The photo upload's gate (#46): the teacher's row `FOR SHARE`, with the shared
- * bounded wait. `FOR SHARE` conflicts with the `FOR NO KEY UPDATE` erasure's
- * anonymising `UPDATE` takes, so an upload and an erasure serialise on this row;
- * `FOR KEY SHARE` would not. Answers whether the teacher is live, read under
- * the lock. `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate".
+ * bounded wait. `FOR SHARE` conflicts with every `UPDATE` of the row, so an
+ * upload and an erasure serialise on it whichever columns the erasure rewrites;
+ * `FOR KEY SHARE` conflicts only with an `UPDATE` that changes a key column.
+ * Answers whether the teacher is live, read under the lock.
+ * `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate".
  */
 export async function lockLiveTeacher(
   tx: TransactionClientOnly,

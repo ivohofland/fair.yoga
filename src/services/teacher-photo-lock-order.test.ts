@@ -115,6 +115,9 @@ describe('a photo upload and a teacher erasure serialise on the Teacher row (#46
     let holderPid = 0;
     const holding = holder.$transaction(async (tx) => {
       holderPid = await ownPid(tx);
+      // `deletedAt` alone: no key column changes, so the holder takes
+      // `FOR NO KEY UPDATE`, the weakest mode an `UPDATE` takes. That is what
+      // lets this case tell the gate's `FOR SHARE` from `FOR KEY SHARE`.
       await tx.$executeRaw`UPDATE "Teacher" SET "deletedAt" = now() WHERE id = ${teacherId}`;
       held.open();
       await release.promise;

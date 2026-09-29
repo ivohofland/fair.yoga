@@ -974,6 +974,11 @@ miss). Pinned by `src/services/student-archive-lock-order.test.ts`'s
 "archiving and reopening bound their wait on the link row" describe, which
 holds the link row past the bound and expects `55P03` inside the hold.
 
+Re-run for issue 46 on 2026-09-29 it returns 23 = the 22 above + 1:
+`lockLiveTeacher` (`db-locks.ts`), the photo upload's gate on the `Teacher`
+row — "The `Teacher` row is the photo upload's gate (#46)" below. Every other
+line sits in one of the files listed above.
+
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
 A slot key is a lock in every sense that matters here. Two transactions
@@ -1672,6 +1677,106 @@ On 2026-09-28 it returned 15 lines = 3 definitions + 2 calls inside
   `acceptInvitation`, `addToWaitlist`, `promoteNext`, `claimSpot`, and
   `completeWalkIn` (`src/services/walk-ins.ts`, the walk-in path of the same
   route).
+
+## The `Teacher` row is the photo upload's gate (#46)
+
+A teacher's profile photo is a `TeacherPhoto` row (`docs/data-model.md`,
+TeacherPhoto), written by `saveTeacherPhoto` and deleted by
+`deleteTeacherAccount`'s closing transaction (`src/services/teacher-photo.ts`,
+`src/services/gdpr.ts`). This section is why the two serialise on the
+teacher's row, and why the erasure's delete sits where it does.
+
+### The race it closes
+
+The upload decodes and re-encodes the image with sharp before it writes
+anything, which can take hundreds of milliseconds. Without a gate:
+
+1. An upload passes its session check and starts processing the image.
+2. An erasure anonymises the teacher, deletes its photo (none yet), commits.
+3. The upload inserts its `TeacherPhoto` row and commits. The erased teacher
+   now has a photo: personal data the erasure was asked to remove.
+
+The foreign key does not stop step 3. The erasure is a soft delete, so the
+`Teacher` row the insert references still exists, and the `FOR KEY SHARE` its
+foreign-key check takes waits at most for the erasure to commit and then
+passes: it reads nothing about whether the teacher is live.
+
+### The lock, and both orders it serialises
+
+`lockLiveTeacher` (`src/lib/db-locks.ts`) arms the shared lock timeout and
+takes the teacher's row `FOR SHARE`, and it answers whether the row is live
+(`deletedAt IS NULL`) from the read it locks with. `saveTeacherPhoto` takes it
+as the first statement of its transaction, and refuses with `teacher-gone`
+when the answer is no. The image is processed before `saveTeacherPhoto` is
+called, so sharp's time is not spent holding the lock. The
+erasure's anonymising `teacher.updateMany` rewrites `email` and `pageSlug`,
+both unique, so it takes the row `FOR UPDATE`, which conflicts with
+`FOR SHARE`. The two queue on the one row in either order:
+
+- **Upload first.** The erasure's `UPDATE` waits until the upload commits. The
+  erasure's `teacherPhoto.deleteMany`, a later statement under READ COMMITTED,
+  takes a fresh snapshot, sees the row the upload wrote, and deletes it.
+- **Erasure first.** The upload's `FOR SHARE` waits until the erasure commits,
+  then reads the row with `deletedAt` set, and the upload refuses without
+  writing.
+
+**The placement rule: the erasure's `teacherPhoto.deleteMany` goes after its
+`teacher.updateMany`, never before.** Before it, the upload-first order
+leaks: the delete finds nothing, the `UPDATE` then waits out the upload, and
+the upload's row survives the erasure.
+
+### Why `FOR SHARE` and not `FOR KEY SHARE`
+
+`FOR KEY SHARE` conflicts only with `FOR UPDATE`, which an `UPDATE` takes only
+when it changes a key column (one with a unique index). The erasure's
+`UPDATE` does that today, through `email` and `pageSlug`, so against today's
+erasure `FOR KEY SHARE` would also serialise: measured below, and by a
+`NOWAIT` probe on 2026-09-29 against a holder rewriting `email` and
+`pageSlug` (both modes refused `55P03`) and one writing `deletedAt` alone
+(`FOR KEY SHARE` acquired, `FOR SHARE` refused). The gate should
+not depend on which columns the anonymisation happens to rewrite. An erasure
+that kept `pageSlug` and `email`, or anything else writing `deletedAt` alone,
+takes `FOR NO KEY UPDATE`, which `FOR KEY SHARE` does not wait for and
+`FOR SHARE` does. `FOR SHARE` conflicts with every `UPDATE` of the row.
+
+Two uploads for the same teacher both hold `FOR SHARE` at once, since the mode
+does not conflict with itself. Prisma issues their `upsert`s as one statement,
+`INSERT … ON CONFLICT ("teacherId") DO UPDATE` (read from its query log on
+2026-09-29), so they meet on the `TeacherPhoto` row: the second waits for the
+first's insert to commit, and then updates it. Last write wins, with no unique
+violation — `src/services/teacher-photo.test.ts`'s "two concurrent saves for
+one teacher leave one row and no error".
+
+### Where `TeacherPhoto` sits: after `Teacher`
+
+The upload takes `Teacher` (`FOR SHARE`) and then the `TeacherPhoto` row its
+`upsert` inserts or updates. The erasure takes `Teacher` (its `UPDATE`) and
+then the `TeacherPhoto` row its `deleteMany` removes. Both take `Teacher`
+first. The upload takes no other lock, so it holds nothing another
+transaction could be waiting on while it waits for `Teacher`, and no cycle
+through it is possible. `removeTeacherPhoto` is a single `deleteMany` of the
+`TeacherPhoto` row and takes no `Teacher` lock, so the photo's own row is the
+only one it holds or waits on.
+
+### How it is pinned
+
+`src/services/teacher-photo-lock-order.test.ts` stages both orders and
+observes the waiter in `pg_stat_activity` / `pg_blocking_pids` before
+releasing the holder:
+
+- "an erasure that waits behind an upload still deletes what the upload
+  wrote": a spy on `lockLiveTeacher` pauses the upload holding the gate, and
+  the real `deleteTeacherAccount` runs against it. Measured on 2026-09-29 by
+  moving the `deleteMany` to the top of the closing transaction: this case
+  fails on the final photo count, `expected 1 to be +0`. The sequential case in
+  `src/services/gdpr.test.ts` ("teacher erasure deletes the stored photo and
+  the export carried it") stays green under that mutation.
+- "an upload that waits behind an erasure is refused and writes nothing": a
+  holder on a second connection writes `deletedAt` alone, so it takes
+  `FOR NO KEY UPDATE`, and holds it. Measured on 2026-09-29 by changing the
+  gate to `FOR KEY SHARE`: this case fails with `expected null not to be
+  null`, the upload never having parked. The upload-first case stays green
+  under that mutation, because the real erasure's `UPDATE` takes `FOR UPDATE`.
 
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
