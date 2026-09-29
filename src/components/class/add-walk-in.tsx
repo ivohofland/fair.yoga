@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface RosterStudent {
   id: string;
@@ -125,7 +125,8 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
         setStudents(json.data.students.filter((s) => !registered.has(s.id)));
         setStudentsLoaded(true);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        logRequestFailure('add-walk-in-students', { classId }, err);
         if (cancelled) return;
         setStudentsFailed(true);
         // A failed load is still a load that finished — it must not keep
@@ -143,7 +144,8 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
         setInvitees(json.data.invitations);
         setInvitationsLoaded(true);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        logRequestFailure('add-walk-in-invitations', { classId }, err);
         if (cancelled) return;
         setInvitationsFailed(true);
         setInvitationsLoaded(true);
@@ -173,7 +175,8 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       } else {
         setError(await readErrorMessage(res, 'Could not add the walk-in. Try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('add-walk-in-register', { classId }, err);
       setError('Network error. Try again.');
     } finally {
       setSubmitting(false);

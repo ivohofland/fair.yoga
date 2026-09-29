@@ -114,12 +114,18 @@ describe('BookingNameStep', () => {
   });
 
   it('surfaces a failure without disabling the button forever', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const offline = new Error('offline');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(offline));
     render(<BookingNameStep email="anna@example.com" redirect="/t/book/c1" />);
 
     fillAndSubmit();
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Continue/i })).not.toBeDisabled();
+    expect(consoleError).toHaveBeenCalledWith('[booking-name-step-profile] request failed', {
+      err: offline,
+    });
+    consoleError.mockRestore();
   });
 });

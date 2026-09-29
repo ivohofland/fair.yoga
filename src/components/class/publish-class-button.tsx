@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface PublishClassButtonProps {
   classId: string;
@@ -42,7 +42,8 @@ export function PublishClassButton({ classId }: PublishClassButtonProps) {
         // server state a sweep or a clock can move underneath it.
         router.refresh();
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('publish-class-button', { classId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

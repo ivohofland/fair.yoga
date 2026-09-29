@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface DataAndDeletionProps {
   /** 'student' | 'teacher' — only changes the consequence copy. */
@@ -26,24 +26,27 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
   async function handleExport() {
     setExporting(true);
     setExportError('');
+    let blob: Blob | undefined;
     try {
       const res = await fetch('/api/account/export');
       if (!res.ok) {
         setExportError(await readErrorMessage(res, 'Could not build the export. Try again.'));
-        return;
+      } else {
+        blob = await res.blob();
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `fair-yoga-export-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch {
+    } catch (err) {
+      logRequestFailure('data-and-deletion-export', { role }, err);
       setExportError('Network error. Try again.');
     } finally {
       setExporting(false);
     }
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `fair-yoga-export-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   async function handleDelete() {
@@ -57,7 +60,8 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
       } else {
         setError(await readErrorMessage(res, 'Could not delete the account. Try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('data-and-deletion-delete', { role }, err);
       setError('Network error. Try again.');
     } finally {
       setDeleting(false);

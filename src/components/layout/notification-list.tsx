@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { Notification, RecipientType } from '@prisma/client';
 import { EmptyState } from '@/components/ui/empty-state';
 import { RetentionNote } from './retention-note';
+import { logRequestFailure } from '@/lib/client-errors';
 import { timeAgo } from '@/lib/format';
 import { postMarkRead } from '@/lib/mark-notification-read';
 import { teacherNotificationHref } from '@/lib/notification-links';
@@ -86,7 +87,12 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
         nextCursor: body.data.nextCursor,
       });
       setStatus('idle');
-    } catch {
+    } catch (err) {
+      logRequestFailure(
+        'notification-list-older',
+        { audience: paging.audience, nextCursor },
+        err,
+      );
       setStatus('failed');
     } finally {
       inFlight.current = false;

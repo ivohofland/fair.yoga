@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface BookingNameStepProps {
   /** The verified address, from the signup ticket. Display only: the route
@@ -58,7 +58,8 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
           lastName: lastName.trim(),
         }),
       });
-    } catch {
+    } catch (err) {
+      logRequestFailure('booking-name-step-profile', {}, err);
       setStatus('idle');
       setError('Network error. Please try again.');
       return;
@@ -84,7 +85,8 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, redirect }),
         });
-      } catch {
+      } catch (err) {
+        logRequestFailure('booking-name-step-resend', { redirect }, err);
         setResendMessage('');
         setStatus('expired-stuck');
         return;
@@ -104,7 +106,8 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
       let body: { data?: { delivered?: boolean; message?: string } } | null;
       try {
         body = await resendRes.json();
-      } catch {
+      } catch (err) {
+        logRequestFailure('booking-name-step-resend-body', {}, err);
         body = null;
       }
       if (body?.data?.delivered === true) {

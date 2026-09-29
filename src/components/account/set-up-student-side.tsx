@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { STUDENT_INVITATION_PATH } from '@/lib/notification-links';
 
 // Adding the student side is the account holder's own act; the invitation is
@@ -27,7 +27,8 @@ export function SetUpStudentSide() {
       router.push(STUDENT_INVITATION_PATH);
       // If the navigation never commits, don't leave a dead button behind.
       setTimeout(() => setState('idle'), 4000);
-    } catch {
+    } catch (err) {
+      logRequestFailure('set-up-student-side', {}, err);
       setMessage('Network error. Try again.');
       setState('error');
     }

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
+import { logRequestFailure } from '@/lib/client-errors';
 
 interface BookingSignInProps {
   /** Where sign-in — magic link or passkey — lands the student: this booking page. */
@@ -37,7 +38,8 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
               body: JSON.stringify({ email, redirect }),
             });
       setStatus(res.ok ? 'sent' : 'error');
-    } catch {
+    } catch (err) {
+      logRequestFailure('booking-sign-in', { mode }, err);
       setStatus('error');
     }
   }

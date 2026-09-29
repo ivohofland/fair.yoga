@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface CompleteClassButtonProps {
   classId: string;
@@ -42,7 +42,8 @@ export function CompleteClassButton({ classId, chargedCount }: CompleteClassButt
         // whether any of that happened.
         setError(await readErrorMessage(res, 'Could not finish the class. Please try again.'));
       }
-    } catch {
+    } catch (err) {
+      logRequestFailure('complete-class-button', { classId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

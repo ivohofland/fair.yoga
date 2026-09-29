@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { logRequestFailure } from '@/lib/client-errors';
 
 interface SignOutButtonProps {
   /**
@@ -25,8 +26,9 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
     try {
       const res = await fetch('/api/auth/session', { method: 'DELETE' });
       cleared = res.ok;
-    } catch {
-      // Network failure; cleared stays false — surfaced below, not silent.
+    } catch (err) {
+      // cleared stays false — surfaced below as well as logged.
+      logRequestFailure('sign-out-button', {}, err);
     } finally {
       // #40. Neither the push nor the refresh is guaranteed to commit on a
       // starved or offline device, and both return `void`, so this component

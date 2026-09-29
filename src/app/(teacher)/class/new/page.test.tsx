@@ -577,11 +577,16 @@ describe('NewClassPage', () => {
     });
 
     it('distinguishes a thrown fetch from an absence of rooms', async () => {
-      fetchMock.mockRejectedValue(new Error('network down'));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const down = new Error('network down');
+      fetchMock.mockRejectedValue(down);
       vi.stubGlobal('fetch', fetchMock);
       render(<CreateClassPage />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalledWith('[class-new-rooms] request failed', {
+        err: down,
+      });
     });
   });
 });
