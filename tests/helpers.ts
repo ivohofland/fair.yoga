@@ -88,9 +88,9 @@ export function sessionCookie(token: string): { name: string; value: string; url
 }
 
 /**
- * Per-run suffix for fixture identities (email, pageSlug, address). The
- * random part is what keeps two files' fixtures apart when both load in the
- * same millisecond, whether in parallel workers of one run or in two
+ * A fresh suffix per call for fixture identities (email, pageSlug, address).
+ * The random part is what keeps two files' fixtures apart when both load in
+ * the same millisecond, whether in parallel workers of one run or in two
  * overlapping runs — a file matching its rows by substring on this suffix
  * relies on it (#705). The rule is in `docs/technical-architecture.md`,
  * "Testing conventions".
