@@ -654,11 +654,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
           value={String(form.maxStudents)}
           onChange={(e) => {
             const max = Math.min(Number(e.target.value), roomCapacity);
-            setForm((prev) => ({
-              ...prev,
-              maxStudents: max,
-              minStudents: Math.min(prev.minStudents, max),
-            }));
+            setForm((prev) => ({ ...prev, maxStudents: max }));
             setError('');
             setSuccess('');
           }}

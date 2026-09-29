@@ -522,6 +522,45 @@ describe('TemplateForm', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  /** #318. Select-all in Max students and type 20: the first keystroke is 2, which must not lower Min students. */
+  it('does not drag min students down while max students is being typed', async () => {
+    stubFetch();
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    const max = await screen.findByLabelText('Max students');
+    fireEvent.change(max, { target: { value: '2' } });
+    fireEvent.change(max, { target: { value: '20' } });
+
+    expect(screen.getByLabelText('Min students')).toHaveValue(4);
+    expect(max).toHaveValue(20);
+  });
+
+  /**
+   * A real click on Save goes through the browser's own pre-submission
+   * constraint validation, which this scenario trips for a reason that has
+   * nothing to do with this guard: `PricingPreviewTable`'s slider picks its
+   * `studentCount` once, at mount, from the *original* min/max, and does not
+   * re-pick it when Max students later shrinks past it — so the rendered
+   * slider's value can sit outside its own (now narrower) min/max and fail
+   * HTML5 validity, which silently blocks a real click's submission before
+   * `handleSubmit` ever runs. A dispatched `submit` event reaches the handler
+   * the same way the form's own #40/F4 test above does, without going through
+   * that unrelated control.
+   */
+  it('refuses a max typed below min students on submit, instead of lowering min', async () => {
+    stubFetch();
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    const max = await screen.findByLabelText('Max students');
+    fireEvent.change(max, { target: { value: '2' } });
+    const form = max.closest('form');
+    if (!form) throw new Error('expected Max students to be inside a form');
+    const callsBefore = fetchMock.mock.calls.length;
+    fireEvent.submit(form);
+
+    expect(screen.getByLabelText('Min students')).toHaveValue(4);
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Min students cannot exceed max students$/);
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+  });
+
   /**
    * `createClassTemplateSchema` has one `.superRefine` running
    * `economicsViolations` (schemas.ts); `updateClassTemplateSchema` does not
