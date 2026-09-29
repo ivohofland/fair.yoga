@@ -433,8 +433,7 @@ describe('TemplateForm', () => {
 
   /**
    * #700. A cleared `type="time"` input reports `''`. `handleSubmit` refuses
-   * it before any request leaves, with this form's own copy, rather than
-   * letting either endpoint's raw schema message reach the banner.
+   * it before any request leaves, with this form's own copy.
    *
    * Parameterised over both modes: create fills the room and class type first
    * so a cleared start time is demonstrably the sole reason the request never
