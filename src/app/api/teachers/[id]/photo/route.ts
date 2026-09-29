@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
 import {
   respondOk, respondUnchanged, respondError, requireTeacher, isErrorResponse, withErrorHandler,
 } from '@/lib/api-utils';
@@ -34,7 +35,8 @@ export const POST = withErrorHandler(async (
   let file: FormDataEntryValue | null;
   try {
     file = (await request.formData()).get('photo');
-  } catch {
+  } catch (err) {
+    log.warn({ err, teacherId: id }, 'teacher photo: upload body could not be parsed');
     return respondError(PHOTO_MESSAGES['no-photo'], 400);
   }
   if (!(file instanceof File) || file.size === 0) return respondError(PHOTO_MESSAGES['no-photo'], 400);
@@ -44,7 +46,10 @@ export const POST = withErrorHandler(async (
   if (!processed.ok) return respondError(PHOTO_MESSAGES[processed.reason], 400);
 
   const saved = await saveTeacherPhoto(prisma, id, processed.bytes);
-  if (!saved.saved) return respondError('Teacher not found', 404);
+  if (!saved.saved) {
+    log.info({ teacherId: id }, 'teacher photo: upload refused — the teacher was erased while it was processed');
+    return respondError('Teacher not found', 404);
+  }
   return respondOk({ photoId: saved.photoId });
 });
 
