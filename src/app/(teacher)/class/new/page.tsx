@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { createClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
+import { economicsViolations, type ClassEconomics, type EconomicsRule } from '@/lib/class-economics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -81,6 +82,27 @@ void _formCoversCreate;
 void _formHasNoExtras;
 
 type StepErrors = Record<string, string>;
+
+/** This form's own wording for each rule `economicsViolations` can report. */
+const ECONOMICS_COPY = {
+  students_order: 'Min students cannot exceed max students',
+  rate_order: 'Min rate cannot exceed target rate',
+  room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
+} as const satisfies Record<EconomicsRule, string>;
+
+const ECONOMICS_MESSAGES: ReadonlySet<string> = new Set(Object.values(ECONOMICS_COPY));
+
+/**
+ * The fields `economicsViolations` reads. Editing any of them may settle a
+ * cross-field refusal shown on another one, so `updateField` clears those too.
+ */
+const ECONOMICS_FIELDS = {
+  roomCost: true,
+  minRate: true,
+  targetRate: true,
+  minStudents: true,
+  maxStudents: true,
+} as const satisfies Record<keyof ClassEconomics, true>;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -211,6 +233,11 @@ export default function CreateClassPage() {
     setErrors((prev) => {
       const next = { ...prev };
       delete next[key];
+      if (key in ECONOMICS_FIELDS) {
+        for (const [field, message] of Object.entries(next)) {
+          if (ECONOMICS_MESSAGES.has(message)) delete next[field];
+        }
+      }
       return next;
     });
   }
@@ -256,10 +283,14 @@ export default function CreateClassPage() {
       if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
       if (form.minStudents <= 0) errs.minStudents = 'Min students must be at least 1';
       if (form.maxStudents <= 0) errs.maxStudents = 'Max students must be at least 1';
-      if (form.maxStudents < form.minStudents)
-        errs.maxStudents = 'Max must be >= min students';
-      if (form.maxStudents > roomCapacity)
+      else if (form.maxStudents > roomCapacity)
         errs.maxStudents = `Cannot exceed room capacity (${roomCapacity})`;
+      // The shared cross-field rules (#221), each on the field it names. A
+      // single-field message already on that field wins, and so does the first
+      // rule to claim it.
+      for (const v of economicsViolations(form)) {
+        errs[v.path] ??= ECONOMICS_COPY[v.rule];
+      }
     }
 
     setErrors(errs);
@@ -551,10 +582,7 @@ export default function CreateClassPage() {
               label="Min students"
               type="number"
               value={String(form.minStudents)}
-              onChange={(e) => {
-                const min = Math.min(Number(e.target.value), form.maxStudents);
-                updateField('minStudents', min);
-              }}
+              onChange={(e) => updateField('minStudents', Number(e.target.value))}
               error={errors.minStudents}
             />
             <Input
@@ -562,20 +590,7 @@ export default function CreateClassPage() {
               label="Max students"
               type="number"
               value={String(form.maxStudents)}
-              onChange={(e) => {
-                const max = Math.min(Number(e.target.value), roomCapacity);
-                setForm((prev) => ({
-                  ...prev,
-                  maxStudents: max,
-                  minStudents: Math.min(prev.minStudents, max),
-                }));
-                setErrors((prev) => {
-                  const next = { ...prev };
-                  delete next.maxStudents;
-                  delete next.minStudents;
-                  return next;
-                });
-              }}
+              onChange={(e) => updateField('maxStudents', Number(e.target.value))}
               error={errors.maxStudents}
             />
           </div>

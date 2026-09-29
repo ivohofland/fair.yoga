@@ -634,4 +634,157 @@ describe('NewClassPage', () => {
       expect(screen.getByLabelText('Date')).toHaveAccessibleDescription('Select a date');
     });
   });
+
+  describe('step 2 validation (#318)', () => {
+    /** Step 1 filled validly with the 30-capacity room; defaults then read room cost 20, min rate 15, target 25, min 4, max 12. */
+    async function renderAtStep2() {
+      stubFetch();
+      render(<CreateClassPage />);
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      await screen.findByLabelText('Room cost');
+    }
+
+    function set(label: string, value: string) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+
+    function next() {
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    }
+
+    function expectStillOnStep2() {
+      expect(screen.getByLabelText('Room cost')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Cancellation deadline')).not.toBeInTheDocument();
+    }
+
+    it('refuses a negative room cost', async () => {
+      await renderAtStep2();
+      set('Room cost', '-1');
+      next();
+      expect(screen.getByLabelText('Room cost')).toHaveAccessibleDescription('Room cost cannot be negative');
+      expectStillOnStep2();
+    });
+
+    it('refuses min students below 1', async () => {
+      await renderAtStep2();
+      set('Min students', '0');
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students must be at least 1');
+      expectStillOnStep2();
+    });
+
+    it('refuses max students below 1', async () => {
+      await renderAtStep2();
+      set('Max students', '0');
+      next();
+      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Max students must be at least 1');
+      expectStillOnStep2();
+    });
+
+    it('refuses max students above the room capacity, keeping what was typed', async () => {
+      await renderAtStep2();
+      set('Max students', '40');
+      expect(screen.getByLabelText('Max students')).toHaveValue(40);
+      next();
+      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Cannot exceed room capacity (30)');
+      expectStillOnStep2();
+    });
+
+    it('refuses min students above max students, on Min students, with the class family copy', async () => {
+      await renderAtStep2();
+      set('Min students', '10');
+      set('Max students', '8');
+      expect(screen.getByLabelText('Min students')).toHaveValue(10);
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students cannot exceed max students');
+      expectStillOnStep2();
+    });
+
+    it('refuses a min rate above the target rate before any request', async () => {
+      await renderAtStep2();
+      set('Min rate', '30');
+      const callsBefore = fetchMock.mock.calls.length;
+      next();
+      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription('Min rate cannot exceed target rate');
+      expectStillOnStep2();
+      expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    });
+
+    it('refuses a min rate subsidizing more than the room cost', async () => {
+      await renderAtStep2();
+      set('Room cost', '10');
+      set('Min rate', '-15');
+      next();
+      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription(
+        'Min rate cannot subsidize more than the room cost — prices would go negative',
+      );
+      expectStillOnStep2();
+    });
+
+    it('shows the single-field message where a field also breaks a cross-field rule', async () => {
+      await renderAtStep2();
+      set('Max students', '-1');
+      set('Min students', '0');
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students must be at least 1');
+      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Max students must be at least 1');
+    });
+
+    it('advances at every legal boundary: max at capacity, min equal to max, min rate at minus the room cost', async () => {
+      await renderAtStep2();
+      set('Max students', '30');
+      set('Min students', '30');
+      set('Room cost', '10');
+      set('Min rate', '-10');
+      next();
+      expect(await screen.findByLabelText('Cancellation deadline')).toBeInTheDocument();
+    });
+
+    it('advances with a zero room cost and a zero min rate', async () => {
+      await renderAtStep2();
+      set('Room cost', '0');
+      set('Min rate', '0');
+      next();
+      expect(await screen.findByLabelText('Cancellation deadline')).toBeInTheDocument();
+    });
+
+    /** Spec §1 correction 2: select-all in Max students and type 20; the first keystroke is 2. */
+    it('does not drag min students down while max students is being typed', async () => {
+      await renderAtStep2();
+      set('Max students', '2');
+      set('Max students', '20');
+      expect(screen.getByLabelText('Min students')).toHaveValue(4);
+      expect(screen.getByLabelText('Max students')).toHaveValue(20);
+    });
+
+    it('clears a students-order refusal when max students is raised', async () => {
+      await renderAtStep2();
+      set('Max students', '3');
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students cannot exceed max students');
+      set('Max students', '5');
+      expect(screen.getByLabelText('Min students')).not.toHaveAccessibleDescription();
+    });
+
+    it('clears a rate-order refusal when the target rate is raised', async () => {
+      await renderAtStep2();
+      set('Min rate', '30');
+      next();
+      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription('Min rate cannot exceed target rate');
+      set('Target rate', '35');
+      expect(screen.getByLabelText('Min rate')).not.toHaveAccessibleDescription();
+    });
+
+    it('keeps a single-field message when a different economics field is edited', async () => {
+      await renderAtStep2();
+      set('Min students', '0');
+      next();
+      set('Target rate', '30');
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students must be at least 1');
+    });
+  });
 });
