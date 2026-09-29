@@ -72,8 +72,8 @@ describe('StudioTemplateForm', () => {
    * One body serves two endpoints, so the key-set has to hold in both modes —
    * a create-only or edit-only assertion would miss a schema that drifted
    * only on the other endpoint. Each mode gets its own `render`/`unmount`
-   * rather than `rerender`, because `useState(initial ?? INITIAL_VALUES)`
-   * only reads its initializer on mount: reusing one instance across modes
+   * rather than `rerender`, because `useState(() => toFormState(initial))`
+   * only runs its initializer on mount: reusing one instance across modes
    * would carry the create-mode fill-ins into the edit-mode assertion instead
    * of exercising `initial` at all.
    */
@@ -132,15 +132,15 @@ describe('StudioTemplateForm', () => {
   });
 
   /**
-   * #282 / #310. All wire-required fields of `StudioTemplateFormValues` are
-   * validated client-side before any request, refusing invalid values with
-   * product copy rather than letting raw Zod developer copy return from the server.
+   * #282. `handleSubmit` refuses a blank class type client-side, before any
+   * request, with product copy rather than letting raw Zod developer copy
+   * return from the server.
    *
-   * The spy carries "not sent"; the banner assertion carries the copy.
+   * The spy assertions carry "not sent"; the banner assertions carry the copy.
    *
    * A second submit fills `'   '` — whitespace-only is the boundary the
    * guard's `.trim()` exists for: drop the trim and `''` still refuses while
-   * `'   '` passes it and the request goes out.
+   * `'   '` passes the guard and the request goes out.
    */
   it('refuses a blank class type before any request, with product copy and alert role', async () => {
     stubFetch();
@@ -272,7 +272,7 @@ describe('StudioTemplateForm', () => {
    * income. Asserted on the fetch count, not on rendered text.
    *
    * The inline setup fills `classType` alongside `location` to match the
-   * create-mode setup of the tests above — and since `handleSubmit` guards
+   * happy-path create setup of the tests above — and since `handleSubmit` guards
    * `classType` (#282), an empty one would refuse the very POST whose count
    * this test audits.
    */
@@ -600,8 +600,23 @@ describe('StudioTemplateForm', () => {
    */
   it('sends again when the teacher retries after a network error without editing', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    stubFetch();
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          id: 'tpl-retry',
+          added: 4,
+          counts: {
+            blockedByCancelled: 0,
+            slotTaken: 0,
+            alreadyThisWeek: 0,
+            blockedByOverlap: 0,
+          },
+        },
+      }),
+    });
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
 
     render(<StudioTemplateForm mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
@@ -610,7 +625,9 @@ describe('StudioTemplateForm', () => {
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/studio-classes'));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
     errorSpy.mockRestore();
   });
 
