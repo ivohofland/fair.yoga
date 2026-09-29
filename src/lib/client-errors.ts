@@ -45,3 +45,18 @@ export async function readError(
 export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   return (await readError(res, fallback)).message;
 }
+
+/**
+ * The one line a client writes when a request never produced a response it
+ * could read — a rejected `fetch`, an unreadable body, or a bug thrown inside
+ * the same `try`. The user sees the caller's own message; this is what leaves
+ * a trace of why. `context` carries identifiers only — never an email, a
+ * name, a sign-in code or anything the user typed.
+ */
+export type RequestFailureContext = Readonly<
+  Record<string, string | number | boolean | null | undefined>
+> & { err?: never };
+
+export function logRequestFailure(tag: string, context: RequestFailureContext, err: unknown): void {
+  console.error(`[${tag}] request failed`, { ...context, err });
+}

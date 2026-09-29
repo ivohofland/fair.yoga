@@ -8,7 +8,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useTodayLocal } from '@/lib/use-today-local';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 
 export interface StudioClassEditInitial {
@@ -198,7 +198,7 @@ export function StudioClassEditForm({
       // `fetch` itself failing — offline, DNS, an aborted connection — since
       // `readErrorMessage` handles its own unreadable body and returns the
       // fallback copy instead of throwing.
-      console.error('studio class edit save failed', err);
+      logRequestFailure('studio-class-edit-form', {}, err);
       setError('Could not reach the server. Check your connection and try again.');
     } finally {
       setSaving(false);

@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
   resumeStudioMessage,
   templateUpdatedMessage,
@@ -168,7 +168,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
           body: JSON.stringify(payload),
         });
       } catch (err) {
-        console.error('[studio-template-form] request failed', { mode, err });
+        logRequestFailure('studio-template-form', { mode }, err);
         setError('Network error. Please try again.');
         return;
       }

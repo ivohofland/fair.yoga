@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { logRequestFailure } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -59,7 +60,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
         const json: StudentListResponse = await res.json();
         if (!cancelled) setStudents(json.data.students);
       } catch (err) {
-        console.error('[student-directory] fetch failed', { err });
+        logRequestFailure('student-directory', {}, err);
         if (!cancelled) setLoadFailed(true);
       } finally {
         if (!cancelled) setLoading(false);

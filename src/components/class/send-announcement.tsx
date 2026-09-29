@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -45,7 +45,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
         body: JSON.stringify({ message: message.trim(), ...(classId ? { classId } : {}) }),
       });
     } catch (err) {
-      console.error('[send-announcement] request failed', { classId, err });
+      logRequestFailure('send-announcement', { classId }, err);
       setError('Network error. Try again.');
       setSending(false);
       return;

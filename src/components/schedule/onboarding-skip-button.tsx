@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import type { OnboardingStep } from '@prisma/client';
+import { logRequestFailure } from '@/lib/client-errors';
 
 interface OnboardingSkipButtonProps {
   step: OnboardingStep;
@@ -46,9 +47,9 @@ export function OnboardingSkipButton({ step, ariaLabel, className = '', children
         router.refresh();
         return;
       }
-      console.error('[onboarding-skip] request failed', { step, status: res.status });
+      console.error('[onboarding-skip] refused', { step, status: res.status });
     } catch (err) {
-      console.error('[onboarding-skip] request failed', { step, err });
+      logRequestFailure('onboarding-skip', { step }, err);
     }
     // A failed skip just leaves the row showing — nothing was recorded, so
     // the teacher can tap Skip again. No error UI: skipping is a quiet,

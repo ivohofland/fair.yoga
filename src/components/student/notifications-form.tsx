@@ -7,7 +7,7 @@ import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface NotificationsFormProps {
   studentId: string;
@@ -100,7 +100,7 @@ export function NotificationsForm({
       // response body, so what reaches here is `fetch` itself failing —
       // offline, DNS, an aborted connection — and without the log nothing
       // records which.
-      console.error('student notification prefs save failed', err);
+      logRequestFailure('notifications-form', {}, err);
       setError('Network error. Try again.');
     } finally {
       setSaving(false);

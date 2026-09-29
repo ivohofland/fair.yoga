@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 import {
   resolveStudioConfirmation,
   UNREADABLE_CONFIRMATION_MESSAGE,
@@ -34,7 +34,7 @@ export function ToggleStudioTemplateButton({ templateId, isActive }: ToggleStudi
           method: 'PATCH',
         });
       } catch (err) {
-        console.error('[toggle-studio-template] request failed', { templateId, err });
+        logRequestFailure('toggle-studio-template', { templateId }, err);
         setError('Network error. Please try again.');
         return;
       }

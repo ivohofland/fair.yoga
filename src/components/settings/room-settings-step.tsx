@@ -5,7 +5,7 @@ import type { z } from 'zod';
 import type { createTeacherRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatRoomLocation } from '@/lib/format';
@@ -94,7 +94,7 @@ export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettings
 
       onSaved();
     } catch (err) {
-      console.error('[room-settings-step] request failed', { roomId: selectedRoom.id, err });
+      logRequestFailure('room-settings-step', { roomId: selectedRoom.id }, err);
       setSettingsError('Network error. Please try again.');
     } finally {
       setSaving(false);

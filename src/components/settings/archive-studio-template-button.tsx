@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
   resolveStudioConfirmation,
   UNREADABLE_CONFIRMATION_MESSAGE,
@@ -32,7 +32,7 @@ export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveS
           method: 'PATCH',
         });
       } catch (err) {
-        console.error('[archive-studio-template] request failed', { templateId, err });
+        logRequestFailure('archive-studio-template', { templateId }, err);
         setError('Network error. Please try again.');
         return;
       }

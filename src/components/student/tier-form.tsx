@@ -6,7 +6,7 @@ import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface TierFormProps {
   studentId: string;
@@ -65,7 +65,7 @@ export function TierForm({ studentId, currentTier }: TierFormProps) {
       // response body, so what reaches here is `fetch` itself failing —
       // offline, DNS, an aborted connection — and without the log nothing
       // records which.
-      console.error('student tier save failed', err);
+      logRequestFailure('tier-form', {}, err);
       setError('Network error. Try again.');
     } finally {
       setSaving(false);

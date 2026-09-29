@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -120,7 +120,7 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
       setSuccess('Saved');
       router.refresh();
     } catch (err) {
-      console.error('[edit-room-form] request failed', { roomId, teacherRoomId, err });
+      logRequestFailure('edit-room-form', { roomId, teacherRoomId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

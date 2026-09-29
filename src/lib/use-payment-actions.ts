@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { PaymentStatus } from '@prisma/client';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { readUndoStatus } from '@/lib/payment-status';
 
 /**
@@ -36,7 +36,7 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
           body: JSON.stringify({ method: 'manual' }),
         });
       } catch (err) {
-        console.error('[payment-mark-paid] request failed', { paymentId, err });
+        logRequestFailure('payment-mark-paid', { paymentId }, err);
         setError('Network error. Try again.');
         return;
       }
@@ -60,7 +60,7 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
       try {
         res = await fetch(`/api/payments/${paymentId}/not-charged`, { method: 'POST' });
       } catch (err) {
-        console.error('[payment-not-charged] request failed', { paymentId, err });
+        logRequestFailure('payment-not-charged', { paymentId }, err);
         setError('Network error. Try again.');
         return;
       }
@@ -94,7 +94,7 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
       try {
         res = await fetch(`/api/payments/${paymentId}/unpaid`, { method: 'POST' });
       } catch (err) {
-        console.error('[payment-undo] request failed', { paymentId, err });
+        logRequestFailure('payment-undo', { paymentId }, err);
         setError('Network error. Try again.');
         return false;
       }
