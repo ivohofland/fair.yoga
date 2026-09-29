@@ -784,6 +784,16 @@ describe('NewClassPage', () => {
         next();
         expect(await screen.findByLabelText('Cancellation deadline')).toBeInTheDocument();
       });
+
+      it('names the class-size bound, not the room capacity, above the room capacity too', async () => {
+        await renderAndPassStep1([LARGE_ROOM], LARGE_ROOM_ID);
+        set('Max students', String(MAX_CLASS_SIZE + 60));
+        next();
+        expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription(
+          `Max students cannot exceed ${MAX_CLASS_SIZE}`,
+        );
+        expectStillOnStep2();
+      });
     });
 
     it('refuses min students above max students, on Min students, with the class family copy', async () => {

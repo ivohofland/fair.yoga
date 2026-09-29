@@ -278,10 +278,11 @@ export default function CreateClassPage() {
       else if (!Number.isInteger(form.minStudents)) errs.minStudents = 'Min students must be a whole number';
       if (form.maxStudents <= 0) errs.maxStudents = 'Max students must be at least 1';
       else if (!Number.isInteger(form.maxStudents)) errs.maxStudents = 'Max students must be a whole number';
-      else if (form.maxStudents > roomCapacity)
-        errs.maxStudents = `Cannot exceed room capacity (${roomCapacity})`;
-      else if (form.maxStudents > MAX_CLASS_SIZE)
-        errs.maxStudents = `Max students cannot exceed ${MAX_CLASS_SIZE}`;
+      else if (form.maxStudents > Math.min(roomCapacity, MAX_CLASS_SIZE))
+        errs.maxStudents =
+          roomCapacity <= MAX_CLASS_SIZE
+            ? `Cannot exceed room capacity (${roomCapacity})`
+            : `Max students cannot exceed ${MAX_CLASS_SIZE}`;
       // The shared cross-field rules (#221), each on the field it names. A
       // single-field message already on that field wins, and so does the first
       // rule to claim it.
