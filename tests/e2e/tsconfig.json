@@ -4,10 +4,11 @@
   // — resolves `server-only` to its non-throwing empty.js, the same
   // substitution vitest.config.ts makes for its own runner. `paths` in a
   // child tsconfig replaces the parent's rather than merging, so `@/*` is
-  // repeated here. This mapping must never move to the root tsconfig.json:
-  // Next honours root `paths`, and putting it there would silently turn off
-  // the `server-only` build guard it exists to route around in this runner
-  // only.
+  // repeated here. This mapping stays local to this file rather than moving
+  // to the root tsconfig.json: measured directly, the same entry added there
+  // does not change what `next build` (Turbopack) resolves `server-only` to
+  // — it still fails a client leak the same way — so it would add nothing
+  // for Next and only Playwright's own resolution needs it.
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "paths": {
