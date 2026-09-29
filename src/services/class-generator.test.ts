@@ -7,6 +7,7 @@ import {
   generateClassInstances,
   generateInstancesForTemplate,
   claimTemplateForGeneration,
+  runClassGenerationTick,
 } from './class-generator';
 import { getNextOccurrences } from './entry-generation';
 import {
@@ -1523,6 +1524,16 @@ describe('generateClassInstances (per-template isolation)', () => {
         generateClassInstances(stub, { streaks: createContentionStreaks(), from }),
       ).resolves.toBeGreaterThan(0);
     }
+  });
+
+  it('the hourly tick wrapper shares one tracker across calls, so it escalates', async () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => log);
+    vi.spyOn(log, 'error').mockImplementation(() => log);
+    const { stub } = contendedStub(new Set(['A']));
+    for (let i = 1; i < MAX_CONSECUTIVE_CONTENDED_SWEEPS; i += 1) {
+      await expect(runClassGenerationTick(stub)).resolves.toBeGreaterThan(0);
+    }
+    await expect(runClassGenerationTick(stub)).rejects.toBeInstanceOf(GenerationContendedError);
   });
 
   it('rethrows a genuine failure ahead of the contention error in the same sweep', async () => {

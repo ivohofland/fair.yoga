@@ -262,7 +262,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // `MAX_CONSECUTIVE_CONTENDED_SWEEPS` (`generation-contention.ts`)
       // consecutive runs; a genuine failure reddens the job on the sweep it
       // happens in. That count is a duration only because of the
-      // interval on the line below.
+      // job's `intervalMs`.
       name: 'class-generation',
       intervalMs: 60 * MINUTE,
       run: isolatedSweeps('class-generation', [runClassGenerationTick, runStudioClassGenerationTick]),

@@ -60,6 +60,11 @@ export class GenerationContendedError extends Error {
  * bounded by the candidate set rather than by uptime. A template at or past
  * the threshold is logged at `error` on every such sweep, so the job stays
  * unhealthy for as long as the row stays locked.
+ *
+ * Because the map is rebuilt from the skips it is given, a tracker must see
+ * every sweep of ONE candidate set: a sweep scoped to fewer templates that
+ * shares the tracker resets the others' streaks. The tick wrappers are
+ * unscoped, and scoped calls use their own tracker.
  */
 export function recordSweepContention(
   streaks: ContentionStreaks,

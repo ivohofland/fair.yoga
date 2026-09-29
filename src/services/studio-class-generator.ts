@@ -177,9 +177,7 @@ export interface StudioGenerationSweepOptions {
  * job-health visibility — ahead of a contention error from the same sweep,
  * since it is the more specific signal.
  *
- * So, unless the candidate read itself failed, a throw to either caller
- * (`api/cron/generate-classes/route.ts` and `lib/scheduler.ts`'s
- * `isolatedSweeps`) means the sweep ran to completion and either at least one
+ * So, unless the candidate read itself failed, a throw means the sweep ran to completion and either at least one
  * template failed along the way or at least one stayed contended across the
  * tracker's consecutive sweeps. It does not mean some templates never got a
  * turn.
