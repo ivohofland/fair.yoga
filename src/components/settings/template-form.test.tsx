@@ -473,17 +473,20 @@ describe('TemplateForm', () => {
 
   /**
    * #702. The number inputs store `Number(value)`, so a cleared one is `0`,
-   * and none carries a native `min`. Every bound the template schemas put on
-   * a number field that the inputs' own clamps don't already hold is refused
-   * before any request leaves, on create and on edit.
+   * and none carries a native `min`. The first number field out of range, in
+   * this form's copy, is refused before any request leaves, on create and on
+   * edit.
    */
   const NUMBER_REFUSALS = [
     ['a cleared duration', 'Duration (minutes)', '', /^Duration must be positive$/],
+    ['a negative duration', 'Duration (minutes)', '-5', /^Duration must be positive$/],
     ['a fractional duration', 'Duration (minutes)', '60.5', /^Duration must be whole minutes$/],
     ['a negative room cost', 'Room cost', '-5', /^Room cost cannot be negative$/],
     ['a cleared min students', 'Min students', '', /^Min students must be at least 1$/],
+    ['a negative min students', 'Min students', '-5', /^Min students must be at least 1$/],
     ['a fractional min students', 'Min students', '2.5', /^Min students must be a whole number$/],
     ['a cleared max students', 'Max students', '', /^Max students must be at least 1$/],
+    ['a negative max students', 'Max students', '-5', /^Max students must be at least 1$/],
     ['a fractional max students', 'Max students', '12.5', /^Max students must be a whole number$/],
   ] as const;
 
@@ -506,6 +509,12 @@ describe('TemplateForm', () => {
     }
   }
 
+  /**
+   * Dispatched as a submit, not a click: jsdom's native constraint validation
+   * blocks a click submit when the pricing preview's range input goes out of
+   * range or a number field fails `step`, which a real browser does not do
+   * here.
+   */
   function submitForm() {
     const form = screen.getByLabelText('Duration (minutes)').closest('form');
     if (!form) throw new Error('expected Duration to be inside a form');

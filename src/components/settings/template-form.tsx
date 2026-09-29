@@ -134,10 +134,10 @@ const ECONOMICS_COPY = {
 
 /**
  * #702. The number inputs store `Number(value)`, so a cleared one is `0`, and
- * none carries a native `min`. The first value the template schemas would
- * refuse, in this form's copy, or `undefined`. No class-size branch: both
- * handlers that write Max students clamp it to `MAX_CLASS_SIZE`, the Min
- * students input clamps to Max, and an edit's `initial` is a saved template.
+ * none carries a native `min`. The first number field out of range, in this
+ * form's copy, or `undefined`. No class-size branch: the handlers that write
+ * Max students clamp it to `MAX_CLASS_SIZE`, the Min students input clamps to
+ * Max, and an edit's `initial` is a saved template.
  */
 function numberFieldError(form: TemplateFormValues): string | undefined {
   if (form.durationMinutes <= 0) return 'Duration must be positive';
