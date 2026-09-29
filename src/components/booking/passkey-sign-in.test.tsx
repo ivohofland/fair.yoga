@@ -181,6 +181,24 @@ describe('PasskeySignIn', () => {
     );
   });
 
+  it('logs when a request rejects outright', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const networkFailure = new TypeError('Failed to fetch');
+    fetchMock.mockRejectedValueOnce(networkFailure);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText("Passkey sign-in didn't work here — use the email link instead."),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[passkey-sign-in] request failed', {
+      err: networkFailure,
+    });
+    consoleError.mockRestore();
+  });
+
   /**
    * The browser reports many different causes — a deliberate cancel, a
    * timeout, no matching credential, a cross-device flow still pending

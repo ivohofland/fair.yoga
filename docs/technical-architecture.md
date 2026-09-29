@@ -161,19 +161,6 @@ a rate limit has only the status to read, and several do. Tests assert
 it with `expectRefusal` (`tests/api-assertions.ts`), never the message, so
 copy can change without touching a test.
 
-A client `catch` binds its error, and a failed request logs through
-`logRequestFailure` (`src/lib/client-errors.ts`). Its `context` carries
-identifiers only — never an email, a name, a sign-in code or anything else the
-user typed, which the type cannot tell from an ID. `err` itself can quote the
-start of a response body, which matters if a client error sink is ever plugged
-in. `src/components` and `src/app` refuse a bare `catch` and a parameterless
-`.catch` handler (or one whose parameter is `_`-named) by lint
-(`bareCatchSelector` and `discardedRejectionSelector` in `eslint.config.mjs`);
-a catch that is correct as bare says why in its `eslint-disable-next-line`.
-`src/lib` is outside the rule; its client helpers were converted once and are
-held by review. The design is in
-`docs/superpowers/specs/2026-09-29-bare-catch-logging-design.md`.
-
 **The one exception is comparing a message against its own exported
 constant, never a literal — and only where several doors share one code and
 the sentence is the only thing that says which door answered.**
@@ -196,6 +183,19 @@ meets a mutation that leaves a test green cannot tell "nothing caught this"
 from "nothing was ever meant to" — the question #197's own PR (`8e22db04`)
 had to answer the hard way, by re-deriving the acceptance criterion from the
 issue itself after a first pass pinned prose at five sites that did not need it.
+
+A client `catch` binds its error, and a failed request logs through
+`logRequestFailure` (`src/lib/client-errors.ts`). Its `context` carries
+identifiers only — never an email, a name, a sign-in code or anything else the
+user typed, which the type cannot tell from an ID. `err` itself can quote the
+start of a response body, which matters if a client error sink is ever plugged
+in. `src/components` and `src/app` refuse a bare `catch` and a parameterless
+`.catch` handler (or one whose parameter is `_`-named) by lint
+(`bareCatchSelector` and `discardedRejectionSelector` in `eslint.config.mjs`);
+a catch that is correct as bare says why in its `eslint-disable-next-line`.
+`src/lib` is outside the rule; its client helpers log through the same helper,
+held by review rather than lint. The design is in
+`docs/superpowers/specs/2026-09-29-bare-catch-logging-design.md`.
 
 **Already done is not an error.** A request whose goal the server can prove
 already holds answers `respondUnchanged(data)`: 200, `{ data, outcome:

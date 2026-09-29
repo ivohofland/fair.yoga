@@ -23,8 +23,8 @@ import { SERIAL_TESTS } from './vitest.tiers';
 //   mocked there: each test that clicks stubs it itself via
 //   `vi.stubGlobal('fetch', …)`. A test that renders fetch-calling code and
 //   never clicks needs no stub; one that clicks and forgets gets a real
-//   relative-URL request that fails: the component logs it via
-//   `logRequestFailure` and shows "Network error", and the test does not fail.
+//   relative-URL request that fails into the component's own error handling; the
+//   test does not fail.
 export default defineConfig(({ mode }) => {
   const fileEnv = loadEnv(mode, process.cwd(), '');
   const devUrl = process.env.DATABASE_URL ?? fileEnv.DATABASE_URL ?? '';

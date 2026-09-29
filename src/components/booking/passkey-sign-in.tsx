@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { startAuthentication } from '@simplewebauthn/browser';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 
 const DEFAULT_ERROR_MESSAGE = "Passkey sign-in didn't work here — use the email link instead.";
@@ -77,6 +77,7 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
         setState('incomplete');
         return;
       }
+      logRequestFailure('passkey-sign-in', {}, err);
       setErrorMessage(DEFAULT_ERROR_MESSAGE);
       setState('error');
     }
