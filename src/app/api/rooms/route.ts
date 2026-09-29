@@ -14,19 +14,15 @@ import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import type { RoomResult } from '@/lib/room-search';
 
 /**
- * The projection the shared-room search returns, tethered to the type its one
- * consumer reads it as.
+ * The columns the shared-room search returns: exactly `RoomResult`'s keys.
  *
- * `satisfies Record<keyof RoomResult, true>` is the tether, and it binds in
- * both directions: drop a field here and the key is missing, add one and it
- * is not in `keyof RoomResult`. Without it the two drift silently — and the
- * drift is invisible, because `searchPublicRooms` only *asserts* the response
- * shape. Omitting `floor` would leave `RoomResult.floor` declared, make
- * `sameRoomIdentity` compare `undefined === '2'`, and quietly retire the
- * "Already shared" branch this whole flow exists to reach.
- *
- * It also stops shipping other teachers' `createdById`, `notes` and
- * timestamps to the browser, which the previous bare `findMany` did.
+ * `satisfies Record<keyof RoomResult, true>` refuses a key `RoomResult` does
+ * not name, and that is what keeps other teachers' `createdById`, `notes` and
+ * timestamps out of the browser. `respondTyped<RoomResult[]>` below cannot:
+ * the query result is not a fresh literal, so it gets no excess-property
+ * check; what it adds is refusing a column whose type no longer matches
+ * `RoomResult`. Pass this object to `select` as is — spreading extra
+ * columns in beside it at the call site escapes both.
  */
 const ROOM_SEARCH_SELECT = {
   id: true,
@@ -109,7 +105,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         createdById: session.teacherId,
       },
     });
-    return respondOk(room, 201);
+    return respondTyped<RoomResult>(room, 201);
   } catch (err) {
     // Two indexes, two shapes: public rooms are unique across the whole
     // shared namespace, private rooms only within their creator.
