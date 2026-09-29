@@ -186,15 +186,15 @@ issue itself after a first pass pinned prose at five sites that did not need it.
 
 A client `catch` binds its error, and a failed request logs through
 `logRequestFailure` (`src/lib/client-errors.ts`). Its `context` carries
-identifiers only — never an email, a name, a sign-in code or anything else the
+ids, flags and enum-like values — never an email, a name, a sign-in code or anything else the
 user typed, which the type cannot tell from an ID. `err` itself can quote the
 start of a response body, which matters if a client error sink is ever plugged
 in. `src/components` and `src/app` refuse a bare `catch` and a parameterless
 `.catch` handler (or one whose parameter is `_`-named) by lint
 (`bareCatchSelector` and `discardedRejectionSelector` in `eslint.config.mjs`);
 a catch that is correct as bare says why in its `eslint-disable-next-line`.
-`src/lib` is outside the rule and held by review; `grep -rn 'catch *{' src/lib`
-re-lists the bare ones. The design is in
+`src/lib` is outside the rule; its client helpers log through the same helper,
+held by review rather than lint. The design is in
 `docs/superpowers/specs/2026-09-29-bare-catch-logging-design.md`.
 
 **Already done is not an error.** A request whose goal the server can prove
