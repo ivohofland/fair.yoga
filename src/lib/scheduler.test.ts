@@ -60,6 +60,15 @@ const _stubsHaveNoExtras: NoneOf<Exclude<StubbedName, keyof SchedulerSweeps>> = 
 void _stubsCoverSweeps;
 void _stubsHaveNoExtras;
 
+// The sweeps themselves must not fit the scheduler's slots: their required
+// `opts` is what keeps a memoryless sweep out of the hourly job.
+// @ts-expect-error — a required second parameter is not assignable to `(db) => Promise<unknown>`
+const classSweepFits: SchedulerSweeps['runClassGenerationTick'] = null as unknown as typeof import('@/services/class-generator').generateClassInstances;
+// @ts-expect-error — same, studio family
+const studioSweepFits: SchedulerSweeps['runStudioClassGenerationTick'] = null as unknown as typeof import('@/services/studio-class-generator').generateStudioClassInstances;
+void classSweepFits;
+void studioSweepFits;
+
 function buildStubs(make: (name: StubbedName) => () => Promise<unknown>): SchedulerSweeps {
   return Object.fromEntries(
     SWEEP_NAMES.map((name) => [name, make(name)]),

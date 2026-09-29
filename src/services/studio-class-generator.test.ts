@@ -6,6 +6,7 @@ import {
   generateStudioClassInstances,
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
+  runStudioClassGenerationTick,
 } from './studio-class-generator';
 import {
   archiveOrUnarchiveStudioTemplate,
@@ -1639,6 +1640,16 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
         generateStudioClassInstances(stub, { streaks: createContentionStreaks(), from }),
       ).resolves.toBeGreaterThan(0);
     }
+  });
+
+  it('the hourly studio tick wrapper shares one tracker across calls, so it escalates', async () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => log);
+    vi.spyOn(log, 'error').mockImplementation(() => log);
+    const { stub } = contendedStub(new Set(['A']));
+    for (let i = 1; i < MAX_CONSECUTIVE_CONTENDED_SWEEPS; i += 1) {
+      await expect(runStudioClassGenerationTick(stub)).resolves.toBeGreaterThan(0);
+    }
+    await expect(runStudioClassGenerationTick(stub)).rejects.toBeInstanceOf(GenerationContendedError);
   });
 
   it('rethrows a genuine studio failure ahead of the contention error in the same sweep', async () => {

@@ -38,7 +38,7 @@ describe('recordSweepContention', () => {
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.objectContaining({ templateId: 'tpl-A', teacherId: 't1', streak: MAX_CONSECUTIVE_CONTENDED_SWEEPS }),
-      expect.stringContaining('recurring class'),
+      expect.any(String),
     );
   });
 

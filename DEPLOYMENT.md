@@ -150,10 +150,14 @@ Migrations run automatically via the `migrate` service on every deploy.
   routine. A genuine failure reddens the job on the sweep it happens in; a
   contended skip does so only when the same template has been skipped on
   `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs
-  (`src/services/generation-contention.ts`) — roughly two to three hours of an
-  unbroken hold — and stays unhealthy until that row is released. Each such
-  run logs an `error` line naming the `templateId`, `teacherId` and `streak`.
-  The usual cause is an idle-in-transaction session: find it in
+  (`src/services/generation-contention.ts`), which at the hourly interval is
+  three consecutive runs — roughly two to three hours of an unbroken hold —
+  and stays unhealthy until the first run after the lock is released. The
+  blocking lock may be on the template's own row or on a row its generation
+  writes against: the teacher, the room, the schedule rule, or an overlapping
+  uncommitted calendar entry. Each such run logs an `error` line naming the
+  `templateId`, `teacherId` and `streak`. An idle-in-transaction session is
+  one cause; find the holder with `pg_blocking_pids()` and
   `pg_stat_activity`. The manual `POST /api/cron/generate-classes` never
   escalates this on its own. The streak lives in memory, so a process restart
   resets it to zero.
