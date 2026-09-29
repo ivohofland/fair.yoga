@@ -972,9 +972,11 @@ export function archiveOrUnarchiveTemplate(
  * Pause or resume generation. Deletes nothing: pausing means "no new classes",
  * not "withdraw what I already offered" — that is what archiving is for.
  *
- * Resuming does not call `generateClassInstances`; that takes no `teacherId`
- * and sweeps every active template platform-wide, across every teacher, which
- * is not something a single PATCH may do. It goes through
+ * Resuming does not call `generateClassInstances`; that sweeps every active
+ * template platform-wide, across every teacher, which is not something a single
+ * PATCH may do. It also opens its own per-template transactions, so it cannot
+ * take this one's client, and it requires a cross-sweep `ContentionStreaks`
+ * that a one-off PATCH has no business owning. It goes through
  * `CLASS_FAMILY.claim`/`generate` instead — `claimTemplateForGeneration` and
  * `generateInstancesForTemplate` (`class-generator.ts`), both scoped to one
  * template and both taking this transaction's client.

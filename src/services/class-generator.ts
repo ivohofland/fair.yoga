@@ -208,10 +208,11 @@ export interface ClassGenerationSweepOptions {
  *
  * `opts` is required and must never get a default: `SchedulerSweeps` types
  * each sweep as `(db) => Promise<unknown>`, and a required second parameter is
- * what makes this function unassignable to that slot, so the scheduler can
- * only be wired to `runClassGenerationTick`, whose tracker persists across
- * sweeps. A default would let a tracker-less sweep fit the slot and never
- * escalate.
+ * what makes this function unassignable to that slot. That refuses the sweep
+ * itself and nothing more: a one-parameter wrapper that mints a fresh tracker
+ * per call still fits the slot and never escalates, so the scheduler's wiring
+ * is `runClassGenerationTick`, whose tracker persists across sweeps.
+ * `ReconcileOptions` (`waitlist-reconciliation.ts`) carries the fuller account.
  */
 export async function generateClassInstances(
   db: PrismaClient,

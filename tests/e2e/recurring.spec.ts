@@ -98,8 +98,8 @@ test.describe('Recurring classes', () => {
       // so deleting the rules removes the templates with them.
       await prisma.scheduleRule.deleteMany({ where: { teacherId } });
       // Again, after the templates are gone. This spec fires the *global*
-      // generate-classes cron (see below) — `generateClassInstances` takes no
-      // teacher scope — so a concurrently-running group can top this teacher's
+      // generate-classes cron (see below) — the cron route calls
+      // `generateClassInstances` unscoped — so a concurrently-running group can top this teacher's
       // template back up in the window between the two deletes above. The
       // rule delete then succeeds (the edge is `CalendarEntry.scheduleRule`,
       // `onDelete: SetNull` — `Class.template` is gone since #327) and the

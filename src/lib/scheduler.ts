@@ -258,9 +258,10 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     },
     {
       // Both sweeps skip a template a concurrent writer holds, and report this
-      // job degraded only when one stays contended across
+      // job degraded for contention only when one stays contended across
       // `MAX_CONSECUTIVE_CONTENDED_SWEEPS` (`generation-contention.ts`)
-      // consecutive runs. That count is a duration only because of the
+      // consecutive runs; a genuine failure reddens the job on the sweep it
+      // happens in. That count is a duration only because of the
       // interval on the line below.
       name: 'class-generation',
       intervalMs: 60 * MINUTE,
