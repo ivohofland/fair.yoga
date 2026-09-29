@@ -1724,7 +1724,10 @@ the upload's row survives the erasure.
 ### Why `FOR SHARE` and not `FOR KEY SHARE`
 
 `FOR KEY SHARE` conflicts only with `FOR UPDATE`, which an `UPDATE` takes only
-when it changes a key column (one with a unique index). The erasure's
+when it changes a key column — one covered by a unique index a foreign key
+could use: non-partial, non-expression. `Teacher_account_live_unique` is
+partial (`WHERE "deletedAt" IS NULL`), so `accountId` does not count even
+though it is unique among live rows. The erasure's
 `UPDATE` does that today, through `email` and `pageSlug`, so against today's
 erasure `FOR KEY SHARE` would also serialise: measured below, and by a
 `NOWAIT` probe on 2026-09-29 against a holder rewriting `email` and
