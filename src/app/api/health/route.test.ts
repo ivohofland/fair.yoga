@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import { STALLED_AFTER_SKIPPED_TICKS, type JobHealth } from '@/lib/scheduler';
+import { log } from '@/lib/log';
 
-vi.mock('@/lib/db', () => ({ prisma: { $queryRaw: vi.fn(async () => [{ ok: 1 }]) } }));
+const { queryRaw } = vi.hoisted(() => ({ queryRaw: vi.fn(async () => [{ ok: 1 }]) }));
+vi.mock('@/lib/db', () => ({ prisma: { $queryRaw: queryRaw } }));
 
 const { GET } = await import('./route');
 
@@ -69,6 +71,32 @@ describe('GET /api/health', () => {
       lastRunAt: '2026-09-29T10:00:00.000Z',
       lastSuccessAt: '2026-09-29T10:00:00.000Z',
       healthy: false,
+    });
+  });
+
+  it('answers 503 with db down and still reports every job verdict', async () => {
+    globalThis.__fairYogaJobHealth = {
+      stalled: entry({ skippedTicks: STALLED_AFTER_SKIPPED_TICKS }),
+      fine: entry({}),
+    };
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    queryRaw.mockRejectedValueOnce(new Error('connection refused'));
+
+    const { status, body } = await read();
+
+    expect(status).toBe(503);
+    expect(body.status).toBe('degraded');
+    expect(body.db).toBe('down');
+    expect(body.jobs.stalled).toEqual({
+      lastRunAt: '2026-09-29T10:00:00.000Z',
+      lastSuccessAt: '2026-09-29T10:00:00.000Z',
+      healthy: false,
+    });
+    expect(body.jobs.fine).toEqual({
+      lastRunAt: '2026-09-29T10:00:00.000Z',
+      lastSuccessAt: '2026-09-29T10:00:00.000Z',
+      healthy: true,
     });
   });
 });
