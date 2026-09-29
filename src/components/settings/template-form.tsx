@@ -132,6 +132,24 @@ const ECONOMICS_COPY = {
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
 
+/**
+ * #702. The number inputs store `Number(value)`, so a cleared one is `0`, and
+ * none carries a native `min`. The first value the template schemas would
+ * refuse, in this form's copy, or `undefined`. No class-size branch: both
+ * handlers that write Max students clamp it to `MAX_CLASS_SIZE`, the Min
+ * students input clamps to Max, and an edit's `initial` is a saved template.
+ */
+function numberFieldError(form: TemplateFormValues): string | undefined {
+  if (form.durationMinutes <= 0) return 'Duration must be positive';
+  if (!Number.isInteger(form.durationMinutes)) return 'Duration must be whole minutes';
+  if (form.roomCost < 0) return 'Room cost cannot be negative';
+  if (form.minStudents <= 0) return 'Min students must be at least 1';
+  if (!Number.isInteger(form.minStudents)) return 'Min students must be a whole number';
+  if (form.maxStudents <= 0) return 'Max students must be at least 1';
+  if (!Number.isInteger(form.maxStudents)) return 'Max students must be a whole number';
+  return undefined;
+}
+
 const INITIAL_VALUES: TemplateFormValues = {
   teacherRoomId: '',
   classType: '',
@@ -282,6 +300,11 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
     }
     if (!form.startTime) {
       setError('Enter a start time');
+      return;
+    }
+    const numberError = numberFieldError(form);
+    if (numberError !== undefined) {
+      setError(numberError);
       return;
     }
     // The cross-field rules of `economicsViolations` (class-economics.ts),
