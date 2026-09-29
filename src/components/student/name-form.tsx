@@ -7,7 +7,7 @@ import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface NameFormProps {
   studentId: string;
@@ -69,7 +69,7 @@ export function NameForm({
           body: JSON.stringify(payload),
         });
       } catch (err) {
-        console.error('student name save failed', err);
+        logRequestFailure('name-form', {}, err);
         setError('Network error. Try again.');
         return;
       }

@@ -94,7 +94,7 @@ describe('NotificationsForm', () => {
     await waitFor(() => {
       expect(screen.getByText('Network error. Try again.')).toBeInTheDocument();
     });
-    expect(logged).toHaveBeenCalledWith('student notification prefs save failed', expect.any(Error));
+    expect(logged).toHaveBeenCalledWith('[notifications-form] request failed', { err: expect.any(Error) });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

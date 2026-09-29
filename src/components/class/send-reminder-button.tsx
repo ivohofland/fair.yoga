@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface SendReminderButtonProps {
   paymentId: string;
@@ -63,7 +63,7 @@ export function SendReminderButton({
     try {
       res = await fetch(`/api/payments/${paymentId}/remind`, { method: 'POST' });
     } catch (err) {
-      console.error('[send-reminder] request failed', { paymentId, err });
+      logRequestFailure('send-reminder', { paymentId }, err);
       onError('Network error. Try again.');
       setBusy(false);
       return;

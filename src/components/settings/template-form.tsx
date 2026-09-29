@@ -14,7 +14,7 @@ import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation } from '@/lib/format';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
   resumeMessage,
   templateUpdatedMessage,
@@ -331,7 +331,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
           body: JSON.stringify(payload),
         });
       } catch (err) {
-        console.error('[template-form] request failed', { mode, err });
+        logRequestFailure('template-form', { mode }, err);
         setError('Network error. Please try again.');
         return;
       }

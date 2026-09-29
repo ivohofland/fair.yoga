@@ -336,7 +336,7 @@ describe('ClassEditForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     expect(await screen.findByText('Could not reach the server. Try again.')).toBeInTheDocument();
-    expect(consoleError).toHaveBeenCalledWith('class edit save failed', expect.any(TypeError));
+    expect(consoleError).toHaveBeenCalledWith('[class-edit-form] request failed', { err: expect.any(TypeError) });
     // A fetch failure is not a refusal — nothing about it tells this page
     // its data is stale, so there is nothing here for #247's refresh to do.
     expect(routerRefresh).not.toHaveBeenCalled();

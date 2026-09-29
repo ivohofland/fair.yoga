@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updateTeacherRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -91,7 +91,7 @@ export function EditTeacherRoomForm({
       setSuccess('Saved');
       router.refresh();
     } catch (err) {
-      console.error('[edit-teacher-room-form] request failed', { teacherRoomId, err });
+      logRequestFailure('edit-teacher-room-form', { teacherRoomId }, err);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);

@@ -85,7 +85,7 @@ describe('TierForm', () => {
     await waitFor(() => {
       expect(screen.getByText('Network error. Try again.')).toBeInTheDocument();
     });
-    expect(logged).toHaveBeenCalledWith('student tier save failed', expect.any(Error));
+    expect(logged).toHaveBeenCalledWith('[tier-form] request failed', { err: expect.any(Error) });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

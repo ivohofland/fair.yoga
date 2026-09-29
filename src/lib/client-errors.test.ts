@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { readError, readErrorMessage } from './client-errors';
+import { logRequestFailure, readError, readErrorMessage } from './client-errors';
 import type { ApiErrorCode } from './api-error-codes';
 import type { Assert, Equals } from './type-pins';
 
@@ -111,3 +111,39 @@ describe('readErrorMessage', () => {
     );
   });
 });
+
+describe('logRequestFailure', () => {
+  it('logs the tag, the context and the error in one console.error call', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = new TypeError('Failed to fetch');
+
+    logRequestFailure('cancel-class-button', { classId: 'c-7' }, err);
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('[cancel-class-button] request failed', {
+      classId: 'c-7',
+      err,
+    });
+  });
+
+  it('logs an empty context as just the error', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = new Error('offline');
+
+    logRequestFailure('login', {}, err);
+
+    expect(consoleError).toHaveBeenCalledWith('[login] request failed', { err });
+  });
+});
+
+/**
+ * Typecheck only, invisible to Vitest: the context admits identifiers, not
+ * objects, and never a caller's own `err` — the real one is the third argument.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _contextRefusesObjectsAndErr(): void {
+  // @ts-expect-error — an object value is refused
+  logRequestFailure('x', { payload: { email: 'a@b.c' } }, null);
+  // @ts-expect-error — a caller-supplied err key is refused
+  logRequestFailure('x', { err: 'shadow' }, null);
+}

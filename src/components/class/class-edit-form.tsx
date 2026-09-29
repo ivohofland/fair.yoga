@@ -7,7 +7,7 @@ import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -129,7 +129,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
       // Bound and logged so a network failure leaves a record. This catch
       // sees only `fetch` itself failing — an unreadable refusal body is
       // `readErrorMessage`'s case, in the branch below.
-      console.error('class edit save failed', err);
+      logRequestFailure('class-edit-form', {}, err);
       setError('Could not reach the server. Try again.');
       setSaving(false);
       return;

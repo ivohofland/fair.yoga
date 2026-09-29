@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 import {
   resolveTemplateConfirmation,
   UNREADABLE_CONFIRMATION_MESSAGE,
@@ -34,7 +34,7 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
           method: 'PATCH',
         });
       } catch (err) {
-        console.error('[toggle-template] request failed', { templateId, err });
+        logRequestFailure('toggle-template', { templateId }, err);
         setError('Network error. Please try again.');
         return;
       }

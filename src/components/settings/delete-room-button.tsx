@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { readError } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 
 interface DeleteRoomButtonProps {
   roomId: string;
@@ -32,7 +32,7 @@ export function DeleteRoomButton({ roomId, roomName }: DeleteRoomButtonProps) {
     } catch (err) {
       // Only a request that never got a response lands here; an unreadable
       // error body is answered above with the fallback.
-      console.error('[delete-room-button] request failed', { roomId, err });
+      logRequestFailure('delete-room-button', { roomId }, err);
       setError('Network error. Please try again.');
     }
 

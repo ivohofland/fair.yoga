@@ -6,7 +6,7 @@ import type { createRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
 import type { NewRoomForm } from './add-room-flow';
-import { readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PublicRoomNotice } from './public-room-notice';
@@ -128,7 +128,7 @@ export function RoomCreateStep({
         body: JSON.stringify(newRoom),
       });
     } catch (err) {
-      console.error('[room-create-step] request failed', { err });
+      logRequestFailure('room-create-step', {}, err);
       setCreateError('Network error. Please try again.');
       setCreating(false);
       return;
