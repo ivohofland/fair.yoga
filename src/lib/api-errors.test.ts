@@ -1082,6 +1082,25 @@ describe('isLockTimeout', () => {
     expect(isLockTimeout(substringError)).toBe(false);
   });
 
+  it('matches a lock timeout carried as the cause of a wrapper error', () => {
+    const inner = new Prisma.PrismaClientUnknownRequestError(
+      'Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
+      { clientVersion: 'test' },
+    );
+    expect(isLockTimeout(new Error('wrapped', { cause: inner }))).toBe(true);
+  });
+
+  it('defers to the Prisma code, as transientDbFailure does, when both are present', () => {
+    // A transaction-budget expiry whose message quotes a 55P03 framing: one
+    // matcher means one answer, and the code is checked first.
+    const budget = new Prisma.PrismaClientKnownRequestError(
+      'Transaction already closed: ... PostgresError { code: "55P03" }',
+      { code: 'P2028', clientVersion: 'test' },
+    );
+    expect(transientDbFailure(budget)?.kind).toBe('tx_budget');
+    expect(isLockTimeout(budget)).toBe(false);
+  });
+
   it.each<[string, unknown]>([
     ['undefined', undefined],
     ['null', null],
