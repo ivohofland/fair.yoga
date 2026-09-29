@@ -39,9 +39,7 @@ function forgetDraft(): void {
   try {
     window.localStorage.removeItem(DRAFT_KEY);
     // eslint-disable-next-line no-restricted-syntax -- storage is unavailable, so there is no draft to remove
-  } catch {
-    // Nothing stored, nothing to remove.
-  }
+  } catch {}
 }
 
 /** Every field the form owns, and the one flag that says how to treat them. */
@@ -197,9 +195,7 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount read of a browser store, for the reason in the docblock above; it cannot cascade, the effect runs once per `email`.
       setForm(draft);
       // eslint-disable-next-line no-restricted-syntax -- a corrupt entry or a store the browser refuses both mean no draft: start clean
-    } catch {
-      // Start clean.
-    }
+    } catch {}
   }, [email]);
 
   /**
@@ -214,9 +210,7 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
       const stored: StoredDraft = { ...next, email };
       window.localStorage.setItem(DRAFT_KEY, JSON.stringify(stored));
       // eslint-disable-next-line no-restricted-syntax -- persisting the draft is a courtesy, never a precondition for submitting
-    } catch {
-      // Submitting does not depend on it.
-    }
+    } catch {}
   }
 
   function updateNames(firstName: string, lastName: string) {

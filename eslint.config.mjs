@@ -3,10 +3,9 @@ import nextVitals from 'eslint-config-next/core-web-vitals';
 import nextTs from 'eslint-config-next/typescript';
 import prettier from 'eslint-config-prettier';
 
-// Shared by both `no-restricted-syntax` blocks below that refuse a direct or
-// qualified-name cast to `ClassLock` (src/lib/db-locks.ts, #219) in non-test
-// `src/` — one object so the broad src/ block and its override for
-// src/services/roster-link.ts can't drift apart. Matches `x as ClassLock`,
+// Shared by every `no-restricted-syntax` block below that covers non-test
+// `src/` and refuses a direct or qualified-name cast to `ClassLock`
+// (src/lib/db-locks.ts, #219) — one object, so they can't drift apart. Matches `x as ClassLock`,
 // `<ClassLock>x`, and the qualified-name form of each — `x as
 // dbLocks.ClassLock`, since a namespace import (`import * as dbLocks from
 // '@/lib/db-locks'`) puts the name behind a qualifier — and the likeliest
@@ -33,8 +32,8 @@ const classLockCastSelector = {
 };
 
 // The roster-link create/upsert refusal (#181), a named constant for the same
-// reason as `classLockCastSelector`: every block that sets `no-restricted-syntax`
-// for a file it applies to has to repeat it.
+// reason as `classLockCastSelector`: a block that sets `no-restricted-syntax`
+// replaces the earlier options, so each repeats the selectors that still apply.
 const teacherStudentWriteSelector = {
   selector:
     "CallExpression[callee.object.property.name='teacherStudent'][callee.property.name=/^(create|createMany|createManyAndReturn|upsert)$/]",
@@ -46,7 +45,7 @@ const teacherStudentWriteSelector = {
 const bareCatchSelector = {
   selector: 'CatchClause[param=null]',
   message:
-    'Bind the error — catch (err) — and log it: logRequestFailure (src/lib/client-errors.ts) in client code, log.error({ err }) on the server. A catch that is correct as bare says why in an eslint-disable-next-line as the last line of the try block (#692).',
+    'Bind the error — catch (err) — and log it: logRequestFailure (src/lib/client-errors.ts) for a failed request in client code, log.error({ err }) on the server. A catch that is correct as bare says why in an eslint-disable-next-line as the last line of the try block (#692).',
 };
 
 // The promise-chain spelling of the same discard: a `.catch` handler that
@@ -55,7 +54,7 @@ const discardedRejectionSelector = {
   selector:
     "CallExpression[callee.property.name='catch'] > :function:matches([params.length=0], [params.0.name=/^_/])",
   message:
-    'A .catch handler that takes no parameter (or an _-named one) drops the rejection — take (err: unknown) and log it: logRequestFailure (src/lib/client-errors.ts) in client code, log.error({ err }) on the server (#692).',
+    'A .catch handler that takes no parameter (or an _-named one) drops the rejection — take (err: unknown) and log it: logRequestFailure (src/lib/client-errors.ts) for a failed request in client code, log.error({ err }) on the server. A handler correct as it is says why in an eslint-disable-next-line above the .catch (#692).',
 };
 
 const eslintConfig = defineConfig([
@@ -72,15 +71,17 @@ const eslintConfig = defineConfig([
   // `no-restricted-syntax` for a file already matched by an earlier one
   // REPLACES that rule's options for that file rather than merging them. So
   // every block below that matches a file this `src/**` block also matches
-  // repeats its selectors (`teacherStudentWriteSelector`,
-  // `classLockCastSelector`) beside its own; a second `src/**` block here
-  // would have silently switched the others off wherever they overlapped.
+  // repeats whichever of its selectors (`teacherStudentWriteSelector`,
+  // `classLockCastSelector`) should still apply there, beside its own; a
+  // second `src/**` block here would have silently switched the others off
+  // wherever they overlapped.
   //
   // `TeacherStudent` rows are created in exactly one place —
   // `linkTeacherStudent` (src/services/roster-link.ts) — and
   // `src/lib/student-visibility.ts` reasons about the set of callers that
-  // reach it. This selector is what keeps that true: a direct create/upsert
-  // outside that one function reopens the read-then-write race #181 closed.
+  // reach it. `teacherStudentWriteSelector` is what keeps that true: a direct
+  // create/upsert outside that one function reopens the read-then-write race
+  // #181 closed.
   //
   // `ClassLock` is minted in exactly one place — `lockClassRow` — and
   // `readSeatCount` (src/services/capacity.ts) trusts that to mean the caller
@@ -101,8 +102,8 @@ const eslintConfig = defineConfig([
   // Client and route code refuses an unbound `catch` and a parameterless
   // `.catch` handler (#692). It repeats the two selectors from the `src/**`
   // block because this block's `no-restricted-syntax` replaces that one for
-  // these files — see the comment above it. `src/lib` is outside: its bare
-  // catches are tooling and server probes that are correct as bare.
+  // these files — see the comment above it. `src/lib` is outside; the scope
+  // and its cost are in docs/technical-architecture.md (Error responses).
   {
     files: ['src/components/**/*.{ts,tsx}', 'src/app/**/*.{ts,tsx}'],
     ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
