@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
+import { Avatar } from '@/components/ui/avatar';
 import { isOnboardingComplete } from '@/lib/onboarding';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
@@ -32,7 +33,15 @@ export default async function SchedulePage() {
   const [teacher, classes, studioClasses, roomCount, classCount] = await Promise.all([
     prisma.teacher.findUniqueOrThrow({
       where: { id: session.teacherId },
-      select: { bio: true, bankIban: true, skippedOnboarding: true, pageSlug: true },
+      select: {
+        bio: true,
+        bankIban: true,
+        skippedOnboarding: true,
+        pageSlug: true,
+        firstName: true,
+        lastName: true,
+        photo: { select: { id: true } },
+      },
     }),
     prisma.class.findMany({
       where: {
@@ -71,10 +80,15 @@ export default async function SchedulePage() {
 
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-3 mb-6">
-        <div>
-          <h1 className="type-display">Schedule</h1>
-          <p className="type-caption mt-1">{formatDayHeader(startOfLocalDay(now, session.defaultTimezone))}</p>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link href="/settings/profile" aria-label="Profile" className="shrink-0 no-underline">
+            <Avatar firstName={teacher.firstName} lastName={teacher.lastName} photoId={teacher.photo?.id ?? null} size={40} />
+          </Link>
+          <div>
+            <h1 className="type-display">Schedule</h1>
+            <p className="type-caption mt-1">{formatDayHeader(startOfLocalDay(now, session.defaultTimezone))}</p>
+          </div>
         </div>
         <Link href="/class/new" className="type-label text-teal no-underline shrink-0">
           + Add class
