@@ -407,8 +407,8 @@ describe('TemplateForm', () => {
    *
    * Expected copy is bare ('Class type is required', no trailing period)
    * matching the class family's unpunctuated refusals. Asserted as role plus
-   * anchored full-string textContent rather than the studio twin's substring
-   * match — a trailing period would pass a substring matcher here. The second
+   * anchored full-string textContent — a trailing period would pass a
+   * substring matcher. The second
    * submit with whitespace verifies `.trim()`. Editing the field clears the
    * banner, so the second submit re-raises the complaint afresh.
    */
