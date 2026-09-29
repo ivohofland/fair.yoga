@@ -64,7 +64,7 @@ describe('UnlinkRoomButton', () => {
   });
 
   it('shows the refusal for a room that classes still use, and stays', async () => {
-    const message = "This room is used by your classes, so it can't be unlinked. Archive it instead.";
+    const message = "This room is used by your classes or recurring classes, so it can't be unlinked. Archive it instead.";
     fetchMock.mockResolvedValue(jsonResponse(409, { error: { code: 'ROOM_IN_USE', message } }));
     vi.stubGlobal('fetch', fetchMock);
 

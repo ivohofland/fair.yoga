@@ -29,15 +29,11 @@ export default async function EditRoomPage({
   }
 
   const { room } = teacherRoom;
-  // KNOWN-OPEN (issue 76): a server-render snapshot. The counts are the delete
-  // door's own (`room-deletion.ts`), taken here at render: room-wide for a
-  // private room, whose delete removes every link, and by link for a shared
-  // one, whose unlink removes only this teacher's. A class or template landing
-  // on the room after render leaves the button offered, and the click meets
-  // the route's 409, which stays the authority. Recorded rather than locked,
-  // for the same reason as the archive race in `services/room-archive.ts` —
-  // see spec section 8.
   const canEditRoom = !room.isPublic && room.createdById === session.teacherId;
+  // KNOWN-OPEN (issue 76): a server-render snapshot. These are the counts the
+  // delete and unlink doors use (`room-deletion.ts`), taken at render. A class
+  // or template landing on the room afterwards leaves the button offered, and
+  // the click meets the route's 409, which stays the authority.
   const blockers = canEditRoom
     ? await countRoomDeleteBlockers(prisma, room.id)
     : await countTeacherRoomDeleteBlockers(prisma, teacherRoom.id);
@@ -146,7 +142,7 @@ export default async function EditRoomPage({
             roomName={formatRoomLocation(room.roomName, room.venueName)}
           />
         )}
-        {!canEditRoom && inUse && (
+        {!canEditRoom && isArchived && inUse && (
           <p className="type-caption">This room is used by your classes or recurring classes, so it can&apos;t be unlinked.</p>
         )}
         {canEditRoom && isArchived && !inUse && (

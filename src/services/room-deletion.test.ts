@@ -124,7 +124,7 @@ describe('the shared constants', () => {
   // The door that removes one teacher's link names its own action.
   it('names the unlink refusal by the action it refuses', () => {
     expect(TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE).toBe(
-      "This room is used by your classes, so it can't be unlinked. Archive it instead.",
+      "This room is used by your classes or recurring classes, so it can't be unlinked. Archive it instead.",
     );
   });
 
