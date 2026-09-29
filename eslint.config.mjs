@@ -98,7 +98,7 @@ const eslintConfig = defineConfig([
     },
   },
   // Client and route code refuses an unbound `catch` and a parameterless
-  // `.catch` handler (#692). It repeats the two shared selectors (see the
+  // `.catch` handler (#692). It repeats the shared selectors (see the
   // `src/**` block's comment on replacement). `src/lib` is outside; the scope
   // and its cost are in docs/technical-architecture.md (Error responses).
   {
