@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
+import * as dbLocks from '@/lib/db-locks';
 import {
   addToWaitlist,
   claimSpot,
@@ -18,6 +19,7 @@ import {
 } from './waitlist-reconciliation';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 const prisma = new PrismaClient();
 const suffix = `recon-${Date.now()}`;
@@ -565,6 +567,77 @@ describe('reconcileWaitlists (DB)', () => {
    * `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md`.
    */
   describe('the broadcast gate under the class row lock', () => {
+    function latch(): { promise: Promise<void>; open: () => void } {
+      let open!: () => void;
+      const promise = new Promise<void>((r) => {
+        open = r;
+      });
+      return { promise, open };
+    }
+
+    /**
+     * Pauses the FIRST `lockClassRow` on `classId` right after it holds the
+     * row, before the caller reads anything under it, and records that
+     * backend's pid. Later calls lock normally, so they park behind it. The
+     * paused side holds the lock rather than waiting on one, so only the
+     * parked side is on `lockClassRow`'s 2s `lock_timeout` clock, and only
+     * from the moment it parks.
+     */
+    function pauseFirstLockOn(classId: string): {
+      reached: Promise<void>;
+      pid: () => number;
+      release: () => void;
+    } {
+      const reached = latch();
+      const held = latch();
+      let pid = 0;
+      let paused = false;
+      const original = dbLocks.lockClassRow;
+      const spy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, id) => {
+        const lock = await original(tx, id);
+        if (id === classId && !paused) {
+          paused = true;
+          const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+          if (row === undefined) throw new Error('pg_backend_pid returned no row');
+          pid = row.pid;
+          reached.open();
+          await held.promise;
+        }
+        return lock;
+      });
+      onTestFinished(() => spy.mockRestore());
+      return { reached: reached.promise, pid: () => pid, release: held.open };
+    }
+
+    async function within(signal: Promise<void>, ms: number, label: string): Promise<void> {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          signal,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error(`${label} never happened within ${ms}ms`)), ms);
+          }),
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+
+    /** Polls until some backend is parked on a lock `holderPid` holds. */
+    async function parkedBehind(holderPid: number): Promise<number> {
+      const deadline = Date.now() + 1_500;
+      while (Date.now() < deadline) {
+        const [row] = await prisma.$queryRaw<Array<{ pid: number }>>`
+          SELECT pid FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock'
+             AND ${holderPid} = ANY(pg_blocking_pids(pid))
+           LIMIT 1`;
+        if (row !== undefined) return row.pid;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error(`nothing parked behind backend ${holderPid} within 1500ms`);
+    }
+
     /**
      * Two route cancels in one claim window, the first broadcast unclaimed.
      * Every waiter was told at the first; a second "A spot opened up" tells
@@ -640,6 +713,48 @@ describe('reconcileWaitlists (DB)', () => {
       expect(await spotNotifications(cls.id, cls.waiter)).toBe(1);
       expect(await broadcastFlag(cls.id)).toEqual(clocks.inClaimWindow);
     });
+
+    /**
+     * The race the issue describes, staged rather than hoped for, in both
+     * orders. The first caller holds the class row lock and is paused before it
+     * reads anything under it. The second then does all of its pre-lock
+     * reading (the sweep's candidate query and gate, `handleSpotFreed`'s own
+     * `findUnique`) and parks. Everything it read says no broadcast stands,
+     * because none has been written yet. Only the locked re-read can find the
+     * first caller's broadcast, which is what the sequential tests above cannot
+     * distinguish from a read of the pre-lock `cls`.
+     */
+    it.each([{ first: 'hook' as const }, { first: 'sweep' as const }])(
+      'announces one freed seat once when the $first holds the lock and the other caller parks behind it',
+      async ({ first }) => {
+        const cls = await makeFreedSeat(`Race${first}`, { waiters: 2 });
+        const clocks = windowClocks(cls.startTime);
+        const scoped = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [cls.id] } } });
+        const hook = () => handleSpotFreed(prisma, cls.id, clocks.inClaimWindow);
+        const sweep = () =>
+          reconcileWaitlists(scoped.db, { now: clocks.inClaimWindow, streaks: createReconciliationStreaks() });
+
+        // Installed after the fixture, whose `addToWaitlist` calls take this lock too.
+        const pause = pauseFirstLockOn(cls.id);
+        let firstRun: Promise<unknown> | undefined;
+        let secondRun: Promise<unknown> | undefined;
+        try {
+          firstRun = first === 'hook' ? hook() : sweep();
+          await within(pause.reached, 2_000, `the ${first} holding the class row`);
+          secondRun = first === 'hook' ? sweep() : hook();
+          await parkedBehind(pause.pid());
+        } finally {
+          pause.release();
+          await joinOrThrow(firstRun, secondRun);
+        }
+
+        for (const waiter of cls.waiters) {
+          expect(await spotNotifications(cls.id, waiter)).toBe(1);
+        }
+        expect(await broadcastFlag(cls.id)).toEqual(clocks.inClaimWindow);
+      },
+      30_000,
+    );
   });
 
   /**
