@@ -8,6 +8,7 @@ import { PHOTO_MESSAGES } from '@/lib/teacher-photo-limits';
 const prisma = new PrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
+const studentIds: string[] = [];
 
 async function makeTeacher(): Promise<{ id: string; token: string; accountId: string }> {
   const s = uniqueSuffix();
@@ -20,6 +21,19 @@ async function makeTeacher(): Promise<{ id: string; token: string; accountId: st
   teacherIds.push(t.id);
   accountIds.push(t.accountId);
   return { id: t.id, accountId: t.accountId, token: await seedSession(prisma, t.accountId) };
+}
+
+/** A student-only session: an Account carrying a Student and no Teacher. */
+async function makeStudentOnly(): Promise<{ token: string }> {
+  const s = uniqueSuffix();
+  const email = `photo-route-student-${s}@test.local`;
+  const student = await prisma.student.create({
+    data: { firstName: 'Photo', lastName: 'Student', email, claimedAt: new Date(), account: { create: { email } } },
+  });
+  const accountId = student.accountId as string;
+  studentIds.push(student.id);
+  accountIds.push(accountId);
+  return { token: await seedSession(prisma, accountId) };
 }
 
 async function jpeg(): Promise<Blob> {
@@ -40,6 +54,9 @@ afterAll(async () => {
   if (teacherIds.length > 0) {
     await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
   }
+  if (studentIds.length > 0) {
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+  }
   if (accountIds.length > 0) {
     await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   }
@@ -57,6 +74,14 @@ describe('POST /api/teachers/[id]/photo', () => {
     const teacher = await makeTeacher();
     const other = await makeTeacher();
     const res = await upload(teacher.id, other.token, await jpeg());
+    expect(res.status).toBe(403);
+    expect(await prisma.teacherPhoto.count({ where: { teacherId: teacher.id } })).toBe(0);
+  });
+
+  it('rejects a student-only session and writes no row', async () => {
+    const teacher = await makeTeacher();
+    const student = await makeStudentOnly();
+    const res = await upload(teacher.id, student.token, await jpeg());
     expect(res.status).toBe(403);
     expect(await prisma.teacherPhoto.count({ where: { teacherId: teacher.id } })).toBe(0);
   });
