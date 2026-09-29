@@ -147,12 +147,14 @@ describe('ClassEditForm', () => {
   });
 
   /**
-   * #700. `classType`, `date` and `startTime` are plain string fields on
-   * `updateClassSchema`, not `.optional()` — a cleared `type="date"`/`type="time"`
-   * input reports `''`, which fails the schema's own shape rather than a
-   * refinement, and the route's raw Zod copy reached the banner in its place.
-   * `handleSave` now refuses each in field order (class type, then date, then
-   * start time) before the request ever leaves, with this form's own prose.
+   * #700. `updateClassSchema` marks `classType`, `date` and `startTime`
+   * `.optional()`, but this form always sends the key, so a cleared
+   * `type="date"`/`type="time"` input (or a whitespace-only class type)
+   * arrives present as `''`, not absent. `.optional()` only exempts an
+   * absent key; a present `''` still hits the base validator and fails it,
+   * which is what surfaces raw Zod copy. `handleSave` refuses each in field
+   * order (class type, then date, then start time) before the request ever
+   * leaves, with this form's own prose.
    *
    * Ahead of the `if (!settingsLocked)` economics block, and unconditionally:
    * these three are DETAILS, always editable and always sent regardless of
