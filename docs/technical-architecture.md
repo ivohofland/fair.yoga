@@ -27,7 +27,7 @@
 
 **Fixture suffixes.** A file that matches its own rows by substring — a `contains`, `startsWith` or `endsWith` on an email, slug or address — keys that match on `uniqueSuffix()` (or an equivalent random part), never on a bare `Date.now()`. Test files load concurrently in the `unit` tier (`fileParallelism: true`), in CI's integration step (`--file-parallelism`) and across Playwright workers, and two files loading in the same millisecond draw the same `Date.now()`: each file's substring then matches the other's rows. In #705 that made a read return seven rows instead of four and a cleanup `deleteMany` fail on `Teacher_accountId_fkey`, because it reached a sibling file's account. `uniqueSuffix()`'s random part leaves only a 1-in-2²⁴ tie within one millisecond. Where a file holds the exact addresses or ids it created, matching them with `in: [...]` is stronger: that cannot reach another file's rows whatever the suffix.
 
-Census (2026-09-29, #705). The files matching fixture rows by substring — 35 at the time; #705's fix itself moved `src/lib/auth/account.test.ts` and `tests/scoped-sweep.test.ts` out of this list, to exact matches, and moved `src/lib/auth/profile-authorization.test.ts`'s `pa-${Date.now()}\` key to `uniqueSuffix()`:
+Census (2026-09-29, #705). The files matching fixture rows by substring — 35 at the time; #705's fix itself moved `src/lib/auth/account.test.ts` and `tests/scoped-sweep.test.ts` out of this list, to exact matches, and moved `src/lib/auth/profile-authorization.test.ts`'s `pa-${Date.now()}` key to `uniqueSuffix()`:
 
     grep -rlE '(contains|startsWith|endsWith)\s*:' --include='*.test.ts' --include='*.spec.ts' --include='*fixtures.ts' src tests
 
