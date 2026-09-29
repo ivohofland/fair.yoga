@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { updateClassSchema } from '@/lib/schemas';
+import { MAX_CLASS_SIZE, type updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
@@ -35,6 +35,25 @@ const ECONOMICS_COPY = {
   rate_order: 'Min rate cannot exceed target rate',
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
+
+/**
+ * #702. The number inputs store `Number(value)`, so a cleared one is `0`, and
+ * nothing native bounds them: this form has no `<form>` element. The first
+ * value `updateClassSchema` would refuse, in this form's copy, or `undefined`.
+ * Duration is always sent. The rest are economics, sent only while unlocked.
+ */
+function numberFieldError(form: ClassEditInitial, settingsLocked: boolean): string | undefined {
+  if (form.durationMinutes <= 0) return 'Duration must be positive';
+  if (!Number.isInteger(form.durationMinutes)) return 'Duration must be whole minutes';
+  if (settingsLocked) return undefined;
+  if (form.roomCost < 0) return 'Room cost cannot be negative';
+  if (form.minStudents <= 0) return 'Min students must be at least 1';
+  if (!Number.isInteger(form.minStudents)) return 'Min students must be a whole number';
+  if (form.maxStudents <= 0) return 'Max students must be at least 1';
+  if (!Number.isInteger(form.maxStudents)) return 'Max students must be a whole number';
+  if (form.maxStudents > MAX_CLASS_SIZE) return `Max students cannot exceed ${MAX_CLASS_SIZE}`;
+  return undefined;
+}
 
 /**
  * #81. `ClassEditInitial` is the only enumeration of this form's fields, and
@@ -96,6 +115,12 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
     }
     if (!form.startTime) {
       setError('Enter a start time');
+      return;
+    }
+
+    const numberError = numberFieldError(form, settingsLocked);
+    if (numberError !== undefined) {
+      setError(numberError);
       return;
     }
 
