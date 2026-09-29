@@ -101,8 +101,8 @@ describe('EditRoomPage — the share affordance', () => {
 
 const DELETE = /Delete room/;
 const UNLINK = /Unlink room/;
-const DELETE_CAPTION = "This room is used by your classes, so it can't be deleted.";
-const UNLINK_CAPTION = "This room is used by your classes, so it can't be unlinked.";
+const DELETE_CAPTION = "This room is used by your classes or recurring classes, so it can't be deleted.";
+const UNLINK_CAPTION = "This room is used by your classes or recurring classes, so it can't be unlinked.";
 
 describe('EditRoomPage — Delete is offered only where the door will accept it', () => {
   it('offers Delete on an archived private room nothing points at', async () => {
