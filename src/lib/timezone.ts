@@ -108,8 +108,8 @@ export function startOfLocalDay(instant: Date, timeZone: string): Date {
     }
 
     return new Date(Date.UTC(parts.year!, parts.month! - 1, parts.day!));
-  } catch {
-    log.error({ timeZone }, 'invalid timezone, falling back to UTC calendar date');
+  } catch (err) {
+    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC calendar date');
     const utc = new Date(instant);
     utc.setUTCHours(0, 0, 0, 0);
     return utc;
@@ -215,8 +215,8 @@ export function formatInstantInZone(instant: Date, timeZone: string): string {
 
   try {
     return fmt(timeZone);
-  } catch {
-    log.error({ timeZone }, 'invalid timezone, falling back to UTC formatting');
+  } catch (err) {
+    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC formatting');
     return `${fmt('UTC')} (UTC)`;
   }
 }
@@ -305,8 +305,8 @@ export function classStartInstant(
     let ts = wallUtc - timeZoneOffsetMs(new Date(wallUtc), timeZone);
     ts = wallUtc - timeZoneOffsetMs(new Date(ts), timeZone);
     return new Date(ts);
-  } catch {
-    log.error({ timeZone }, 'invalid timezone, falling back to UTC interpretation');
+  } catch (err) {
+    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC interpretation');
     return new Date(wallUtc);
   }
 }

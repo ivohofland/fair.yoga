@@ -72,7 +72,10 @@ describe('finish window', () => {
     it('falls back to UTC, says so, and logs the zone at error', () => {
       const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
       expect(formatClockInZone(new Date('2026-06-01T17:30:00Z'), 'Not/AZone')).toBe('17:30 (UTC)');
-      expect(error).toHaveBeenCalledWith({ timeZone: 'Not/AZone' }, expect.any(String));
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ timeZone: 'Not/AZone', err: expect.any(Error) }),
+        expect.any(String),
+      );
     });
 
     /**
