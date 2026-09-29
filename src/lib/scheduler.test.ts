@@ -303,13 +303,26 @@ describe('makeTick', () => {
     expect(isJobHealthy(health)).toBe(true);
     expect(error).not.toHaveBeenCalled();
 
-    // Two: the run has been in flight across two of its intervals.
+    // Two: the run is still in flight at the second tick that came due after
+    // it began.
     await tick();
     expect(health.skippedTicks).toBe(2);
     expect(health.lastError).toBeNull();
     expect(isJobHealthy(health)).toBe(false);
     expect(error).toHaveBeenCalledWith(
       expect.objectContaining({ job: 'test-job', skippedTicks: 2, runningSince: health.lastRunAt }),
+      expect.any(String),
+    );
+
+    // Three: still refused, still past the threshold — the log line fires on
+    // every refused tick from the threshold on, not only the one that first
+    // crosses it.
+    await tick();
+    expect(health.skippedTicks).toBe(3);
+    expect(isJobHealthy(health)).toBe(false);
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ job: 'test-job', skippedTicks: 3, runningSince: health.lastRunAt }),
       expect.any(String),
     );
 
