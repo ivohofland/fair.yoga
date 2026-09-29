@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { createClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
-import { economicsViolations, type ClassEconomics, type EconomicsRule } from '@/lib/class-economics';
+import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -91,18 +91,6 @@ const ECONOMICS_COPY = {
 } as const satisfies Record<EconomicsRule, string>;
 
 const ECONOMICS_MESSAGES: ReadonlySet<string> = new Set(Object.values(ECONOMICS_COPY));
-
-/**
- * The fields `economicsViolations` reads. Editing any of them may settle a
- * cross-field refusal shown on another one, so `updateField` clears those too.
- */
-const ECONOMICS_FIELDS = {
-  roomCost: true,
-  minRate: true,
-  targetRate: true,
-  minStudents: true,
-  maxStudents: true,
-} as const satisfies Record<keyof ClassEconomics, true>;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -227,16 +215,18 @@ export default function CreateClassPage() {
   // Field update helpers
   // -------------------------------------------------------------------------
 
+  // Every field step 2 renders is one `economicsViolations` reads, so any edit
+  // there may settle a cross-field refusal shown on another field — this
+  // clears every message in `ECONOMICS_MESSAGES`, not just the edited field's
+  // own, regardless of which field changed.
   function updateField<K extends keyof FormData>(key: K, value: FormData[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSubmitError('');
     setErrors((prev) => {
       const next = { ...prev };
       delete next[key];
-      if (key in ECONOMICS_FIELDS) {
-        for (const [field, message] of Object.entries(next)) {
-          if (ECONOMICS_MESSAGES.has(message)) delete next[field];
-        }
+      for (const [field, message] of Object.entries(next)) {
+        if (ECONOMICS_MESSAGES.has(message)) delete next[field];
       }
       return next;
     });
