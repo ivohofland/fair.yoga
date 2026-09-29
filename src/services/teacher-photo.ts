@@ -2,7 +2,7 @@ import sharp, { type Metadata } from 'sharp';
 import { log } from '@/lib/log';
 import type { PhotoRefusal } from '@/lib/teacher-photo-limits';
 
-/** The stored avatar's edge, in pixels: covers the largest placement at 3× density. */
+/** The stored avatar's edge, in pixels. Sized against the Avatar entry in `docs/design-brief.md`. */
 export const PHOTO_EDGE_PX = 400;
 
 /** Refused before decoding — the guard against a small file that inflates to gigabytes. */

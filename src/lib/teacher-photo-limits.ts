@@ -1,6 +1,6 @@
 /**
- * The photo upload's limits and copy, shared by the route and the upload
- * control. Imports nothing: client code value-imports this module.
+ * The photo upload's size limits, accepted types and refusal copy.
+ * Imports nothing: client code value-imports this module.
  */
 export const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
