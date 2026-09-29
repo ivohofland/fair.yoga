@@ -18,6 +18,12 @@ import {
   generateEntriesForRule,
   type GeneratorFamily,
 } from './entry-generation';
+import {
+  createContentionStreaks,
+  recordSweepContention,
+  type ContendedTemplate,
+  type ContentionStreaks,
+} from './generation-contention';
 import { readInPages } from '@/lib/read-in-pages';
 
 // ---------------------------------------------------------------------------
@@ -176,27 +182,49 @@ export function readGenerationCandidates(
   );
 }
 
+export interface ClassGenerationSweepOptions {
+  /** Required, never defaulted — see `generateClassInstances`' docblock. */
+  streaks: ContentionStreaks;
+  from?: Date;
+  teacherId?: string;
+}
+
 /**
  * Cron / teacher-wide entry point: tops up the rolling window for all
  * active templates (or one teacher's). Each template is isolated — one
- * template whose generation throws is logged and skipped. If the throw is
- * a Postgres lock timeout (55P03), it means a concurrent writer (such as a
- * teacher resume or edit) holds the row; this is logged at warn and skipped
- * without failing the sweep (#122). Genuine failures are logged at error,
- * collected, and the first error is rethrown at the end for job-health
- * visibility.
+ * template whose generation throws is logged and skipped.
+ *
+ * If the throw is a Postgres lock timeout (55P03), a concurrent writer (such
+ * as a teacher resume or edit) holds the row. One such skip is logged at warn
+ * and does not fail the sweep (#122). A template skipped that way on
+ * `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive sweeps of the same
+ * `opts.streaks` fails it with `GenerationContendedError` (#354), because a row
+ * that stays locked looks identical to a routine skip inside any one sweep —
+ * see `recordSweepContention` (`generation-contention.ts`).
+ *
+ * Genuine failures are logged at error, collected, and the first is rethrown
+ * at the end for job-health visibility — ahead of a contention error from the
+ * same sweep, since it is the more specific signal.
+ *
+ * `opts` is required and must never get a default: `SchedulerSweeps` types
+ * each sweep as `(db) => Promise<unknown>`, and a required second parameter is
+ * what makes this function unassignable to that slot, so the scheduler can
+ * only be wired to `runClassGenerationTick`, whose tracker persists across
+ * sweeps. A default would let a tracker-less sweep fit the slot and never
+ * escalate.
  */
 export async function generateClassInstances(
   db: PrismaClient,
-  from?: Date,
-  teacherId?: string,
+  opts: ClassGenerationSweepOptions,
 ): Promise<number> {
-  const startDate = from ?? new Date();
+  const startDate = opts.from ?? new Date();
+  const teacherId = opts.teacherId;
 
   const templates = await readGenerationCandidates(db, teacherId);
 
   let totalCreated = 0;
   const errors: unknown[] = [];
+  const skipped: ContendedTemplate[] = [];
 
   for (const template of templates) {
     try {
@@ -223,13 +251,15 @@ export async function generateClassInstances(
     } catch (err) {
       // Per-template isolation. A lock timeout (55P03) against a concurrent
       // writer means someone else has the template right now, not that
-      // generation failed (#122) — so it is logged at warn and skipped without
-      // failing the job health check.
+      // generation failed (#122) — so it is logged at warn and skipped, and
+      // counts toward the template's contention streak rather than failing
+      // this sweep on its own.
       if (isLockTimeout(err)) {
         log.warn(
           { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
           'recurring class generation skipped template due to lock contention',
         );
+        skipped.push({ templateId: template.id, teacherId: template.scheduleRule.teacherId });
       } else {
         log.error(
           { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
@@ -240,9 +270,22 @@ export async function generateClassInstances(
     }
   }
 
+  const contended = recordSweepContention(opts.streaks, skipped, CLASS_GENERATOR.logNoun);
   if (errors.length > 0) throw errors[0];
+  if (contended) throw contended;
   return totalCreated;
 }
 
+/**
+ * The scheduler's entry point: the one caller that persists across sweeps, so
+ * the one whose tracker can see a template stay contended. Module-level
+ * because `scheduler.ts` imports services dynamically and has nowhere else to
+ * keep it.
+ */
+const productionStreaks = createContentionStreaks();
+
+export function runClassGenerationTick(db: PrismaClient): Promise<number> {
+  return generateClassInstances(db, { streaks: productionStreaks });
+}
 
 

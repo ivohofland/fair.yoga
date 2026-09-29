@@ -40,8 +40,15 @@ export interface SchedulerSweeps {
   autoTransitionToInProgress: (db: PrismaClient) => Promise<unknown>;
   autoCancelClasses: (db: PrismaClient) => Promise<unknown>;
   autoCompleteClasses: (db: PrismaClient) => Promise<unknown>;
-  generateClassInstances: (db: PrismaClient) => Promise<unknown>;
-  generateStudioClassInstances: (db: PrismaClient) => Promise<unknown>;
+  /**
+   * The WRAPPERS, never `generateClassInstances` / `generateStudioClassInstances`
+   * themselves. Each sweep takes a required second argument carrying the
+   * cross-sweep contention streaks, and TypeScript refuses to assign a
+   * two-parameter function to these one-parameter slots, so miswiring one is a
+   * compile error rather than a sweep that silently forgets between runs.
+   */
+  runClassGenerationTick: (db: PrismaClient) => Promise<unknown>;
+  runStudioClassGenerationTick: (db: PrismaClient) => Promise<unknown>;
   processEmailFallback: (db: PrismaClient) => Promise<unknown>;
   processPaymentReminders: (db: PrismaClient) => Promise<unknown>;
   cleanupExpiredAuth: (db: PrismaClient) => Promise<unknown>;
@@ -117,8 +124,8 @@ export async function startScheduler(): Promise<void> {
   const { prisma } = await import('@/lib/db');
   const { autoTransitionToInProgress, autoCancelClasses, autoCompleteClasses } =
     await import('@/services/class-transitions');
-  const { generateClassInstances } = await import('@/services/class-generator');
-  const { generateStudioClassInstances } = await import('@/services/studio-class-generator');
+  const { runClassGenerationTick } = await import('@/services/class-generator');
+  const { runStudioClassGenerationTick } = await import('@/services/studio-class-generator');
   const { processEmailFallback } = await import('@/services/email-fallback');
   const { processPaymentReminders } = await import('@/services/payment-reminders');
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
@@ -131,8 +138,8 @@ export async function startScheduler(): Promise<void> {
     autoTransitionToInProgress,
     autoCancelClasses,
     autoCompleteClasses,
-    generateClassInstances,
-    generateStudioClassInstances,
+    runClassGenerationTick,
+    runStudioClassGenerationTick,
     processEmailFallback,
     processPaymentReminders,
     cleanupExpiredAuth,
@@ -223,8 +230,8 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     autoTransitionToInProgress,
     autoCancelClasses,
     autoCompleteClasses,
-    generateClassInstances,
-    generateStudioClassInstances,
+    runClassGenerationTick,
+    runStudioClassGenerationTick,
     processEmailFallback,
     processPaymentReminders,
     cleanupExpiredAuth,
@@ -250,9 +257,14 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       run: (db) => processEmailFallback(db),
     },
     {
+      // Both sweeps skip a template a concurrent writer holds, and report this
+      // job degraded only when one stays contended across
+      // `MAX_CONSECUTIVE_CONTENDED_SWEEPS` (`generation-contention.ts`)
+      // consecutive runs. That count is a duration only because of the
+      // interval on the line below.
       name: 'class-generation',
       intervalMs: 60 * MINUTE,
-      run: isolatedSweeps('class-generation', [generateClassInstances, generateStudioClassInstances]),
+      run: isolatedSweeps('class-generation', [runClassGenerationTick, runStudioClassGenerationTick]),
     },
     {
       name: 'payment-reminders',

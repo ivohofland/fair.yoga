@@ -26,8 +26,8 @@ const SWEEP_NAMES = [
   'autoTransitionToInProgress',
   'autoCancelClasses',
   'autoCompleteClasses',
-  'generateClassInstances',
-  'generateStudioClassInstances',
+  'runClassGenerationTick',
+  'runStudioClassGenerationTick',
   'processEmailFallback',
   'processPaymentReminders',
   'cleanupExpiredAuth',
@@ -154,7 +154,7 @@ describe('buildJobs', () => {
         'autoCompleteClasses',
       ],
       'email-fallback': ['processEmailFallback'],
-      'class-generation': ['generateClassInstances', 'generateStudioClassInstances'],
+      'class-generation': ['runClassGenerationTick', 'runStudioClassGenerationTick'],
       'payment-reminders': ['processPaymentReminders'],
       // The ORDER here is pinned without being load-bearing. `isolatedSweeps`
       // order is meaningful for `class-transitions` — a class must transition
