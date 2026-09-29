@@ -54,20 +54,18 @@ export const ROOM_DELETE_RESTRICT_FKS = [
 /**
  * One refusal for both blockers, deliberately naming neither.
  *
- * A `ClassTemplate` is never hard-deleted anywhere in `src/` — there is no
- * `DELETE` verb on `/api/class-templates/[id]` — but `PUT
- * /api/class-templates/[id]` can move a paused or archived one to another
- * room, so a template blocker is clearable where class history is not; the
- * remedy for both is the same. Same reasoning `classifyApiError` states for
- * the two terminality triggers ("any wording that names one column is wrong
- * half the time").
+ * A `ClassTemplate` is never hard-deleted anywhere in `src/`, though a
+ * template can be moved to another room, so a template blocker is clearable
+ * where class history is not; the remedy the message names is the same for
+ * either. Same reasoning `classifyApiError` states for the two terminality
+ * triggers ("any wording that names one column is wrong half the time").
  *
  * "STILL IN USE", NOT "CLASS HISTORY" — the noun was corrected in PR review.
  * The earlier wording was accurate only when a class was the blocker. A room
  * blocked solely by a template has ZERO classes (that is the state issue 103
  * reproduced), so it sent the teacher to a schedule showing nothing — the
- * exact failure `describeRoomBlockers` documents at `room-archive.ts:111-116`
- * for its own "unfinished" vs "upcoming" choice.
+ * exact failure `describeRoomBlockers`'s "unfinished, not upcoming" comment
+ * documents for its own choice of noun.
  *
  * AND DO NOT REACH FOR `describeRoomBlockers` TO SAY IT BETTER. The two doors
  * count different things: it says "unfinished class", meaning
@@ -75,10 +73,6 @@ export const ROOM_DELETE_RESTRICT_FKS = [
  * EVERY class because a foreign key does. Reused here, three completed
  * classes read "3 unfinished classes still use this room" — the same defect
  * in a different word.
- *
- * The room detail page offers this door only when `countRoomDeleteBlockers`
- * and `countTeacherRoomDeleteBlockers` are zero, so the refusal reaches a
- * teacher only through a change between render and click.
  */
 export const ROOM_DELETE_BLOCKED_MESSAGE =
   'This room is still in use and cannot be deleted. Archive it instead.';
