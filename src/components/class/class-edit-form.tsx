@@ -82,6 +82,26 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
   }
 
   async function handleSave() {
+    // #700. `classType`, `date` and `startTime` are plain fields on
+    // `updateClassSchema`, not `.optional()` — a cleared `type="date"`/
+    // `type="time"` input (or a whitespace-only class type) reaches the route
+    // as `''`, which fails the schema's shape and surfaces its raw Zod copy
+    // instead of product prose. Checked in field order, ahead of the
+    // economics block below and regardless of `settingsLocked`: these three
+    // are details, always editable and always sent.
+    if (!form.classType.trim()) {
+      setError('Class type is required');
+      return;
+    }
+    if (!form.date) {
+      setError('Select a date');
+      return;
+    }
+    if (!form.startTime) {
+      setError('Enter a start time');
+      return;
+    }
+
     // The same three cross-field rules `updateClass` enforces
     // (class-economics.ts), checked through the same `economicsViolations`
     // function so a teacher sees the message immediately instead of after a
