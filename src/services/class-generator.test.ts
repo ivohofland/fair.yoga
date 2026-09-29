@@ -1449,6 +1449,7 @@ describe('generateClassInstances (per-template isolation)', () => {
    */
   function contendedStub(contended: ReadonlySet<string>, failing: ReadonlySet<string> = new Set()) {
     const created: string[] = [];
+    const failure = new Error('genuine failure');
     const lockTimeoutError = new Prisma.PrismaClientUnknownRequestError(
       'Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
       { clientVersion: 'test' },
@@ -1468,7 +1469,7 @@ describe('generateClassInstances (per-template isolation)', () => {
           for (const row of data) {
             const id = row.scheduleRuleId.replace('rule-', '');
             if (contended.has(id)) throw lockTimeoutError;
-            if (failing.has(id)) throw new Error(`boom-${id}`);
+            if (failing.has(id)) throw failure;
             created.push(id);
           }
           return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date }));
@@ -1481,7 +1482,7 @@ describe('generateClassInstances (per-template isolation)', () => {
       $queryRaw: async () => [{ id: 'stub' }],
       $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
     } as unknown as import('@prisma/client').PrismaClient;
-    return { stub, created };
+    return { stub, created, failure };
   }
 
   it('does not rethrow when a template fails with a 55P03 lock timeout, but logs at warn and generates others', async () => {
@@ -1532,11 +1533,9 @@ describe('generateClassInstances (per-template isolation)', () => {
     for (let i = 1; i < MAX_CONSECUTIVE_CONTENDED_SWEEPS; i += 1) {
       await generateClassInstances(contendedOnly, { streaks, from });
     }
-    const { stub: both } = contendedStub(new Set(['A']), new Set(['B']));
+    const { stub: both, failure } = contendedStub(new Set(['A']), new Set(['B']));
     const rejection = generateClassInstances(both, { streaks, from });
-    // The genuine failure, not the contention error: assert the kind, not message text.
-    await expect(rejection).rejects.not.toBeInstanceOf(GenerationContendedError);
-    await expect(rejection).rejects.toBeInstanceOf(Error);
+    await expect(rejection).rejects.toBe(failure);
   });
 });
 

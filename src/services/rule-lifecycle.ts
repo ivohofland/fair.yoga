@@ -1048,8 +1048,9 @@ export type PauseRuleOutcome<TChild> =
  * not "withdraw what I already offered" — that is what archiving is for.
  *
  * Resuming generates, through `family.claim`/`family.generate` rather than
- * through the family's platform-wide sweep: a sweep takes no `teacherId` and
- * runs across every teacher, which is not something a single PATCH may do.
+ * through the family's platform-wide sweep: the sweep runs across every
+ * teacher and opens its own transactions, which is not something a single
+ * PATCH may do.
  *
  * Nothing here knows about rooms, and a resume onto an archived room is
  * refused elsewhere: `docs/lock-order.md`, "Where a resume onto an archived

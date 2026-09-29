@@ -147,8 +147,9 @@ Migrations run automatically via the `migrate` service on every deploy.
   exists yet (issue #157).
 - `class-generation` runs hourly and skips a recurring or studio template
   whose row is locked, since a teacher saving an edit at that moment is
-  routine. It reports the job unhealthy only when the same template has been
-  skipped on `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs
+  routine. A genuine failure reddens the job on the sweep it happens in; a
+  contended skip does so only when the same template has been skipped on
+  `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs
   (`src/services/generation-contention.ts`) — roughly two to three hours of an
   unbroken hold — and stays unhealthy until that row is released. Each such
   run logs an `error` line naming the `templateId`, `teacherId` and `streak`.
