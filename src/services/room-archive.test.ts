@@ -277,11 +277,18 @@ describe('setTeacherRoomArchived — ownership, idempotency, release valve', () 
 
 describe('describeRoomBlockers', () => {
   it.each([
-    [{ classes: 1, templates: 0 }, '1 unfinished class still uses this room.'],
-    [{ classes: 2, templates: 0 }, '2 unfinished classes still use this room.'],
-    [{ classes: 0, templates: 1 }, '1 recurring class still uses this room.'],
-    [{ classes: 0, templates: 3 }, '3 recurring classes still use this room.'],
-    [{ classes: 2, templates: 1 }, '2 unfinished classes and 1 recurring class still use this room.'],
+    [{ classes: 1, templates: 0 }, '1 unfinished class still uses this room. Cancel or finish it first.'],
+    [{ classes: 2, templates: 0 }, '2 unfinished classes still use this room. Cancel or finish them first.'],
+    [{ classes: 0, templates: 1 }, '1 recurring class still uses this room. Pause or archive it first.'],
+    [{ classes: 0, templates: 3 }, '3 recurring classes still use this room. Pause or archive them first.'],
+    [
+      { classes: 2, templates: 1 },
+      '2 unfinished classes and 1 recurring class still use this room. Cancel or finish the classes, and pause or archive the recurring class, first.',
+    ],
+    [
+      { classes: 1, templates: 2 },
+      '1 unfinished class and 2 recurring classes still use this room. Cancel or finish the class, and pause or archive the recurring classes, first.',
+    ],
     // The state the type admits and the service never produces. Pinned so the
     // empty-subject sentence (" still use this room.") cannot come back.
     [{ classes: 0, templates: 0 }, 'This room is still in use.'],
