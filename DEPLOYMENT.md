@@ -50,6 +50,11 @@ certbot --nginx -d yourdomain.example
 The proxy config sets `X-Forwarded-For` (the rate limiter keys on it) and
 disables buffering for the SSE endpoint.
 
+The teacher photo upload route gets its own `location` block with a raised
+`client_max_body_size` (10m) — the app already refuses anything over 8 MB, in
+JSON, so this only has to be large enough to let a request through to the app
+for it to answer. Everything else keeps nginx's 1 MB default.
+
 ## 4. Backups
 
 ```bash
