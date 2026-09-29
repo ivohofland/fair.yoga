@@ -127,21 +127,25 @@ Migrations run automatically via the `migrate` service on every deploy.
   and per-job scheduler state (`jobs.<name>.healthy` flips false when a
   job errors, and also when its run is still in flight when a second
   consecutive tick comes due — `STALLED_AFTER_SKIPPED_TICKS` in
-  `src/lib/scheduler.ts` — which is at most two of the job's own interval
+  `src/lib/scheduler.ts` — which is at most two of the job's own intervals
   after the run began, so a couple of minutes for a job that ticks every
   minute and two days for the daily one; each job's interval is
-  `intervalMs` in `buildJobs`). It logs an `error` line naming the job,
-  `skippedTicks` and `runningSince` on every refused tick from then on, and
-  clears once the run settles, when the verdict rests on that run's own
-  outcome again. An idle-in-transaction session holding a lock is one
-  cause — the `pg_blocking_pids()` / `pg_stat_activity` advice in the
-  `class-generation` bullet below applies to any job, not only that one.
+  `intervalMs` in `buildJobs`). From that tick on, the scheduler logs an
+  `error` line — `scheduler job run still in flight; reporting it
+  unhealthy`, with `job`, `skippedTicks` and `runningSince` fields — on
+  every further refused tick, so an operator can grep for that message; the
+  job's `healthy` flag clears once the run settles, when the verdict rests
+  on that run's own outcome again. An idle-in-transaction session holding a
+  lock is one cause — the `pg_blocking_pids()` / `pg_stat_activity` advice in
+  the `class-generation` bullet below applies to any job, not only that one.
   Point your uptime monitor here.
-- `waitlist-reconciliation` is deliberately slower to flip than the other
-  jobs. It runs every minute and repairs waitlists whose live spot-freed hook
-  was dropped, so a single lost row-lock race is routine and self-healing. It
-  reports the job unhealthy when a failure will not clear by retrying, or when
-  five consecutive ticks lost **every** class to contention
+- `waitlist-reconciliation` is deliberately slower to flip than the other jobs
+  for its own failures — a pass still in flight across two ticks flips it
+  exactly as fast as any job under the `STALLED_AFTER_SKIPPED_TICKS` rule in the
+  bullet above. It runs every minute and repairs waitlists whose live spot-freed
+  hook was dropped, so a single lost row-lock race is routine and self-healing.
+  It reports the job unhealthy when a failure will not clear by retrying, or
+  when five consecutive ticks lost **every** class to contention
   (`MAX_CONSECUTIVE_CONTENDED_TICKS` in
   `src/services/waitlist-reconciliation.ts`) — roughly five minutes of an
   unbroken hold. "Every class" means every class the tick actually **invoked**:

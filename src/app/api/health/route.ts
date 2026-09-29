@@ -21,11 +21,11 @@ export async function GET() {
       },
     ]),
   );
-  const jobsStalled = Object.values(jobs).some((j) => !j.healthy);
+  const jobsUnhealthy = Object.values(jobs).some((j) => !j.healthy);
   try {
     await prisma.$queryRaw`SELECT 1`;
     return Response.json({
-      status: jobsStalled ? 'degraded' : 'ok',
+      status: jobsUnhealthy ? 'degraded' : 'ok',
       db: 'up',
       jobs,
     });
