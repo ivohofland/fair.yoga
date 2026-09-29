@@ -4,8 +4,8 @@
  *
  * One definition, in `lib/` and import-free at runtime, for the same reason
  * `class-fields.ts` and `tiers.ts` are: a `'use client'` component that ever
- * needs this list must be able to import it without dragging `@/lib/log`
- * (pino, server-only) into the browser bundle. The `import type` below erases
+ * needs this list must be able to import it without `@/lib/log`
+ * (pino, server-only) failing `next build`. The `import type` below erases
  * completely, so this module emits no runtime import at all.
  *
  * `cancelled` and `late_cancel` are absent from `ACTIVE_REGISTRATION_STATUSES`

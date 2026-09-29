@@ -11,8 +11,8 @@
  * `timezone.ts`. It is imported from both sides of the client boundary;
  * `schemas.ts`, which many `'use client'` components import, is what puts it
  * on the client side. `timezone.ts` imports `@/lib/log` (pino), so
- * hosting the probe there would pull a server-only logger into the client
- * bundle. Same split, same reason, as `tiers.ts` against `tiers.server.ts`.
+ * hosting the probe there would fail `next build`. Same split, same reason,
+ * as `tiers.ts` against `tiers.server.ts`.
  *
  * Keep this file dependency-free. An import added here is an import added to
  * every client bundle that reaches `schemas.ts`.
