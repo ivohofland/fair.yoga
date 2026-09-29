@@ -215,18 +215,20 @@ export default function CreateClassPage() {
   // Field update helpers
   // -------------------------------------------------------------------------
 
-  // An edit can settle a cross-field refusal shown on a different field, so
-  // every edit clears every `ECONOMICS_MESSAGES` message along with the edited
-  // field's own. One still true comes back on the next Next, since
-  // `validateStep` rebuilds the whole map.
+  // An edit clears the edited field's own message, and every cross-field
+  // message whose rule the edited form no longer breaks, wherever it is shown.
   function updateField<K extends keyof FormData>(key: K, value: FormData[K]) {
+    const nextForm = { ...form, [key]: value };
+    const stillFiring: ReadonlySet<string> = new Set(
+      economicsViolations(nextForm).map((v) => ECONOMICS_COPY[v.rule]),
+    );
     setForm((prev) => ({ ...prev, [key]: value }));
     setSubmitError('');
     setErrors((prev) => {
       const next = { ...prev };
       delete next[key];
       for (const [field, message] of Object.entries(next)) {
-        if (ECONOMICS_MESSAGES.has(message)) delete next[field];
+        if (ECONOMICS_MESSAGES.has(message) && !stillFiring.has(message)) delete next[field];
       }
       return next;
     });

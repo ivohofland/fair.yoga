@@ -831,6 +831,15 @@ describe('NewClassPage', () => {
       expect(screen.getByLabelText('Min rate')).not.toHaveAccessibleDescription();
     });
 
+    it('keeps a students-order refusal that is still true when room cost is edited', async () => {
+      await renderAtStep2();
+      set('Min students', '10');
+      set('Max students', '8');
+      next();
+      set('Room cost', '15');
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students cannot exceed max students');
+    });
+
     it('keeps a single-field message when a different economics field is edited', async () => {
       await renderAtStep2();
       set('Min students', '0');

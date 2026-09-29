@@ -88,10 +88,9 @@ In the wizard:
   `ECONOMICS_COPY … satisfies Record<EconomicsRule, string>`, per the per-form pattern.
   `'Max must be >= min students'` goes away: no teacher could ever reach it, so
   replacing it changes nothing anyone has seen.
-- Editing any field clears every cross-field message, not only the
-  edited field's own key. Otherwise a refusal shown on Min rate would stay after the
-  teacher fixed it by raising the target rate. This can clear a still-true refusal on
-  an unrelated field for a moment; `validateStep` recomputes it on the next Next.
+- Editing a field clears a cross-field message once its rule no longer holds; a
+  refusal still true stays. So a refusal shown on Min rate goes when the teacher fixes
+  it by raising the target rate, not only when Min rate itself is edited.
 
 In `template-form.tsx`: remove only the drag (`minStudents: Math.min(prev.minStudents,
 max)` in the Max students `onChange`, and its twin in `handleRoomChange`, which now
@@ -128,7 +127,8 @@ representative tests also pin the fetch count. Each pin gets a recorded mutation
   min rate = −room cost).
 - The drag: Max students `2` then `20` leaves Min students at 4, in both forms; so does
   a room change after Max was lowered below Min.
-- Clearing: a cross-field message clears when its other field is edited.
+- Clearing: a cross-field message clears when its other field is edited, and one still
+  true stays when an unrelated field is edited.
 
 ## 4. What this does not do
 
