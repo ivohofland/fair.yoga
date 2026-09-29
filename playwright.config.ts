@@ -6,6 +6,10 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 export default defineConfig({
   testDir: './tests/e2e',
+  // Every module an e2e spec imports resolves `server-only` through
+  // tests/e2e/tsconfig.json instead of the per-file tsconfig lookup this
+  // option replaces — see that file's comment for why.
+  tsconfig: './tests/e2e/tsconfig.json',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

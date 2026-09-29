@@ -1,0 +1,18 @@
+{
+  // playwright.config.ts's `tsconfig` option points here so every module
+  // reached from an e2e spec — including src/lib/log.ts via tests/helpers.ts
+  // — resolves `server-only` to its non-throwing empty.js, the same
+  // substitution vitest.config.ts makes for its own runner. `paths` in a
+  // child tsconfig replaces the parent's rather than merging, so `@/*` is
+  // repeated here. This mapping must never move to the root tsconfig.json:
+  // Next honours root `paths`, and putting it there would silently turn off
+  // the `server-only` build guard it exists to route around in this runner
+  // only.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../../src/*"],
+      "server-only": ["../../node_modules/server-only/empty.js"]
+    }
+  }
+}
