@@ -3,6 +3,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { timeZoneOptions } from '@/lib/timezone-options';
 import { PageHeader } from '@/components/layout/page-header';
 import { ProfileForm } from '@/components/settings/profile-form';
+import { ProfilePhotoField } from '@/components/settings/profile-photo-field';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
 import { AddPasskey } from '@/components/account/add-passkey';
 
@@ -11,11 +12,18 @@ export default async function ProfilePage() {
 
   const teacher = await prisma.teacher.findUniqueOrThrow({
     where: { id: session.teacherId },
+    include: { photo: { select: { id: true } } },
   });
 
   return (
     <>
       <PageHeader title="Profile" backHref="/settings" backLabel="Settings" />
+      <ProfilePhotoField
+        teacherId={teacher.id}
+        firstName={teacher.firstName}
+        lastName={teacher.lastName}
+        photoId={teacher.photo?.id ?? null}
+      />
       <ProfileForm
         teacherId={teacher.id}
         email={teacher.email}

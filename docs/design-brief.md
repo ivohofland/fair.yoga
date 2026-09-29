@@ -107,6 +107,7 @@ Lucide-style line icons, stroke 1.75, `currentColor`, never filled — inlined i
 - **Skeleton** — static sand blocks matching layout (used by `loading.tsx` files). No shimmer, no spinners.
 - **TabBar**, **PageHeader** — see Navigation.
 - **Sheet** — *not yet built* (no consumer). Spec reserved: bottom sheet w/ drag handle, 20px top radius, ink-40% scrim, the system's only shadow; desktop modal max 480px; confirmations two buttons, never three. Current confirms are inline destructive/secondary button pairs.
+- **Avatar** — a circle, two sizes: 40px (Schedule header, linking to `/settings/profile`) and 72px (public `/[slug]` page, profile settings). With a photo: `object-cover`, empty `alt` — every placement sits beside the teacher's name, so a screen reader would otherwise read it twice. Without: first-letter initials of first and last name, Georgia bold, teal on teal-tint, `aria-hidden`. No ring, border, shadow or hover step — a person, not a card. Not used in directory rows (text-first there). The stored photo is 400×400 (`PHOTO_EDGE_PX`, `src/services/teacher-photo.ts`) — that covers the largest avatar (72px) at 3× device density (216px) with headroom.
 
 ### List rows
 

@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Avatar } from '@/components/ui/avatar';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
@@ -37,6 +38,7 @@ export default async function TeacherBookingPage({
       bio: true,
       deletedAt: true,
       defaultTimezone: true,
+      photo: { select: { id: true } },
     },
   });
   // deletedAt: erasure renames the slug, but never rely on that alone.
@@ -112,10 +114,15 @@ export default async function TeacherBookingPage({
 
   return (
     <div>
-      <h1 className="type-display">
-        {teacher.firstName} {teacher.lastName}
-      </h1>
-      {teacher.bio && <p className="type-body mt-2 max-w-[480px]">{teacher.bio}</p>}
+      <div className="flex items-start gap-4">
+        <Avatar firstName={teacher.firstName} lastName={teacher.lastName} photoId={teacher.photo?.id ?? null} size={72} />
+        <div className="min-w-0">
+          <h1 className="type-display">
+            {teacher.firstName} {teacher.lastName}
+          </h1>
+          {teacher.bio && <p className="type-body mt-2 max-w-[480px]">{teacher.bio}</p>}
+        </div>
+      </div>
 
       <PricingExplainer className="mt-5 max-w-[480px]" />
 
