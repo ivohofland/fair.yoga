@@ -65,5 +65,10 @@ test.describe('Teacher profile photo', () => {
     await expect(page.getByRole('button', { name: 'Replace photo' })).toBeVisible();
     await page.goto(`/${slug}`);
     await expect(page.locator('img[src^="/api/teacher-photos/"]')).toBeVisible();
+
+    await page.goto('/schedule');
+    const profileLink = page.getByRole('link', { name: 'Profile', exact: true });
+    await expect(profileLink).toHaveAttribute('href', '/settings/profile');
+    await expect(profileLink.locator('img[src^="/api/teacher-photos/"]')).toBeVisible();
   });
 });
