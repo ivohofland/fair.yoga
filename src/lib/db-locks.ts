@@ -16,6 +16,8 @@ import { ClassStatus, Prisma } from '@prisma/client';
  *   adopt  `lockClassRow`, `lockClassRowsOrdered` and `setLockTimeout` below.
  *   adopt  `lockStudentForErasure` and `lockLiveStudent` below — each issues
  *          `SET LOCAL` and then a row lock on `Student` (#183).
+ *   adopt  `lockLiveTeacher` below — issues `SET LOCAL` and then a
+ *          `FOR SHARE` on `Teacher` (#46).
  *   adopt  `claimRuleForGeneration` (`entry-generation.ts`) — issues
  *          `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`, for either template
  *          family from the one statement.
@@ -389,6 +391,24 @@ export async function lockLiveStudent(
     SELECT "deletedAt" FROM "Student" WHERE id = ${studentId} FOR SHARE`;
   const row = rows[0];
   if (row === undefined || row.deletedAt !== null) throw new StudentErasedError(studentId);
+}
+
+/**
+ * The photo upload's gate (#46): the teacher's row `FOR SHARE`, with the shared
+ * bounded wait. `FOR SHARE` conflicts with the `FOR NO KEY UPDATE` erasure's
+ * anonymising `UPDATE` takes, so an upload and an erasure serialise on this row;
+ * `FOR KEY SHARE` would not. Answers whether the teacher is live, read under
+ * the lock. `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate".
+ */
+export async function lockLiveTeacher(
+  tx: TransactionClientOnly,
+  teacherId: string,
+): Promise<boolean> {
+  await setLockTimeout(tx);
+  const rows = await tx.$queryRaw<Array<{ deletedAt: Date | null }>>`
+    SELECT "deletedAt" FROM "Teacher" WHERE id = ${teacherId} FOR SHARE`;
+  const row = rows[0];
+  return row !== undefined && row.deletedAt === null;
 }
 
 /**

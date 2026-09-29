@@ -208,6 +208,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         },
       },
       announcements: true,
+      photo: { select: { bytes: true } },
     },
   });
 
@@ -231,6 +232,9 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       bankIban: teacher.bankIban,
       bankAccountName: teacher.bankAccountName,
       createdAt: teacher.createdAt,
+      photo: teacher.photo
+        ? { contentType: 'image/webp' as const, base64: Buffer.from(teacher.photo.bytes).toString('base64') }
+        : null,
     },
     rooms: teacher.teacherRooms.map((tr) => ({
       venue: tr.room.venueName,
@@ -1525,6 +1529,11 @@ export async function deleteTeacherAccount(
         },
       });
       if (erased.count === 0) throw new AlreadyErasedError('teacher');
+
+      // After the anonymising UPDATE, never before it: that UPDATE is what
+      // waits out an upload holding the teacher row (`lockLiveTeacher`), and
+      // this DELETE's own snapshot then sees the row that upload wrote.
+      await tx.teacherPhoto.deleteMany({ where: { teacherId } });
 
       return skipped;
     },

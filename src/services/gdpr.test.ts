@@ -4,14 +4,17 @@ import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
 import {
   exportStudentData,
+  exportTeacherData,
   deleteStudentAccount,
   deleteTeacherAccount,
 } from './gdpr';
+import { saveTeacherPhoto } from './teacher-photo';
 import * as dbLocks from '@/lib/db-locks';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { startOfLocalDay } from '@/lib/timezone';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { expectErased } from '../../tests/erasure-assertions';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -3195,5 +3198,49 @@ describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
     // what fails if that ever stops being true.
     const decoyEntry = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: classDEntryId } });
     expect(decoyEntry.cancelledAt).toBeNull();
+  });
+});
+
+/** #46: the stored photo is personal data — exported with the profile, deleted by erasure. */
+describe('teacher erasure and export reach the profile photo (#46)', () => {
+  const prisma = new PrismaClient();
+  const teacherIds: string[] = [];
+
+  async function makeTeacher(): Promise<string> {
+    const s = `gdpr-photo-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const t = await prisma.teacher.create({
+      data: {
+        firstName: 'Photo', lastName: 'Teacher', email: `${s}@test.local`,
+        account: { create: { email: `${s}@test.local` } }, bio: '', pageSlug: s,
+      },
+      select: { id: true },
+    });
+    teacherIds.push(t.id);
+    return t.id;
+  }
+
+  afterAll(async () => {
+    if (teacherIds.length > 0) {
+      const accounts = await prisma.teacher.findMany({ where: { id: { in: teacherIds } }, select: { accountId: true } });
+      await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } }); // cascades TeacherPhoto
+      await prisma.account.deleteMany({ where: { id: { in: accounts.map((a) => a.accountId) } } });
+    }
+    await prisma.$disconnect();
+  });
+
+  it('teacher erasure deletes the stored photo and the export carried it', async () => {
+    const teacherId = await makeTeacher();
+    const saved = await saveTeacherPhoto(prisma, teacherId, Buffer.from('face'));
+    if (!saved.saved) throw new Error('save refused');
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.profile.photo).toEqual({ contentType: 'image/webp', base64: Buffer.from('face').toString('base64') });
+    await expectErased(deleteTeacherAccount(prisma, teacherId));
+    expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(0);
+  }, 20_000);
+
+  it('exports photo: null for a teacher without one', async () => {
+    const teacherId = await makeTeacher();
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.profile.photo).toBeNull();
   });
 });

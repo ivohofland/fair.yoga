@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import sharp, { type Metadata } from 'sharp';
+import type { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
+import { lockLiveTeacher } from '@/lib/db-locks';
 import type { PhotoRefusal } from '@/lib/teacher-photo-limits';
 
 /** The stored avatar's edge, in pixels. Sized against the Avatar entry in `docs/design-brief.md`. */
@@ -49,4 +52,46 @@ export async function processTeacherPhoto(input: Uint8Array): Promise<ProcessedP
     log.warn({ err }, 'teacher photo: decode failed after the header parsed');
     return { ok: false, reason: 'not-an-image' };
   }
+}
+
+export type SavePhotoResult = { saved: true; photoId: string } | { saved: false; reason: 'teacher-gone' };
+
+/**
+ * Stores `bytes` as the teacher's photo under a fresh id, replacing any earlier
+ * one. The `upsert` resolves two concurrent saves last-write-wins through
+ * `ON CONFLICT` rather than a unique violation. Gated on `lockLiveTeacher`,
+ * whose placement against erasure is `docs/lock-order.md`'s.
+ */
+export async function saveTeacherPhoto(
+  db: PrismaClient,
+  teacherId: string,
+  bytes: Uint8Array,
+): Promise<SavePhotoResult> {
+  return db.$transaction(async (tx): Promise<SavePhotoResult> => {
+    if (!(await lockLiveTeacher(tx, teacherId))) return { saved: false, reason: 'teacher-gone' };
+    const photoId = randomUUID();
+    // A copy: Prisma's `Bytes` input takes only an `ArrayBuffer`-backed array,
+    // and a `Buffer` (sharp's output) is typed over `ArrayBufferLike`.
+    const stored = new Uint8Array(bytes);
+    await tx.teacherPhoto.upsert({
+      where: { teacherId },
+      create: { id: photoId, teacherId, bytes: stored },
+      update: { id: photoId, bytes: stored },
+    });
+    return { saved: true, photoId };
+  });
+}
+
+export async function removeTeacherPhoto(db: PrismaClient, teacherId: string): Promise<'removed' | 'none'> {
+  const { count } = await db.teacherPhoto.deleteMany({ where: { teacherId } });
+  return count === 0 ? 'none' : 'removed';
+}
+
+/** The stored bytes for `photoId`, or `null` when unknown or its teacher is erased. */
+export async function readTeacherPhoto(db: PrismaClient, photoId: string): Promise<Uint8Array | null> {
+  const row = await db.teacherPhoto.findFirst({
+    where: { id: photoId, teacher: { deletedAt: null } },
+    select: { bytes: true },
+  });
+  return row?.bytes ?? null;
 }
