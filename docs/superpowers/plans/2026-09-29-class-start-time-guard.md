@@ -23,7 +23,7 @@
 - Copy (decided autonomously at the brainstorming gate — the user asked for a run without interaction):
   - start time: `Enter a start time` in both forms — the wizard's string, as the issue directs.
   - date (edit form): `Select a date` — the wizard's string.
-  - class type (edit form): `Class type is required` — `template-form.tsx`'s string, the class family's other settings-side form, rather than the wizard's `Enter a class type`. Within-family class-type copy is already split two ways; this adds no third.
+  - class type (edit form): `Enter a class type` — the wizard's string. This form edits wizard-made classes, and its other two refusals are wizard imperatives. (First ruled `Class type is required`, `template-form.tsx`'s string; the whole-branch review's register argument reversed it.)
   - Unpunctuated, like both forms' neighbours (`ECONOMICS_COPY`, `'Select a room'`).
 - Guard conditions: `!form.startTime`, `!form.date`, `!form.classType.trim()`. A `type="time"`/`type="date"` input reports `''` when cleared or partly filled and otherwise a valid value; no regex duplicate of the schema.
 - `class-edit-form.tsx`: the new guards run **before** the economics check and **regardless of `settingsLocked`** — details are always editable and always sent.
