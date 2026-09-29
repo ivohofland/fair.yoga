@@ -604,7 +604,12 @@ describe('NewClassPage', () => {
       const callsBefore = fetchMock.mock.calls.length;
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
 
-      expect(screen.getByLabelText('Room')).toHaveAccessibleDescription('Select a room');
+      const room = screen.getByLabelText('Room');
+      expect(room).toHaveAccessibleDescription('Select a room');
+      expect(room).toBeInvalid();
+      const roomErrorId = room.getAttribute('aria-describedby');
+      if (!roomErrorId) throw new Error('expected Room to name its error element');
+      expect(document.getElementById(roomErrorId)).toHaveAttribute('role', 'alert');
       expect(screen.getByLabelText('Class type')).toHaveAccessibleDescription('Enter a class type');
       expect(screen.getByLabelText('Date')).toHaveAccessibleDescription('Select a date');
       expect(screen.getByLabelText('Start time')).toHaveAccessibleDescription('Enter a start time');
@@ -632,6 +637,18 @@ describe('NewClassPage', () => {
 
       expect(screen.getByLabelText('Class type')).not.toHaveAccessibleDescription();
       expect(screen.getByLabelText('Date')).toHaveAccessibleDescription('Select a date');
+    });
+
+    it('unwires the Room error once a room is picked', async () => {
+      await renderAtStep1();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      const room = screen.getByLabelText('Room');
+      expect(room).toHaveAccessibleDescription('Select a room');
+      fireEvent.change(room, { target: { value: ROOM_ID } });
+
+      expect(room).not.toHaveAccessibleDescription();
+      expect(room).not.toBeInvalid();
+      expect(room).not.toHaveAttribute('aria-describedby');
     });
   });
 
