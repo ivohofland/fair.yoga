@@ -149,10 +149,9 @@ describe('ClassEditForm', () => {
   /**
    * #700. This form's payload spreads all of `form`, so a cleared
    * `type="date"`/`type="time"` input (or a whitespace-only class type) is
-   * sent as `''` rather than omitted, and the route refuses it with raw
-   * schema copy. `handleSave` refuses each in field order (class type, then
-   * date, then start time) before the request ever leaves, with this form's
-   * own prose.
+   * sent as `''` rather than omitted. `handleSave` refuses each in field
+   * order (class type, then date, then start time) before the request ever
+   * leaves, with this form's own prose.
    *
    * Checked regardless of `settingsLocked`: these three are DETAILS, always
    * editable and always sent regardless of lock state (see the file-level

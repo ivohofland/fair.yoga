@@ -83,10 +83,9 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
 
   async function handleSave() {
     // #700. The payload below spreads all of `form`, so a cleared input or
-    // whitespace-only class type is sent as `''` rather than omitted, and the
-    // route refuses it with raw schema copy. Checked in field order and
-    // regardless of `settingsLocked`, since these three are always-sent
-    // details.
+    // whitespace-only class type is sent as `''` rather than omitted. Refused
+    // here first, with this form's own copy, in field order and regardless of
+    // `settingsLocked`, since these three are always-sent details.
     if (!form.classType.trim()) {
       setError('Enter a class type');
       return;
