@@ -182,8 +182,9 @@ describe('ClassEditForm', () => {
   );
 
   /**
-   * #702. The number inputs store `Number(value)`, so a cleared one is `0`.
-   * Every bound `updateClassSchema` puts on a number field is refused before
+   * #702. The number inputs store `Number(value)`, so a cleared one is `0`,
+   * and nothing native bounds them: this form has no `<form>` element. The
+   * first number field out of range, in this form's copy, is refused before
    * the request leaves. Duration is a detail, sent and checked at any lock
    * state. Room cost and the student counts are economics, checked only while
    * unlocked, since locked economics are never sent.
@@ -191,11 +192,14 @@ describe('ClassEditForm', () => {
   it.each([
     ['a cleared duration', 'Duration (minutes)', '', false, /^Duration must be positive$/],
     ['a cleared duration, settings locked', 'Duration (minutes)', '', true, /^Duration must be positive$/],
+    ['a negative duration', 'Duration (minutes)', '-5', false, /^Duration must be positive$/],
     ['a fractional duration', 'Duration (minutes)', '60.5', false, /^Duration must be whole minutes$/],
     ['a negative room cost', 'Room cost (€)', '-5', false, /^Room cost cannot be negative$/],
     ['a cleared min students', 'Min students', '', false, /^Min students must be at least 1$/],
+    ['a negative min students', 'Min students', '-5', false, /^Min students must be at least 1$/],
     ['a fractional min students', 'Min students', '2.5', false, /^Min students must be a whole number$/],
     ['a cleared max students', 'Max students', '', false, /^Max students must be at least 1$/],
+    ['a negative max students', 'Max students', '-5', false, /^Max students must be at least 1$/],
     ['a fractional max students', 'Max students', '12.5', false, /^Max students must be a whole number$/],
     [
       'a max students over the class size limit',
