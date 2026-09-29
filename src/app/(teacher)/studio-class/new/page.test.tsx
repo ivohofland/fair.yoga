@@ -128,19 +128,11 @@ describe('NewStudioClassPage', () => {
    * client-side before any request, refusing invalid values with product copy
    * rather than letting raw Zod developer copy return from the server.
    *
-   * The two assertions pin different things — the request not being sent, and
-   * the exact copy. On the realistic continuing-guard mutant (the guard fires
-   * but its `return` is dropped) both go red: `handleSubmit` clears `error`
-   * just before the request, so this banner assertion finds nothing and
-   * throws — a red that would read as a missing guard, where the spy's red
-   * names the outgoing request. Asserted against a stubbed `fetch` because
-   * `tests/setup/components.ts` does not mock it — "not called" must be a spy
-   * fact, not an inference from absent network noise.
+   * The spy carries "not sent"; the banner assertion carries the copy.
    *
    * A second submit fills `'   '` — whitespace-only is the boundary the
    * guard's `.trim()` exists for: drop the trim and `''` still refuses while
-   * `'   '` reaches the wire schema's `min(1)` and raw Zod returns. The edit
-   * form's test (`studio-class-edit-form.test.tsx`) pins the same boundary.
+   * `'   '` passes it and the request goes out.
    */
   it('refuses a blank class type before any request, with product copy and alert role', () => {
     stubFetch();
