@@ -1,10 +1,7 @@
 /**
- * Pins the one way this repo has found to make the `server-only` build guard
- * on `src/lib/log.ts` vanish silently: deleting or commenting out its
- * `import 'server-only';`. See that file's header for the mechanism and the
- * runner aliases. `next build` only catches a leak that already exists —
- * nothing in this tree currently value-imports the logger from client code —
- * so this guards the guard itself, not a leak that is live today.
+ * Pins `import 'server-only';` in log.ts. Removing it would pass every
+ * other check — `next build` fails only on a leak that already exists.
+ * See log.ts's header for the mechanism.
  */
 import ts from 'typescript';
 import { readFileSync } from 'node:fs';
