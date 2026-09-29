@@ -86,4 +86,26 @@ describe('createConcurrencyLimit', () => {
     expect(await Promise.all(tasks)).toEqual([0, 1, 2, 3]);
     expect(started).toEqual([0, 1, 2, 3]);
   });
+
+  it('releases a slot when a QUEUED task throws synchronously, so the task behind it still runs', async () => {
+    const run = createConcurrencyLimit(1);
+    const blockerA = latch();
+
+    const a = run(async () => {
+      await blockerA.promise;
+      return 'a';
+    });
+    // Not async: throws synchronously rather than returning a rejected
+    // promise. Queued behind A, so it never runs directly in run()'s own
+    // call stack — only once A's slot frees up.
+    const b = run(() => {
+      throw new Error('b failed');
+    });
+    const c = run(async () => 'c');
+
+    blockerA.open();
+    expect(await a).toBe('a');
+    await expect(b).rejects.toThrow('b failed');
+    expect(await c).toBe('c'); // c's slot opened up once b's synchronous throw released it
+  }, 2000);
 });

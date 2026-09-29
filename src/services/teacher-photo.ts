@@ -13,8 +13,7 @@ export const PHOTO_EDGE_PX = 400;
 export const MAX_INPUT_PIXELS = 50_000_000;
 
 // Bounds how much memory concurrent decodes can take on the single 2 GB VPS
-// this app runs on (CLAUDE.md, "VPS budget"). A 49 MP PNG measured at ~86 MB
-// RSS per decode.
+// this app runs on (CLAUDE.md, "VPS budget").
 export const DECODE_SLOTS = 2;
 const decodeSlot = createConcurrencyLimit(DECODE_SLOTS);
 
