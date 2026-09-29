@@ -147,22 +147,19 @@ describe('ClassEditForm', () => {
   });
 
   /**
-   * #700. `updateClassSchema` marks `classType`, `date` and `startTime`
-   * `.optional()`, but this form always sends the key, so a cleared
-   * `type="date"`/`type="time"` input (or a whitespace-only class type)
-   * arrives present as `''`, not absent. `.optional()` only exempts an
-   * absent key; a present `''` still hits the base validator and fails it,
-   * which is what surfaces raw Zod copy. `handleSave` refuses each in field
-   * order (class type, then date, then start time) before the request ever
-   * leaves, with this form's own prose.
+   * #700. This form's payload spreads all of `form`, so a cleared
+   * `type="date"`/`type="time"` input (or a whitespace-only class type) is
+   * sent as `''` rather than omitted, and the route refuses it with raw
+   * schema copy. `handleSave` refuses each in field order (class type, then
+   * date, then start time) before the request ever leaves, with this form's
+   * own prose.
    *
-   * Ahead of the `if (!settingsLocked)` economics block, and unconditionally:
-   * these three are DETAILS, always editable and always sent regardless of
-   * lock state (see the file-level comment above the component), unlike the
-   * five economic fields the block below strips when locked. The final case
-   * pins exactly that — clearing start time with `settingsLocked={true}`
-   * still refuses, which a guard placed inside the unlocked branch would
-   * fail to do.
+   * Checked regardless of `settingsLocked`: these three are DETAILS, always
+   * editable and always sent regardless of lock state (see the file-level
+   * comment above the component), unlike the five economic fields the block
+   * below strips when locked. The final case pins exactly that — clearing
+   * start time with `settingsLocked={true}` still refuses, which a guard
+   * placed inside the unlocked branch would fail to do.
    */
   it.each([
     ['class type', 'Class type', '   ', false, /^Enter a class type$/],

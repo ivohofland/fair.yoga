@@ -432,10 +432,9 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * #700. The startTime refusal guard in handleSubmit was wholly unpinned — a
-   * cleared start time reached the route as `''`, which `.optional()` does not
-   * skip, surfacing the schema's raw `Must be HH:mm (00:00-23:59)` copy instead
-   * of product prose.
+   * #700. A cleared `type="time"` input reports `''`. `handleSubmit` refuses
+   * it before any request leaves, with this form's own copy, rather than
+   * letting either endpoint's raw schema message reach the banner.
    *
    * Parameterised over both modes: create fills the room and class type first
    * so a cleared start time is demonstrably the sole reason the request never

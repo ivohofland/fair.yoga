@@ -82,15 +82,11 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
   }
 
   async function handleSave() {
-    // #700. `updateClassSchema` marks `classType`, `date` and `startTime`
-    // `.optional()`, but this form always sends the key — the payload below
-    // spreads all of `form` — so a cleared `type="date"`/`type="time"` input
-    // (or a whitespace-only class type) arrives present as `''`, not absent.
-    // `.optional()` only exempts an absent key; a present `''` still hits the
-    // base validator and fails it, surfacing raw Zod copy. Checked in field
-    // order, ahead of the economics block below and regardless of
-    // `settingsLocked`: these three are details, always editable and always
-    // sent.
+    // #700. The payload below spreads all of `form`, so a cleared input or
+    // whitespace-only class type is sent as `''` rather than omitted, and the
+    // route refuses it with raw schema copy. Checked in field order and
+    // regardless of `settingsLocked`, since these three are always-sent
+    // details.
     if (!form.classType.trim()) {
       setError('Enter a class type');
       return;
