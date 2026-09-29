@@ -28,18 +28,24 @@ export function ProfilePhotoField({ teacherId, firstName, lastName, photoId }: P
   async function send(init: RequestInit, fallback: string, state: 'uploading' | 'removing') {
     setBusy(state);
     setError(null);
+    let res: Response;
     try {
-      const res = await fetch(url, init);
+      res = await fetch(url, init);
       if (!res.ok) {
         setError(await readErrorMessage(res, fallback));
+        setBusy(null);
         return;
       }
-      router.refresh();
-    } catch {
+    } catch (err) {
+      console.error(err);
       setError('Network error. Please try again.');
-    } finally {
       setBusy(null);
+      return;
     }
+    // Outside the try: a completed, successful upload must not be reported
+    // as a network error if refreshing the route throws.
+    setBusy(null);
+    router.refresh();
   }
 
   async function onChoose(event: ChangeEvent<HTMLInputElement>) {
