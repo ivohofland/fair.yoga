@@ -205,24 +205,27 @@ grep the section above prescribes, minus the template tables:
       | grep -vE ':[0-9]+: *(\*|//)' \
       | grep -vE 'OF (ct|sct|tpl)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
 
-**Expect EIGHT lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
-and `lockClassRowsOrdered`'s two — plus four that are not `Class` or
+**Expect NINE lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
+and `lockClassRowsOrdered`'s two — plus five that are not `Class` or
 `CalendarEntry` locks at all:**
 
-- `src/services/room-archive.ts:252` and `src/services/room-switch.ts:88`, the
+- `src/services/room-archive.ts:251` and `src/services/room-switch.ts:88`, the
   archive's and the switch's step-1 pre-locks, both on `ClassTemplate` rows;
 - `src/services/room-switch.ts:93` and `:138`, the switch's step-2 and step-3
-  locks on the private and the shared `TeacherRoom` (#259).
+  locks on the private and the shared `TeacherRoom` (#259);
+- `src/services/roster-link.ts:123`, `lockTeacherStudentLink`'s lock on one
+  `TeacherStudent` link row (#265).
 
-Three of the four are false positives this command cannot suppress: the
-table name (`"ClassTemplate"` at `room-archive.ts:252` and `room-switch.ts:88`,
-`"TeacherRoom"` at `:138`) sits on a line ABOVE its `FOR UPDATE`, and every
-filter here matches line by line. The fourth, `room-switch.ts:93`, carries
+Four of the five are false positives this command cannot suppress: the
+table name (`"ClassTemplate"` at `room-archive.ts:251` and `room-switch.ts:88`,
+`"TeacherRoom"` at `room-switch.ts:138`, `"TeacherStudent"` at
+`roster-link.ts:123`) sits on a line ABOVE its `FOR UPDATE`, and every
+filter here matches line by line. The fifth, `room-switch.ts:93`, carries
 `"TeacherRoom"` on its own line and passes only because this command filters
 the template tables, not every table that is not `Class` or `CalendarEntry`.
-Both copies of this census share these lines, so both return eight; the
-three blind-spot lines cannot be "fixed" by tightening the filter, only by
-rewriting each statement onto one line, which nothing else wants. Any NINTH
+Both copies of this census share these lines, so both return nine; the
+four blind-spot lines cannot be "fixed" by tightening the filter, only by
+rewriting each statement onto one line, which nothing else wants. Any TENTH
 line is the real signal — a site that took a `Class` or `CalendarEntry` row
 lock without going through either helper.
 
@@ -255,7 +258,7 @@ archive.
 
 The third filter is not optional, and leaving it off is how this check shipped
 broken. Drop it and the same command returns **96** lines across twenty files
-where it returns eight with it — this codebase discusses `FOR UPDATE` far more
+where it returns nine with it — this codebase discusses `FOR UPDATE` far more
 often than it issues it, so a reader running the unfiltered version concludes
 on first use that the convention is already abandoned. Caught by #239's
 review, which is to say: after it shipped. The two figures are the same command
@@ -1862,7 +1865,8 @@ held a template lock across its inserts.
 
 **What closes it is a guard in each delete route, not a lock.** Both routes
 count `ClassTemplate` rows and refuse with 409 before issuing the `DELETE`
-(`countRoomDeleteBlockers`, `src/services/room-deletion.ts`), and the cycle
+(`countRoomDeleteBlockers` in the rooms route, `countTeacherRoomDeleteBlockers`
+in the teacher-rooms route, both in `src/services/room-deletion.ts`), and the cycle
 requires a template row to exist — that row is what gives the trigger something
 to lock. With the guard in place the statement is never issued in the
 deadlocking case.
@@ -1885,10 +1889,10 @@ the guard rather than as coverage.
 an earlier version of this section wrongly claimed. For the sweep to be
 inserting a `Class` on `TeacherRoom` X it must be holding
 `claimTemplateForGeneration`'s `FOR UPDATE` on a `ClassTemplate` whose
-`teacherRoomId` IS X (`class-generator.ts:186` copies `template.teacherRoomId`
+`teacherRoomId` IS X (the generator's `Class` insert copies `template.teacherRoomId`
 onto every row it inserts). That template row is committed, and the pre-check
 counts **every** template with no `isActive`/`isArchived` filter
-(`countRoomDeleteBlockers`), so it sees it, answers 409, and the `DELETE` is never
+(`countRoomDeleteBlockers`, `countTeacherRoomDeleteBlockers`), so it sees it, answers 409, and the `DELETE` is never
 issued — the same mechanism that closes the template edge. The `Class` edge is
 reachable only inside the check-to-`DELETE` window described next, not as an
 independent cycle.
