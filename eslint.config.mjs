@@ -5,12 +5,12 @@ import prettier from 'eslint-config-prettier';
 
 // Shared by every `no-restricted-syntax` block below that covers non-test
 // `src/` and refuses a direct or qualified-name cast to `ClassLock`
-// (src/lib/db-locks.ts, #219) — one object, so they can't drift apart. Matches `x as ClassLock`,
-// `<ClassLock>x`, and the qualified-name form of each — `x as
-// dbLocks.ClassLock`, since a namespace import (`import * as dbLocks from
-// '@/lib/db-locks'`) puts the name behind a qualifier — and the likeliest
-// such form to get copied into `src/`; `x as unknown as ClassLock` is
-// already an outer `TSAsExpression` whose own `typeAnnotation` is
+// (src/lib/db-locks.ts, #219) — one object, so they can't drift apart.
+// Matches `x as ClassLock`, `<ClassLock>x`, and the qualified-name form of
+// each — `x as dbLocks.ClassLock`, since a namespace import (`import * as
+// dbLocks from '@/lib/db-locks'`) puts the name behind a qualifier — and the
+// likeliest such form to get copied into `src/`; `x as unknown as ClassLock`
+// is already an outer `TSAsExpression` whose own `typeAnnotation` is
 // `ClassLock`, so it needs no separate branch.
 //
 // An early signal, not the guarantee: it matches by the literal name
@@ -31,9 +31,8 @@ const classLockCastSelector = {
     'Only lockClassRow (src/lib/db-locks.ts) mints a ClassLock — take the lock instead of casting one (#219).',
 };
 
-// The roster-link create/upsert refusal (#181), a named constant for the same
-// reason as `classLockCastSelector`: a block that sets `no-restricted-syntax`
-// replaces the earlier options, so each repeats the selectors that still apply.
+// The roster-link create/upsert refusal (#181); a named constant for the same
+// reason as `classLockCastSelector`.
 const teacherStudentWriteSelector = {
   selector:
     "CallExpression[callee.object.property.name='teacherStudent'][callee.property.name=/^(create|createMany|createManyAndReturn|upsert)$/]",
@@ -100,9 +99,8 @@ const eslintConfig = defineConfig([
     },
   },
   // Client and route code refuses an unbound `catch` and a parameterless
-  // `.catch` handler (#692). It repeats the two selectors from the `src/**`
-  // block because this block's `no-restricted-syntax` replaces that one for
-  // these files — see the comment above it. `src/lib` is outside; the scope
+  // `.catch` handler (#692). It repeats the two shared selectors (see the
+  // `src/**` block's comment on replacement). `src/lib` is outside; the scope
   // and its cost are in docs/technical-architecture.md (Error responses).
   {
     files: ['src/components/**/*.{ts,tsx}', 'src/app/**/*.{ts,tsx}'],

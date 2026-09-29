@@ -231,6 +231,27 @@ describe('DELETE /api/registrations/[id] — the loss its spot-freed hook record
     expect(error.mock.calls[0]?.[1]).toContain('the queue head was not promoted into the freed seat');
   });
 
+  it('logs why the waiting count failed and still records the hook failure with -1', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
+    const countFailure = new Error('count failed');
+    waitlistCount.mockRejectedValue(countFailure);
+    handleSpotFreed.mockRejectedValue(new SpotFreedError(CLASS_ID, 'auto_promote', new Error('boom')));
+
+    const res = await cancel();
+
+    expect(res.status).toBe(200);
+    expect(warn).toHaveBeenCalledWith(
+      { err: countFailure, classId: CLASS_ID },
+      'waitlist count failed after cancel',
+    );
+    expect(error.mock.calls[0]?.[0]).toMatchObject({ classId: CLASS_ID, waiting: -1 });
+  });
+
   /**
    * The backstop, mirroring `deleteStudentAccount`'s: the diagnostic read
    * guards itself with `.catch()`, but the `log` call after it did not. An

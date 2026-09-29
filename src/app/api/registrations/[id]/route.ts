@@ -571,17 +571,15 @@ async function promoteAfterCancel(classId: string): Promise<void> {
       // handler that must not throw, and a count no real queue can take keeps
       // the line honest about not knowing rather than claiming nobody waited.
       //
-      // What `-1` no longer distinguishes is WHY the count failed. #104 routes
-      // materially more traffic into this catch — both branches of
-      // `handleSpotFreed` can raise `55P03` now, not just the broadcast one — so
-      // a `-1` here can be pool exhaustion or a second `lock_timeout` on the
-      // count itself, and the error is discarded either way. One
-      // `log.debug({ err }, …)` in this `.catch` restores that; it is left out
-      // of a documentation-only pass on purpose, not by oversight.
+      // `-1` alone does not say WHY the count failed — pool exhaustion and a
+      // second `lock_timeout` on the count itself look the same — so the
+      // `.catch` logs its own error before answering it.
       const waiting = await prisma.waitlistEntry
         .count({ where: { classId, status: 'waiting' } })
-        // eslint-disable-next-line no-restricted-syntax -- the dropped error is a known gap, see the comment above
-        .catch(() => -1);
+        .catch((countErr: unknown) => {
+          log.warn({ err: countErr, classId }, 'waitlist count failed after cancel');
+          return -1;
+        });
       const failure = transientDbFailure(err);
       const transient = failure !== null;
       const window = err instanceof SpotFreedError ? err.window : null;
