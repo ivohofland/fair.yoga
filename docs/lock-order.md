@@ -209,13 +209,13 @@ grep the section above prescribes, minus the template tables:
 and `lockClassRowsOrdered`'s two — plus four that are not `Class` or
 `CalendarEntry` locks at all:**
 
-- `src/services/room-archive.ts:236` and `src/services/room-switch.ts:88`, the
+- `src/services/room-archive.ts:252` and `src/services/room-switch.ts:88`, the
   archive's and the switch's step-1 pre-locks, both on `ClassTemplate` rows;
 - `src/services/room-switch.ts:93` and `:138`, the switch's step-2 and step-3
   locks on the private and the shared `TeacherRoom` (#259).
 
 Three of the four are false positives this command cannot suppress: the
-table name (`"ClassTemplate"` at `room-archive.ts:236` and `room-switch.ts:88`,
+table name (`"ClassTemplate"` at `room-archive.ts:252` and `room-switch.ts:88`,
 `"TeacherRoom"` at `:138`) sits on a line ABOVE its `FOR UPDATE`, and every
 filter here matches line by line. The fourth, `room-switch.ts:93`, carries
 `"TeacherRoom"` on its own line and passes only because this command filters
@@ -1888,7 +1888,7 @@ inserting a `Class` on `TeacherRoom` X it must be holding
 `teacherRoomId` IS X (`class-generator.ts:186` copies `template.teacherRoomId`
 onto every row it inserts). That template row is committed, and the pre-check
 counts **every** template with no `isActive`/`isArchived` filter
-(`room-deletion.ts:97`), so it sees it, answers 409, and the `DELETE` is never
+(`countRoomDeleteBlockers`), so it sees it, answers 409, and the `DELETE` is never
 issued — the same mechanism that closes the template edge. The `Class` edge is
 reachable only inside the check-to-`DELETE` window described next, not as an
 independent cycle.
@@ -3236,7 +3236,7 @@ establish:
   `ClassTemplate_live_needs_open_room` only forbids a LIVE one on an archived
   room — so a reused S that is archived can hold templates for this cascade
   to reach. The precondition is narrow: `setTeacherRoomArchived`'s own
-  `unchanged` early return (`room-archive.ts:145`) reads `isArchived` before
+  `unchanged` early return reads `isArchived` before
   it ever opens a transaction, so a concurrent `setTeacherRoomArchived(S,
   'archived')` reaches its own pre-lock only if ITS pre-read already saw S
   live — which means a SECOND, distinct archive of S has to commit in the
