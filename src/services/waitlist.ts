@@ -268,8 +268,8 @@ export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZon
  * notification still inside the window and suppress the sweep for the rest of
  * it, so the remaining waiters would never be told — precisely the loss the
  * reconciliation sweep exists to repair. A flag cleared by the fill that takes
- * the last seat cannot make that mistake. It also costs no extra query: it is
- * a column on the row each caller already reads.
+ * the last seat cannot make that mistake. The predicate itself queries
+ * nothing; each caller supplies the row it read.
  *
  * The claim-window lower bound survives as a secondary check, in memory and
  * for free. `date` and `startTime` are absent from `ECONOMIC_FIELDS`

@@ -2223,6 +2223,11 @@ describe('handleSpotFreed (DB)', () => {
   });
 
   it('wraps a broadcast failure with its branch', async () => {
+    // The test above leaves a broadcast standing on this class at this same
+    // instant. A standing broadcast now stops the branch before it ever
+    // reaches `createMany` (#691), so reset the flag here to reach it again.
+    await prisma.class.update({ where: { id: classId }, data: { spotBroadcastAt: null } });
+
     const boom = new Error('injected: notification write failed');
     const failing = prisma.$extends({
       query: { notification: { createMany() { throw boom; } } },
