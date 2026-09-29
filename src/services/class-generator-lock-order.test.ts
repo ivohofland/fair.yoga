@@ -87,6 +87,7 @@ import {
   claimTemplateForGeneration,
 } from './class-generator';
 import { getNextOccurrences } from './entry-generation';
+import { createContentionStreaks } from './generation-contention';
 import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
@@ -603,7 +604,7 @@ describe('the class generator under staged lock contention (DB)', () => {
       // 2. Sweep. Its findMany reads the pre-archive row and includes the
       //    template; its claim then blocks on the child row lock above.
       let sweepSettled = false;
-      const sweeping = generateClassInstances(prisma, undefined, teacherId).then((n) => {
+      const sweeping = generateClassInstances(prisma, { streaks: createContentionStreaks(), teacherId }).then((n) => {
         sweepSettled = true;
         return n;
       });
@@ -703,7 +704,7 @@ describe('the class generator under staged lock contention (DB)', () => {
       // 2. Sweep. Its findMany reads the pre-edit row; its claim then blocks
       //    on the child row lock above.
       let sweepSettled = false;
-      const sweeping = generateClassInstances(prisma, undefined, teacherId).then((n) => {
+      const sweeping = generateClassInstances(prisma, { streaks: createContentionStreaks(), teacherId }).then((n) => {
         sweepSettled = true;
         return n;
       });

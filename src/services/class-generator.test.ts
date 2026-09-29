@@ -10,6 +10,11 @@ import {
 } from './class-generator';
 import { getNextOccurrences } from './entry-generation';
 import {
+  createContentionStreaks,
+  GenerationContendedError,
+  MAX_CONSECUTIVE_CONTENDED_SWEEPS,
+} from './generation-contention';
+import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
   updateClassTemplate,
@@ -111,7 +116,7 @@ describe('generateClassInstances (DB)', () => {
   it('generates 4 class instances from a template', async () => {
     // Use Monday 2026-04-06 as the starting date
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from, teacherId);
+    const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
 
@@ -145,7 +150,7 @@ describe('generateClassInstances (DB)', () => {
 
   it('is idempotent — running again creates no duplicates', async () => {
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from, teacherId);
+    const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
 
@@ -164,7 +169,7 @@ describe('generateClassInstances (DB)', () => {
     });
 
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from, teacherId);
+    const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
 
@@ -191,7 +196,7 @@ describe('generateClassInstances (DB)', () => {
     });
 
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from, teacherId);
+    const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(0);
@@ -211,7 +216,7 @@ describe('generateClassInstances (DB)', () => {
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
     const from = new Date('2026-04-07T18:00:00.000Z');
-    const count = await generateClassInstances(prisma, from, teacherId);
+    const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
@@ -229,7 +234,7 @@ describe('generateClassInstances (DB)', () => {
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
     const from = new Date('2026-04-07T05:00:00.000Z');
-    const count = await generateClassInstances(prisma, from, teacherId);
+    const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
@@ -1257,7 +1262,11 @@ describe('generateClassInstances (DB)', () => {
         });
         expect(archived.isArchived).toBe(true);
 
-        const count = await generateClassInstances(prisma, new Date('2026-04-06T00:00:00.000Z'), other.id);
+        const count = await generateClassInstances(prisma, {
+          streaks: createContentionStreaks(),
+          from: new Date('2026-04-06T00:00:00.000Z'),
+          teacherId: other.id,
+        });
         expect(count).toBe(0);
         expect(
           await prisma.class.count({
@@ -1419,7 +1428,7 @@ describe('generateClassInstances (per-template isolation)', () => {
 
     const spy = vi.spyOn(log, 'error').mockImplementation(() => log);
 
-    await expect(generateClassInstances(stub, from)).rejects.toThrow('boom-A');
+    await expect(generateClassInstances(stub, { streaks: createContentionStreaks(), from })).rejects.toThrow('boom-A');
     expect(created).toContain('B'); // B generated despite A failing before and C failing after
 
     // Both failing templates are logged, not just the one that's rethrown.
@@ -1429,9 +1438,17 @@ describe('generateClassInstances (per-template isolation)', () => {
     spy.mockRestore();
   });
 
-  it('does not rethrow when a template fails with a 55P03 lock timeout, but logs at warn and generates others', async () => {
+  const from = new Date('2099-01-05T00:00:00Z');
+
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * Templates `A` and `B`. Creating a template's entries throws a 55P03 lock
+   * timeout when its id is in `contended`, and a genuine `boom-<id>` error when
+   * it is in `failing`; otherwise the id is recorded in `created`.
+   */
+  function contendedStub(contended: ReadonlySet<string>, failing: ReadonlySet<string> = new Set()) {
     const created: string[] = [];
-    const from = new Date('2099-01-05T00:00:00Z');
     const lockTimeoutError = new Prisma.PrismaClientUnknownRequestError(
       'Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
       { clientVersion: 'test' },
@@ -1449,8 +1466,10 @@ describe('generateClassInstances (per-template isolation)', () => {
           data: Array<{ scheduleRuleId: string; date: Date }>;
         }) => {
           for (const row of data) {
-            if (row.scheduleRuleId === 'rule-A') throw lockTimeoutError;
-            created.push(row.scheduleRuleId.replace('rule-', ''));
+            const id = row.scheduleRuleId.replace('rule-', '');
+            if (contended.has(id)) throw lockTimeoutError;
+            if (failing.has(id)) throw new Error(`boom-${id}`);
+            created.push(id);
           }
           return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date }));
         },
@@ -1462,11 +1481,16 @@ describe('generateClassInstances (per-template isolation)', () => {
       $queryRaw: async () => [{ id: 'stub' }],
       $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
     } as unknown as import('@prisma/client').PrismaClient;
+    return { stub, created };
+  }
+
+  it('does not rethrow when a template fails with a 55P03 lock timeout, but logs at warn and generates others', async () => {
+    const { stub, created } = contendedStub(new Set(['A']));
 
     const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => log);
     const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => log);
 
-    const count = await generateClassInstances(stub, from);
+    const count = await generateClassInstances(stub, { streaks: createContentionStreaks(), from });
 
     expect(count).toBe(4);
     expect(created).toContain('B');
@@ -1475,9 +1499,44 @@ describe('generateClassInstances (per-template isolation)', () => {
       'recurring class generation skipped template due to lock contention',
     );
     expect(errorSpy).not.toHaveBeenCalled();
+  });
 
-    warnSpy.mockRestore();
-    errorSpy.mockRestore();
+  it('reports a template contended on MAX consecutive sweeps, even while a sibling generates', async () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => log);
+    vi.spyOn(log, 'error').mockImplementation(() => log);
+    const streaks = createContentionStreaks();
+    const { stub } = contendedStub(new Set(['A']));
+    for (let i = 1; i < MAX_CONSECUTIVE_CONTENDED_SWEEPS; i += 1) {
+      await expect(generateClassInstances(stub, { streaks, from })).resolves.toBeGreaterThan(0);
+    }
+    const last = generateClassInstances(stub, { streaks, from });
+    await expect(last).rejects.toBeInstanceOf(GenerationContendedError);
+    await expect(last).rejects.toMatchObject({ templateIds: ['A'] });
+  });
+
+  it('never escalates with a fresh tracker per call (the manual cron route)', async () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const { stub } = contendedStub(new Set(['A']));
+    for (let i = 0; i < MAX_CONSECUTIVE_CONTENDED_SWEEPS + 1; i += 1) {
+      await expect(
+        generateClassInstances(stub, { streaks: createContentionStreaks(), from }),
+      ).resolves.toBeGreaterThan(0);
+    }
+  });
+
+  it('rethrows a genuine failure ahead of the contention error in the same sweep', async () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => log);
+    vi.spyOn(log, 'error').mockImplementation(() => log);
+    const streaks = createContentionStreaks();
+    const { stub: contendedOnly } = contendedStub(new Set(['A']));
+    for (let i = 1; i < MAX_CONSECUTIVE_CONTENDED_SWEEPS; i += 1) {
+      await generateClassInstances(contendedOnly, { streaks, from });
+    }
+    const { stub: both } = contendedStub(new Set(['A']), new Set(['B']));
+    const rejection = generateClassInstances(both, { streaks, from });
+    // The genuine failure, not the contention error: assert the kind, not message text.
+    await expect(rejection).rejects.not.toBeInstanceOf(GenerationContendedError);
+    await expect(rejection).rejects.toBeInstanceOf(Error);
   });
 });
 
