@@ -205,9 +205,13 @@ jobs:
       - name: Run migrations
         run: pnpm exec prisma migrate deploy
 
-      # Fails when schema.prisma and the migration history disagree —
-      # catches schema edits committed without a migration. Lives here
-      # because it needs a live database and this is the cheapest job that has one.
+      # Fails when anything Prisma can see in the migrated database is not
+      # declared in schema.prisma, or the reverse. That catches schema edits
+      # committed without a migration, and it also rules out any hand-authored
+      # object Prisma models but the schema cannot express — a deliberate
+      # tradeoff, see docs/technical-architecture.md, "What the drift check
+      # enforces" (#329). Lives here because it needs a live database and this
+      # is the cheapest job that has one.
       # (Catching amended applied migrations is handled statically in `checks` via
       # `check-migrations` (#302) — `migrate diff` runs against a freshly deployed DB,
       # so it cannot detect an amendment that leaves the deployed schema consistent

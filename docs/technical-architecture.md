@@ -786,6 +786,59 @@ CREATE INDEX idx_payment_status ON "Payment" (status, created_at);
 
 Prisma handles migrations. Every schema change produces a migration file that's committed to git. Migrations run automatically on deployment.
 
+#### What the drift check enforces
+
+CI's `Check schema/migration drift` step runs `prisma migrate diff
+--from-schema-datasource … --to-schema-datamodel … --exit-code` against a
+database built by `migrate deploy`. It was added to catch a schema edit
+committed without a migration, and it does. What it enforces is wider, and
+that is a decision this project made (#329), not an accident of the tool:
+
+> **Everything Prisma can model must be declarable in `prisma/schema.prisma`.**
+
+Every hand-authored database object falls into one of three categories:
+
+1. **Declarable.** Prisma models it and the schema can say so.
+   `CalendarEntry.span` and `ScheduleRule.slot` are `Unsupported(...)` with
+   `@default(dbgenerated())`: declared, so the two sides agree.
+2. **Invisible.** Prisma does not model it, so the diff never sees it:
+   every `CHECK`, every `EXCLUDE USING gist` constraint, every trigger and
+   trigger function, and every partial or expression unique index
+   (`Room_private_identity_unique`, `WaitlistEntry_waiting_position_key`).
+   These pass the check because Prisma cannot see them, which says nothing
+   about whether they are right. The evidence for them is the tests that
+   exercise them, and the seed step that runs right after this one.
+3. **Visible but not declarable.** Prisma models the kind of object but the
+   schema language cannot express the variant. The first case was #328's
+   composite foreign key with PostgreSQL 15's column-list
+   `ON DELETE SET NULL ("scheduleRuleId")`. **Such an object fails the
+   check, and this repo does not ship one.**
+
+**Why the check is not narrowed to its original purpose.** A
+category-3 object and a genuinely unmigrated schema edit produce the same
+diff. Measured on #329: #328's column-list foreign key applied to a
+migrated database, and separately an `onDelete` change made in the schema
+with no migration, each yield a `DropForeignKey` plus `AddForeignKey` hunk
+on `CalendarEntry_scheduleRuleId_fkey` and exit 2. Nothing in the output
+tells intent apart, so narrowing means allowlisting one constraint's exact
+diff text: a frozen string that rots silently and weakens the check for
+the whole repo to serve one object.
+
+**The way out is category 2, and it has a price.** Express the rule as a
+trigger instead: `20260829120000_entry_rule_kind_guard` did this for #328,
+and `CREATE CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED` covers the
+deferred-check case Prisma cannot declare either. A trigger standing in for
+a foreign key does not get a foreign key's `FOR KEY SHARE` lock on the
+referenced row, so its behaviour under concurrent writes has to be argued
+rather than inherited. #328's argument is its second trigger:
+`ScheduleRule.kind` is immutable, so the guard's unlocked read of it cannot
+go stale, and the single-column foreign key still guarantees the row exists.
+`docs/lock-order.md` is where arguments of this kind live.
+
+**When to revisit:** a category-3 object with no category-2 equivalent that
+can be argued safe under concurrent writes. That is a concrete case to
+measure a narrower check against, and it has not happened yet.
+
 ---
 
 ## Real-Time Updates
