@@ -780,6 +780,39 @@ describe('NewClassPage', () => {
       expect(screen.getByLabelText('Max students')).toHaveValue(20);
     });
 
+    it('keeps a refused min students above max when another room is picked', async () => {
+      const OTHER_ROOM_ID = '33333333-3333-4333-8333-333333333333';
+      const OTHER_ROOM = {
+        ...ROOM,
+        id: OTHER_ROOM_ID,
+        capacityOverride: 16,
+        room: { roomName: 'Studio B', venueName: 'Main Venue' },
+      };
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [STEP2_ROOM, OTHER_ROOM] }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<CreateClassPage />);
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: STEP2_ROOM_ID } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+      next();
+      set('Min students', '10');
+      set('Max students', '8');
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students cannot exceed max students');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      fireEvent.change(screen.getByLabelText('Room'), { target: { value: OTHER_ROOM_ID } });
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveValue(10);
+      next();
+      expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students cannot exceed max students');
+      expectStillOnStep2();
+    });
+
     it('clears a students-order refusal when max students is raised', async () => {
       await renderAtStep2();
       set('Max students', '3');

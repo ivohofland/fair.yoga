@@ -251,7 +251,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         teacherRoomId,
         roomCost: room ? Number(room.rentalRate) : prev.roomCost,
         maxStudents,
-        minStudents: Math.min(prev.minStudents, maxStudents),
+        minStudents: room ? Math.min(prev.minStudents, room.capacityOverride) : prev.minStudents,
       };
     });
     setError('');

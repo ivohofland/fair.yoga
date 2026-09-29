@@ -1,8 +1,9 @@
 # #318 — the class wizard's step validation: pinned, and made reachable
 
 Base: `origin/main` `6ec6f4bd`. Surface: `src/app/(teacher)/class/new/page.tsx`
-(`validateStep` and the step-2 inputs), one line of
-`src/components/settings/template-form.tsx`, and `src/components/ui/select.tsx`.
+(`validateStep`, `updateField`, `handleRoomChange` and the step-2 inputs), the Max
+students and room-change handlers of `src/components/settings/template-form.tsx`, and
+`src/components/ui/select.tsx`.
 
 ## 1. What was measured
 
@@ -75,7 +76,9 @@ In the wizard:
 
 - The Min and Max students inputs store what was typed. Neither clamps its own value or
   rewrites the other field. `handleRoomChange` keeps its clamps: picking a room is a
-  prefill, like the `rentalRate` → room cost prefill beside it, not a keystroke.
+  prefill, like the `rentalRate` → room cost prefill beside it, not a keystroke. Both
+  clamp against the room's capacity; Min students is never clamped against Max, so a
+  refused min above max survives a room change and is refused again on Next.
 - `validateStep(2)` runs the single-field checks (room cost ≥ 0, min ≥ 1, max ≥ 1,
   max ≤ room capacity), then `economicsViolations` for the cross-field rules, each
   placed on the violation's `path` field. A single-field message on a field wins over
@@ -91,8 +94,9 @@ In the wizard:
   an unrelated field for a moment; `validateStep` recomputes it on the next Next.
 
 In `template-form.tsx`: remove only the drag (`minStudents: Math.min(prev.minStudents,
-max)` in the Max students `onChange`). A max below min then reaches the form's existing
-`students_order` refusal on submit. Its capacity and min clamps stay: that form has no
+max)` in the Max students `onChange`, and its twin in `handleRoomChange`, which now
+clamps Min students against the room as the wizard's does). A max below min then
+reaches the form's existing `students_order` refusal on submit. Its capacity and min clamps stay: that form has no
 capacity message to fall back on, and its min clamp rewrites only its own field.
 
 Chosen over:
@@ -122,7 +126,8 @@ representative tests also pin the fetch count. Each pin gets a recorded mutation
 - Step 2: each single-field message; each economics rule's copy on its field; the
   boundaries that must pass (max = capacity, min = max, room cost 0,
   min rate = −room cost).
-- The drag: Max students `2` then `20` leaves Min students at 4, in both forms.
+- The drag: Max students `2` then `20` leaves Min students at 4, in both forms; so does
+  a room change after Max was lowered below Min.
 - Clearing: a cross-field message clears when its other field is edited.
 
 ## 4. What this does not do
