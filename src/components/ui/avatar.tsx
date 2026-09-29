@@ -18,9 +18,10 @@ export function initialsOf(firstName: string, lastName: string): string {
   return `${first}${last}`.toUpperCase();
 }
 
-// A person, not a card: round, flat, no ring or hover step. Every placement
-// sits beside the person's name, so the image's alt is empty and the initials
-// are hidden — the name is read once, from the text beside it.
+// A person, not a card: round, flat, no ring or hover step. Placements sit
+// beside a visible name (`docs/design-brief.md`, Avatar), so the image's alt
+// is empty and the initials are hidden — a screen reader reads the name once,
+// from the text beside it, not twice.
 export function Avatar({ firstName, lastName, photoId, size, className = '' }: AvatarProps) {
   if (photoId !== null) {
     return (

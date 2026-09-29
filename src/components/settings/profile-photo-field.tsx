@@ -62,7 +62,6 @@ export function ProfilePhotoField({ teacherId, firstName, lastName, photoId }: P
         <div className="flex flex-col items-start gap-1">
           <input
             ref={inputRef}
-            id="profile-photo"
             type="file"
             accept={ACCEPTED_PHOTO_TYPES}
             aria-label="Profile photo"
@@ -72,7 +71,7 @@ export function ProfilePhotoField({ teacherId, firstName, lastName, photoId }: P
           />
           <button
             type="button"
-            className="text-teal text-sm text-left"
+            className="type-label text-teal text-left"
             onClick={() => inputRef.current?.click()}
             disabled={busy !== null}
           >
@@ -90,7 +89,7 @@ export function ProfilePhotoField({ teacherId, firstName, lastName, photoId }: P
           )}
         </div>
       </div>
-      {error && <p role="alert" className="text-sm text-danger mt-2">{error}</p>}
+      {error && <p role="alert" className="type-caption text-danger mt-2">{error}</p>}
     </section>
   );
 }
