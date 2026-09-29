@@ -137,8 +137,8 @@ describe('logRequestFailure', () => {
 });
 
 /**
- * Typecheck only, invisible to Vitest: the context admits identifiers, not
- * objects, and never a caller's own `err` — the real one is the third argument.
+ * Typecheck only, invisible to Vitest: the context admits ids, flags and enum-like
+ * values, not objects, and never a caller's own `err` — the real one is the third argument.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _contextRefusesObjectsAndErr(): void {

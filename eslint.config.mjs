@@ -70,8 +70,7 @@ const eslintConfig = defineConfig([
   // `no-restricted-syntax` for a file already matched by an earlier one
   // REPLACES that rule's options for that file rather than merging them. So
   // every block below that matches a file this `src/**` block also matches
-  // repeats whichever of its selectors (`teacherStudentWriteSelector`,
-  // `classLockCastSelector`) should still apply there, beside its own; a
+  // repeats the shared selectors that should still apply there, beside its own; a
   // second `src/**` block here would have silently switched the others off
   // wherever they overlapped.
   //
@@ -89,7 +88,7 @@ const eslintConfig = defineConfig([
   // above is an early signal against a cast that names `ClassLock` literally,
   // not the enforcement — see its own comment for what it misses.
   //
-  // Tests are exempt from both: some write `teacherStudent` directly on
+  // Tests are exempt from these two protections: some write `teacherStudent` directly on
   // purpose, for fixture setup or to pin Prisma's own locking behaviour.
   {
     files: ['src/**/*.ts', 'src/**/*.tsx'],
