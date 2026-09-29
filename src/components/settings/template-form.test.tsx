@@ -472,6 +472,78 @@ describe('TemplateForm', () => {
   );
 
   /**
+   * #702. The number inputs store `Number(value)`, so a cleared one is `0`,
+   * and none carries a native `min`. Every bound the template schemas put on
+   * a number field that the inputs' own clamps don't already hold is refused
+   * before any request leaves, on create and on edit.
+   */
+  const NUMBER_REFUSALS = [
+    ['a cleared duration', 'Duration (minutes)', '', /^Duration must be positive$/],
+    ['a fractional duration', 'Duration (minutes)', '60.5', /^Duration must be whole minutes$/],
+    ['a negative room cost', 'Room cost', '-5', /^Room cost cannot be negative$/],
+    ['a cleared min students', 'Min students', '', /^Min students must be at least 1$/],
+    ['a fractional min students', 'Min students', '2.5', /^Min students must be a whole number$/],
+    ['a cleared max students', 'Max students', '', /^Max students must be at least 1$/],
+    ['a fractional max students', 'Max students', '12.5', /^Max students must be a whole number$/],
+  ] as const;
+
+  /** Renders `mode` ready to submit: create picks the room and names the class first. */
+  async function renderReady(mode: 'create' | 'edit') {
+    stubFetch();
+    render(
+      mode === 'create' ? (
+        <TemplateForm mode="create" />
+      ) : (
+        <TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />
+      ),
+    );
+    await screen.findByLabelText('Room');
+    if (mode === 'create') {
+      fireEvent.change(screen.getByLabelText('Room'), {
+        target: { value: '11111111-1111-4111-8111-111111111111' },
+      });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    }
+  }
+
+  function submitForm() {
+    const form = screen.getByLabelText('Duration (minutes)').closest('form');
+    if (!form) throw new Error('expected Duration to be inside a form');
+    fireEvent.submit(form);
+  }
+
+  describe.each(['create', 'edit'] as const)('number refusals (%s)', (mode) => {
+    it.each(NUMBER_REFUSALS)(
+      'refuses %s before any request, with product copy',
+      async (_label, fieldName, value, copy) => {
+        await renderReady(mode);
+        fireEvent.change(screen.getByLabelText(fieldName), { target: { value } });
+
+        const callsBefore = fetchMock.mock.calls.length;
+        submitForm();
+
+        expect(fetchMock.mock.calls.length).toBe(callsBefore);
+        expect(screen.getByRole('alert')).toHaveTextContent(copy);
+      },
+    );
+
+    /** Each bound is inclusive: every field at its edge still sends. */
+    it('sends every number field at its bound, with no alert', async () => {
+      await renderReady(mode);
+      fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '1' } });
+      fireEvent.change(screen.getByLabelText('Room cost'), { target: { value: '0' } });
+      fireEvent.change(screen.getByLabelText('Min students'), { target: { value: '1' } });
+      fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '1' } });
+
+      const callsBefore = fetchMock.mock.calls.length;
+      submitForm();
+
+      await waitFor(() => expect(fetchMock.mock.calls.length).toBe(callsBefore + 1));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+  });
+
+  /**
    * #590. The minStudents > maxStudents refusal guard in handleSubmit was unpinned.
    *
    * The guard is reachable from the edit UI itself by lowering Max students below
