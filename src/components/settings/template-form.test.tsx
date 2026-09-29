@@ -535,16 +535,9 @@ describe('TemplateForm', () => {
   });
 
   /**
-   * A real click on Save goes through the browser's own pre-submission
-   * constraint validation, which this scenario trips for a reason that has
-   * nothing to do with this guard: `PricingPreviewTable`'s slider picks its
-   * `studentCount` once, at mount, from the *original* min/max, and does not
-   * re-pick it when Max students later shrinks past it — so the rendered
-   * slider's value can sit outside its own (now narrower) min/max and fail
-   * HTML5 validity, which silently blocks a real click's submission before
-   * `handleSubmit` ever runs. A dispatched `submit` event reaches the handler
-   * the same way the form's own #40/F4 test above does, without going through
-   * that unrelated control.
+   * Dispatched as a submit, as the Review F4 test does: in jsdom, native
+   * constraint validation blocks the click on a range input a browser would
+   * sanitize into range.
    */
   it('refuses a max typed below min students on submit, instead of lowering min', async () => {
     stubFetch();
