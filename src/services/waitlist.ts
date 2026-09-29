@@ -28,18 +28,7 @@ import {
 } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { readSeatCount } from './capacity';
-// pino, and server-only. Safe here and CHECKED rather than assumed: no
-// `'use client'` file imports this module. Re-derived rather than carried, so
-// no roster here can go stale — the first command's output IS the census, one
-// line per importer, and the second's EMPTY output is the claim:
-//
-//   grep -rlE "from '(@/services|\.)/waitlist'" src --include='*.ts' --include='*.tsx'
-//   grep -rlE "from '(@/services|\.)/waitlist'" src --include='*.ts' --include='*.tsx' \
-//     | xargs grep -l 'use client'
-//
-// The needle is anchored on the import specifier, not on the word: a bare
-// `/waitlist'` also matches `fetch('/api/waitlist')` in a client component,
-// which is not an importer of this module.
+// Server-only: the build rejects a client import of this chain (see `@/lib/log`'s header).
 import { log } from '@/lib/log';
 
 /**

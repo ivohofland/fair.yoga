@@ -52,10 +52,7 @@ import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib
 import { transientDbFailure } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import type { GenerationResult } from '@/lib/generation';
-// Server-only (pino). Safe here: this module's sole importer is
-// `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
-// transitively through `studio-class-generator`. No `'use client'` component
-// value-imports anything in this chain.
+// Server-only: the build rejects a client import of this chain (see `@/lib/log`'s header).
 import { log } from '@/lib/log';
 import type {
   PlainUpdateForbiddenScheduleRuleField as PlainUpdateForbiddenClassRuleField,

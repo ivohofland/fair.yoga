@@ -45,10 +45,7 @@ import {
   statusInList,
   statusesWhere,
 } from '@/lib/db-locks';
-// Server-only (pino). Safe here: this module's sole importer is
-// `api/class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
-// transitively through `class-generator`. No `'use client'` component
-// value-imports anything in this chain.
+// Server-only: the build rejects a client import of this chain (see `@/lib/log`'s header).
 import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import {
