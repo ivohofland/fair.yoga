@@ -166,9 +166,10 @@ describe('POST /api/teachers/[id]/photo', () => {
         duplex: 'half',
       });
     } catch (err) {
-      // If this environment's fetch cannot send a request with no
-      // Content-Length at all (e.g. it always computes one for a stream),
-      // there's nothing to drive here — record and skip rather than fail.
+      // A thrown fetch here is not an expected "unsupported environment"
+      // case to route around — this environment's fetch has always been able
+      // to send a streaming body with no Content-Length. `toBeUndefined()`
+      // fails the test loudly, naming the error, rather than skipping it.
       expect(err).toBeUndefined();
       return;
     }

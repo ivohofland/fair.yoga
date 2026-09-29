@@ -3,7 +3,7 @@ import sharp, { type Metadata } from 'sharp';
 import type { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { lockLiveTeacher } from '@/lib/db-locks';
-import type { PhotoRefusal } from '@/lib/teacher-photo-limits';
+import { ACCEPTED_PHOTO_FORMATS, type PhotoRefusal } from '@/lib/teacher-photo-limits';
 
 /** The stored avatar's edge, in pixels. Sized against the Avatar entry in `docs/design-brief.md`. */
 export const PHOTO_EDGE_PX = 400;
@@ -11,7 +11,7 @@ export const PHOTO_EDGE_PX = 400;
 /** Refused before decoding — the guard against a small file that inflates to gigabytes. */
 export const MAX_INPUT_PIXELS = 50_000_000;
 
-const ACCEPTED_FORMATS: ReadonlySet<string> = new Set(['jpeg', 'png', 'webp']);
+const ACCEPTED_FORMATS: ReadonlySet<string> = new Set(Object.keys(ACCEPTED_PHOTO_FORMATS));
 
 export type ProcessedPhoto = { ok: true; bytes: Buffer } | { ok: false; reason: PhotoRefusal };
 

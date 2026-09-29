@@ -1,4 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { crc32, deflateSync } from 'node:zlib';
 import { PrismaClient } from '@prisma/client';
@@ -146,6 +147,12 @@ describe('saveTeacherPhoto / readTeacherPhoto / removeTeacherPhoto', () => {
     ]);
     expect(results.every((r) => r.saved)).toBe(true);
     expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(1);
+  });
+
+  it('refuses an unknown teacher and writes nothing', async () => {
+    const teacherId = randomUUID();
+    expect(await saveTeacherPhoto(prisma, teacherId, bytes)).toEqual({ saved: false, reason: 'teacher-gone' });
+    expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(0);
   });
 
   it('refuses an erased teacher and writes nothing', async () => {
