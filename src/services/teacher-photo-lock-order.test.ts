@@ -89,8 +89,12 @@ describe('a photo upload and a teacher erasure serialise on the Teacher row (#46
     });
 
     const upload = saveTeacherPhoto(prisma, teacherId, Buffer.from('racing'));
+    void upload.catch(() => undefined);
     try {
-      await reached.promise;
+      // Raced, not bare-awaited: an upload that rejects before opening the
+      // latch would otherwise hang here for the full 20s timeout instead of
+      // failing at the assertion below.
+      await Promise.race([reached.promise, upload]);
       let erasureSettled = false;
       const erasure = deleteTeacherAccount(prisma, teacherId).finally(() => { erasureSettled = true; });
       void erasure.catch(() => undefined);

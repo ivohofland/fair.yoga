@@ -27,9 +27,13 @@ export interface ProfileFormValues {
 }
 
 /**
- * Forward: a field added to `updateTeacherSchema` with no input here fails the
- * build, naming it. Reverse: a field this form sends that the schema dropped —
- * `.strict()` would 400 it at runtime; this catches it at compile time.
+ * Forward: a field added to `updateTeacherSchema` with no matching key in
+ * `ProfileFormValues` fails the build, naming it. Reverse: a key in
+ * `ProfileFormValues` the schema dropped fails the build too — `.strict()`
+ * would 400 it at runtime; this catches it at compile time. Both pins reach
+ * the wire body because `handleSubmit` builds it as a `payload` literal typed
+ * `ProfileFormValues` and stringifies that literal directly: the same excess-
+ * property check that guards this alias guards the object actually sent.
  */
 const _formCoversSchema: NoneOf<Exclude<keyof UpdateTeacherWire, keyof ProfileFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof ProfileFormValues, keyof UpdateTeacherWire>> = true;
@@ -96,20 +100,21 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
     setSuccess('');
 
     try {
+      const payload: ProfileFormValues = {
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        bio: form.bio.trim(),
+        pageSlug: form.pageSlug.trim(),
+        defaultCurrency: form.defaultCurrency,
+        defaultTimezone: form.defaultTimezone,
+        defaultReminder: form.defaultReminder,
+        bankIban: form.bankIban?.trim() || null,
+        bankAccountName: form.bankAccountName?.trim() || null,
+      };
       const res = await fetch(`/api/teachers/${teacherId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firstName: form.firstName.trim(),
-          lastName: form.lastName.trim(),
-          bio: form.bio.trim(),
-          pageSlug: form.pageSlug.trim(),
-          defaultCurrency: form.defaultCurrency,
-          defaultTimezone: form.defaultTimezone,
-          defaultReminder: form.defaultReminder,
-          bankIban: form.bankIban?.trim() || null,
-          bankAccountName: form.bankAccountName?.trim() || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {

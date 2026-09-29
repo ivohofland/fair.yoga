@@ -59,19 +59,20 @@ export function ProfilePhotoField({ teacherId, firstName, lastName, photoId }: P
     <section className="mb-8">
       <div className="flex items-center gap-4">
         <Avatar firstName={firstName} lastName={lastName} photoId={photoId} size={72} />
-        <div className="flex flex-col items-start gap-1">
+        <div className="flex flex-col items-start gap-2">
           <input
             ref={inputRef}
             type="file"
             accept={ACCEPTED_PHOTO_TYPES}
             aria-label="Profile photo"
             className="sr-only"
+            tabIndex={-1}
             onChange={onChoose}
             disabled={busy !== null}
           />
           <button
             type="button"
-            className="type-label text-teal text-left"
+            className="type-label text-teal text-left min-h-11 flex items-center"
             onClick={() => inputRef.current?.click()}
             disabled={busy !== null}
           >
@@ -80,7 +81,7 @@ export function ProfilePhotoField({ teacherId, firstName, lastName, photoId }: P
           {photoId !== null && (
             <button
               type="button"
-              className="type-caption"
+              className="type-caption min-h-11 flex items-center"
               onClick={() => send({ method: 'DELETE' }, REMOVE_FALLBACK, 'removing')}
               disabled={busy !== null}
             >
