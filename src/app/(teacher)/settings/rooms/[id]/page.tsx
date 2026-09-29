@@ -147,7 +147,7 @@ export default async function EditRoomPage({
           />
         )}
         {!canEditRoom && inUse && (
-          <p className="type-caption">This room is used by your classes, so it can&apos;t be unlinked.</p>
+          <p className="type-caption">This room is used by your classes or recurring classes, so it can&apos;t be unlinked.</p>
         )}
         {canEditRoom && isArchived && !inUse && (
           <DeleteRoomButton
@@ -156,7 +156,7 @@ export default async function EditRoomPage({
           />
         )}
         {canEditRoom && isArchived && inUse && (
-          <p className="type-caption">This room is used by your classes, so it can&apos;t be deleted.</p>
+          <p className="type-caption">This room is used by your classes or recurring classes, so it can&apos;t be deleted.</p>
         )}
       </section>
     </>
