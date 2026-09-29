@@ -817,6 +817,16 @@ describe('NewClassPage', () => {
       expectStillOnStep2();
     });
 
+    it('shows the rate-order refusal on min rate when the room-subsidy rule also fires', async () => {
+      await renderAtStep2();
+      set('Room cost', '5');
+      set('Target rate', '-10');
+      set('Min rate', '-8');
+      next();
+      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription('Min rate cannot exceed target rate');
+      expectStillOnStep2();
+    });
+
     it('shows the single-field message where a field also breaks a cross-field rule', async () => {
       await renderAtStep2();
       set('Max students', '-1');
