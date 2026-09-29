@@ -608,7 +608,7 @@ describe('PATCH /api/teacher-rooms/[id]', () => {
 
     const body = (await res.json()) as { error: { message: string; code?: string } };
     expect(body.error.code).toBe('ROOM_IN_USE');
-    expect(body.error.message).toBe('1 unfinished class still uses this room.');
+    expect(body.error.message).toBe('1 unfinished class still uses this room. Cancel or finish it first.');
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkWithOpenClassId } });
     expect(after.isArchived).toBe(false);

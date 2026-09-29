@@ -121,7 +121,23 @@ export function describeRoomBlockers(blockers: RoomBlockers): string {
   const subject = parts.join(' and ');
   // "uses" only when a single thing is named; two clauses are always plural.
   const verb = parts.length === 1 && blockers.classes + blockers.templates === 1 ? 'uses' : 'use';
-  return `${subject} still ${verb} this room.`;
+  // The second sentence uses the verbs on the buttons that clear each blocker.
+  // "Finish" covers the teacher's Finish action and the automatic completion
+  // after the class ends: an `in_progress` class cannot be cancelled but can
+  // finish. A single kind of blocker takes a pronoun; both kinds name their
+  // remedy by object so the reader can tell which applies to which.
+  const classes = blockers.classes;
+  const templates = blockers.templates;
+  const pronoun = classes + templates === 1 ? 'it' : 'them';
+  let remedy: string;
+  if (templates === 0) remedy = `Cancel or finish ${pronoun} first.`;
+  else if (classes === 0) remedy = `Pause or archive ${pronoun} first.`;
+  else {
+    const classObject = classes === 1 ? 'the class' : 'the classes';
+    const templateObject = templates === 1 ? 'the recurring class' : 'the recurring classes';
+    remedy = `Cancel or finish ${classObject}, and pause or archive ${templateObject}, first.`;
+  }
+  return `${subject} still ${verb} this room. ${remedy}`;
 }
 
 export async function setTeacherRoomArchived(
