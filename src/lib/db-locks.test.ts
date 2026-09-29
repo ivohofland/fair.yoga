@@ -9,6 +9,7 @@ import {
   lockClassRow,
   lockClassRowsOrdered,
   lockLiveStudent,
+  lockLiveTeacher,
   lockStudentForErasure,
   setLockTimeout,
   statusesWhere,
@@ -195,6 +196,16 @@ describe('the shared lock timeout', () => {
       await lockLiveStudent(tx, '00000000-0000-4000-8000-000000000000').catch((err: unknown) => {
         if (!(err instanceof StudentErasedError)) throw err;
       });
+      const rows = await tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
+      return rows[0]?.lock_timeout;
+    });
+
+    expect(observed).toBe('2s');
+  });
+
+  it('is in force after lockLiveTeacher, which sets it itself', async () => {
+    const observed = await prisma.$transaction(async (tx) => {
+      await lockLiveTeacher(tx, '00000000-0000-4000-8000-000000000000');
       const rows = await tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
       return rows[0]?.lock_timeout;
     });
