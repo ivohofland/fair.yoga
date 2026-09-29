@@ -145,5 +145,16 @@ Migrations run automatically via the `migrate` service on every deploy.
   configured, so watching for it means reading the server logs directly (the
   `docker compose … logs` command below) — no automated alerting on log level
   exists yet (issue #157).
+- `class-generation` runs hourly and skips a recurring or studio template
+  whose row is locked, since a teacher saving an edit at that moment is
+  routine. It reports the job unhealthy only when the same template has been
+  skipped on `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs
+  (`src/services/generation-contention.ts`) — roughly two to three hours of an
+  unbroken hold — and stays unhealthy until that row is released. Each such
+  run logs an `error` line naming the `templateId`, `teacherId` and `streak`.
+  The usual cause is an idle-in-transaction session: find it in
+  `pg_stat_activity`. The manual `POST /api/cron/generate-classes` never
+  escalates this on its own. The streak lives in memory, so a process restart
+  resets it to zero.
 - `docker compose -f docker-compose.prod.yml logs -f app` — scheduler and
   request logs.
