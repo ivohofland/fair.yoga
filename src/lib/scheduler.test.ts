@@ -5,10 +5,12 @@ import type { NoneOf } from './type-pins';
 import {
   buildJobs,
   getJobHealth,
+  isJobHealthy,
   isolatedSweeps,
   makeTick,
   scheduleJobs,
   startScheduler,
+  STALLED_AFTER_SKIPPED_TICKS,
   type Job,
   type JobHealth,
   type SchedulerSweeps,
@@ -185,11 +187,30 @@ describe('buildJobs', () => {
   });
 });
 
+describe('isJobHealthy', () => {
+  const clean: JobHealth = { lastRunAt: null, lastSuccessAt: null, lastError: null, skippedTicks: 0 };
+
+  it('is healthy with no error and no stall', () => {
+    expect(isJobHealthy(clean)).toBe(true);
+  });
+
+  it('is unhealthy on an error alone', () => {
+    expect(isJobHealthy({ ...clean, lastError: 'boom' })).toBe(false);
+  });
+
+  it('tolerates one refused tick and is unhealthy from the threshold on', () => {
+    expect(STALLED_AFTER_SKIPPED_TICKS).toBe(2);
+    expect(isJobHealthy({ ...clean, skippedTicks: STALLED_AFTER_SKIPPED_TICKS - 1 })).toBe(true);
+    expect(isJobHealthy({ ...clean, skippedTicks: STALLED_AFTER_SKIPPED_TICKS })).toBe(false);
+    expect(isJobHealthy({ ...clean, skippedTicks: STALLED_AFTER_SKIPPED_TICKS + 1 })).toBe(false);
+  });
+});
+
 describe('makeTick', () => {
   function fixture(run: Job['run']): { job: Job; health: JobHealth } {
     return {
       job: { name: 'test-job', intervalMs: MINUTE, run },
-      health: { lastRunAt: null, lastSuccessAt: null, lastError: null },
+      health: { lastRunAt: null, lastSuccessAt: null, lastError: null, skippedTicks: 0 },
     };
   }
 
@@ -256,6 +277,68 @@ describe('makeTick', () => {
     // `finally`, not the success path: a job that throws every tick must still
     // be allowed to try again rather than wedging itself permanently.
     expect(job.running).toBe(false);
+  });
+
+  /**
+   * #711: a run that never settles holds the guard, and every later tick is
+   * refused without writing any other health field — so `lastError` alone
+   * would report this job healthy forever. The refused ticks are the signal.
+   */
+  it('reports a run that never settles unhealthy at its second refused tick, and clears when it settles', async () => {
+    let release!: () => void;
+    const hung = new Promise<void>((r) => {
+      release = r;
+    });
+    const { job, health } = fixture(() => hung);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    const tick = makeTick(job, health, db);
+
+    const first = tick();
+    expect(isJobHealthy(health)).toBe(true);
+
+    // One refused tick: a single overrun is routine, not a page.
+    await tick();
+    expect(health.skippedTicks).toBe(1);
+    expect(isJobHealthy(health)).toBe(true);
+    expect(error).not.toHaveBeenCalled();
+
+    // Two: the run has been in flight across two of its intervals.
+    await tick();
+    expect(health.skippedTicks).toBe(2);
+    expect(health.lastError).toBeNull();
+    expect(isJobHealthy(health)).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ job: 'test-job', skippedTicks: 2, runningSince: health.lastRunAt }),
+      expect.any(String),
+    );
+
+    release();
+    await first;
+    expect(health.skippedTicks).toBe(0);
+    expect(isJobHealthy(health)).toBe(true);
+  });
+
+  it('keeps a hung run that finally throws unhealthy on its error once the stall clears', async () => {
+    let fail!: (err: Error) => void;
+    const hung = new Promise<void>((_, reject) => {
+      fail = reject;
+    });
+    const { job, health } = fixture(() => hung);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    const tick = makeTick(job, health, db);
+
+    const first = tick();
+    await tick();
+    await tick();
+    expect(isJobHealthy(health)).toBe(false);
+
+    fail(new Error('gave up'));
+    await first;
+    expect(health.skippedTicks).toBe(0);
+    expect(health.lastError).toBe('gave up');
+    expect(isJobHealthy(health)).toBe(false);
   });
 });
 
@@ -418,8 +501,9 @@ describe('scheduleJobs', () => {
       },
     };
     const { timers, registrations } = recordingTimers();
+    const health: Record<string, JobHealth> = {};
 
-    scheduleJobs([job], db, {}, timers);
+    scheduleJobs([job], db, health, timers);
 
     const [boot, interval] = registrations;
     const first = boot!.fn();
@@ -427,10 +511,14 @@ describe('scheduleJobs', () => {
     // tick's guard release before the second tick lands, defeating the test.
     const second = interval!.fn();
     expect(runs).toBe(1);
+    // The refusal by the interval registration counts on the same entry the
+    // boot registration's run holds.
+    expect(health['test-job']?.skippedTicks).toBe(1);
 
     for (const release of releases) release();
     await first;
     await second;
+    expect(health['test-job']?.skippedTicks).toBe(0);
   });
 
   /**

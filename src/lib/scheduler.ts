@@ -19,7 +19,9 @@
  *   `class_cancelled` set (`class-transitions.ts`) and `autoCompleteClasses`
  *   reaches `completeClass`'s `payment_request` set (`class-lifecycle.ts`) —
  *   and neither was examined for this.
- * - A per-job `running` flag prevents a slow tick from stacking on itself.
+ * - A per-job `running` flag prevents a slow tick from stacking on itself. A
+ *   run holding that flag across `STALLED_AFTER_SKIPPED_TICKS` ticks reports
+ *   its job unhealthy.
  * - CRON_SCHEDULER=off disables the scheduler entirely and is a CI setting,
  *   not a production mode (`DEPLOYMENT.md` §5). `startScheduler` warns when
  *   it is set.
@@ -95,6 +97,27 @@ export interface JobHealth {
   lastRunAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
+  /**
+   * Consecutive ticks refused by the re-entrancy guard while the current run
+   * is still in flight. Reset to 0 when that run settles.
+   */
+  skippedTicks: number;
+}
+
+/**
+ * Refused ticks after which a run still in flight counts as stalled: one is a
+ * routine overrun, two means the run has been in flight across two of its
+ * job's intervals.
+ */
+export const STALLED_AFTER_SKIPPED_TICKS = 2;
+
+function isStalled(h: JobHealth): boolean {
+  return h.skippedTicks >= STALLED_AFTER_SKIPPED_TICKS;
+}
+
+/** The whole of `/api/health`'s per-job verdict: no error, and not stalled. */
+export function isJobHealthy(h: JobHealth): boolean {
+  return h.lastError === null && !isStalled(h);
 }
 
 declare global {
@@ -175,7 +198,12 @@ export function scheduleJobs(
   timers: SchedulerTimers = { setTimeout, setInterval },
 ): void {
   for (const job of jobs) {
-    const jobHealth: JobHealth = { lastRunAt: null, lastSuccessAt: null, lastError: null };
+    const jobHealth: JobHealth = {
+      lastRunAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      skippedTicks: 0,
+    };
     health[job.name] = jobHealth;
     const tick = makeTick(job, jobHealth, db);
 
@@ -193,7 +221,9 @@ export function scheduleJobs(
  * The `running` guard is what drops a tick that lands while the job's
  * previous run is still in flight — the `waitlist-reconciliation` entry in
  * `buildJobs` below relies on that — which is why it is separated and
- * asserted here.
+ * asserted here. It also counts what it refuses: each dropped tick increments
+ * `skippedTicks`, and that count is what reports a hung run — one whose
+ * `run` never settles — unhealthy.
  */
 export function makeTick(
   job: Job,
@@ -201,7 +231,16 @@ export function makeTick(
   db: PrismaClient,
 ): () => Promise<void> {
   return async () => {
-    if (job.running) return;
+    if (job.running) {
+      jobHealth.skippedTicks += 1;
+      if (isStalled(jobHealth)) {
+        log.error(
+          { job: job.name, skippedTicks: jobHealth.skippedTicks, runningSince: jobHealth.lastRunAt },
+          'scheduler job run still in flight; reporting it unhealthy',
+        );
+      }
+      return;
+    }
     job.running = true;
     jobHealth.lastRunAt = new Date().toISOString();
     try {
@@ -213,6 +252,7 @@ export function makeTick(
       jobHealth.lastError = err instanceof Error ? err.message : String(err);
     } finally {
       job.running = false;
+      jobHealth.skippedTicks = 0;
     }
   };
 }
@@ -297,8 +337,8 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         //
         // That protects `lastError` here (in-memory; the full error already
         // reached the server log through `isolatedSweeps`' `log.error`). It
-        // does NOT protect `/api/health`'s `healthy` flag
-        // (`healthy: j.lastError === null`, `health/route.ts`): that flag is
+        // does NOT protect `/api/health`'s verdict on this job — the
+        // `lastError` half of `isJobHealthy`, above — because that flag is
         // shared across every sweep in this job, and a standing timezone
         // problem already holds it at `false`. A real failure in a sweep
         // above it while the timezone row stands produces no observable
@@ -326,7 +366,9 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // statement in the transaction (`waitlist.ts`'s `promoteNext` docblock
       // spells this out), so a single contended class can cost more than 2s on
       // its own, and several in one pass add up past the interval. The
-      // `job.running` guard then drops the ticks it overruns.
+      // `job.running` guard then drops the ticks it overruns — and a pass
+      // that overruns two ticks reports the job unhealthy
+      // (`STALLED_AFTER_SKIPPED_TICKS`).
       //
       // This interval is also what a tick COUNTS AS. The reconciliation
       // module tolerates a bounded number of consecutive all-contended TICKS
