@@ -125,7 +125,18 @@ Migrations run automatically via the `migrate` service on every deploy.
 
 - `GET /api/health` — liveness, DB reachability (503 when the DB is down),
   and per-job scheduler state (`jobs.<name>.healthy` flips false when a
-  job errors); point your uptime monitor here.
+  job errors, and also when its run is still in flight when a second
+  consecutive tick comes due — `STALLED_AFTER_SKIPPED_TICKS` in
+  `src/lib/scheduler.ts` — which is at most two of the job's own interval
+  after the run began, so a couple of minutes for a job that ticks every
+  minute and two days for the daily one; each job's interval is
+  `intervalMs` in `buildJobs`). It logs an `error` line naming the job,
+  `skippedTicks` and `runningSince` on every refused tick from then on, and
+  clears once the run settles, when the verdict rests on that run's own
+  outcome again. An idle-in-transaction session holding a lock is one
+  cause — the `pg_blocking_pids()` / `pg_stat_activity` advice in the
+  `class-generation` bullet below applies to any job, not only that one.
+  Point your uptime monitor here.
 - `waitlist-reconciliation` is deliberately slower to flip than the other
   jobs. It runs every minute and repairs waitlists whose live spot-freed hook
   was dropped, so a single lost row-lock race is routine and self-healing. It

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { getJobHealth } from '@/lib/scheduler';
+import { getJobHealth, isJobHealthy } from '@/lib/scheduler';
 import { log } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
@@ -7,8 +7,8 @@ export const dynamic = 'force-dynamic';
 /**
  * Health check for the reverse proxy / uptime monitor.
  * Public by design; reveals liveness, DB reachability, and per-job
- * scheduler state (timestamps + healthy flag — error text stays in the
- * server log), nothing else.
+ * scheduler state (timestamps + `isJobHealthy`'s verdict — error text stays
+ * in the server log), nothing else.
  */
 export async function GET() {
   const jobs = Object.fromEntries(
@@ -17,7 +17,7 @@ export async function GET() {
       {
         lastRunAt: j.lastRunAt,
         lastSuccessAt: j.lastSuccessAt,
-        healthy: j.lastError === null,
+        healthy: isJobHealthy(j),
       },
     ]),
   );
