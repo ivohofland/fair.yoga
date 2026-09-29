@@ -38,6 +38,7 @@ const DRAFT_KEY = 'fair_yoga_profile_draft';
 function forgetDraft(): void {
   try {
     window.localStorage.removeItem(DRAFT_KEY);
+    // eslint-disable-next-line no-restricted-syntax -- storage is unavailable, so there is no draft to remove
   } catch {
     // Nothing stored, nothing to remove.
   }
@@ -110,6 +111,7 @@ interface SlugRejection {
 function detectTimeZone(): string | undefined {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+    // eslint-disable-next-line no-restricted-syntax -- no zone is a supported answer: the route applies its own fallback
   } catch {
     return undefined;
   }
@@ -194,9 +196,9 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
       }
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount read of a browser store, for the reason in the docblock above; it cannot cascade, the effect runs once per `email`.
       setForm(draft);
+      // eslint-disable-next-line no-restricted-syntax -- a corrupt entry or a store the browser refuses both mean no draft: start clean
     } catch {
-      // A corrupt entry, or a browser that refuses the store outright. Both
-      // mean the same thing here: no draft, start clean.
+      // Start clean.
     }
   }, [email]);
 
@@ -211,8 +213,9 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
     try {
       const stored: StoredDraft = { ...next, email };
       window.localStorage.setItem(DRAFT_KEY, JSON.stringify(stored));
+      // eslint-disable-next-line no-restricted-syntax -- persisting the draft is a courtesy, never a precondition for submitting
     } catch {
-      // Persisting is a courtesy, never a precondition for submitting.
+      // Submitting does not depend on it.
     }
   }
 

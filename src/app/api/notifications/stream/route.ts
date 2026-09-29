@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(chunk));
+          // eslint-disable-next-line no-restricted-syntax -- enqueue after the client disconnected throws; the stream is already gone
         } catch {
           cleanup();
         }
@@ -76,8 +77,9 @@ export async function GET(request: NextRequest) {
         else sseCounts.set(userKey, count);
         try {
           controller.close();
+          // eslint-disable-next-line no-restricted-syntax -- the runtime already closed the controller; there is nothing left to close
         } catch {
-          // already closed by the runtime
+          // Nothing to do.
         }
       };
 

@@ -185,6 +185,7 @@ async function readArchiveBody(
   let raw: unknown;
   try {
     raw = JSON.parse(text);
+    // eslint-disable-next-line no-restricted-syntax -- a body that isn't JSON is a 400, not a fault
   } catch {
     return null;
   }
