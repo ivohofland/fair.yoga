@@ -20,7 +20,10 @@ function stubFetch(impl: () => unknown) {
   vi.stubGlobal('fetch', vi.fn(impl));
 }
 
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const room = {
   id: 'r1', venueName: 'Yoga Loft', roomName: 'Studio A',
