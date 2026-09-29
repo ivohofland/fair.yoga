@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
+  respondTyped,
   respondError,
   requireTeacher,
   parseBody,
@@ -61,7 +62,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       orderBy: { createdAt: 'desc' },
       select: ROOM_SEARCH_SELECT,
     });
-    return respondOk(rooms);
+    return respondTyped<RoomResult[]>(rooms);
   }
 
   // Default: all public rooms + teacher's private rooms
