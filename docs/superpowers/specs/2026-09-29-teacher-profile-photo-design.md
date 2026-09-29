@@ -48,9 +48,13 @@ model TeacherPhoto {
   bytes     Bytes
   createdAt DateTime @default(now())
 
-  teacher Teacher @relation(fields: [teacherId], references: [id])
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 }
 ```
+
+The relation carries `onDelete: Cascade`: tests hard-delete `Teacher` rows,
+while production erasure only anonymises the row (never deletes it) and
+removes the photo itself, in `deleteTeacherAccount`'s own transaction.
 
 `Teacher` gains `photo TeacherPhoto?` and loses `photoUrl`. There is no
 `contentType` column: the stored bytes are always WebP.
@@ -87,7 +91,9 @@ In order:
 1. `requireTeacher`; `session.teacherId !== id` → 403.
 2. Per-teacher rate limit via `checkRateLimit` (10 per 15 minutes) → 429.
 3. `Content-Length` absent or above 8 MB → 400, before the body is read.
-   After `formData()`, the file's actual size is checked again.
+   After `formData()`, the file's actual size is checked again — `fetch`
+   computes `Content-Length` itself, so this post-parse `file.size` check is
+   defence no HTTP test can reach.
 4. Process (above). Refusal → 400 with a message naming the accepted formats.
 5. One transaction:
    `SELECT "deletedAt" FROM "Teacher" WHERE id = $1 FOR SHARE` — absent or
@@ -207,7 +213,7 @@ checkout and cannot prove what the standalone trace includes.
   output is 400×400 WebP; **an input carrying EXIF GPS comes out with none**;
   EXIF orientation is applied; SVG, GIF and random bytes are refused; an image
   above the pixel limit is refused.
-- **Integration:** 401 and 403; oversize by header and by body; non-image;
+- **Integration:** 401 and 403; oversize by header; non-image;
   a replace issues a new id and the old URL 404s; DELETE twice answers
   `unchanged`; GET headers; GET for an erased teacher 404s; erasure deletes the
   bytes; the export carries the photo; the rate limit bites.

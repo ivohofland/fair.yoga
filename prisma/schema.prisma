@@ -165,7 +165,6 @@ model Teacher {
   firstName          String
   lastName           String
   email              String           @unique
-  photoUrl           String?
   bio                String           @db.VarChar(250)
   pageSlug           String           @unique
   customDomain       String?
@@ -192,6 +191,19 @@ model Teacher {
   invitations     Invitation[]
   teacherBlocks   TeacherBlock[]
   scheduleRules   ScheduleRule[]
+  photo           TeacherPhoto?
+}
+
+/// A teacher's avatar, downscaled and re-encoded on upload. `id` is regenerated
+/// on every upload and is the photo's URL, so a replaced photo's old URL stops
+/// resolving.
+model TeacherPhoto {
+  id        String   @id @default(uuid())
+  teacherId String   @unique
+  bytes     Bytes
+  createdAt DateTime @default(now())
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 }
 
 /// Carries a partial unique index Prisma cannot express and therefore cannot

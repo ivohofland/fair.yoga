@@ -561,7 +561,7 @@ describe('pageSlugField', () => {
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdAt',
   'createdById', 'date', 'effectiveTeacherRate', 'id', 'isActive', 'isArchived',
-  'isPublic', 'kind', 'paidAt', 'photoUrl', 'scheduleRuleId', 'settingsLocked',
+  'isPublic', 'kind', 'paidAt', 'scheduleRuleId', 'settingsLocked',
   'status', 'studentId', 'teacherId', 'tierAtBooking',
   'tierSelectedAt', 'totalRevenue', 'totalStudents', 'updatedAt',
   'withdrawnCount',
@@ -649,9 +649,6 @@ const EXPECTED: Record<string, readonly string[]> = {
   // which is why neither can be validated at rest against the column. `date`
   // joined under #276/D2, gated there to manual, not-yet-past rows.
   updateStudioClassSchema: ['cancelledAt', 'date'],
-  // KNOWN GAP: no form sends it and nothing renders it. Latent until someone
-  // adds the <img>. Blocked on #46.
-  updateTeacherSchema: ['photoUrl'],
 };
 
 // Exports that are ZodType but not ZodObject — a single field's validator,
@@ -686,7 +683,6 @@ describe('server-owned fields', () => {
       'isPublic',
       'kind',
       'paidAt',
-      'photoUrl',
       'scheduleRuleId',
       'settingsLocked',
       'status',

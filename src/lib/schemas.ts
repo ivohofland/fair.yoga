@@ -280,7 +280,6 @@ export const studentProfileSchema = z.object({
 export const updateTeacherSchema = z.object({
   firstName: z.string().trim().min(1).optional(),
   lastName: z.string().trim().min(1).optional(),
-  photoUrl: z.string().url().nullable().optional(),
   bio: z.string().max(250).optional(),
   pageSlug: pageSlugField.optional(),
   defaultCurrency: z.string().optional(),

@@ -18,11 +18,11 @@ export default async function ProfilePage() {
       <PageHeader title="Profile" backHref="/settings" backLabel="Settings" />
       <ProfileForm
         teacherId={teacher.id}
+        email={teacher.email}
         timeZoneOptions={timeZoneOptions(teacher.defaultTimezone, new Date())}
         initial={{
           firstName: teacher.firstName,
           lastName: teacher.lastName,
-          email: teacher.email,
           bio: teacher.bio,
           pageSlug: teacher.pageSlug,
           defaultCurrency: teacher.defaultCurrency,
