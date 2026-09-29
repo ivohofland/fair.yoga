@@ -88,12 +88,12 @@ export function sessionCookie(token: string): { name: string; value: string; url
 }
 
 /**
- * Per-run suffix for unique columns (email, pageSlug). Within one run every
- * file already namespaces its fixtures with its own prefix, so the random
- * component only matters for *overlapping* runs against the shared database
- * — a watch-mode run left going plus a manual one — which would otherwise
- * collide on a unique constraint (P2002) if both started in the same
- * millisecond.
+ * Per-run suffix for fixture identities (email, pageSlug, address). The
+ * random part is what keeps two files' fixtures apart when both load in the
+ * same millisecond, whether in parallel workers of one run or in two
+ * overlapping runs — a file matching its rows by substring on this suffix
+ * relies on it (#705). The rule is in `docs/technical-architecture.md`,
+ * "Testing conventions".
  */
 export function uniqueSuffix(): string {
   return `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
