@@ -12,15 +12,17 @@
 
 ## Premise, as measured (not as the issue states it)
 
-The issue (filed 2026-08-24) names `template-form.test.tsx:210,326,327,344,353`. The file has since grown from ~360 to 1870 lines. The same five pins now sit at **726, 925, 926, 943, 952** (identified by content at `671c3b63`, the revision the issue's numbers match). Three more unanchored positive pins were added after the issue: **843** (`/^Created/`, prefix-anchored only), **1015**, **1094**. The studio twin file carries the same shape twice: **`studio-template-form.test.tsx:318`** (`/^Created/`) and **`:764`**. Each studio pin guards copy shared with the class-family pin beside it (the SettledNotice `label` on both forms; the one `buildResumeSentence` both families call).
+The issue (filed 2026-08-24) names `template-form.test.tsx:210,326,327,344,353`. The file has since grown from ~360 to 1870 lines. The same five pins now sit at **726, 925, 926, 943, 952** (identified by content at `671c3b63`, the revision the issue's numbers match; all line numbers in this plan are as of `0f451444`). Three more unanchored positive pins were added after the issue: **843** (`/^Created/`, prefix-anchored only), **1015**, **1094**. The studio twin file carries the same shape three times: **`studio-template-form.test.tsx:318`** (`/^Created/`), **`:363–364`**, and **`:764`**. `:363–364` is the twin of `:1015` — its `findByText(` opens on line 363 and the unanchored regex sits on line 364, so a grep pinned to a single line cannot see it. Each studio pin guards copy shared with the class-family pin beside it (the SettledNotice `label` on both forms; the one `buildResumeSentence` both families call).
 
-Re-derive: `grep -nE "(get|find)(All)?ByText\(/" src/components/settings/template-form.test.tsx src/components/settings/studio-template-form.test.tsx`. That grep also lists the negative pins below, which this plan leaves alone.
+Re-derive, at `0f451444` (`git show 0f451444:<path> | grep …`), with two separate commands:
+- Positive pins, multi-line aware: `grep -nE -A1 "(get|find)(All)?ByText\(/?" src/components/settings/template-form.test.tsx src/components/settings/studio-template-form.test.tsx`, reading each hit whose regex opens on the matched line or the line after.
+- Negative pins: `grep -nE "queryByText\(/" src/components/settings/template-form.test.tsx src/components/settings/studio-template-form.test.tsx`. `(get|find)(All)?ByText\(/` cannot match `queryByText(…)` — it requires `get` or `find`, so the positive-pin grep never lists the negative pins; they need this second command.
 
 **Deliberately unchanged:**
-- **Negative pins** — `queryByText(/no rooms configured/i)` (927, 944, 953) and `queryByText(/undefined/)` (1305). An unanchored negative regex refuses *every* string containing the phrase. Anchoring it would shrink what it refuses, which weakens it.
+- **Negative pins** — `queryByText(/no rooms configured/i)` (927, 944, 953) and `queryByText(/undefined/)` (1305, plus the studio twin `studio-template-form.test.tsx:512`). An unanchored negative regex refuses *every* string containing the phrase. Anchoring it would shrink what it refuses, which weakens it.
 - **Locators, not copy pins** — `findByRole('button', { name: /create/i })`, `findByLabelText(/cancellation deadline/i)`, `findByRole('option', { name: /Studio B/ })`. These find an element; the copy under test is asserted elsewhere.
-- **`toHaveTextContent(/^…$/)` pins** (382, 425, 470, 578, 692, …) — already anchored at both ends. They have to be regexes: `toHaveTextContent` with a *string* is a substring match.
-- **The other regex `*ByText` pins across the repo** — `grep -rhE "(get|find)(All)?ByText\(/" src --include='*.test.tsx' | wc -l` → 102 lines in 33 files (2026-09-29, before this change). That is out of this issue's scope, and the PR body says so.
+- **`toHaveTextContent(/^…$/)` pins** (382, 425, 470, 578, 692, …) — already anchored at both ends. They have to be regexes: `toHaveTextContent` with a *string* is a substring match. The studio twin file's `toHaveTextContent('Class type is required.')` pins (`studio-template-form.test.tsx:153, 162, 169`) were still the unanchored, substring-matching string form — this plan converts them to `toHaveTextContent(/^Class type is required\.$/)`, matching their class-family twins (`template-form.test.tsx:425, 432`).
+- **The other regex `*ByText` pins across the repo** — `grep -rhE "(get|find)(All)?ByText\(/" src --include='*.test.tsx' | wc -l` → 102 lines; `grep -rlE "(get|find)(All)?ByText\(/" src --include='*.test.tsx' | wc -l` → 33 files (both at `0f451444`). That line-based grep misses the same multi-line shape as `:363–364` above: `grep -rnE -A1 "(get|find)(All)?ByText\($" src --include='*.test.tsx' | grep -E "^\S+-[0-9]+-\s*/"` finds exactly one repo-wide hit whose next line opens with `/` — that same `studio-template-form.test.tsx:364` — and its file is already among the 33, so the population is **103 lines in 33 files**. That is out of this issue's scope, and the PR body says so.
 
 ## Global Constraints
 
@@ -104,7 +106,7 @@ git commit -m "test(template-form): pin copy by exact string, not substring rege
 ### Task 2: `studio-template-form.test.tsx` — the twin pins
 
 **Files:**
-- Modify: `src/components/settings/studio-template-form.test.tsx` (lines 318, 764–765 as of `0f451444`)
+- Modify: `src/components/settings/studio-template-form.test.tsx` (lines 318, 363–364, 764–765, and the `toHaveTextContent` substring pins at 153, 162, 169, as of `0f451444`)
 
 **Interfaces:** none.
 
@@ -114,29 +116,42 @@ git commit -m "test(template-form): pin copy by exact string, not substring rege
 |---|---|---|---|---|
 | S1 | `src/components/settings/studio-template-form.tsx:425` | `label="Created"` | `label="Created."` | 318 |
 | S2 | `src/components/settings/template-action-messages.ts:281` | `'Nothing is scheduled from this template.'` | `'Nothing is scheduled from this template'` | 764 |
+| S3 | `src/components/settings/template-action-messages.ts:284` | `if (causes.length > 0) return [head, ...causes].join(' ');` | `if (causes.length > 0) return [head, ...causes, 'Nothing needed adding.'].join(' ');` | 363–364 — the studio twin of Task 1's M6/1015, missed by the original plan's line-based grep because its regex opens on the line after `findByText(` |
+
+- [ ] **Step 1a (class-type refusal pins).** `studio-template-form.test.tsx:153, 162, 169` use `toHaveTextContent('Class type is required.')` — a string argument, which `toHaveTextContent` matches as a substring rather than the anchored regex their class-family twins use (`template-form.test.tsx:425, 432`: `toHaveTextContent(/^Class type is required\.$/)`). Mutate `src/components/settings/studio-template-form.tsx:121`: `setError('Class type is required.');` → `setError('Class type is required. Enter one.');`. Run the file — the two tests holding those three pins stay **green**. Restore.
 
 - [ ] **Step 2: Convert.**
 
 ```ts
 // 318
 expect(screen.getByText('Created')).toBeInTheDocument();
+// 363–364
+expect(
+  await screen.findByText(
+    '2 classes on your schedule. 1 cancelled class still holds that date.',
+  ),
+).toBeInTheDocument();
 // 764–765
 expect(
   await screen.findByText(
     'Nothing is scheduled from this template. 2 dates overlap other classes on your schedule.',
   ),
 ).toBeInTheDocument();
+// 153, 162, 169
+expect(alert).toHaveTextContent(/^Class type is required\.$/);
+expect(screen.getByRole('alert')).toHaveTextContent(/^Class type is required\.$/);
+expect(screen.getByRole('alert')).toHaveTextContent(/^Class type is required\.$/);
 ```
 
 Before relying on 764's head, confirm the studio create path passes `added` as the scheduled count (grep `resumeStudioMessage(` in `studio-template-form.tsx`). If the head differs, use the string the run reports and note it in the task report.
 
-- [ ] **Step 3: Run green**, then **Step 4: Commit.**
+- [ ] **Step 3: Run green**, then **Step 4: Commit** — one commit per conversion, in this order: `test(studio-template-form): pin the shared copy by exact string (#320)` (S1, S2), `test(studio-template-form): pin the short-window sentence by exact string (#320)` (S3), `test(studio-template-form): anchor the class-type refusal pins (#320)` (153, 162, 169).
 
 ```bash
 git add src/components/settings/studio-template-form.test.tsx
 git commit -m "test(studio-template-form): pin the shared copy by exact string (#320)"
 ```
 
-- [ ] **Step 5: Prove each converted pin bites.** S1 → 318 red, S2 → 764 red; record the error lines; restore.
+- [ ] **Step 5: Prove each converted pin bites.** S1 → 318 red, S2 → 764 red, S3 → 363–364 red (re-apply the same mutation as Task 1's M6); record the error lines; restore. For the class-type pins, re-apply the `Enter one.` mutation (all three pins' tests red) and a second mutation dropping the period entirely, `setError('Class type is required')` (all three pins' tests red); record the error lines; restore.
 
 - [ ] **Step 6: End clean.** `git status --porcelain` empty; file green.
