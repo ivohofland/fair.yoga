@@ -35,6 +35,9 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+        // Vitest resolves the package's default export, which throws; Next
+        // resolves the `react-server` condition to `empty.js` for server code.
+        'server-only': path.resolve(__dirname, './node_modules/server-only/empty.js'),
       },
     },
     test: {

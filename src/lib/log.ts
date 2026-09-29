@@ -4,9 +4,15 @@
  *
  * Usage: `log.error({ err, classId }, 'completion failed')` — put the
  * error under the `err` key so pino serializes stack traces properly.
- * Client components keep using console.* (this module is server-only).
+ *
+ * This module imports `server-only`, so `next build` fails when any
+ * `'use client'` module value-imports it, directly or through any chain
+ * of imports. Client code logs with console.*. A client component that
+ * needs a type from a module that reaches this one uses `import type`,
+ * which erases.
  */
 
+import 'server-only';
 import pino from 'pino';
 
 export const log = pino({
