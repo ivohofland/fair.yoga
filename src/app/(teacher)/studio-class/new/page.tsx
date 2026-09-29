@@ -116,6 +116,10 @@ export default function NewStudioClassPage() {
       setError('Date is required.');
       return;
     }
+    if (!startTime) {
+      setError('Pick a start time.');
+      return;
+    }
 
     const duration = Number(durationMinutes);
     if (!durationMinutes.trim() || !Number.isInteger(duration) || duration <= 0) {

@@ -198,6 +198,18 @@ describe('NewStudioClassPage', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a cleared start time before any request, with product copy', () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Pick a start time.')).toBeInTheDocument();
+  });
+
   /**
    * #310. Clearing hourlyRate or entering a negative value refuses before any
    * request with product copy. Explicit 0 is allowed for unpaid classes.
