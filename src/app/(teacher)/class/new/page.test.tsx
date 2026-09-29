@@ -897,6 +897,27 @@ describe('NewClassPage', () => {
       expectStillOnStep2();
     });
 
+    it('clamps min students to a smaller room picked after Back', async () => {
+      const SMALL_ROOM_ID = '55555555-5555-4555-8555-555555555555';
+      const SMALL_ROOM = {
+        ...ROOM,
+        id: SMALL_ROOM_ID,
+        capacityOverride: 10,
+        room: { roomName: 'Studio C', venueName: 'Main Venue' },
+      };
+      await renderAndPassStep1([STEP2_ROOM, SMALL_ROOM], STEP2_ROOM_ID);
+      set('Min students', '20');
+      set('Max students', '20');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      fireEvent.change(screen.getByLabelText('Room'), { target: { value: SMALL_ROOM_ID } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      await screen.findByLabelText('Room cost');
+
+      expect(screen.getByLabelText('Min students')).toHaveValue(10);
+      expect(screen.getByLabelText('Max students')).toHaveValue(10);
+    });
+
     it('clears a students-order refusal when max students is raised', async () => {
       await renderAtStep2();
       set('Max students', '3');
