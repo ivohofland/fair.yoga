@@ -21,9 +21,7 @@ export function ShareBookingLink({ pageSlug }: ShareBookingLinkProps) {
         await navigator.share({ title: 'Book a class', url });
         return;
         // eslint-disable-next-line no-restricted-syntax -- the share sheet was dismissed (or is unsupported); fall through to the clipboard
-      } catch {
-        // Fall through to the clipboard.
-      }
+      } catch {}
     }
     try {
       await navigator.clipboard.writeText(url);

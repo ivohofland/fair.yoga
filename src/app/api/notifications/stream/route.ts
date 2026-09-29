@@ -78,9 +78,7 @@ export async function GET(request: NextRequest) {
         try {
           controller.close();
           // eslint-disable-next-line no-restricted-syntax -- the runtime already closed the controller; there is nothing left to close
-        } catch {
-          // Nothing to do.
-        }
+        } catch {}
       };
 
       // Send initial keepalive comment

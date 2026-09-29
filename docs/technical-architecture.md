@@ -167,9 +167,11 @@ identifiers only — never an email, a name, a sign-in code or anything else the
 user typed, which the type cannot tell from an ID. `err` itself can quote the
 start of a response body, which matters if a client error sink is ever plugged
 in. `src/components` and `src/app` refuse a bare `catch` and a parameterless
-`.catch` handler by lint (`bareCatchSelector` and `discardedRejectionSelector`
-in `eslint.config.mjs`); a catch that is correct as bare says why in its
-`eslint-disable-next-line`. The design is in
+`.catch` handler (or one whose parameter is `_`-named) by lint
+(`bareCatchSelector` and `discardedRejectionSelector` in `eslint.config.mjs`);
+a catch that is correct as bare says why in its `eslint-disable-next-line`.
+`src/lib` is outside the rule; its client helpers were converted once and are
+held by review. The design is in
 `docs/superpowers/specs/2026-09-29-bare-catch-logging-design.md`.
 
 **The one exception is comparing a message against its own exported
