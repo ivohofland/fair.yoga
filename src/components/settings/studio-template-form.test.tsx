@@ -600,6 +600,27 @@ describe('StudioTemplateForm', () => {
     errorSpy.mockRestore();
   });
 
+  /**
+   * The network copy invites a retry with nothing edited, so this second click
+   * is a submit that starts with `error` still set — no field change has
+   * cleared it. It must send again, not sit on the banner.
+   */
+  it('sends again when the teacher retries after a network error without editing', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch();
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    errorSpy.mockRestore();
+  });
+
   /** #477: Edit mode unreadable 200 body confirms update and refreshes without network error. */
   it('does not report a network error and refreshes when PUT succeeds but body is unreadable (#477)', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
