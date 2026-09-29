@@ -257,7 +257,7 @@ per-family claims used before the merge, still issued by `gdpr.ts`'s bulk
 archive.
 
 The third filter is not optional, and leaving it off is how this check shipped
-broken. Drop it and the same command returns **96** lines across twenty files
+broken. Drop it and the same command returns **99** lines across twenty-one files
 where it returns nine with it — this codebase discusses `FOR UPDATE` far more
 often than it issues it, so a reader running the unfiltered version concludes
 on first use that the convention is already abandoned. Caught by #239's
