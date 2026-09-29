@@ -1,14 +1,11 @@
 {
-  // playwright.config.ts's `tsconfig` option points here so every module
-  // reached from an e2e spec — including src/lib/log.ts via tests/helpers.ts
-  // — resolves `server-only` to its non-throwing empty.js, the same
-  // substitution vitest.config.ts makes for its own runner. `paths` in a
-  // child tsconfig replaces the parent's rather than merging, so `@/*` is
-  // repeated here. This mapping stays local to this file rather than moving
-  // to the root tsconfig.json: measured directly, the same entry added there
-  // does not change what `next build` (Turbopack) resolves `server-only` to
-  // — it still fails a client leak the same way — so it would add nothing
-  // for Next and only Playwright's own resolution needs it.
+  // playwright.config.ts's `tsconfig` option points here: modules reached
+  // from an e2e spec import `@/lib/log`, and without this mapping Playwright
+  // resolves `server-only` to its throwing default. `paths` in a child
+  // tsconfig replaces the parent's rather than merging, so `@/*` is repeated
+  // here. The mapping belongs only here, not in the root tsconfig.json: only
+  // Playwright needs it — Next's build already resolves `server-only`
+  // correctly, and a root mapping doesn't change that.
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "paths": {
