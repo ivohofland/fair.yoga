@@ -1037,8 +1037,7 @@ export async function handleSpotFreed(
     // branch cannot run at all. The argument does not lean on timing: this
     // branch runs right up to class start (#236).
     //
-    // `lockClassRow` here is the same helper that bounds every other row
-    // lock in this file, to the wait set by `LOCK_TIMEOUT_SQL`
+    // `lockClassRow` bounds its wait to `LOCK_TIMEOUT_SQL`
     // (`@/lib/db-locks`). The cost is that a class row held longer than that
     // drops the broadcast entirely — the live callers log and swallow, and
     // the reconciliation sweep retries on its next tick. That is the

@@ -564,9 +564,8 @@ describe('reconcileWaitlists (DB)', () => {
 
   /**
    * The gate `handleSpotFreed` applies under the class row lock (#691). The
-   * sweep's own gate reads `spotBroadcastAt` unlocked, and the live callers
-   * of the hook — the DELETE registration route and `deleteStudentAccount`
-   * — have no gate of their own, so without this the lock orders two callers
+   * sweep's own gate reads `spotBroadcastAt` unlocked, and the hook's live
+   * callers have no gate of their own, so without this the lock orders two callers
    * for one freed seat without telling the second that the first already
    * announced it. Spec:
    * `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md`.
