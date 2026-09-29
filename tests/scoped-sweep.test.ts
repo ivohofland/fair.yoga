@@ -1,9 +1,10 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { scopeSweep } from './scoped-sweep';
+import { uniqueSuffix } from './helpers';
 
 const prisma = new PrismaClient();
-const suffix = Date.now();
+const suffix = uniqueSuffix();
 let inId = '';
 let outId = '';
 // The deleteMany case's own pair: the scoped delete removes `delInId` and
@@ -108,9 +109,11 @@ describe('scopeSweep', () => {
   it('leaves unnamed models and single-row operations alone', async () => {
     const s = scopeSweep(prisma, { Teacher: { id: { in: [inId] } } });
     expect(await s.db.teacher.findUnique({ where: { id: outId } })).not.toBeNull();
-    // Account is not named in the scope, so an unscoped read reaches every
-    // account this file has created, by email.
-    const accounts = await s.db.account.findMany({ where: { email: { contains: `-${suffix}@` } } });
+    // Account is not named in the scope, so the read reaches every account
+    // this file created — by their exact addresses. If the Teacher scope
+    // leaked onto Account, the Teacher ids would narrow it to none and the
+    // equality below would fail.
+    const accounts = await s.db.account.findMany({ where: { email: { in: emails } } });
     expect(accounts.map((a) => a.email).sort()).toEqual([...emails].sort());
     expect(() => s.rowsRead('Account')).toThrow(/does not name Account/);
   });

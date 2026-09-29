@@ -10,6 +10,7 @@ import {
 } from './profile-authorization';
 import { teacherProfileSchema, studentProfileSchema } from '@/lib/schemas';
 import { log } from '@/lib/log';
+import { uniqueSuffix } from '../../../tests/helpers';
 
 // Real by default (importOriginal) — `ticketAuthorization`'s call to
 // `consumeSignupTicket` only goes through this mock at all when a specific
@@ -22,7 +23,7 @@ vi.mock('./signup-ticket', async (importOriginal) => {
 });
 
 const prisma = new PrismaClient();
-const suffix = `pa-${Date.now()}`;
+const suffix = `pa-${uniqueSuffix()}`;
 
 beforeAll(async () => { await prisma.$connect(); });
 
