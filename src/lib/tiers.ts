@@ -7,8 +7,8 @@ import type { NoneOf } from '@/lib/type-pins';
  *
  * This module must ship no runtime imports: `tier-form.tsx`, `booking-flow.tsx`,
  * and `pricing-preview-table.tsx` are all `'use client'` and value-import from
- * it, so any transitive reach to `@/lib/log` (pino) would land in the browser
- * bundle. The narrowing helper that logs lives in `tiers.server.ts` for
+ * it, so any transitive reach to `@/lib/log` (pino) would fail `next build`.
+ * The narrowing helper that logs lives in `tiers.server.ts` for
  * exactly that reason. A type-only import is safe here and is why the pins
  * below can import `NoneOf` from `type-pins.ts`: `import type` erases
  * completely at compile time, so nothing is emitted for it and no runtime

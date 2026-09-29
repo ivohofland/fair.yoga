@@ -4,8 +4,8 @@
  *
  * One definition, in `lib/` and import-free at runtime, for the same reason
  * `registration-status.ts` and `class-fields.ts` are: a `'use client'` component
- * that ever needs this list must be able to import it without dragging
- * `@/lib/log` (pino, server-only) into the browser bundle. The `import type`
+ * that ever needs this list must be able to import it without
+ * `@/lib/log` (pino, server-only) failing `next build`. The `import type`
  * below erases completely, so this module emits no runtime import at all.
  *
  * **Why this file exists.** `expired` sat in the Prisma enum from Phase 1 with
