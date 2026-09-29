@@ -85,7 +85,7 @@ In the wizard:
   `ECONOMICS_COPY … satisfies Record<EconomicsRule, string>`, per the per-form pattern.
   `'Max must be >= min students'` goes away: no teacher could ever reach it, so
   replacing it changes nothing anyone has seen.
-- Editing any of step 2's fields clears every cross-field message, not only the
+- Editing any field clears every cross-field message, not only the
   edited field's own key. Otherwise a refusal shown on Min rate would stay after the
   teacher fixed it by raising the target rate. This can clear a still-true refusal on
   an unrelated field for a moment; `validateStep` recomputes it on the next Next.
