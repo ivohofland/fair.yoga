@@ -652,12 +652,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
           label="Max students"
           type="number"
           value={String(form.maxStudents)}
-          onChange={(e) => {
-            const max = Math.min(Number(e.target.value), roomCapacity);
-            setForm((prev) => ({ ...prev, maxStudents: max }));
-            setError('');
-            setSuccess('');
-          }}
+          onChange={(e) => update('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
         />
       </div>
 
