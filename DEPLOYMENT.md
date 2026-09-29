@@ -150,9 +150,8 @@ Migrations run automatically via the `migrate` service on every deploy.
   routine. A genuine failure reddens the job on the sweep it happens in; a
   contended skip does so only when the same template has been skipped on
   `MAX_CONSECUTIVE_CONTENDED_SWEEPS` consecutive runs
-  (`src/services/generation-contention.ts`), which at the hourly interval is
-  three consecutive runs — roughly two to three hours of an unbroken hold —
-  and stays unhealthy until the first run after the lock is released. The
+  (`src/services/generation-contention.ts`) — three consecutive hourly runs,
+  roughly two to three hours of an unbroken hold — and stays unhealthy until the first run after the lock is released. The
   blocking lock may be on the template's own row or on a row its generation
   writes against: the teacher, the room, the schedule rule, or an overlapping
   uncommitted calendar entry. Each such run logs an `error` line naming the
