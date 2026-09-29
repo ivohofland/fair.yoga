@@ -787,14 +787,30 @@ Every hand-authored database object falls into one of three categories:
    every `CHECK`, every `EXCLUDE USING gist` constraint, every trigger and
    trigger function, and every partial or expression unique index
    (`Room_private_identity_unique`, `WaitlistEntry_waiting_position_key`).
-   These pass the check because Prisma cannot see them, which says nothing
+   The same goes for an attribute Prisma does not read on an object it does:
+   `DEFERRABLE INITIALLY DEFERRED` on a declared foreign key passes the
+   check. These pass because Prisma cannot see them, which says nothing
    about whether they are right. The evidence for them is the tests that
-   exercise them, and the seed step that runs right after this one.
+   exercise them, and the seed step that runs right after the drift step.
 3. **Visible but not declarable.** Prisma models the kind of object but the
    schema language cannot express the variant. The first case was #328's
    composite foreign key with PostgreSQL 15's column-list
    `ON DELETE SET NULL ("scheduleRuleId")`. **Such an object fails the
    check, and this repo does not ship one.**
+
+Which category an object falls in is a fact about the pinned Prisma
+version, not about PostgreSQL, so measure it rather than guess: apply the
+object to a migrated scratch database and run the step's command against
+it. Guesses have been wrong in both directions. #329 expected
+`ON DELETE SET DEFAULT` and a `DEFERRABLE` foreign key to be category 3,
+but the first is declarable (`onDelete: SetDefault`) and the second is
+invisible. A Prisma upgrade can move an object between categories.
+
+`20260829120000_entry_rule_kind_guard`'s header gives a different reason
+the composite key was not used: that `ON DELETE SET NULL` would null every
+referencing column, `kind` included. The column-list form above removes
+that reason, and what remains is this check. The correction is recorded
+here because the migration file is immutable.
 
 **Why the check is not narrowed to its original purpose.** A
 category-3 object and a genuinely unmigrated schema edit produce the same
@@ -807,15 +823,16 @@ diff text: a frozen string that rots silently and weakens the check for
 the whole repo to serve one object.
 
 **The way out is category 2, and it has a price.** Express the rule as a
-trigger instead: `20260829120000_entry_rule_kind_guard` did this for #328,
-and `CREATE CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED` covers the
-deferred-check case Prisma cannot declare either. A trigger standing in for
+trigger instead, as `20260829120000_entry_rule_kind_guard` did for #328.
+`CREATE CONSTRAINT TRIGGER … DEFERRABLE` is the form for a check that
+must run at commit. A trigger standing in for
 a foreign key does not get a foreign key's `FOR KEY SHARE` lock on the
 referenced row, so its behaviour under concurrent writes has to be argued
 rather than inherited. #328's argument is its second trigger:
 `ScheduleRule.kind` is immutable, so the guard's unlocked read of it cannot
 go stale, and the single-column foreign key still guarantees the row exists.
-`docs/lock-order.md` is where arguments of this kind live.
+That argument is stated in the migration's own header. A new one belongs in
+`docs/lock-order.md`, beside the lock arguments already there.
 
 **When to revisit:** a category-3 object with no category-2 equivalent that
 can be argued safe under concurrent writes. That is a concrete case to
