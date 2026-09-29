@@ -115,7 +115,10 @@ function isStalled(h: JobHealth): boolean {
   return h.skippedTicks >= STALLED_AFTER_SKIPPED_TICKS;
 }
 
-/** The whole of `/api/health`'s per-job verdict: no error, and not stalled. */
+/**
+ * A job is healthy when its last settled run left no error and its current
+ * run is not stalled (`STALLED_AFTER_SKIPPED_TICKS`).
+ */
 export function isJobHealthy(h: JobHealth): boolean {
   return h.lastError === null && !isStalled(h);
 }
@@ -337,12 +340,12 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         //
         // That protects `lastError` here (in-memory; the full error already
         // reached the server log through `isolatedSweeps`' `log.error`). It
-        // does NOT protect `/api/health`'s verdict on this job — the
-        // `lastError` half of `isJobHealthy`, above — because that flag is
-        // shared across every sweep in this job, and a standing timezone
-        // problem already holds it at `false`. A real failure in a sweep
-        // above it while the timezone row stands produces no observable
-        // change there — the flag was false already. So the ordering keeps
+        // does NOT protect `/api/health`'s verdict on this job — `isJobHealthy`,
+        // above — because that verdict is shared across every sweep in this
+        // job, and a standing timezone problem already holds it `false`. A
+        // real failure in a sweep above it while the timezone row stands
+        // produces no observable change there — the verdict was false
+        // already. So the ordering keeps
         // the other sweeps' failures legible in logs, but `/api/health` stays
         // uninformative about them until the bad row is fixed. Recorded as a
         // tradeoff, not mitigated architecturally.
