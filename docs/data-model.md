@@ -51,7 +51,7 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | bytes | bytea | Always 400×400 WebP — downscaled and re-encoded on upload by `src/services/teacher-photo.ts`; there is no `content_type` column because the format never varies. |
 | created_at | datetime | |
 
-Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after the `Teacher` row's own `updateMany` — see that service for the race this ordering closes.
+Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after the `Teacher` row's own `updateMany` — see `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate (#46)" for the race this ordering closes.
 
 ### Student (core)
 

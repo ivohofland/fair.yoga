@@ -90,7 +90,9 @@ In order:
 
 1. `requireTeacher`; `session.teacherId !== id` → 403.
 2. Per-teacher rate limit via `checkRateLimit` (10 per 15 minutes) → 429.
-3. `Content-Length` absent or above 8 MB → 400, before the body is read.
+3. `Content-Length` absent or non-numeric → 400 no-photo; above
+   `MAX_PHOTO_REQUEST_BYTES` (the 8 MB file limit plus 64 KB multipart
+   framing) → 400 too-large. Both before the body is read.
    After `formData()`, the file's actual size is checked again — `fetch`
    computes `Content-Length` itself, so this post-parse `file.size` check is
    defence no HTTP test can reach.
@@ -125,7 +127,8 @@ and `X-Content-Type-Options: nosniff` (already global, via `next.config.ts`).
 upload in flight — sharp can take hundreds of milliseconds, a wide window:
 
 - **Upload locks first.** The upload holds `Teacher` `FOR SHARE`; erasure's
-  `UPDATE` (`FOR NO KEY UPDATE`) waits for it to commit. Erasure's `DELETE`,
+  `UPDATE` takes `FOR UPDATE` (it rewrites the unique `email` and `pageSlug`)
+  and waits for it to commit. Erasure's `DELETE`,
   a later statement under READ COMMITTED, takes a fresh snapshot and sees —
   and removes — the row the upload just wrote.
 - **Erasure locks first.** The upload's `FOR SHARE` waits for erasure to commit,
@@ -135,10 +138,12 @@ With the `DELETE` placed *before* the `UPDATE`, the first ordering leaks: the
 delete finds nothing, erasure then waits on the upload, and the upload's row
 survives erasure. That is the mutation the race test must catch.
 
-`FOR SHARE`, not `FOR KEY SHARE`: `FOR KEY SHARE` does not conflict with
-`FOR NO KEY UPDATE`, so it would not wait for erasure at all. (The FK check on
-the upsert already takes `FOR KEY SHARE` on the teacher, for exactly that
-reason useless as a gate.)
+`FOR SHARE`, not `FOR KEY SHARE`: the erasure's `UPDATE` takes `FOR UPDATE`
+today, and `FOR SHARE` is chosen because it conflicts with every `UPDATE`
+mode, whichever columns erasure rewrites. (The FK check on the upsert takes
+`FOR KEY SHARE`, but that only waits for erasure to commit — it never reads
+whether the teacher is live, so it is not a gate regardless of which mode
+conflicts with which.)
 
 Both transactions take `Teacher` before `TeacherPhoto`, and the upload takes
 nothing else, so no cycle is possible. `docs/lock-order.md` gets an entry for
@@ -173,8 +178,10 @@ Server-safe (no `'use client'`). Props:
 - With a photo: `next/image` with `unoptimized` (the bytes are already sized;
   Next's optimizer would re-process them, and a plain `<img>` trips
   `@next/next/no-img-element`), fixed width and height, `rounded-pill`,
-  `object-cover`. `alt=""`: every placement sits beside the teacher's name, and
-  a screen reader would otherwise read it twice.
+  `object-cover`. `alt=""`: decorative — the public page places it beside the
+  teacher's name, `/schedule` places it inside a link already named "Profile",
+  and `/settings/profile` places it beside the Upload/Replace buttons, so a
+  non-empty alt would announce it a second time in every placement.
 - Without: the first letters of first and last name, uppercased, Georgia bold,
   teal on `teal-tint`, `aria-hidden`.
 - No ring, border, shadow or hover step. Documented in `docs/design-brief.md`.
@@ -217,10 +224,11 @@ checkout and cannot prove what the standalone trace includes.
   a replace issues a new id and the old URL 404s; DELETE twice answers
   `unchanged`; GET headers; GET for an erased teacher 404s; erasure deletes the
   bytes; the export carries the photo; the rate limit bites.
-- **Race:** a second connection holds the `Teacher` row lock, one test per
-  ordering. The erasure ordering is mutation-tested by moving the `deleteMany`
-  above the `updateMany`; the upload gate by weakening `FOR SHARE` to
-  `FOR KEY SHARE`.
+- **Race:** the upload-first test pauses the upload inside its own transaction
+  via a spy on `lockLiveTeacher`; the erasure-first test holds the `Teacher`
+  row on a second connection. The erasure ordering is mutation-tested by
+  moving the `deleteMany` above the `updateMany`; the upload gate by
+  weakening `FOR SHARE` to `FOR KEY SHARE`.
 - **Component:** `Avatar` fallback and image; `ProfilePhotoField` states and the
   client-side size refusal.
 - **e2e:** upload on `/settings/profile`, see it on the public page.

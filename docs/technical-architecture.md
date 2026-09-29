@@ -560,16 +560,17 @@ prefetching it — without ever asking the user which one this is:
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **63** routes. **9** carry no session
+`find src/app/api -name route.ts` finds **67** routes. **10** carry no session
 guard; **6** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
-`passkey/authenticate/options`), leaving **3** with neither:
+`passkey/authenticate/options`), leaving **4** with neither:
 
 | route | why that is correct |
 |---|---|
 | `health` | Public health check. |
 | `auth/magic-link/verify` | Token is `crypto.randomBytes(32)` — 256 bits, stored hashed, 15-minute TTL. Brute force is infeasible. |
 | `auth/passkey/authenticate/verify` | Gated on a one-time 5-minute challenge plus WebAuthn signature verification; `redirect` is `relativePath.optional()` in `passkeyAuthVerifySchema`. |
+| `teacher-photos/[photoId]` | Public by design (#46): the teacher's public page shows the photo to signed-out visitors. The id is a per-upload `randomUUID`, regenerated on every upload and replace, and the route answers 404 once a photo is replaced or its teacher erased. |
 
 Re-derive with:
 

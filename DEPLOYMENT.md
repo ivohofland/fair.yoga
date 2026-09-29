@@ -55,6 +55,11 @@ The teacher photo upload route gets its own `location` block with a raised
 JSON, so this only has to be large enough to let a request through to the app
 for it to answer. Everything else keeps nginx's 1 MB default.
 
+`GET /api/teacher-photos/*` answers `Cache-Control: public, max-age=31536000,
+immutable`, so a shared cache or CDN placed in front of this app must not
+cache it — otherwise a replaced or erased teacher's photo would stay
+reachable at the edge past the origin's own 404.
+
 ## 4. Backups
 
 ```bash
