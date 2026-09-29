@@ -400,28 +400,26 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         }
 
         let handled = false;
-        try {
-          const json = rawJson as {
-            data?: { added: TemplateCreateResponse['added']; counts?: unknown };
-          };
-          const result = json.data;
+        // `null` is the one parsed payload whose `.data` throws; every other
+        // non-object reads `undefined` and fails the shape check below.
+        const result =
+          typeof rawJson === 'object' && rawJson !== null
+            ? (rawJson as { data?: { added: TemplateCreateResponse['added']; counts?: unknown } }).data
+            : undefined;
 
-          // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
-          // gate enumerated its terms until #296 added `blockedByOverlap` —
-          // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
-          // been reachable on create since #196, and the gate listed it) — and
-          // then navigated away from a short window in silence. See that
-          // function's docblock; the paragraph ABOVE is the rule it broke.
-          if (result && Number.isInteger(result.added) && hasIntegerCounts(result.counts)) {
-            if (anyBlocked(result.counts)) {
-              setSuccess(resumeMessage(result.added, result.added, result.counts));
-            } else {
-              router.push(RECURRING_LIST_PATH);
-            }
-            handled = true;
+        // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
+        // gate enumerated its terms until #296 added `blockedByOverlap` —
+        // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
+        // been reachable on create since #196, and the gate listed it) — and
+        // then navigated away from a short window in silence. See that
+        // function's docblock; the paragraph ABOVE is the rule it broke.
+        if (result && Number.isInteger(result.added) && hasIntegerCounts(result.counts)) {
+          if (anyBlocked(result.counts)) {
+            setSuccess(resumeMessage(result.added, result.added, result.counts));
+          } else {
+            router.push(RECURRING_LIST_PATH);
           }
-        } catch {
-          // Payload was not an object or reading properties threw
+          handled = true;
         }
 
         if (!handled) {
