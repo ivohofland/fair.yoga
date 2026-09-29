@@ -1,8 +1,8 @@
 # #318 — the class wizard's step validation: pinned, and made reachable
 
 Base: `origin/main` `6ec6f4bd`. Surface: `src/app/(teacher)/class/new/page.tsx`
-(`validateStep` and the step-2 inputs) and one line of
-`src/components/settings/template-form.tsx`.
+(`validateStep` and the step-2 inputs), one line of
+`src/components/settings/template-form.tsx`, and `src/components/ui/select.tsx`.
 
 ## 1. What was measured
 
@@ -85,9 +85,10 @@ In the wizard:
   `ECONOMICS_COPY … satisfies Record<EconomicsRule, string>`, per the per-form pattern.
   `'Max must be >= min students'` goes away: no teacher could ever reach it, so
   replacing it changes nothing anyone has seen.
-- Editing a field clears the cross-field message it takes part in, not only its own
-  key. Otherwise a refusal shown on Min rate would stay after the teacher fixed it by
-  raising the target rate.
+- Editing any of step 2's fields clears every cross-field message, not only the
+  edited field's own key. Otherwise a refusal shown on Min rate would stay after the
+  teacher fixed it by raising the target rate. This can clear a still-true refusal on
+  an unrelated field for a moment; `validateStep` recomputes it on the next Next.
 
 In `template-form.tsx`: remove only the drag (`minStudents: Math.min(prev.minStudents,
 max)` in the Max students `onChange`). A max below min then reaches the form's existing
@@ -109,9 +110,12 @@ Chosen over:
 ## 3. Coverage
 
 Every pin is driven through the rendered wizard and asserts the message as the field's
-accessible description (`Input` wires `aria-describedby`), so a message on the wrong
-field fails. Every refusal also asserts the step didn't advance and no POST was sent.
-Each pin gets a recorded mutation.
+accessible description (`Input` and `Select` wire `aria-describedby`), so a message on
+the wrong field fails. `Select` now wires its error to its control (`aria-invalid`,
+`aria-describedby`, `role="alert"`) as `Input` does, because the wizard's Room picker is
+its only error-bearing use and its message was not associated with the control. Every
+refusal asserts the step did not advance; the POST lives only behind step 4, so
+representative tests also pin the fetch count. Each pin gets a recorded mutation.
 
 - Step 1: an empty Next shows all five messages at once. The render is simultaneous.
   A whitespace-only class type is refused (the `.trim()`).
