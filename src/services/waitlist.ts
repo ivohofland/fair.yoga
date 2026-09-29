@@ -247,8 +247,8 @@ export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZon
 
 /**
  * True when a first-come-first-claimed broadcast already stands for the seat
- * that is currently free. The one gate both the reconciliation sweep and
- * `handleSpotFreed`'s broadcast branch apply (#691).
+ * that is currently free. Exported so every decision whether to broadcast
+ * uses one predicate (#691).
  *
  * Two conditions, and they answer different questions.
  *
@@ -1037,10 +1037,11 @@ export async function handleSpotFreed(
     // branch cannot run at all. The argument does not lean on timing: this
     // branch runs right up to class start (#236).
     //
-    // `lockClassRow` here is the same helper `addToWaitlist`, `promoteNext`
-    // and `claimSpot` above now take too — all four share the bounded 2s
-    // wait. The cost is that a class row held longer than that drops the
-    // broadcast entirely — both callers log and swallow. That is the
+    // `lockClassRow` here is the same helper that bounds every other row
+    // lock in this file, to the wait set by `LOCK_TIMEOUT_SQL`
+    // (`@/lib/db-locks`). The cost is that a class row held longer than that
+    // drops the broadcast entirely — the live callers log and swallow, and
+    // the reconciliation sweep retries on its next tick. That is the
     // conservative outcome: a writer holding this row that long is probably
     // filling the seat.
     const outcome = await db.$transaction(async (tx) => {
@@ -1060,9 +1061,6 @@ export async function handleSpotFreed(
       // either. The lock alone orders two callers for one freed seat; this is
       // what tells the second about the first. Why declining loses no
       // recipient: `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md` §2.
-      // The schedule half of this re-read is, by that same §2 argument, an
-      // equivalent mutant too: a stale one could only turn this into a
-      // decline, and §2 covers why a decline loses no current waiter.
       const current = await tx.class.findUniqueOrThrow({
         where: { id: classId },
         select: {
@@ -1118,7 +1116,7 @@ export async function handleSpotFreed(
       // act on an outcome where the cancel and the refill both did the right
       // thing — the auto-promote branch above swallows the identical event
       // silently for that reason. But silence has a cost this branch cannot
-      // pay: neither caller reads the return value, so with no line here the
+      // pay: neither live caller reads the return value, so with no line here the
       // guard FIRING is indistinguishable from its never having been reached,
       // including for a guard broken to reject every class. `debug` is off by
       // default (`LOG_LEVEL`, `lib/log.ts`), so it costs nothing in production

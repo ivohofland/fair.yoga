@@ -254,9 +254,12 @@ benefit from an empty database — assertion scoping becomes trivial.
   is made reachable only in the statement immediately before that call
   (write the entry there, or free the seat there) and the promotion is
   asserted from the stored entry rather than from that call's return, since
-  a sweep promotion runs the same `promoteNext`. A site that keeps a
-  reachable free seat because the sweep's action there changes nothing it
-  asserts says so beside the fixture. `expectReconciliationSkips`
+  a sweep promotion runs the same `promoteNext`. That same standing
+  broadcast also silences `handleSpotFreed` itself for that claim window, so
+  a test that then expects a broadcast from a direct hook call clears the
+  flag first. A site that keeps a reachable free seat because the sweep's
+  action there changes nothing it asserts says so beside the fixture.
+  `expectReconciliationSkips`
   (`tests/waitlist-fixtures.ts`) forces a tick scoped to the test's own
   classes and asserts they were skipped. Scoped because CI runs integration
   files in parallel. Find the direct writes with

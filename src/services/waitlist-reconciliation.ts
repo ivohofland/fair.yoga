@@ -584,9 +584,6 @@ async function reconcileOne(
     // `lockClassRow` before it acts. Stale in either direction costs almost
     // nothing: reads full when free, the seat waits one more tick; reads free
     // when full, the hook's locked count suppresses it, as designed.
-    // `spotBroadcastAt` on the same pre-read is stale in the same harmless
-    // way: read as unset while another caller's broadcast commits, the call
-    // re-checks it under the lock and declines.
     //
     // "Almost", because there is one seat this loses: a class read as full on
     // the last tick before its start is `frozen` on the next one and never
@@ -602,8 +599,12 @@ async function reconcileOne(
 
     // Only the broadcast needs a gate. A promotion fills one seat, so the
     // auto-promote branch consumes its own trigger; a broadcast leaves the
-    // seat free and would go out again every tick. `handleSpotFreed` applies
-    // the same gate again under the lock; this one only saves the round-trip.
+    // seat free and would go out again every tick. `handleSpotFreed`
+    // re-applies this gate under the lock, which is what makes it correct
+    // under a race. This unlocked copy keeps a standing broadcast a
+    // `skipped` outcome rather than an invocation that takes the class row
+    // lock every tick. Read stale as unset, the invocation re-checks under
+    // the lock and declines; read stale as set, the seat waits one tick.
     if (window === 'first_come_first_claimed' && broadcastStillStands(cls)) {
       return { kind: 'skipped', reason: 'already_broadcast' };
     }
