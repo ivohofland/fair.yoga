@@ -636,11 +636,29 @@ describe('NewClassPage', () => {
   });
 
   describe('step 2 validation (#318)', () => {
-    /** Step 1 filled validly with the 30-capacity room; defaults then read room cost 20, min rate 15, target 25, min 4, max 12. */
+    // A room whose capacity differs from `?? 30`'s fallback, so a mutant that
+    // drops the room lookup (or reads the wrong field) can't pass by
+    // coincidence — see the capacity test below.
+    const STEP2_ROOM_ID = '22222222-2222-4222-8222-222222222222';
+    const STEP2_ROOM = {
+      ...ROOM,
+      id: STEP2_ROOM_ID,
+      capacityOverride: 24,
+    };
+
+    function stubFetchStep2Room() {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [STEP2_ROOM] }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    /** Step 1 filled validly with the 24-capacity room; defaults then read room cost 20, min rate 15, target 25, min 4, max 12. */
     async function renderAtStep2() {
-      stubFetch();
+      stubFetchStep2Room();
       render(<CreateClassPage />);
-      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: STEP2_ROOM_ID } });
       fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
       fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
       fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
@@ -690,7 +708,7 @@ describe('NewClassPage', () => {
       set('Max students', '40');
       expect(screen.getByLabelText('Max students')).toHaveValue(40);
       next();
-      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Cannot exceed room capacity (30)');
+      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Cannot exceed room capacity (24)');
       expectStillOnStep2();
     });
 
@@ -732,12 +750,13 @@ describe('NewClassPage', () => {
       next();
       expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students must be at least 1');
       expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Max students must be at least 1');
+      expectStillOnStep2();
     });
 
     it('advances at every legal boundary: max at capacity, min equal to max, min rate at minus the room cost', async () => {
       await renderAtStep2();
-      set('Max students', '30');
-      set('Min students', '30');
+      set('Max students', '24');
+      set('Min students', '24');
       set('Room cost', '10');
       set('Min rate', '-10');
       next();
