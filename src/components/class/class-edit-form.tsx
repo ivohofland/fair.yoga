@@ -92,7 +92,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
     // `settingsLocked`: these three are details, always editable and always
     // sent.
     if (!form.classType.trim()) {
-      setError('Class type is required');
+      setError('Enter a class type');
       return;
     }
     if (!form.date) {
