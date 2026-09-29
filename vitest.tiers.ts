@@ -156,6 +156,9 @@ export const LOCK_CONTENTION_TESTS = [
   // #265: the `invitations-lock-order.test.ts` shape, for archiving; its
   // header carries the reason.
   'src/services/student-archive-lock-order.test.ts',
+  // #46: the `privacy/route-lock-order.test.ts` shape, for the photo upload's
+  // `Teacher` gate; its header carries the reason.
+  'src/services/teacher-photo-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

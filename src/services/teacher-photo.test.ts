@@ -1,7 +1,39 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import sharp from 'sharp';
 import { crc32, deflateSync } from 'node:zlib';
-import { processTeacherPhoto, PHOTO_EDGE_PX } from './teacher-photo';
+import { PrismaClient } from '@prisma/client';
+import {
+  processTeacherPhoto,
+  PHOTO_EDGE_PX,
+  saveTeacherPhoto,
+  removeTeacherPhoto,
+  readTeacherPhoto,
+} from './teacher-photo';
+import { uniqueSuffix } from '../../tests/helpers';
+
+const prisma = new PrismaClient();
+const teacherIds: string[] = [];
+
+async function makeTeacher(): Promise<string> {
+  const s = uniqueSuffix();
+  const t = await prisma.teacher.create({
+    data: {
+      firstName: 'Photo', lastName: 'Teacher', email: `photo-${s}@test.local`,
+      account: { create: { email: `photo-${s}@test.local` } }, bio: '', pageSlug: `photo-${s}`,
+    },
+  });
+  teacherIds.push(t.id);
+  return t.id;
+}
+
+afterAll(async () => {
+  if (teacherIds.length > 0) {
+    const accounts = await prisma.teacher.findMany({ where: { id: { in: teacherIds } }, select: { accountId: true } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } }); // cascades TeacherPhoto
+    await prisma.account.deleteMany({ where: { id: { in: accounts.map((a) => a.accountId) } } });
+  }
+  await prisma.$disconnect();
+});
 
 async function solidJpeg(width: number, height: number): Promise<Buffer> {
   return sharp({ create: { width, height, channels: 3, background: '#1A5653' } }).jpeg().toBuffer();
@@ -87,5 +119,54 @@ describe('processTeacherPhoto', () => {
   it('refuses a header claiming more pixels than the ceiling, before decoding', async () => {
     expect(await processTeacherPhoto(pngHeaderClaiming(10_000, 10_000)))
       .toEqual({ ok: false, reason: 'too-many-pixels' });
+  });
+});
+
+describe('saveTeacherPhoto / readTeacherPhoto / removeTeacherPhoto', () => {
+  const bytes = Buffer.from('stored-bytes');
+
+  it('stores, reads back, and issues a new id on replace', async () => {
+    const teacherId = await makeTeacher();
+    const first = await saveTeacherPhoto(prisma, teacherId, bytes);
+    if (!first.saved) throw new Error('first save refused');
+    expect(Buffer.from((await readTeacherPhoto(prisma, first.photoId)) ?? [])).toEqual(bytes);
+
+    const second = await saveTeacherPhoto(prisma, teacherId, Buffer.from('replacement'));
+    if (!second.saved) throw new Error('second save refused');
+    expect(second.photoId).not.toBe(first.photoId);
+    expect(await readTeacherPhoto(prisma, first.photoId)).toBeNull();
+    expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(1);
+  });
+
+  it('two concurrent saves for one teacher leave one row and no error', async () => {
+    const teacherId = await makeTeacher();
+    const results = await Promise.all([
+      saveTeacherPhoto(prisma, teacherId, Buffer.from('a')),
+      saveTeacherPhoto(prisma, teacherId, Buffer.from('b')),
+    ]);
+    expect(results.every((r) => r.saved)).toBe(true);
+    expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(1);
+  });
+
+  it('refuses an erased teacher and writes nothing', async () => {
+    const teacherId = await makeTeacher();
+    await prisma.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });
+    expect(await saveTeacherPhoto(prisma, teacherId, bytes)).toEqual({ saved: false, reason: 'teacher-gone' });
+    expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(0);
+  });
+
+  it('does not serve an erased teacher\'s photo even if a row survived', async () => {
+    const teacherId = await makeTeacher();
+    const saved = await saveTeacherPhoto(prisma, teacherId, bytes);
+    if (!saved.saved) throw new Error('save refused');
+    await prisma.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });
+    expect(await readTeacherPhoto(prisma, saved.photoId)).toBeNull();
+  });
+
+  it('remove answers removed, then none', async () => {
+    const teacherId = await makeTeacher();
+    await saveTeacherPhoto(prisma, teacherId, bytes);
+    expect(await removeTeacherPhoto(prisma, teacherId)).toBe('removed');
+    expect(await removeTeacherPhoto(prisma, teacherId)).toBe('none');
   });
 });
