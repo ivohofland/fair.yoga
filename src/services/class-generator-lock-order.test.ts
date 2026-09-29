@@ -87,7 +87,11 @@ import {
   claimTemplateForGeneration,
 } from './class-generator';
 import { getNextOccurrences } from './entry-generation';
-import { createContentionStreaks } from './generation-contention';
+import {
+  createContentionStreaks,
+  GenerationContendedError,
+  MAX_CONSECUTIVE_CONTENDED_SWEEPS,
+} from './generation-contention';
 import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
@@ -741,6 +745,76 @@ describe('the class generator under staged lock contention (DB)', () => {
         expect(c.calendarEntry.date.getUTCDay()).toBe(6);
       }
     });
+  });
+
+  describe('generateClassInstances — a held template row across sweeps (#354)', () => {
+    afterEach(async () => {
+      await prisma.calendarEntry.deleteMany({
+        where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+      });
+    });
+
+    /**
+     * A real `55P03`, not a stubbed one: the holder takes the `ClassTemplate`
+     * row the claim needs `FOR UPDATE`, so each sweep's claim gives up at its
+     * own 2s `lock_timeout`. One tracker across the sweeps is what a scheduler
+     * process keeps. The sweeps before the threshold resolve; the one that
+     * reaches it rejects.
+     */
+    it(
+      'escalates on the sweep that reaches the streak threshold while a template row stays locked',
+      async () => {
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+        const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+
+        let release!: () => void;
+        let markLocked!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const locked = new Promise<void>((resolve) => {
+          markLocked = resolve;
+        });
+
+        const holding = prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
+            markLocked();
+            await held;
+          },
+          { timeout: 30_000 },
+        );
+
+        try {
+          await locked;
+          const streaks = createContentionStreaks();
+
+          for (let sweep = 1; sweep < MAX_CONSECUTIVE_CONTENDED_SWEEPS; sweep++) {
+            await expect(generateClassInstances(prisma, { streaks, teacherId })).resolves.toBe(0);
+          }
+          expect(warn).toHaveBeenCalledTimes(MAX_CONSECUTIVE_CONTENDED_SWEEPS - 1);
+          for (const call of warn.mock.calls) {
+            expect(call[0]).toEqual(expect.objectContaining({ templateId, teacherId }));
+          }
+
+          const escalated = await generateClassInstances(prisma, { streaks, teacherId }).then(
+            () => null,
+            (e: unknown) => e,
+          );
+          expect(escalated).toBeInstanceOf(GenerationContendedError);
+          expect((escalated as GenerationContendedError).templateIds).toEqual([templateId]);
+        } finally {
+          // In a `finally`, so a failure above fails this test alone instead of
+          // holding the template row for the holder's full `{ timeout: 30_000 }`
+          // budget, which every later claim in this file would queue behind.
+          release();
+          await holding.catch(() => {});
+          warn.mockRestore();
+          error.mockRestore();
+        }
+      },
+      30_000,
+    );
   });
 
   describe('generateInstancesForTemplate — slot reporting', () => {
