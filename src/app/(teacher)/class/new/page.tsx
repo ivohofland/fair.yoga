@@ -215,10 +215,10 @@ export default function CreateClassPage() {
   // Field update helpers
   // -------------------------------------------------------------------------
 
-  // Every field step 2 renders is one `economicsViolations` reads, so any edit
-  // there may settle a cross-field refusal shown on another field — this
-  // clears every message in `ECONOMICS_MESSAGES`, not just the edited field's
-  // own, regardless of which field changed.
+  // An edit can settle a cross-field refusal shown on a different field, so
+  // every edit clears every `ECONOMICS_MESSAGES` message along with the edited
+  // field's own. One still true comes back on the next Next, since
+  // `validateStep` rebuilds the whole map.
   function updateField<K extends keyof FormData>(key: K, value: FormData[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSubmitError('');
