@@ -259,9 +259,7 @@ describe('makeTick', () => {
   /**
    * A throwing job must leave `lastError` set and `lastSuccessAt` untouched —
    * this is the path by which a FAILING run makes `isJobHealthy` report the
-   * job unhealthy, and it is why the waitlist sweep throws
-   * `ReconciliationFailedError` on a tick that failed every class it invoked
-   * and is worth escalating, rather than swallowing it.
+   * job unhealthy.
    */
   it('records a failure without stamping success, and releases the guard', async () => {
     const { job, health } = fixture(async () => {

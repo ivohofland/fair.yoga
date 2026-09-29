@@ -131,20 +131,21 @@ Migrations run automatically via the `migrate` service on every deploy.
   after the run began, so a couple of minutes for a job that ticks every
   minute and two days for the daily one; each job's interval is
   `intervalMs` in `buildJobs`). From that tick on, the scheduler logs an
-  `error` line — `scheduler job run still in flight; reporting it
-  unhealthy`, with `job`, `skippedTicks` and `runningSince` fields — on
-  every further refused tick, so an operator can grep for that message; the
-  job's `healthy` flag clears once the run settles, when the verdict rests
-  on that run's own outcome again. An idle-in-transaction session holding a
+  `error` line — `scheduler job run still in flight; reporting it unhealthy`,
+  with `job`, `skippedTicks` and `runningSince` fields — on that tick and
+  every refused tick after it, so an operator can grep for that message; the
+  job stays unhealthy until the run settles, and from then the verdict rests
+  on that run's own outcome. An idle-in-transaction session holding a
   lock is one cause — the `pg_blocking_pids()` / `pg_stat_activity` advice in
   the `class-generation` bullet below applies to any job, not only that one.
   Point your uptime monitor here.
-- `waitlist-reconciliation` is deliberately slower to flip than the other jobs
-  for its own failures — a pass still in flight across two ticks flips it
-  exactly as fast as any job under the `STALLED_AFTER_SKIPPED_TICKS` rule in the
-  bullet above. It runs every minute and repairs waitlists whose live spot-freed
-  hook was dropped, so a single lost row-lock race is routine and self-healing.
-  It reports the job unhealthy when a failure will not clear by retrying, or
+- `waitlist-reconciliation` tolerates contention for
+  `MAX_CONSECUTIVE_CONTENDED_TICKS` ticks before its own failures flip it; a
+  pass still in flight flips it at its second refused tick, like any job,
+  under the rule in the bullet above. It runs every minute and repairs
+  waitlists whose live spot-freed hook was dropped, so a single lost row-lock
+  race is routine and self-healing. It reports the job unhealthy when a
+  failure will not clear by retrying, or
   when five consecutive ticks lost **every** class to contention
   (`MAX_CONSECUTIVE_CONTENDED_TICKS` in
   `src/services/waitlist-reconciliation.ts`) — roughly five minutes of an

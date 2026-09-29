@@ -20,8 +20,8 @@
  *   reaches `completeClass`'s `payment_request` set (`class-lifecycle.ts`) —
  *   and neither was examined for this.
  * - A per-job `running` flag prevents a slow tick from stacking on itself. A
- *   run holding that flag across `STALLED_AFTER_SKIPPED_TICKS` ticks reports
- *   its job unhealthy.
+ *   run holding that flag across `STALLED_AFTER_SKIPPED_TICKS` ticks makes
+ *   `isJobHealthy` report its job unhealthy.
  * - CRON_SCHEDULER=off disables the scheduler entirely and is a CI setting,
  *   not a production mode (`DEPLOYMENT.md` §5). `startScheduler` warns when
  *   it is set.
@@ -106,8 +106,8 @@ export interface JobHealth {
 
 /**
  * Refused ticks after which a run still in flight counts as stalled: one is a
- * routine overrun, two means the run has been in flight across two of its
- * job's intervals.
+ * routine overrun, two means the run is still in flight at the second tick
+ * that came due after it began.
  */
 export const STALLED_AFTER_SKIPPED_TICKS = 2;
 
@@ -225,8 +225,9 @@ export function scheduleJobs(
  * previous run is still in flight — the `waitlist-reconciliation` entry in
  * `buildJobs` below relies on that — which is why it is separated and
  * asserted here. It also counts what it refuses: each dropped tick increments
- * `skippedTicks`, and that count is what reports a hung run — one whose
- * `run` never settles — unhealthy.
+ * `skippedTicks`, and `isJobHealthy` reads that count — a run still in flight
+ * after `STALLED_AFTER_SKIPPED_TICKS` refused ticks reads unhealthy, whether
+ * that run is hung or merely slow.
  */
 export function makeTick(
   job: Job,
@@ -340,12 +341,12 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         //
         // That protects `lastError` here (in-memory; the full error already
         // reached the server log through `isolatedSweeps`' `log.error`). It does
-        // NOT protect `/api/health`'s verdict on this job — `isJobHealthy`,
-        // above — because that verdict is shared across every sweep in this job,
-        // and a standing timezone problem already holds it `false`. A real failure
-        // in a sweep above it while the timezone row stands produces no observable
-        // change there — the verdict was false already. So the ordering keeps the
-        // other sweeps' failures legible in logs, but `/api/health` stays
+        // NOT protect this job's `isJobHealthy` verdict — one verdict, shared
+        // across every sweep in this job, and a standing timezone problem
+        // already holds it `false`. A real failure in a sweep above it while
+        // the timezone row stands produces no observable change there — the
+        // verdict was false already. So the ordering keeps the other sweeps'
+        // failures legible in logs, but the job's health verdict stays
         // uninformative about them until the bad row is fixed. Recorded as a
         // tradeoff, not mitigated architecturally.
         auditTeacherTimezones,
@@ -369,8 +370,8 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // spells this out), so a single contended class can cost more than 2s on
       // its own, and several in one pass add up past the interval. The
       // `job.running` guard then drops the ticks it overruns — and a pass
-      // that overruns two ticks reports the job unhealthy
-      // (`STALLED_AFTER_SKIPPED_TICKS`).
+      // still in flight after `STALLED_AFTER_SKIPPED_TICKS` refused ticks
+      // reads unhealthy.
       //
       // This interval is also what a tick COUNTS AS. The reconciliation
       // module tolerates a bounded number of consecutive all-contended TICKS
