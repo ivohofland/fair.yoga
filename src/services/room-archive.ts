@@ -92,7 +92,8 @@ function plural(n: number, one: string, many: string): string {
 
 /**
  * The refusal names what blocks it rather than saying "in use", so the teacher
- * knows what to clear — the house style `DUPLICATE_ROOM` and `NOW_SHARED`
+ * knows what to clear, and a second sentence names the action that clears each
+ * kind — the house style `DUPLICATE_ROOM` and `NOW_SHARED`
  * already follow in `src/app/api/rooms/[id]/route.ts`.
  */
 export function describeRoomBlockers(blockers: RoomBlockers): string {
@@ -121,10 +122,8 @@ export function describeRoomBlockers(blockers: RoomBlockers): string {
   const subject = parts.join(' and ');
   // "uses" only when a single thing is named; two clauses are always plural.
   const verb = parts.length === 1 && blockers.classes + blockers.templates === 1 ? 'uses' : 'use';
-  // The second sentence uses the verbs on the buttons that clear each blocker.
-  // "Finish" covers the teacher's Finish action and the automatic completion
-  // after the class ends: an `in_progress` class cannot be cancelled but can
-  // finish. A single kind of blocker takes a pronoun; both kinds name their
+  // Classes are cleared by cancelling or finishing, templates by pausing or
+  // archiving. A single kind of blocker takes a pronoun; both kinds name their
   // remedy by object so the reader can tell which applies to which.
   const classes = blockers.classes;
   const templates = blockers.templates;
