@@ -784,10 +784,9 @@ That's the **manifest-list** digest — the response's `Content-Type` is
 `application/vnd.oci.image.index.v1+json`, not a single platform's
 `...image.manifest.v1+json` — which is the level that keeps the image
 multi-arch; Docker resolves the right per-platform manifest under it at
-pull time. Confirmed buildable both targets, 2026-09-15, including after
-collapsing to the single `base` stage: `docker build -t fairyoga .` and
-`docker build --target migrate -t fairyoga-migrate .` both exit 0 against
-the pinned digest.
+pull time. Confirmed buildable both targets, 2026-09-30, against the
+`node:24-alpine` digest: `docker build -t fairyoga .` and
+`docker build --target migrate -t fairyoga-migrate .` both exit 0.
 
 Neither half is enough alone. A digest pin with no tracking Dependabot
 entry freezes the wrong content forever; a Dependabot entry with no digest
