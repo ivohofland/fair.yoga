@@ -30,6 +30,18 @@ describe('parseBirthday', () => {
     expect(parseBirthday('2026-10-01', NOW)).toEqual({ ok: false, reason: 'range' });
     expect(parseBirthday('1899-12-31', NOW)).toEqual({ ok: false, reason: 'range' });
   });
+
+  // A date input accepts a five-digit year, and Date.UTC maps years 0–99 onto
+  // 1900–1999; both are real dates outside the range, not malformed ones.
+  it.each(['20260-01-01', '0050-06-01', '0000-01-01'])('refuses the out-of-range year %j as range', (s) => {
+    expect(parseBirthday(s, NOW)).toEqual({ ok: false, reason: 'range' });
+  });
+
+  // 02:00Z on 1 October is still 30 September west of UTC; the bound is the
+  // UTC date, so 1 October is today, not tomorrow.
+  it('bounds today by the UTC calendar date, not the local one', () => {
+    expect(parseBirthday('2026-10-01', new Date('2026-10-01T02:00:00.000Z')).ok).toBe(true);
+  });
 });
 
 describe('dayMonthOf', () => {
@@ -40,6 +52,9 @@ describe('dayMonthOf', () => {
 
 describe('ageOn', () => {
   const b = new Date('1990-04-17T00:00:00.000Z');
+  it('is one less in a month before the birthday month', () => {
+    expect(ageOn(b, new Date('2026-01-10T12:00:00.000Z'))).toBe(35);
+  });
   it('is one less the day before the birthday', () => {
     expect(ageOn(b, new Date('2026-04-16T23:59:00.000Z'))).toBe(35);
   });
