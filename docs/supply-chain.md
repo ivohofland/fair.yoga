@@ -816,7 +816,7 @@ grep -rn 'image:\|^FROM ' Dockerfile docker-compose*.yml .github/workflows/*.yml
 
 `docker-compose.yml:6`, `docker-compose.prod.yml:12` (the **production**
 database), and four GitHub Actions `services:` blocks —
-`.github/workflows/ci.yml:161`, `:244`, `:346`, and
+`.github/workflows/ci.yml:172`, `:259`, `:361`, and
 `.github/workflows/e2e-flake-repro.yml:87`.
 
 **Two of the six are covered, the same way as the base image.**
@@ -837,7 +837,7 @@ still open as of 2026-09-15) — not a configuration mistake in this repo,
 and not one this repo can fix directly. #603 closes it with a script
 instead of a Dependabot entry, the same two-part shape used everywhere
 else in this file: the four lines
-(`.github/workflows/ci.yml:161,244,346`, `.github/workflows/e2e-flake-repro.yml:87`)
+(`.github/workflows/ci.yml:172,259,361`, `.github/workflows/e2e-flake-repro.yml:87`)
 are now digest-pinned to the same `sha256:cf78e7…fc20685` the compose
 files already carry, and `scripts/check-service-image-freshness.ts`
 (`pnpm run check-service-image-freshness`, non-blocking in `checks` —
@@ -1001,18 +1001,23 @@ A tag can be moved to point at other code, and a workflow following it
 runs that code on its next run with no change here — the
 `tj-actions/changed-files` compromise (March 2025) had that shape. A commit
 SHA cannot be moved. Local references (`uses: ./.github/actions/…`) carry
-no pin: they run from the same commit as the workflow that calls them.
+no pin: a local action is loaded from the checked-out tree, and no checkout
+step here sets `ref:`, so that tree is the workflow's own commit. A
+checkout given a `ref:` would end that, and the local action would need
+the same scrutiny as a remote one.
 
-The blast radius of a moved tag is small here: `ci.yml` grants
-`contents: read`, triggers on `pull_request` rather than
-`pull_request_target`, and holds only dummy secrets. What a moved tag could
-still do is poison the caches `actions/cache` restores across runs, or
-report green on a bad tree to `checks` and `test` — the required contexts
+The blast radius of a moved tag is small here: every workflow grants only
+`contents: read` and holds only dummy secrets, `ci.yml` triggers on
+`pull_request` rather than `pull_request_target`, and
+`e2e-flake-repro.yml` runs only on `workflow_dispatch`. What a moved tag
+could still do is poison the caches `actions/cache` restores across runs —
+a cache written by a push to main is readable from pull request branches —
+or report green on a bad tree to `checks` and `test`, the required contexts
 the branch ruleset relies on.
 
 **Keeping the pins current.** Dependabot's `github-actions` entry proposes a
-new SHA and rewrites the version comment together. Its `directory: /`
-default scans only `.github/workflows` and a root `action.yml`, so
+new SHA and rewrites the version comment together. A `/` directory scans
+only `.github/workflows` and a root `action.yml`, so
 `.github/dependabot.yml` lists `/.github/actions/*` as well — without it the
 pins inside a composite action would never be updated, and a stale pin,
 unlike a tag, never moves on its own.
@@ -1025,6 +1030,10 @@ it and a fork does not inherit it. Check it with:
 ```bash
 gh api repos/{owner}/{repo}/actions/permissions --jq .sha_pinning_required
 ```
+
+`true` is the expected answer; `false` means nothing stops a tag-pinned
+`uses:` from landing, and the census below is the only thing that would
+show one.
 
 **Census.** Counts remote references that are not a SHA plus version
 comment; `0` is the expected answer:

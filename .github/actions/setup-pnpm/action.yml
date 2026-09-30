@@ -11,9 +11,9 @@ description: >-
 # weakest copy: a fix applied to five of six leaves the sixth job setting the
 # effective strength, and nothing reports the difference. Six copies of three
 # corrections is eighteen edits that have to stay in lockstep; this is one.
-# Local, not third-party, deliberately: a local action runs from the same
-# commit as the workflow calling it, so it needs no pin of its own. The
-# `uses:` lines inside it do, and carry one.
+# Local, not third-party, deliberately: a local action is loaded from the
+# checked-out tree, so it needs no pin of its own as long as the caller's
+# checkout takes the default ref. The `uses:` lines inside it do, and carry one.
 
 inputs:
   node-version:

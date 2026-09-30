@@ -2,11 +2,11 @@
 # ecosystem groups minor/patch into one tidy PR rather than a weekly drizzle.
 version: 2
 updates:
-  # Every `uses:` is pinned to a commit SHA with a version comment, which
-  # Dependabot updates together. `/` scans only .github/workflows and a root
-  # action.yml, so the composite actions need their own entry here or their
-  # pins would never move. docs/supply-chain.md ("GitHub Actions") has the
-  # enforcement and the census command.
+  # Updates the remote action pins, SHA and version comment together
+  # (docs/supply-chain.md, "GitHub Actions", has the pinning rule, its
+  # enforcement and the census). `/` scans only .github/workflows and a root
+  # action.yml, so the composite actions need their own directory in this
+  # entry or their pins would never move.
   - package-ecosystem: github-actions
     directories: ['/', '/.github/actions/*']
     schedule:
