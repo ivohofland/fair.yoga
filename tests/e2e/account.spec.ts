@@ -1,7 +1,8 @@
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs/promises';
-import { accountIdOfStudent } from './account-helpers';
+import { accountIdOfStudent, accountIdOfTeacher } from './account-helpers';
+import { hydrationSignal, reloadHydrated, SERVER_RENDER_TIMEOUT } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
@@ -17,6 +18,7 @@ const studentEmail = `e2e-account-${suffix}@test.local`;
 let studentId: string;
 let teacherId: string;
 let sessionToken: string;
+let teacherSessionToken: string;
 
 test.describe('Account — GDPR export and deletion', () => {
   test.describe.configure({ mode: 'serial' });
@@ -48,6 +50,7 @@ test.describe('Account — GDPR export and deletion', () => {
     teacherId = teacher.id;
     await prisma.teacherStudent.create({ data: { teacherId, studentId } });
     sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
+    teacherSessionToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
   });
 
   test.afterAll(async () => {
@@ -57,6 +60,7 @@ test.describe('Account — GDPR export and deletion', () => {
       await prisma.studentPrivacy.deleteMany({ where: { studentId } });
     }
     if (teacherId) {
+      await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
       await prisma.teacherStudent.deleteMany({ where: { teacherId } });
       await prisma.teacher.delete({ where: { id: teacherId } });
     }
@@ -113,6 +117,72 @@ test.describe('Account — GDPR export and deletion', () => {
     });
     expect(row.shareFullName).toBe(true);
     expect(row.receiveComms).toBe(true); // untouched default
+  });
+
+  test('contact details are entered once and reach a teacher only as shared', async ({
+    page,
+    browser,
+    baseURL,
+  }) => {
+    const hydrated = hydrationSignal(page);
+    await page.goto('/account');
+    await hydrated;
+
+    await page.getByLabel('Phone').fill('+31 6 1234 5678');
+    await page.getByLabel('Birthday').fill('1990-04-17');
+    await page.getByLabel('Address').fill('Straat 1\n1011 AB Amsterdam');
+    await page.getByRole('button', { name: 'Save contact details' }).click();
+    await expect(page.getByText('Saved')).toBeVisible();
+
+    await reloadHydrated(page);
+    await expect(page.getByLabel('Phone')).toHaveValue('+31 6 1234 5678', SERVER_RENDER_TIMEOUT);
+    await expect(page.getByLabel('Birthday')).toHaveValue('1990-04-17');
+    await expect(page.getByLabel('Address')).toHaveValue('Straat 1\n1011 AB Amsterdam');
+
+    // Share the phone number with this teacher, and nothing else.
+    await page.getByRole('link', { name: 'Privacy' }).click();
+    await expect(page.getByText('Privacy Teacher')).toBeVisible();
+    const privacySaved = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/students/${studentId}/privacy`) &&
+        r.request().method() === 'PUT' &&
+        r.ok(),
+    );
+    await page.getByLabel('Phone number').check();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await privacySaved;
+
+    const teacherContext = await browser.newContext({ baseURL });
+    try {
+      await teacherContext.addCookies([sessionCookie(teacherSessionToken)]);
+      const teacherPage = await teacherContext.newPage();
+      const teacherHydrated = hydrationSignal(teacherPage);
+      await teacherPage.goto(`/students/${studentId}`);
+      await teacherHydrated;
+      await expect(teacherPage.getByText('+31 6 1234 5678')).toBeVisible(SERVER_RENDER_TIMEOUT);
+      await expect(teacherPage.getByText('17 Apr')).toHaveCount(0);
+      await expect(teacherPage.getByText('Amsterdam')).toHaveCount(0);
+      // By label element, never by substring: "Age" also sits inside "Page".
+      await expect(teacherPage.locator('span.type-label', { hasText: /^Age$/ })).toHaveCount(0);
+      await expect(teacherPage.locator('span.type-label', { hasText: /^Birthday$/ })).toHaveCount(0);
+      await expect(teacherPage.locator('span.type-label', { hasText: /^Address$/ })).toHaveCount(0);
+
+      // Clearing the phone leaves the teacher nothing to see.
+      await page.goto('/account');
+      await page.getByLabel('Phone').fill('');
+      await page.getByRole('button', { name: 'Save contact details' }).click();
+      await expect(page.getByText('Saved')).toBeVisible();
+      await expect
+        .poll(async () => (await prisma.student.findUniqueOrThrow({ where: { id: studentId } })).phone)
+        .toBeNull();
+
+      await teacherPage.reload();
+      await expect(teacherPage.getByText('No contact information to show.')).toBeVisible(
+        SERVER_RENDER_TIMEOUT,
+      );
+    } finally {
+      await teacherContext.close();
+    }
   });
 
   test('deleting the account anonymizes and signs out', async ({ page }) => {

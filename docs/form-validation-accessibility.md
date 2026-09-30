@@ -37,6 +37,7 @@ This document establishes the house standards for form validation error presenta
 | **Room Creation Step** | `src/components/settings/room-create-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | `set()`, `onStreetChange()`, `onPostcodeChange()` clearing `createError` |
 | **Room Search Step** | `src/components/settings/room-search-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | `onPostcodeChange()` & `onStreetChange()` clearing `searchError` |
 | **Room Settings Step** | `src/components/settings/room-settings-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | Input `onChange` handlers clearing `settingsError` |
+| **Student Contact Details** | `src/components/student/contact-details-form.tsx` | Client badInput check & per-field API errors | `<Input error={...} />` / `<Textarea error={...} />` + `<p role="alert">` banner | each `onChange` clearing its `fieldErrors[key]`, `error` and `saved` |
 
 ---
 

@@ -3,12 +3,16 @@ import { useId, type TextareaHTMLAttributes } from 'react';
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   error?: string;
+  hint?: string;
 }
 
 // Multi-line sibling of Input: same sand field, radius 12, label above.
-export function Textarea({ label, error, id, className = '', ...props }: TextareaProps) {
+export function Textarea({ label, error, hint, id, className = '', ...props }: TextareaProps) {
   const generatedId = useId();
   const textareaId = id ?? generatedId;
+  const hintId = hint ? `${textareaId}-hint` : undefined;
+  const errorId = error ? `${textareaId}-error` : undefined;
+  const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
   const fieldColors = error
     ? 'border-danger bg-danger-tint'
     : 'border-border bg-sand-soft';
@@ -20,12 +24,27 @@ export function Textarea({ label, error, id, className = '', ...props }: Textare
           {label}
         </label>
       )}
+      {hint && (
+        <span id={hintId} className="type-caption text-brown-light">
+          {hint}
+        </span>
+      )}
       <textarea
         id={textareaId}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
         className={`border rounded-field px-4 py-3 min-h-24 text-ink text-base ${fieldColors} focus:outline-none focus:shadow-focus ${className}`.trim()}
         {...props}
       />
-      {error && <span className="text-[13px] leading-[1.4] text-danger">{error}</span>}
+      {error && (
+        <span
+          id={errorId}
+          role="alert"
+          className="text-[13px] leading-[1.4] text-danger"
+        >
+          {error}
+        </span>
+      )}
     </div>
   );
 }
