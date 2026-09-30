@@ -416,4 +416,34 @@ describe('TeacherPrivacyCard', () => {
       expect(screen.queryByRole('link', { name: 'add it in Settings' })).toBeNull();
     });
   });
+
+  // Day and month plus age, against today's date, give the year away. Each
+  // toggle alone hides it, so the warning follows the unsaved checkbox state:
+  // it has to be on screen before the student presses Save.
+  describe('full date of birth warning (#714)', () => {
+    const WARNING = /together, these show jane teacher your full date of birth/i;
+
+    it('stays hidden while only one of the two is on', () => {
+      renderCard();
+      fireEvent.click(screen.getByLabelText('Age'));
+      expect(screen.queryByText(WARNING)).toBeNull();
+      fireEvent.click(screen.getByLabelText('Age'));
+      fireEvent.click(screen.getByLabelText('Birthday (day and month)'));
+      expect(screen.queryByText(WARNING)).toBeNull();
+    });
+
+    it('appears when both go on, and leaves when either goes off', () => {
+      renderCard();
+      fireEvent.click(screen.getByLabelText('Birthday (day and month)'));
+      fireEvent.click(screen.getByLabelText('Age'));
+      expect(screen.getByText(WARNING)).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('Birthday (day and month)'));
+      expect(screen.queryByText(WARNING)).toBeNull();
+    });
+
+    it('shows on load when both are already saved on', () => {
+      renderCard({ initial: { ...initial, shareBirthday: true, shareAge: true } });
+      expect(screen.getByText(WARNING)).toBeInTheDocument();
+    });
+  });
 });
