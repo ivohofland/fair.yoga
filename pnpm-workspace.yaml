@@ -38,6 +38,10 @@ verifyDepsBeforeRun: error
 # weakening — this line cannot rot quietly in either direction.
 strictDepBuilds: true
 
+# Without this, the root `package.json`'s `engines.node` is only metadata to
+# pnpm; with it, an install on a Node outside that range refuses.
+engineStrict: true
+
 # Dependencies permitted to run install scripts. Anything reaching this repo
 # with a build script and no entry here ERRORS the install — on a
 # contributor's laptop, not only in CI.
