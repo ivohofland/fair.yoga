@@ -146,6 +146,12 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // The engine probe runs under bare `node` inside the runner image, which has
+  // no loader for ESM or TypeScript, so it is CommonJS and must `require`.
+  {
+    files: ['scripts/prisma-engine-probe.cjs'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
   // docs/ holds the vendored design-system reference (prototype JSX, generated
   // support.js) — documentation, not app code.
   //
