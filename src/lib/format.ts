@@ -1,5 +1,6 @@
 import type { PaymentStatus } from '@prisma/client';
 import { timeToHHmm } from '@/lib/time-of-day';
+import type { BirthdayDayMonth } from '@/lib/birthday';
 
 export function formatRoomLocation(roomName: string, venueName: string): string {
   return roomName ? `${roomName} at ${venueName}` : venueName;
@@ -142,6 +143,11 @@ export function formatDayHeader(date: Date): string {
 export function formatDateWithYear(date: Date): string {
   const d = new Date(date);
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/** `15 Jun` from a day and 1-based month — a birthday, which has no year to show. */
+export function formatDayMonth({ day, month }: BirthdayDayMonth): string {
+  return `${day} ${MONTHS[month - 1]}`;
 }
 
 /**

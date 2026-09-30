@@ -1539,6 +1539,7 @@ const SILENCED_PRIVACY = {
   shareEmail: false,
   sharePhone: false,
   shareBirthday: false,
+  shareAge: false,
   shareAddress: false,
   receiveComms: false,
 } satisfies Prisma.StudentPrivacyUpdateInput;

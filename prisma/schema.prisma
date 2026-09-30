@@ -249,6 +249,7 @@ model StudentPrivacy {
   shareEmail    Boolean  @default(false)
   sharePhone    Boolean  @default(false)
   shareBirthday Boolean  @default(false)
+  shareAge      Boolean  @default(false)
   shareAddress  Boolean  @default(false)
   receiveComms  Boolean  @default(true)
   createdAt     DateTime @default(now())

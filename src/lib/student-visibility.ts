@@ -1,6 +1,7 @@
 import type { Prisma, StudentPrivacy } from '@prisma/client';
 import type { NoneOf } from './type-pins';
 import { formatStudentName } from './format';
+import { ageOn, dayMonthOf, type BirthdayDayMonth } from './birthday';
 
 /**
  * One answer to "what may this teacher see about this student".
@@ -27,7 +28,7 @@ import { formatStudentName } from './format';
  */
 export type VisibilityFlags = Pick<
   StudentPrivacy,
-  'shareFullName' | 'shareEmail' | 'sharePhone' | 'shareBirthday' | 'shareAddress'
+  'shareFullName' | 'shareEmail' | 'sharePhone' | 'shareBirthday' | 'shareAge' | 'shareAddress'
 >;
 
 /**
@@ -132,13 +133,14 @@ export interface TeacherVisibleStudent {
   displayName: string;
   email: string | null;
   phone: string | null;
-  birthday: Date | null;
+  birthday: BirthdayDayMonth | null;
+  age: number | null;
   address: string | null;
   claimedAt: Date | null;
 }
 
 /**
- * The projection carries these seven keys and nothing else — an allowlist, in
+ * The projection carries these keys and nothing else — an allowlist, in
  * the same shape as `_visibilityFlagsAreExhaustive` above. Adding a key to
  * `TeacherVisibleStudent` without adding it here fails the build *by that
  * key's name*, which is what forces the "may a teacher see this?" question to
@@ -154,7 +156,7 @@ export interface TeacherVisibleStudent {
 const _projectionCarriesNoRawIdentity: NoneOf<
   Exclude<
     keyof TeacherVisibleStudent,
-    'id' | 'displayName' | 'email' | 'phone' | 'birthday' | 'address' | 'claimedAt'
+    'id' | 'displayName' | 'email' | 'phone' | 'birthday' | 'age' | 'address' | 'claimedAt'
   >
 > = true;
 void _projectionCarriesNoRawIdentity;
@@ -171,6 +173,7 @@ export function teacherVisibleName(student: StudentNameInput, teacherId: string)
 export function projectStudentForTeacher(
   student: StudentProjectionInput,
   teacherId: string,
+  now: Date = new Date(),
 ): TeacherVisibleStudent {
   const flags = student.studentPrivacy.find((p) => p.teacherId === teacherId);
   const shared = <T>(flag: boolean | undefined, value: T): T | null =>
@@ -181,7 +184,9 @@ export function projectStudentForTeacher(
     displayName: teacherVisibleName(student, teacherId),
     email: shared(flags?.shareEmail, student.email),
     phone: shared(flags?.sharePhone, student.phone),
-    birthday: shared(flags?.shareBirthday, student.birthday),
+    birthday:
+      (flags?.shareBirthday ?? false) && student.birthday ? dayMonthOf(student.birthday) : null,
+    age: (flags?.shareAge ?? false) && student.birthday ? ageOn(student.birthday, now) : null,
     address: shared(flags?.shareAddress, student.address),
     claimedAt: student.claimedAt,
   };
@@ -230,6 +235,7 @@ export function studentVisibilitySelect(teacherId: string) {
         shareEmail: true,
         sharePhone: true,
         shareBirthday: true,
+        shareAge: true,
         shareAddress: true,
       },
     },

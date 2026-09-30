@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
-import { formatDateWithYear, formatDateShort } from '@/lib/format';
+import { formatDateWithYear, formatDayMonth } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { isOutstanding } from '@/lib/payment-status';
@@ -88,21 +88,20 @@ export default async function StudentDetailPage({
           {visible.birthday && (
             <div>
               <span className="type-label">Birthday</span>
-              {/*
-                `formatDateShort`, not `formatDateWithYear`: this field omits
-                the year on purpose (a birth *year* is a different disclosure
-                than a birth *date* on a privacy-first page), and
-                `formatDateWithYear` always appends one. `formatDateShort`
-                reads with UTC accessors, which avoids the same
-                host-local-shifts-the-day bug as the two class dates below.
-              */}
-              <p className="text-base text-ink">{formatDateShort(visible.birthday)}</p>
+              {/* The year is absent from `TeacherVisibleStudent` itself (`src/lib/student-visibility.ts`), so no formatter here can show it. */}
+              <p className="text-base text-ink">{formatDayMonth(visible.birthday)}</p>
+            </div>
+          )}
+          {visible.age !== null && (
+            <div>
+              <span className="type-label">Age</span>
+              <p className="text-base text-ink">{visible.age}</p>
             </div>
           )}
           {visible.address && (
             <div>
               <span className="type-label">Address</span>
-              <p className="text-base text-ink">{visible.address}</p>
+              <p className="text-base text-ink whitespace-pre-line">{visible.address}</p>
             </div>
           )}
           {/*
@@ -113,7 +112,7 @@ export default async function StudentDetailPage({
             `email` is non-null on `Student`, so `shareEmail: true` always
             renders a row and can never reach this branch.
           */}
-          {!visible.email && !visible.phone && !visible.birthday && !visible.address && (
+          {!visible.email && !visible.phone && !visible.birthday && visible.age === null && !visible.address && (
             <EmptyState title="No contact information to show." />
           )}
         </div>

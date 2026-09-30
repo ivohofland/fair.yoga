@@ -4,6 +4,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDateShort, formatDateWithYear } from '@/lib/format';
+import { ageOn } from '@/lib/birthday';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -223,10 +224,81 @@ describe('GET /students/[id] (student detail page)', () => {
       expect(html).toContain(formatDateShort(birthday));
       expect(html).toContain('15 Jun');
       expect(html).not.toContain('1992');
+      expect(html).not.toContain('>Age</span>');
 
       // Withheld contact fields
       expect(html).not.toContain(email);
       expect(html).not.toContain('Keizersgracht 100');
+    });
+
+    it('renders the age, never the birth date or year, when only age and address are shared', async () => {
+      const email = `claimed-age-${suffix}@test.local`;
+      const birthday = new Date('1992-06-15T00:00:00.000Z');
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Eva',
+          lastName: 'Evers',
+          email,
+          birthday,
+          address: 'Straat 1\n1011 AB Amsterdam',
+          account: { create: { email } },
+          claimedAt: new Date(),
+        },
+      });
+      await prisma.teacherStudent.create({ data: { teacherId, studentId: student.id } });
+      await prisma.studentPrivacy.create({
+        data: {
+          studentId: student.id,
+          teacherId,
+          shareFullName: false,
+          shareEmail: false,
+          sharePhone: false,
+          shareBirthday: false,
+          shareAge: true,
+          shareAddress: true,
+        },
+      });
+
+      const html = await (await studentPage(student.id)).text();
+
+      expect(html).toContain('>Age</span>');
+      expect(html).toContain(`>${ageOn(birthday, new Date())}</p>`);
+      expect(html).toContain('whitespace-pre-line');
+      expect(html).not.toContain('15 Jun');
+      expect(html).not.toContain('1992');
+      expect(html).not.toContain('No contact information to show.');
+    });
+
+    it('does not show the empty state when age is the only thing shared', async () => {
+      const email = `claimed-ageonly-${suffix}@test.local`;
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Finn',
+          lastName: 'Fokker',
+          email,
+          birthday: new Date('1985-01-02T00:00:00.000Z'),
+          account: { create: { email } },
+          claimedAt: new Date(),
+        },
+      });
+      await prisma.teacherStudent.create({ data: { teacherId, studentId: student.id } });
+      await prisma.studentPrivacy.create({
+        data: {
+          studentId: student.id,
+          teacherId,
+          shareFullName: false,
+          shareEmail: false,
+          sharePhone: false,
+          shareBirthday: false,
+          shareAge: true,
+          shareAddress: false,
+        },
+      });
+
+      const html = await (await studentPage(student.id)).text();
+
+      expect(html).toContain('>Age</span>');
+      expect(html).not.toContain('No contact information to show.');
     });
 
     it('renders full name and all contact fields when everything is shared', async () => {

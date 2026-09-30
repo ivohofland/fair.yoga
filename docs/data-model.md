@@ -67,7 +67,7 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | claimed_at | datetime, nullable | Set together with `account_id`, never independently — see `Student_claim_link_check` below. |
 | **Optional fields** | | |
 | phone | string, nullable | |
-| birthday | date, nullable | |
+| birthday | date, nullable | Year collected for the age; never shown to a teacher — the projection returns day and month and, separately, the age |
 | address | string, nullable | e.g. for teacher sending holiday cards |
 | **Preferences** | | |
 | reminder_pref | enum: eve, morning, 1h, off | Student controls their own reminders |
@@ -93,6 +93,7 @@ Nothing in the database requires an erased row to keep its `account_id`. A futur
 | share_email | boolean, default false | |
 | share_phone | boolean, default false | |
 | share_birthday | boolean, default false | |
+| share_age | boolean, default false | |
 | share_address | boolean, default false | |
 | receive_comms | boolean, default true | Opt-out from teacher announcements |
 | **Timestamps** | | |

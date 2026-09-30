@@ -15,6 +15,7 @@ const ALL_FALSE = {
   shareEmail: false,
   sharePhone: false,
   shareBirthday: false,
+  shareAge: false,
   shareAddress: false,
 };
 
@@ -24,6 +25,7 @@ const ALL_TRUE_FOR_OTHER = {
   shareEmail: true,
   sharePhone: true,
   shareBirthday: true,
+  shareAge: true,
   shareAddress: true,
 };
 
@@ -107,6 +109,7 @@ describe('projectStudentForTeacher', () => {
       email: null,
       phone: null,
       birthday: null,
+      age: null,
       address: null,
       claimedAt: new Date('2026-01-01T00:00:00.000Z'),
     });
@@ -117,6 +120,7 @@ describe('projectStudentForTeacher', () => {
     expect(result.email).toBeNull();
     expect(result.phone).toBeNull();
     expect(result.birthday).toBeNull();
+    expect(result.age).toBeNull();
     expect(result.address).toBeNull();
   });
 
@@ -128,7 +132,7 @@ describe('projectStudentForTeacher', () => {
         claimedAt: null,
         studentPrivacy: [{
           teacherId: 't1', shareFullName: true, shareEmail: true,
-          sharePhone: false, shareBirthday: false, shareAddress: false,
+          sharePhone: false, shareBirthday: false, shareAge: false, shareAddress: false,
         }],
       },
       't1',
@@ -149,6 +153,7 @@ describe('projectStudentForTeacher', () => {
     );
     expect(projected.displayName).toBe('Anna b.');
     expect(projected.email).toBeNull();
+    expect(projected.age).toBeNull();
   });
 
   it('releases exactly the fields whose flag is set, and no others', () => {
@@ -157,6 +162,7 @@ describe('projectStudentForTeacher', () => {
     expect(result.email).toBe('anna@example.com');
     expect(result.phone).toBeNull();
     expect(result.birthday).toBeNull();
+    expect(result.age).toBeNull();
     expect(result.address).toBeNull();
   });
 
@@ -172,7 +178,7 @@ describe('projectStudentForTeacher', () => {
         claimedStudent({ studentPrivacy: [{ ...ALL_FALSE, shareBirthday: true }] }),
         TEACHER,
       ).birthday,
-    ).toEqual(BIRTHDAY);
+    ).toEqual({ day: 17, month: 4 });
     expect(
       projectStudentForTeacher(
         claimedStudent({ studentPrivacy: [{ ...ALL_FALSE, shareAddress: true }] }),
@@ -214,6 +220,7 @@ describe('projectStudentForTeacher', () => {
       email: null,
       phone: null,
       birthday: null,
+      age: null,
       address: null,
       claimedAt: new Date('2026-01-01T00:00:00.000Z'),
     });
@@ -223,5 +230,37 @@ describe('projectStudentForTeacher', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER, ALL_FALSE] });
     expect(projectStudentForTeacher(s, TEACHER).email).toBeNull();
     expect(projectStudentForTeacher(s, OTHER_TEACHER).email).toBe('anna@example.com');
+  });
+});
+
+describe('projectStudentForTeacher — birthday and age (#714)', () => {
+  const NOW = new Date('2026-09-30T12:00:00.000Z'); // BIRTHDAY is 1990-04-17 → 36
+  const flags = (shareBirthday: boolean, shareAge: boolean) =>
+    claimedStudent({ studentPrivacy: [{ ...ALL_FALSE, shareBirthday, shareAge }] });
+
+  it.each([
+    [false, false, null, null],
+    [true, false, { day: 17, month: 4 }, null],
+    [false, true, null, 36],
+    [true, true, { day: 17, month: 4 }, 36],
+  ] as const)('shareBirthday=%s shareAge=%s', (b, a, birthday, age) => {
+    const r = projectStudentForTeacher(flags(b, a), TEACHER, NOW);
+    expect(r.birthday).toEqual(birthday);
+    expect(r.age).toBe(age);
+  });
+
+  it('never carries the birth year, with everything shared', () => {
+    const r = projectStudentForTeacher(flags(true, true), TEACHER, NOW);
+    expect(JSON.stringify(r)).not.toContain('1990');
+  });
+
+  it('is null for both when the birthday column is null, whatever the flags', () => {
+    const r = projectStudentForTeacher(
+      claimedStudent({ birthday: null, studentPrivacy: [{ ...ALL_FALSE, shareBirthday: true, shareAge: true }] }),
+      TEACHER,
+      NOW,
+    );
+    expect(r.birthday).toBeNull();
+    expect(r.age).toBeNull();
   });
 });

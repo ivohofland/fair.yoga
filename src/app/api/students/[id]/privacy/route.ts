@@ -81,6 +81,7 @@ export const GET = withErrorHandler(async (
       shareEmail: false,
       sharePhone: false,
       shareBirthday: false,
+      shareAge: false,
       shareAddress: false,
       receiveComms: true,
     });
