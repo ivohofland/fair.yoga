@@ -7,7 +7,7 @@ A free, open-source toolkit for independent yoga teachers. Handles scheduling, i
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) 24 LTS (below 25)
+- [Node.js](https://nodejs.org/) 24.15 or newer, below 25
 - [Docker](https://www.docker.com/) and Docker Compose
 - pnpm, via Corepack — run `corepack enable` once. Corepack ships with Node
   "from 14.19.0 up to (but not including) 25.0.0", so on Node 25 or newer
