@@ -7,6 +7,7 @@ import { Icon } from '@/components/ui/icon';
 import { AddPasskey } from '@/components/account/add-passkey';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { NameForm } from '@/components/student/name-form';
+import { ContactDetailsForm } from '@/components/student/contact-details-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +27,14 @@ export default async function StudentSettingsPage() {
 
   const student = await prisma.student.findUnique({
     where: { id: session.studentId },
-    select: { id: true, firstName: true, lastName: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      birthday: true,
+      address: true,
+    },
   });
   if (!student) redirect('/login');
 
@@ -48,6 +56,14 @@ export default async function StudentSettingsPage() {
           initialFirstName={student.firstName}
           initialLastName={student.lastName}
         />
+        <div className="mt-8">
+          <ContactDetailsForm
+            studentId={student.id}
+            initialPhone={student.phone ?? ''}
+            initialBirthday={student.birthday ? student.birthday.toISOString().slice(0, 10) : ''}
+            initialAddress={student.address ?? ''}
+          />
+        </div>
       </section>
 
       <div>
