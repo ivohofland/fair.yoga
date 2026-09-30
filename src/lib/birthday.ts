@@ -5,15 +5,21 @@
  * uses UTC accessors.
  */
 
+import type { NoneOf } from '@/lib/type-pins';
+
 export const BIRTHDAY_MIN = '1900-01-01';
 
 export type BirthdayParse = { ok: true; date: Date } | { ok: false; reason: 'format' | 'range' };
 
 export interface BirthdayDayMonth {
-  day: number;
+  readonly day: number;
   /** 1–12. */
-  month: number;
+  readonly month: number;
 }
+
+/** The teacher-facing birthday: a key added here would carry past the projection. */
+const _birthdayCarriesNoYear: NoneOf<Exclude<keyof BirthdayDayMonth, 'day' | 'month'>> = true;
+void _birthdayCarriesNoYear;
 
 // A date input can hold a year of more than four digits; that is out of
 // range, not malformed.
