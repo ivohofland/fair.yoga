@@ -6,6 +6,7 @@ import { classifyApiError } from './api-errors';
 import type { ApiErrorCode, CodedRefusal, StatusOf } from './api-error-codes';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
+import { formatIssues } from '@/lib/validation-message';
 
 /**
  * Checks nothing: `T` is inferred from whatever literal `data` happens to be,
@@ -154,10 +155,7 @@ export async function parseBody<T>(
 
   const result = schema.safeParse(raw);
   if (!result.success) {
-    const message = result.error.issues
-      .map((i) => `${i.path.join('.')}: ${i.message}`)
-      .join(', ');
-    return { error: respondError(message, 400) };
+    return { error: respondError(formatIssues(result.error.issues), 400) };
   }
 
   return { data: result.data };
