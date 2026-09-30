@@ -142,6 +142,7 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       shareEmail: p.shareEmail,
       sharePhone: p.sharePhone,
       shareBirthday: p.shareBirthday,
+      shareAge: p.shareAge,
       shareAddress: p.shareAddress,
       receiveComms: p.receiveComms,
     })),

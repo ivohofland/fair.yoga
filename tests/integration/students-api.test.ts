@@ -1043,6 +1043,79 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
   });
 });
 
+describe('GET /api/students/[id] — birthday and age never carry the year (#714)', () => {
+  const sfx = `${suffix}-age`;
+  let teacherId: string;
+  let teacherAccountId: string;
+  let token: string;
+  let studentId: string;
+  let studentAccountId: string;
+
+  beforeAll(async () => {
+    const teacherEmail = `stuapi-age-t-${sfx}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Age',
+        lastName: 'Teacher',
+        email: teacherEmail,
+        bio: 'Birthday projection fixtures',
+        pageSlug: `stuapi-age-${sfx}`,
+        account: { create: { email: teacherEmail } },
+      },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+    token = await seedSession(prisma, teacherAccountId);
+
+    const studentEmail = `stuapi-age-s-${sfx}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Aged',
+        lastName: 'Student',
+        email: studentEmail,
+        birthday: new Date('1988-03-14T00:00:00.000Z'),
+        claimedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId!;
+    await prisma.teacherStudent.create({ data: { teacherId, studentId } });
+    await prisma.studentPrivacy.create({
+      data: { studentId, teacherId, shareBirthday: true, shareAge: true },
+    });
+  });
+
+  afterAll(async () => {
+    const teacherIds = [teacherId].filter((id): id is string => id !== undefined);
+    const accountIds = [teacherAccountId, studentAccountId].filter(
+      (id): id is string => id !== undefined,
+    );
+    if (teacherIds.length) {
+      await prisma.studentPrivacy.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    }
+    await prisma.student.deleteMany({ where: { email: { contains: `-${sfx}@test.local` } } });
+    if (teacherIds.length) {
+      await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    }
+    if (accountIds.length) {
+      await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+      await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    }
+  });
+
+  it('a linked teacher gets day, month and age, and the response never contains the year', async () => {
+    const res = await fetch(`${BASE_URL}/api/students/${studentId}`, { headers: cookie(token) });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text) as { data: { birthday: unknown; age: unknown } };
+    expect(body.data.birthday).toEqual({ day: 14, month: 3 });
+    expect(typeof body.data.age).toBe('number');
+    expect(text).not.toContain('1988');
+  });
+});
+
 describe('GET /api/students — overduePayments', () => {
   let otherTeacherId: string;
   let roomId: string;
