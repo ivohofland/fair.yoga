@@ -502,11 +502,14 @@ jobs:
       # the engine loading from the engine failing. The output is captured
       # with an explicit `|| true` and asserted on instead; a docker failure
       # (no image, no daemon) prints no P1001 and so still fails the step.
+      # The schema engine still reaches P1001 with libssl missing, so the
+      # warning Prisma prints when it cannot find libssl is refused too.
       - name: Prisma engine loads in the migration image
         run: |
           OUT="$(docker run --rm -e DATABASE_URL='postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3' fairyoga-migrate pnpm exec prisma migrate status 2>&1)" || true
           echo "$OUT"
           grep -q 'P1001' <<< "$OUT" || { echo "::error::migrate status did not report P1001 - the engine did not load"; exit 1; }
+          ! grep -q 'failed to detect the libssl' <<< "$OUT" || { echo "::error::Prisma cannot find libssl in the migration image"; exit 1; }
 
   # This job exists so the branch ruleset's required status check named
   # `test` keeps reporting after the split: ruleset 19724469 requires the
