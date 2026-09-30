@@ -44,7 +44,7 @@ export const GET = withErrorHandler(async (
   // returns the maximum-privacy view rather than nothing: a truncated name,
   // and the confirmation that this id is a student at all. That is the
   // disclosure the link check exists to prevent. Once linked, the projection
-  // decides which of email, phone, birthday and address come back.
+  // decides which of `TeacherVisibleStudent`'s gated fields come back.
   //
   // Never income tiers: `incomeTier` is not in the teacher-facing shape
   // (#167), and `students-api.test.ts` pins that it stays out.

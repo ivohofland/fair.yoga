@@ -342,9 +342,9 @@ async function main() {
     { shareFullName: false, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // David — initial only
     { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: false, shareAddress: true }, // Eva — full name visible
     { shareFullName: false, shareEmail: false, sharePhone: false, shareBirthday: true, shareAddress: false }, // Finn — initial only
-    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: true }, // Greta (shares all)
+    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: true, shareAge: true, shareAddress: true }, // Greta (shares all)
     { shareFullName: false, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // Hugo — initial only
-    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: true }, // Iris (shares all)
+    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: true, shareAge: true, shareAddress: true }, // Iris (shares all)
     { shareFullName: false, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // Jan — initial only
   ];
 

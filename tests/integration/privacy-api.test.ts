@@ -173,6 +173,24 @@ describe('students privacy API', () => {
     expect(data.receiveComms).toBe(false); // persisted row, not the virtual default
   });
 
+  it('a first PUT of only shareAge creates the row with shareAge on and every other share off (#714)', async () => {
+    const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(studentToken) },
+      body: JSON.stringify({ teacherId: archivedTeacherId, shareAge: true }),
+    });
+    expect(res.status).toBe(200);
+    const row = await prisma.studentPrivacy.findUniqueOrThrow({
+      where: { studentId_teacherId: { studentId, teacherId: archivedTeacherId } },
+    });
+    expect(row.shareAge).toBe(true);
+    expect(row.shareFullName).toBe(false);
+    expect(row.shareEmail).toBe(false);
+    expect(row.sharePhone).toBe(false);
+    expect(row.shareBirthday).toBe(false);
+    expect(row.shareAddress).toBe(false);
+  });
+
   it('rejects a GET without teacherId', async () => {
     const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
       headers: cookie(studentToken),

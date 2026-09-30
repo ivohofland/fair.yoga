@@ -1,15 +1,19 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
-import { TeacherPrivacyCard } from './teacher-privacy-card';
+import {
+  TeacherPrivacyCard,
+  type FilledFields,
+  type TeacherPrivacyValues,
+} from './teacher-privacy-card';
 
 /**
  * #136. The body here was already `{ teacherId, ...values }`, spread from
  * the exported `TeacherPrivacyValues` interface — so unlike its three
  * siblings in this batch, this form had no untracked drift to begin with.
  * Only the pins against `updatePrivacySchema` were missing. This test holds
- * what a pin cannot see, which is what actually reaches the API: all seven
- * keys, teacherId plus the six privacy fields, including a toggled value.
+ * what a pin cannot see, which is what actually reaches the API: every key,
+ * teacherId plus each privacy field, including a toggled value.
  *
  * Nothing fetches on mount, so the save click is the first (and only) call.
  */
@@ -26,11 +30,14 @@ describe('TeacherPrivacyCard', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
-  const initial = {
+  const ALL_FILLED: FilledFields = { phone: true, birthday: true, address: true };
+
+  const initial: TeacherPrivacyValues = {
     shareFullName: true,
     shareEmail: true,
     sharePhone: false,
     shareBirthday: false,
+    shareAge: false,
     shareAddress: false,
     receiveComms: true,
   };
@@ -47,7 +54,7 @@ describe('TeacherPrivacyCard', () => {
     };
   }
 
-  it('sends all seven fields — teacherId plus the six privacy values', async () => {
+  it('sends every field — teacherId plus each privacy value', async () => {
     stubFetch();
     render(
       <TeacherPrivacyCard
@@ -55,6 +62,7 @@ describe('TeacherPrivacyCard', () => {
         teacherId="teacher-1"
         teacherName="Jane Teacher"
         initial={initial}
+        filled={ALL_FILLED}
       />,
     );
     const { url, method, body } = await save();
@@ -66,6 +74,7 @@ describe('TeacherPrivacyCard', () => {
       shareEmail: true,
       sharePhone: false,
       shareBirthday: false,
+      shareAge: false,
       shareAddress: false,
       receiveComms: true,
     });
@@ -79,6 +88,7 @@ describe('TeacherPrivacyCard', () => {
         teacherId="teacher-1"
         teacherName="Jane Teacher"
         initial={initial}
+        filled={ALL_FILLED}
       />,
     );
     fireEvent.click(screen.getByLabelText('Phone number'));
@@ -91,13 +101,14 @@ describe('TeacherPrivacyCard', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
-  function renderCard() {
+  function renderCard(override: { filled?: FilledFields; initial?: TeacherPrivacyValues } = {}) {
     render(
       <TeacherPrivacyCard
         studentId="student-1"
         teacherId="teacher-1"
         teacherName="Jane Teacher"
-        initial={initial}
+        initial={override.initial ?? initial}
+        filled={override.filled ?? ALL_FILLED}
       />,
     );
   }
@@ -360,12 +371,49 @@ describe('TeacherPrivacyCard', () => {
           teacherId="teacher-1"
           teacherName="Jane Teacher"
           initial={initial}
+          filled={ALL_FILLED}
           archivedByTeacher
         />,
       );
       expect(screen.getByText(/archived by jane teacher/i)).toBeInTheDocument();
       expect(screen.getByLabelText('Phone number')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /remove this teacher/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('age and empty fields (#714)', () => {
+    it('labels the two birthday disclosures separately', () => {
+      renderCard();
+      expect(screen.getByRole('checkbox', { name: 'Birthday (day and month)' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Age' })).toBeInTheDocument();
+    });
+
+    it('sends shareAge when the Age toggle changes', async () => {
+      stubFetch();
+      renderCard();
+      fireEvent.click(screen.getByLabelText('Age'));
+      const { body } = await save();
+      expect(body.shareAge).toBe(true);
+      expect(body.shareBirthday).toBe(false);
+    });
+
+    it('captions a toggle whose field is empty, linking to /account', () => {
+      renderCard({ filled: { phone: false, birthday: false, address: true } });
+      const links = screen.getAllByRole('link', { name: 'add it in Settings' });
+      // phone, birthday, age
+      expect(links).toHaveLength(3);
+      links.forEach((l) => expect(l).toHaveAttribute('href', '/account'));
+    });
+
+    it('shows no caption when every field is filled, and never disables a toggle', () => {
+      renderCard({ filled: { phone: false, birthday: true, address: true } });
+      expect(screen.getAllByRole('link', { name: 'add it in Settings' })).toHaveLength(1);
+      expect(screen.getByRole('checkbox', { name: 'Phone number' })).toBeEnabled();
+    });
+
+    it('shows no caption at all when every field is filled', () => {
+      renderCard();
+      expect(screen.queryByRole('link', { name: 'add it in Settings' })).toBeNull();
     });
   });
 });

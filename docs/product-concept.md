@@ -267,7 +267,8 @@ This also creates a natural pathway: a student who discovers a teacher through a
 | Income tier (aggregate per class) | Visible to teacher (e.g., "3 in tier 1, 5 in tier 3") |
 | Email | Per-teacher opt-in by student |
 | Phone (optional) | Per-teacher opt-in by student |
-| Birthday (optional) | Per-teacher opt-in by student |
+| Birthday — day and month (optional) | Per-teacher opt-in by student |
+| Age (optional) | Per-teacher opt-in by student, separate from the birthday; the birth year itself is never shown |
 | Address (optional) | Per-teacher opt-in by student |
 | Attendance history | Visible to teacher |
 | Payment details | Never visible to teacher |

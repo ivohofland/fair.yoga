@@ -18,6 +18,7 @@ const MAX_PRIVACY: TeacherPrivacyValues = {
   shareEmail: false,
   sharePhone: false,
   shareBirthday: false,
+  shareAge: false,
   shareAddress: false,
   receiveComms: true,
 };
@@ -37,7 +38,7 @@ export default async function PrivacySettingsPage() {
     select: { email: true },
   });
 
-  const [links, privacyRows, pendingInvitations, declinedTeachers] = await Promise.all([
+  const [links, privacyRows, contact, pendingInvitations, declinedTeachers] = await Promise.all([
     // Existence, not `isArchived: false` — the same choice
     // `students/[id]/privacy/route.ts` makes for the API that reads and
     // writes these settings, and for the same reason: archiving is the
@@ -54,6 +55,11 @@ export default async function PrivacySettingsPage() {
     }),
     prisma.studentPrivacy.findMany({
       where: { studentId: session.studentId },
+    }),
+    // Presence only: the cards caption a toggle whose field is empty.
+    prisma.student.findUniqueOrThrow({
+      where: { id: session.studentId },
+      select: { phone: true, birthday: true, address: true },
     }),
     listPendingInvitations(prisma, { accountEmail: account.email }),
     listDeclinedTeachers(prisma, { accountEmail: account.email }),
@@ -154,6 +160,7 @@ export default async function PrivacySettingsPage() {
                   shareEmail: row.shareEmail,
                   sharePhone: row.sharePhone,
                   shareBirthday: row.shareBirthday,
+                  shareAge: row.shareAge,
                   shareAddress: row.shareAddress,
                   receiveComms: row.receiveComms,
                 }
@@ -165,6 +172,11 @@ export default async function PrivacySettingsPage() {
                 teacherId={teacher.id}
                 teacherName={`${teacher.firstName} ${teacher.lastName}`}
                 initial={initial}
+                filled={{
+                  phone: contact.phone !== null,
+                  birthday: contact.birthday !== null,
+                  address: contact.address !== null,
+                }}
                 archivedByTeacher={isArchived}
               />
             );
