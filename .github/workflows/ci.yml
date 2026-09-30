@@ -42,7 +42,7 @@ jobs:
       # prisma validate resolves env("DATABASE_URL") even without connecting.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # fetch-depth: 0 is load-bearing for two static checks below: both
           # resolve a base ref to diff against (via resolveBaseRef in
@@ -155,7 +155,7 @@ jobs:
       # rather than throwing — same reason the `checks` job sets it.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
       # The steps and the reasoning for each live in .github/actions/setup-pnpm.
@@ -196,7 +196,7 @@ jobs:
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
       # The steps and the reasoning for each live in .github/actions/setup-pnpm.
@@ -281,7 +281,7 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
       # The steps and the reasoning for each live in .github/actions/setup-pnpm.
@@ -292,7 +292,7 @@ jobs:
 
       # Next.js incremental compile cache — cuts repeat builds roughly in half.
       - name: Cache Next.js build
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .next-build/cache
           key: nextjs-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('src/**', 'prisma/schema.prisma') }}
@@ -346,7 +346,7 @@ jobs:
 
       - name: Upload server log
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: server-log-integration
           path: server.log
@@ -383,7 +383,7 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
       # The steps and the reasoning for each live in .github/actions/setup-pnpm.
@@ -394,7 +394,7 @@ jobs:
 
       # Next.js incremental compile cache — cuts repeat builds roughly in half.
       - name: Cache Next.js build
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .next-build/cache
           key: nextjs-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('src/**', 'prisma/schema.prisma') }}
@@ -409,7 +409,7 @@ jobs:
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
@@ -451,7 +451,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report
           path: playwright-report/
@@ -459,7 +459,7 @@ jobs:
 
       - name: Upload server log
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: server-log-e2e
           path: server.log
@@ -480,7 +480,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build production image (runner)
         run: docker build -t fairyoga .
