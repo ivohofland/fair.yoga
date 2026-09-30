@@ -111,7 +111,7 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
       # The steps and the reasoning for each live in .github/actions/setup-pnpm.
@@ -168,7 +168,7 @@ jobs:
       # comparison this job exists to produce.
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: flake-repro-report
           path: playwright-report/
@@ -176,7 +176,7 @@ jobs:
 
       - name: Upload traces
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: flake-repro-traces
           path: test-results/
@@ -184,7 +184,7 @@ jobs:
 
       - name: Upload server log
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: flake-repro-server-log
           path: server.log

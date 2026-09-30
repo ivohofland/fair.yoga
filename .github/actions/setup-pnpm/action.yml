@@ -11,9 +11,9 @@ description: >-
 # weakest copy: a fix applied to five of six leaves the sixth job setting the
 # effective strength, and nothing reports the difference. Six copies of three
 # corrections is eighteen edits that have to stay in lockstep; this is one.
-# Local, not third-party, deliberately: #535 exists to commit-pin the actions
-# already here, and adding another unpinned third-party action to a
-# supply-chain PR would be self-defeating.
+# Local, not third-party, deliberately: a local action runs from the same
+# commit as the workflow calling it, so it needs no pin of its own. The
+# `uses:` lines inside it do, and carry one.
 
 inputs:
   node-version:
@@ -27,7 +27,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v7
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ inputs.node-version }}
         # No `cache:` key. `cache: 'pnpm'` needs pnpm resolvable when this
@@ -76,7 +76,7 @@ runs:
         echo "PNPM_STORE=$PNPM_STORE" >> "$GITHUB_ENV"
 
     - name: Cache pnpm store
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.PNPM_STORE }}
         key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
