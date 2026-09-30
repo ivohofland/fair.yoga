@@ -1114,6 +1114,21 @@ describe('GET /api/students/[id] — birthday and age never carry the year (#714
     expect(typeof body.data.age).toBe('number');
     expect(text).not.toContain('1988');
   });
+
+  // The list composes extra keys around the projection, which is where a raw
+  // `birthday` could be spread back in without the key set changing.
+  it('the directory list carries day, month and age, and never the year', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, { headers: cookie(token) });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text) as {
+      data: { students: { id: string; birthday: unknown; age: unknown }[] };
+    };
+    const row = body.data.students.find((s) => s.id === studentId);
+    expect(row?.birthday).toEqual({ day: 14, month: 3 });
+    expect(typeof row?.age).toBe('number');
+    expect(text).not.toContain('1988');
+  });
 });
 
 describe('GET /api/students — overduePayments', () => {

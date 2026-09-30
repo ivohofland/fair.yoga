@@ -4,7 +4,6 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDateShort, formatDateWithYear } from '@/lib/format';
-import { ageOn } from '@/lib/birthday';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -233,7 +232,17 @@ describe('GET /students/[id] (student detail page)', () => {
 
     it('renders the age, never the birth date or year, when only age and address are shared', async () => {
       const email = `claimed-age-${suffix}@test.local`;
-      const birthday = new Date('1992-06-15T00:00:00.000Z');
+      // Tomorrow, 28 years back: always 27 today, whatever year this runs in,
+      // so the expectation is a literal rather than the code under test. 28
+      // keeps a 29 February valid.
+      const now = new Date();
+      const birthYear = now.getUTCFullYear() - 28;
+      const birthday = new Date(Date.UTC(birthYear, now.getUTCMonth(), now.getUTCDate() + 1));
+      const dayMonth = birthday.toLocaleString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        timeZone: 'UTC',
+      });
       const student = await prisma.student.create({
         data: {
           firstName: 'Eva',
@@ -262,10 +271,10 @@ describe('GET /students/[id] (student detail page)', () => {
       const html = await (await studentPage(student.id)).text();
 
       expect(html).toContain('>Age</span>');
-      expect(html).toContain(`>${ageOn(birthday, new Date())}</p>`);
+      expect(html).toContain('>27</p>');
       expect(html).toContain('whitespace-pre-line');
-      expect(html).not.toContain('15 Jun');
-      expect(html).not.toContain('1992');
+      expect(html).not.toContain(dayMonth);
+      expect(html).not.toContain(String(birthYear));
       expect(html).not.toContain('No contact information to show.');
     });
 
