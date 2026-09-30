@@ -22,7 +22,7 @@ inputs:
       not including) 25.0.0; above that range this action needs an explicit
       `npm i -g corepack` first.
     required: false
-    default: '22'
+    default: '24'
 
 runs:
   using: composite
