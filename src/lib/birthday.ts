@@ -1,6 +1,6 @@
 /**
- * Every rule about a student's birthday, which is a calendar date stored in a
- * `@db.Date` column. Postgres keeps only the UTC calendar date of whatever
+ * The date rules for a student's birthday (parse, day and month, age), a
+ * calendar date stored in a `@db.Date` column. Postgres keeps only the UTC calendar date of whatever
  * instant it is handed, so every `Date` here is UTC midnight and every read
  * uses UTC accessors.
  */
@@ -15,7 +15,9 @@ export interface BirthdayDayMonth {
   month: number;
 }
 
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+// A date input can hold a year of more than four digits; that is out of
+// range, not malformed.
+const ISO_DATE = /^(\d{4,})-(\d{2})-(\d{2})$/;
 
 function utcMidnight(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -30,8 +32,10 @@ export function parseBirthday(s: string, now: Date = new Date()): BirthdayParse 
   const m = ISO_DATE.exec(s);
   if (!m) return { ok: false, reason: 'format' };
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const date = new Date(Date.UTC(y, mo - 1, d));
-  // Date.UTC rolls 30 February into March; a round-trip mismatch is a non-date.
+  // setUTCFullYear, because Date.UTC reads a year 0–99 as 1900–1999.
+  const date = new Date(0);
+  date.setUTCFullYear(y, mo - 1, d);
+  // Both roll 30 February into March; a round-trip mismatch is a non-date.
   if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) {
     return { ok: false, reason: 'format' };
   }
