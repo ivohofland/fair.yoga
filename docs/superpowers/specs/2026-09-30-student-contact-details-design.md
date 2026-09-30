@@ -71,7 +71,10 @@ Taken at the brainstorming gate, 2026-09-30:
 - **The stored year never reaches a teacher**, on any path. Enforced by the
   projection's type, not a formatter. A student who shares both the birthday
   (day and month) and the age lets that teacher work out the year, so the two
-  disclosures together are the student's choice to make, not a leak.
+  disclosures together are the student's choice to make, not a leak. The
+  privacy card says so under the Age toggle while both are on — "Together,
+  these show {teacher} your full date of birth." — reading the unsaved
+  checkboxes, so the warning is up before Save.
 - **Separate forms** on `/account`: `NameForm` unchanged, a new
   `ContactDetailsForm` below it with its own save. The name is required and
   these are optional; one form would let a blank surname block saving a phone.
