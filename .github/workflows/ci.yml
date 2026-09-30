@@ -477,10 +477,13 @@ jobs:
   # --from graph, so it silently goes unbuilt without its own step.
   # Nothing is pushed. The images are started only far enough to prove that
   # Prisma can load its engine in each: a base-image bump that leaves libssl
-  # or the engine library unloadable builds green and fails at first query.
+  # or the engine unloadable builds green and fails at first query.
   # Deliberately no database — each check aims at an address nothing can
   # answer and passes only on P1001 (can't reach it), the error that only an
   # engine which loaded can produce. Query behaviour is the other jobs' work.
+  # Every container runs with --network none: given a network, Prisma fetches
+  # a replacement for a missing or unusable engine from binaries.prisma.sh and
+  # then reports P1001 anyway, so the check would say nothing.
   docker-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -496,20 +499,17 @@ jobs:
       # The script goes in over stdin because the runner image has no
       # scripts/ directory. It exits 0 only on P1001.
       - name: Prisma engine loads in the runner image
-        run: docker run --rm -i --entrypoint node fairyoga - < scripts/prisma-engine-probe.cjs
+        run: docker run --rm --network none -i --entrypoint node fairyoga - < scripts/prisma-engine-probe.cjs
 
       # `migrate status` exits 1 on P1001 too, so the exit code cannot tell
       # the engine loading from the engine failing. The output is captured
       # with an explicit `|| true` and asserted on instead; a docker failure
       # (no image, no daemon) prints no P1001 and so still fails the step.
-      # The schema engine still reaches P1001 with libssl missing, so the
-      # warning Prisma prints when it cannot find libssl is refused too.
       - name: Prisma engine loads in the migration image
         run: |
-          OUT="$(docker run --rm -e DATABASE_URL='postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3' fairyoga-migrate pnpm exec prisma migrate status 2>&1)" || true
+          OUT="$(docker run --rm --network none -e DATABASE_URL='postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3' fairyoga-migrate pnpm exec prisma migrate status 2>&1)" || true
           echo "$OUT"
           grep -q 'P1001' <<< "$OUT" || { echo "::error::migrate status did not report P1001 - the engine did not load"; exit 1; }
-          ! grep -q 'failed to detect the libssl' <<< "$OUT" || { echo "::error::Prisma cannot find libssl in the migration image"; exit 1; }
 
   # This job exists so the branch ruleset's required status check named
   # `test` keeps reporting after the split: ruleset 19724469 requires the

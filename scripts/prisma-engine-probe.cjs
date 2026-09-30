@@ -16,6 +16,9 @@ function fail(what, err) {
   process.exit(1);
 }
 
+// A connect that neither fails nor succeeds must not hang the CI job.
+setTimeout(() => fail('timed out waiting for connect'), 30_000).unref();
+
 let PrismaClient;
 try {
   // Resolved from /app, where the standalone bundle keeps its node_modules;
