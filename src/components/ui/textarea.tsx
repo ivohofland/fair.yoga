@@ -7,12 +7,20 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 }
 
 // Multi-line sibling of Input: same sand field, radius 12, label above.
-export function Textarea({ label, error, hint, id, className = '', ...props }: TextareaProps) {
+export function Textarea({
+  label,
+  error,
+  hint,
+  id,
+  className = '',
+  'aria-describedby': ownDescribedBy,
+  ...props
+}: TextareaProps) {
   const generatedId = useId();
   const textareaId = id ?? generatedId;
   const hintId = hint ? `${textareaId}-hint` : undefined;
   const errorId = error ? `${textareaId}-error` : undefined;
-  const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
+  const describedBy = [ownDescribedBy, hintId, errorId].filter(Boolean).join(' ') || undefined;
   const fieldColors = error
     ? 'border-danger bg-danger-tint'
     : 'border-border bg-sand-soft';

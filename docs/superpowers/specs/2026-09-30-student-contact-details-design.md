@@ -71,10 +71,15 @@ Taken at the brainstorming gate, 2026-09-30:
 - **The stored year never reaches a teacher**, on any path. Enforced by the
   projection's type, not a formatter. A student who shares both the birthday
   (day and month) and the age lets that teacher work out the year, so the two
-  disclosures together are the student's choice to make, not a leak. The
-  privacy card says so under the Age toggle while both are on — "Together,
-  these show {teacher} your full date of birth." — reading the unsaved
-  checkboxes, so the warning is up before Save.
+  disclosures together are the student's choice to make, not a leak. The age
+  alone gives the same away over time: it is recomputed per request, so the
+  day it goes up is the birthday. Accepted on the same footing (PR #720
+  review) — the teacher is linked and the student opted in — and said out
+  loud rather than hidden. The privacy card warns under the Age toggle,
+  reading the unsaved checkboxes so the warning is up before Save, and says
+  nothing while no birthday is stored: both on, "Together, these show
+  {teacher} your full date of birth."; Age alone, "Over time, the day your age
+  goes up shows {teacher} your birthday, and with it your full date of birth."
 - **Separate forms** on `/account`: `NameForm` unchanged, a new
   `ContactDetailsForm` below it with its own save. The name is required and
   these are optional; one form would let a blank surname block saving a phone.
@@ -125,8 +130,8 @@ age: number | null;                               // gated on shareAge
   `projectStudentForTeacher` takes an optional `now: Date = new Date()` so the
   unit tests pin it without a fake clock. UTC rather than the teacher's zone:
   the call sites do not all have the teacher's timezone to hand, and the
-  cost is an age that turns over up to a few hours early or late on the
-  birthday itself.
+  cost is an age that turns over up to 14 hours early or late on the
+  birthday itself (the widest offset from UTC).
 - A 29 February birthday: `day: 29, month: 2`; the age turns over on
   1 March in non-leap years.
 - `studentVisibilitySelect` selects `shareAge`.
@@ -174,8 +179,8 @@ reconciles every hit.
   age), address — a caption: "Not added yet — add it in Settings", the last
   words linking to `/account`. The toggle stays enabled; sharing an empty
   field returns null.
-- The page passes **presence booleans** (`hasPhone`, `hasBirthday`,
-  `hasAddress`), never the values.
+- The page passes **presence booleans** (`filled: FilledFields`, keyed
+  `phone`, `birthday`, `address`), never the values.
 
 ### Teacher page (`src/app/(teacher)/students/[id]/page.tsx`)
 

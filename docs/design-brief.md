@@ -66,6 +66,10 @@ Day-first, always: `12 Jun`, never `Jun 12`. Three formats, all in
 - `formatDateShort` — `12 Jun`. Inline in a row, where neighbouring copy
   already supplies the context.
 
+`formatDayMonth` prints `formatDateShort`'s shape for a teacher-facing
+birthday, which arrives as a day and a month with no year rather than a
+`Date` — the same format for a value that has no year to drop, not a fourth.
+
 Two grouping labels use the full month name instead, for a heading over a
 *set* of dates rather than one: `formatMonthLabel` (`June 2026`, the
 reporting page's month grouping) and `class-list.tsx`'s local `weekLabel`

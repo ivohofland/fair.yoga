@@ -9,12 +9,20 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 // 48px field on sand, radius 12, label above with 8px gap.
 // Hint = caption between label and field. Error = danger border + danger-tint
 // background + 13px message below.
-export function Input({ label, error, hint, id, className = '', ...props }: InputProps) {
+export function Input({
+  label,
+  error,
+  hint,
+  id,
+  className = '',
+  'aria-describedby': ownDescribedBy,
+  ...props
+}: InputProps) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const hintId = hint ? `${inputId}-hint` : undefined;
   const errorId = error ? `${inputId}-error` : undefined;
-  const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
+  const describedBy = [ownDescribedBy, hintId, errorId].filter(Boolean).join(' ') || undefined;
   const fieldColors = error
     ? 'border-danger bg-danger-tint'
     : 'border-border bg-sand-soft';

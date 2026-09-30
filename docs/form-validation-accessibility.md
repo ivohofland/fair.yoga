@@ -9,7 +9,7 @@ This document establishes the house standards for form validation error presenta
 1. **Inaudible Refusal Prevention (`role="alert"`)**:
    - Validation refusals that prevent form submission without full-page navigation or button-label flips MUST be announced to assistive technologies (screen readers).
    - Any validation error message rendered in a top-level form banner or next to an action control MUST include `role="alert"`.
-   - Per-field errors rendered by `<Input />` automatically carry `role="alert"`, `id="${inputId}-error"`, and are linked via `aria-describedby` and `aria-invalid` on the underlying `<input />`.
+   - Per-field errors rendered by `<Input />` or `<Textarea />` automatically carry `role="alert"`, `id="${id}-error"`, and are linked via `aria-describedby` (alongside the `hint` id, when there is one) and `aria-invalid` on the underlying control.
 
 2. **Immediate Complaint Clearing (Clear-on-Change)**:
    - When a validation error banner is displayed (e.g. "Class type is required."), editing *any* relevant input field MUST clear the error banner immediately (`setError('')`).
