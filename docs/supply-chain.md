@@ -753,7 +753,7 @@ Either is a reason to fix rather than to note.
 ## The base image and the package manager binary
 
 Two artefacts execute in every build and sat outside every control above:
-`node:22-alpine` (the `Dockerfile`) and pnpm itself, bootstrapped via
+`node:24-alpine` (the `Dockerfile`) and pnpm itself, bootstrapped via
 `packageManager`. Neither is a lockfile entry, so `--frozen-lockfile`,
 `minimumReleaseAge`, and `pnpm audit` have nothing to say about either.
 #562. Reviewing #562's own PR turned up a third artefact in the same
@@ -765,11 +765,11 @@ under *The database image*.
 
 Covered two ways: one digest, tracked by one Dependabot entry.
 `Dockerfile` has a single `base` stage — `FROM
-node:22-alpine@sha256:c610fc…a3aa32 AS base` (see the `Dockerfile` for the
+node:24-alpine@sha256:ebfe2f…5ec1c1 AS base` (see the `Dockerfile` for the
 full value) — that both `deps` and `runner` build from, so there is exactly
 one line to bump rather than two that could drift apart by hand.
 `.github/dependabot.yml` gained a `docker` ecosystem entry to move it.
-Resolved 2026-09-15 straight from the registry rather than from whatever
+Resolved 2026-09-30 straight from the registry rather than from whatever
 happened to be cached locally:
 
 ```bash
@@ -777,7 +777,7 @@ TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=r
   | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).token")
 curl -sI -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.index.v1+json" \
-  https://registry-1.docker.io/v2/library/node/manifests/22-alpine | grep -i docker-content-digest
+  https://registry-1.docker.io/v2/library/node/manifests/24-alpine | grep -i docker-content-digest
 ```
 
 That's the **manifest-list** digest — the response's `Content-Type` is
@@ -793,7 +793,7 @@ Neither half is enough alone. A digest pin with no tracking Dependabot
 entry freezes the wrong content forever; a Dependabot entry with no digest
 pin still lets the tag drift between its monthly checks — alpine variant
 images get rebuilt for OS-level patches with no Node version change, so
-`node:22-alpine` alone is a moving target even under active Dependabot
+`node:24-alpine` alone is a moving target even under active Dependabot
 coverage. Together, the tag is pinned between commits and Dependabot is
 what moves the pin — the same shape `--frozen-lockfile` already gives the
 dependency tree.

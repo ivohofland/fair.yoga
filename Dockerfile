@@ -5,12 +5,12 @@
 # Prisma CLI; the runtime image does not).
 
 # ---------------------------------------------------------------------------
-# Digest-pinned: `node:22-alpine` is a floating tag that can resolve to
+# Digest-pinned: `node:24-alpine` is a floating tag that can resolve to
 # different content on an unchanged Dockerfile. Dependabot's docker
 # ecosystem (dependabot.yml) keeps this digest current; docs/supply-chain.md
 # has the reasoning and the command that re-derives it. One base stage, not
 # one FROM per downstream stage, so there is exactly one line to bump.
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS base
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS base
 
 # ---------------------------------------------------------------------------
 FROM base AS deps
