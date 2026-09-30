@@ -799,7 +799,7 @@ dependency tree.
 
 **Going forward:** with a digest present, Dependabot's docker ecosystem
 proposes the tag and its digest together on each check (confirmed against
-current dependabot-core behaviour, 2026-09-15). Its `node` entry ignores
+current dependabot-core behaviour, 2026-09-15). Its `ignore` rule for `node` ignores
 `version-update:semver-major`, so digest and same-major updates still arrive
 monthly while a runtime major never does: odd majors are never LTS and were
 proposed anyway (#716), and Corepack is not bundled from Node 25 on. A
