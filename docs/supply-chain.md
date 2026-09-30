@@ -987,6 +987,62 @@ moment this change merges rather than shipping red — a non-blocking check
 that starts out permanently red trains reviewers to stop reading it, which
 is the opposite of what a non-blocking check is for.
 
+## GitHub Actions
+
+Every remote `uses:` reference — in `.github/workflows/` and in the
+composite actions under `.github/actions/` — names a full 40-character
+commit SHA with the release it corresponds to as a trailing comment:
+
+```
+uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+```
+
+A tag can be moved to point at other code, and a workflow following it
+runs that code on its next run with no change here — the
+`tj-actions/changed-files` compromise (March 2025) had that shape. A commit
+SHA cannot be moved. Local references (`uses: ./.github/actions/…`) carry
+no pin: they run from the same commit as the workflow that calls them.
+
+The blast radius of a moved tag is small here: `ci.yml` grants
+`contents: read`, triggers on `pull_request` rather than
+`pull_request_target`, and holds only dummy secrets. What a moved tag could
+still do is poison the caches `actions/cache` restores across runs, or
+report green on a bad tree to `checks` and `test` — the required contexts
+the branch ruleset relies on.
+
+**Keeping the pins current.** Dependabot's `github-actions` entry proposes a
+new SHA and rewrites the version comment together. Its `directory: /`
+default scans only `.github/workflows` and a root `action.yml`, so
+`.github/dependabot.yml` lists `/.github/actions/*` as well — without it the
+pins inside a composite action would never be updated, and a stale pin,
+unlike a tag, never moves on its own.
+
+**Keeping them pinned.** The repository setting "Require actions to be
+pinned to a full-length commit SHA" makes GitHub refuse a run that uses an
+unpinned remote action. It lives outside the repository, so no diff shows
+it and a fork does not inherit it. Check it with:
+
+```bash
+gh api repos/{owner}/{repo}/actions/permissions --jq .sha_pinning_required
+```
+
+**Census.** Counts remote references that are not a SHA plus version
+comment; `0` is the expected answer:
+
+```bash
+grep -rnE "^[[:space:]]*(-[[:space:]]+)?uses:" .github/ | grep -v "uses: \./" \
+  | grep -vcE "@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$"
+```
+
+The first pattern is anchored to a YAML key, bare or as a list item. An
+unanchored `uses:` also matches a comment that mentions the key, and reports
+it as an unpinned reference.
+
+Measured 2026-09-30: `0` on the commit that pinned them, and `18` on its parent
+(12 in `ci.yml`, 4 in `e2e-flake-repro.yml`, 2 in
+`.github/actions/setup-pnpm/action.yml`) — the second run is what shows the
+command can report a non-zero answer.
+
 ## Not yet in place
 
 The controls that would keep a *compromised* version out, rather than an
@@ -1022,5 +1078,5 @@ absorbed** — see *The database image* above. Resolved with a script
 rather than a Dependabot entry, since no Dependabot ecosystem reaches a
 `services:` image reference (dependabot-core#5819, still open).
 
-**#535 (commit-pinned GitHub Actions)** is unaffected by this migration and
-stays open. See #531.
+**#535 (commit-pinned GitHub Actions) is now absorbed** — see *GitHub
+Actions* above.
