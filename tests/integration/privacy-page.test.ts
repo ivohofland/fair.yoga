@@ -237,4 +237,18 @@ describe('GET /account/privacy (page) — empty contact fields', () => {
     const html = await res.text();
     expect(html.split('Not added yet').length - 1).toBe(2);
   });
+
+  // The opposite fill state, so a presence flag hard-wired to either value
+  // changes the count rather than matching the fixture by accident.
+  it('captions the birthday and age toggles once phone and address are added', async () => {
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { phone: '+31 6 0000 0000', address: 'Straat 1', birthday: null },
+    });
+    const res = await fetch(`${BASE_URL}/account/privacy`, { headers: cookie(token) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html.split('Not added yet').length - 1).toBe(2);
+    expect(html).toContain('Birthday (day and month)');
+  });
 });
