@@ -337,7 +337,7 @@ export const respondToInvitationSchema = z.object({
 /**
  * Optional free text: trimmed, and "" stores null so a cleared input clears
  * the column. The transform must leave an absent key absent (never map
- * `undefined` to a value), because the route's empty-body check counts keys.
+ * `undefined` to a value): `{}` parses to `{}`, pinned by "omits absent keys".
  */
 function optionalText(label: string, max: number) {
   return z

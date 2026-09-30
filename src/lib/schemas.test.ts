@@ -521,6 +521,15 @@ describe('updateStudentSchema — contact fields (#714)', () => {
       expect(r.success ? [] : r.error.issues.map((i) => i.path.join('.'))).toEqual(['birthday']);
     },
   );
+
+  // The two refusals tell the student different things to fix.
+  it.each([
+    ['1880-05-01', /between 1900 and today/],
+    ['2023-02-30', /real date/],
+  ] as const)('birthday: %j gets the message for its own reason', (birthday, copy) => {
+    const r = updateStudentSchema.safeParse({ birthday });
+    expect(r.success ? '' : r.error.issues[0]?.message).toMatch(copy);
+  });
 });
 
 describe('updateTeacherSchema.pageSlug', () => {
