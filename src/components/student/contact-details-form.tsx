@@ -47,8 +47,9 @@ function parseFieldErrors(message: string): FieldErrors {
   const found: FieldErrors = {};
   if (parts[0] !== '') return found;
   for (let i = 1; i + 1 < parts.length; i += 2) {
-    const field = parts[i];
-    if (isContactField(field)) found[field] = parts[i + 1];
+    const field = parts[i] ?? '';
+    const text = parts[i + 1];
+    if (isContactField(field) && text !== undefined) found[field] = text;
   }
   return found;
 }
