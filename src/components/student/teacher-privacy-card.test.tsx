@@ -405,7 +405,7 @@ describe('TeacherPrivacyCard', () => {
       links.forEach((l) => expect(l).toHaveAttribute('href', '/account'));
     });
 
-    it('shows no caption when every field is filled, and never disables a toggle', () => {
+    it('a filled field gets no caption, and a toggle over an empty one stays enabled', () => {
       renderCard({ filled: { phone: false, birthday: true, address: true } });
       expect(screen.getAllByRole('link', { name: 'add it in Settings' })).toHaveLength(1);
       expect(screen.getByRole('checkbox', { name: 'Phone number' })).toBeEnabled();

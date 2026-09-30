@@ -249,7 +249,7 @@ describe('projectStudentForTeacher — birthday and age (#714)', () => {
     expect(r.age).toBe(age);
   });
 
-  it('never carries the birth year, with everything shared', () => {
+  it('carries the stored year under no key of the teacher shape, with everything shared', () => {
     const r = projectStudentForTeacher(flags(true, true), TEACHER, NOW);
     expect(JSON.stringify(r)).not.toContain('1990');
   });

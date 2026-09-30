@@ -109,7 +109,7 @@ describe('students privacy API', () => {
     await prisma.$disconnect();
   });
 
-  it('virtual default carries all six fields, maximum privacy', async () => {
+  it('virtual default carries every field, maximum privacy', async () => {
     const res = await fetch(
       `${BASE_URL}/api/students/${studentId}/privacy?teacherId=${teacherId}`,
       { headers: cookie(studentToken) },
@@ -120,11 +120,12 @@ describe('students privacy API', () => {
     expect(data.shareEmail).toBe(false);
     expect(data.sharePhone).toBe(false);
     expect(data.shareBirthday).toBe(false);
+    expect(data.shareAge).toBe(false);
     expect(data.shareAddress).toBe(false);
     expect(data.receiveComms).toBe(true);
   });
 
-  it('first PUT persists all six fields — including shareFullName', async () => {
+  it('first PUT persists every field — including shareFullName and shareAge', async () => {
     const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...cookie(studentToken) },
@@ -134,6 +135,7 @@ describe('students privacy API', () => {
         shareEmail: true,
         sharePhone: false,
         shareBirthday: false,
+        shareAge: true,
         shareAddress: false,
         receiveComms: false,
       }),
@@ -143,6 +145,7 @@ describe('students privacy API', () => {
       where: { studentId_teacherId: { studentId, teacherId } },
     });
     expect(row.shareFullName).toBe(true);
+    expect(row.shareAge).toBe(true);
     expect(row.shareEmail).toBe(true);
     expect(row.receiveComms).toBe(false);
   });

@@ -193,7 +193,7 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     expect(await prisma.invitation.findUniqueOrThrow({ where: { teacherId_email: { teacherId, email } } }))
       .toMatchObject({ status: 'accepted', firstName: 'Anna', lastName: 'Bergsma' });
     expect(await prisma.studentPrivacy.findUniqueOrThrow({ where: { studentId_teacherId: { studentId: resolved.studentId, teacherId } } }))
-      .toMatchObject({ shareFullName: true, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false });
+      .toMatchObject({ shareFullName: true, shareEmail: true, sharePhone: false, shareBirthday: false, shareAge: false, shareAddress: false });
     const n = await prisma.notification.findFirstOrThrow({ where: { recipientId: resolved.studentId, type: 'walk_in_added' } });
     expect(n).toMatchObject({ recipientType: 'student', relatedClassId: classId });
     // Who added them, to what, when, and that the price comes later.

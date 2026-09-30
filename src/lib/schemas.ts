@@ -339,11 +339,11 @@ export const respondToInvitationSchema = z.object({
  * the column. The transform must leave an absent key absent (never map
  * `undefined` to a value), because the route's empty-body check counts keys.
  */
-function optionalText(max: number) {
+function optionalText(label: string, max: number) {
   return z
     .string()
     .trim()
-    .max(max)
+    .max(max, `${label} must be ${max} characters or fewer`)
     .transform((v) => (v === '' ? null : v))
     .nullable()
     .optional();
@@ -369,9 +369,9 @@ const birthdayField = z
 export const updateStudentSchema = z.object({
   firstName: z.string().trim().min(1).optional(),
   lastName: z.string().trim().min(1).optional(),
-  phone: optionalText(40),
+  phone: optionalText('Phone', 40),
   birthday: birthdayField,
-  address: optionalText(300),
+  address: optionalText('Address', 300),
   // `.refine` with a type predicate narrows the inferred type to IncomeTier
   // (verified by compiling both directions), so the wire type carries the
   // same constraint as the column and the engine. A literal union would
