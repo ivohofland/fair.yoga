@@ -1035,6 +1035,21 @@ gh api repos/{owner}/{repo}/actions/permissions --jq .sha_pinning_required
 `uses:` from landing, and the census below is the only thing that would
 show one.
 
+**It reaches inside the composite action, and exempts the local reference
+to it.** Measured 2026-09-30 with the setting on, from a throwaway pull
+request (#717) whose only change was `setup-pnpm`'s cache step moved back
+to `actions/cache@v6.1.0`. Every job calling the composite action failed
+at its `Run ./.github/actions/setup-pnpm` step with
+
+```
+The action actions/cache@v6.1.0 is not allowed in ivohofland/fair.yoga because all actions must be pinned to a full-length commit SHA.
+```
+
+while `docker-build`, which does not call it, passed. The refusal names the
+nested action, not the `./` reference. The control: main at `2a732652`,
+fully pinned, re-run with the setting on (CI run 36673384086, attempt 2)
+passed every job, local references included.
+
 **Census.** Counts remote references that are not a SHA plus version
 comment; `0` is the expected answer:
 
