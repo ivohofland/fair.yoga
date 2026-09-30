@@ -494,8 +494,8 @@ jobs:
 
       # The script goes in over stdin because the runner image has no
       # scripts/ directory. The output is captured and must carry the probe's
-      # success line: a probe that arrives empty or truncated makes `node -`
-      # exit 0 with nothing to say, which the exit code alone would pass.
+      # success line: a probe that arrives empty or truncated can make
+      # `node -` exit 0 with nothing to say, which the exit code alone would pass.
       # `|| true` keeps the assertion, not docker's exit status, as the verdict;
       # a docker failure prints no success line and so still fails the step.
       - name: Prisma query engine loads in the runner image

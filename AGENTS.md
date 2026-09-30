@@ -5,8 +5,8 @@
 ```bash
 docker compose up -d                     # PostgreSQL on :5432
 cp .env.example .env                     # required env vars (DATABASE_URL, PASSKEY_*, etc.)
-corepack enable                          # pnpm, via Corepack — once per machine; Node 25+ needs `npm i -g corepack` first
 nvm use                                  # reads .nvmrc; pnpm refuses a Node outside package.json's devEngines.runtime
+corepack enable                          # pnpm, via Corepack — once per Node install; after `nvm use`, since it shims into the active Node
 pnpm install --frozen-lockfile           # postinstall runs `prisma generate`
 pnpm exec prisma migrate dev             # apply migrations to dev DB
 EMAIL_DRY_RUN=1 pnpm run dev             # start on :3000; dry-run logs magic links to stdout
