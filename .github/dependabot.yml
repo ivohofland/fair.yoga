@@ -60,10 +60,9 @@ updates:
       interval: monthly
     cooldown:
       default-days: 8
-    # Node majors are an issue, not a monthly PR. Odd majors are never LTS and
-    # are proposed anyway (#716 was one), and Corepack, which the pnpm
-    # integrity gate relies on, is not bundled from Node 25 on. Digest and
-    # same-major updates keep flowing.
+    # Node majors are an issue, not a monthly PR: a runtime major moves
+    # deliberately. Reasons and what this does not ignore: docs/supply-chain.md
+    # (The base image).
     ignore:
       - dependency-name: node
         update-types: ['version-update:semver-major']

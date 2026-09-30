@@ -24,8 +24,8 @@ setTimeout(() => fail('timed out waiting for connect'), 30_000);
 
 let PrismaClient;
 try {
-  // Resolved from /app, where the standalone bundle keeps its node_modules;
-  // a stdin script has no location of its own to resolve from.
+  // Resolved from /app, where the standalone bundle keeps its node_modules,
+  // so the result does not depend on the container's working directory.
   ({ PrismaClient } = createRequire('/app/')('@prisma/client'));
 } catch (err) {
   fail('could not require @prisma/client', err);
@@ -45,7 +45,10 @@ try {
       console.log('engine loaded; connect failed with P1001 as expected');
       process.exit(0);
     }
-    fail('connect failed with something other than P1001', err);
+    fail(
+      `connect failed with ${err?.errorCode ?? err?.code ?? err?.name}, not P1001`,
+      err,
+    );
   }
   fail('connect succeeded against an address nothing can answer');
 })();
