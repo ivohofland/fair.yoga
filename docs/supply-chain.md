@@ -799,10 +799,19 @@ dependency tree.
 
 **Going forward:** with a digest present, Dependabot's docker ecosystem
 proposes the tag and its digest together on each check (confirmed against
-current dependabot-core behaviour, 2026-09-15). A Dependabot PR proposing a
-bump past Node 25 — outside corepack's supported range, per the
-`Dockerfile`'s own comment on the `deps` stage — therefore arrives as a red
-CI run rather than a surprise on someone's laptop.
+current dependabot-core behaviour, 2026-09-15). Its `node` entry ignores
+`version-update:semver-major`, so digest and same-major updates still arrive
+monthly while a runtime major never does: odd majors are never LTS and were
+proposed anyway (#716), and Corepack is not bundled from Node 25 on. A
+runtime major moves by a deliberate issue. The npm entry ignores majors of
+`@types/node` for the same reason, so the types move in the same PR as the
+image.
+
+The local Node range lives in `package.json`'s `devEngines.runtime` with
+`onFail: "error"`, not in `engines`: pnpm (the pinned major) does not check
+the root project's `engines.node`, even with `engineStrict`, while
+`devEngines` refuses both `pnpm install` and `pnpm run` on a Node outside the
+range (measured 2026-09-30).
 
 ### The database image
 
