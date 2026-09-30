@@ -10,6 +10,7 @@
 
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
+import type { VisibilityFlags } from '@/lib/student-visibility';
 import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { linkTeacherStudent, RosterLinkVanishedError } from './roster-link';
 import { lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
@@ -1542,7 +1543,10 @@ const SILENCED_PRIVACY = {
   shareAge: false,
   shareAddress: false,
   receiveComms: false,
-} satisfies Prisma.StudentPrivacyUpdateInput;
+} satisfies Prisma.StudentPrivacyUpdateInput satisfies Record<
+  keyof VisibilityFlags | 'receiveComms',
+  false
+>;
 
 /**
  * A student severs a teacher link.
@@ -1631,8 +1635,8 @@ export async function unlinkTeacher(
     // take these two rows in that order; this function alone took them the
     // other way round, and unlike the `Invitation`/`TeacherStudent`
     // inversion #174 also fixed, this one is not protected by any accident
-    // of how Prisma compiles an upsert: `SILENCED_PRIVACY` below is six real
-    // columns, never empty, so this `upsert` always compiles to the atomic
+    // of how Prisma compiles an upsert: `SILENCED_PRIVACY` is every flag
+    // column, never empty, so this `upsert` always compiles to the atomic
     // `INSERT ... ON CONFLICT DO UPDATE`, which always takes the row lock.
     // Reproduced directly (#174 task 7): a transaction shaped like this
     // function's old order, racing one shaped like `deleteStudentAccount`'s,

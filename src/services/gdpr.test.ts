@@ -204,7 +204,8 @@ let studentAccountId: string;
 
     await prisma.teacherStudent.create({ data: { teacherId, studentId } });
     await prisma.studentPrivacy.create({
-      data: { studentId, teacherId, shareFullName: true },
+      // `shareAge` on, against its default, so the export's copy of it is seen.
+      data: { studentId, teacherId, shareFullName: true, shareAge: true },
     });
 
     const mkClass = (status: 'completed' | 'open', date: string) =>
@@ -289,6 +290,14 @@ let studentAccountId: string;
     const paidBooking = data.bookings.find((b) => b.payment);
     expect(paidBooking?.payment?.status).toBe('pending');
     expect(data.privacySettings).toHaveLength(1);
+    expect(data.privacySettings[0]).toMatchObject({
+      shareFullName: true,
+      shareEmail: false,
+      sharePhone: false,
+      shareBirthday: false,
+      shareAge: true,
+      shareAddress: false,
+    });
   });
 
   it('student deletion anonymizes, cancels upcoming, and keeps financial rows', async () => {

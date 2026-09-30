@@ -14,6 +14,7 @@ import { erasedAddress } from '@/lib/erased-address';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, ClassStatus, WaitlistStatus } from '@prisma/client';
+import type { VisibilityFlags } from '@/lib/student-visibility';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
@@ -145,7 +146,7 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       shareAge: p.shareAge,
       shareAddress: p.shareAddress,
       receiveComms: p.receiveComms,
-    })),
+    }) satisfies Record<keyof VisibilityFlags | 'receiveComms', boolean> & { teacher: string }),
     teachers: student.teacherStudents.map((t) => ({
       teacher: `${t.teacher.firstName} ${t.teacher.lastName}`,
       page: t.teacher.pageSlug,
