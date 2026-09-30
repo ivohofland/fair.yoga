@@ -51,6 +51,7 @@ export const BASE_URL = process.env.INTEGRATION_BASE_URL ?? 'http://localhost:30
  */
 export const PROJECTED_STUDENT_KEYS = [
   'address',
+  'age',
   'birthday',
   'claimedAt',
   'displayName',
