@@ -480,6 +480,49 @@ describe('updateStudentSchema.incomeTier', () => {
   });
 });
 
+describe('updateStudentSchema — contact fields (#714)', () => {
+  it('omits absent keys, so an empty body stays empty', () => {
+    const r = updateStudentSchema.safeParse({});
+    expect(r.success).toBe(true);
+    expect(Object.keys(r.success ? r.data : {})).toEqual([]);
+  });
+
+  it.each(['phone', 'address'] as const)('%s: trims, and stores "" / whitespace / null as null', (key) => {
+    expect(updateStudentSchema.parse({ [key]: '  x  ' })[key]).toBe('x');
+    expect(updateStudentSchema.parse({ [key]: '' })[key]).toBeNull();
+    expect(updateStudentSchema.parse({ [key]: '   ' })[key]).toBeNull();
+    expect(updateStudentSchema.parse({ [key]: null })[key]).toBeNull();
+  });
+
+  it('caps phone at 40 and address at 300', () => {
+    expect(updateStudentSchema.safeParse({ phone: '1'.repeat(40) }).success).toBe(true);
+    expect(updateStudentSchema.safeParse({ phone: '1'.repeat(41) }).success).toBe(false);
+    expect(updateStudentSchema.safeParse({ address: 'a'.repeat(300) }).success).toBe(true);
+    expect(updateStudentSchema.safeParse({ address: 'a'.repeat(301) }).success).toBe(false);
+  });
+
+  it('keeps newlines in an address', () => {
+    expect(updateStudentSchema.parse({ address: 'Straat 1\n1011 AB Amsterdam' }).address)
+      .toBe('Straat 1\n1011 AB Amsterdam');
+  });
+
+  it('birthday: date-only becomes UTC midnight; "" and null become null', () => {
+    expect(updateStudentSchema.parse({ birthday: '1990-01-01' }).birthday)
+      .toEqual(new Date('1990-01-01T00:00:00.000Z'));
+    expect(updateStudentSchema.parse({ birthday: '' }).birthday).toBeNull();
+    expect(updateStudentSchema.parse({ birthday: null }).birthday).toBeNull();
+  });
+
+  it.each(['not-a-date', '2023-02-30', '1990-01-01T00:00:00+02:00', '2999-01-01'])(
+    'birthday: refuses %j with an issue on the birthday path',
+    (birthday) => {
+      const r = updateStudentSchema.safeParse({ birthday });
+      expect(r.success).toBe(false);
+      expect(r.success ? [] : r.error.issues.map((i) => i.path.join('.'))).toEqual(['birthday']);
+    },
+  );
+});
+
 describe('updateTeacherSchema.pageSlug', () => {
   it('rejects reserved slugs on update, not just on signup', () => {
     expect(updateTeacherSchema.safeParse({ pageSlug: 'settings' }).success).toBe(false);
