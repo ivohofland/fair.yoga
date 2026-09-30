@@ -45,7 +45,7 @@ interface TeacherPrivacyCardProps {
   teacherId: string;
   teacherName: string;
   initial: TeacherPrivacyValues;
-  /** Presence only, never the values: drives the "Not added yet" hint. */
+  /** Presence only, never the values: drives the "Not added yet" caption. */
   filled: FilledFields;
   /**
    * True when this `TeacherStudent` link is archived on the teacher's side
@@ -57,19 +57,28 @@ interface TeacherPrivacyCardProps {
   archivedByTeacher?: boolean;
 }
 
-const SHARE_FIELDS: Array<{
-  key: keyof TeacherPrivacyValues;
-  label: string;
-  /** The student's field this toggle discloses, when it can be empty. */
-  field?: keyof FilledFields;
-}> = [
-  { key: 'shareFullName', label: 'Full last name' },
-  { key: 'shareEmail', label: 'Email address' },
-  { key: 'sharePhone', label: 'Phone number', field: 'phone' },
-  { key: 'shareBirthday', label: 'Birthday (day and month)', field: 'birthday' },
-  { key: 'shareAge', label: 'Age', field: 'birthday' },
-  { key: 'shareAddress', label: 'Address', field: 'address' },
-];
+type ShareKey = Exclude<keyof TeacherPrivacyValues, 'receiveComms'>;
+
+/** In render order; `satisfies` makes a new share flag without a toggle a build error. */
+const SHARE_FIELD_SPECS = {
+  shareFullName: { label: 'Full last name' },
+  shareEmail: { label: 'Email address' },
+  sharePhone: { label: 'Phone number', field: 'phone' },
+  shareBirthday: { label: 'Birthday (day and month)', field: 'birthday' },
+  shareAge: { label: 'Age', field: 'birthday' },
+  shareAddress: { label: 'Address', field: 'address' },
+} satisfies Record<
+  ShareKey,
+  {
+    label: string;
+    /** The student's field this toggle discloses, when it can be empty. */
+    field?: keyof FilledFields;
+  }
+>;
+
+const SHARE_FIELDS: Array<{ key: ShareKey; label: string; field?: keyof FilledFields }> = (
+  Object.keys(SHARE_FIELD_SPECS) as ShareKey[]
+).map((key) => ({ key, ...SHARE_FIELD_SPECS[key] }));
 
 export function TeacherPrivacyCard({
   studentId,
@@ -221,12 +230,15 @@ export function TeacherPrivacyCard({
                 Not added yet — <Link href="/account">add it in Settings</Link>
               </p>
             )}
-            {/* Day and month plus age, against today's date, give the year
-                away; either alone does not. Reads the unsaved state so the
-                warning is up before Save. */}
-            {field.key === 'shareAge' && values.shareBirthday && values.shareAge && (
+            {/* Day and month plus age give the year away at once; age alone
+                gives the birthday away on the day it goes up. Reads the
+                unsaved state so the warning is up before Save, and says
+                nothing while no birthday is stored, since nothing is shown. */}
+            {field.key === 'shareAge' && filled.birthday && values.shareAge && (
               <p className="type-caption text-brown-light pl-8">
-                Together, these show {teacherName} your full date of birth.
+                {values.shareBirthday
+                  ? `Together, these show ${teacherName} your full date of birth.`
+                  : `Over time, the day your age goes up shows ${teacherName} your birthday, and with it your full date of birth.`}
               </p>
             )}
           </div>

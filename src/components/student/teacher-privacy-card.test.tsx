@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
 import {
   TeacherPrivacyCard,
@@ -405,6 +405,18 @@ describe('TeacherPrivacyCard', () => {
       links.forEach((l) => expect(l).toHaveAttribute('href', '/account'));
     });
 
+    // Counts alone let two rows swap their captions unseen.
+    it('puts each caption under the toggle for its own empty field', () => {
+      renderCard({ filled: { phone: true, birthday: true, address: false } });
+      const row = (name: string) => {
+        const el = screen.getByRole('checkbox', { name }).closest('label')?.parentElement;
+        if (!el) throw new Error(`no row for ${name}`);
+        return within(el);
+      };
+      expect(row('Address').getByRole('link', { name: 'add it in Settings' })).toBeInTheDocument();
+      expect(row('Phone number').queryByRole('link', { name: 'add it in Settings' })).toBeNull();
+    });
+
     it('a filled field gets no caption, and a toggle over an empty one stays enabled', () => {
       renderCard({ filled: { phone: false, birthday: true, address: true } });
       expect(screen.getAllByRole('link', { name: 'add it in Settings' })).toHaveLength(1);
@@ -417,17 +429,40 @@ describe('TeacherPrivacyCard', () => {
     });
   });
 
-  // Day and month plus age, against today's date, give the year away. Each
-  // toggle alone hides it, so the warning follows the unsaved checkbox state:
-  // it has to be on screen before the student presses Save.
-  describe('full date of birth warning (#714)', () => {
+  // Day and month plus age give the year away at once; age alone gives the
+  // birthday away over time, on the day it goes up. The warnings follow the
+  // unsaved checkbox state, so they are on screen before Save.
+  describe('full date of birth warnings (#714)', () => {
     const WARNING = /together, these show jane teacher your full date of birth/i;
+    const AGE_ALONE = /the day your age goes up shows jane teacher your birthday/i;
 
-    it('stays hidden while only one of the two is on', () => {
+    it('warns nothing for the day and month alone', () => {
+      renderCard();
+      fireEvent.click(screen.getByLabelText('Birthday (day and month)'));
+      expect(screen.queryByText(WARNING)).toBeNull();
+      expect(screen.queryByText(AGE_ALONE)).toBeNull();
+    });
+
+    it('warns that age alone gives the birthday away over time', () => {
       renderCard();
       fireEvent.click(screen.getByLabelText('Age'));
+      expect(screen.getByText(AGE_ALONE)).toBeInTheDocument();
       expect(screen.queryByText(WARNING)).toBeNull();
-      fireEvent.click(screen.getByLabelText('Age'));
+    });
+
+    it('shows one warning, not both, when both are on', () => {
+      renderCard({ initial: { ...initial, shareBirthday: true, shareAge: true } });
+      expect(screen.queryByText(AGE_ALONE)).toBeNull();
+    });
+
+    // Nothing reaches the teacher while no birthday is stored; the row already
+    // says "Not added yet", and a disclosure warning beside it contradicts it.
+    it('warns nothing while no birthday is stored', () => {
+      renderCard({
+        filled: { ...ALL_FILLED, birthday: false },
+        initial: { ...initial, shareAge: true },
+      });
+      expect(screen.queryByText(AGE_ALONE)).toBeNull();
       fireEvent.click(screen.getByLabelText('Birthday (day and month)'));
       expect(screen.queryByText(WARNING)).toBeNull();
     });
