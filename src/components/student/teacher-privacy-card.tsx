@@ -221,6 +221,14 @@ export function TeacherPrivacyCard({
                 Not added yet — <Link href="/account">add it in Settings</Link>
               </p>
             )}
+            {/* Day and month plus age, against today's date, give the year
+                away; either alone does not. Reads the unsaved state so the
+                warning is up before Save. */}
+            {field.key === 'shareAge' && values.shareBirthday && values.shareAge && (
+              <p className="type-caption text-brown-light pl-8">
+                Together, these show {teacherName} your full date of birth.
+              </p>
+            )}
           </div>
         ))}
       </div>
