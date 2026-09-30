@@ -3475,7 +3475,7 @@ describe('unlinking silences the teacher and freezes the shares (#166 whole-bran
     await prisma.studentPrivacy.create({
       data: {
         studentId: c1StudentId, teacherId: c1TeacherId,
-        shareFullName: true, shareEmail: true, receiveComms: true,
+        shareFullName: true, shareEmail: true, shareAge: true, receiveComms: true,
       },
     });
 
@@ -3586,6 +3586,7 @@ describe('unlinking silences the teacher and freezes the shares (#166 whole-bran
     expect(privacy.shareEmail).toBe(false);
     expect(privacy.sharePhone).toBe(false);
     expect(privacy.shareBirthday).toBe(false);
+    expect(privacy.shareAge).toBe(false);
     expect(privacy.shareAddress).toBe(false);
   });
 });

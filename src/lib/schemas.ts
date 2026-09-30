@@ -336,8 +336,8 @@ export const respondToInvitationSchema = z.object({
 
 /**
  * Optional free text: trimmed, and "" stores null so a cleared input clears
- * the column. The transform sits inside `.optional()` so an absent key stays
- * absent — the route's empty-body check counts keys.
+ * the column. The transform must leave an absent key absent (never map
+ * `undefined` to a value), because the route's empty-body check counts keys.
  */
 function optionalText(max: number) {
   return z
@@ -389,6 +389,7 @@ export const updatePrivacySchema = z.object({
   shareEmail: z.boolean().optional(),
   sharePhone: z.boolean().optional(),
   shareBirthday: z.boolean().optional(),
+  shareAge: z.boolean().optional(),
   shareAddress: z.boolean().optional(),
   receiveComms: z.boolean().optional(),
 }).strict();

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updatePrivacySchema } from '@/lib/schemas';
@@ -14,6 +15,7 @@ export interface TeacherPrivacyValues {
   shareEmail: boolean;
   sharePhone: boolean;
   shareBirthday: boolean;
+  shareAge: boolean;
   shareAddress: boolean;
   receiveComms: boolean;
 }
@@ -31,11 +33,20 @@ const _formHasNoExtras: NoneOf<Exclude<keyof PrivacyBody, keyof UpdatePrivacyWir
 void _formCoversUpdate;
 void _formHasNoExtras;
 
+/** Which of the student's own fields hold a value. */
+export interface FilledFields {
+  phone: boolean;
+  birthday: boolean;
+  address: boolean;
+}
+
 interface TeacherPrivacyCardProps {
   studentId: string;
   teacherId: string;
   teacherName: string;
   initial: TeacherPrivacyValues;
+  /** Presence only, never the values: drives the "Not added yet" hint. */
+  filled: FilledFields;
   /**
    * True when this `TeacherStudent` link is archived on the teacher's side
    * (their CRM filing action, `isArchived` on the row). Archiving must not
@@ -46,12 +57,18 @@ interface TeacherPrivacyCardProps {
   archivedByTeacher?: boolean;
 }
 
-const SHARE_FIELDS: Array<{ key: keyof TeacherPrivacyValues; label: string }> = [
+const SHARE_FIELDS: Array<{
+  key: keyof TeacherPrivacyValues;
+  label: string;
+  /** The student's field this toggle discloses, when it can be empty. */
+  field?: keyof FilledFields;
+}> = [
   { key: 'shareFullName', label: 'Full last name' },
   { key: 'shareEmail', label: 'Email address' },
-  { key: 'sharePhone', label: 'Phone number' },
-  { key: 'shareBirthday', label: 'Birthday' },
-  { key: 'shareAddress', label: 'Address' },
+  { key: 'sharePhone', label: 'Phone number', field: 'phone' },
+  { key: 'shareBirthday', label: 'Birthday (day and month)', field: 'birthday' },
+  { key: 'shareAge', label: 'Age', field: 'birthday' },
+  { key: 'shareAddress', label: 'Address', field: 'address' },
 ];
 
 export function TeacherPrivacyCard({
@@ -59,6 +76,7 @@ export function TeacherPrivacyCard({
   teacherId,
   teacherName,
   initial,
+  filled,
   archivedByTeacher = false,
 }: TeacherPrivacyCardProps) {
   const router = useRouter();
@@ -188,15 +206,22 @@ export function TeacherPrivacyCard({
       </div>
       <div className="flex flex-col">
         {SHARE_FIELDS.map((field) => (
-          <label key={field.key} className="flex items-center gap-3 min-h-11">
-            <input
-              type="checkbox"
-              checked={values[field.key]}
-              onChange={(e) => toggle(field.key, e.target.checked)}
-              className="w-5 h-5 accent-teal"
-            />
-            <span className="type-body">{field.label}</span>
-          </label>
+          <div key={field.key}>
+            <label className="flex items-center gap-3 min-h-11">
+              <input
+                type="checkbox"
+                checked={values[field.key]}
+                onChange={(e) => toggle(field.key, e.target.checked)}
+                className="w-5 h-5 accent-teal"
+              />
+              <span className="type-body">{field.label}</span>
+            </label>
+            {field.field && !filled[field.field] && (
+              <p className="type-caption text-brown-light pl-8">
+                Not added yet — <Link href="/account">add it in Settings</Link>
+              </p>
+            )}
+          </div>
         ))}
       </div>
       <label className="flex items-center gap-3 min-h-11 mt-3 pt-3 border-t border-border">

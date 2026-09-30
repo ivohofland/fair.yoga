@@ -37,6 +37,7 @@ export async function updateStudentPrivacy(
         shareEmail: input.fields.shareEmail ?? false,
         sharePhone: input.fields.sharePhone ?? false,
         shareBirthday: input.fields.shareBirthday ?? false,
+        shareAge: input.fields.shareAge ?? false,
         shareAddress: input.fields.shareAddress ?? false,
         receiveComms: input.fields.receiveComms ?? true,
       },

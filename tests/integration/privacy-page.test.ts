@@ -185,3 +185,56 @@ describe('GET /account/privacy (page)', () => {
     }
   });
 });
+
+/**
+ * #714. The card captions a toggle whose field the student has not filled in.
+ * The page passes presence only; the caption text is what reaches the HTML.
+ */
+describe('GET /account/privacy (page) — empty contact fields', () => {
+  let studentId: string;
+  let accountId: string;
+  let teacherId: string;
+  let token: string;
+
+  beforeAll(async () => {
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'HintVerify', lastName: 'Student',
+        email: `hint-verify-${suffix}@test.local`,
+        claimedAt: new Date(),
+        birthday: new Date('1990-05-17T00:00:00Z'),
+        account: { create: { email: `hint-verify-${suffix}@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    accountId = student.accountId as string;
+    token = await seedSession(prisma, accountId);
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'HintOnly', lastName: 'Teacher',
+        email: `hint-teacher-${suffix}@test.local`,
+        account: { create: { email: `hint-teacher-${suffix}@test.local` } },
+        bio: 'empty-field hint fixture',
+        pageSlug: `hint-teacher-${suffix}`,
+      },
+    });
+    teacherId = teacher.id;
+    await prisma.teacherStudent.create({ data: { teacherId, studentId } });
+  });
+
+  afterAll(async () => {
+    if (studentId) await prisma.teacherStudent.deleteMany({ where: { studentId } });
+    if (teacherId) await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    if (accountId) await prisma.session.deleteMany({ where: { accountId } });
+    if (studentId) await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.account.deleteMany({ where: { email: { contains: `-${suffix}@test.local` } } });
+  });
+
+  it('captions the phone and address toggles, and not the birthday and age ones', async () => {
+    const res = await fetch(`${BASE_URL}/account/privacy`, { headers: cookie(token) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html.split('Not added yet').length - 1).toBe(2);
+  });
+});
