@@ -18,7 +18,9 @@ description: >-
 inputs:
   node-version:
     description: >-
-      Node major to install. Corepack ships with Node from 14.19.0 up to (but
+      Node major to install. The range this repo accepts is
+      `devEngines.runtime` in package.json; pnpm refuses installs and runs
+      outside it. Corepack ships with Node from 14.19.0 up to (but
       not including) 25.0.0; above that range this action needs an explicit
       `npm i -g corepack` first.
     required: false

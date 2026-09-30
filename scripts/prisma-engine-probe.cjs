@@ -16,8 +16,11 @@ function fail(what, err) {
   process.exit(1);
 }
 
-// A connect that neither fails nor succeeds must not hang the CI job.
-setTimeout(() => fail('timed out waiting for connect'), 30_000).unref();
+// A connect that neither fails nor succeeds must not hang the CI job. The
+// timer is referenced on purpose: if the connect promise never settles and
+// nothing else holds the event loop, Node would drain it and exit 0 with no
+// output; the live timer turns that into this failure.
+setTimeout(() => fail('timed out waiting for connect'), 30_000);
 
 let PrismaClient;
 try {
