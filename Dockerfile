@@ -10,7 +10,7 @@
 # ecosystem (dependabot.yml) keeps this digest current; docs/supply-chain.md
 # has the reasoning and the command that re-derives it. One base stage, not
 # one FROM per downstream stage, so there is exactly one line to bump.
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS base
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS base
 
 # ---------------------------------------------------------------------------
 FROM base AS deps
