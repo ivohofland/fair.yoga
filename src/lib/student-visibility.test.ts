@@ -249,6 +249,13 @@ describe('projectStudentForTeacher — birthday and age (#714)', () => {
     expect(r.age).toBe(age);
   });
 
+  // A `now` whose answer differs from the wall clock's for years to come, so
+  // a projection that ignored its argument reads 36, not 35.
+  it('computes the age on the `now` it is handed', () => {
+    const r = projectStudentForTeacher(flags(false, true), TEACHER, new Date('2026-01-10T12:00:00.000Z'));
+    expect(r.age).toBe(35);
+  });
+
   it('carries the stored year under no key of the teacher shape, with everything shared', () => {
     const r = projectStudentForTeacher(flags(true, true), TEACHER, NOW);
     expect(JSON.stringify(r)).not.toContain('1990');
