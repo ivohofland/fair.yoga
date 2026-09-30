@@ -66,9 +66,15 @@ export function ContactDetailsForm({
 
     // A half-typed date reads as '' in `value`, which would silently clear the
     // stored birthday; `badInput` is the only place the browser says so.
-    const birthdayInput = e.currentTarget.elements.namedItem('birthday');
+    const form = e.currentTarget;
+    const birthdayInput = form.elements.namedItem('birthday');
     if (birthdayInput instanceof HTMLInputElement && birthdayInput.validity.badInput) {
+      setError('');
+      setSaved(false);
       setFieldErrors({ birthday: 'Enter a full date, or clear the field' });
+      // `noValidate` withholds the browser's own move to the first invalid
+      // field, so a keyboard user who pressed Enter is put there here.
+      birthdayInput.focus();
       return;
     }
 
@@ -117,6 +123,8 @@ export function ContactDetailsForm({
         const field = split === -1 ? '' : message.slice(0, split);
         if (isContactField(field)) {
           setFieldErrors({ [field]: message.slice(split + 2) });
+          const invalid = form.elements.namedItem(field);
+          if (invalid instanceof HTMLElement) invalid.focus();
         } else {
           setError(message);
         }

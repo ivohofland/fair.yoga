@@ -168,7 +168,9 @@ test.describe('Account — GDPR export and deletion', () => {
       await expect(teacherPage.locator('span.type-label', { hasText: /^Address$/ })).toHaveCount(0);
 
       // Clearing the phone leaves the teacher nothing to see.
+      const accountHydrated = hydrationSignal(page);
       await page.goto('/account');
+      await accountHydrated;
       await page.getByLabel('Phone').fill('');
       await page.getByRole('button', { name: 'Save contact details' }).click();
       await expect(page.getByText('Saved')).toBeVisible();
