@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { OnboardingStep } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
+import { parseBirthday } from '@/lib/birthday';
 import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations } from '@/lib/class-economics';
 
@@ -333,12 +334,44 @@ export const respondToInvitationSchema = z.object({
   response: z.enum(['accept', 'decline']),
 }).strict();
 
+/**
+ * Optional free text: trimmed, and "" stores null so a cleared input clears
+ * the column. The transform sits inside `.optional()` so an absent key stays
+ * absent — the route's empty-body check counts keys.
+ */
+function optionalText(max: number) {
+  return z
+    .string()
+    .trim()
+    .max(max)
+    .transform((v) => (v === '' ? null : v))
+    .nullable()
+    .optional();
+}
+
+const birthdayField = z
+  .string()
+  .transform((s, ctx) => {
+    if (s === '') return null;
+    const parsed = parseBirthday(s);
+    if (parsed.ok) return parsed.date;
+    ctx.addIssue({
+      code: 'custom',
+      message: parsed.reason === 'range'
+        ? 'Birthday must be between 1900 and today'
+        : 'Birthday must be a real date (YYYY-MM-DD)',
+    });
+    return z.NEVER;
+  })
+  .nullable()
+  .optional();
+
 export const updateStudentSchema = z.object({
   firstName: z.string().trim().min(1).optional(),
   lastName: z.string().trim().min(1).optional(),
-  phone: z.string().nullable().optional(),
-  birthday: z.string().nullable().optional(), // ISO date string
-  address: z.string().nullable().optional(),
+  phone: optionalText(40),
+  birthday: birthdayField,
+  address: optionalText(300),
   // `.refine` with a type predicate narrows the inferred type to IncomeTier
   // (verified by compiling both directions), so the wire type carries the
   // same constraint as the column and the engine. A literal union would

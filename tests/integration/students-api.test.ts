@@ -2055,6 +2055,68 @@ describe('PUT /api/students/[id]', () => {
     expect(await firstNameOf(alice.id)).toBe(before);
   });
 
+  describe('contact fields (#714)', () => {
+    async function contactOf(id: string) {
+      return prisma.student.findUniqueOrThrow({
+        where: { id },
+        select: { phone: true, birthday: true, address: true },
+      });
+    }
+
+    it.each([
+      ['phone', '+31 6 1234 5678', '+31 6 0000 0000'],
+      ['address', 'Straat 1\n1011 AB Amsterdam', 'Plein 2'],
+    ] as const)('%s: sets, changes, clears with null and with ""', async (key, first, second) => {
+      expect((await put(alice.id, { [key]: first }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id))[key]).toBe(first);
+      expect((await put(alice.id, { [key]: second }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id))[key]).toBe(second);
+      expect((await put(alice.id, { [key]: null }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id))[key]).toBeNull();
+      await put(alice.id, { [key]: first }, alice.token);
+      expect((await put(alice.id, { [key]: '' }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id))[key]).toBeNull();
+    });
+
+    it('birthday: a date-only string round-trips without shifting a day', async () => {
+      expect((await put(alice.id, { birthday: '1990-01-01' }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id)).birthday?.toISOString()).toBe('1990-01-01T00:00:00.000Z');
+      expect((await put(alice.id, { birthday: '1990-12-31' }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id)).birthday?.toISOString()).toBe('1990-12-31T00:00:00.000Z');
+    });
+
+    it('birthday: clears with null and with ""', async () => {
+      await put(alice.id, { birthday: '1990-01-01' }, alice.token);
+      expect((await put(alice.id, { birthday: null }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id)).birthday).toBeNull();
+      await put(alice.id, { birthday: '1990-01-01' }, alice.token);
+      expect((await put(alice.id, { birthday: '' }, alice.token)).status).toBe(200);
+      expect((await contactOf(alice.id)).birthday).toBeNull();
+    });
+
+    it.each([
+      { birthday: 'not-a-date' },
+      { birthday: '2023-02-30' },
+      { birthday: '2999-01-01' },
+      { birthday: '1990-01-01T00:00:00+02:00' },
+      { phone: '1'.repeat(41) },
+      { address: 'a'.repeat(301) },
+    ])('refuses %j with a 400 naming the field, and writes nothing', async (body) => {
+      await put(alice.id, { phone: 'keep', birthday: '1990-01-01', address: 'keep' }, alice.token);
+      const before = await contactOf(alice.id);
+      const res = await put(alice.id, body, alice.token);
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { error?: { message?: string } | string };
+      const message = typeof json.error === 'string' ? json.error : json.error?.message;
+      expect(message).toMatch(new RegExp(Object.keys(body)[0]!));
+      expect(await contactOf(alice.id)).toEqual(before);
+    });
+
+    it('still refuses an empty body', async () => {
+      expect((await put(alice.id, {}, alice.token)).status).toBe(400);
+    });
+  });
+
   /**
    * An erasure holds the `Student` row from right after its `setLockTimeout`
    * to its commit, so a self-edit sent meanwhile authenticates against a live
