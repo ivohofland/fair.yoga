@@ -185,6 +185,95 @@ describe('ContactDetailsForm', () => {
     expect(screen.getByText('Enter a full date, or clear the field')).toBeInTheDocument();
   });
 
+  it('a half-typed birthday clears a Saved notice from the save before', async () => {
+    stubFetch();
+    renderForm();
+    clickSave();
+    await waitFor(() => expect(screen.getByText('Saved')).toBeInTheDocument());
+
+    // A half-typed date fires no onChange, so nothing but the submit clears it.
+    Object.defineProperty(screen.getByLabelText('Birthday'), 'validity', {
+      value: { badInput: true },
+    });
+    clickSave();
+    expect(screen.queryByText('Saved')).toBeNull();
+  });
+
+  it('editing a field clears the form-level banner', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    renderForm();
+    clickSave();
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Network error'));
+    logged.mockRestore();
+    fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '+31 6 2' } });
+    expect(screen.queryByText('Network error. Try again.')).toBeNull();
+  });
+
+  it('a new save drops field errors from the one before, edited or not', async () => {
+    stubFetch(false, { error: { message: 'phone: Phone is not valid' } });
+    renderForm();
+    clickSave();
+    await waitFor(() => expect(screen.getByText('Phone is not valid')).toBeInTheDocument());
+
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    clickSave();
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Network error'));
+    logged.mockRestore();
+    expect(screen.queryByText('Phone is not valid')).toBeNull();
+  });
+
+  it('shows a message that only mentions a field later on as a banner, whole', async () => {
+    stubFetch(false, { error: { message: 'Something went wrong, phone: X' } });
+    renderForm();
+    clickSave();
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong, phone: X');
+    });
+    expect(screen.getByLabelText('Phone')).not.toHaveAttribute('aria-invalid');
+  });
+
+  describe('an edit made while the save is in flight', () => {
+    function deferFetch() {
+      let release!: (value: unknown) => void;
+      fetchMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
+      vi.stubGlobal('fetch', fetchMock);
+      return (value: unknown) => release(value);
+    }
+
+    it('survives the success, which then claims no Saved', async () => {
+      const release = deferFetch();
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '222' } });
+      clickSave();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '2223' } });
+      release({ ok: true, json: async () => ({}) });
+      await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+      expect(screen.getByLabelText('Phone')).toHaveValue('2223');
+      expect(screen.queryByText('Saved')).toBeNull();
+    });
+
+    it('is not marked with the error for the value it replaced', async () => {
+      const release = deferFetch();
+      renderForm();
+      clickSave();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '+31 6 3' } });
+      release({
+        ok: false,
+        json: async () => ({ error: { message: 'phone: Phone A, address: Address B' } }),
+      });
+      await waitFor(() => expect(screen.getByText('Address B')).toBeInTheDocument());
+      expect(screen.queryByText('Phone A')).toBeNull();
+      expect(screen.getByLabelText('Address')).toHaveFocus();
+    });
+  });
+
   it('points the Birthday field at its hint', () => {
     renderForm();
     const birthday = screen.getByLabelText('Birthday');

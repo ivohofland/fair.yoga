@@ -1,11 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { BIRTHDAY_MIN } from '@/lib/birthday';
+import {
+  ADDRESS_MAX,
+  CONTACT_FIELDS,
+  PHONE_MAX,
+  isContactField,
+  parseFieldErrors,
+  type ContactField,
+  type FieldErrors,
+} from '@/lib/contact-details';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -21,38 +30,11 @@ interface ContactDetailsFormProps {
 
 type UpdateStudentWire = z.input<typeof updateStudentSchema>;
 
-interface ContactBody {
-  phone: string;
-  birthday: string;
-  address: string;
-}
-
-type FieldErrors = Partial<Record<keyof ContactBody, string>>;
+type ContactBody = Record<ContactField, string>;
 
 /** Reverse pin only, as `name-form.tsx`: a key the `.strict()` schema dropped would 400. */
 const _formHasNoExtras: NoneOf<Exclude<keyof ContactBody, keyof UpdateStudentWire>> = true;
 void _formHasNoExtras;
-
-function isContactField(key: string): key is keyof ContactBody {
-  return key === 'phone' || key === 'birthday' || key === 'address';
-}
-
-/**
- * The 400 body joins every issue as `field: message, field: message`. Splits at
- * each recognised field prefix, in the order the server listed them; text with
- * no such prefix yields nothing, so the caller shows it as a banner.
- */
-function parseFieldErrors(message: string): FieldErrors {
-  const parts = message.split(/(?:^|, )(phone|birthday|address): /);
-  const found: FieldErrors = {};
-  if (parts[0] !== '') return found;
-  for (let i = 1; i + 1 < parts.length; i += 2) {
-    const field = parts[i] ?? '';
-    const text = parts[i + 1];
-    if (isContactField(field) && text !== undefined) found[field] = text;
-  }
-  return found;
-}
 
 export function ContactDetailsForm({
   studentId,
@@ -69,10 +51,15 @@ export function ContactDetailsForm({
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
-  // The server bound on a birthday is UTC too.
+  // UTC, as `parseBirthday` bounds it.
   const todayUtcIso = new Date().toISOString().slice(0, 10);
 
-  function touch(key: keyof ContactBody) {
+  // Fields changed since the request in flight was sent: its answer is about
+  // values they no longer hold.
+  const editedInFlight = useRef(new Set<ContactField>());
+
+  function touch(key: ContactField) {
+    editedInFlight.current.add(key);
     setFieldErrors((prev) => ({ ...prev, [key]: undefined }));
     setError('');
     setSaved(false);
@@ -101,6 +88,7 @@ export function ContactDetailsForm({
       address: address.trim(),
     };
 
+    editedInFlight.current.clear();
     setSaving(true);
     setSaved(false);
     setError('');
@@ -122,11 +110,16 @@ export function ContactDetailsForm({
         return;
       }
 
+      const edited = editedInFlight.current;
       if (res.ok) {
-        setPhone(payload.phone);
-        setBirthday(payload.birthday);
-        setAddress(payload.address);
-        setSaved(true);
+        // Writing the trimmed payload back over an edit would discard it, and
+        // "Saved" would then vouch for text the server never received.
+        if (edited.size === 0) {
+          setPhone(payload.phone);
+          setBirthday(payload.birthday);
+          setAddress(payload.address);
+          setSaved(true);
+        }
         // The save already succeeded; a refresh failure is a stale-page
         // problem, not a failed save, so it logs instead of raising an error.
         try {
@@ -137,13 +130,17 @@ export function ContactDetailsForm({
       } else {
         const message = await readErrorMessage(res, 'Could not save. Try again.');
         const found = parseFieldErrors(message);
-        const first = Object.keys(found).find(isContactField);
-        if (first) {
-          setFieldErrors(found);
-          const invalid = form.elements.namedItem(first);
-          if (invalid instanceof HTMLElement) invalid.focus();
-        } else {
+        if (Object.keys(found).length === 0) {
           setError(message);
+        } else {
+          const current: FieldErrors = {};
+          for (const key of CONTACT_FIELDS) {
+            if (!edited.has(key) && found[key] !== undefined) current[key] = found[key];
+          }
+          setFieldErrors(current);
+          const first = Object.keys(found).filter(isContactField).find((k) => !edited.has(k));
+          const invalid = first ? form.elements.namedItem(first) : null;
+          if (invalid instanceof HTMLElement) invalid.focus();
         }
       }
     } finally {
@@ -159,7 +156,7 @@ export function ContactDetailsForm({
         name="phone"
         type="tel"
         autoComplete="tel"
-        maxLength={40}
+        maxLength={PHONE_MAX}
         value={phone}
         error={fieldErrors.phone}
         onChange={(e) => {
@@ -187,7 +184,7 @@ export function ContactDetailsForm({
         id="address"
         name="address"
         autoComplete="street-address"
-        maxLength={300}
+        maxLength={ADDRESS_MAX}
         rows={3}
         value={address}
         error={fieldErrors.address}

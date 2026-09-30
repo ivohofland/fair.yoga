@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { OnboardingStep } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
+import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
 import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations } from '@/lib/class-economics';
 
@@ -369,9 +370,9 @@ const birthdayField = z
 export const updateStudentSchema = z.object({
   firstName: z.string().trim().min(1).optional(),
   lastName: z.string().trim().min(1).optional(),
-  phone: optionalText('Phone', 40),
+  phone: optionalText('Phone', PHONE_MAX),
   birthday: birthdayField,
-  address: optionalText('Address', 300),
+  address: optionalText('Address', ADDRESS_MAX),
   // `.refine` with a type predicate narrows the inferred type to IncomeTier
   // (verified by compiling both directions), so the wire type carries the
   // same constraint as the column and the engine. A literal union would
