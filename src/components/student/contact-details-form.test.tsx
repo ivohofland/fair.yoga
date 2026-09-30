@@ -102,6 +102,7 @@ describe('ContactDetailsForm', () => {
       expect(screen.getByText('Birthday must be a real date (YYYY-MM-DD)')).toBeInTheDocument();
     });
     expect(screen.getByLabelText('Birthday')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Birthday')).toHaveFocus();
     expect(screen.getByLabelText('Phone')).not.toHaveAttribute('aria-invalid');
     // The field's own message is the only alert; no form-level banner.
     expect(screen.getAllByRole('alert')).toHaveLength(1);
@@ -144,6 +145,32 @@ describe('ContactDetailsForm', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText('Enter a full date, or clear the field')).toBeInTheDocument();
     expect(birthday).toHaveAttribute('aria-invalid', 'true');
+    expect(birthday).toHaveFocus();
+  });
+
+  it('focuses the field a server refusal names, whichever it is', async () => {
+    stubFetch(false, { error: { message: 'address: Address is too long' } });
+    renderForm();
+    clickSave();
+    await waitFor(() => expect(screen.getByText('Address is too long')).toBeInTheDocument());
+    expect(screen.getByLabelText('Address')).toHaveFocus();
+  });
+
+  it('a half-typed birthday clears a stale banner and the Saved notice', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderForm();
+    clickSave();
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Network error'));
+    logged.mockRestore();
+
+    Object.defineProperty(screen.getByLabelText('Birthday'), 'validity', {
+      value: { badInput: true },
+    });
+    clickSave();
+    expect(screen.queryByText('Network error. Try again.')).toBeNull();
+    expect(screen.getByText('Enter a full date, or clear the field')).toBeInTheDocument();
   });
 
   it('points the Birthday field at its hint', () => {
