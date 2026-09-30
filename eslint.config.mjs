@@ -146,8 +146,7 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // The engine probe is piped to `node -`, which evaluates stdin as CommonJS,
-  // so it must `require` (and resolves `@prisma/client` from `/app`).
+  // The engine probe is CommonJS by construction (`.cjs`) and uses `require`.
   {
     files: ['scripts/prisma-engine-probe.cjs'],
     rules: { '@typescript-eslint/no-require-imports': 'off' },

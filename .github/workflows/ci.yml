@@ -476,14 +476,10 @@ jobs:
   # executes a stage nothing depends on — migrate isn't in runner's COPY
   # --from graph, so it silently goes unbuilt without its own step.
   # Nothing is pushed. The images are started only far enough to prove that
-  # Prisma can load its engine in each: a base-image bump that leaves libssl
-  # or the engine unloadable builds green and fails at first query.
-  # Deliberately no database — each check aims at an address nothing can
-  # answer and passes only on P1001 (can't reach it), the error that only an
-  # engine which loaded can produce. Query behaviour is the other jobs' work.
-  # Every container runs with --network none: given a network, Prisma fetches
-  # a replacement for a missing or unusable engine from binaries.prisma.sh and
-  # then reports P1001 anyway, so the check would say nothing.
+  # Prisma can load its engine in each; each check aims at an address nothing
+  # can answer and passes only on P1001. Every container runs with
+  # --network none, for a reason docs/supply-chain.md keeps (Prisma's engine
+  # in the images). Query behaviour is the other jobs' work.
   docker-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -497,19 +493,26 @@ jobs:
         run: docker build --target migrate -t fairyoga-migrate .
 
       # The script goes in over stdin because the runner image has no
-      # scripts/ directory. It exits 0 only on P1001.
-      - name: Prisma engine loads in the runner image
-        run: docker run --rm --network none -i --entrypoint node fairyoga - < scripts/prisma-engine-probe.cjs
+      # scripts/ directory. The output is captured and must carry the probe's
+      # success line: a probe that arrives empty or truncated makes `node -`
+      # exit 0 with nothing to say, which the exit code alone would pass.
+      # `|| true` keeps the assertion, not docker's exit status, as the verdict;
+      # a docker failure prints no success line and so still fails the step.
+      - name: Prisma query engine loads in the runner image
+        run: |
+          OUT="$(docker run --rm --network none -i --entrypoint node fairyoga - < scripts/prisma-engine-probe.cjs 2>&1)" || true
+          echo "$OUT"
+          grep -q 'engine loaded; connect failed with P1001 as expected' <<< "$OUT" || { echo "::error::engine probe did not report its success line - the query engine did not load"; exit 1; }
 
       # `migrate status` exits 1 on P1001 too, so the exit code cannot tell
       # the engine loading from the engine failing. The output is captured
       # with an explicit `|| true` and asserted on instead; a docker failure
       # (no image, no daemon) prints no P1001 and so still fails the step.
-      - name: Prisma engine loads in the migration image
+      - name: Prisma schema engine loads in the migration image
         run: |
           OUT="$(docker run --rm --network none -e DATABASE_URL='postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3' fairyoga-migrate pnpm exec prisma migrate status 2>&1)" || true
           echo "$OUT"
-          grep -q 'P1001' <<< "$OUT" || { echo "::error::migrate status did not report P1001 - the engine did not load"; exit 1; }
+          grep -q 'P1001' <<< "$OUT" || { echo "::error::migrate status did not report P1001 - the schema engine did not load"; exit 1; }
 
   # This job exists so the branch ruleset's required status check named
   # `test` keeps reporting after the split: ruleset 19724469 requires the

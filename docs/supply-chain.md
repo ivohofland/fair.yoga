@@ -799,19 +799,47 @@ dependency tree.
 
 **Going forward:** with a digest present, Dependabot's docker ecosystem
 proposes the tag and its digest together on each check (confirmed against
-current dependabot-core behaviour, 2026-09-15). Its `ignore` rule for `node` ignores
-`version-update:semver-major`, so digest and same-major updates still arrive
-monthly while a runtime major never does: odd majors are never LTS and were
-proposed anyway (#716), and Corepack is not bundled from Node 25 on. A
-runtime major moves by a deliberate issue. The npm entry ignores majors of
-`@types/node` for the same reason, so the types move in the same PR as the
-image.
+current dependabot-core behaviour, 2026-09-15). Its `ignore` rule for `node`
+ignores `version-update:semver-major`, so digest and same-major updates still
+arrive monthly while a runtime major never does. Odd majors are never LTS, and
+Corepack is not bundled from Node 25 on. A runtime major moves by a
+deliberate issue. The npm entry ignores majors of `@types/node` for the same
+reason, so the types move in the same PR as the image.
 
-The local Node range lives in `package.json`'s `devEngines.runtime` with
-`onFail: "error"`, not in `engines`: pnpm (the pinned major) does not check
-the root project's `engines.node`, even with `engineStrict`, while
+**What that ignore does and does not match** (source read 2026-09-30, in
+dependabot-core): `common/lib/dependabot/config/ignore_condition.rb`
+(`versions_by_type`) applies update types through the ecosystem's version
+class, and `docker/lib/dependabot/docker/version.rb` reduces a tag via
+`Tag#numeric_version` (suffix stripped). `24-alpine` therefore has the
+segments `[24]`, and only a major bump is ignored; a digest update or a
+same-major tag update is not matched. Re-derive by reading those two files at
+the dependabot-core revision GitHub currently runs.
+
+**Local Node range.** It lives in `package.json`'s `devEngines.runtime` with
+`onFail: "error"`, not in `engines`: the `packageManager` pin (pnpm 12) does
+not check the root project's `engines.node`, even with `engineStrict`, while
 `devEngines` refuses both `pnpm install` and `pnpm run` on a Node outside the
-range (measured 2026-09-30).
+range (`ERR_PNPM_BAD_RUNTIME_VERSION`); `onFail: "warn"` lets both through.
+Measured 2026-09-30 on Node 22.22.2 against `^24.15.0`. Re-derive: put a
+Node outside the range first on `PATH`, run `pnpm install --frozen-lockfile`
+and check the exit code.
+
+### Prisma's engine in the images
+
+`docker-build` in `.github/workflows/ci.yml` starts both images far enough to
+prove Prisma's engine loads, and runs every container with `--network none`.
+Reason, measured 2026-09-30 on `node:24-alpine`, arm64, Prisma 6.19.3: given
+network access, when the image's engine is missing, corrupt or unloadable,
+Prisma downloads a replacement from `binaries.prisma.sh` and then reports
+P1001 anyway, so a P1001 check passes without the image's engine ever having
+loaded. With `--network none` the same images fail (`EAI_AGAIN` on
+`binaries.prisma.sh`, exit 1). With libssl removed Prisma falls back to the
+`openssl-1.1.x` target and tries to download it, which also fails offline.
+Re-derive: build a scratch Dockerfile whose `migrate` stage `RUN rm`s the
+engine (the schema engine under
+`/app/node_modules/.pnpm/@prisma+engines@*/node_modules/@prisma/engines/schema-engine-*`
+plus `rm -rf /root/.cache/prisma`), then run the CI migrate step with and
+without `--network none`.
 
 ### The database image
 
@@ -829,7 +857,7 @@ database), and four GitHub Actions `services:` blocks —
 
 **Two of the six are covered, the same way as the base image.**
 `docker-compose.yml` and `docker-compose.prod.yml` are digest-pinned
-(`sha256:cf78e7…fc20685`, resolved 2026-09-15 the same way as `node`'s,
+(`sha256:cf78e7…fc20685`, resolved 2026-09-15 by the same registry command as `node`'s,
 against `library/postgres`) and tracked by a new `docker-compose`
 Dependabot ecosystem entry — a genuinely **separate** ecosystem from
 `docker`, confirmed against GitHub's ecosystem support table: `docker`
