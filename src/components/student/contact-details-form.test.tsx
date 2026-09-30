@@ -109,6 +109,18 @@ describe('ContactDetailsForm', () => {
     expect(screen.getByRole('alert').tagName).toBe('SPAN');
   });
 
+  it('marks every field a multi-issue 400 names, and leaves the banner empty', async () => {
+    stubFetch(false, { error: { message: 'phone: Phone A, address: Address B' } });
+    renderForm();
+    clickSave();
+    await waitFor(() => expect(screen.getByText('Phone A')).toBeInTheDocument());
+    expect(screen.getByText('Address B')).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Address')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Phone')).toHaveFocus();
+    expect(screen.getAllByRole('alert').every((el) => el.tagName === 'SPAN')).toBe(true);
+  });
+
   it('renders a 400 without a field prefix in the form-level banner', async () => {
     stubFetch(false, { error: { message: 'Could not save right now' } });
     renderForm();

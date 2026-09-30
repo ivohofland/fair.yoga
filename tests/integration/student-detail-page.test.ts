@@ -327,6 +327,7 @@ describe('GET /students/[id] (student detail page)', () => {
           shareEmail: true,
           sharePhone: true,
           shareBirthday: true,
+          shareAge: true,
           shareAddress: true,
         },
       });
@@ -336,6 +337,7 @@ describe('GET /students/[id] (student detail page)', () => {
       const html = await res.text();
 
       expect(html).toContain('Bram Bakker');
+      expect(html).toContain('>Age</span>');
       expect(html).toContain(email);
       expect(html).toContain('+31698765432');
       expect(html).toContain('23 Nov');

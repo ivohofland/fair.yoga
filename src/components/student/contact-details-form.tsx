@@ -37,6 +37,22 @@ function isContactField(key: string): key is keyof ContactBody {
   return key === 'phone' || key === 'birthday' || key === 'address';
 }
 
+/**
+ * The 400 body joins every issue as `field: message, field: message`. Splits at
+ * each recognised field prefix, in the order the server listed them; text with
+ * no such prefix yields nothing, so the caller shows it as a banner.
+ */
+function parseFieldErrors(message: string): FieldErrors {
+  const parts = message.split(/(?:^|, )(phone|birthday|address): /);
+  const found: FieldErrors = {};
+  if (parts[0] !== '') return found;
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    const field = parts[i];
+    if (isContactField(field)) found[field] = parts[i + 1];
+  }
+  return found;
+}
+
 export function ContactDetailsForm({
   studentId,
   initialPhone,
@@ -119,11 +135,11 @@ export function ContactDetailsForm({
         }
       } else {
         const message = await readErrorMessage(res, 'Could not save. Try again.');
-        const split = message.indexOf(': ');
-        const field = split === -1 ? '' : message.slice(0, split);
-        if (isContactField(field)) {
-          setFieldErrors({ [field]: message.slice(split + 2) });
-          const invalid = form.elements.namedItem(field);
+        const found = parseFieldErrors(message);
+        const first = Object.keys(found).find(isContactField);
+        if (first) {
+          setFieldErrors(found);
+          const invalid = form.elements.namedItem(first);
           if (invalid instanceof HTMLElement) invalid.focus();
         } else {
           setError(message);
@@ -142,6 +158,7 @@ export function ContactDetailsForm({
         name="phone"
         type="tel"
         autoComplete="tel"
+        maxLength={40}
         value={phone}
         error={fieldErrors.phone}
         onChange={(e) => {
@@ -169,6 +186,7 @@ export function ContactDetailsForm({
         id="address"
         name="address"
         autoComplete="street-address"
+        maxLength={300}
         rows={3}
         value={address}
         error={fieldErrors.address}

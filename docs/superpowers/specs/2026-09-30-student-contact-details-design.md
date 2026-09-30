@@ -68,8 +68,10 @@ Taken at the brainstorming gate, 2026-09-30:
   The ability-estimate use sits close to what *Key Constraints* excludes (no
   experience levels); what distinguishes it is that the student opts in, per
   teacher, to a field separate from the birthday itself.
-- **The year never reaches a teacher**, on any path. Enforced by the
-  projection's type, not a formatter.
+- **The stored year never reaches a teacher**, on any path. Enforced by the
+  projection's type, not a formatter. A student who shares both the birthday
+  (day and month) and the age lets that teacher work out the year, so the two
+  disclosures together are the student's choice to make, not a leak.
 - **Separate forms** on `/account`: `NameForm` unchanged, a new
   `ContactDetailsForm` below it with its own save. The name is required and
   these are optional; one form would let a blank surname block saving a phone.

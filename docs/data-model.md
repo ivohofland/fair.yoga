@@ -67,7 +67,7 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | claimed_at | datetime, nullable | Set together with `account_id`, never independently — see `Student_claim_link_check` below. |
 | **Optional fields** | | |
 | phone | string, nullable | |
-| birthday | date, nullable | Year collected for the age; never shown to a teacher — the projection returns day and month and, separately, the age |
+| birthday | date, nullable | Year collected for the age; never shown to a teacher — the projection returns day and month and, separately, the age; a teacher shared both can work the year out |
 | address | string, nullable | e.g. for teacher sending holiday cards |
 | **Preferences** | | |
 | reminder_pref | enum: eve, morning, 1h, off | Student controls their own reminders |
@@ -145,15 +145,15 @@ grep -rnE "studentPrivacy: *\{ *(create|upsert|update|connectOrCreate)" \
 
 No server-side predicate may filter
 (`where`) or order (`orderBy`) on a privacy-gated `Student` column —
-`lastName`, `email`, `phone`, `birthday`, or `address`, one per
-`VisibilityFlags` member in that file — because a match, or a sort position,
+each column a `VisibilityFlags` member (that file) gates; `shareBirthday`
+and `shareAge` both gate `birthday` — because a match, or a sort position,
 against a column the projection redacts is an enumeration oracle regardless
 of what the response body shows: a teacher can learn a withheld value from a
 hit/miss, a count, or its rank among other rows even when it is never
 rendered. Re-derive this column list from `VisibilityFlags` if it ever
 changes: `_visibilityFlagsAreExhaustive` (same file) only pins that every
-`StudentPrivacy` column is classified as a flag or excluded, not that this
-sentence's five-item list stays in sync with it. `firstName` is exempt: `formatStudentName`
+`StudentPrivacy` column is classified as a flag or excluded, not that the
+columns this sentence names stay in sync with it. `firstName` is exempt: `formatStudentName`
 (`src/lib/format.ts`) always discloses it in full via `displayName`
 regardless of privacy settings, which is also why the list route's own
 `orderBy: { firstName: 'asc' }` is safe. Found and fixed in #176, which
