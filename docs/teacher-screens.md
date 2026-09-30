@@ -252,7 +252,7 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 
 ### 8.2 — Student Detail
 - Student name (first + last initial)
-- Visible info based on student's privacy settings (email, phone, birthday, address — if shared)
+- Visible info based on student's privacy settings (email, phone, birthday, age, address — if shared)
 - Attendance history: list of classes attended, no-shows, cancellations
 - Total classes, first visit, last visit
 - Payment history with this teacher

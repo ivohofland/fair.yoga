@@ -27,6 +27,7 @@
 ## Review Focus
 
 1. **An empty body still answers 400.** Transforms placed *outside* `.optional()` make Zod emit the key as `undefined` for an absent field, so `{}` would parse to three keys and slip past the route's `Object.keys(updateData).length === 0` check into a no-op 200. Pinned in Task 1.
+   *Correction (PR #720 review):* false on the installed Zod 4 — an absent key stays absent whichever side of `.optional()` the transform sits, unless the transform maps `undefined` to a value. The tests stand, guarding that narrower regression.
 2. **A half-typed birthday must not erase the stored one.** A browser `type="date"` with only some parts filled reports `value === ""` and `validity.badInput === true`; sending that `""` would clear the date. The form refuses to save instead. Pinned in Task 4.
 3. **A whitespace-only phone or address stores `null`, not `" "`.** Trim before the empty check. Pinned in Task 1.
 4. **A multi-line address reads as lines on the teacher page.** `<p>` collapses newlines; the teacher page renders it with `whitespace-pre-line`. Pinned in Task 2.
@@ -373,7 +374,7 @@ Commit first (Step 12), then for each mutation: apply it, curl `PUT /api/student
 
 1. Replace `birthday: birthdayField` with the original `birthday: z.string().nullable().optional()` → the date-only round-trip integration test goes red with a 500, the regression this issue measured.
 2. In `parseBirthday`, delete the `|| date > utcMidnight(now)` half → the tomorrow unit case and the `2999-01-01` integration case go red.
-3. Move `optionalText`'s `.transform` after `.optional()` → `'omits absent keys, so an empty body stays empty'` goes red, and `'still refuses an empty body'` goes red.
+3. Move `optionalText`'s `.transform` after `.optional()` → `'omits absent keys, so an empty body stays empty'` goes red, and `'still refuses an empty body'` goes red. *Correction (PR #720 review):* an equivalent mutant on Zod 4 — measured, `{}` still parses to `{}`, so neither test can go red under it.
 4. Remove `.trim()` from `optionalText` → the whitespace case goes red.
 
 - [ ] **Step 12: Commit**

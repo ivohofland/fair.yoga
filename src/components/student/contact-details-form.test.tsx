@@ -22,6 +22,22 @@ describe('Input and Textarea hint', () => {
     }
   });
 
+  // A caller's own description joins the computed ids instead of replacing
+  // them, which would silently cut the field off from its error.
+  it('keeps a caller aria-describedby alongside the hint and error ids', () => {
+    render(
+      <>
+        <Input label="Field one" id="one" error="An error" aria-describedby="extra" />
+        <Textarea label="Field two" id="two" error="An error" aria-describedby="extra" />
+      </>,
+    );
+    for (const label of ['Field one', 'Field two']) {
+      const ids = (screen.getByLabelText(label).getAttribute('aria-describedby') ?? '').split(' ');
+      expect(ids).toContain('extra');
+      expect(ids.some((id) => id.endsWith('-error'))).toBe(true);
+    }
+  });
+
   it('leaves aria-describedby off when there is neither hint nor error', () => {
     render(<Textarea label="Plain" id="plain" />);
     expect(screen.getByLabelText('Plain')).not.toHaveAttribute('aria-describedby');

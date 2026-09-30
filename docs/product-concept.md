@@ -268,7 +268,7 @@ This also creates a natural pathway: a student who discovers a teacher through a
 | Email | Per-teacher opt-in by student |
 | Phone (optional) | Per-teacher opt-in by student |
 | Birthday — day and month (optional) | Per-teacher opt-in by student |
-| Age (optional) | Per-teacher opt-in by student, separate from the birthday; the birth year itself is never shown, though a teacher given both the birthday (day and month) and the age can work it out |
+| Age (optional) | Per-teacher opt-in by student, separate from the birthday; the birth year itself is never shown, though a teacher given both the birthday (day and month) and the age can work it out, and one given only the age can over time, from the day it goes up |
 | Address (optional) | Per-teacher opt-in by student |
 | Attendance history | Visible to teacher |
 | Payment details | Never visible to teacher |

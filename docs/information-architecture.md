@@ -160,7 +160,7 @@ Teachers can add a contact for migrating existing students, but a teacher may no
 
 ### Student detail
 
-Tapping a student shows their relationship with this teacher: every class attended, cancellations, no-shows, payment history. Plus whatever optional info the student has chosen to share (email, phone, birthday, address).
+Tapping a student shows their relationship with this teacher: every class attended, cancellations, no-shows, payment history. Plus whatever optional info the student has chosen to share (email, phone, birthday, age, address).
 
 ### Reporting
 

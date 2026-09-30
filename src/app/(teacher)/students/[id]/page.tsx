@@ -88,7 +88,7 @@ export default async function StudentDetailPage({
           {visible.birthday && (
             <div>
               <span className="type-label">Birthday</span>
-              {/* The year is absent from `TeacherVisibleStudent` itself (`src/lib/student-visibility.ts`), so no formatter here can show it. */}
+              {/* The year is absent from `TeacherVisibleStudent` itself (`src/lib/student-visibility.ts`), so nothing read from `visible` can show it; render from `visible`, never the raw row. */}
               <p className="text-base text-ink">{formatDayMonth(visible.birthday)}</p>
             </div>
           )}

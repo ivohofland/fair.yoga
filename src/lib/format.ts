@@ -155,7 +155,7 @@ export function formatDayMonth({ day, month }: BirthdayDayMonth): string {
  *
  * For a date sitting inline in a row beside other text, where the surrounding
  * copy supplies the context a weekday would otherwise give. Same UTC-accessor
- * reasoning as the two above.
+ * reasoning as `formatDayHeader` and `formatDateWithYear`.
  */
 export function formatDateShort(date: Date): string {
   const d = new Date(date);
