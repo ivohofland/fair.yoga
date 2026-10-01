@@ -4,10 +4,16 @@
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
     "verifiedAt": "2026-09-24"
   },
-  "login": {
-    "sourceSha256": "dc624d4ecc5638e311a64c07371830d81b2866bf0e682c2582460494d0c74d94",
-    "baselineSha256": "3c24a27953b78e9fece08f4b41bdbb082d8d931e31598a5d7f8c135e2f5429c2",
-    "verifiedAt": "2026-09-29",
-    "note": "catch now logs the transport error via logRequestFailure; no rendered change (#692)"
+  "schedule": {
+    "sourceSha256": "e8c13f219cc20fa44716828395f46cf8e711d191f71d2349c67287d0f2ebe80b",
+    "baselineSha256": "89c0bb9171896fb2bd9911bbc7ba27ae90e412c35738711448550de0c9631da6",
+    "verifiedAt": "2026-10-01",
+    "note": "the install card renders only on the client, for a browser that can install"
+  },
+  "settings": {
+    "sourceSha256": "b5416147611e3e65c84d9fc1f79658d568bc64b1005722987b5dc41f25f04181",
+    "baselineSha256": "981b53c74746867fea5f1459a0e697100a93a23cdd3b7eb717712f39b65f9f0c",
+    "verifiedAt": "2026-10-01",
+    "note": "the install row renders only on the client, for a browser that can install"
   }
 }
