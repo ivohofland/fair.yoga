@@ -200,7 +200,7 @@ One-to-many only. No group chat. Teachers use external tools for community.
 
 ### Announcements
 
-Teacher sends message to all students of a specific class (or all their students). Creates one Notification per recipient.
+Teacher sends message to all students of a specific class, to all their students, or to a chosen subset of them. Creates one Notification per recipient; a student already told the same message in the last two minutes is skipped.
 
 ## Data Model
 

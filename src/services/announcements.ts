@@ -1,8 +1,8 @@
 /**
  * Announcement Service — Manages announcement dispatch and deduplication.
  *
- * Announcements broadcast messages from a teacher to their students (either scoped
- * to a specific class, or to all active students of that teacher). Dedupe is per
+ * Announcements broadcast messages from a teacher to their students: those of one
+ * class, all of the teacher's students, or a chosen subset of them. Dedupe is per
  * recipient, keyed on `(teacherId, message)` within `ANNOUNCEMENT_DEDUPE_WINDOW_MS`.
  *
  * Business logic lives here per CLAUDE.md:
@@ -39,9 +39,7 @@ import { studentNameSelect, teacherVisibleName } from '@/lib/student-visibility'
  * that hard-codes `120000` drifts silently the day the window changes.
  *
  * Importing this module in a jsdom test pulls the notification bus and pino in
- * transitively (via `services/notifications.ts` — unlike its old home in
- * `lib/db-locks.ts`, which pulled only `crypto` and the generated client).
- * It stays safe in node tests and server contexts, but re-check before
+ * transitively (via `services/notifications.ts`). It stays safe in node tests and server contexts, but re-check before
  * importing it from a client component or a `'use client'` test; a bundled
  * pino is the same class of failure as a bundled Prisma client.
  */
@@ -186,9 +184,8 @@ export async function listAnnouncementAudience(
 }
 
 /**
- * The all-students audience as a picker lists it: muted students included
- * (the composer shows them as unreachable), named the way this teacher may see
- * them, sorted by that name.
+ * The all-students audience as a picker lists it: muted students included,
+ * named the way this teacher may see them, sorted by that name.
  */
 export async function listAnnouncementAudienceStudents(
   db: PrismaClient,
@@ -286,8 +283,12 @@ export async function sendAnnouncement(
     {
       teacherId,
       classId,
-      announcementId: result.announcement.id,
-      recipientCount: result.announcement.recipientCount,
+      ...(result.deduped
+        ? { matchedAnnouncementId: result.announcement.id }
+        : {
+            announcementId: result.announcement.id,
+            recipientCount: result.announcement.recipientCount,
+          }),
       deduped: result.deduped,
       alreadyNotified: result.alreadyNotified,
     },

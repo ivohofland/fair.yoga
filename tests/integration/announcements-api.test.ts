@@ -720,6 +720,14 @@ describe('POST /api/announcements', () => {
       const res = await getAudience();
       const s1 = (await res.json()).data.students.find((s: { id: string }) => s.id === s1Id);
       expect(s1.displayName).not.toContain('Student'); // surname withheld by default
+
+      await prisma.studentPrivacy.create({
+        data: { studentId: s4Id, teacherId, shareFullName: true },
+      });
+      const shared = (await (await getAudience()).json()).data.students.find(
+        (s: { id: string }) => s.id === s4Id,
+      );
+      expect(shared.displayName).toBe('Second Student');
     });
 
     it('401 without a session', async () => {

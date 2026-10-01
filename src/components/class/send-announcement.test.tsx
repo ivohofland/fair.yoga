@@ -81,8 +81,9 @@ describe('SendAnnouncement', () => {
 
     // Both halves are asserted: what did NOT happen, and that the earlier send
     // did reach those students — the second is what makes the first calm
-    // rather than alarming, and `recipientCount` on this branch is the FIRST
-    // send's, which is the honest number.
+    // rather than alarming. `recipientCount` on this branch is how many of THIS
+    // request's students already had the message (the response's
+    // `alreadyNotified`), not the size of any earlier send.
     const caption = await screen.findByText(/Not sent again/);
     expect(caption).toHaveTextContent(/reached 12 students/);
 

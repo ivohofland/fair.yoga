@@ -42,7 +42,8 @@ The issue holds, with two corrections to its scope.
 ## 3. Design
 
 **Schema.** `createAnnouncementSchema` gains `studentIds: z.array(uuid).min(1).max(500)
-.optional()`, transformed to sorted-unique. `classId` and `studentIds` together are a
+.optional()`. The schema does not transform it: the route dedupes the ids and the
+service sorts the ones it stores. `classId` and `studentIds` together are a
 400 (a refine, not a precedence rule — a body naming two audiences is ambiguous).
 The 500 cap bounds one request's fan-out on the 2 GB VPS.
 
@@ -66,8 +67,8 @@ Search is client-side over already-projected `displayName` (the #176 hazard was 
 
 **Service.** Inside the locked transaction `sendAnnouncement` reads the recent rows for
 `(teacherId, message)`, subtracts their ids from `recipients`, and then:
-- nothing left → `deduped: true`, returns the most recent matching row (today's
-  "not sent again" answer);
+- nothing left → `deduped: true`, nothing written; the route answers 200 with
+  `{ recipientCount (= alreadyNotified), duplicateSuppressed: true, alreadyNotified }`;
 - some left → fans out to the remainder and creates a row whose `recipientCount` and
   `audienceStudentIds` are the remainder only, and the result carries
   `alreadyNotified` (how many of the requested set had it), so the composer can say
@@ -117,3 +118,10 @@ re-derivation command, never in a docblock.
 Saved/named groups; a longer dedupe window (kept at 2 min by decision); selecting from class detail; messaging never-booked contacts
 (**#48** stays about the third audience only); a sent-history screen, though the
 column makes one possible.
+
+## 7. Rulings during build
+
+- **Erased students are not in any audience.** `Student.deletedAt` is filtered at both audience reads (`listAnnouncementAudience` and the class-scoped registration read in `POST /api/announcements`), because erasure leaves a started or completed class's registration uncancelled and the profile would otherwise be notified and listed in the picker.
+- **The Announcement scrub is a new lock node**, ordered Student -> Class -> Announcement; the census and the accepted write-back race are in `docs/lock-order.md`, "`Announcement` rows: the audience scrub".
+- **A fully-deduped send answers 200** with `{ recipientCount (= alreadyNotified), duplicateSuppressed: true, alreadyNotified }`: how many of this request's students already had the message, not the size of any earlier send.
+- **Dedupe ignores `classId` across scopes, by decision.** A student booked in two classes who gets the identical message for both within two minutes is told once, with the first send's class link. Flagged for the user's reaffirmation in the PR.

@@ -287,6 +287,23 @@ describe('Announcement Service', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('counts a student as told by any recent send, not only the latest', async () => {
+    const message = `Union ${suffix}`;
+    await sendAnnouncement(prisma, { teacherId, classId: null, message, recipients: to([student1Id], message, null) });
+    await sendAnnouncement(prisma, { teacherId, classId: null, message, recipients: to([student2Id], message, null) });
+    const both = await sendAnnouncement(prisma, {
+      teacherId, classId: null, message, recipients: to([student1Id, student2Id], message, null),
+    });
+    expect(both.deduped).toBe(true);
+    expect(both.alreadyNotified).toBe(2);
+    for (const studentId of [student1Id, student2Id]) {
+      const rows = await prisma.notification.findMany({
+        where: { type: 'announcement', body: message, recipientId: studentId },
+      });
+      expect(rows).toHaveLength(1);
+    }
+  });
+
   it('lists one student once when recipients repeats them', async () => {
     const message = `Repeated ${suffix}`;
     const r = await sendAnnouncement(prisma, {

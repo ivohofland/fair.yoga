@@ -17,7 +17,7 @@ interface SentState {
   /** `null` when a 2xx body couldn't be read — the send still happened. */
   count: number | null;
   suppressed: boolean;
-  /** Chosen students who already had this exact message; 0 when not reported. */
+  /** Students of this request who already had this exact message; 0 when not reported. */
   alreadyNotified: number;
 }
 
@@ -38,8 +38,8 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   const recipientExplanation = choosing
     ? "Only the students you tick, and only those who have booked with you and haven't muted your messages. Anyone who already got this exact message in the last two minutes is skipped."
     : classId
-    ? "Everyone registered for this class (late cancellations included), unless they've muted your messages. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes — sooner when class is about to start — also gets it by email, unless they've turned email off."
-    : "Students with a booking in any of your classes, unless they've muted your messages — contacts who've never booked (or only cancelled) aren't included. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes also gets it by email, unless they've turned email off.";
+    ? "Everyone registered for this class (late cancellations included), unless they've muted your messages. Anyone who already got this exact message in the last two minutes is skipped. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes — sooner when class is about to start — also gets it by email, unless they've turned email off."
+    : "Students with a booking in any of your classes, unless they've muted your messages — contacts who've never booked (or only cancelled) aren't included. Anyone who already got this exact message in the last two minutes is skipped. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes also gets it by email, unless they've turned email off.";
 
   async function handleSend() {
     if (!message.trim()) return;
@@ -71,8 +71,8 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
     }
 
     // `res.ok` alone is not the whole answer: the route answers 201 when it
-    // created the announcement and 200 when it suppressed an identical one
-    // sent moments ago, and only `duplicateSuppressed` distinguishes them
+    // created the announcement and 200 when every requested student had
+    // already been told this message moments ago, and only `duplicateSuppressed` distinguishes them
     // in a field a client has to read past rather than a status it can
     // ignore.
     try {
