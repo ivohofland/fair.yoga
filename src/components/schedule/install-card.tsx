@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { InstallSteps } from '@/components/account/install-steps';
@@ -34,18 +34,23 @@ function recordInstallOnce(): Promise<boolean> {
 /**
  * A one-time nudge to install the app. Shows on a phone that can install,
  * whatever the checklist's state, until dismissed — by Dismiss, by Done
- * after the steps, by an accepted install prompt, or by opening on a
- * device where the browser reports the app is already installed.
+ * after the steps, by an accepted install prompt, or by opening inside the
+ * installed app, or in the tab that just installed it.
  */
 export function InstallCard({ dismissed }: { dismissed: boolean }) {
   const support = useInstallSupport();
   const coarse = useCoarsePointer();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const stepsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!dismissed && support === 'installed') void recordInstallOnce();
   }, [dismissed, support]);
+
+  useEffect(() => {
+    if (open) stepsRef.current?.focus();
+  }, [open]);
 
   if (dismissed) return null;
   const visible = support === 'ios-safari' || ((support === 'prompt' || support === 'manual') && coarse);
@@ -68,12 +73,14 @@ export function InstallCard({ dismissed }: { dismissed: boolean }) {
       </p>
       {open ? (
         <>
-          <InstallSteps variant={support === 'ios-safari' ? 'ios' : 'manual'} />
+          <div ref={stepsRef} tabIndex={-1} className="focus:outline-none">
+            <InstallSteps variant={support === 'ios-safari' ? 'ios' : 'manual'} />
+          </div>
           <div className="mt-4">
             <OnboardingSkipButton
               step="install"
               ariaLabel="Done adding fair.yoga to your Home Screen"
-              className="type-label text-teal px-3 min-h-11"
+              className="type-label text-teal hover:text-teal-hover px-3 min-h-11"
             >
               Done
             </OnboardingSkipButton>
@@ -87,7 +94,7 @@ export function InstallCard({ dismissed }: { dismissed: boolean }) {
           <OnboardingSkipButton
             step="install"
             ariaLabel="Dismiss the install card"
-            className="type-label text-brown-light px-3 min-h-11 shrink-0"
+            className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
           >
             Dismiss
           </OnboardingSkipButton>
