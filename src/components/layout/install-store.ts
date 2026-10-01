@@ -37,7 +37,10 @@ export function createInstallStore(win: InstallWindow): InstallStore {
   const emit = (): void => listeners.forEach((listener) => listener());
 
   win.addEventListener('beforeinstallprompt', (event) => {
-    if (!isBeforeInstallPrompt(event)) return;
+    if (!isBeforeInstallPrompt(event)) {
+      console.warn('[install-store] beforeinstallprompt without prompt()/userChoice');
+      return;
+    }
     // Suppresses Chromium's own mini-infobar, so the app decides when to
     // prompt.
     event.preventDefault();
