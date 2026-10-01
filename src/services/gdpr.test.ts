@@ -3251,10 +3251,19 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     const teacherId = await makeTeacher();
     const exported = await exportTeacherData(prisma, teacherId);
     expect(exported.profile.photo).toBeNull();
+  });
+
+  it('exports the teacher’s notification preferences as stored', async () => {
+    const teacherId = await makeTeacher();
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { bookingNotifications: 'inbox_only', emailOnClassCompleted: false, emailOnInvitation: false },
+    });
+    const exported = await exportTeacherData(prisma, teacherId);
     expect(exported.profile).toMatchObject({
-      bookingNotifications: 'inbox_and_email',
-      emailOnClassCompleted: true,
-      emailOnInvitation: true,
+      bookingNotifications: 'inbox_only',
+      emailOnClassCompleted: false,
+      emailOnInvitation: false,
     });
   });
 });
