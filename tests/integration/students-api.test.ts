@@ -2154,7 +2154,8 @@ describe('PUT /api/students/[id]', () => {
   it.each([
     ['a retired timing value', { classReminder: 'eve' }],
     ['an unknown channel', { classReminderChannel: 'sms' }],
-    ['the retired reminderPref key', { reminderPref: 'morning_of' }],
+    // Beside a valid field, so the empty-body refusal cannot answer for it.
+    ['the retired reminderPref key', { reminderPref: 'morning_of', classReminder: 'morning_of' }],
   ])('refuses %s with 400 (#721)', async (_label, body) => {
     expect((await put(alice.id, body, alice.token)).status).toBe(400);
   });
