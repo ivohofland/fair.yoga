@@ -250,11 +250,9 @@ test.describe('Passkey sign-in', () => {
     // The browser refuses the ceremony; the component treats that as a
     // dismissal and returns to idle, with nothing sent for verification.
     //
-    // Scoped to the button's own container, not bare `getByRole('alert')`:
-    // every Next.js App Router page carries an always-present, visually
-    // hidden `#__next-route-announcer__` with `role="alert"` for route-change
-    // announcements, unrelated to this component's error state — a bare
-    // query would match it on every render, success or failure alike.
+    // Scoped to the button's container: a bare `getByRole('alert')` also
+    // matches Next's route announcer — docs/technical-architecture.md
+    // ("Testing conventions", "Asserting no alert in e2e").
     const addPasskeyButton = page.getByRole('button', { name: 'Add a passkey' });
     await expect(addPasskeyButton).toBeEnabled();
     await expect(addPasskeyButton.locator('..').getByRole('alert')).toHaveCount(0);
