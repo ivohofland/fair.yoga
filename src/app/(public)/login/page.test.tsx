@@ -148,6 +148,14 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('Code')).toBeInTheDocument();
   });
 
+  it('moves focus into the code field when it is revealed', () => {
+    render(<LoginPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enter it' }));
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Code'));
+  });
+
   it('renders fallback when search params suspend', () => {
     suspendSearchParams = true;
     const { container } = render(<LoginPage />);

@@ -93,7 +93,7 @@ function LoginForm() {
               field even when this page was reloaded in the meantime, as an
               installed app can be while the person is in Mail. */}
           {showCode ? (
-            <HandoffCodeEntry />
+            <HandoffCodeEntry autoFocus />
           ) : (
             <p className="mt-6 type-caption">
               Have a code from the email link?{' '}

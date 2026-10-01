@@ -33,7 +33,7 @@ export function GettingStarted({ pageSlug, ...input }: GettingStartedProps) {
           <OnboardingSkipButton
             step="share"
             ariaLabel="Dismiss the getting started card"
-            className="type-label text-brown-light px-3 min-h-11 shrink-0"
+            className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
           >
             Dismiss
           </OnboardingSkipButton>
@@ -86,7 +86,7 @@ export function GettingStarted({ pageSlug, ...input }: GettingStartedProps) {
                 <OnboardingSkipButton
                   step={skipTarget}
                   ariaLabel={`Skip ${step.label.toLowerCase()}`}
-                  className="type-label text-brown-light px-3 min-h-11 shrink-0"
+                  className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
                 >
                   Skip
                 </OnboardingSkipButton>

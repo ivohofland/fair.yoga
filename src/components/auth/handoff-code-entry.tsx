@@ -7,6 +7,7 @@ import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface HandoffCodeEntryProps {
   className?: string;
+  autoFocus?: boolean;
 }
 
 /**
@@ -21,7 +22,7 @@ interface HandoffCodeEntryProps {
  * along with the request on its own, and this component never reads or
  * sets it.
  */
-export function HandoffCodeEntry({ className = '' }: HandoffCodeEntryProps) {
+export function HandoffCodeEntry({ className = '', autoFocus }: HandoffCodeEntryProps) {
   const [code, setCode] = useState('');
   const [status, setStatus] = useState<'idle' | 'submitting' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
@@ -63,6 +64,7 @@ export function HandoffCodeEntry({ className = '' }: HandoffCodeEntryProps) {
       <form onSubmit={handleSubmit} className="flex flex-col gap-3 mt-3 max-w-[200px]">
         <Input
           label="Code"
+          autoFocus={autoFocus}
           value={code}
           onChange={(e) => {
             setCode(e.target.value);

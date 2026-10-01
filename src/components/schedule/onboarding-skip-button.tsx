@@ -14,22 +14,20 @@ interface OnboardingSkipButtonProps {
 
 /**
  * `docs/design-brief.md` §2 asks for `shadow-focus` on every interactive
- * element and 50% opacity when disabled. The hover step is a defined colour
- * move (brown-light -> brown) rather than a transition, since this design has
- * essentially no motion.
- *
- * Before the caller's own classes, so a call site can still override any of
- * it — both of them pass the text colour this hover step darkens.
+ * element and 50% opacity when disabled. Colour — including any hover step,
+ * a defined step rather than a transition, since this design has essentially
+ * no motion — is entirely the call site's own concern; the call site's
+ * classes come after this base so they can override any of it.
  */
 const BASE_CLASSES =
-  'rounded-field hover:text-brown focus:outline-none focus-visible:shadow-focus disabled:opacity-50';
+  'rounded-field focus:outline-none focus-visible:shadow-focus disabled:opacity-50';
 
 /**
  * Records a skip via `POST /api/account/onboarding` and refreshes the page
  * so the checklist re-renders against the teacher's updated
- * `skippedOnboarding`. Shared by a row's Skip control and the completion
- * card's Dismiss action — same endpoint, same idempotent append, different
- * `step`.
+ * `skippedOnboarding`. A thin wrapper over that endpoint — a call site
+ * supplies its own label, aria text and colours, and gets back the same
+ * idempotent append under whichever `step` it names.
  */
 export function OnboardingSkipButton({ step, ariaLabel, className = '', children }: OnboardingSkipButtonProps) {
   const router = useRouter();

@@ -73,6 +73,27 @@ describe('InstallCard', () => {
     expect(routerRefresh).toHaveBeenCalled();
   });
 
+  it('gives Done a teal hover step, not the brown one shared by Skip and Dismiss', () => {
+    support = 'ios-safari';
+    render(<InstallCard dismissed={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show me how' }));
+
+    const done = screen.getByRole('button', { name: /^Done/ });
+    expect(done).toHaveClass('hover:text-teal-hover');
+    expect(done).not.toHaveClass('hover:text-brown');
+  });
+
+  it('moves focus to the revealed steps when Show me how opens them', () => {
+    support = 'ios-safari';
+    const { container } = render(<InstallCard dismissed={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show me how' }));
+
+    const revealed = container.querySelector('[tabindex="-1"]');
+    expect(revealed).not.toBeNull();
+    expect(document.activeElement).toBe(revealed);
+  });
+
   it('records the dismissal when the browser prompt is accepted', async () => {
     support = 'prompt';
     promptInstall.mockResolvedValue('accepted');
