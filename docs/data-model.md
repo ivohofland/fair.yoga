@@ -802,7 +802,7 @@ Three-layer delivery: in-app notification (real-time) → in-app inbox (retained
 | sent_at | datetime | |
 | audience_student_ids | text[], default {} | The students this send notified (sorted). What per-recipient dedupe reads; `deleteStudentAccount` removes an erased student's id from the rows that exist when it runs; a send in flight can still write one back (`docs/lock-order.md`, "`Announcement` rows: the audience scrub") |
 
-When sent, creates one Notification per recipient not already told the same message by this teacher inside the dedupe window. Three audiences: class-scoped (that class's non-cancelled registrants), teacher-wide (every student with a non-cancelled registration in one of this teacher's classes, skipping any student this teacher has archived — TeacherStudent), or a custom selection. All three skip erased students and students who set `receive_comms` false for this teacher.
+When sent, creates one Notification per recipient not already told the same message by this teacher inside the dedupe window. Three audiences: class-scoped (that class's non-cancelled registrants), teacher-wide (every student with a non-cancelled registration in one of this teacher's classes, skipping any student this teacher has archived — TeacherStudent), or a custom selection. All three skip erased students and students who set `receive_comms` false for this teacher. An erased profile keeps its past registrations, so the audience reads exclude `Student.deletedAt` explicitly.
 
 A custom audience is a selection from the teacher-wide audience, never wider.
 

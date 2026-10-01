@@ -98,8 +98,8 @@ function hash32(value: string): number {
  * that document's "fourth path". So this lock sits ABOVE `Class` in the order
  * (see "The announcement advisory lock" section there). The `FOR KEY SHARE`
  * reasoning covers the worst case, which is the class-scoped send; an
- * all-students announcement carries `classId === null` on both inserts and
- * takes no `Class` lock at all.
+ * announcement with no class (all-students or custom) carries
+ * `classId === null` on both inserts and takes no `Class` lock at all.
  *
  * The lock call is wrapped in a subselect and the outer projection is a
  * literal, which is not styling: `pg_advisory_xact_lock` returns `void`, and
@@ -160,12 +160,10 @@ export type SendAnnouncementResult = {
 };
 
 /**
- * Student ids of the all-students audience: everyone with a live registration
- * in one of this teacher's classes, minus students this teacher has archived
- * and erased profiles (erasure leaves a started or completed class's
- * registration uncancelled).
- * Before the opt-out subtraction, which belongs to the caller that knows
- * whether it is listing for a picker (muted students stay visible there).
+ * Student ids of the all-students audience: everyone with a non-cancelled
+ * registration in one of this teacher's classes, minus students this teacher
+ * has archived and erased profiles (`docs/data-model.md`, Announcement).
+ * Muted students are not subtracted here; opt-out filtering is the caller's.
  */
 export async function listAnnouncementAudience(
   db: PrismaClient,
@@ -227,6 +225,8 @@ export async function sendAnnouncement(
     throw new Error('sendAnnouncement: refusing to announce to zero recipients');
   }
 
+  const wanted = [...new Map(recipients.map((r) => [r.recipientId, r])).values()];
+
   const result = await db.$transaction(async (tx) => {
     // First statement in the transaction, so the compare below and both writes
     // after it are serialised against a concurrent send of the same text.
@@ -250,7 +250,6 @@ export async function sendAnnouncement(
     });
     const told = new Set(recent.flatMap((a) => a.audienceStudentIds));
 
-    const wanted = [...new Map(recipients.map((r) => [r.recipientId, r])).values()];
     const fresh = wanted.filter((r) => !told.has(r.recipientId));
     const alreadyNotified = wanted.length - fresh.length;
 
@@ -290,6 +289,8 @@ export async function sendAnnouncement(
             recipientCount: result.announcement.recipientCount,
           }),
       deduped: result.deduped,
+      requested: wanted.length,
+      created: result.deduped ? 0 : result.announcement.recipientCount,
       alreadyNotified: result.alreadyNotified,
     },
     result.deduped ? 'announcement send suppressed as duplicate' : 'announcement sent',

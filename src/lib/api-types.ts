@@ -1,9 +1,8 @@
 /**
  * Canonical wire API response types (#206).
  *
- * Response payload contracts for routes migrated to compile-time response type
- * checking under #206 (currently class-template and studio-class-template
- * lifecycle endpoints).
+ * Response payload contracts for routes whose response literals are checked at
+ * compile time (#206).
  *
  * Scoped to response payloads only — distinct from request-body validation
  * schemas in `@/lib/schemas`. Route handlers construct response payloads that flow
@@ -106,6 +105,27 @@ export type StudioTemplateCreateResponse = TemplateCreateResponse;
 export interface TemplateEditResponse {
   firstEffective: string | null;
   generationState: TemplateGenerationState;
+}
+
+/**
+ * The `data` payload of `GET /api/announcements/audience` (#48): the students
+ * a custom announcement may be sent to, named as this teacher may see them.
+ */
+export interface AnnouncementAudienceResponse {
+  students: { id: string; displayName: string }[];
+}
+
+/**
+ * The reporting fields on the `data` payload of `POST /api/announcements`
+ * (#196, #48). A created send answers 201 with these beside its stored row; a
+ * send whose every student already had the message answers 200 with only
+ * these, `recipientCount` then being how many of this request's students
+ * already had it.
+ */
+export interface AnnouncementSendResponse {
+  recipientCount: number;
+  duplicateSuppressed: boolean;
+  alreadyNotified: number;
 }
 
 // Compile-time pins asserting that the class and studio toggle response types

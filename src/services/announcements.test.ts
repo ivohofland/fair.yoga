@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
+import { log } from '@/lib/log';
 import { sendAnnouncement, ANNOUNCEMENT_DEDUPE_WINDOW_MS } from './announcements';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
@@ -311,6 +312,38 @@ describe('Announcement Service', () => {
     });
     expect(r.announcement.recipientCount).toBe(1);
     expect(r.announcement.audienceStudentIds).toEqual([student1Id]);
+  });
+
+  it('logs how many students a send was asked to tell and how many it told', async () => {
+    const message = `Outcome log ${suffix}`;
+    const info = vi.spyOn(log, 'info').mockImplementation(() => log);
+    try {
+      await sendAnnouncement(prisma, {
+        teacherId, classId: null, message, recipients: to([student1Id, student1Id], message, null),
+      });
+      expect(info).toHaveBeenLastCalledWith(
+        expect.objectContaining({ requested: 1, created: 1, deduped: false }),
+        'announcement sent',
+      );
+
+      await sendAnnouncement(prisma, {
+        teacherId, classId: null, message, recipients: to([student1Id, student2Id], message, null),
+      });
+      expect(info).toHaveBeenLastCalledWith(
+        expect.objectContaining({ requested: 2, created: 1, alreadyNotified: 1 }),
+        'announcement sent',
+      );
+
+      await sendAnnouncement(prisma, {
+        teacherId, classId: null, message, recipients: to([student2Id], message, null),
+      });
+      expect(info).toHaveBeenLastCalledWith(
+        expect.objectContaining({ requested: 1, created: 0, deduped: true }),
+        'announcement send suppressed as duplicate',
+      );
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it('deduplicates a second identical all-students send (both classId null)', async () => {
