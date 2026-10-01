@@ -361,13 +361,29 @@ let studentAccountId: string;
         audienceStudentIds: [gone.id, keep.id].sort(),
       },
     });
+    // Never named the subject, so the scrub must leave it unwritten: an
+    // `UPDATE` that merely matched it would give it a new row version.
+    const untouched = await prisma.announcement.create({
+      data: {
+        teacherId,
+        message: `erase elsewhere ${uniqueSuffix}`,
+        recipientCount: 1,
+        audienceStudentIds: [keep.id],
+      },
+    });
+    const rowVersion = async (id: string) =>
+      (await prisma.$queryRaw<{ xmin: string }[]>`
+        SELECT xmin::text AS xmin FROM "Announcement" WHERE id = ${id}`)[0]?.xmin;
     try {
+      const versionBefore = await rowVersion(untouched.id);
       await deleteStudentAccount(prisma, gone.id);
       const after = await prisma.announcement.findUniqueOrThrow({ where: { id: a.id } });
       expect(after.audienceStudentIds).toEqual([keep.id]);
       expect(after.recipientCount).toBe(2); // a snapshot of what was sent, not a live count
+      expect(versionBefore).toBeDefined();
+      expect(await rowVersion(untouched.id)).toBe(versionBefore);
     } finally {
-      await prisma.announcement.delete({ where: { id: a.id } });
+      await prisma.announcement.deleteMany({ where: { id: { in: [a.id, untouched.id] } } });
       await prisma.student.deleteMany({ where: { id: { in: [keep.id, gone.id] } } });
     }
   });

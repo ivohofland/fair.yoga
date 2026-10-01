@@ -25,6 +25,25 @@ function to(
   }));
 }
 
+/** Advisory locks in this database under the announcement namespace (196), granted or awaited. */
+async function advisoryLocks({ granted }: { granted: boolean }): Promise<number> {
+  const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+    SELECT count(*) AS n FROM pg_locks
+    WHERE locktype = 'advisory' AND classid = 196 AND granted = ${granted}
+      AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Polls `check` until it holds or `ms` has passed; the last answer is the verdict. */
+async function until(check: () => Promise<boolean>, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (await check()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return check();
+}
+
 describe('Announcement Service', () => {
   let teacherId: string;
   let otherTeacherId: string;
@@ -526,47 +545,59 @@ describe('Announcement Service', () => {
     const classHolder = new PrismaClient();
     const parkedClient = new PrismaClient();
 
-    let release!: () => void;
-    let locked!: () => void;
-    const released = new Promise<void>((r) => {
-      release = r;
-    });
-    const classLocked = new Promise<void>((r) => {
-      locked = r;
-    });
-    const holdingClass = classHolder.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${class1Id} FOR UPDATE`;
-        locked();
-        await released;
-      },
-      { timeout: 20_000 },
-    );
-    await classLocked;
-
-    const holderSend = sendAnnouncement(holderClient, {
-      teacherId,
-      classId: class1Id,
-      message,
-      recipients: to([student1Id], message, class1Id),
-    });
-    await new Promise((r) => setTimeout(r, 300));
-
-    const outcome = (p: Promise<unknown>, ms: number) =>
-      Promise.race([
-        p.then(() => 'sent' as const),
-        new Promise<'parked'>((resolve) => setTimeout(() => resolve('parked'), ms)),
-      ]);
-
-    // Same (teacher, message), different scope: shares the holder's key.
-    const sameSlot = sendAnnouncement(parkedClient, {
-      teacherId,
-      classId: null,
-      message,
-      recipients: to([student2Id], message, null),
-    });
+    let release: () => void = () => {};
+    let holdingClass: Promise<unknown> = Promise.resolve();
+    let holderSend: ReturnType<typeof sendAnnouncement> | undefined;
+    let sameSlot: ReturnType<typeof sendAnnouncement> | undefined;
 
     try {
+      // Connected before anything is timed, so a slow first connect cannot
+      // pass for a send that is waiting on a lock.
+      await Promise.all(
+        [holderClient, classHolder, parkedClient].map((client) => client.$queryRaw`SELECT 1`),
+      );
+
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      let locked!: () => void;
+      const classLocked = new Promise<void>((r) => {
+        locked = r;
+      });
+      holdingClass = classHolder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${class1Id} FOR UPDATE`;
+          locked();
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+      await classLocked;
+
+      holderSend = sendAnnouncement(holderClient, {
+        teacherId,
+        classId: class1Id,
+        message,
+        recipients: to([student1Id], message, class1Id),
+      });
+      expect(await until(async () => (await advisoryLocks({ granted: true })) > 0, 5000)).toBe(true);
+
+      const outcome = (p: Promise<unknown>, ms: number) =>
+        Promise.race([
+          p.then(() => 'sent' as const),
+          new Promise<'parked'>((resolve) => setTimeout(() => resolve('parked'), ms)),
+        ]);
+
+      // Same (teacher, message), different scope: shares the holder's key.
+      // It names the holder's student too, so once it runs it shows whether
+      // it read the holder's committed row.
+      sameSlot = sendAnnouncement(parkedClient, {
+        teacherId,
+        classId: null,
+        message,
+        recipients: to([student1Id, student2Id], message, null),
+      });
+
       expect(
         await outcome(
           sendAnnouncement(prisma, {
@@ -590,21 +621,30 @@ describe('Announcement Service', () => {
         ),
       ).toBe('sent');
 
-      let sameSlotSettled = false;
-      void sameSlot.then(() => {
-        sameSlotSettled = true;
-      });
-      await new Promise((r) => setTimeout(r, 300));
-      expect(sameSlotSettled).toBe(false);
-    } finally {
+      // Waiting, asserted where Postgres records it rather than inferred
+      // from a promise that has not settled yet.
+      expect(await until(async () => (await advisoryLocks({ granted: false })) > 0, 5000)).toBe(true);
+
       release();
       await holdingClass;
+      const [held, parked] = await Promise.all([holderSend, sameSlot]);
+
+      expect(held.deduped).toBe(false);
+      expect(held.alreadyNotified).toBe(0);
+      expect(held.announcement.audienceStudentIds).toEqual([student1Id]);
+      // It ran after the holder committed: the holder's student counts as told.
+      expect(parked.deduped).toBe(false);
+      expect(parked.alreadyNotified).toBe(1);
+      expect(parked.announcement.audienceStudentIds).toEqual([student2Id]);
+    } finally {
+      release();
+      await holdingClass.catch(() => undefined);
+      await Promise.allSettled([holderSend, sameSlot].filter((p) => p !== undefined));
+      await holderClient.$disconnect();
+      await classHolder.$disconnect();
+      await parkedClient.$disconnect();
     }
-    await Promise.all([holderSend, sameSlot]);
-    await holderClient.$disconnect();
-    await classHolder.$disconnect();
-    await parkedClient.$disconnect();
-  });
+  }, 20_000);
 
   it('serialises concurrent sends with the same slot so only one creates and the other dedupes', async () => {
     const message = `Concurrent lever test message ${suffix}`;
