@@ -19,6 +19,10 @@ describe('the document head', () => {
     expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
     expect(html).toMatch(/<meta name="theme-color" content="#F7F4EF"/);
     expect(html).toMatch(/<meta name="apple-mobile-web-app-title" content="fair.yoga"/);
+    expect(html).toMatch(/<meta name="apple-mobile-web-app-status-bar-style" content="default"/);
+    // Next 16 emits `mobile-web-app-capable` (the non-Apple-prefixed token)
+    // for `appleWebApp.capable`, not `apple-mobile-web-app-capable`.
+    expect(html).toMatch(/<meta name="mobile-web-app-capable" content="yes"/);
   });
 });
 
@@ -63,9 +67,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Session has no `account` relation (prisma/schema.prisma's Session model
-  // carries only `accountId`), so cleanup filters by the ids read back from
-  // the accounts this file created, not by a relation filter.
+  // Cleanup filters sessions by the ids read back from this file's accounts,
+  // never by an id a failed beforeAll could leave unset.
   const accounts = await prisma.account.findMany({ where: { email: { in: emails } }, select: { id: true } });
   const accountIds = accounts.map((a) => a.id);
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
@@ -76,8 +79,9 @@ afterAll(async () => {
 });
 
 // Pathname AND search, so a signed-out redirect that picked up a ?redirect=
-// query (which it would if /start were ever added to src/proxy.ts's
-// matcher) fails this assertion rather than passing on the pathname alone.
+// query fails this assertion rather than passing on the pathname alone — see
+// docs/technical-architecture.md (Authentication Flow → Installed app start
+// URL) for why /start must stay outside src/proxy.ts's matcher.
 async function startDestination(token: string | null): Promise<string> {
   const res = await fetch(`${BASE_URL}/start`, {
     redirect: 'manual',
