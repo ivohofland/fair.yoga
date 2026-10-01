@@ -323,7 +323,7 @@ whole platform — paged through `readInPages`:
 | `readStudioGenerationCandidates` | `studio-class-generator.ts` | |
 | `getUnreadForEmailFallback` | `notifications.ts` | keyset on `(createdAt, id)`, not `id` alone |
 | `readDuePayments` | `payment-reminders.ts` | |
-| `processClassReminders` | `class-reminders.ts` | windowed (`reminderCandidateDates`) |
+| `processClassReminders` | `class-reminders.ts` | windowed (`reminderCandidateDates`); registrations read per class, one bounded query per candidate, not a relation load over the paged set |
 
 **Three pitfalls the next paged read will meet:**
 
