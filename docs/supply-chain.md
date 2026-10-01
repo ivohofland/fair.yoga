@@ -675,10 +675,11 @@ that ship matches it:
   `node_modules` it gets is the one inside `.next-build/standalone`, which
   Next populates by tracing actual imports — so it holds far less than the
   production dependency tree. (It copies two other trees,
-  `.next-build/static` and `public`; neither carries dependencies. This repo
-  has never tracked a `public/` of its own — icons are Next's file-based
-  `app/icon.svg` convention instead — so the `build` stage creates one empty
-  before the copy; #543 has the history.)
+  `.next-build/static` and `public`; neither carries dependencies. `public/`
+  holds the web app manifest's install icons; the site icons are Next's
+  file-based `app/icon.svg` convention. The `build` stage still creates
+  `public/` before the copy, so the copy never depends on it; #543 has the
+  history.)
   Check what is really in it with
   ```bash
   for p in nanoid baseline-browser-mapping postcss prisma @prisma/config deepmerge-ts browserslist @babel/core; do

@@ -32,9 +32,9 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 WORKDIR /app
 COPY . .
-# Ensures the runner's COPY below always finds a directory — see
-# docs/supply-chain.md for why this repo has no public/ of its own to
-# depend on.
+# public/ is tracked (the install icons); the mkdir keeps the runner's
+# COPY below independent of that — see docs/supply-chain.md for the
+# runner stage's contents.
 RUN mkdir -p public
 # Build-time page-data collection instantiates PrismaClient, which only
 # needs the env var to EXIST (no connection is made). Runtime env from
