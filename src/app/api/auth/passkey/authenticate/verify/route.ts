@@ -19,7 +19,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const challenge = getAndDeleteChallenge('authentication', body.challengeId);
   if (!challenge) {
-    return respondError('This sign-in attempt expired. Please try again.', 400);
+    return respondError(
+      'This sign-in attempt expired. Please try again.',
+      400,
+      'PASSKEY_CHALLENGE_MISSING',
+    );
   }
 
   const response = body.response as unknown as AuthenticationResponseJSON;
@@ -39,7 +43,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!result.verified) {
-    return respondError('Authentication verification failed', 400);
+    return respondError(
+      'This passkey could not be verified. Please try again.',
+      400,
+      'PASSKEY_NOT_VERIFIED',
+    );
   }
 
   await prisma.passkeyCredential.update({

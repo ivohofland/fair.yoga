@@ -201,12 +201,17 @@ export const magicLinkClaimSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Enter the six-digit code'),
 });
 
+// WebAuthn caps a credential id at 1023 bytes; ⌈1023 × 4 / 3⌉ = 1364 unpadded base64url characters.
+const passkeyCredentialId = z.string().regex(/^[A-Za-z0-9_-]+$/).max(1364);
+
 export const passkeyRegisterVerifySchema = z.object({
-  response: z.record(z.string(), z.unknown()), // WebAuthn response is complex, validate shape loosely
+  // `id` is checked; the rest of the response is validated loosely — WebAuthn's shape is complex.
+  response: z.looseObject({ id: passkeyCredentialId }),
 });
 
 export const passkeyAuthVerifySchema = z.object({
-  response: z.record(z.string(), z.unknown()),
+  // `id` is checked; the rest of the response is validated loosely — WebAuthn's shape is complex.
+  response: z.looseObject({ id: passkeyCredentialId }),
   challengeId: z.string().trim().min(1),
   redirect: relativePath.optional(),
 });

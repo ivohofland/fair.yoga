@@ -21,7 +21,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const challenge = getAndDeleteChallenge('registration', session.accountId);
   if (!challenge) {
-    return respondError('No pending registration challenge', 400);
+    return respondError(
+      'This passkey setup expired. Please try again.',
+      400,
+      'PASSKEY_CHALLENGE_MISSING',
+    );
   }
 
   const result = await verifyPasskeyRegistration({
@@ -30,7 +34,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!result.verified) {
-    return respondError('Registration verification failed', 400);
+    return respondError(
+      'This passkey could not be verified. Please try again.',
+      400,
+      'PASSKEY_NOT_VERIFIED',
+    );
   }
 
   await prisma.passkeyCredential.create({
