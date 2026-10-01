@@ -6,24 +6,9 @@
  * - Jobs call the services directly (no HTTP round-trip, no CRON_SECRET
  *   needed for the in-process path). The /api/cron/* endpoints remain for
  *   manual runs.
- * - These jobs have had their send guarded against an overlapping trigger at
- *   the DB layer, and were measured: `payment-reminders` stamps
- *   `reminderSentAt` with a conditional `updateMany` and abandons the
- *   notification when the count is zero (`payment-reminders.ts`, the
- *   `$transaction` around its stamp); `email-fallback` claims each
- *   notification — `emailSent: false -> true`, count checked — BEFORE calling
- *   Resend, releasing the claim if the send fails; `class-reminders` stamps
- *   `Registration.classReminderSentAt` and `Class.teacherReminderSentAt` with
- *   a conditional `updateMany` inside a `$transaction` before any inbox row
- *   or email, and skips the reminder when the count is zero — measured by
- *   `class-reminders.test.ts` interposing a whole second sweep between the
- *   candidate read and the claim.
- *
- *   That is a statement about the jobs it names, NOT a survey. `class-transitions`
- *   also sends recipient-visible notifications — `autoCancelClasses` writes a
- *   `class_cancelled` set (`class-transitions.ts`) and `autoCompleteClasses`
- *   reaches `completeClass`'s `payment_request` set (`class-lifecycle.ts`) —
- *   and neither was examined for this.
+ * - Which jobs have had their send guarded against a manual call overlapping a
+ *   scheduled tick is recorded in `docs/technical-architecture.md` (Cron Jobs →
+ *   Overlapping triggers); a job it does not name was not examined.
  * - A per-job `running` flag prevents a slow tick from stacking on itself. A
  *   run holding that flag across `STALLED_AFTER_SKIPPED_TICKS` ticks makes
  *   `isJobHealthy` report its job unhealthy.

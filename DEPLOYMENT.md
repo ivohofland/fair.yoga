@@ -82,7 +82,7 @@ and in production they must — nothing to configure.
 own clocks, so CI does not need the in-process scheduler running. It is not a
 production mode. With it set, no scheduled job runs in the app: classes don't
 start, auto-cancel, or complete; recurring classes aren't generated; fallback
-emails and payment reminders don't send; daily cleanup (retention, expired
+emails, payment reminders and class reminders don't send; daily cleanup (retention, expired
 sessions and auth tokens, the timezone audit) doesn't run. Waitlist
 reconciliation is worse off than the rest — it has no endpoint, so it cannot
 be run any other way — and a seat freed by a cancellation whose spot-freed
@@ -94,7 +94,8 @@ The `/api/cron/*` endpoints are for running a job by hand between its ticks —
 useful for the hourly and daily jobs — alongside the scheduler, not instead of
 it. Every job already runs within 15 seconds of the app starting, so a
 restart needs none. Not every job has been examined for a manual call that
-overlaps its own tick — `src/lib/scheduler.ts`'s header says which were:
+overlaps its own tick — `docs/technical-architecture.md` (Cron Jobs →
+Overlapping triggers) says which were:
 
 ```bash
 curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/daily-cleanup
