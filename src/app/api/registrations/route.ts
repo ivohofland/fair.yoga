@@ -405,8 +405,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           linkOutcome,
         });
 
+        // Unlocked: a preference changed mid-booking lands either side of
+        // this read, and either answer is acceptable (spec §5).
+        const { bookingNotifications } = await tx.teacher.findUniqueOrThrow({
+          where: { id: cls.calendarEntry.teacherId },
+          select: { bookingNotifications: true },
+        });
+
         // Layer 1+2 of the comms model: confirmation for the student,
-        // heads-up for the teacher. Email fallback picks these up if unread.
+        // heads-up for the teacher unless they turned new-booking
+        // notifications off. Email fallback picks these up if unread.
         await createBulkNotifications(tx, [
           {
             recipientType: 'student',
@@ -416,14 +424,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             body: `You're booked for ${cls.calendarEntry.classType}. The final price settles after class.`,
             relatedClassId: cls.id,
           },
-          {
-            recipientType: 'teacher',
-            recipientId: cls.calendarEntry.teacherId,
-            type: 'booking_confirmed',
-            title: 'New booking',
-            body: `${target.student.firstName} booked ${cls.calendarEntry.classType}.`,
-            relatedClassId: cls.id,
-          },
+          ...(bookingNotifications === 'off'
+            ? []
+            : [
+                {
+                  recipientType: 'teacher' as const,
+                  recipientId: cls.calendarEntry.teacherId,
+                  type: 'booking_confirmed' as const,
+                  title: 'New booking',
+                  body: `${target.student.firstName} booked ${cls.calendarEntry.classType}.`,
+                  relatedClassId: cls.id,
+                },
+              ]),
         ]);
       }
 
