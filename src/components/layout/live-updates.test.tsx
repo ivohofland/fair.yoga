@@ -2,9 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { LiveUpdates } from './live-updates';
 
-// One router object for every render, as Next's `useRouter` gives. The shared
-// setup's mock builds a new one per call, and `router` is this effect's
-// dependency, so any re-render there would tear the stream down and reopen it.
+// `router` is this effect's dependency, so a router object that changed
+// between renders would close and reopen the stream.
 const { routerRefresh, router } = vi.hoisted(() => {
   const refresh = vi.fn();
   return { routerRefresh: refresh, router: { refresh } };
