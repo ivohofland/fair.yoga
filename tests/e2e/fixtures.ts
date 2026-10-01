@@ -33,7 +33,20 @@ import { test as base, expect } from '@playwright/test';
  */
 const MAX_LINES = 500;
 
-export const test = base.extend<{ browserLogs: void }>({
+export const test = base.extend<{ browserLogs: void; suppressInstallPrompt: void }>({
+  // Whether this Chromium fires `beforeinstallprompt` is not ours to pin:
+  // when it does, the install card and row would appear on some runs. A
+  // capture listener registered before any spec's own code runs stops the
+  // page's own listener from ever seeing the event.
+  suppressInstallPrompt: [
+    async ({ page }, use) => {
+      await page.addInitScript(() => {
+        window.addEventListener('beforeinstallprompt', (event) => event.stopImmediatePropagation(), { capture: true });
+      });
+      await use();
+    },
+    { auto: true },
+  ],
   browserLogs: [
     async ({ page }, use, testInfo) => {
       const lines: string[] = [];

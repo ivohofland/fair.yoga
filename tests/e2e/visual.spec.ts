@@ -222,15 +222,6 @@ test.describe('Visual regression', () => {
   test.skip(Boolean(process.env.CI) && !hasBaselines, 'no visual baselines for this platform');
   test.describe.configure({ mode: 'serial' });
 
-  // Whether this Chromium fires beforeinstallprompt is not ours to pin: when
-  // it does, the install card and row would appear on some runs. A capture
-  // listener registered first stops the page's own from ever seeing it.
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      window.addEventListener('beforeinstallprompt', (event) => event.stopImmediatePropagation(), { capture: true });
-    });
-  });
-
   test.beforeAll(async () => {
     await prisma.$connect();
     const teacher = await prisma.teacher.create({
