@@ -1,9 +1,57 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { z } from 'zod';
 
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
+import { expectRefusal } from '../api-assertions';
+import { formatIssues } from '@/lib/validation-message';
+import { passkeyRegisterVerifySchema, passkeyAuthVerifySchema } from '@/lib/schemas';
 
 const prisma = new PrismaClient();
+
+/**
+ * A syntactically valid credential id — base64url characters only — for
+ * cases that only need to clear the schema's `id` check, not name a real
+ * stored credential.
+ */
+function makeCredentialId(seed: string): string {
+  return Buffer.from(`cred-${seed}`).toString('base64url');
+}
+
+/**
+ * A base64url `clientDataJSON` naming a challenge other than the one that
+ * will be issued. The library reads this field before the attestation
+ * object or signature, so a fixture built from it reaches the challenge
+ * check unsigned — "wrong-challenge", not "signed".
+ */
+function wrongChallengeClientDataJSON(type: 'webauthn.create' | 'webauthn.get'): string {
+  return Buffer.from(
+    JSON.stringify({ type, challenge: 'not-the-issued-challenge', origin: BASE_URL }),
+  ).toString('base64url');
+}
+
+/**
+ * A validation 400, per `docs/technical-architecture.md` (Error responses):
+ * status 400, no `code`, and a message equal to `formatIssues` of that
+ * schema's own `safeParse` issues for the body sent — never a literal.
+ * `schema.safeParse(body).success` must itself be `false`, so a schema
+ * mutation that stops rejecting fails this precondition rather than the
+ * response assertions below it.
+ */
+async function expectValidation400(
+  res: Response,
+  schema: z.ZodType,
+  body: unknown,
+): Promise<void> {
+  const parsed = schema.safeParse(body);
+  expect(parsed.success).toBe(false);
+  expect(res.status).toBe(400);
+  const resBody = (await res.json()) as { error: { message: string; code?: string } };
+  expect(resBody.error.code).toBeUndefined();
+  if (!parsed.success) {
+    expect(resBody.error.message).toBe(formatIssues(parsed.error.issues));
+  }
+}
 
 /**
  * The verify route must reject an unsafe redirect at the request boundary
@@ -11,7 +59,9 @@ const prisma = new PrismaClient();
  * route is wired to the strict schema, which the schema unit tests alone
  * cannot show. A bogus challengeId also yields 400, so each assertion pins
  * *which* rejection fired: a validation 400 names the failing field first
- * (`parseBody`), and the challenge refusal is an uncoded 400 that names none.
+ * (`parseBody`), and the challenge refusal carries `PASSKEY_CHALLENGE_MISSING`.
+ * Each body carries a valid `response.id` so the only validation issue in
+ * the first two cases is `redirect`, not also `id`.
  */
 describe('POST /api/auth/passkey/authenticate/verify', () => {
   const post = (body: unknown) =>
@@ -22,23 +72,111 @@ describe('POST /api/auth/passkey/authenticate/verify', () => {
     });
 
   it('rejects an absolute redirect with a validation 400', async () => {
-    const res = await post({ response: {}, challengeId: 'x', redirect: 'https://evil.com' });
+    const id = makeCredentialId('redirect-absolute');
+    const res = await post({ response: { id }, challengeId: 'x', redirect: 'https://evil.com' });
     expect(res.status).toBe(400);
     expect(await res.text()).toContain('relative path');
   });
 
   it('rejects a protocol-relative redirect with a validation 400', async () => {
-    const res = await post({ response: {}, challengeId: 'x', redirect: '//evil.com' });
+    const id = makeCredentialId('redirect-protocol-relative');
+    const res = await post({ response: { id }, challengeId: 'x', redirect: '//evil.com' });
     expect(res.status).toBe(400);
     expect(await res.text()).toContain('relative path');
   });
 
   it('a safe redirect passes validation and fails only on the challenge', async () => {
-    const res = await post({ response: {}, challengeId: 'x', redirect: '/somewhere' });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { message: string; code?: string } };
-    expect(body.error.message).not.toMatch(/^redirect:/);
-    expect(body.error.code).toBeUndefined();
+    const id = makeCredentialId('redirect-safe');
+    const res = await post({ response: { id }, challengeId: 'x', redirect: '/somewhere' });
+    await expectRefusal(res, 'PASSKEY_CHALLENGE_MISSING');
+  });
+});
+
+/**
+ * The boundary validation on `response.id` (an empty object, a NUL byte) and
+ * the coded refusal a wrong-challenge response against a real credential
+ * answers. Each case needs a live `challengeId` from
+ * `POST /api/auth/passkey/authenticate/options`, which is IP-rate-limited —
+ * `freshIp()` keeps each call in its own bucket.
+ */
+describe('POST /api/auth/passkey/authenticate/verify — id validation and the coded refusal', () => {
+  const suffix = uniqueSuffix();
+  const accountIds: string[] = [];
+  const credentialIds: string[] = [];
+  let seededCredentialId: string;
+
+  beforeAll(async () => {
+    const account = await prisma.account.create({
+      data: { email: `pk-auth-verify-${suffix}@test.local` },
+    });
+    accountIds.push(account.id);
+    seededCredentialId = makeCredentialId(`seeded-${suffix}`);
+    await prisma.passkeyCredential.create({
+      data: {
+        id: seededCredentialId,
+        accountId: account.id,
+        publicKey: Buffer.from([1, 2, 3]),
+        counter: BigInt(0),
+        transports: ['internal'],
+      },
+    });
+    credentialIds.push(seededCredentialId);
+  });
+
+  afterAll(async () => {
+    await prisma.passkeyCredential.deleteMany({ where: { id: { in: credentialIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  async function freshChallengeId(): Promise<string> {
+    const res = await fetch(`${BASE_URL}/api/auth/passkey/authenticate/options`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { challengeId: string } };
+    return body.data.challengeId;
+  }
+
+  const post = (body: unknown) =>
+    fetch(`${BASE_URL}/api/auth/passkey/authenticate/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  it('rejects an empty response object with a validation 400', async () => {
+    const challengeId = await freshChallengeId();
+    const body = { challengeId, response: {} };
+    const res = await post(body);
+    await expectValidation400(res, passkeyAuthVerifySchema, body);
+  });
+
+  it('rejects a NUL-bearing id with a validation 400', async () => {
+    const challengeId = await freshChallengeId();
+    const body = { challengeId, response: { id: 'ab\u0000cd' } };
+    const res = await post(body);
+    await expectValidation400(res, passkeyAuthVerifySchema, body);
+  });
+
+  it('answers PASSKEY_NOT_VERIFIED for a wrong-challenge response against a seeded credential', async () => {
+    const challengeId = await freshChallengeId();
+    const res = await post({
+      challengeId,
+      response: {
+        id: seededCredentialId,
+        rawId: seededCredentialId,
+        type: 'public-key',
+        response: {
+          clientDataJSON: wrongChallengeClientDataJSON('webauthn.get'),
+          authenticatorData: '',
+          signature: '',
+        },
+        clientExtensionResults: {},
+      },
+    });
+    await expectRefusal(res, 'PASSKEY_NOT_VERIFIED');
   });
 });
 
@@ -202,5 +340,117 @@ describe('POST /api/auth/passkey/register/options', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { user: { displayName: string } } };
     expect(body.data.user.displayName).toBe('Live Student');
+  });
+});
+
+/**
+ * `validateSession` refuses a session whose account has no live profile
+ * (401 `Session expired`), so this fixture's account carries a live student
+ * profile throughout.
+ */
+describe('POST /api/auth/passkey/register/verify', () => {
+  const suffix = uniqueSuffix();
+  const accountIds: string[] = [];
+  const studentIds: string[] = [];
+  let token: string;
+
+  beforeAll(async () => {
+    const account = await prisma.account.create({
+      data: { email: `pk-register-verify-${suffix}@test.local` },
+    });
+    accountIds.push(account.id);
+    const student = await prisma.student.create({
+      data: {
+        accountId: account.id,
+        firstName: 'Passkey', lastName: 'Student',
+        email: `pk-register-verify-${suffix}@test.local`,
+        claimedAt: new Date(),
+      },
+    });
+    studentIds.push(student.id);
+    token = await seedSession(prisma, account.id);
+  });
+
+  afterAll(async () => {
+    await prisma.passkeyCredential.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  function post(body: unknown, { withCookie = true }: { withCookie?: boolean } = {}) {
+    return fetch(`${BASE_URL}/api/auth/passkey/register/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(withCookie ? cookie(token) : {}),
+      },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+  }
+
+  async function requestRegisterOptions(): Promise<void> {
+    const res = await fetch(`${BASE_URL}/api/auth/passkey/register/options`, {
+      method: 'POST',
+      headers: cookie(token),
+    });
+    expect(res.status).toBe(200);
+  }
+
+  it('refuses a request with no session cookie', async () => {
+    const body = { response: { id: makeCredentialId(`noauth-${suffix}`) } };
+    const res = await post(body, { withCookie: false });
+    expect(res.status).toBe(401);
+  });
+
+  it('answers an uncoded 400 for a body that is not JSON', async () => {
+    const res = await post('{not valid json');
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code?: string } };
+    expect(body.error.code).toBeUndefined();
+  });
+
+  it('rejects a non-object response with a validation 400', async () => {
+    const body = { response: 'x' };
+    const res = await post(body);
+    await expectValidation400(res, passkeyRegisterVerifySchema, body);
+  });
+
+  it('answers PASSKEY_CHALLENGE_MISSING with no prior register/options call', async () => {
+    const body = { response: { id: makeCredentialId(`nochallenge-${suffix}`) } };
+    const res = await post(body);
+    await expectRefusal(res, 'PASSKEY_CHALLENGE_MISSING');
+  });
+
+  it('after register/options, an empty response object is a validation 400', async () => {
+    await requestRegisterOptions();
+
+    const body = { response: {} };
+    const res = await post(body);
+    await expectValidation400(res, passkeyRegisterVerifySchema, body);
+  });
+
+  it('a wrong-challenge response answers PASSKEY_NOT_VERIFIED, and burns the challenge', async () => {
+    await requestRegisterOptions();
+
+    const id = makeCredentialId(`wrongchallenge-${suffix}`);
+    const body = {
+      response: {
+        id,
+        rawId: id,
+        type: 'public-key',
+        response: {
+          clientDataJSON: wrongChallengeClientDataJSON('webauthn.create'),
+          attestationObject: '',
+        },
+        clientExtensionResults: {},
+      },
+    };
+
+    const firstRes = await post(body);
+    await expectRefusal(firstRes, 'PASSKEY_NOT_VERIFIED');
+
+    const secondRes = await post(body);
+    await expectRefusal(secondRes, 'PASSKEY_CHALLENGE_MISSING');
   });
 });

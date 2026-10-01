@@ -53,7 +53,11 @@ function verify(challengeId: string, redirect?: string): NextRequest {
   return new NextRequest('http://localhost:3000/api/auth/passkey/authenticate/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ response: {}, challengeId, ...(redirect ? { redirect } : {}) }),
+    body: JSON.stringify({
+      response: { id: 'cred-1' },
+      challengeId,
+      ...(redirect ? { redirect } : {}),
+    }),
   });
 }
 

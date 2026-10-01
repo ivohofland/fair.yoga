@@ -67,7 +67,8 @@ describe('redirect path validation', () => {
     magicLinkSendSchema: (redirect) =>
       magicLinkSendSchema.safeParse({ email: 'a@b.test', redirect }).success,
     passkeyAuthVerifySchema: (redirect) =>
-      passkeyAuthVerifySchema.safeParse({ response: {}, challengeId: 'x', redirect }).success,
+      passkeyAuthVerifySchema.safeParse({ response: { id: 'cred-1' }, challengeId: 'x', redirect })
+        .success,
   };
 
   for (const [name, parse] of Object.entries(parsers)) {
@@ -94,7 +95,7 @@ describe('redirect path validation', () => {
   it('redirect is optional in both schemas', () => {
     expect(magicLinkSendSchema.safeParse({ email: 'a@b.test' }).success).toBe(true);
     expect(
-      passkeyAuthVerifySchema.safeParse({ response: {}, challengeId: 'x' }).success,
+      passkeyAuthVerifySchema.safeParse({ response: { id: 'cred-1' }, challengeId: 'x' }).success,
     ).toBe(true);
   });
 
