@@ -30,7 +30,7 @@
   - Radio labels: "In the inbox, and emailed if I miss it" / "In the inbox only" / "Off".
   - Booking caption: "Bookings always show on your schedule — this only changes whether you're told about each one."
   - Checkboxes: "Email me when I miss a class-completed summary" and "Email me when I miss an invitation".
-  - Auto-cancel row: "Always emailed — so you know the class won't run."
+  - Auto-cancel row: "Always emailed if you miss it — so you know the class won't run."
 
 ## Review Focus
 

@@ -212,7 +212,7 @@ Settings
 │   └── Payment level toggle — planned
 │
 ├── Notifications
-│   └── New booking: inbox and email / inbox only / off; class completed and invitations: email on/off; auto-cancel: always emailed
+│   └── New booking: inbox and email / inbox only / off; class completed and invitations: email on/off; auto-cancel: emailed if missed, whatever the settings
 │
 └── Personal page preview
     └── See what students see

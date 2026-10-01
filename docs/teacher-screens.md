@@ -301,7 +301,7 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 ### 9.4 — Notification Preferences
 - New booking: in the inbox and emailed if missed / in the inbox only / off
 - Class completed and invitations: email if missed, on or off
-- Class auto-cancelled: always emailed
+- Class auto-cancelled: emailed if missed, whatever the settings
 
 ---
 
