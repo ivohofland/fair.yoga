@@ -11,7 +11,7 @@
  *   out the unread threshold. Urgency never overrides consent.
  */
 
-import type { NotificationType } from '@prisma/client';
+import type { NotificationType, TeacherBookingNotifications } from '@prisma/client';
 
 export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set([
   'class_cancelled',
@@ -70,4 +70,47 @@ export function shouldEmailStudent(
   emailNotifications: boolean,
 ): boolean {
   return isEssential(type) || emailNotifications;
+}
+
+/**
+ * What a teacher recipient can be sent. `CreateNotificationInput`'s teacher
+ * variant (`notifications.ts`) accepts only these, so a new teacher
+ * notification cannot be written until it joins this union — and joining it
+ * fails `TEACHER_EMAIL_POLICY`'s `satisfies` until it is classified there.
+ */
+export type TeacherNotificationType =
+  | 'booking_confirmed'
+  | 'class_cancelled'
+  | 'payment_request'
+  | 'teacher_invitation';
+
+export interface TeacherNotificationPrefs {
+  bookingNotifications: TeacherBookingNotifications;
+  emailOnClassCompleted: boolean;
+  emailOnInvitation: boolean;
+}
+
+/**
+ * The teacher's own counterpart to `ESSENTIAL_NOTIFICATION_TYPES`, kept apart
+ * because essentiality depends on the recipient: `payment_request` is a debt
+ * to a student but a summary to a teacher. `class_cancelled` here is the
+ * auto-cancel — the system ended the teacher's class without them, so it
+ * ignores every preference.
+ */
+const TEACHER_EMAIL_POLICY = {
+  class_cancelled: () => true,
+  booking_confirmed: (p: TeacherNotificationPrefs) => p.bookingNotifications === 'inbox_and_email',
+  payment_request: (p: TeacherNotificationPrefs) => p.emailOnClassCompleted,
+  teacher_invitation: (p: TeacherNotificationPrefs) => p.emailOnInvitation,
+} satisfies Record<TeacherNotificationType, (prefs: TeacherNotificationPrefs) => boolean>;
+
+export function isTeacherNotificationType(type: NotificationType): type is TeacherNotificationType {
+  return Object.hasOwn(TEACHER_EMAIL_POLICY, type);
+}
+
+export function shouldEmailTeacher(
+  type: TeacherNotificationType,
+  prefs: TeacherNotificationPrefs,
+): boolean {
+  return TEACHER_EMAIL_POLICY[type](prefs);
 }

@@ -4,6 +4,9 @@ import {
   isEssential,
   isEmailEligible,
   shouldEmailStudent,
+  shouldEmailTeacher,
+  isTeacherNotificationType,
+  type TeacherNotificationPrefs,
 } from './notification-policy';
 
 const now = new Date('2026-07-21T12:00:00Z');
@@ -113,5 +116,57 @@ describe('shouldEmailStudent', () => {
   it('mails a teacher-removed booking past the opt-out, but not a self-cancel', () => {
     expect(shouldEmailStudent('booking_removed', false)).toBe(true);
     expect(shouldEmailStudent('booking_cancelled', false)).toBe(false);
+  });
+});
+
+const ALL_ON: TeacherNotificationPrefs = {
+  bookingNotifications: 'inbox_and_email',
+  emailOnClassCompleted: true,
+  emailOnInvitation: true,
+};
+const ALL_OFF: TeacherNotificationPrefs = {
+  bookingNotifications: 'off',
+  emailOnClassCompleted: false,
+  emailOnInvitation: false,
+};
+
+describe('shouldEmailTeacher', () => {
+  it('always emails an auto-cancel, whatever the preferences', () => {
+    expect(shouldEmailTeacher('class_cancelled', ALL_OFF)).toBe(true);
+    expect(shouldEmailTeacher('class_cancelled', ALL_ON)).toBe(true);
+  });
+
+  // Each case flips ONLY the column it names, with every other column at the
+  // value that would make the answer `true`. A function reading the wrong
+  // column therefore answers true where false is expected.
+  it.each([
+    ['inbox_and_email', true],
+    ['inbox_only', false],
+    ['off', false],
+  ] as const)('booking_confirmed with bookingNotifications=%s emails: %s', (value, expected) => {
+    expect(shouldEmailTeacher('booking_confirmed', { ...ALL_ON, bookingNotifications: value })).toBe(expected);
+  });
+
+  it('payment_request follows emailOnClassCompleted only', () => {
+    expect(shouldEmailTeacher('payment_request', { ...ALL_ON, emailOnClassCompleted: false })).toBe(false);
+    expect(shouldEmailTeacher('payment_request', { ...ALL_OFF, emailOnClassCompleted: true })).toBe(true);
+  });
+
+  it('teacher_invitation follows emailOnInvitation only', () => {
+    expect(shouldEmailTeacher('teacher_invitation', { ...ALL_ON, emailOnInvitation: false })).toBe(false);
+    expect(shouldEmailTeacher('teacher_invitation', { ...ALL_OFF, emailOnInvitation: true })).toBe(true);
+  });
+});
+
+describe('isTeacherNotificationType', () => {
+  it('accepts every type a teacher can receive', () => {
+    for (const t of ['booking_confirmed', 'class_cancelled', 'payment_request', 'teacher_invitation'] as const) {
+      expect(isTeacherNotificationType(t)).toBe(true);
+    }
+  });
+
+  it('rejects student-only types', () => {
+    expect(isTeacherNotificationType('announcement')).toBe(false);
+    expect(isTeacherNotificationType('walk_in_added')).toBe(false);
   });
 });

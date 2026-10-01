@@ -34,6 +34,12 @@ enum StudentReminderPref {
   off
 }
 
+enum TeacherBookingNotifications {
+  inbox_and_email
+  inbox_only
+  off
+}
+
 enum CancelDeadline {
   HOURS_48
   HOURS_24
@@ -160,26 +166,29 @@ model Account {
 /// drift and will not be dropped — and equally will not appear in this file
 /// unless someone keeps this comment true.
 model Teacher {
-  id                 String           @id @default(uuid())
-  accountId          String
-  firstName          String
-  lastName           String
-  email              String           @unique
-  bio                String           @db.VarChar(250)
-  pageSlug           String           @unique
-  customDomain       String?
-  defaultCurrency    String           @default("EUR")
-  defaultTimezone    String           @default("Europe/Amsterdam")
-  defaultReminder    ReminderPref     @default(morning_of)
-  skippedOnboarding  OnboardingStep[] @default([])
-  paymentLevel       PaymentLevel     @default(LEVEL_1)
-  bankIban           String?
-  bankAccountName    String?
-  processorType      ProcessorType?
-  processorAccountId String?
-  deletedAt          DateTime?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  id                    String                      @id @default(uuid())
+  accountId             String
+  firstName             String
+  lastName              String
+  email                 String                      @unique
+  bio                   String                      @db.VarChar(250)
+  pageSlug              String                      @unique
+  customDomain          String?
+  defaultCurrency       String                      @default("EUR")
+  defaultTimezone       String                      @default("Europe/Amsterdam")
+  defaultReminder       ReminderPref                @default(morning_of)
+  bookingNotifications  TeacherBookingNotifications @default(inbox_and_email)
+  emailOnClassCompleted Boolean                     @default(true)
+  emailOnInvitation     Boolean                     @default(true)
+  skippedOnboarding     OnboardingStep[]            @default([])
+  paymentLevel          PaymentLevel                @default(LEVEL_1)
+  bankIban              String?
+  bankAccountName       String?
+  processorType         ProcessorType?
+  processorAccountId    String?
+  deletedAt             DateTime?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
 
   account         Account          @relation(fields: [accountId], references: [id])
   teacherRooms    TeacherRoom[]
