@@ -2,11 +2,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { log } from '@/lib/log';
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/types';
 
-// Mocks `@simplewebauthn/server`'s verify calls directly: the branches these
-// cases exercise — the library resolving `verified: false`, throwing
-// something other than an `Error`, or resolving `transports` with junk
-// members — are not reachable by building a real attestation/assertion
-// through this module's public API.
+// Mocks `@simplewebauthn/server`'s verify calls directly. Two of the branches
+// these cases exercise — the library resolving `verified: false`, and
+// throwing something other than an `Error` — are not reachable by building a
+// real attestation/assertion through this module's public API. The
+// transports filter is reachable with a forged `fmt: 'none'` attestation; it
+// is mocked here so the case can name its junk members directly.
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@simplewebauthn/server')>();
   return {
@@ -66,13 +67,14 @@ describe('verifyPasskeyRegistration transports filter', () => {
     } as unknown as Awaited<ReturnType<typeof verifyRegistrationResponse>>);
 
     const result = await verifyPasskeyRegistration({
-      // Not read: the mocked library call above never inspects it.
-      response: {} as RegistrationResponseJSON,
+      // Only `id` is read, by the helper's check that it matches the mocked
+      // `credential.id`; the mocked library call never inspects the rest.
+      response: { id: credentialId } as RegistrationResponseJSON,
       expectedChallenge: 'irrelevant-with-the-library-mocked',
     });
 
     if (!result.verified) {
-      throw new Error('expected a verified result');
+      throw new Error(`expected a verified result, got: ${result.reason}`);
     }
     expect(result.transports).toEqual(['usb', 'internal']);
   });

@@ -209,10 +209,9 @@ function formatCaughtReason(error: unknown): string {
 }
 
 /**
- * The one `warn` a verification refusal emits, never `error`: the refusal
- * already answers 400, so there is nothing here for an on-call alert to do.
- * `reason` is for this line only — neither verify helper returns it to a
- * route for sending to the client.
+ * The one `warn` a verification refusal emits, never `error`: a refused
+ * response is a client fault, not something for an on-call alert to act on.
+ * `reason` is written for this log line; callers decide what the client sees.
  */
 function warnRefused(ceremony: PasskeyCeremony, reason: string): void {
   log.warn({ ceremony, reason }, 'passkey verification refused');
@@ -276,8 +275,16 @@ export async function generatePasskeyRegistrationOptions(params: {
  * Verifies a registration response, resolving to a refusal rather than
  * rejecting. `@simplewebauthn/server` signals almost every refused response
  * by throwing a plain `Error`; left uncaught, `withErrorHandler` would answer
- * that as a 500 logged `unhandled API error`, so the `try` below encloses
- * only the library call — nothing else here is about the client's response.
+ * that as a 500 logged `unhandled API error`, so the `try` below encloses the
+ * library call.
+ *
+ * A verified result is still client-derived past the `try`: a `fmt: 'none'`
+ * attestation verifies with no signature, and the library neither checks
+ * that the credential id it parses from the authenticator data equals
+ * `response.id` nor validates `transports`. This function therefore refuses
+ * an id mismatch the same way as a library throw — the id it returns is
+ * always the caller's `response.id` — and keeps only known transport names,
+ * treating a `transports` that is not an array as none.
  *
  * The library's `Error`s are untyped, so this catch cannot distinguish a
  * hostile response from a server-side cause — every one of the following is
@@ -329,12 +336,20 @@ export async function verifyPasskeyRegistration(params: {
 
   const { credential } = registrationInfo;
 
+  if (credential.id !== params.response.id) {
+    const reason = 'Authenticator data credential id does not match response.id';
+    warnRefused('registration', reason);
+    return { verified: false, reason };
+  }
+
   return {
     verified: true,
     credentialId: credential.id,
     publicKey: new Uint8Array(credential.publicKey),
     counter: credential.counter,
-    transports: (credential.transports ?? []).filter(isKnownTransport),
+    transports: Array.isArray(credential.transports)
+      ? credential.transports.filter(isKnownTransport)
+      : [],
   };
 }
 
@@ -367,8 +382,9 @@ export async function generatePasskeyAuthenticationOptions(): Promise<PublicKeyC
  * Verifies an authentication response, resolving to a refusal rather than
  * rejecting. `@simplewebauthn/server` signals almost every refused response
  * by throwing a plain `Error`; left uncaught, `withErrorHandler` would answer
- * that as a 500 logged `unhandled API error`, so the `try` below encloses
- * only the library call — nothing else here is about the client's response.
+ * that as a 500 logged `unhandled API error`, so the `try` below encloses the
+ * library call. What it returns past the `try` is the library's own counter,
+ * read from a response it verified against the stored public key.
  *
  * The library's `Error`s are untyped, so this catch cannot distinguish a
  * hostile response from a server-side cause — every one of the following is

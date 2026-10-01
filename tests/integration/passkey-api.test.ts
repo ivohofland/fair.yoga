@@ -20,20 +20,23 @@ function makeCredentialId(seed: string): string {
 
 /**
  * A base64url `clientDataJSON` naming a challenge other than the one that
- * will be issued. The library reads this field before the attestation
- * object or signature, so a fixture built from it reaches the challenge
- * check unsigned — "wrong-challenge", not "signed".
+ * will be issued. The library checks the challenge before the origin, the
+ * attestation object or the signature, so no signature is needed to reach
+ * that check — but the response carrying this must also have a base64url
+ * `id` equal to its `rawId` and `type: 'public-key'`, which come first.
  */
 function wrongChallengeClientDataJSON(type: 'webauthn.create' | 'webauthn.get'): string {
-  return Buffer.from(
-    JSON.stringify({ type, challenge: 'not-the-issued-challenge', origin: BASE_URL }),
-  ).toString('base64url');
+  return Buffer.from(JSON.stringify({ type, challenge: 'not-the-issued-challenge' })).toString(
+    'base64url',
+  );
 }
 
 /**
- * A validation 400, per `docs/technical-architecture.md` (Error responses):
- * status 400, no `code`, and a message equal to `formatIssues` of that
- * schema's own `safeParse` issues for the body sent — never a literal.
+ * A validation 400, as the spec defines it
+ * (`docs/superpowers/specs/2026-10-01-passkey-verify-refusals-design.md`,
+ * Tests): status 400, no `code`, and a message equal to `formatIssues` of
+ * that schema's own `safeParse` issues for the body sent — never a literal
+ * (`docs/technical-architecture.md`, Error responses).
  * `schema.safeParse(body).success` must itself be `false`, so a schema
  * mutation that stops rejecting fails this precondition rather than the
  * response assertions below it.
@@ -412,6 +415,12 @@ describe('POST /api/auth/passkey/register/verify', () => {
 
   it('rejects a non-object response with a validation 400', async () => {
     const body = { response: 'x' };
+    const res = await post(body);
+    await expectValidation400(res, passkeyRegisterVerifySchema, body);
+  });
+
+  it('rejects a base64url id one character past the credential id bound with a validation 400', async () => {
+    const body = { response: { id: 'A'.repeat(1365) } };
     const res = await post(body);
     await expectValidation400(res, passkeyRegisterVerifySchema, body);
   });
