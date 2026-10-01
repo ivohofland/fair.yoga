@@ -31,8 +31,8 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | **Defaults** | | |
 | default_currency | string, default 'EUR' | |
 | default_timezone | string | IANA identifier, e.g. 'Europe/Amsterdam'; V8's old spellings are stored renamed — see Design Notes |
-| class_reminder | enum: evening_before, morning_of, one_hour_before, off | When the teacher is reminded of each class they teach |
-| class_reminder_channel | enum: inbox, email, inbox_and_email | How that reminder arrives |
+| class_reminder | enum: evening_before, morning_of, one_hour_before, off, default morning_of | When the teacher is reminded of each class they teach |
+| class_reminder_channel | enum: inbox, email, inbox_and_email, default inbox_and_email | How that reminder arrives |
 | booking_notifications | enum: inbox_and_email, inbox_only, off, default inbox_and_email | New-booking notification: inbox and fallback email, inbox only, or none |
 | email_on_class_completed | boolean, default true | Fallback email for the class-completed summary |
 | email_on_invitation | boolean, default true | Fallback email for an invitation from another teacher |
@@ -74,8 +74,8 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | birthday | date, nullable | Year collected for the age; no response to a teacher carries it — the projection returns day and month and, separately, the age. A teacher given both can work the year out at once, and one given only the age can over time, from the day it goes up; the privacy card says so under the Age toggle |
 | address | string, nullable | e.g. for teacher sending holiday cards |
 | **Preferences** | | |
-| class_reminder | enum: evening_before, morning_of, one_hour_before, off | When the student is reminded of each class they booked |
-| class_reminder_channel | enum: inbox, email, inbox_and_email | How that reminder arrives |
+| class_reminder | enum: evening_before, morning_of, one_hour_before, off, default morning_of | When the student is reminded of each class they booked |
+| class_reminder_channel | enum: inbox, email, inbox_and_email, default inbox_and_email | How that reminder arrives |
 | email_notifications | boolean, default true | Fallback email on/off |
 | **Timestamps** | | |
 | created_at | datetime | |
@@ -292,7 +292,7 @@ The fact that tells the two apart is read off the roster link's own write, not f
 
 An account holding both LIVE profiles therefore always takes the student branch — the `Student` lookup runs first and does not consult the teacher side at all. An account holding a LIVE teacher beside an ERASED student takes the teacher branch instead: erasure tombstones `Student.email` (see `deleteStudentAccount`, `services/gdpr.ts`), so the lookup above misses and falls through.
 
-**The teacher branch reads the teacher's own email preferences, never the student's.** `processEmailFallback` (`src/services/email-fallback.ts`) selects `Teacher.bookingNotifications`, `Teacher.emailOnClassCompleted` and `Teacher.emailOnInvitation` for a teacher recipient and decides through `shouldEmailTeacher` (`src/services/notification-policy.ts`), at sweep time, so a preference changed after a row was created applies to that row. The policy table is keyed by `TeacherNotificationType`, which the teacher variant of `CreateNotificationInput` enforces at creation. `class_cancelled` (an auto-cancel) ignores every preference. A teacher row whose type is outside `TeacherNotificationType` was written around the type: directly, or by a cast, mutation or `Object.assign` that defeats it; it is emailed rather than dropped, and logged at `error`. `Student.emailNotifications` is the student arm's alone: an account holding both profiles is governed by each profile's own setting for the notifications addressed to it. `Teacher.classReminder` is the teacher's own class-reminder timing, sent directly rather than as a fallback, and `StudentPrivacy.receiveComms` is student-side per-teacher announcement muting; neither is an email preference.
+**The teacher branch reads the teacher's own email preferences, never the student's.** `processEmailFallback` (`src/services/email-fallback.ts`) selects the teacher's `TeacherNotificationPrefs` columns (`src/services/notification-policy.ts`) for a teacher recipient — the class-reminder members are there because the type requires them, and the fallback never consults them, since its policy answers `false` for `class_reminder` — and decides through `shouldEmailTeacher` (`src/services/notification-policy.ts`), at sweep time, so a preference changed after a row was created applies to that row. The policy table is keyed by `TeacherNotificationType`, which the teacher variant of `CreateNotificationInput` enforces at creation. `class_cancelled` (an auto-cancel) ignores every preference. A teacher row whose type is outside `TeacherNotificationType` was written around the type: directly, or by a cast, mutation or `Object.assign` that defeats it; it is emailed rather than dropped, and logged at `error`. `Student.emailNotifications` is the student arm's alone: an account holding both profiles is governed by each profile's own setting for the notifications addressed to it. `Teacher.classReminder` is the teacher's own class-reminder timing, sent directly rather than as a fallback, and `StudentPrivacy.receiveComms` is student-side per-teacher announcement muting; neither is an email preference.
 
 `teacher_invitation` stays out of `ESSENTIAL_NOTIFICATION_TYPES` (`src/services/notification-policy.ts`), which is what lets a *student* invitee opt out of its email; a teacher invitee's email is governed by `Teacher.emailOnInvitation`, and the one-notification cap above bounds how many such notifications a single invitation can produce.
 
@@ -780,7 +780,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | body | text | |
 | *related_class_id* (FK) | → Class, nullable | |
 | is_read | boolean, default false | |
-| email_sent | boolean, default false | True when fallback email was triggered |
+| email_sent | boolean, default false | True once no fallback email may be sent for this row: set when the fallback claims the row (cleared again if its send fails), and written true at creation for every `class_reminder` row, whose email (if its channel has one) the class-reminder sweep sends directly |
 | created_at | datetime | |
 | updated_at | datetime | |
 

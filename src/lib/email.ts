@@ -88,7 +88,11 @@ export async function sendInvitationEmail(
   }
 }
 
-/** Sends one HTML email. Resend reports failure as `{ error }`, not a throw; so does this. */
+/**
+ * Sends one HTML email. An API failure Resend reports as `{ error }` comes back
+ * as `{ ok: false }`; an error the SDK throws (network, serialisation)
+ * propagates.
+ */
 export async function sendHtmlEmail(input: {
   to: string;
   subject: string;

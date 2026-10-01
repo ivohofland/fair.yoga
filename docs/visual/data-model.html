@@ -402,6 +402,7 @@
         <div class="section-label">State</div>
         <div class="field"><span class="field-name">status</span><span class="field-type">enum (see note)</span></div>
         <div class="field"><span class="field-name">settings_locked</span><span class="field-type">boolean</span></div>
+        <div class="field"><span class="field-name">teacher_reminder_sent_at</span><span class="field-type">datetime, nullable</span></div>
         <div class="section-label">Calculated (after class ends)</div>
         <div class="field"><span class="field-name">effective_teacher_rate</span><span class="field-type">decimal, nullable</span></div>
         <div class="field"><span class="field-name">total_students</span><span class="field-type">int, nullable</span></div>
@@ -448,6 +449,7 @@
         <div class="section-label">Timestamps</div>
         <div class="field"><span class="field-name">registered_at</span><span class="field-type">datetime</span></div>
         <div class="field"><span class="field-name">cancelled_at</span><span class="field-type">datetime, nullable</span></div>
+        <div class="field"><span class="field-name">class_reminder_sent_at</span><span class="field-type">datetime, nullable</span></div>
         <div class="field-note">Status: registered &#8594; attended / no_show / late_cancel / cancelled</div>
       </div>
     </div>

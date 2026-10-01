@@ -2133,6 +2133,24 @@ describe('PUT /api/students/[id]', () => {
     expect(await firstNameOf(alice.id)).toBe('Alicia');
   });
 
+  it("persists a student's own class-reminder choice at non-default values (#721)", async () => {
+    const before = await prisma.student.findUniqueOrThrow({
+      where: { id: alice.id },
+      select: { classReminder: true, classReminderChannel: true },
+    });
+    // Neither value is the column default, so a route that dropped them would fail.
+    expect(before).toEqual({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+
+    const res = await put(alice.id, { classReminder: 'one_hour_before', classReminderChannel: 'email' }, alice.token);
+
+    expect(res.status).toBe(200);
+    const after = await prisma.student.findUniqueOrThrow({
+      where: { id: alice.id },
+      select: { classReminder: true, classReminderChannel: true },
+    });
+    expect(after).toEqual({ classReminder: 'one_hour_before', classReminderChannel: 'email' });
+  });
+
   it('refuses a whitespace-only first name (#405 §1, over the wire)', async () => {
     const before = await firstNameOf(alice.id);
     const res = await put(alice.id, { firstName: '   ' }, alice.token);
