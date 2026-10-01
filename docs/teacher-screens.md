@@ -299,8 +299,9 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 - Fee overview
 
 ### 9.4 — Notification Preferences
-- Which events trigger notifications for the teacher
-- Email on/off per event type
+- New booking: in the inbox and emailed if missed / in the inbox only / off
+- Class completed and invitations: email if missed, on or off
+- Class auto-cancelled: always emailed
 
 ---
 

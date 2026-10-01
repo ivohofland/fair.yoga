@@ -1,0 +1,25 @@
+import { prisma } from '@/lib/db';
+import { requireTeacherSession } from '@/lib/session';
+import { PageHeader } from '@/components/layout/page-header';
+import { NotificationPrefsForm } from '@/components/settings/notification-prefs-form';
+
+export default async function NotificationSettingsPage() {
+  const session = await requireTeacherSession();
+  const teacher = await prisma.teacher.findUniqueOrThrow({
+    where: { id: session.teacherId },
+    select: { id: true, bookingNotifications: true, emailOnClassCompleted: true, emailOnInvitation: true },
+  });
+  return (
+    <>
+      <PageHeader title="Notifications" backHref="/settings" backLabel="Settings" />
+      <NotificationPrefsForm
+        teacherId={teacher.id}
+        initial={{
+          bookingNotifications: teacher.bookingNotifications,
+          emailOnClassCompleted: teacher.emailOnClassCompleted,
+          emailOnInvitation: teacher.emailOnInvitation,
+        }}
+      />
+    </>
+  );
+}
