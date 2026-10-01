@@ -134,19 +134,33 @@ describe('PUT /api/teachers/[id]', () => {
       bookingNotifications: 'inbox_only',
       emailOnClassCompleted: false,
       emailOnInvitation: false,
+      classReminder: 'evening_before',
+      classReminderChannel: 'inbox',
     }, teacherToken);
     expect(res.status).toBe(200);
     const after = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(after.bookingNotifications).toBe('inbox_only');
     expect(after.emailOnClassCompleted).toBe(false);
     expect(after.emailOnInvitation).toBe(false);
-    // every other column is untouched; only the three preferences moved
-    expect({ ...after, bookingNotifications: before.bookingNotifications, emailOnClassCompleted: before.emailOnClassCompleted, emailOnInvitation: before.emailOnInvitation, updatedAt: before.updatedAt })
+    expect(after.classReminder).toBe('evening_before');
+    expect(after.classReminderChannel).toBe('inbox');
+    // every other column is untouched; only the preferences moved
+    expect({ ...after, bookingNotifications: before.bookingNotifications, emailOnClassCompleted: before.emailOnClassCompleted, emailOnInvitation: before.emailOnInvitation, classReminder: before.classReminder, classReminderChannel: before.classReminderChannel, updatedAt: before.updatedAt })
       .toEqual(before);
   });
 
   it('refuses an unknown bookingNotifications value (#49)', async () => {
     const res = await putTeacher(teacherId, { bookingNotifications: 'sometimes' }, teacherToken);
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses an unknown classReminder value (#721)', async () => {
+    const res = await putTeacher(teacherId, { classReminder: 'eve' }, teacherToken);
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses the retired defaultReminder key (#721)', async () => {
+    const res = await putTeacher(teacherId, { defaultReminder: 'morning_of' }, teacherToken);
     expect(res.status).toBe(400);
   });
 

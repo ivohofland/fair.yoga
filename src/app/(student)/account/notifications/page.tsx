@@ -14,7 +14,7 @@ export default async function NotificationSettingsPage() {
 
   const student = await prisma.student.findUnique({
     where: { id: session.studentId },
-    select: { id: true, emailNotifications: true, classReminder: true },
+    select: { id: true, emailNotifications: true, classReminder: true, classReminderChannel: true },
   });
   if (!student) redirect('/login');
 
@@ -32,6 +32,7 @@ export default async function NotificationSettingsPage() {
         studentId={student.id}
         emailNotifications={student.emailNotifications}
         classReminder={student.classReminder}
+        classReminderChannel={student.classReminderChannel}
       />
     </div>
   );
