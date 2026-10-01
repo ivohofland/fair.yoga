@@ -17,8 +17,8 @@ import { createClassFixture } from '../class-fixtures';
  * sibling tests, the second one gets a fresh context with no credential
  * and fails confusingly.
  *
- * The add-passkey refusal test beside it needs none of the journey's state;
- * it shares the file for the fixtures.
+ * The PIN-less-key refusal test has its own describe and fixture, so a
+ * journey failure does not skip it.
  */
 
 const prisma = new PrismaClient();
@@ -31,7 +31,6 @@ let roomId: string;
 let classId: string;
 let studentId: string;
 let studentToken: string;
-let uvlessStudentId: string;
 
 /**
  * A CTAP2 security key with no PIN and no biometric: it can prove presence
@@ -115,18 +114,6 @@ test.describe('Passkey sign-in', () => {
     });
     studentId = student.id;
     studentToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
-
-    const uvlessStudent = await prisma.student.create({
-      data: {
-        firstName: 'No',
-        lastName: 'Pin',
-        email: `e2e-passkey-nopin-${suffix}@test.local`,
-        account: { create: { email: `e2e-passkey-nopin-${suffix}@test.local` } },
-        claimedAt: new Date(),
-        incomeTier: 3,
-      },
-    });
-    uvlessStudentId = uvlessStudent.id;
   });
 
   test.afterAll(async () => {
@@ -135,10 +122,6 @@ test.describe('Passkey sign-in', () => {
     if (studentId) {
       await prisma.passkeyCredential.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
       await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
-    }
-    if (uvlessStudentId) {
-      await prisma.passkeyCredential.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, uvlessStudentId) } });
-      await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, uvlessStudentId) } });
     }
     if (teacherId) {
       await prisma.calendarEntry.deleteMany({ where: { teacherId } });
@@ -230,6 +213,46 @@ test.describe('Passkey sign-in', () => {
     await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
     await page.waitForURL((url) => url.pathname === '/schedule', { timeout: 10_000 });
   });
+});
+
+test.describe('Passkey: a PIN-less security key', () => {
+  const uvlessEmail = `e2e-passkey-nopin-${suffix}@test.local`;
+  let uvlessStudentId: string;
+  let uvlessStudentAccountId: string;
+
+  test.beforeAll(async () => {
+    const uvlessStudent = await prisma.student.create({
+      data: {
+        firstName: 'No',
+        lastName: 'Pin',
+        email: uvlessEmail,
+        account: { create: { email: uvlessEmail } },
+        claimedAt: new Date(),
+        incomeTier: 3,
+      },
+    });
+    uvlessStudentId = uvlessStudent.id;
+    uvlessStudentAccountId = await accountIdOfStudent(prisma, uvlessStudentId);
+  });
+
+  test.afterAll(async () => {
+    // Guarded per id: after a partial beforeAll an unset id must skip its
+    // deletes — an `undefined` in a deleteMany filter matches everything.
+    // Keyed on the account id captured in `beforeAll`, not looked up again
+    // here: the journey describe's own `afterAll` sweeps by `contains:
+    // suffix` and may run before or after this one, so by the time this
+    // runs the student row it would resolve through may already be gone.
+    if (uvlessStudentId && uvlessStudentAccountId) {
+      await prisma.passkeyCredential.deleteMany({ where: { accountId: uvlessStudentAccountId } });
+      await prisma.session.deleteMany({ where: { accountId: uvlessStudentAccountId } });
+    }
+    // Exact email, not `contains: suffix`: the journey describe's sweep
+    // shares that suffix and may already have reached these rows. Both
+    // sides' exact-email deletes are idempotent and cannot reach the other
+    // describe's rows.
+    await prisma.student.deleteMany({ where: { email: uvlessEmail } });
+    await prisma.account.deleteMany({ where: { email: uvlessEmail } });
+  });
 
   test('a security key with no PIN cannot add a passkey, and nothing is sent for verification', async ({
     page,
@@ -242,28 +265,23 @@ test.describe('Passkey sign-in', () => {
       if (request.url().includes('/api/auth/passkey/register/verify')) verifyRequests.push(request.url());
     });
 
-    await context.addCookies([
-      sessionCookie(await seedSession(prisma, await accountIdOfStudent(prisma, uvlessStudentId))),
-    ]);
+    await context.addCookies([sessionCookie(await seedSession(prisma, uvlessStudentAccountId))]);
     await page.goto('/account');
     const optionsResponse = page.waitForResponse('**/api/auth/passkey/register/options');
     await page.getByRole('button', { name: 'Add a passkey' }).click();
     await optionsResponse;
 
-    // The browser refuses the ceremony; the component treats that as a
-    // dismissal and returns to idle, with nothing sent for verification.
+    // A refused ceremony is a dismissal to AddPasskey
+    // (src/components/account/add-passkey.tsx): back to idle, nothing sent.
     //
-    // Scoped to the button's container: a bare `getByRole('alert')` also
-    // matches Next's route announcer — docs/technical-architecture.md
+    // Every alert but Next's route announcer — docs/technical-architecture.md
     // ("Testing conventions", "Asserting no alert in e2e").
     const addPasskeyButton = page.getByRole('button', { name: 'Add a passkey' });
     await expect(addPasskeyButton).toBeEnabled();
-    await expect(addPasskeyButton.locator('..').getByRole('alert')).toHaveCount(0);
+    await expect(page.locator('[role="alert"]:not(#__next-route-announcer__)')).toHaveCount(0);
     expect(verifyRequests).toEqual([]);
     expect(
-      await prisma.passkeyCredential.count({
-        where: { accountId: await accountIdOfStudent(prisma, uvlessStudentId) },
-      }),
+      await prisma.passkeyCredential.count({ where: { accountId: uvlessStudentAccountId } }),
     ).toBe(0);
   });
 });
