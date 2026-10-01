@@ -62,6 +62,17 @@ describe('createNotification', () => {
     expect(notification.createdAt).toBeInstanceOf(Date);
   });
 
+  it('writes emailSent as given, and false by default (#721)', async () => {
+    const sent = await createNotification(prisma, {
+      recipientType: 'student', recipientId: teacherId, type: 'class_reminder', title: 't', body: 'b', emailSent: true,
+    });
+    const unsent = await createNotification(prisma, {
+      recipientType: 'student', recipientId: teacherId, type: 'announcement', title: 't', body: 'b',
+    });
+    expect(sent.emailSent).toBe(true);
+    expect(unsent.emailSent).toBe(false);
+  });
+
   it('creates a notification with relatedClassId when provided', async () => {
     // Create supporting entities for a class
     const room = await prisma.room.create({
