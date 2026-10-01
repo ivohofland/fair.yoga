@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, onTestFinished, vi } from 'vitest';
 import {
   PrismaClient,
   type ClassStatus,
@@ -10,6 +10,8 @@ import crypto from 'crypto';
 import { processClassReminders, reminderCandidateDates } from './class-reminders';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
+import * as timezone from '@/lib/timezone';
+import * as emailTemplates from '@/lib/email-templates';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 
@@ -553,15 +555,15 @@ describe('processClassReminders (DB)', () => {
   });
 
   // 17
-  it('counts a failed send, keeps the stamp, and does not retry', async () => {
+  it('a sweep whose every send fails rejects, keeps the stamp, and does not retry', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminderChannel: 'email' });
     sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
 
-    const first = await run(f, MORNING);
+    await expect(run(f, MORNING)).rejects.toThrow(
+      'class reminders: 1 reminder email(s) failed and will not be retried, 0 class(es) failed (1 student, 0 teacher reminders claimed)',
+    );
 
-    expect(first.emailFailures).toBe(1);
-    expect(first.studentReminders).toBe(1);
     expect(sendsTo(student.email)).toBe(1);
     expect(await stampOf(registration.id)).toEqual(MORNING);
     expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ reason: 'boom' }), expect.any(String));
@@ -572,24 +574,104 @@ describe('processClassReminders (DB)', () => {
   });
 
   // 18
-  it('a send that throws is a failed send; the sweep carries on to the next student', async () => {
+  it('a send that throws is a failed send; the sweep carries on to the next student, then rejects', async () => {
     const f = await seed({ classReminder: 'off' });
     const a = await book(f, { classReminderChannel: 'email' });
     const b = await book(f, { classReminderChannel: 'email' });
-    sendMock.mockRejectedValueOnce(new Error('socket hang up'));
+    const thrown = new Error('socket hang up');
+    sendMock.mockRejectedValueOnce(thrown);
 
-    const result = await run(f, MORNING);
+    await expect(run(f, MORNING)).rejects.toThrow(
+      'class reminders: 1 reminder email(s) failed and will not be retried, 0 class(es) failed (2 student, 0 teacher reminders claimed)',
+    );
 
-    expect(result).toEqual({ studentReminders: 2, teacherReminders: 0, emailFailures: 1 });
     expect(sendMock).toHaveBeenCalledTimes(2);
     expect(sendsTo(a.student.email)).toBe(1);
     expect(sendsTo(b.student.email)).toBe(1);
     expect(await stampOf(a.registration.id)).toEqual(MORNING);
     expect(await stampOf(b.registration.id)).toEqual(MORNING);
+    // The error itself, so its stack and cause reach the log.
     expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'socket hang up' }),
-      expect.any(String),
+      expect.objectContaining({ classId: f.classId, recipientType: 'student', err: thrown }),
+      'class reminder email failed; not retried',
     );
+  });
+
+  // 18a
+  it('a render that throws is a failed send of that reminder, not a failed class', async () => {
+    const f = await seed({ classReminder: 'off' });
+    const { student, registration } = await book(f, { classReminderChannel: 'email' });
+    const thrown = new Error('render failed');
+    const spy = vi.spyOn(emailTemplates, 'renderNotificationEmail').mockImplementationOnce(() => {
+      throw thrown;
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    await expect(run(f, MORNING)).rejects.toThrow(
+      'class reminders: 1 reminder email(s) failed and will not be retried, 0 class(es) failed (1 student, 0 teacher reminders claimed)',
+    );
+
+    expect(sendsTo(student.email)).toBe(0);
+    expect(await stampOf(registration.id)).toEqual(MORNING);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ classId: f.classId, err: thrown }),
+      'class reminder email failed; not retried',
+    );
+  });
+
+  // 18b
+  it('one class failing does not stop the classes after it, and the sweep then rejects', async () => {
+    const f1 = await seed({ classReminder: 'off' });
+    const f2 = await seed({ classReminder: 'off' });
+    const r1 = await book(f1, { classReminderChannel: 'inbox' });
+    const r2 = await book(f2, { classReminderChannel: 'inbox' });
+    // The sweep walks classes in `id` order: fail the first one it reaches.
+    const [failing, later] = [f1, f2].sort((x, y) => (x.classId < y.classId ? -1 : 1)) as [Fixture, Fixture];
+    const laterStudent = later === f1 ? r1 : r2;
+    const failingStudent = later === f1 ? r2 : r1;
+    const forced = new Error('forced registration read failure');
+    const failingClient = prisma.$extends({
+      query: {
+        registration: {
+          async findMany({ args, query }) {
+            const where = args.where as { classId?: unknown } | undefined;
+            if (where?.classId === failing.classId) throw forced;
+            return query(args);
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`; every method used is the real one.
+    }) as unknown as PrismaClient;
+    const scoped = scopeSweep(failingClient, {
+      Class: { calendarEntry: { teacherId: { in: [f1.teacherId, f2.teacherId] } } },
+    });
+
+    await expect(processClassReminders(scoped.db, MORNING)).rejects.toThrow(
+      'class reminders: 0 reminder email(s) failed and will not be retried, 1 class(es) failed (1 student, 0 teacher reminders claimed)',
+    );
+
+    expect(await studentRows(laterStudent.student.id)).toHaveLength(1);
+    expect(await stampOf(laterStudent.registration.id)).toEqual(MORNING);
+    expect(await stampOf(failingStudent.registration.id)).toBeNull();
+    expect(log.error).toHaveBeenCalledWith(
+      { classId: failing.classId, err: forced },
+      'class reminders failed for this class; the sweep carries on',
+    );
+  });
+
+  // 18c
+  it('skips a class whose start cannot be read, naming it once', async () => {
+    const f = await seed({ classReminder: 'morning_of' });
+    const { student, registration } = await book(f);
+    expect(await prisma.registration.count({ where: { id: registration.id, status: 'registered' } })).toBe(1);
+    const spy = vi.spyOn(timezone, 'classStartInstant').mockReturnValueOnce(new Date(Number.NaN));
+    onTestFinished(() => spy.mockRestore());
+
+    const result = await run(f, MORNING);
+
+    expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
+    expect(await studentRows(student.id)).toHaveLength(0);
+    expect(log.error).toHaveBeenCalledWith({ classId: f.classId }, 'class reminders: unreadable class start; skipped');
   });
 
   // 19
@@ -700,14 +782,16 @@ describe('processClassReminders (DB)', () => {
   });
 
   // 23
-  it("counts a failed teacher send and keeps the class's stamp", async () => {
+  it("a failed teacher send rejects the sweep and keeps the class's stamp; email-only writes no row", async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'email' });
     sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
 
-    const result = await run(f, MORNING);
+    await expect(run(f, MORNING)).rejects.toThrow(
+      'class reminders: 1 reminder email(s) failed and will not be retried, 0 class(es) failed (0 student, 1 teacher reminders claimed)',
+    );
 
-    expect(result).toEqual({ studentReminders: 0, teacherReminders: 1, emailFailures: 1 });
     expect(sendsTo(f.teacherEmail)).toBe(1);
+    expect(await teacherRows(f.teacherId)).toHaveLength(0);
     expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toEqual(MORNING);
   });
 });
