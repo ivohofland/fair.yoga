@@ -25,8 +25,9 @@ at `fd7a396d`, with an account holding a live student profile and a seeded sessi
 | 8 | `authenticate/verify` | live `challengeId`, credential row exists, wrong challenge | **500** | `Error: Unexpected authentication response challenge …` (library) |
 
 What held: every branch the issue lists (rows 1–5, 8), and its reading of the library —
-`@simplewebauthn/server` 13.3.2 signals almost every rejection by `throw new Error(...)` and
-returns `verified: false` only from its late attestation/signature checks
+`@simplewebauthn/server` 13.3.2 signals almost every rejection by throwing (mostly plain
+`Error`s, a few named subclasses such as `UnexpectedRPIDHash`) and returns `verified: false`
+only from its late attestation/signature checks
 (`esm/registration/verifyRegistrationResponse.js`, `esm/authentication/verifyAuthenticationResponse.js`).
 
 What the issue missed: **row 7.** `authenticate/verify` reads `response.id` before it ever calls
@@ -42,10 +43,11 @@ review found two more, by reading and one measurement:
   500 — `PrismaClientUnknownRequestError`, Postgres `22021` (NUL in a UTF-8 string), from the same
   `findUnique`. A non-empty-string check would not have stopped it.
 - `register/verify` writes `registrationInfo.credential.transports` to the `String[]` column. The
-  library passes the client's `response.transports` through untouched, and a `fmt: 'none'`
-  attestation verifies with no signature, so any signed-in caller can build a response the
-  library accepts carrying `transports: [1]` or a NUL-bearing string — a 500 **after** a
-  successful verification, past any catch. Reasoned from the library source, not measured.
+  library passes the client's `response.response.transports` through untouched, and no
+  attestation format's signature covers that field, so a verified response can carry
+  `transports: [1]` or a NUL-bearing string — a 500 **after** a successful verification, past any
+  catch. A `fmt: 'none'` attestation, signed by nothing, lets any signed-in caller build such a
+  response without an authenticator. Reasoned from the library source, not measured.
 
 A client-chosen credential id that already exists is a P2002, which `classifyApiError` already
 answers 409 `UNIQUE_CONFLICT` at warn — not a 500, and not in scope.
@@ -64,8 +66,8 @@ then carry every refusal.
 
 **B. A typed `PasskeyVerificationError`, classified in `classifyApiError`.** Rejected: `ApiFailure`'s
 status is a deliberate `409 | 500 | 503` union, widening it to 400 for one module changes a
-shared contract, and the classifier would still need the helper to wrap the library's untyped
-`Error` first — B is A plus a type and a classifier branch.
+shared contract, and the classifier would still need the helper to wrap whatever the library
+throws first — B is A plus a type and a classifier branch.
 
 ## Design
 
@@ -73,30 +75,51 @@ shared contract, and the classifier would still need the helper to wrap the libr
    discriminated union — `{ verified: true; …fields }` | `{ verified: false; reason: string }` —
    replacing the registration helper's sentinel `credentialId: ''` / empty-key shape. The `try`
    encloses only the library call. The registration helper's verified result is still
-   client-derived past it (a `fmt: 'none'` attestation verifies with no signature), so that
-   helper also checks what it returns — Design 3 and 4. `reason` is
-   `error instanceof Error ? error.message : String(error)`, truncated to 300 characters (several
-   library messages echo client-sent strings of unbounded length), or a fixed string when the
-   library returned `verified: false` or the helper refused a verified result. **`reason` goes to the log only, never to
-   the client.**
-2. **One `warn` line per refusal, from the helper,** carrying the ceremony
-   (`'registration' | 'authentication'`) and the reason — never `error`, never
-   `unhandled API error`. The library's errors are untyped, so the catch cannot tell a hostile
-   client from a server-side cause, and some server-side causes now answer 400 + warn instead of
-   500 + error. Each is accepted, and the helper's docblock names them:
+   client-derived past it (no attestation signature covers `transports`, a `fmt: 'none'`
+   attestation is signed by nothing, and the library never compares the authenticator data's
+   credential id with `response.id`), so that helper also checks what it returns — Design 3 and
+   4. For a caught throw, `reason` is `error instanceof Error ? error.message : String(error)`,
+   truncated to 300 characters (several library messages echo client-sent strings of unbounded
+   length). Otherwise it is a fixed string naming what failed: the library's own
+   `verified: false` is `Signature did not verify against the stored public key` on
+   authentication (its one resolved refusal, from `verifySignature`) and `Attestation statement
+   did not verify` on registration (an attestation-format verifier returning false); the id
+   binding's is Design 3's. **`reason` goes to the log only, never to the client.**
+2. **One `warn` line per refusal, from the helper,** `passkey verification refused`, carrying
+   the ceremony (`'registration' | 'authentication'`), the caller's `response.id` as
+   `credentialId` (schema-bounded, Design 3, so an operator can tell one credential retrying from
+   many failing), and the reason — never `error`, never `unhandled API error`. For a caught throw
+   it also carries the error's `name` as `errorName` and its first stack frame as `frame`
+   (trimmed, at most 200 characters). The frame is searched for past the message: a V8 stack
+   begins with the name and message, and the message can echo client-sent text containing a
+   newline and `at …`, which would otherwise pass for a frame. The full stack is never logged —
+   it begins with the unbounded message.
+
+   The catch does not branch on what was thrown. For the origin and user-verification failures it
+   could not: the library throws them as plain `Error`s, told apart only by message text.
+   `errorName` is what separates a library-named error (`UnexpectedRPIDHash`) or a `TypeError`
+   from a plain `Error` in the log. So some causes that are not a hostile response now answer
+   400 + warn instead of 500 + error. Each is accepted, and the helper's docblock names them:
    - a wrong `NEXT_PUBLIC_APP_URL` — every origin check fails, and `reason` names the expected
      origin. (A wrong `PASSKEY_RP_ID` mostly fails earlier, in the browser's options ceremony;
-     what reaches the server says only `Unexpected RP ID hash`.)
+     what reaches the server is `UnexpectedRPIDHash` / `Unexpected RP ID hash`.)
    - **the user-verification mismatch** — both option generators ask for
      `userVerification: 'preferred'`, but neither verifier passes `requireUserVerification`, so the
      library's default `true` refuses an authenticator that honours "preferred" by skipping UV (a
      security key with no PIN). That is a live defect for such users today, as a 500. Fixing it
      changes the security posture (accept single-factor possession, or demand UV up front), so it
-     is **filed as a decision issue (#732), not fixed here**; this design only moves it from 500 to 400
-     and leaves its `reason` greppable.
-   - a counter regression (the library's cloned-authenticator signal) — the attempt already fails
-     closed, there is no alerting that a level would route to, and its `reason` names the counters.
-   - a corrupt stored public key, or a runtime without WebCrypto — server-side, negligible.
+     is **filed as a decision issue (#732)**; this design only moves it from 500 to 400 and leaves
+     its `reason` greppable.
+   - a counter at or below a non-zero stored counter (the library's cloned-authenticator signal,
+     equally a hostile response) — the attempt already fails closed, there is no alerting that a
+     level would route to, and its `reason` names both counters.
+   - a stored public key the library cannot use.
+
+   A runtime without WebCrypto is **not** among them: the library's `matchExpectedRPID` runs
+   `toHash(...).then(...)` inside a `new Promise` with no rejection handler, so a missing
+   WebCrypto leaves the RP-ID check pending forever — an `unhandledRejection` and a hung request,
+   no warn. Both ceremonies reach that check before any other crypto. A library defect,
+   unreachable on the Node this app runs.
 3. **Both schemas require `response.id` to be a credential id's shape,** still loose elsewhere:
    `z.looseObject({ id: <credential id> })`, where the credential id is one named schema in
    `src/lib/schemas.ts` used by both — base64url characters only (`/^[A-Za-z0-9_-]+$/`), at most
@@ -107,19 +130,24 @@ shared contract, and the classifier would still need the helper to wrap the libr
 
    On registration the schema bound reaches the stored id only through **the id binding**: the id
    the library returns is parsed from the client-supplied authenticator data (a uint16 length, so
-   up to 65535 bytes), and the library never checks it against `response.id`. A 4000-byte id
-   verified and Postgres refused it as a btree key (SQLSTATE 54000) — a 500 on the `create`. The
-   registration helper therefore refuses, through the same `{ verified: false, reason }` + one
-   `warn` path, a result whose credential id differs from `response.id`; a genuine authenticator
-   always satisfies this. With it, the stored id is the schema-checked one, and `.max(1364)` is
-   what keeps an oversized id out of the primary key.
+   up to 65535 bytes), and the library never checks it against `response.id` (it compares only
+   `id` with `rawId`, two strings the client sends). A 4000-byte id verified and Postgres refused
+   it as a btree key (SQLSTATE 54000) — a 500 on the `create`. The registration helper therefore
+   refuses, through the same `{ verified: false, reason }` + one `warn` path, a result whose
+   credential id differs from `response.id`; a genuine authenticator always satisfies this. Its
+   `reason` states the two lengths — `Authenticator data credential id (N chars) does not match
+   response.id (M chars)` — and never the authenticator data id itself, which is unbounded. The
+   lengths are what tell a forged oversized id from a provider that encodes `id` differently.
+   With the binding, the stored id is the schema-checked one, and `.max(1364)` is what keeps an
+   oversized id out of the primary key.
 4. **The registration helper keeps only transports it knows.** The library passes the client's
-   `response.transports` through untouched. **A value that is not an array is treated as no
-   transports** (`.filter` on a string, object or number throws a `TypeError` after
-   verification, past the catch — a 500), and an array is filtered to `AuthenticatorTransportFuture` members, with the set tethered
-   to the type by `satisfies Record<AuthenticatorTransportFuture, true>`; the `as string[]` cast
-   goes. The container check and the filter together close the post-verification 500 and stop
-   arbitrary client strings landing in the column.
+   `response.response.transports` through untouched, and no attestation format signs it. **A
+   value that is not an array is treated as no transports** (`.filter` on a string, object or
+   number throws a `TypeError` after verification, past the catch — a 500), and an array is
+   filtered to `AuthenticatorTransportFuture` members, with the set tethered to the type by
+   `satisfies Record<AuthenticatorTransportFuture, true>`; the `as string[]` cast goes. The
+   container check and the filter together close the post-verification 500 and stop arbitrary
+   client strings landing in the column.
 5. **Two refusals gain registered 400 codes, shared by both routes.** Status unchanged.
    `PASSKEY_NOT_VERIFIED` is sent by each route's `!result.verified` branch;
    `PASSKEY_CHALLENGE_MISSING` by each route's missing-challenge branch. Why codes: today both of
@@ -127,8 +155,11 @@ shared contract, and the classifier would still need the helper to wrap the libr
    challenge below needs exactly that — could only read `error.message`, which
    `docs/technical-architecture.md` (Error responses) forbids for a new assertion. 400 codes have
    precedent (`ROOM_NOT_ON_LIST`). `Credential not found` stays uncoded: no test needs to tell it
-   apart, since a coded `PASSKEY_NOT_VERIFIED` already proves a request got past it. The challenge
-   stays consumed before verification, so a refused attempt burns it.
+   apart, since a coded `PASSKEY_NOT_VERIFIED` already proves a request got past it. It does gain
+   one `warn`, `passkey credential not found`, with `{ ceremony: 'authentication', credentialId }`
+   — its likeliest trigger is a discoverable credential the authenticator still holds after its
+   row was deleted, which a user retries without the server otherwise recording anything. The
+   challenge stays consumed before verification, so a refused attempt burns it.
 6. **The three messages these lines send are reworded to the copy register** (full sentence,
    closing period, the user's terms, the next step) while the lines are open for their codes. No
    client renders them and no test reads them, so this costs nothing:
@@ -139,6 +170,11 @@ shared contract, and the classifier would still need the helper to wrap the libr
 
 ## Tests
 
+- **Shared fixtures (`tests/passkey-fixtures.ts`)**, imported by the unit and integration files
+  below: the wrong-challenge `clientDataJSON` builder, the forged `fmt: 'none'` registration
+  builder and the signed-assertion builder, each taking the challenge, origin and RP ID to build
+  for. One copy, so the integration tier's wrong-challenge response is the same one the unit tier
+  shows reaching the challenge check.
 - **Integration (`tests/integration/passkey-api.test.ts`)**, over HTTP. Coded refusals are asserted
   with `expectRefusal`, never by copy. A validation 400 is asserted as: precondition
   `schema.safeParse(body).success === false` (so a schema mutation fails an assertion, not the
@@ -147,32 +183,56 @@ shared contract, and the classifier would still need the helper to wrap the libr
   output, never a literal.
   - `register/verify`: no session → 401; unparseable JSON → uncoded 400; `{ response: 'x' }` →
     validation 400; no pending challenge → `PASSKEY_CHALLENGE_MISSING`; after `register/options`,
-    `{ response: {} }` → validation 400 (a body the old schema accepted, so it sees a revert);
-    after `register/options`, a wrong-challenge response → `PASSKEY_NOT_VERIFIED`, and the same
-    body again → `PASSKEY_CHALLENGE_MISSING` (the refused attempt burned the challenge); a
-    1365-character base64url `response.id` → validation 400 (pins `.max(1364)`).
+    `{ response: {} }` → validation 400 (a body the old schema accepted, so it sees a revert),
+    then a wrong-challenge response → `PASSKEY_NOT_VERIFIED` (the challenge outlived the
+    validation 400); after `register/options`, a wrong-challenge response →
+    `PASSKEY_NOT_VERIFIED`, its body free of the client's challenge (`reason` never reaches the
+    client), and the same body again → `PASSKEY_CHALLENGE_MISSING` (the refused attempt burned
+    the challenge); a 1365-character base64url `response.id` → validation 400.
+  - `register/verify`, forged `fmt: 'none'` registrations built for `register/options`' returned
+    challenge, origin `BASE_URL` and RP ID `localhost` — the configuration the app under test must
+    have, which the first case controls for: a well-formed one with transports
+    `['usb', 'carrier-pigeon']` → 200, and the stored row has `id === response.id`, the session's
+    `accountId` and `transports: ['usb']` (the first integration pin of the success write); an
+    authenticator data id ≠ `response.id` → `PASSKEY_NOT_VERIFIED`, no row under either id;
+    `transports: 'usb'` → 200, stored `transports: []`.
   - `authenticate/verify`: live `challengeId`, `response: {}` → validation 400; live
     `challengeId`, `response.id` containing a NUL byte → validation 400; wrong-challenge response
-    against a seeded credential row → `PASSKEY_NOT_VERIFIED`. The existing "fails only on the
-    challenge" case asserts `PASSKEY_CHALLENGE_MISSING` rather than an absent code.
+    against a seeded credential row → `PASSKEY_NOT_VERIFIED`, its body free of the client's
+    challenge. The two redirect cases are validation 400s; the "fails only on the challenge" case
+    asserts `PASSKEY_CHALLENGE_MISSING` rather than an absent code.
 - **Unit (`src/lib/auth/passkey.test.ts`)**, the "not logged as an unhandled error" half: each
   helper, given a wrong-challenge response, resolves (never rejects) to `{ verified: false }` with
   a `reason` matching `/challenge/` (the library's message, not this repo's copy — it proves the
-  fixture reached the check it is named for), logs exactly one `warn` carrying its ceremony, and
+  fixture reached the check it is named for), logs exactly one `warn` carrying its ceremony, the
+  credential id, `errorName: 'Error'` and a `frame` naming the library's verify function, and
   logs no `error`. Real library, no mock. Spies are fresh per case and the warn count is filtered
   on the ceremony field, since `storeChallenge`'s eviction warns share the logger.
-- **Unit, transports:** the registration helper, with the library mocked to return a verified
-  result whose `transports` mixes known members with junk (a number, a NUL-bearing string, an
-  unknown name), returns only the known members. In its own file, since `passkey.test.ts` runs the
-  real library.
-- **Unit, forged `fmt: 'none'` attestation (real library, `passkey.test.ts`):** a registration
-  response built without an authenticator — `clientDataJSON` with the issued challenge,
-  `webauthn.create` and the expected origin; authData = sha256(rpId) ‖ flags UP|UV|AT ‖ counter ‖
-  AAGUID ‖ id length ‖ id ‖ COSE ES256 key; attestation object CBOR
-  `{ fmt: 'none', attStmt: {}, authData }`. With `response.id` equal to the authData id it
-  verifies (proving every case below reaches the post-verification code); with
-  `transports: 'usb'` it verifies with `transports: []`; with the authData id differing from
-  `response.id` it resolves `{ verified: false }` with one `registration` warn and no `error`.
+- **Unit, mocked library (`src/lib/auth/passkey-verify-mocked.test.ts`)** — each case states the
+  library outcome it needs: transports mixing known members with junk (a number, a NUL-bearing
+  string, an unknown name, `constructor`, `__proto__`) come back as only the known members; a
+  resolved `verified: false` gives each helper's fixed reason and one warn; a caught message is
+  truncated to 300 characters; a non-`Error` throw is formatted with `String()` and logs no name
+  or frame; a caught `Error` logs its name and first frame; a message containing a forged
+  `at …` line does not supply the frame; the frame is capped at 200 characters. The mocked
+  functions are reset after each case.
+- **Unit, forged `fmt: 'none'` attestation (real library, `passkey.test.ts`):** with `response.id`
+  equal to the authenticator data id it verifies (proving every case below reaches the
+  post-verification code); with `transports: 'usb'` it verifies with `transports: []`; with the
+  authenticator data id (16 bytes) differing from a 32-byte `response.id` it resolves
+  `{ verified: false }`, `reason` exactly the Design 3 wording with 22 and 43 chars, one
+  `registration` warn carrying the credential id, and no `error`.
+- **Unit, signed assertion (real library, `passkey.test.ts`):** an assertion with the issued
+  challenge, the expected origin, `sha256(rpId)`, UP|UV and counter 1 over a stored counter of 0,
+  signed by key A and verified against key A's COSE public key → `verified: true`,
+  `newCounter: 1` (the positive control); the same signed by key B → `{ verified: false }`,
+  `reason` `Signature did not verify against the stored public key`, one `authentication` warn,
+  no `error`. This is the library's resolved refusal reached without a mock.
+- **Unit, credential id schema (`src/lib/schemas.test.ts`):** for both verify schemas, accept
+  1364 × `'A'` and an id containing both `-` and `_`; reject 1365 characters, `''`, `'='`
+  padding, `'+'`, `'/'` and a NUL byte.
+- **Unit, `authenticate/verify/route.test.ts`:** an unknown credential id → 400 and one
+  `passkey credential not found` warn carrying `{ ceremony: 'authentication', credentialId }`.
 - **How the route-level half follows:** no HTTP test can read the server log. The claim that a
   refused response no longer produces `unhandled API error` rests on the coded 400: a
   `PASSKEY_NOT_VERIFIED` answer comes from the route's own `respondError`, and `withErrorHandler`'s
@@ -186,35 +246,65 @@ shared contract, and the classifier would still need the helper to wrap the libr
   400", is corrected to what is true now.
 
 **Wrong-challenge fixtures** need no real signature: the library checks the challenge before the
-attestation object or signature. To reach that check a fixture must pass every earlier one —
-`id === rawId`, base64url `id`, `type: 'public-key'`, and a base64url `clientDataJSON` string whose
-JSON `type` is `'webauthn.create'` (registration) or `'webauthn.get'` (authentication). Tests say
-"names another challenge", never "signed". The origin check comes after the challenge check, so
-these cases do not depend on the server's configured origin or port.
+origin, the authenticator data, the attestation object or the signature. To reach that check a
+fixture must pass every earlier one — a non-empty `id` equal to `rawId`, `type: 'public-key'`, and
+a base64url `clientDataJSON` string whose JSON `type` is `'webauthn.create'` (registration) or
+`'webauthn.get'` (authentication); at the route, the schema also requires a base64url `id`. Tests
+say "names another challenge", never "signed". The origin check comes after the challenge check,
+so these cases do not depend on the server's configured origin or port.
 
-## Mutation checks (in the plan, per guard)
+## Mutation checks (observed)
+
+Where a mutation leaves the exported schema intact but changes what the route or helper does, the
+failure lands on the HTTP status, code or body; a mutation to an exported schema itself fails
+first at `expectValidation400`'s `safeParse` precondition, since that is the schema the test
+reads.
 
 - Remove the registration helper's `try`/`catch` → the register wrong-challenge integration case
-  answers 500 and its unit case rejects.
-- Remove the authentication helper's `try`/`catch` → the authenticate wrong-challenge integration
-  case answers 500 and its unit case rejects.
+  answers 500 (`expected { status: 500, code: undefined } to deeply equal { status: 400, … }`);
+  its unit case rejects with the library's `Unexpected registration response challenge` error.
+- Remove the authentication helper's `try`/`catch` → the same on the authenticate side.
 - Revert `passkeyAuthVerifySchema.response` to `z.record(z.string(), z.unknown())` → the
-  authenticate `response: {}` case answers 500 (row 7).
-- Drop only the base64url pattern from the credential id schema → the NUL-byte case answers 500.
-- Revert `passkeyRegisterVerifySchema.response` likewise → the register `response: {}` case
-  (challenge pending) answers `PASSKEY_NOT_VERIFIED` instead of the validation 400.
-- Change a helper's `log.warn` to `log.error` → its unit case fails on the no-`error` assertion.
-- Drop the transports filter → the transports unit case fails.
-- Drop the registration helper's `Array.isArray` container check → the forged-attestation
-  `transports: 'usb'` case rejects with a `TypeError`.
-- Drop the registration helper's credential-id binding → the forged-attestation id-mismatch case
-  resolves `verified: true`.
-- Drop `.max(1364)` from the credential id schema → the register 1365-character id case fails.
+  authenticate `response: {}` case fails at the precondition (`expected true to be false`); the
+  route itself answers 500 (row 7, confirmed by hand).
+- Drop only the base64url pattern from the credential id schema → the NUL-byte case fails at the
+  precondition; the route answers 500.
+- Revert `passkeyRegisterVerifySchema.response` likewise → the register `response: {}` case fails
+  at the precondition.
+- Swap the authenticate route's `parseBody` schema for an inline
+  `z.object({ response: z.record(z.string(), z.unknown()), challengeId: z.string() })`, leaving the
+  exported schema intact → the `response: {}` and NUL-byte cases fail on status
+  (`expected 500 to be 400`), the two redirect cases on code
+  (`expected 'PASSKEY_CHALLENGE_MISSING' to be undefined`).
+- Change `warnRefused`'s `log.warn` to `log.error` → every unit case asserting one warn fails on
+  the warn count (`expected [] to have a length of 1 but got +0`), before its no-`error`
+  assertion runs.
+- Drop the transports filter → the mocked transports unit case and the integration success case
+  (stored transports) fail.
+- Drop the registration helper's `Array.isArray` container check (back to
+  `(credential.transports ?? []).filter(…)`) → the forged-attestation `transports: 'usb'` unit
+  case rejects with a `TypeError`, and its integration twin answers 500.
+- Drop the registration helper's credential-id binding → the forged-attestation id-mismatch unit
+  case resolves `verified: true`, and its integration twin answers 200.
+- Drop the authentication helper's `!verification.verified` refusal → the signed-by-key-B unit
+  case and the mocked `verified: false` case both fail with `expected a refusal`.
+- Drop `.max(1364)` from the credential id schema → the register 1365-character id case fails at
+  the precondition. Tighten it to `.max(1363)`, or drop `_` from the pattern → the schema table's
+  accepting rows fail (`expected false to be true`).
 - Drop `PASSKEY_NOT_VERIFIED` from `register/verify`'s refusal → the register wrong-challenge case
-  fails.
+  fails on code.
+- Send `result.reason` as either route's refusal message → that route's wrong-challenge case fails
+  on the body containing the client's challenge.
+- Consume `register/verify`'s challenge before `parseBody` → the follow-up to the `response: {}`
+  validation 400 answers `PASSKEY_CHALLENGE_MISSING`, not `PASSKEY_NOT_VERIFIED`.
+- Search the whole stack for the first frame, message included → the forged-frame mocked case
+  fails (`expected 'at forged (fake.js:1:1)"' not to contain 'forged'`).
+- Remove the `Credential not found` warn → its route unit case fails on the warn count.
 
 ## Out of scope
 
-- **The success path** of `register/verify` stays covered by `tests/e2e/passkey.spec.ts`, unchanged.
+- **The success path** of `register/verify` keeps its browser coverage in
+  `tests/e2e/passkey.spec.ts`, unchanged; the integration tier now pins its write with a forged
+  attestation.
 - **The user-verification mismatch** (Design 2) — #732.
 - No change to the challenge store or the client components.
