@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { NotificationPrefsForm } from './notification-prefs-form';
+import { REMINDER_CHANNEL_OPTIONS } from '@/lib/reminder-options';
 import type { TeacherNotificationPrefs } from '@/services/notification-policy';
 
 const DEFAULTS: TeacherNotificationPrefs = {
@@ -73,6 +74,24 @@ describe('NotificationPrefsForm', () => {
     expect(screen.getByLabelText('How')).toBeDisabled();
     fireEvent.change(screen.getByLabelText('When'), { target: { value: 'evening_before' } });
     expect(screen.getByLabelText('How')).toHaveValue('email');
+  });
+
+  it('shows the disabled How select as inactive, and the enabled one as active (#721)', () => {
+    render(<NotificationPrefsForm teacherId="t1" initial={{ ...DEFAULTS, classReminder: 'morning_of' }} />);
+    expect(screen.getByLabelText('How')).not.toHaveClass('opacity-50');
+    fireEvent.change(screen.getByLabelText('When'), { target: { value: 'off' } });
+    expect(screen.getByLabelText('How')).toHaveClass('opacity-50', 'cursor-not-allowed');
+  });
+
+  it('offers the channel options in order from REMINDER_CHANNEL_OPTIONS (#721)', () => {
+    render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} />);
+    const how = within(screen.getByLabelText('How'));
+    expect(how.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)).toEqual(
+      REMINDER_CHANNEL_OPTIONS.map((o) => o.value),
+    );
+    expect(how.getAllByRole('option').map((o) => o.textContent)).toEqual(
+      REMINDER_CHANNEL_OPTIONS.map((o) => o.label),
+    );
   });
 
   it('clears the saved notice when edited after a save', async () => {
