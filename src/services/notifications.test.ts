@@ -123,7 +123,7 @@ describe('createNotification', () => {
     const notification = await createNotification(prisma, {
       recipientType: 'teacher',
       recipientId: teacherId,
-      type: 'payment_received',
+      type: 'teacher_invitation',
       title: 'Payment received',
       body: 'A student paid for their class.',
     });
@@ -179,7 +179,7 @@ describe('createBulkNotifications', () => {
       {
         recipientType: 'teacher',
         recipientId: teacherId,
-        type: 'reminder',
+        type: 'payment_request',
         title: 'Reminder',
         body: 'Class starting soon.',
       },
@@ -227,7 +227,7 @@ describe('markAsRead', () => {
     const notification = await createNotification(prisma, {
       recipientType: 'teacher',
       recipientId: teacherId,
-      type: 'waitlist_promoted',
+      type: 'booking_confirmed',
       title: 'Spot available',
       body: 'You have been promoted from the waitlist.',
     });
@@ -284,7 +284,7 @@ describe('getUnreadForEmailFallback', () => {
     await createNotification(prisma, {
       recipientType: 'teacher',
       recipientId: teacherId,
-      type: 'reminder',
+      type: 'teacher_invitation',
       title: 'Recent notification',
       body: 'This notification is brand new.',
     });

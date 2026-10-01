@@ -447,11 +447,12 @@ function classPhrase(entry: { classType: string; date: Date; startTime: Date }):
   return `${entry.classType} on ${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)}`;
 }
 
-/** What `notifyCancellation` needs from a call site: everything static about
+/** What `notifyCancellation` needs from a call site (a student notice): everything static about
  *  the notice, plus a way to phrase it once the fresh class read below is in
  *  hand. `body` is deliberately absent — `notifyCancellation` builds it, not
  *  the caller. */
-type CancellationNoticeInput = Omit<CreateNotificationInput, 'body' | 'relatedClassId'> & {
+type StudentNotificationInput = Extract<CreateNotificationInput, { recipientType: 'student' }>;
+type CancellationNoticeInput = Omit<StudentNotificationInput, 'body' | 'relatedClassId'> & {
   relatedClassId: string;
   buildBody: (phrase: string) => string;
 };

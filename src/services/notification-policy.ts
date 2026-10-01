@@ -73,10 +73,10 @@ export function shouldEmailStudent(
 }
 
 /**
- * What a teacher recipient can be sent. `CreateNotificationInput`'s teacher
- * variant (`notifications.ts`) accepts only these, so a new teacher
- * notification cannot be written until it joins this union — and joining it
- * fails `TEACHER_EMAIL_POLICY`'s `satisfies` until it is classified there.
+ * What a teacher recipient can be sent. Enforced at creation by
+ * `CreateNotificationInput`'s teacher variant (`notifications.ts`). Joining
+ * this union fails `TEACHER_EMAIL_POLICY`'s `satisfies` until the type is
+ * classified there.
  */
 export type TeacherNotificationType =
   | 'booking_confirmed'
