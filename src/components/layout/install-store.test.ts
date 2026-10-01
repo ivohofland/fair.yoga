@@ -15,6 +15,15 @@ function promptEvent(outcome: 'accepted' | 'dismissed') {
   });
 }
 
+function rejectingPromptEvent(err: Error) {
+  // userChoice is never read: `promptInstall` catches the `prompt()`
+  // rejection first, so it only needs to exist for `isBeforeInstallPrompt`.
+  return Object.assign(new Event('beforeinstallprompt', { cancelable: true }), {
+    prompt: vi.fn().mockRejectedValue(err),
+    userChoice: Promise.resolve({ outcome: 'dismissed' as const, platform: 'web' }),
+  });
+}
+
 describe('createInstallStore', () => {
   it('holds a beforeinstallprompt, cancels its default and notifies', () => {
     const win = fakeWindow();
@@ -41,9 +50,12 @@ describe('createInstallStore', () => {
     const win = fakeWindow();
     const store = createInstallStore(win);
     win.dispatchEvent(promptEvent('dismissed'));
+    const listener = vi.fn();
+    store.subscribe(listener);
 
     expect(await store.promptInstall()).toBe('dismissed');
     expect(store.getSnapshot()).toBe('manual');
+    expect(listener).toHaveBeenCalled();
   });
 
   it('calls prompt() once when tapped twice while the dialog is open', async () => {
@@ -63,12 +75,43 @@ describe('createInstallStore', () => {
   it('answers installed once appinstalled fires', () => {
     const win = fakeWindow();
     const store = createInstallStore(win);
+    const listener = vi.fn();
+    store.subscribe(listener);
+
     win.dispatchEvent(new Event('appinstalled'));
+
     expect(store.getSnapshot()).toBe('installed');
+    expect(listener).toHaveBeenCalled();
   });
 
   it('answers unavailable when nothing is held', async () => {
     const store = createInstallStore(fakeWindow());
     expect(await store.promptInstall()).toBe('unavailable');
+  });
+
+  it('answers unavailable when prompt() rejects, logging the failure', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const win = fakeWindow();
+    const store = createInstallStore(win);
+    const err = new Error('x');
+    win.dispatchEvent(rejectingPromptEvent(err));
+
+    expect(await store.promptInstall()).toBe('unavailable');
+    expect(store.getSnapshot()).toBe('manual');
+    expect(errorSpy).toHaveBeenCalledWith('[install-store] prompt failed', err);
+
+    errorSpy.mockRestore();
+  });
+
+  it('keeps a prompt that arrives while another is being shown', async () => {
+    const win = fakeWindow();
+    const store = createInstallStore(win);
+    win.dispatchEvent(promptEvent('accepted'));
+
+    const first = store.promptInstall();
+    win.dispatchEvent(promptEvent('accepted'));
+    await first;
+
+    expect(store.getSnapshot()).toBe('prompt');
   });
 });

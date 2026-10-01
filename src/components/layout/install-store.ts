@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { classifyInstall, type InstallSupport } from '@/lib/install-support';
 
 /** The slice of `Window` the store reads; `window` satisfies it, and a test
- *  can hand in an `EventTarget` with these two members. */
+ *  can hand in an `EventTarget` carrying the rest. */
 export interface InstallWindow {
   addEventListener(type: string, listener: (event: Event) => void): void;
   navigator: { userAgent: string; maxTouchPoints: number; standalone?: boolean };
@@ -38,8 +38,8 @@ export function createInstallStore(win: InstallWindow): InstallStore {
 
   win.addEventListener('beforeinstallprompt', (event) => {
     if (!isBeforeInstallPrompt(event)) return;
-    // Suppresses Chromium's own mini-infobar: the install card and row are
-    // the only prompts.
+    // Suppresses Chromium's own mini-infobar, so the app decides when to
+    // prompt.
     event.preventDefault();
     deferred = event;
     emit();
@@ -76,8 +76,11 @@ export function createInstallStore(win: InstallWindow): InstallStore {
         await event.prompt();
         const { outcome } = await event.userChoice;
         return outcome;
+      } catch (err) {
+        console.error('[install-store] prompt failed', err);
+        return 'unavailable';
       } finally {
-        deferred = null;
+        if (deferred === event) deferred = null;
         promptUsed = true;
         prompting = false;
         emit();
@@ -87,8 +90,7 @@ export function createInstallStore(win: InstallWindow): InstallStore {
 }
 
 /** Created when this module first loads in a browser, not in an effect:
- *  `beforeinstallprompt` can fire before any component has mounted.
- *  `InstallListener` is what loads it on every page. */
+ *  `beforeinstallprompt` can fire before any component has mounted. */
 export const installStore: InstallStore | null =
   typeof window === 'undefined' ? null : createInstallStore(window);
 
