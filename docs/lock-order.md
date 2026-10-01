@@ -608,17 +608,17 @@ archive notification a `relatedClassId` and it becomes a transaction taking
 whatever the query planner returned — not the ascending order the rest of this
 document depends on.
 
-**A single-class transaction can still take the order backwards through this
-path, and the class reminder's student claim did (#721).** It writes one
-registration and one notification for one class — no second `Class` lock, so
-nothing in the table above concerns it. But its first statement was the
-`Registration` CAS, and the inbox row it then inserts carries
-`relatedClassId`, so its `FOR KEY SHARE` on `Class` arrived *after* its
-`Registration` lock: `Registration → Class`, against the line at the top. The
-erasures take the other order — `deleteStudentAccount` and
-`deleteTeacherAccount` lock `Class` `FOR UPDATE` and then update that class's
-`registered` rows — so the two could close a cycle. The claim
-(`processClassReminders`, `class-reminders.ts`) now opens with
+**A single-class transaction can take the order backwards through this path
+too.** The class reminder's student claim (`processClassReminders`,
+`class-reminders.ts`, #721) writes one registration and one notification for
+one class — no second `Class` lock, so nothing in the table above concerns it.
+But the inbox row it inserts carries `relatedClassId`, so were its
+`Registration` CAS its first statement, the insert's `FOR KEY SHARE` on `Class`
+would arrive *after* the `Registration` lock: `Registration → Class`, against
+the line at the top. The erasures take the other order —
+`deleteStudentAccount` and `deleteTeacherAccount` lock `Class` `FOR UPDATE`
+and then update that class's `registered` rows — so the two could close a
+cycle. The claim therefore opens with
 `SELECT 1 FROM "Class" WHERE id = … FOR KEY SHARE`, so it is
 `Class → Registration`, and the later insert's lock lands on a row it already
 holds. The teacher claim needs nothing: its CAS is on `Class` itself.
@@ -3587,7 +3587,7 @@ reaches is one it already holds (the second bullet below):
   creating — nothing for the archive to wait behind. `api/classes/route.ts`
   reads the room with an explicit
   `SELECT "isArchived" FROM "TeacherRoom" … FOR KEY SHARE` ahead of that
-  insert — the only explicit `FOR KEY SHARE` anywhere in `src/` — held for the
+  insert — the only explicit `FOR KEY SHARE` on `TeacherRoom` in `src/` — held for the
   length of the create transaction and, deliberately, with no
   `setLockTimeout` of its own (issue 228, the same bound the route's own
   comment already names for the create paths generally). It introduces no

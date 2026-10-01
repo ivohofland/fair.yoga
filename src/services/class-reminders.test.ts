@@ -86,7 +86,8 @@ describe('processClassReminders (DB)', () => {
         registration: {
           async findMany({ args, query }) {
             const rows = await query(args);
-            // Keyed on the candidate read's shape, as in 2b.
+            // Keyed on the candidate read's shape: the only registration read
+            // asking for unstamped rows.
             const where = args.where as { classReminderSentAt?: unknown } | undefined;
             if (where?.classReminderSentAt !== null || state.interposed > 0) return rows;
             state.interposed += 1;
@@ -230,7 +231,7 @@ describe('processClassReminders (DB)', () => {
     if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
     else process.env.EMAIL_DRY_RUN = savedDryRun;
 
-    // Every filter below reads an array declared non-empty-safe at the top: an
+    // Every filter below is an `in` over an id array collected by the seeds: an
     // empty `in` matches nothing, so a failed seed cannot widen a delete.
     await prisma.notification.deleteMany({ where: { recipientId: { in: [...studentIds, ...teacherIds] } } });
     await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
@@ -243,7 +244,6 @@ describe('processClassReminders (DB)', () => {
     await prisma.$disconnect();
   });
 
-  // 1
   it('reminds a morning_of / inbox_and_email student once, in the inbox and by email', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
@@ -266,7 +266,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toEqual(MORNING);
   });
 
-  // 2
   it('sends once across two runs', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
@@ -280,7 +279,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(student.email)).toBe(1);
   });
 
-  // 2b
   it('sends once when two sweeps overlap on the same registration', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
@@ -319,7 +317,6 @@ describe('processClassReminders (DB)', () => {
     expect(outer.studentReminders).toBe(0);
   });
 
-  // 3
   it('inbox-only writes a row and sends no email', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox' });
@@ -331,7 +328,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(student.email)).toBe(0);
   });
 
-  // 4
   it('email-only sends and writes no row, and stamps the registration', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'email' });
@@ -344,7 +340,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toEqual(MORNING);
   });
 
-  // 5
   it('timing off: nothing, and no stamp', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminder: 'off' });
@@ -358,7 +353,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toBeNull();
   });
 
-  // 6
   it('skips a registration made after its reminder moment', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(
@@ -376,7 +370,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toBeNull();
   });
 
-  // 7
   it('skips a cancelled registration', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, {}, { status: 'cancelled' });
@@ -390,7 +383,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toBeNull();
   });
 
-  // 8
   it('sends nothing before the moment', async () => {
     const f = await seed();
     const { student, registration } = await book(f);
@@ -404,7 +396,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
-  // 9
   it('sends nothing at start', async () => {
     const f = await seed();
     const { student, registration } = await book(f);
@@ -419,7 +410,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toBeNull();
   });
 
-  // 10
   it('skips a class whose entry is cancelled', async () => {
     const f = await seed({}, { cancelledAt: new Date('2099-06-01T00:00:00Z') });
     const { student, registration } = await book(f);
@@ -433,7 +423,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
-  // 11
   it('skips a draft class', async () => {
     const f = await seed({}, { status: 'draft' });
     const { student, registration } = await book(f);
@@ -447,7 +436,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
-  // 12
   it('skips an erased student', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f);
@@ -462,7 +450,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toBeNull();
   });
 
-  // 13
   it('reminds the teacher once, with the registration count', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
     await book(f, { classReminder: 'off' });
@@ -495,7 +482,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(f.teacherEmail)).toBe(1);
   });
 
-  // 13b
   it('reminds the teacher once when two sweeps overlap on the same class', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
 
@@ -527,7 +513,6 @@ describe('processClassReminders (DB)', () => {
     expect(outer.teacherReminders).toBe(0);
   });
 
-  // 13c
   it('skips the teacher of a class created after their moment, and still reminds its students', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox' });
     await prisma.class.update({ where: { id: f.classId }, data: { createdAt: new Date(MORNING.getTime() + MINUTE) } });
@@ -542,7 +527,6 @@ describe('processClassReminders (DB)', () => {
     expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toBeNull();
   });
 
-  // 14
   it('teacher timing off: no teacher reminder, no stamp', async () => {
     const f = await seed({ classReminder: 'off' });
     await book(f, { classReminder: 'off' });
@@ -557,7 +541,6 @@ describe('processClassReminders (DB)', () => {
     expect(cls.teacherReminderSentAt).toBeNull();
   });
 
-  // 15
   it('skips an erased teacher', async () => {
     const f = await seed({ classReminder: 'morning_of' });
     await prisma.teacher.update({ where: { id: f.teacherId }, data: { deletedAt: new Date('2099-06-02T00:00:00Z') } });
@@ -570,7 +553,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(f.teacherEmail)).toBe(0);
   });
 
-  // 16
   it('never reminds about a studio class', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox' });
     await createStudioClassFixture(prisma, {
@@ -593,7 +575,6 @@ describe('processClassReminders (DB)', () => {
     expect(rows[0]!.relatedClassId).toBe(f.classId);
   });
 
-  // 17
   it('a sweep whose every send fails rejects, keeps the stamp, and does not retry', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminderChannel: 'email' });
@@ -612,7 +593,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(student.email)).toBe(1);
   });
 
-  // 18
   it('a send that throws is a failed send; the sweep carries on to the next student, then rejects', async () => {
     const f = await seed({ classReminder: 'off' });
     const a = await book(f, { classReminderChannel: 'email' });
@@ -636,7 +616,6 @@ describe('processClassReminders (DB)', () => {
     );
   });
 
-  // 18a
   it('a render that throws is a failed send of that reminder, not a failed class', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminderChannel: 'email' });
@@ -658,7 +637,6 @@ describe('processClassReminders (DB)', () => {
     );
   });
 
-  // 18b
   it('one class failing does not stop the classes after it, and the sweep then rejects', async () => {
     const f1 = await seed({ classReminder: 'off' });
     const f2 = await seed({ classReminder: 'off' });
@@ -698,7 +676,6 @@ describe('processClassReminders (DB)', () => {
     );
   });
 
-  // 18c
   it('skips a class whose start cannot be read, naming it once', async () => {
     const f = await seed({ classReminder: 'morning_of' });
     const { student, registration } = await book(f);
@@ -713,7 +690,6 @@ describe('processClassReminders (DB)', () => {
     expect(log.error).toHaveBeenCalledWith({ classId: f.classId }, 'class reminders: unreadable class start; skipped');
   });
 
-  // 19
   it('reminds no one when the entry is cancelled between the candidate read and the claims', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
@@ -732,7 +708,6 @@ describe('processClassReminders (DB)', () => {
     expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toBeNull();
   });
 
-  // 20
   it('reminds no one when the class leaves open between the candidate read and the claims', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
@@ -751,7 +726,6 @@ describe('processClassReminders (DB)', () => {
     expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toBeNull();
   });
 
-  // 21
   it('skips a registration cancelled and rebooked after its moment between the read and the claim', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
@@ -761,7 +735,8 @@ describe('processClassReminders (DB)', () => {
         where: { id: registration.id },
         data: { status: 'cancelled', cancelledAt: rebookedAt },
       });
-      // What `activateRegistration` writes when it reuses the row.
+      // The columns the claim reads, as a rebooking leaves them: booked again
+      // after the moment, stamp cleared.
       await prisma.registration.update({
         where: { id: registration.id },
         data: { status: 'registered', cancelledAt: null, registeredAt: rebookedAt, classReminderSentAt: null },
@@ -777,7 +752,6 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toBeNull();
   });
 
-  // 22
   it("times reminders on the teacher's zone (Europe/Amsterdam, summer time)", async () => {
     // 18:00 CEST is 16:00Z: the student's one-hour-before moment is 15:00Z,
     // and the teacher's evening-before moment is 19:00 CEST the day before,
@@ -802,7 +776,6 @@ describe('processClassReminders (DB)', () => {
     expect(await studentRows(student.id)).toHaveLength(1);
   });
 
-  // 22b
   it("reads the class's start in the teacher's zone (America/New_York, summer time)", async () => {
     // 18:00 EDT is 22:00Z, so one hour before is 21:00Z. Read in UTC the start
     // would be 18:00Z, already past at 21:00Z.
@@ -824,7 +797,6 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(f.teacherEmail)).toBe(0);
   });
 
-  // 22c
   it("names the class's local day when its start falls on the next UTC day (America/New_York)", async () => {
     // 21:00 EDT on 10 June is 01:00Z on 11 June; one hour before is 00:00Z.
     const f = await seed(
@@ -841,7 +813,6 @@ describe('processClassReminders (DB)', () => {
     expect(rows[0]!.body).toBe('Your Flow on Wednesday, 10 Jun at 21:00 with Remy.');
   });
 
-  // 23
   it("a failed teacher send rejects the sweep and keeps the class's stamp; email-only writes no row", async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'email' });
     sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });

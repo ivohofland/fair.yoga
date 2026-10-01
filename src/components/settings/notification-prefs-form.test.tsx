@@ -41,7 +41,7 @@ describe('NotificationPrefsForm', () => {
     expect(within(other).getByRole('checkbox', { name: /invitation/i })).toBeInTheDocument();
   });
 
-  it('sends exactly the five preference keys to the teacher route, each at a non-default value', async () => {
+  it('sends exactly the TeacherNotificationPrefs keys to the teacher route, each at a non-default value', async () => {
     stubFetch();
     render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} />);
     fireEvent.click(screen.getByRole('radio', { name: 'Off' }));

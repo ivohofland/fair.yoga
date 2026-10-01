@@ -2,15 +2,16 @@ import type { ReminderTiming } from '@prisma/client';
 import { classStartInstant } from './timezone';
 import { hhmmToTime } from './time-of-day';
 
-/** No reminder lands later than this many minutes before the class starts. */
+/** No reminder is due later than this many minutes before the class starts. */
 export const REMINDER_LATEST_LEAD_MINUTES = 60;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The instant a class reminder is due, in the teacher's timezone: 19:00 the day
- * before, 07:00 on the day, or an hour before start — never later than
- * `REMINDER_LATEST_LEAD_MINUTES` before start. `null` when reminders are off.
+ * The instant a class reminder is due, with wall-clock times read in
+ * `timeZone`: 19:00 the day before, 07:00 on the day, or
+ * `REMINDER_LATEST_LEAD_MINUTES` before start, and never later than that.
+ * `null` when reminders are off.
  */
 export function reminderMoment(
   entry: { date: Date; startTime: Date },

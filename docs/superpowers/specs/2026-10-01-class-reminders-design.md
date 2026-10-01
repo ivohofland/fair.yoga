@@ -59,7 +59,8 @@ through `Payment.reminderSentAt`.
 
 ## 3. Data model
 
-One migration, created with `prisma migrate dev`. No backfill: nothing is in
+Two migrations, created with `prisma migrate dev`: the `ADD VALUE` alone, then
+the rest. No backfill: nothing is in
 production.
 
 ```prisma
@@ -140,7 +141,10 @@ nominal moment. The calculation is a pure function in its own module, taking
 **The `registeredAt < moment` rule** skips anyone who booked after their
 reminder moment: a late booking, a walk-in, or a waitlist promotion. Each of
 them just received a notification about this class, so a reminder would repeat
-it.
+it. The teacher's `Class.createdAt < moment` rule does the same for a class
+created after its own moment. A draft created early and published late is
+still reminded, once, at the next sweep. That case is accepted rather than
+adding a `publishedAt` column.
 
 **A reactivated registration counts as a new booking.** `activateRegistration`
 (`src/services/waitlist.ts`) reuses a student's earlier, cancelled row for the
@@ -153,10 +157,7 @@ by `registeredAt`. That order reflects when they actually booked.
 
 **Erased profiles are filtered explicitly.** The candidate query requires
 `deletedAt: null` on the student and on the teacher, as payment reminders do,
-rather than relying on erasure having cancelled their rows. The teacher's `createdAt` rule does the same for a class created inside its
-own reminder window. A draft created early and published late is still
-reminded, once, at the next sweep. That case is accepted rather than adding a
-`publishedAt` column.
+rather than relying on erasure having cancelled their rows.
 
 **Excluded by the status filter:** `draft`, `in_progress`, `completed`, and any
 cancelled entry. Studio classes are not queried at all.
@@ -199,8 +200,8 @@ channel includes `email`.
   `relatedClassId` is set, so the inbox row links to the class through the
   existing `studentNotificationHref` / `teacherNotificationHref`.
 - **The email** is rendered by `renderNotificationEmail`
-  (`src/lib/email-templates.ts`), with a plain static action link like every
-  fallback email. No magic link: fallback emails carry none either. `wrapEmail`
+  (`src/lib/email-templates.ts`), with a plain static action link, as the linked
+  fallback emails have. No magic link: fallback emails carry none either. `wrapEmail`
   takes an optional footer, because its fixed footer ("when an in-app message
   goes unread") is false for a reminder. The reminder footer says the email was
   sent because the recipient chose class reminders by email, and where to

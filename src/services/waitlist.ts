@@ -137,7 +137,8 @@ export async function activateRegistration(
           cancelledAt: null,
           tierAtBooking: input.tierAtBooking,
           isWalkIn: input.isWalkIn ?? false,
-          // A reused row is a new booking: its reminder is judged from now.
+          // A reused row is a new booking: it is dated now, for its reminder
+          // and for every list ordered by booking time.
           registeredAt: new Date(),
           classReminderSentAt: null,
         },

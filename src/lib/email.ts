@@ -94,10 +94,10 @@ export async function sendInvitationEmail(
  * propagates.
  *
  * In production with no key and no explicit `EMAIL_DRY_RUN=1` it answers
- * `{ ok: false }` rather than dry-running. `sendInvitationEmail` dry-runs there
- * because something else still reaches the invitee; for an email-only class
- * reminder the email is the whole delivery, so a dry-run would lose it with
- * nothing above an `info` line to say so.
+ * `{ ok: false }` rather than dry-running, so the caller can count the failure.
+ * A caller may have no other delivery — an email-only class reminder has no
+ * inbox row — and a dry-run would lose its message with nothing above an
+ * `info` line to say so.
  */
 export async function sendHtmlEmail(input: {
   to: string;

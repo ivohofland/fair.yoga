@@ -97,7 +97,9 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
  * exists to ask someone for a decision, and the mail that arrives when they
  * miss the in-app one has to reach the place that decision is made. A
  * waitlist promotion or a freed-spot broadcast (#236) is likewise meant to
- * be acted on quickly, and `/bookings` is a student route.
+ * be acted on quickly, and `/bookings` is a student route. A class reminder
+ * points at `/bookings`, the student's own list of what they booked, because
+ * the class route it is about is teacher-only.
  *
  * Path only. The base URL is the caller's, so this stays renderable without
  * an environment.
@@ -113,7 +115,10 @@ const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; pa
   class_reminder: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
 };
 
-/** The teacher reader's counterpart to `STUDENT_ACTION_LINKS` (#172). */
+/**
+ * The teacher reader's counterpart to `STUDENT_ACTION_LINKS` (#172). A class
+ * reminder opens the schedule.
+ */
 const TEACHER_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
   teacher_invitation: { label: TEACHER_INVITATION_LABEL, path: TEACHER_INVITATION_PATH },
   class_reminder: { label: 'Open your schedule', path: '/schedule' },

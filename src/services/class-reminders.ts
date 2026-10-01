@@ -23,8 +23,9 @@ function utcMidnight(ms: number): Date {
 }
 
 /**
- * Entry dates that can hold a due reminder at `now`: wide enough for an
- * evening-before reminder under any zone offset; the moment check narrows it.
+ * Entry dates that can hold a due reminder at `now`: wide enough, under any
+ * zone offset, for a class not yet started (the lower bound) and for the
+ * earliest moment, evening-before (the upper). The moment check narrows it.
  */
 export function reminderCandidateDates(now: Date): { from: Date; to: Date } {
   return { from: utcMidnight(now.getTime() - 2 * DAY_MS), to: utcMidnight(now.getTime() + 3 * DAY_MS) };
@@ -78,8 +79,10 @@ function dueMoment(
 }
 
 /**
- * The class half of the due rule, restated in each claim: the candidate read
- * can be a whole tick of sends old by the time a later class is claimed.
+ * The class's liveness (open, entry not cancelled), restated in each claim
+ * because the candidate read can be a whole tick of sends old by the time a
+ * later class is claimed. The schedule and the teacher's erasure are judged on
+ * the read.
  */
 const LIVE_CLASS = { status: 'open', calendarEntry: { cancelledAt: null } } as const;
 
