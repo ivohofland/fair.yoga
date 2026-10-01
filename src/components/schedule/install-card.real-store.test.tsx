@@ -2,10 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 /**
- * `install-card.test.tsx` mocks `@/components/layout/install-store` entirely,
- * so it never exercises the real `useSyncExternalStore` wiring between a
- * dispatched `beforeinstallprompt` and the card's own re-render. This file
- * leaves the store unmocked instead.
+ * Renders `InstallCard` against the real, unmocked install store, so a
+ * dispatched `beforeinstallprompt` reaches the card through
+ * `useSyncExternalStore`.
  */
 describe('InstallCard against the real install store', () => {
   afterEach(() => {
