@@ -171,6 +171,19 @@ describe('createBulkNotifications', () => {
     await prisma.teacher.delete({ where: { id: teacherId } });
   });
 
+  it('writes emailSent per row as given (#721)', async () => {
+    const title = `bulk-email-sent-${uniqueSuffix}`;
+    await createBulkNotifications(prisma, [
+      { recipientType: 'teacher', recipientId: teacherId, type: 'class_reminder', title: `${title}-sent`, body: 'b', emailSent: true },
+      { recipientType: 'teacher', recipientId: teacherId, type: 'booking_confirmed', title: `${title}-unsent`, body: 'b' },
+    ]);
+    const sent = await prisma.notification.findFirstOrThrow({ where: { recipientId: teacherId, title: `${title}-sent` } });
+    const unsent = await prisma.notification.findFirstOrThrow({ where: { recipientId: teacherId, title: `${title}-unsent` } });
+    await prisma.notification.deleteMany({ where: { id: { in: [sent.id, unsent.id] } } });
+    expect(sent.emailSent).toBe(true);
+    expect(unsent.emailSent).toBe(false);
+  });
+
   it('creates multiple notifications and returns count', async () => {
     const count = await createBulkNotifications(prisma, [
       {
