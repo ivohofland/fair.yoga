@@ -22,7 +22,9 @@ import { type TransactionClientOnly } from '@/lib/db-locks';
 import { log } from '@/lib/log';
 
 /**
- * How long an identical announcement suppresses a second send of itself.
+ * How long a student who was told a message is not told it again: the window
+ * in which a resend of the same text from the same teacher skips every
+ * recipient already named by an earlier send, whatever scope that send had.
  *
  * Two minutes: long enough to absorb a double-click and a retried request from
  * a flaky connection, short enough that a teacher who genuinely wants to say
@@ -265,6 +267,7 @@ export async function sendAnnouncement(
       announcementId: result.announcement.id,
       recipientCount: result.announcement.recipientCount,
       deduped: result.deduped,
+      alreadyNotified: result.alreadyNotified,
     },
     result.deduped ? 'announcement send suppressed as duplicate' : 'announcement sent',
   );
