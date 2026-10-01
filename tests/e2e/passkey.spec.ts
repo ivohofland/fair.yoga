@@ -216,7 +216,8 @@ test.describe('Passkey sign-in', () => {
 });
 
 test.describe('Passkey: a PIN-less security key', () => {
-  const uvlessEmail = `e2e-passkey-nopin-${suffix}@test.local`;
+  // Its own suffix, so no cleanup keyed on the file's `suffix` reaches it.
+  const uvlessEmail = `e2e-passkey-nopin-${uniqueSuffix()}@test.local`;
   let uvlessStudentId: string;
   let uvlessStudentAccountId: string;
 
@@ -238,18 +239,10 @@ test.describe('Passkey: a PIN-less security key', () => {
   test.afterAll(async () => {
     // Guarded per id: after a partial beforeAll an unset id must skip its
     // deletes — an `undefined` in a deleteMany filter matches everything.
-    // Keyed on the account id captured in `beforeAll`, not looked up again
-    // here: the journey describe's own `afterAll` sweeps by `contains:
-    // suffix` and may run before or after this one, so by the time this
-    // runs the student row it would resolve through may already be gone.
     if (uvlessStudentId && uvlessStudentAccountId) {
       await prisma.passkeyCredential.deleteMany({ where: { accountId: uvlessStudentAccountId } });
       await prisma.session.deleteMany({ where: { accountId: uvlessStudentAccountId } });
     }
-    // Exact email, not `contains: suffix`: the journey describe's sweep
-    // shares that suffix and may already have reached these rows. Both
-    // sides' exact-email deletes are idempotent and cannot reach the other
-    // describe's rows.
     await prisma.student.deleteMany({ where: { email: uvlessEmail } });
     await prisma.account.deleteMany({ where: { email: uvlessEmail } });
   });
@@ -271,9 +264,6 @@ test.describe('Passkey: a PIN-less security key', () => {
     await page.getByRole('button', { name: 'Add a passkey' }).click();
     await optionsResponse;
 
-    // A refused ceremony is a dismissal to AddPasskey
-    // (src/components/account/add-passkey.tsx): back to idle, nothing sent.
-    //
     // Every alert but Next's route announcer — docs/technical-architecture.md
     // ("Testing conventions", "Asserting no alert in e2e").
     const addPasskeyButton = page.getByRole('button', { name: 'Add a passkey' });
