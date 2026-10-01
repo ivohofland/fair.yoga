@@ -121,20 +121,20 @@ describe('passkey verify schemas — response.id', () => {
     passkeyAuthVerifySchema: (id) =>
       passkeyAuthVerifySchema.safeParse({ response: { id }, challengeId: 'x' }).success,
   };
-  const cases: ReadonlyArray<[label: string, id: string, accepted: boolean]> = [
-    ['1364 characters, the bound', 'A'.repeat(1364), true],
-    ['both base64url-only characters', 'ab-cd_ef', true],
-    ['1365 characters', 'A'.repeat(1365), false],
-    ['empty', '', false],
-    ['padded', 'AAAA=', false],
-    ['standard base64 +', 'ab+cd', false],
-    ['standard base64 /', 'ab/cd', false],
-    ['a NUL byte', 'ab\u0000cd', false],
+  const cases: ReadonlyArray<{ label: string; id: string; accepted: boolean }> = [
+    { label: '1364 characters, the bound', id: 'A'.repeat(1364), accepted: true },
+    { label: 'both base64url-only characters', id: 'ab-cd_ef', accepted: true },
+    { label: '1365 characters', id: 'A'.repeat(1365), accepted: false },
+    { label: 'empty', id: '', accepted: false },
+    { label: 'padded', id: 'AAAA=', accepted: false },
+    { label: 'standard base64 +', id: 'ab+cd', accepted: false },
+    { label: 'standard base64 /', id: 'ab/cd', accepted: false },
+    { label: 'a NUL byte', id: 'ab\u0000cd', accepted: false },
   ];
 
   for (const [name, parse] of Object.entries(parsers)) {
     describe(name, () => {
-      it.each(cases)('%s → accepted: %s', (_label, id, accepted) => {
+      it.each(cases)('$label → accepted: $accepted', ({ id, accepted }) => {
         expect(parse(id)).toBe(accepted);
       });
     });
