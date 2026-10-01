@@ -32,7 +32,7 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | default_currency | string, default 'EUR' | |
 | default_timezone | string | IANA identifier, e.g. 'Europe/Amsterdam'; V8's old spellings are stored renamed — see Design Notes |
 | default_reminder | enum: morning_of, evening_before, 1h_before | Pre-fills class reminder setting |
-| booking_notifications | enum: inbox_and_email, inbox_only, off | New-booking notification: inbox and fallback email, inbox only, or none |
+| booking_notifications | enum: inbox_and_email, inbox_only, off, default inbox_and_email | New-booking notification: inbox and fallback email, inbox only, or none |
 | email_on_class_completed | boolean, default true | Fallback email for the class-completed summary |
 | email_on_invitation | boolean, default true | Fallback email for an invitation from another teacher |
 | **Payment settings** | | |

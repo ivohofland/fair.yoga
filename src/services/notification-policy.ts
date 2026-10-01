@@ -9,6 +9,9 @@
  * - WHEN: class-linked notifications become email-eligible immediately
  *   when the class starts within the urgent window, instead of waiting
  *   out the unread threshold. Urgency never overrides consent.
+ *
+ * Teacher recipients decide WHETHER through `TEACHER_EMAIL_POLICY` below,
+ * keyed by `TeacherNotificationType`; WHEN is shared.
  */
 
 import type { NotificationType, TeacherBookingNotifications } from '@prisma/client';
