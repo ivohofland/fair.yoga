@@ -33,8 +33,9 @@ Chrome stops a UV-less authenticator before anything reaches the server.
    unchanged. Pinned by the existing e2e journey in `tests/e2e/passkey.spec.ts`, which Task 2
    re-runs unedited after the change.
 2. **Sign-in on an authenticator holding a credential but lacking UV.** Expected: the browser
-   stops the ceremony, the sign-in button shows its "Nothing came back from your device" status,
-   and no request reaches `/api/auth/passkey/authenticate/verify`. Task 2, second e2e test.
+   stops it. Measured in Task 2: Chrome's virtual authenticator refuses it under `'preferred'`
+   too, so no e2e can pin the option here; the authentication options' `'required'` is pinned
+   by Task 1's unit test alone.
 3. **A response with UV cleared that reaches the server anyway** (a client ignoring
    `'required'`). Expected: refused, one warn naming user verification. Task 1 unit tests;
    the route's mapping of any refusal to 400 `PASSKEY_NOT_VERIFIED` is #729's existing pin.
@@ -352,6 +353,10 @@ git commit -m "fix(passkey): require user verification in both ceremonies, from 
 ---
 
 ### Task 2: E2e — the browser stops a UV-less authenticator
+
+> Executed with two controller rulings: the sign-in test was dropped (Review Focus 2), and the
+> registration test's `alert` query is scoped to the button's container, because Next's route
+> announcer is a `role="alert"` on every page.
 
 **Order:** after Task 1. This task's assertions are about the app with Task 1's options in it.
 

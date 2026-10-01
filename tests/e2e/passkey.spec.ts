@@ -1,3 +1,4 @@
+import type { CDPSession } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfStudent } from './account-helpers';
@@ -27,6 +28,25 @@ let roomId: string;
 let classId: string;
 let studentId: string;
 let studentToken: string;
+let uvlessStudentId: string;
+
+/**
+ * A CTAP2 security key with no PIN and no biometric: it can prove presence
+ * (a touch) but never user verification.
+ */
+async function addUvlessAuthenticator(cdp: CDPSession): Promise<void> {
+  await cdp.send('WebAuthn.enable');
+  await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport: 'usb',
+      hasResidentKey: true,
+      hasUserVerification: false,
+      isUserVerified: false,
+      automaticPresenceSimulation: true,
+    },
+  });
+}
 
 test.describe('Passkey sign-in', () => {
   test.describe.configure({ mode: 'serial' });
@@ -92,6 +112,18 @@ test.describe('Passkey sign-in', () => {
     });
     studentId = student.id;
     studentToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
+
+    const uvlessStudent = await prisma.student.create({
+      data: {
+        firstName: 'No',
+        lastName: 'Pin',
+        email: `e2e-passkey-nopin-${suffix}@test.local`,
+        account: { create: { email: `e2e-passkey-nopin-${suffix}@test.local` } },
+        claimedAt: new Date(),
+        incomeTier: 3,
+      },
+    });
+    uvlessStudentId = uvlessStudent.id;
   });
 
   test.afterAll(async () => {
@@ -100,6 +132,10 @@ test.describe('Passkey sign-in', () => {
     if (studentId) {
       await prisma.passkeyCredential.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
       await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
+    }
+    if (uvlessStudentId) {
+      await prisma.passkeyCredential.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, uvlessStudentId) } });
+      await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, uvlessStudentId) } });
     }
     if (teacherId) {
       await prisma.calendarEntry.deleteMany({ where: { teacherId } });
@@ -190,5 +226,43 @@ test.describe('Passkey sign-in', () => {
     await page.goto('/login');
     await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
     await page.waitForURL((url) => url.pathname === '/schedule', { timeout: 10_000 });
+  });
+
+  test('a security key with no PIN cannot add a passkey, and the server is never asked', async ({
+    page,
+    context,
+  }) => {
+    const cdp = await context.newCDPSession(page);
+    await addUvlessAuthenticator(cdp);
+    const verifyRequests: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/auth/passkey/register/verify')) verifyRequests.push(request.url());
+    });
+
+    await context.addCookies([
+      sessionCookie(await seedSession(prisma, await accountIdOfStudent(prisma, uvlessStudentId))),
+    ]);
+    await page.goto('/account');
+    const optionsResponse = page.waitForResponse('**/api/auth/passkey/register/options');
+    await page.getByRole('button', { name: 'Add a passkey' }).click();
+    await optionsResponse;
+
+    // The browser refuses the ceremony; the component treats that as a
+    // dismissal and returns to idle, with nothing sent for verification.
+    //
+    // Scoped to the button's own container, not bare `getByRole('alert')`:
+    // every Next.js App Router page carries an always-present, visually
+    // hidden `#__next-route-announcer__` with `role="alert"` for route-change
+    // announcements, unrelated to this component's error state — a bare
+    // query would match it on every render, success or failure alike.
+    const addPasskeyButton = page.getByRole('button', { name: 'Add a passkey' });
+    await expect(addPasskeyButton).toBeEnabled();
+    await expect(addPasskeyButton.locator('..').getByRole('alert')).toHaveCount(0);
+    expect(verifyRequests).toEqual([]);
+    expect(
+      await prisma.passkeyCredential.count({
+        where: { accountId: await accountIdOfStudent(prisma, uvlessStudentId) },
+      }),
+    ).toBe(0);
   });
 });
