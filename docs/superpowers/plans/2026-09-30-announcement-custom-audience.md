@@ -38,7 +38,7 @@
 
 **Files:**
 - Modify: `prisma/schema.prisma` (model `Announcement`, ~line 1101)
-- Create: `prisma/migrations/20260930120000_announcement_audience_student_ids/migration.sql`
+- Create: `prisma/migrations/20260930120100_announcement_audience_student_ids/migration.sql`
 - Modify: `src/lib/schemas.ts:610-613`
 - Modify: `src/lib/schemas.test.ts` (new describe block; existing sweeps must stay green)
 - Modify: `docs/data-model.md` (Announcement table, ~line 792)
@@ -108,7 +108,7 @@ One `.refine` and no `.transform`: `schemas.test.ts`'s sweep reads a single effe
 ```prisma
   audienceStudentIds String[] @default([])
 ```
-Create `prisma/migrations/20260930120000_announcement_audience_student_ids/migration.sql`:
+Create `prisma/migrations/20260930120100_announcement_audience_student_ids/migration.sql`:
 
 ```sql
 -- AlterTable
@@ -126,7 +126,7 @@ Expected: deploy applies one migration; diff exits 0 (no drift). If diff prints 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add prisma/schema.prisma prisma/migrations/20260930120000_announcement_audience_student_ids/migration.sql src/lib/schemas.ts src/lib/schemas.test.ts docs/data-model.md
+git add prisma/schema.prisma prisma/migrations/20260930120100_announcement_audience_student_ids/migration.sql src/lib/schemas.ts src/lib/schemas.test.ts docs/data-model.md
 git commit -m "feat: Announcement.audienceStudentIds and the studentIds request field (#48)"
 ```
 
