@@ -121,6 +121,17 @@ until observed. The plan's first e2e step runs the scenario against both `'prefe
 `'required'` and records what happens. If `'required'` does not stop the ceremony in the
 browser, stop and report: the case for option 1 rests on that behaviour.
 
+**Measured.** The registration behaviour held: with `'required'` Chrome refused the UV-less
+virtual authenticator and no request reached `register/verify`; with `'preferred'` the
+ceremony completed and the server refused it (400). Sign-in could not be pinned in the
+browser: an authenticator without UV holding a discoverable credential for the RP was
+refused with `NotAllowedError` under `'preferred'` as well as `'required'` — a bare
+`navigator.credentials.get()` included, so not this app's code. This app's sign-in sends no
+`allowCredentials` (#187), which is the likely reason; it was not isolated further. A test
+green under both values certifies nothing, so the e2e covers registration only, and the
+authentication options' `'required'` is pinned at the unit tier. Measured with Chromium's
+CDP virtual authenticator; a physical key may behave differently.
+
 ## Mutation checks
 
 Each recorded with the exact failure text in the plan's execution:
