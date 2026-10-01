@@ -39,11 +39,14 @@ describe('createInstallStore', () => {
     expect(listener).toHaveBeenCalled();
   });
 
-  it('ignores an event without a prompt method', () => {
+  it('ignores an event without a prompt method, warning about it', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const win = fakeWindow();
     const store = createInstallStore(win);
     win.dispatchEvent(new Event('beforeinstallprompt', { cancelable: true }));
     expect(store.getSnapshot()).toBe('unsupported');
+    expect(warnSpy).toHaveBeenCalledWith('[install-store] beforeinstallprompt without prompt()/userChoice');
+    warnSpy.mockRestore();
   });
 
   it('answers manual after a dismissed prompt, so a visible surface stays', async () => {
