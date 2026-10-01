@@ -1,6 +1,7 @@
 /**
  * What this browser can do about installing fair.yoga. `unknown` is the
- * server's answer and the first client render's: nothing renders for it.
+ * server's answer and the first client render's; `classifyInstall` never
+ * returns it.
  */
 export type InstallSupport = 'unknown' | 'installed' | 'ios-safari' | 'prompt' | 'manual' | 'unsupported';
 
@@ -24,9 +25,8 @@ function isIos(env: InstallEnv): boolean {
   return /iPhone|iPad|iPod/.test(env.userAgent) || (/Macintosh/.test(env.userAgent) && env.maxTouchPoints > 1);
 }
 
-/** Browsers and webviews on iOS that are not Safari. Each either lacks the
- *  Share → Add to Home Screen route or puts it somewhere these steps do not
- *  describe. */
+/** iOS browsers and webviews that are not Safari; their Add to Home Screen
+ *  route, where one exists, is not Safari's Share sheet. */
 const NOT_SAFARI = /CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|GSA\/|DuckDuckGo|YaBrowser|FBAN|FBAV|Instagram|Line\/|Snapchat|LinkedInApp|Pinterest/;
 
 function isIosSafari(env: InstallEnv): boolean {
