@@ -2,17 +2,24 @@
 
 import { useState } from 'react';
 import type { z } from 'zod';
-import type { ReminderTiming } from '@prisma/client';
+import type { ReminderChannel, ReminderTiming } from '@prisma/client';
 import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import {
+  REMINDER_CHANNEL_OPTIONS,
+  REMINDER_TIMING_OPTIONS,
+  isReminderChannel,
+  isReminderTiming,
+} from '@/lib/reminder-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface NotificationsFormProps {
   studentId: string;
   emailNotifications: boolean;
-  classReminder: string;
+  classReminder: ReminderTiming;
+  classReminderChannel: ReminderChannel;
 }
 
 type UpdateStudentWire = z.infer<typeof updateStudentSchema>;
@@ -20,6 +27,7 @@ type UpdateStudentWire = z.infer<typeof updateStudentSchema>;
 interface NotificationsBody {
   emailNotifications: boolean;
   classReminder: ReminderTiming;
+  classReminderChannel: ReminderChannel;
 }
 
 /**
@@ -31,40 +39,15 @@ interface NotificationsBody {
 const _formHasNoExtras: NoneOf<Exclude<keyof NotificationsBody, keyof UpdateStudentWire>> = true;
 void _formHasNoExtras;
 
-const REMINDER_OPTIONS = [
-  { value: 'evening_before', label: 'Evening before' },
-  { value: 'morning_of', label: 'Morning of class' },
-  { value: 'one_hour_before', label: 'One hour before' },
-  { value: 'off', label: 'No reminders' },
-] as const;
-
-type ReminderOption = (typeof REMINDER_OPTIONS)[number]['value'];
-
-const _offersEveryReminder: NoneOf<Exclude<ReminderTiming, ReminderOption>> = true;
-const _noStaleReminder: NoneOf<Exclude<ReminderOption, ReminderTiming>> = true;
-void _offersEveryReminder;
-void _noStaleReminder;
-
-/**
- * `classReminder` arrives as `string` — both the prop (Prisma's enum flows
- * through the server component as a plain string) and `e.target.value` off
- * the `<select>`. This narrows either to `ReminderOption` without an
- * assertion, reading the options array rather than a second list, the same
- * way `template-form.tsx`'s `isCancelDeadline`/`isAutoCancelCheck` do.
- */
-function isReminderOption(v: string): v is ReminderOption {
-  return REMINDER_OPTIONS.some((o) => o.value === v);
-}
-
 export function NotificationsForm({
   studentId,
   emailNotifications,
   classReminder,
+  classReminderChannel,
 }: NotificationsFormProps) {
   const [emails, setEmails] = useState(emailNotifications);
-  const [reminder, setReminder] = useState<ReminderOption>(
-    isReminderOption(classReminder) ? classReminder : REMINDER_OPTIONS[0].value,
-  );
+  const [reminder, setReminder] = useState(classReminder);
+  const [reminderChannel, setReminderChannel] = useState(classReminderChannel);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -77,6 +60,7 @@ export function NotificationsForm({
       const payload: NotificationsBody = {
         emailNotifications: emails,
         classReminder: reminder,
+        classReminderChannel: reminderChannel,
       };
       const res = await fetch(`/api/students/${studentId}`, {
         method: 'PUT',
@@ -115,27 +99,46 @@ export function NotificationsForm({
         </label>
         <p className="type-caption mt-1 max-w-[420px]">
           Essential messages about your bookings — cancellations, waitlist
-          spots, payment requests — are still emailed even when this is off.
+          spots, payment requests — are still emailed even when this is off. Class reminders follow their own setting below.
         </p>
-        <div className="mt-3 max-w-[280px]">
+      </section>
+
+      <fieldset>
+        <legend className="type-subtitle">Class reminder</legend>
+        <div className="mt-3 flex max-w-[280px] flex-col gap-3">
           <Select
-            label="Class reminder"
+            id="reminder-when"
+            label="When"
             value={reminder}
             onChange={(e) => {
-              if (isReminderOption(e.target.value)) {
+              if (isReminderTiming(e.target.value)) {
                 setReminder(e.target.value);
                 setSaved(false);
               }
             }}
           >
-            {REMINDER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
+            {REMINDER_TIMING_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </Select>
+          <Select
+            id="reminder-how"
+            label="How"
+            value={reminderChannel}
+            disabled={reminder === 'off'}
+            onChange={(e) => {
+              if (isReminderChannel(e.target.value)) {
+                setReminderChannel(e.target.value);
+                setSaved(false);
+              }
+            }}
+          >
+            {REMINDER_CHANNEL_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </Select>
         </div>
-      </section>
+      </fieldset>
 
       <div className="flex items-center gap-3">
         <Button variant="primary" onClick={handleSave} disabled={saving}>

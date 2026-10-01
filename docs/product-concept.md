@@ -204,7 +204,7 @@ Three-layer communication model, same content, different delivery:
 
 **Email:** External fallback. The system sends in-app first; if the student hasn't seen it within a reasonable window, email follows. Student controls whether email notifications are on or off (on by default).
 
-**Class reminders:** On by default, set to morning-of. Student can change to: evening before, 1 hour before, or off. Global setting from account settings, applies to all bookings.
+**Class reminders:** On by default, set to morning-of, in the app and by email. Each student chooses when (evening before, morning of, 1 hour before, or off) and how (in the app, by email, or both); the setting applies to all their bookings. Teachers get the same reminder for each class they teach, with the same two choices, in Settings → Notifications.
 
 **Teacher capabilities:**
 - Send one-to-many announcements to all students in a class

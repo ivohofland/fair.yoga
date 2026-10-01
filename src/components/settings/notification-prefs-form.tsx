@@ -7,6 +7,13 @@ import type { updateTeacherSchema } from '@/lib/schemas';
 import type { TeacherNotificationPrefs } from '@/services/notification-policy';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
+import {
+  REMINDER_CHANNEL_OPTIONS,
+  REMINDER_TIMING_OPTIONS,
+  isReminderChannel,
+  isReminderTiming,
+} from '@/lib/reminder-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface NotificationPrefsFormProps {
@@ -38,8 +45,8 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
   const [booking, setBooking] = useState<TeacherBookingNotifications>(initial.bookingNotifications);
   const [completed, setCompleted] = useState(initial.emailOnClassCompleted);
   const [invitation, setInvitation] = useState(initial.emailOnInvitation);
-  const [reminder] = useState(initial.classReminder);
-  const [reminderChannel] = useState(initial.classReminderChannel);
+  const [reminder, setReminder] = useState(initial.classReminder);
+  const [reminderChannel, setReminderChannel] = useState(initial.classReminderChannel);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -95,6 +102,43 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
         <p className="type-caption mt-1 max-w-[420px]">
           Bookings always show on your schedule — this only changes whether you&apos;re told about each one.
         </p>
+      </fieldset>
+
+      <fieldset>
+        <legend className="type-subtitle">Class reminder</legend>
+        <div className="mt-3 flex max-w-[280px] flex-col gap-3">
+          <Select
+            id="reminder-when"
+            label="When"
+            value={reminder}
+            onChange={(e) => {
+              if (isReminderTiming(e.target.value)) {
+                setReminder(e.target.value);
+                setSaved(false);
+              }
+            }}
+          >
+            {REMINDER_TIMING_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </Select>
+          <Select
+            id="reminder-how"
+            label="How"
+            value={reminderChannel}
+            disabled={reminder === 'off'}
+            onChange={(e) => {
+              if (isReminderChannel(e.target.value)) {
+                setReminderChannel(e.target.value);
+                setSaved(false);
+              }
+            }}
+          >
+            {REMINDER_CHANNEL_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </Select>
+        </div>
       </fieldset>
 
       <fieldset>

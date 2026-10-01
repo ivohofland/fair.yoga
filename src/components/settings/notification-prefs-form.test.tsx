@@ -58,6 +58,23 @@ describe('NotificationPrefsForm', () => {
     });
   });
 
+  it('offers a Class reminder timing and channel, and sends both (#721)', async () => {
+    stubFetch();
+    render(<NotificationPrefsForm teacherId="t1" initial={{ ...DEFAULTS, classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' }} />);
+    fireEvent.change(screen.getByLabelText('When'), { target: { value: 'one_hour_before' } });
+    fireEvent.change(screen.getByLabelText('How'), { target: { value: 'email' } });
+    const { body } = await save();
+    expect(body).toMatchObject({ classReminder: 'one_hour_before', classReminderChannel: 'email' });
+  });
+
+  it('disables How while When is Off, and keeps the chosen channel (#721)', () => {
+    render(<NotificationPrefsForm teacherId="t1" initial={{ ...DEFAULTS, classReminder: 'morning_of', classReminderChannel: 'email' }} />);
+    fireEvent.change(screen.getByLabelText('When'), { target: { value: 'off' } });
+    expect(screen.getByLabelText('How')).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('When'), { target: { value: 'evening_before' } });
+    expect(screen.getByLabelText('How')).toHaveValue('email');
+  });
+
   it('clears the saved notice when edited after a save', async () => {
     stubFetch();
     render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} />);
