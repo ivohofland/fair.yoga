@@ -61,6 +61,7 @@ Every destructive action, transition button, or dialog refusal renders with `rol
 - `src/components/class/publish-class-button.tsx`
 - `src/components/class/add-walk-in.tsx`
 - `src/components/class/send-announcement.tsx`
+- `src/components/class/audience-picker.tsx`
 - `src/components/class/attendance-list.tsx`
 - `src/components/class/payment-checklist.tsx`
 - `src/components/class/outstanding-payment-row.tsx`

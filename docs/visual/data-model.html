@@ -529,7 +529,7 @@
         <div class="field"><span class="field-name">recipient_count</span><span class="field-type">int</span></div>
         <div class="field"><span class="field-name">audience_student_ids</span><span class="field-type">text[], default {}</span></div>
         <div class="field"><span class="field-name">sent_at</span><span class="field-type">datetime</span></div>
-        <div class="field-note">class_id null = sent to all teacher's students or a chosen subset. Creates one Notification per recipient not already told this message in the last two minutes.</div>
+        <div class="field-note">class_id null = sent to all teacher's students or a chosen subset, or its class has since been deleted. Creates one Notification per recipient not already told this message inside the dedupe window.</div>
       </div>
     </div>
 

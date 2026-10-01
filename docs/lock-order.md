@@ -282,7 +282,7 @@ needs a concurrent reschedule *and* an erasure timed into the same gap, of a
 student in one of two shapes: waitlisted across both classes, or waitlisted on
 the rescheduled class and named in the audience of an announcement scoped to
 another class the same delete removes first — the second shape since #48, see
-"`Announcement` rows: the audience scrub"), it is measured rather than theorised,
+"`Announcement` rows: the audience scrub (#48)"), it is measured rather than theorised,
 and it is no worse than the pre-#180 state, which had no ordering at all — but
 it is not closed. Widening the call past `today` would lock history for no
 gain, and #86/#112 require the delete's live predicate re-evaluation regardless.
@@ -557,7 +557,7 @@ Against each, the class its notifications carry:
 | `sendPaymentReminders` (`payment-reminders.ts`) | one — per-payment, one transaction each |
 | `POST /api/registrations` | one — the class being booked |
 | `completeWalkIn` (`walk-ins.ts`) | one — the class being walked into, under the `lockClassRow` `POST /api/registrations` already holds |
-| `POST /api/announcements` | one — the announcement's class, inside the dedupe transaction (#196; it ran outside any transaction until then) |
+| `POST /api/announcements` | at most one — the class of a class-scoped send; an all-students or custom send names none (#196, #48) |
 | `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327; this is where the transition route's cancel branch went) |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 
@@ -1482,8 +1482,11 @@ to `FOR UPDATE`, and it is no foreign key, so the `UPDATE` fires no RI check
 and takes no `FOR KEY SHARE` on the row's `Teacher` or `Class`.
 
 It runs after the class pre-lock, like every write in that transaction, so the
-erasure's order is `Student → Class → Announcement`. Who else locks an
-EXISTING `Announcement` row, and what each meeting does:
+erasure's order is `Student → Class → Announcement`. `Announcement` is not on
+the canonical line: the erasure scrubs it before `reorderWaitingEntries`
+writes `WaitlistEntry` rows, which the line puts earlier, so no one position on
+the line describes it; its order is the pairs in this section. Who else locks
+an EXISTING `Announcement` row, and what each meeting does:
 
 - **`sendAnnouncement` never does.** Its dedupe read is a plain `findMany`, no
   `FOR UPDATE`, and its one write inserts a new row. A row a send has inserted
@@ -1507,7 +1510,8 @@ EXISTING `Announcement` row, and what each meeting does:
   residual ("Ordering WITHIN `Class`", "One exception survives"; `gdpr.ts`,
   the comment above the erasure's first write): an entry rescheduled into the
   delete's predicate after the pre-lock is deleted without its `Class` held.
-  If the erasure holds that class (the subject has an entry there), and the
+  If the erasure holds that class (the subject has a `WaitlistEntry` there,
+  which is what puts a class in the erasure's lock set), and the
   same delete has already nulled an announcement, scoped to another of its
   classes, whose audience names the subject, the archive holds a row the scrub
   wants while waiting on the class the erasure holds: `40P01`. This is a
@@ -1536,9 +1540,14 @@ require `deletedAt: null` on the student. But the route reads its audience
 before `sendAnnouncement`'s transaction opens and takes no `Student` lock, so a
 send that read the audience before the erasure committed, and whose row is not
 yet committed when the scrub runs, writes the erased id into that new row, and
-nothing scrubs it afterwards. This is accepted: the id is an opaque uuid of a profile that no
-longer names anyone, and it stops being read once the row leaves the dedupe
-window.
+nothing scrubs it afterwards. This is accepted: the id is an opaque uuid of a
+profile that no longer names anyone, and it stops affecting anything once the
+row leaves the dedupe window. The same send's `Notification` to that profile
+outlives the erasure the same way — `Notification` has no foreign key to
+`Student`, and the erasure deletes only the notifications that exist when it
+runs — so the announcement's text stays addressed to the erased profile until
+the one-year inbox retention sweep (`src/lib/notification-retention.ts`)
+deletes it.
 
 ## The `TeacherStudent` row is the archive's gate (#265)
 
