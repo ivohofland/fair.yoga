@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { logRequestFailure } from '@/lib/client-errors';
 import { MAX_CUSTOM_AUDIENCE } from '@/lib/schemas';
 import { Input } from '@/components/ui/input';
@@ -20,10 +20,15 @@ type LoadState =
   | { status: 'failed' }
   | { status: 'ready'; students: AudienceStudent[] };
 
-// Ids are sent back exactly as the endpoint listed them.
 export function AudiencePicker({ selected, onChange }: AudiencePickerProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [query, setQuery] = useState('');
+  // The load effect runs once but must prune against the selection and
+  // callback current when the list arrives.
+  const latest = useRef({ selected, onChange });
+  useEffect(() => {
+    latest.current = { selected, onChange };
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +40,11 @@ export function AudiencePicker({ selected, onChange }: AudiencePickerProps) {
           return;
         }
         const json = (await res.json()) as { data: { students: AudienceStudent[] } };
-        if (!cancelled) setLoad({ status: 'ready', students: json.data.students });
+        if (cancelled) return;
+        const present = new Set(json.data.students.map((s) => s.id));
+        const kept = latest.current.selected.filter((id) => present.has(id));
+        if (kept.length !== latest.current.selected.length) latest.current.onChange(kept);
+        setLoad({ status: 'ready', students: json.data.students });
       } catch (err) {
         logRequestFailure('audience-picker', {}, err);
         if (!cancelled) setLoad({ status: 'failed' });
@@ -53,7 +62,7 @@ export function AudiencePicker({ selected, onChange }: AudiencePickerProps) {
   if (load.status === 'failed') {
     return (
       <p role="alert" className="text-sm text-danger">
-        Could not load your students. Try again.
+        Could not load your students.
       </p>
     );
   }
@@ -91,16 +100,16 @@ export function AudiencePicker({ selected, onChange }: AudiencePickerProps) {
         onChange={(e) => setQuery(e.target.value)}
       />
       <div className="flex items-center gap-4">
-        <button type="button" onClick={selectAllShown} className="type-label text-teal">
+        <button type="button" onClick={selectAllShown} className="type-label text-teal min-h-11">
           Select all
         </button>
-        <button type="button" onClick={() => onChange([])} className="type-label text-teal">
+        <button type="button" onClick={() => onChange([])} className="type-label text-teal min-h-11">
           Clear
         </button>
         <span className="type-caption">{selected.length} selected</span>
       </div>
       {atLimit && (
-        <p className="type-caption">
+        <p role="status" className="type-caption">
           One announcement can go to at most {MAX_CUSTOM_AUDIENCE} students. Clear some to choose others.
         </p>
       )}

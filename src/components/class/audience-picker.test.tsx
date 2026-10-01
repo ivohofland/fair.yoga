@@ -15,6 +15,8 @@ const STUDENTS = [
   { id: 'c', displayName: 'Cleo M.' },
 ];
 
+const LIMIT_NOTICE = new RegExp(`at most ${MAX_CUSTOM_AUDIENCE} students`);
+
 function manyStudents(count: number) {
   return Array.from({ length: count }, (_, i) => ({ id: `id-${i}`, displayName: `Student ${i}` }));
 }
@@ -78,6 +80,23 @@ describe('AudiencePicker', () => {
     expect(onChange).toHaveBeenCalledWith([]);
   });
 
+  it('drops ticked ids that left the audience, once', async () => {
+    stubAudience(STUDENTS);
+    const onChange = vi.fn();
+    render(<AudiencePicker selected={['a', 'gone']} onChange={onChange} />);
+    await screen.findByLabelText('Anna K.');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(['a']);
+  });
+
+  it('does not call onChange when every tick is still in the audience', async () => {
+    stubAudience(STUDENTS);
+    const onChange = vi.fn();
+    render(<AudiencePicker selected={['a', 'b']} onChange={onChange} />);
+    await screen.findByLabelText('Anna K.');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('says how many are selected', async () => {
     stubAudience(STUDENTS);
     render(<AudiencePicker selected={['a', 'b']} onChange={vi.fn()} />);
@@ -87,7 +106,7 @@ describe('AudiencePicker', () => {
   it('says so when the fetch fails instead of showing an empty list', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }));
     render(<AudiencePicker selected={[]} onChange={vi.fn()} />);
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not load your students. Try again.'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not load your students.'));
   });
 
   it('logs and says so when the request itself throws', async () => {
@@ -121,12 +140,13 @@ describe('AudiencePicker', () => {
       const full = Array.from({ length: MAX_CUSTOM_AUDIENCE }, (_, i) => `id-${i}`);
       const onChange = vi.fn();
       render(<AudiencePicker selected={full} onChange={onChange} />);
-      expect(await screen.findByText(/at most 500 students/)).toBeTruthy();
+      const notice = await screen.findByText(LIMIT_NOTICE);
+      expect(notice.getAttribute('role')).toBe('status');
       const extra = screen.getByLabelText(`Student ${MAX_CUSTOM_AUDIENCE}`) as HTMLInputElement;
       expect(extra.disabled).toBe(true);
       fireEvent.click(extra);
       expect(onChange).not.toHaveBeenCalled();
-      // A ticked student stays untickable-off.
+      // A ticked student stays enabled so it can still be unticked.
       const ticked = screen.getByLabelText('Student 0') as HTMLInputElement;
       expect(ticked.disabled).toBe(false);
     });
@@ -135,7 +155,19 @@ describe('AudiencePicker', () => {
       stubAudience(manyStudents(MAX_CUSTOM_AUDIENCE + 20));
       render(<AudiencePicker selected={['id-0']} onChange={vi.fn()} />);
       await screen.findByLabelText('Student 0');
-      expect(screen.queryByText(/at most 500 students/)).toBeNull();
+      expect(screen.queryByText(LIMIT_NOTICE)).toBeNull();
+    });
+
+    it('Select all on top of earlier ticks stops at the limit and keeps the earlier ticks first', async () => {
+      const all = manyStudents(600);
+      stubAudience(all);
+      const earlier = all.slice(0, 300).map((s) => s.id);
+      const onChange = vi.fn();
+      render(<AudiencePicker selected={earlier} onChange={onChange} />);
+      fireEvent.click(await screen.findByText('Select all'));
+      const ids = onChange.mock.calls[0]?.[0] as string[];
+      expect(ids).toHaveLength(MAX_CUSTOM_AUDIENCE);
+      expect(ids.slice(0, 300)).toEqual(earlier);
     });
   });
 });
