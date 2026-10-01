@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icon } from '@/components/ui/icon';
 import { SignOutButton } from '@/components/account/sign-out-button';
+import { InstallAppRow } from '@/components/account/install-app-row';
 import { getSession } from '@/lib/session';
 
 const SETTINGS_ITEMS = [
@@ -40,6 +41,7 @@ export default async function SettingsPage() {
             <Icon name="chevron-right" size={20} className="text-brown-light" />
           </Link>
         )}
+        <InstallAppRow />
       </div>
       <div className="mt-8">
         <SignOutButton />

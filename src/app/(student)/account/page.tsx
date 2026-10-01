@@ -6,6 +6,7 @@ import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { AddPasskey } from '@/components/account/add-passkey';
 import { SignOutButton } from '@/components/account/sign-out-button';
+import { InstallAppRow } from '@/components/account/install-app-row';
 import { NameForm } from '@/components/student/name-form';
 import { ContactDetailsForm } from '@/components/student/contact-details-form';
 
@@ -77,6 +78,7 @@ export default async function StudentSettingsPage() {
             <Icon name="chevron-right" size={20} className="text-brown-light" />
           </Link>
         ))}
+        <InstallAppRow />
       </div>
 
       {session.teacherId && (
