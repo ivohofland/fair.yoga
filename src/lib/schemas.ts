@@ -205,12 +205,12 @@ export const magicLinkClaimSchema = z.object({
 const passkeyCredentialId = z.string().regex(/^[A-Za-z0-9_-]+$/).max(1364);
 
 export const passkeyRegisterVerifySchema = z.object({
-  // `id` is checked; the rest of the response is validated loosely — WebAuthn's shape is complex.
+  // Only `id` is checked; `looseObject` passes the rest of the response through unvalidated.
   response: z.looseObject({ id: passkeyCredentialId }),
 });
 
 export const passkeyAuthVerifySchema = z.object({
-  // `id` is checked; the rest of the response is validated loosely — WebAuthn's shape is complex.
+  // Only `id` is checked; `looseObject` passes the rest of the response through unvalidated.
   response: z.looseObject({ id: passkeyCredentialId }),
   challengeId: z.string().trim().min(1),
   redirect: relativePath.optional(),
