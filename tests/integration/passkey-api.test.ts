@@ -1,9 +1,16 @@
+import { randomBytes } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
-import { expectRefusal } from '../api-assertions';
+import { expectApplied, expectRefusal } from '../api-assertions';
+import {
+  WRONG_CHALLENGE,
+  forgedNoneRegistration,
+  wrongChallengeClientDataJSON,
+} from '../passkey-fixtures';
 import { formatIssues } from '@/lib/validation-message';
 import { passkeyRegisterVerifySchema, passkeyAuthVerifySchema } from '@/lib/schemas';
 
@@ -16,19 +23,6 @@ const prisma = new PrismaClient();
  */
 function makeCredentialId(seed: string): string {
   return Buffer.from(`cred-${seed}`).toString('base64url');
-}
-
-/**
- * A base64url `clientDataJSON` naming a challenge other than the one that
- * will be issued. The library checks the challenge before the origin, the
- * attestation object or the signature, so no signature is needed to reach
- * that check — but the response carrying this must also have a base64url
- * `id` equal to its `rawId` and `type: 'public-key'`, which come first.
- */
-function wrongChallengeClientDataJSON(type: 'webauthn.create' | 'webauthn.get'): string {
-  return Buffer.from(JSON.stringify({ type, challenge: 'not-the-issued-challenge' })).toString(
-    'base64url',
-  );
 }
 
 /**
@@ -63,8 +57,8 @@ async function expectValidation400(
  * cannot show. A bogus challengeId also yields 400, so each assertion pins
  * *which* rejection fired: a validation 400 names the failing field first
  * (`parseBody`), and the challenge refusal carries `PASSKEY_CHALLENGE_MISSING`.
- * Each body carries a valid `response.id` so the only validation issue in
- * the first two cases is `redirect`, not also `id`.
+ * Each body carries a valid `response.id`, so a redirect case's only
+ * validation issue is `redirect`, not also `id`.
  */
 describe('POST /api/auth/passkey/authenticate/verify', () => {
   const post = (body: unknown) =>
@@ -76,16 +70,16 @@ describe('POST /api/auth/passkey/authenticate/verify', () => {
 
   it('rejects an absolute redirect with a validation 400', async () => {
     const id = makeCredentialId('redirect-absolute');
-    const res = await post({ response: { id }, challengeId: 'x', redirect: 'https://evil.com' });
-    expect(res.status).toBe(400);
-    expect(await res.text()).toContain('relative path');
+    const body = { response: { id }, challengeId: 'x', redirect: 'https://evil.com' };
+    const res = await post(body);
+    await expectValidation400(res, passkeyAuthVerifySchema, body);
   });
 
   it('rejects a protocol-relative redirect with a validation 400', async () => {
     const id = makeCredentialId('redirect-protocol-relative');
-    const res = await post({ response: { id }, challengeId: 'x', redirect: '//evil.com' });
-    expect(res.status).toBe(400);
-    expect(await res.text()).toContain('relative path');
+    const body = { response: { id }, challengeId: 'x', redirect: '//evil.com' };
+    const res = await post(body);
+    await expectValidation400(res, passkeyAuthVerifySchema, body);
   });
 
   it('a safe redirect passes validation and fails only on the challenge', async () => {
@@ -98,9 +92,11 @@ describe('POST /api/auth/passkey/authenticate/verify', () => {
 /**
  * The boundary validation on `response.id` (an empty object, a NUL byte) and
  * the coded refusal a wrong-challenge response against a real credential
- * answers. Each case needs a live `challengeId` from
- * `POST /api/auth/passkey/authenticate/options`, which is IP-rate-limited —
- * `freshIp()` keeps each call in its own bucket.
+ * answers. The wrong-challenge case needs a live `challengeId` from
+ * `POST /api/auth/passkey/authenticate/options`; the validation cases send
+ * one too, so the `response.id` check is the only thing between each body and
+ * the challenge lookup. That route is IP-rate-limited — `freshIp()` keeps
+ * each call in its own bucket.
  */
 describe('POST /api/auth/passkey/authenticate/verify — id validation and the coded refusal', () => {
   const suffix = uniqueSuffix();
@@ -179,6 +175,9 @@ describe('POST /api/auth/passkey/authenticate/verify — id validation and the c
         clientExtensionResults: {},
       },
     });
+    // The refusal's `reason` echoes the client's challenge; it goes to the
+    // log, never the response.
+    expect(await res.clone().text()).not.toContain(WRONG_CHALLENGE);
     await expectRefusal(res, 'PASSKEY_NOT_VERIFIED');
   });
 });
@@ -347,9 +346,9 @@ describe('POST /api/auth/passkey/register/options', () => {
 });
 
 /**
- * `validateSession` refuses a session whose account has no live profile
- * (401 `Session expired`), so this fixture's account carries a live student
- * profile throughout.
+ * `requireSession` answers 401 for a session whose account has no live
+ * profile, so this fixture's account carries a live student profile
+ * throughout.
  */
 describe('POST /api/auth/passkey/register/verify', () => {
   const suffix = uniqueSuffix();
@@ -392,12 +391,52 @@ describe('POST /api/auth/passkey/register/verify', () => {
     });
   }
 
-  async function requestRegisterOptions(): Promise<void> {
+  /** Issues a registration challenge for this fixture's account and returns it. */
+  async function requestRegisterOptions(): Promise<string> {
     const res = await fetch(`${BASE_URL}/api/auth/passkey/register/options`, {
       method: 'POST',
       headers: cookie(token),
     });
     expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { challenge: string } };
+    return body.data.challenge;
+  }
+
+  function wrongChallengeBody(id: string) {
+    return {
+      response: {
+        id,
+        rawId: id,
+        type: 'public-key',
+        response: {
+          clientDataJSON: wrongChallengeClientDataJSON('webauthn.create'),
+          attestationObject: '',
+        },
+        clientExtensionResults: {},
+      },
+    };
+  }
+
+  /**
+   * A forged `fmt: 'none'` registration for the challenge just issued, built
+   * for origin `BASE_URL` and RP ID `localhost` — what the app under test
+   * must be configured to expect. The success case below is the control
+   * that fails if it is not.
+   */
+  async function forgedRegistrationBody(
+    authDataCredentialId: Uint8Array,
+    responseId: string,
+    transports: unknown,
+  ) {
+    const challenge = await requestRegisterOptions();
+    const forged = forgedNoneRegistration({
+      challenge,
+      origin: BASE_URL,
+      rpId: 'localhost',
+      authDataCredentialId,
+      responseId,
+    });
+    return { response: { ...forged, response: { ...forged.response, transports } } };
   }
 
   it('refuses a request with no session cookie', async () => {
@@ -431,35 +470,72 @@ describe('POST /api/auth/passkey/register/verify', () => {
     await expectRefusal(res, 'PASSKEY_CHALLENGE_MISSING');
   });
 
-  it('after register/options, an empty response object is a validation 400', async () => {
+  it('after register/options, an empty response object is a validation 400 that leaves the challenge pending', async () => {
     await requestRegisterOptions();
 
     const body = { response: {} };
     const res = await post(body);
     await expectValidation400(res, passkeyRegisterVerifySchema, body);
+
+    // `PASSKEY_NOT_VERIFIED`, not `PASSKEY_CHALLENGE_MISSING`: the challenge
+    // outlived the validation 400.
+    const nextRes = await post(wrongChallengeBody(makeCredentialId(`afterinvalid-${suffix}`)));
+    await expectRefusal(nextRes, 'PASSKEY_NOT_VERIFIED');
   });
 
   it('a wrong-challenge response answers PASSKEY_NOT_VERIFIED, and burns the challenge', async () => {
     await requestRegisterOptions();
 
-    const id = makeCredentialId(`wrongchallenge-${suffix}`);
-    const body = {
-      response: {
-        id,
-        rawId: id,
-        type: 'public-key',
-        response: {
-          clientDataJSON: wrongChallengeClientDataJSON('webauthn.create'),
-          attestationObject: '',
-        },
-        clientExtensionResults: {},
-      },
-    };
+    const body = wrongChallengeBody(makeCredentialId(`wrongchallenge-${suffix}`));
 
     const firstRes = await post(body);
+    // The refusal's `reason` echoes the client's challenge; it goes to the
+    // log, never the response.
+    expect(await firstRes.clone().text()).not.toContain(WRONG_CHALLENGE);
     await expectRefusal(firstRes, 'PASSKEY_NOT_VERIFIED');
 
     const secondRes = await post(body);
     await expectRefusal(secondRes, 'PASSKEY_CHALLENGE_MISSING');
+  });
+
+  it('stores a verified registration under response.id, for the session account, with known transports only', async () => {
+    const credentialId = new Uint8Array(randomBytes(16));
+    const responseId = isoBase64URL.fromBuffer(credentialId);
+    const body = await forgedRegistrationBody(credentialId, responseId, ['usb', 'carrier-pigeon']);
+
+    const res = await post(body);
+
+    expect(await expectApplied(res)).toEqual({ credentialId: responseId });
+    const row = await prisma.passkeyCredential.findUnique({ where: { id: responseId } });
+    expect(row && { accountId: row.accountId, transports: row.transports }).toEqual({
+      accountId: accountIds[0],
+      transports: ['usb'],
+    });
+  });
+
+  it('answers PASSKEY_NOT_VERIFIED, storing nothing, when the authenticator data id differs from response.id', async () => {
+    const authDataCredentialId = new Uint8Array(randomBytes(16));
+    const responseId = isoBase64URL.fromBuffer(new Uint8Array(randomBytes(16)));
+    const body = await forgedRegistrationBody(authDataCredentialId, responseId, ['usb']);
+
+    const res = await post(body);
+
+    await expectRefusal(res, 'PASSKEY_NOT_VERIFIED');
+    const stored = await prisma.passkeyCredential.count({
+      where: { id: { in: [responseId, isoBase64URL.fromBuffer(authDataCredentialId)] } },
+    });
+    expect(stored).toBe(0);
+  });
+
+  it('stores no transports for a transports value that is not an array', async () => {
+    const credentialId = new Uint8Array(randomBytes(16));
+    const responseId = isoBase64URL.fromBuffer(credentialId);
+    const body = await forgedRegistrationBody(credentialId, responseId, 'usb');
+
+    const res = await post(body);
+
+    expect(await expectApplied(res)).toEqual({ credentialId: responseId });
+    const row = await prisma.passkeyCredential.findUnique({ where: { id: responseId } });
+    expect(row?.transports).toEqual([]);
   });
 });
