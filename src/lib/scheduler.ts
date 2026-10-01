@@ -6,15 +6,20 @@
  * - Jobs call the services directly (no HTTP round-trip, no CRON_SECRET
  *   needed for the in-process path). The /api/cron/* endpoints remain for
  *   manual runs.
- * - Two of these jobs have had their send guarded against an overlapping
- *   trigger at the DB layer, and were measured: `payment-reminders` stamps
+ * - These jobs have had their send guarded against an overlapping trigger at
+ *   the DB layer, and were measured: `payment-reminders` stamps
  *   `reminderSentAt` with a conditional `updateMany` and abandons the
  *   notification when the count is zero (`payment-reminders.ts`, the
  *   `$transaction` around its stamp); `email-fallback` claims each
  *   notification — `emailSent: false -> true`, count checked — BEFORE calling
- *   Resend, releasing the claim if the send fails.
+ *   Resend, releasing the claim if the send fails; `class-reminders` stamps
+ *   `Registration.classReminderSentAt` and `Class.teacherReminderSentAt` with
+ *   a conditional `updateMany` inside a `$transaction` before any inbox row
+ *   or email, and skips the reminder when the count is zero — measured by
+ *   `class-reminders.test.ts` interposing a whole second sweep between the
+ *   candidate read and the claim.
  *
- *   That is a statement about those two jobs, NOT a survey. `class-transitions`
+ *   That is a statement about the jobs it names, NOT a survey. `class-transitions`
  *   also sends recipient-visible notifications — `autoCancelClasses` writes a
  *   `class_cancelled` set (`class-transitions.ts`) and `autoCompleteClasses`
  *   reaches `completeClass`'s `payment_request` set (`class-lifecycle.ts`) —
@@ -321,8 +326,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       run: (db) => processPaymentReminders(db),
     },
     {
-      // 5 minutes bounds how late a reminder lands after its moment; the
-      // sweep never sends at or after the class's start.
+      // 5 minutes bounds how late a reminder lands after its moment.
       name: 'class-reminders',
       intervalMs: 5 * MINUTE,
       run: (db) => processClassReminders(db),

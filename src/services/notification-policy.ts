@@ -110,7 +110,8 @@ const TEACHER_EMAIL_POLICY = {
   booking_confirmed: (p: TeacherNotificationPrefs) => p.bookingNotifications === 'inbox_and_email',
   payment_request: (p: TeacherNotificationPrefs) => p.emailOnClassCompleted,
   teacher_invitation: (p: TeacherNotificationPrefs) => p.emailOnInvitation,
-  // Sent directly by the class-reminder sweep at its moment, never as an unread fallback.
+  // Never by fallback, whatever the preferences; why is in `docs/data-model.md`
+  // (Notification, `email_sent`).
   class_reminder: () => false,
 } satisfies Record<TeacherNotificationType, (prefs: TeacherNotificationPrefs) => boolean>;
 

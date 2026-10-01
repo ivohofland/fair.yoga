@@ -89,7 +89,8 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
 };
 
 /**
- * Types whose fallback email needs somewhere to go, keyed by the reader.
+ * Types whose email needs somewhere to go, keyed by the reader — a fallback
+ * email, or a class reminder's own.
  *
  * Most notifications are about a class, and the class routes they would
  * point at are teacher-only, so those stay linkless below. An invitation
@@ -127,7 +128,8 @@ export interface NotificationEmailInput {
 }
 
 /**
- * Renders the email for an unread notification (layer 3 fallback).
+ * Renders the email for a notification: an unread one's layer 3 fallback, or
+ * a class reminder sent directly. `footer` replaces the fallback footer.
  *
  * `baseUrl` defaults from the environment the same way `notifyInvitee`
  * (services/invitations.ts) builds its own sign-in link, so existing
