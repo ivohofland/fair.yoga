@@ -328,6 +328,26 @@ describe('processEmailFallback — teacher preferences (#49)', () => {
     expect(sendsTo(teacherEmail)).toBe(1);
   });
 
+  it('leaves the student hat to its own setting when every teacher preference is off', async () => {
+    await setPrefs({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
+    await prisma.student.update({ where: { id: dualStudentId }, data: { emailNotifications: true } });
+    try {
+      const n = await prisma.notification.create({
+        data: {
+          recipientType: 'student', recipientId: dualStudentId, type: 'announcement',
+          title: 'Prefs test', body: 'Prefs test body', isRead: false, emailSent: false,
+          createdAt: new Date(Date.now() - 45 * 60 * 1000),
+        },
+      });
+      ids.push(n.id);
+      await processEmailFallback(prisma);
+      expect(sendsTo(teacherEmail)).toBe(1);
+      expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).emailSent).toBe(true);
+    } finally {
+      await prisma.student.update({ where: { id: dualStudentId }, data: { emailNotifications: false } });
+    }
+  });
+
   it('fails open on a teacher row outside TeacherNotificationType: emailed, and warned', async () => {
     await setPrefs({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
     const n = await note('announcement'); // only reachable by a direct write — the typed path refuses it
