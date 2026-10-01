@@ -298,8 +298,8 @@ describe('verifyPasskeyRegistration', () => {
       },
       clientExtensionResults: {},
     };
-    const warnSpy = vi.spyOn(log, 'warn');
-    const errorSpy = vi.spyOn(log, 'error');
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
 
     const result = await verifyPasskeyRegistration({
       response,
@@ -338,8 +338,8 @@ describe('verifyPasskeyAuthentication', () => {
       },
       clientExtensionResults: {},
     };
-    const warnSpy = vi.spyOn(log, 'warn');
-    const errorSpy = vi.spyOn(log, 'error');
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
 
     const result = await verifyPasskeyAuthentication({
       response,
