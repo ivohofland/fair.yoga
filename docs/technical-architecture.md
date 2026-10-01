@@ -9,7 +9,7 @@
 | Database | PostgreSQL | Relational model fits the data perfectly (see data-model.md). Mature, free, low resource usage. |
 | ORM | Prisma | Type-safe queries generated from schema. Strict TypeScript integration. Easy for volunteers to understand. |
 | Auth | Custom (magic link + passkeys) | Magic links via email. WebAuthn/passkeys for returning users. No passwords, no SMS (cost). Tokens are `crypto.randomBytes`, hashed with `@oslojs/crypto` before storage — nothing is signed. `@simplewebauthn/server` handles passkey verification. |
-| Email | Resend | Transactional email for magic links, payment reminders, notification fallback. Simple API, generous free tier. |
+| Email | Resend | Transactional email for magic links, invitations, payment reminders, class reminders, notification fallback. Simple API, generous free tier. |
 | Payments | Mollie (EU) / Stripe (US) | Level 1 doesn't need these (manual tracking). Level 2 uses payment links — no card-on-file, no subscriptions. |
 | Styling | Tailwind CSS | Utility-first, matches the warm minimalist design brief. No custom CSS files to maintain. |
 | Testing | Vitest + Playwright | Vitest for the projects in `vitest.config.ts`, Playwright for e2e. Test-first development — tests are written before implementation. The database-backed unit tiers run against a dedicated `ethical_yoga_test` database, auto-provisioned via `DATABASE_URL_TEST` (see `docs/test-database.md`). |
@@ -323,7 +323,7 @@ whole platform — paged through `readInPages`:
 | `readStudioGenerationCandidates` | `studio-class-generator.ts` | |
 | `getUnreadForEmailFallback` | `notifications.ts` | keyset on `(createdAt, id)`, not `id` alone |
 | `readDuePayments` | `payment-reminders.ts` | |
-| `processClassReminders` | `class-reminders.ts` | windowed (`reminderCandidateDates`); registrations read per class, one bounded query per candidate, not a relation load over the paged set |
+| `processClassReminders` | `class-reminders.ts` | windowed (`reminderCandidateDates`); a class's registrations are read per class (plus a count when the teacher's reminder is due), never as a relation load over the paged set |
 
 **Three pitfalls the next paged read will meet:**
 
@@ -893,7 +893,7 @@ export async function GET(request: Request) {
 
 ## Cron Jobs
 
-Every job skips a tick while its own previous run is still in flight, and from the second refused tick on it reads unhealthy (`STALLED_AFTER_SKIPPED_TICKS`, `src/lib/scheduler.ts`); the `src/lib/scheduler.ts` module header records which jobs were examined for a manual call overlapping a scheduled tick — a job it does not name was not examined. Each job's first run happens shortly after the Node server boots (15 seconds after the scheduler registers it), then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs alongside the scheduler — every job except waitlist reconciliation has one — and `CRON_SCHEDULER=off` is a CI setting, not a production mode (`DEPLOYMENT.md` §5).
+Every job skips a tick while its own previous run is still in flight, and from the second refused tick on it reads unhealthy (`STALLED_AFTER_SKIPPED_TICKS`, `src/lib/scheduler.ts`); Overlapping triggers, below, records which jobs were examined for a manual call overlapping a scheduled tick — a job it does not name was not examined. Each job's first run happens shortly after the Node server boots (15 seconds after the scheduler registers it), then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs alongside the scheduler — every job except waitlist reconciliation has one — and `CRON_SCHEDULER=off` is a CI setting, not a production mode (`DEPLOYMENT.md` §5).
 
 | Job | Schedule | What it does |
 |---|---|---|
@@ -904,6 +904,29 @@ Every job skips a tick while its own previous run is still in flight, and from t
 | Class reminders | Every 5 minutes | Reminds registered students and the teacher of an open class at each one's chosen moment (`reminderMoment`, `src/lib/reminder-moment.ts`), in the inbox and/or by direct email — once, and never at or after the class's start |
 | Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable or an offset identifier (`isValidTimeZone`) |
 | Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before class start |
+
+### Overlapping triggers
+
+The jobs named in this section have had their send guarded at the DB layer
+against a manual `/api/cron/*` call overlapping a scheduled tick, and were
+measured:
+
+- **Payment reminders** stamps `Payment.reminderSentAt` with a conditional
+  `updateMany` inside a `$transaction` and abandons the notification when the
+  count is zero (`payment-reminders.ts`).
+- **Email fallback** claims each notification — `emailSent: false → true`,
+  count checked — before calling Resend, and releases the claim if the send
+  fails (`email-fallback.ts`).
+- **Class reminders** claims each reminder with a conditional `updateMany` on
+  its stamp (`Registration.classReminderSentAt`, `Class.teacherReminderSentAt`),
+  count checked, before writing an inbox row or sending anything
+  (`class-reminders.ts`).
+
+That is a statement about the jobs it names, NOT a survey. Class transitions
+also sends recipient-visible notifications — `autoCancelClasses` writes a
+`class_cancelled` set (`class-transitions.ts`) and `autoCompleteClasses`
+reaches `completeClass`'s `payment_request` set (`class-lifecycle.ts`) — and
+neither was examined for this.
 
 ---
 
