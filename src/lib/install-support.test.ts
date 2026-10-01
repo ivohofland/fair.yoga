@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyInstall, type InstallEnv } from './install-support';
+import { classifyInstall, canOfferInstall, installStepsVariant, type InstallEnv, type InstallSupport, type OfferableInstallSupport } from './install-support';
 
 const UA = {
   iphoneSafari: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
@@ -50,5 +50,28 @@ describe('classifyInstall', () => {
     ['a tab after appinstalled fired', env({ userAgent: UA.androidChrome, appInstalled: true }), 'installed'],
   ] as const)('%s → %s', (_label, input, expected) => {
     expect(classifyInstall(input)).toBe(expected);
+  });
+});
+
+describe('canOfferInstall', () => {
+  it.each([
+    ['unknown', false],
+    ['installed', false],
+    ['ios-safari', true],
+    ['prompt', true],
+    ['manual', true],
+    ['unsupported', false],
+  ] as const satisfies readonly (readonly [InstallSupport, boolean])[])('%s → %s', (support, expected) => {
+    expect(canOfferInstall(support)).toBe(expected);
+  });
+});
+
+describe('installStepsVariant', () => {
+  it.each([
+    ['ios-safari', 'ios'],
+    ['prompt', 'manual'],
+    ['manual', 'manual'],
+  ] as const satisfies readonly (readonly [OfferableInstallSupport, 'ios' | 'manual'])[])('%s → %s', (support, expected) => {
+    expect(installStepsVariant(support)).toBe(expected);
   });
 });

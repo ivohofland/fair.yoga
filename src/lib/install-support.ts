@@ -40,3 +40,47 @@ export function classifyInstall(env: InstallEnv): Exclude<InstallSupport, 'unkno
   if (env.promptUsed) return 'manual';
   return 'unsupported';
 }
+
+/** The `InstallSupport` members an install surface may offer to a visitor —
+ *  everything except the server/first-render placeholder, an already-done
+ *  install, and a browser with no install route at all. */
+export type OfferableInstallSupport = Extract<InstallSupport, 'ios-safari' | 'prompt' | 'manual'>;
+
+/** Whether an install surface (the one-time card, the settings row) may
+ *  offer to install at all, given this browser's support. An exhaustive
+ *  `switch` over every `InstallSupport` member: adding one without naming it
+ *  here fails to compile. */
+export function canOfferInstall(support: InstallSupport): support is OfferableInstallSupport {
+  switch (support) {
+    case 'ios-safari':
+    case 'prompt':
+    case 'manual':
+      return true;
+    case 'unknown':
+    case 'installed':
+    case 'unsupported':
+      return false;
+    default: {
+      const never: never = support;
+      return never;
+    }
+  }
+}
+
+/** Which `InstallSteps` copy an offerable support level shows: iOS's Share
+ *  sheet steps, or the browser-menu route (a live prompt, or one already
+ *  spent). An exhaustive `switch`: adding an `OfferableInstallSupport`
+ *  member without naming it here fails to compile. */
+export function installStepsVariant(support: OfferableInstallSupport): 'ios' | 'manual' {
+  switch (support) {
+    case 'ios-safari':
+      return 'ios';
+    case 'prompt':
+    case 'manual':
+      return 'manual';
+    default: {
+      const never: never = support;
+      return never;
+    }
+  }
+}
