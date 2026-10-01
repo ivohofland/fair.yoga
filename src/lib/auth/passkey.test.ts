@@ -448,7 +448,11 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
       (call) => (call[0] as { ceremony?: string }).ceremony === 'registration',
     );
     expect(refusalWarnings).toHaveLength(1);
-    expect(refusalWarnings[0]?.[0]).toMatchObject({ credentialId: responseId });
+    expect(refusalWarnings[0]?.[0]).toMatchObject({
+      credentialId: responseId,
+      errorName: 'Error',
+      frame: expect.stringMatching(/^at verifyRegistrationResponse /),
+    });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
@@ -571,7 +575,11 @@ describe('verifyPasskeyAuthentication, signed assertion', () => {
       (call) => (call[0] as { ceremony?: string }).ceremony === 'authentication',
     );
     expect(refusalWarnings).toHaveLength(1);
-    expect(refusalWarnings[0]?.[0]).toMatchObject({ credentialId });
+    expect(refusalWarnings[0]?.[0]).toMatchObject({
+      credentialId,
+      errorName: 'Error',
+      frame: expect.stringMatching(/^at verifyAuthenticationResponse /),
+    });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
