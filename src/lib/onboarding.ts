@@ -65,7 +65,19 @@ const COPY: Record<StepKey, { label: string; detail: string; href: string }> = {
 };
 
 function skippableKey(key: StepKey): OnboardingStep | null {
-  return key === 'profile' || key === 'bank' ? key : null;
+  switch (key) {
+    case 'profile':
+    case 'bank':
+      return key;
+    case 'room':
+    case 'class':
+      return null;
+    default: {
+      // Adding a StepKey without a skippable-or-not answer fails to compile here.
+      const never: never = key;
+      return never;
+    }
+  }
 }
 
 export function resolveSteps(input: StepInput): ResolvedStep[] {
