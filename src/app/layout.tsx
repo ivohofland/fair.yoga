@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { InstallListener } from '@/components/layout/install-listener';
 import { THEME_COLOR } from './manifest';
 import './globals.css';
 
@@ -29,6 +30,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col">
+        <InstallListener />
         <div className="mx-auto w-full max-w-content px-4 sm:px-6 pt-6 pb-8 flex-1 flex flex-col">
           {children}
         </div>
