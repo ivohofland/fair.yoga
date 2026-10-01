@@ -257,6 +257,16 @@ describe('generatePasskeyRegistrationOptions', () => {
     expect(options.excludeCredentials?.[0]?.id).toBe('cred-1');
     expect(options.excludeCredentials?.[1]?.id).toBe('cred-2');
   });
+
+  it('asks the authenticator for user verification', async () => {
+    const options = await generatePasskeyRegistrationOptions({
+      accountId: 'uv-test',
+      userName: 'uv@example.com',
+      userDisplayName: 'UV',
+    });
+
+    expect(options.authenticatorSelection?.userVerification).toBe('required');
+  });
 });
 
 describe('generatePasskeyAuthenticationOptions', () => {
@@ -274,6 +284,12 @@ describe('generatePasskeyAuthenticationOptions', () => {
     // The library builds the key unconditionally and leaves it undefined, which
     // JSON.stringify then drops — the integration test asserts the wire form.
     expect(options.allowCredentials).toBeUndefined();
+  });
+
+  it('asks the authenticator for user verification', async () => {
+    const options = await generatePasskeyAuthenticationOptions();
+
+    expect(options.userVerification).toBe('required');
   });
 });
 
@@ -407,6 +423,35 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
     expect(result.credentialId).toBe(responseId);
   });
 
+  it('refuses, with one warn, a response whose authenticator did not verify the user', async () => {
+    const credentialId = new Uint8Array(randomBytes(16));
+    const responseId = isoBase64URL.fromBuffer(credentialId);
+    const response = forgedNoneRegistration({
+      ...FORGED,
+      authDataCredentialId: credentialId,
+      responseId,
+      userVerified: false,
+    });
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+
+    const result = await verifyPasskeyRegistration({
+      response,
+      expectedChallenge: FORGED_CHALLENGE,
+    });
+
+    if (result.verified) {
+      throw new Error('expected a refusal');
+    }
+    expect(result.reason).toBe('User verification was required, but user could not be verified');
+    const refusalWarnings = warnSpy.mock.calls.filter(
+      (call) => (call[0] as { ceremony?: string }).ceremony === 'registration',
+    );
+    expect(refusalWarnings).toHaveLength(1);
+    expect(refusalWarnings[0]?.[0]).toMatchObject({ credentialId: responseId });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
   it('treats a transports value that is not an array as no transports', async () => {
     const credentialId = new Uint8Array(randomBytes(16));
     const forged = forgedNoneRegistration({
@@ -498,6 +543,36 @@ describe('verifyPasskeyAuthentication, signed assertion', () => {
       throw new Error(`expected a verified result, got: ${result.reason}`);
     }
     expect(result.newCounter).toBe(1);
+  });
+
+  it('refuses, with one warn, an assertion whose authenticator did not verify the user', async () => {
+    const response = signedAssertion({
+      ...FORGED,
+      credentialId,
+      counter: 1,
+      privateKey: keyA.privateKey,
+      userVerified: false,
+    });
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+
+    const result = await verifyPasskeyAuthentication({
+      response,
+      expectedChallenge: FORGED_CHALLENGE,
+      credentialPublicKey: coseES256PublicKey(keyA.publicKey),
+      credentialCounter: 0,
+    });
+
+    if (result.verified) {
+      throw new Error('expected a refusal');
+    }
+    expect(result.reason).toBe('User verification required, but user could not be verified');
+    const refusalWarnings = warnSpy.mock.calls.filter(
+      (call) => (call[0] as { ceremony?: string }).ceremony === 'authentication',
+    );
+    expect(refusalWarnings).toHaveLength(1);
+    expect(refusalWarnings[0]?.[0]).toMatchObject({ credentialId });
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('refuses, with one warn, an assertion signed by another key', async () => {

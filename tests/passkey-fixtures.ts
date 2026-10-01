@@ -63,13 +63,20 @@ function clientDataJSON(type: 'webauthn.create' | 'webauthn.get', expected: Expe
  * is the id written into the authenticator data — the one the library
  * returns — independently of `responseId`. The credential key is a fresh
  * P-256 key; nothing verifies a signature with it.
+ *
+ * `userVerified: false` clears the UV flag and nothing else.
  */
 export function forgedNoneRegistration(
-  params: ExpectedCeremony & { authDataCredentialId: Uint8Array; responseId: string },
+  params: ExpectedCeremony & {
+    authDataCredentialId: Uint8Array;
+    responseId: string;
+    userVerified?: boolean;
+  },
 ): RegistrationResponseJSON {
   const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  // UP | UV | AT: user present, user verified, attested credential data.
-  const flags = Uint8Array.of(0x01 | 0x04 | 0x40);
+  // UP | AT, plus UV unless `userVerified` is false: user present, attested
+  // credential data, user verified.
+  const flags = Uint8Array.of(0x01 | 0x40 | (params.userVerified === false ? 0 : 0x04));
   const counter = new Uint8Array(4);
   const aaguid = new Uint8Array(16);
   const credentialIdLength = new Uint8Array(2);
@@ -112,12 +119,19 @@ export function forgedNoneRegistration(
  * signs. Given a `counter` above the stored one, it passes every check before
  * the signature, so whether it verifies is whether `privateKey` pairs with
  * the public key the verifier is given.
+ *
+ * `userVerified: false` clears the UV flag and nothing else.
  */
 export function signedAssertion(
-  params: ExpectedCeremony & { credentialId: string; counter: number; privateKey: KeyObject },
+  params: ExpectedCeremony & {
+    credentialId: string;
+    counter: number;
+    privateKey: KeyObject;
+    userVerified?: boolean;
+  },
 ): AuthenticationResponseJSON {
-  // UP | UV: user present, user verified.
-  const flags = Uint8Array.of(0x01 | 0x04);
+  // UP, plus UV unless `userVerified` is false: user present, user verified.
+  const flags = Uint8Array.of(0x01 | (params.userVerified === false ? 0 : 0x04));
   const counter = new Uint8Array(4);
   new DataView(counter.buffer).setUint32(0, params.counter);
   const authenticatorData = Buffer.concat([sha256(params.rpId), flags, counter]);
