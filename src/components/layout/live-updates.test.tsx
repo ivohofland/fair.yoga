@@ -65,9 +65,8 @@ function latest(): FakeEventSource {
 }
 
 /**
- * #731. `LiveUpdates` keeps the inbox, the tab-bar unread dot and open lists
- * current by refreshing the page when the notification stream speaks. A
- * regression here fails silently: the page keeps working, it just stops
+ * #731. `LiveUpdates` refreshes the page when the notification stream speaks.
+ * A regression here fails silently: the page keeps working, it just stops
  * updating.
  */
 describe('LiveUpdates', () => {
