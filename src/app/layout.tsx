@@ -1,9 +1,12 @@
 import type { Metadata, Viewport } from 'next';
+import { THEME_COLOR } from './manifest';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: 'fair.yoga',
   description: 'Ethical pricing for independent yoga teachers',
+  // 'default' keeps iOS content below the status bar in the installed app.
+  appleWebApp: { capable: true, title: 'fair.yoga', statusBarStyle: 'default' },
 };
 
 // viewportFit: 'cover' is required for env(safe-area-inset-bottom) to be
@@ -12,6 +15,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  themeColor: THEME_COLOR,
 };
 
 export default function RootLayout({
