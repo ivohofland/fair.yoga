@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OnboardingStep, TeacherBookingNotifications } from '@prisma/client';
+import { OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
@@ -291,7 +291,8 @@ export const updateTeacherSchema = z.object({
   pageSlug: pageSlugField.optional(),
   defaultCurrency: z.string().optional(),
   defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').transform(modernTimeZone).optional(),
-  defaultReminder: z.enum(['morning_of', 'evening_before', 'one_hour_before']).optional(),
+  classReminder: z.enum(ReminderTiming).optional(),
+  classReminderChannel: z.enum(ReminderChannel).optional(),
   bookingNotifications: z.enum(TeacherBookingNotifications).optional(),
   emailOnClassCompleted: z.boolean().optional(),
   emailOnInvitation: z.boolean().optional(),
@@ -388,7 +389,8 @@ export const updateStudentSchema = z.object({
   incomeTier: z.number().int().refine(isIncomeTier, {
     message: 'Income tier must be 1-5',
   }).optional(),
-  reminderPref: z.enum(['eve', 'morning', 'one_hour', 'off']).optional(),
+  classReminder: z.enum(ReminderTiming).optional(),
+  classReminderChannel: z.enum(ReminderChannel).optional(),
   emailNotifications: z.boolean().optional(),
 }).strict();
 

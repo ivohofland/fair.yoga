@@ -7,7 +7,14 @@ export default async function NotificationSettingsPage() {
   const session = await requireTeacherSession();
   const teacher = await prisma.teacher.findUniqueOrThrow({
     where: { id: session.teacherId },
-    select: { id: true, bookingNotifications: true, emailOnClassCompleted: true, emailOnInvitation: true },
+    select: {
+      id: true,
+      bookingNotifications: true,
+      emailOnClassCompleted: true,
+      emailOnInvitation: true,
+      classReminder: true,
+      classReminderChannel: true,
+    },
   });
   return (
     <>
@@ -18,6 +25,8 @@ export default async function NotificationSettingsPage() {
           bookingNotifications: teacher.bookingNotifications,
           emailOnClassCompleted: teacher.emailOnClassCompleted,
           emailOnInvitation: teacher.emailOnInvitation,
+          classReminder: teacher.classReminder,
+          classReminderChannel: teacher.classReminderChannel,
         }}
       />
     </>

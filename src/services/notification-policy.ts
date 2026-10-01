@@ -14,7 +14,12 @@
  * keyed by `TeacherNotificationType`; WHEN is shared.
  */
 
-import type { NotificationType, TeacherBookingNotifications } from '@prisma/client';
+import type {
+  NotificationType,
+  ReminderChannel,
+  ReminderTiming,
+  TeacherBookingNotifications,
+} from '@prisma/client';
 
 export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set([
   'class_cancelled',
@@ -83,12 +88,15 @@ export type TeacherNotificationType =
   | 'booking_confirmed'
   | 'class_cancelled'
   | 'payment_request'
-  | 'teacher_invitation';
+  | 'teacher_invitation'
+  | 'class_reminder';
 
 export interface TeacherNotificationPrefs {
   bookingNotifications: TeacherBookingNotifications;
   emailOnClassCompleted: boolean;
   emailOnInvitation: boolean;
+  classReminder: ReminderTiming;
+  classReminderChannel: ReminderChannel;
 }
 
 /**
@@ -102,6 +110,8 @@ const TEACHER_EMAIL_POLICY = {
   booking_confirmed: (p: TeacherNotificationPrefs) => p.bookingNotifications === 'inbox_and_email',
   payment_request: (p: TeacherNotificationPrefs) => p.emailOnClassCompleted,
   teacher_invitation: (p: TeacherNotificationPrefs) => p.emailOnInvitation,
+  // Sent directly by the class-reminder sweep at its moment, never as an unread fallback.
+  class_reminder: () => false,
 } satisfies Record<TeacherNotificationType, (prefs: TeacherNotificationPrefs) => boolean>;
 
 export function isTeacherNotificationType(type: NotificationType): type is TeacherNotificationType {

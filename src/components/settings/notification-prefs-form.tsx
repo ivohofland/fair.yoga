@@ -38,6 +38,8 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
   const [booking, setBooking] = useState<TeacherBookingNotifications>(initial.bookingNotifications);
   const [completed, setCompleted] = useState(initial.emailOnClassCompleted);
   const [invitation, setInvitation] = useState(initial.emailOnInvitation);
+  const [reminder] = useState(initial.classReminder);
+  const [reminderChannel] = useState(initial.classReminderChannel);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -51,6 +53,8 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
         bookingNotifications: booking,
         emailOnClassCompleted: completed,
         emailOnInvitation: invitation,
+        classReminder: reminder,
+        classReminderChannel: reminderChannel,
       };
       const res = await fetch(`/api/teachers/${teacherId}`, {
         method: 'PUT',

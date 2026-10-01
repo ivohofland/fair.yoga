@@ -31,7 +31,8 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | **Defaults** | | |
 | default_currency | string, default 'EUR' | |
 | default_timezone | string | IANA identifier, e.g. 'Europe/Amsterdam'; V8's old spellings are stored renamed — see Design Notes |
-| default_reminder | enum: morning_of, evening_before, 1h_before | Pre-fills class reminder setting |
+| class_reminder | enum: evening_before, morning_of, one_hour_before, off | When the teacher is reminded of each class they teach |
+| class_reminder_channel | enum: inbox, email, inbox_and_email | How that reminder arrives |
 | booking_notifications | enum: inbox_and_email, inbox_only, off, default inbox_and_email | New-booking notification: inbox and fallback email, inbox only, or none |
 | email_on_class_completed | boolean, default true | Fallback email for the class-completed summary |
 | email_on_invitation | boolean, default true | Fallback email for an invitation from another teacher |
@@ -73,7 +74,8 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | birthday | date, nullable | Year collected for the age; no response to a teacher carries it — the projection returns day and month and, separately, the age. A teacher given both can work the year out at once, and one given only the age can over time, from the day it goes up; the privacy card says so under the Age toggle |
 | address | string, nullable | e.g. for teacher sending holiday cards |
 | **Preferences** | | |
-| reminder_pref | enum: eve, morning, 1h, off | Student controls their own reminders |
+| class_reminder | enum: evening_before, morning_of, one_hour_before, off | When the student is reminded of each class they booked |
+| class_reminder_channel | enum: inbox, email, inbox_and_email | How that reminder arrives |
 | email_notifications | boolean, default true | Fallback email on/off |
 | **Timestamps** | | |
 | created_at | datetime | |
@@ -290,7 +292,7 @@ The fact that tells the two apart is read off the roster link's own write, not f
 
 An account holding both LIVE profiles therefore always takes the student branch — the `Student` lookup runs first and does not consult the teacher side at all. An account holding a LIVE teacher beside an ERASED student takes the teacher branch instead: erasure tombstones `Student.email` (see `deleteStudentAccount`, `services/gdpr.ts`), so the lookup above misses and falls through.
 
-**The teacher branch reads the teacher's own email preferences, never the student's.** `processEmailFallback` (`src/services/email-fallback.ts`) selects `Teacher.bookingNotifications`, `Teacher.emailOnClassCompleted` and `Teacher.emailOnInvitation` for a teacher recipient and decides through `shouldEmailTeacher` (`src/services/notification-policy.ts`), at sweep time, so a preference changed after a row was created applies to that row. The policy table is keyed by `TeacherNotificationType`, which the teacher variant of `CreateNotificationInput` enforces at creation. `class_cancelled` (an auto-cancel) ignores every preference. A teacher row whose type is outside `TeacherNotificationType` was written around the type: directly, or by a cast, mutation or `Object.assign` that defeats it; it is emailed rather than dropped, and logged at `error`. `Student.emailNotifications` is the student arm's alone: an account holding both profiles is governed by each profile's own setting for the notifications addressed to it. `Teacher.defaultReminder` is class-reminder timing and `StudentPrivacy.receiveComms` is student-side per-teacher announcement muting; neither is an email preference.
+**The teacher branch reads the teacher's own email preferences, never the student's.** `processEmailFallback` (`src/services/email-fallback.ts`) selects `Teacher.bookingNotifications`, `Teacher.emailOnClassCompleted` and `Teacher.emailOnInvitation` for a teacher recipient and decides through `shouldEmailTeacher` (`src/services/notification-policy.ts`), at sweep time, so a preference changed after a row was created applies to that row. The policy table is keyed by `TeacherNotificationType`, which the teacher variant of `CreateNotificationInput` enforces at creation. `class_cancelled` (an auto-cancel) ignores every preference. A teacher row whose type is outside `TeacherNotificationType` was written around the type: directly, or by a cast, mutation or `Object.assign` that defeats it; it is emailed rather than dropped, and logged at `error`. `Student.emailNotifications` is the student arm's alone: an account holding both profiles is governed by each profile's own setting for the notifications addressed to it. `Teacher.classReminder` is the teacher's own class-reminder timing, sent directly rather than as a fallback, and `StudentPrivacy.receiveComms` is student-side per-teacher announcement muting; neither is an email preference.
 
 `teacher_invitation` stays out of `ESSENTIAL_NOTIFICATION_TYPES` (`src/services/notification-policy.ts`), which is what lets a *student* invitee opt out of its email; a teacher invitee's email is governed by `Teacher.emailOnInvitation`, and the one-notification cap above bounds how many such notifications a single invitation can produce.
 
@@ -577,6 +579,7 @@ child, and the reverse does not.
 | status | enum | draft → open → in_progress → completed. `full` is derived, not stored; cancellation is the entry's `cancelled_at`, not a member |
 | settings_locked | boolean | Flips to true on first registration |
 | spot_broadcast_at | datetime, nullable | When the first-come-first-claimed broadcast last went out for the seat that is currently free (#220) |
+| teacher_reminder_sent_at | datetime, nullable | Set when the teacher's reminder for this class is sent |
 | **Calculated** | | Populated after class ends |
 | effective_teacher_rate | decimal, nullable | What the teacher actually earned per student |
 | total_students | int, nullable | Final attendance count |
@@ -625,6 +628,7 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | **Timestamps** | | |
 | registered_at | datetime | |
 | cancelled_at | datetime, nullable | |
+| class_reminder_sent_at | datetime, nullable | Set when this booking's reminder is sent; cleared on reactivation |
 | updated_at | datetime | |
 
 **A booking that meets its student's erasure at the `Student` row is refused
@@ -780,7 +784,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Notification types: booking_confirmed, booking_cancelled, booking_removed, class_cancelled, payment_received, payment_request, waitlist_promoted, spot_available, spot_taken, reminder, announcement, teacher_invitation, walk_in_added.
+Notification types: booking_confirmed, booking_cancelled, booking_removed, class_cancelled, payment_received, payment_request, waitlist_promoted, spot_available, spot_taken, reminder, announcement, teacher_invitation, walk_in_added, class_reminder.
 
 Rows are deleted by the daily `daily-cleanup` job once older than their type's retention period; the periods live in `NOTIFICATION_RETENTION_DAYS` (`src/lib/notification-retention.ts`) — `spot_available` and `spot_taken` keep 30 days, every other type keeps 365, and read state has no bearing on when a row is reaped. Deleting is safe because a notification row is the message about an event, never that event's record: the domain row the notification is about holds the record (for example `Payment`, `Registration`, `Invitation`, or the class's calendar entry), and no code reads a notification once it has aged out. There is no index on `createdAt`: the sweep's batch read filters on `(type, createdAt)`, which no index covers, so each daily run reads the table in full once for each retention period (the last, short batch of each period is a full scan), accepted because it runs once a day and the table stays bounded to about a year of rows, against an index maintained on every insert into the app's highest-write table.
 

@@ -173,7 +173,7 @@ describe('tierSelectedAt stamping', () => {
   });
 
   it('a self-edit without incomeTier does not stamp', async () => {
-    const res = await api(`/api/students/${sNoStamp.id}`, 'PUT', { reminderPref: 'morning' }, sNoStamp.token);
+    const res = await api(`/api/students/${sNoStamp.id}`, 'PUT', { classReminder: 'morning_of' }, sNoStamp.token);
     expect(res.status).toBe(200);
     expect(await tierSelectedAt(sNoStamp.id)).toBeNull();
 

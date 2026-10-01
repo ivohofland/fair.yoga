@@ -11,10 +11,17 @@ datasource db {
 // ENUMS
 // ============================================================================
 
-enum ReminderPref {
-  morning_of
+enum ReminderTiming {
   evening_before
+  morning_of
   one_hour_before
+  off
+}
+
+enum ReminderChannel {
+  inbox
+  email
+  inbox_and_email
 }
 
 enum PaymentLevel {
@@ -25,13 +32,6 @@ enum PaymentLevel {
 enum ProcessorType {
   mollie
   stripe
-}
-
-enum StudentReminderPref {
-  eve
-  morning
-  one_hour
-  off
 }
 
 enum TeacherBookingNotifications {
@@ -102,6 +102,7 @@ enum NotificationType {
   announcement
   teacher_invitation
   walk_in_added
+  class_reminder
 }
 
 enum InvitationStatus {
@@ -176,7 +177,8 @@ model Teacher {
   customDomain          String?
   defaultCurrency       String                      @default("EUR")
   defaultTimezone       String                      @default("Europe/Amsterdam")
-  defaultReminder       ReminderPref                @default(morning_of)
+  classReminder         ReminderTiming              @default(morning_of)
+  classReminderChannel  ReminderChannel             @default(inbox_and_email)
   bookingNotifications  TeacherBookingNotifications @default(inbox_and_email)
   emailOnClassCompleted Boolean                     @default(true)
   emailOnInvitation     Boolean                     @default(true)
@@ -235,7 +237,8 @@ model Student {
   phone              String?
   birthday           DateTime?           @db.Date
   address            String?
-  reminderPref       StudentReminderPref @default(morning)
+  classReminder        ReminderTiming  @default(morning_of)
+  classReminderChannel ReminderChannel @default(inbox_and_email)
   emailNotifications Boolean             @default(true)
   claimedAt          DateTime?
   tierSelectedAt     DateTime?
@@ -562,6 +565,9 @@ model Class {
   /// the sweep's repair of a dropped second broadcast. The flag was cleared by
   /// the fill, so the null check does not.
   spotBroadcastAt DateTime?
+
+  /// Set once when the teacher's class reminder for this class is sent.
+  teacherReminderSentAt DateTime?
 
   calendarEntry   CalendarEntry   @relation(fields: [calendarEntryId, kind, entryLive], references: [id, kind, live], onDelete: Cascade)
   teacherRoom     TeacherRoom     @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
@@ -1019,6 +1025,9 @@ model Registration {
   tierRatio     Decimal?           @db.Decimal(5, 4)
   registeredAt  DateTime           @default(now())
   cancelledAt   DateTime?
+  /// Set once when this booking's class reminder is sent; cleared when the row
+  /// is reactivated as a new booking (`activateRegistration`).
+  classReminderSentAt DateTime?
   updatedAt     DateTime           @updatedAt
 
   class         Class          @relation(fields: [classId], references: [id], onDelete: Cascade)
