@@ -361,6 +361,94 @@ describe('SendAnnouncement audience choice', () => {
     expect(JSON.parse(last[1].body)).toEqual({ message: 'Hello.', studentIds: ['a', 'b'] });
   });
 
+  it('says how many of the selection could not be reached', async () => {
+    stubRoutes({ status: 201, data: { recipientCount: 1, duplicateSuppressed: false, alreadyNotified: 0 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.click(screen.getByLabelText('Ben L.'));
+    fireEvent.change(screen.getByLabelText('Announcement to 2 selected'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    expect(
+      await screen.findByText(
+        'Sent to 1 student — 1 of your selection could not be reached (muted, or no longer your students)',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('counts a student who already had it as reached', async () => {
+    stubRoutes({ status: 201, data: { recipientCount: 1, duplicateSuppressed: false, alreadyNotified: 1 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.click(screen.getByLabelText('Ben L.'));
+    fireEvent.change(screen.getByLabelText('Announcement to 2 selected'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    expect(await screen.findByText('Sent to 1 student (1 already had it)')).toBeInTheDocument();
+  });
+
+  it('says nothing about the selection when the send went to everyone', async () => {
+    stubRoutes({ status: 201, data: { recipientCount: 1, duplicateSuppressed: false, alreadyNotified: 0 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.click(screen.getByLabelText('Ben L.'));
+    fireEvent.click(screen.getByLabelText('Everyone'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    expect(await screen.findByText('Sent to 1 student')).toBeInTheDocument();
+  });
+
+  describe('while the student list is not in', () => {
+    /**
+     * The first GET answers, so a student can be ticked and sent to; the
+     * second — the picker remounting on "Send another" — is whatever `second`
+     * says. The tick survives the remount, which is what makes a hidden,
+     * sendable selection possible at all.
+     */
+    function stubSecondLoad(second: () => Promise<unknown>) {
+      let gets = 0;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          if (url === '/api/announcements/audience') {
+            gets += 1;
+            if (gets === 1) {
+              return { ok: true, status: 200, json: async () => ({ data: { students: AUDIENCE } }) };
+            }
+            return second();
+          }
+          return { ok: true, status: 201, json: async () => ({ data: { recipientCount: 1 } }) };
+        }),
+      );
+    }
+
+    async function sendOnceThenReopen() {
+      render(<SendAnnouncement recipientHint="your students" />);
+      fireEvent.click(await openChoosing());
+      fireEvent.change(screen.getByLabelText('Announcement to 1 selected'), { target: { value: 'Hello.' } });
+      fireEvent.click(screen.getByText('Send'));
+      await screen.findByText('Sent to 1 student');
+      fireEvent.click(screen.getByText('Send another'));
+      fireEvent.change(screen.getByLabelText('Announcement to 1 selected'), { target: { value: 'Again.' } });
+    }
+
+    it('holds Send while the list is loading', async () => {
+      stubSecondLoad(() => new Promise(() => {}));
+      await sendOnceThenReopen();
+      expect(screen.getByText('Loading your students…')).toBeInTheDocument();
+      expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('holds Send when the list failed to load', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      stubSecondLoad(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+      await sendOnceThenReopen();
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not load your students.');
+      expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(true);
+    });
+  });
+
   it('keeps the suppressed wording when every chosen student already had it', async () => {
     stubRoutes({ status: 200, data: { recipientCount: 2, duplicateSuppressed: true, alreadyNotified: 2 } });
     render(<SendAnnouncement recipientHint="your students" />);

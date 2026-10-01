@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { AudiencePicker } from '@/components/class/audience-picker';
+import { AudiencePicker, type AudienceLoadStatus } from '@/components/class/audience-picker';
+import type { AnnouncementSendResponse } from '@/lib/api-types';
 
 interface SendAnnouncementProps {
-  /** Scope to one class; omit to message all the teacher's students. */
+  /** Scope to one class; omit to let the teacher pick all their students or a chosen subset. */
   classId?: string;
   /** e.g. "everyone in this class" / "your booked students". */
   recipientHint: string;
@@ -19,6 +20,8 @@ interface SentState {
   suppressed: boolean;
   /** Students of this request who already had this exact message; 0 when not reported. */
   alreadyNotified: number;
+  /** Ticked students neither told now nor already told; 0 unless a chosen list was sent. */
+  unreached: number;
 }
 
 // One-to-many only, by design: an announcement creates one notification
@@ -32,8 +35,12 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   const [showRecipients, setShowRecipients] = useState(false);
   const [audience, setAudience] = useState<'all' | 'chosen'>('all');
   const [chosen, setChosen] = useState<string[]>([]);
+  const [pickerStatus, setPickerStatus] = useState<AudienceLoadStatus>('loading');
 
   const choosing = !classId && audience === 'chosen';
+  // A chosen list is sendable only once the picker shows it: ticks survive a
+  // remount, and a failed or pending load would otherwise hide what Send sends.
+  const choiceUnsendable = choosing && (pickerStatus !== 'ready' || chosen.length === 0);
 
   const recipientExplanation = choosing
     ? "Only the students you tick, and only those who have booked with you and haven't muted your messages. Anyone who already got this exact message in the last two minutes is skipped."
@@ -72,27 +79,29 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
 
     // `res.ok` alone is not the whole answer: the route answers 201 when it
     // created the announcement and 200 when every requested student had
-    // already been told this message moments ago, and only `duplicateSuppressed` distinguishes them
-    // in a field a client has to read past rather than a status it can
-    // ignore.
+    // already been told this message moments ago, and only
+    // `duplicateSuppressed` distinguishes them, in a field a client has to
+    // read past rather than a status it can ignore.
     try {
-      const json = (await res.json()) as {
-        data: { recipientCount: number; duplicateSuppressed?: boolean; alreadyNotified?: number };
-      };
+      const json = (await res.json()) as { data?: Partial<AnnouncementSendResponse> };
       if (typeof json?.data?.recipientCount !== 'number') {
         throw new Error('missing recipientCount');
       }
-      setSent({
-        count: json.data.recipientCount,
-        suppressed: json.data.duplicateSuppressed === true,
-        alreadyNotified: typeof json.data.alreadyNotified === 'number' ? json.data.alreadyNotified : 0,
-      });
+      const count = json.data.recipientCount;
+      const suppressed = json.data.duplicateSuppressed === true;
+      const alreadyNotified =
+        typeof json.data.alreadyNotified === 'number' ? json.data.alreadyNotified : 0;
+      // Aggregates only: the route says how many it told, never who it
+      // skipped or why, so the shortfall is all the composer can report.
+      const unreached =
+        choosing && !suppressed ? Math.max(0, chosen.length - count - alreadyNotified) : 0;
+      setSent({ count, suppressed, alreadyNotified, unreached });
     } catch (err) {
       // A 2xx here means the send already happened (or was suppressed) —
       // an unreadable body is not a failure to report, and inviting a resend
       // would risk a genuine duplicate. Settle on what IS known: it went out.
       console.error('[send-announcement] sent, but the response was unreadable', { classId, err });
-      setSent({ count: null, suppressed: false, alreadyNotified: 0 });
+      setSent({ count: null, suppressed: false, alreadyNotified: 0, unreached: 0 });
     }
     setMessage('');
     setOpen(false);
@@ -106,13 +115,16 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
     // is reserved for things that did. Every other outcome (a fresh send, or
     // one whose body couldn't be read) uses the same teal as a plain confirm.
     const neutral = sent.count !== null && sent.suppressed;
+    const unreached = sent.unreached > 0
+      ? ` — ${sent.unreached} of your selection could not be reached (muted, or no longer your students)`
+      : '';
     const label = sent.count === null
       ? 'Announcement sent.'
       : sent.suppressed
         ? `Not sent again — the same message reached ${students} moments ago.`
         : sent.alreadyNotified > 0
-          ? `Sent to ${students} (${sent.alreadyNotified} already had it)`
-          : `Sent to ${students}`;
+          ? `Sent to ${students} (${sent.alreadyNotified} already had it)${unreached}`
+          : `Sent to ${students}${unreached}`;
     return (
       <div className="flex items-center gap-3">
         <span className={neutral ? 'type-caption' : 'type-caption text-teal'}>
@@ -120,7 +132,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
         </span>
         <button
           type="button"
-          onClick={() => { setSent(null); setOpen(true); }}
+          onClick={() => { setSent(null); setPickerStatus('loading'); setOpen(true); }}
           className="type-label text-teal"
         >
           Send another
@@ -131,7 +143,11 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
 
   if (!open) {
     return (
-      <button type="button" onClick={() => setOpen(true)} className="type-label text-teal">
+      <button
+        type="button"
+        onClick={() => { setPickerStatus('loading'); setOpen(true); }}
+        className="type-label text-teal"
+      >
         Send announcement
       </button>
     );
@@ -157,13 +173,15 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
               className="h-5 w-5 accent-teal"
               name="announcement-audience"
               checked={audience === 'chosen'}
-              onChange={() => setAudience('chosen')}
+              onChange={() => { setPickerStatus('loading'); setAudience('chosen'); }}
             />
             Choose students
           </label>
         </div>
       )}
-      {choosing && <AudiencePicker selected={chosen} onChange={setChosen} />}
+      {choosing && (
+        <AudiencePicker selected={chosen} onChange={setChosen} onLoadStateChange={setPickerStatus} />
+      )}
       <Textarea
         label={choosing ? `Announcement to ${chosen.length} selected` : `Announcement to ${recipientHint}`}
         value={message}
@@ -185,7 +203,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
         )}
       </div>
       <div className="flex gap-3">
-        <Button variant="primary" onClick={handleSend} disabled={sending || !message.trim() || (choosing && chosen.length === 0)}>
+        <Button variant="primary" onClick={handleSend} disabled={sending || !message.trim() || choiceUnsendable}>
           {sending ? 'Sending...' : 'Send'}
         </Button>
         <Button variant="ghost" onClick={() => { setOpen(false); setError(''); }}>
