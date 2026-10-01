@@ -16,6 +16,9 @@ import { createClassFixture } from '../class-fixtures';
  * key it holds) lives in the per-test browser context. Split into
  * sibling tests, the second one gets a fresh context with no credential
  * and fails confusingly.
+ *
+ * The add-passkey refusal test beside it needs none of the journey's state;
+ * it shares the file for the fixtures.
  */
 
 const prisma = new PrismaClient();
@@ -228,7 +231,7 @@ test.describe('Passkey sign-in', () => {
     await page.waitForURL((url) => url.pathname === '/schedule', { timeout: 10_000 });
   });
 
-  test('a security key with no PIN cannot add a passkey, and the server is never asked', async ({
+  test('a security key with no PIN cannot add a passkey, and nothing is sent for verification', async ({
     page,
     context,
   }) => {
