@@ -165,6 +165,14 @@ describe('LiveUpdates', () => {
       expect(sources).toHaveLength(1);
     });
 
+    it("recovers when the browser's own retry is refused, as on session expiry", () => {
+      render(<LiveUpdates />);
+
+      latest().open();
+      latest().dropAndRetry();
+      expectReconnectAfter(4_000);
+    });
+
     it('rebuilds a closed stream after 4 s, doubling per attempt, capped at 60 s', () => {
       render(<LiveUpdates />);
 
