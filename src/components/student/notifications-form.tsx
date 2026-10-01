@@ -74,10 +74,8 @@ export function NotificationsForm({
         setError(await readErrorMessage(res, 'Could not save. Try again.'));
       }
     } catch (err) {
-      // Bound and logged rather than discarded. This form never reads the
-      // response body, so what reaches here is `fetch` itself failing —
-      // offline, DNS, an aborted connection — and without the log nothing
-      // records which.
+      // Bound and logged rather than discarded: without the log nothing
+      // records why the request failed.
       logRequestFailure('notifications-form', {}, err);
       setError('Network error. Try again.');
     } finally {
