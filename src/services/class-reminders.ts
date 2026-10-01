@@ -62,11 +62,26 @@ type Candidate = Awaited<ReturnType<typeof readCandidatePage>>[number];
 const wantsInbox = (c: ReminderChannel) => c !== 'email';
 const wantsEmail = (c: ReminderChannel) => c !== 'inbox';
 
-/** True when a reminder at `timing` is due at `now` for something created at `createdAt`. */
-function isDue(entry: Candidate['calendarEntry'], timing: ReminderTiming, createdAt: Date, start: Date, now: Date): boolean {
+/**
+ * The moment of a reminder at `timing` when it is due at `now` for something
+ * created at `createdAt`; `null` when it is not due.
+ */
+function dueMoment(
+  entry: Candidate['calendarEntry'],
+  timing: ReminderTiming,
+  createdAt: Date,
+  start: Date,
+  now: Date,
+): Date | null {
   const moment = reminderMoment(entry, entry.teacher.defaultTimezone, timing);
-  return moment !== null && moment <= now && now < start && createdAt < moment;
+  return moment !== null && moment <= now && now < start && createdAt < moment ? moment : null;
 }
+
+/**
+ * The class half of the due rule, restated in each claim: the candidate read
+ * can be a whole tick of sends old by the time a later class is claimed.
+ */
+const LIVE_CLASS = { status: 'open', calendarEntry: { cancelledAt: null } } as const;
 
 /**
  * Sends one reminder email and reports whether it went out. Never throws: the
@@ -114,12 +129,19 @@ export async function processClassReminders(db: PrismaClient, now: Date = new Da
     });
     for (const reg of registrations) {
       const { student } = reg;
-      if (!isDue(entry, student.classReminder, reg.registeredAt, start, now)) continue;
+      const moment = dueMoment(entry, student.classReminder, reg.registeredAt, start, now);
+      if (moment === null) continue;
       const title = 'Class reminder';
       const body = `Your ${when} with ${entry.teacher.firstName}.`;
       const claimed = await db.$transaction(async (tx) => {
         const { count } = await tx.registration.updateMany({
-          where: { id: reg.id, status: 'registered', classReminderSentAt: null },
+          where: {
+            id: reg.id,
+            status: 'registered',
+            classReminderSentAt: null,
+            registeredAt: { lt: moment },
+            class: LIVE_CLASS,
+          },
           data: { classReminderSentAt: now },
         });
         if (count === 0) return false;
@@ -142,13 +164,13 @@ export async function processClassReminders(db: PrismaClient, now: Date = new Da
     }
 
     const { teacher } = entry;
-    if (cls.teacherReminderSentAt === null && isDue(entry, teacher.classReminder, cls.createdAt, start, now)) {
+    if (cls.teacherReminderSentAt === null && dueMoment(entry, teacher.classReminder, cls.createdAt, start, now) !== null) {
       const title = 'Class reminder';
       const registered = await db.registration.count({ where: { classId: cls.id, status: 'registered' } });
       const body = `${when} — ${registered} registered so far.`;
       const claimed = await db.$transaction(async (tx) => {
         const { count } = await tx.class.updateMany({
-          where: { id: cls.id, teacherReminderSentAt: null },
+          where: { id: cls.id, teacherReminderSentAt: null, ...LIVE_CLASS },
           data: { teacherReminderSentAt: now },
         });
         if (count === 0) return false;

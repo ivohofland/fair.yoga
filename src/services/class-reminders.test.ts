@@ -59,11 +59,46 @@ describe('processClassReminders (DB)', () => {
     teacherId: string;
     teacherEmail: string;
     classId: string;
+    calendarEntryId: string;
   }
 
-  /** A teacher of the test's own (UTC), with one class on 2099-06-10 at 18:00. */
+  /**
+   * `base` with a hook that runs `between` once, after the sweep's candidate
+   * `Class` read returns and before any claim — the read is a tick's worth of
+   * sends old by the time a later class is claimed. Attached under the scope,
+   * so it sees the sweep's own args.
+   */
+  function interposeAfterClassRead(f: Fixture, between: () => Promise<void>) {
+    const state = { interposed: 0, sawFixture: false };
+    const client = prisma.$extends({
+      query: {
+        class: {
+          async findMany({ args, query }) {
+            const rows = await query(args);
+            if (state.interposed > 0) return rows;
+            state.interposed += 1;
+            state.sawFixture = rows.some((r) => r.id === f.classId);
+            await between();
+            return rows;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`; every method used is the real one.
+    }) as unknown as PrismaClient;
+    return {
+      state,
+      sweep: (now: Date) =>
+        processClassReminders(scopeSweep(client, { Class: { calendarEntry: { teacherId: f.teacherId } } }).db, now),
+    };
+  }
+
+  /** A teacher of the test's own (UTC unless overridden), with one class on 2099-06-10 at 18:00. */
   async function seed(
-    teacherOverrides: Partial<{ classReminder: ReminderTiming; classReminderChannel: ReminderChannel }> = {},
+    teacherOverrides: Partial<{
+      classReminder: ReminderTiming;
+      classReminderChannel: ReminderChannel;
+      defaultTimezone: string;
+    }> = {},
     classOverrides: Partial<{ status: ClassStatus; cancelledAt: Date }> = {},
   ): Promise<Fixture> {
     const k = n++;
@@ -114,7 +149,7 @@ describe('processClassReminders (DB)', () => {
       cancelledAt: classOverrides.cancelledAt ?? null,
     });
     classIds.push(cls.id);
-    return { teacherId: teacher.id, teacherEmail, classId: cls.id };
+    return { teacherId: teacher.id, teacherEmail, classId: cls.id, calendarEntryId: cls.calendarEntryId };
   }
 
   async function book(
@@ -553,5 +588,106 @@ describe('processClassReminders (DB)', () => {
       expect.objectContaining({ reason: 'socket hang up' }),
       expect.any(String),
     );
+  });
+
+  // 19
+  it('reminds no one when the entry is cancelled between the candidate read and the claims', async () => {
+    const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+    const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+    const { state, sweep } = interposeAfterClassRead(f, async () => {
+      await prisma.calendarEntry.update({ where: { id: f.calendarEntryId }, data: { cancelledAt: MORNING } });
+    });
+
+    const result = await sweep(MORNING);
+
+    expect(state).toEqual({ interposed: 1, sawFixture: true });
+    expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(await studentRows(student.id)).toHaveLength(0);
+    expect(await teacherRows(f.teacherId)).toHaveLength(0);
+    expect(await stampOf(registration.id)).toBeNull();
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toBeNull();
+  });
+
+  // 20
+  it('reminds no one when the class leaves open between the candidate read and the claims', async () => {
+    const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+    const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+    const { state, sweep } = interposeAfterClassRead(f, async () => {
+      await prisma.class.update({ where: { id: f.classId }, data: { status: 'in_progress' } });
+    });
+
+    const result = await sweep(MORNING);
+
+    expect(state).toEqual({ interposed: 1, sawFixture: true });
+    expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(await studentRows(student.id)).toHaveLength(0);
+    expect(await teacherRows(f.teacherId)).toHaveLength(0);
+    expect(await stampOf(registration.id)).toBeNull();
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toBeNull();
+  });
+
+  // 21
+  it('skips a registration cancelled and rebooked after its moment between the read and the claim', async () => {
+    const f = await seed({ classReminder: 'off' });
+    const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+    const rebookedAt = new Date(MORNING.getTime() + 5 * MINUTE);
+    const { state, sweep } = interposeAfterClassRead(f, async () => {
+      await prisma.registration.update({
+        where: { id: registration.id },
+        data: { status: 'cancelled', cancelledAt: rebookedAt },
+      });
+      // What `activateRegistration` writes when it reuses the row.
+      await prisma.registration.update({
+        where: { id: registration.id },
+        data: { status: 'registered', cancelledAt: null, registeredAt: rebookedAt, classReminderSentAt: null },
+      });
+    });
+
+    const result = await sweep(new Date(MORNING.getTime() + 10 * MINUTE));
+
+    expect(state).toEqual({ interposed: 1, sawFixture: true });
+    expect(result.studentReminders).toBe(0);
+    expect(sendsTo(student.email)).toBe(0);
+    expect(await studentRows(student.id)).toHaveLength(0);
+    expect(await stampOf(registration.id)).toBeNull();
+  });
+
+  // 22
+  it("times reminders on the teacher's zone (Europe/Amsterdam, summer time)", async () => {
+    // 18:00 CEST is 16:00Z: the student's one-hour-before moment is 15:00Z,
+    // and the teacher's evening-before moment is 19:00 CEST the day before,
+    // 17:00Z on 2099-06-09. Read in UTC, both would be two hours later.
+    const f = await seed({
+      defaultTimezone: 'Europe/Amsterdam',
+      classReminder: 'evening_before',
+      classReminderChannel: 'inbox',
+    });
+    const { student } = await book(f, { classReminder: 'one_hour_before', classReminderChannel: 'inbox' });
+
+    const teacherBefore = await run(f, new Date('2099-06-09T16:59:00Z'));
+    const teacherAt = await run(f, new Date('2099-06-09T17:00:00Z'));
+    const studentBefore = await run(f, new Date('2099-06-10T14:59:00Z'));
+    const studentAt = await run(f, new Date('2099-06-10T15:00:00Z'));
+
+    expect(teacherBefore).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
+    expect(teacherAt).toEqual({ studentReminders: 0, teacherReminders: 1, emailFailures: 0 });
+    expect(studentBefore).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
+    expect(studentAt).toEqual({ studentReminders: 1, teacherReminders: 0, emailFailures: 0 });
+    expect(await teacherRows(f.teacherId)).toHaveLength(1);
+    expect(await studentRows(student.id)).toHaveLength(1);
+  });
+
+  // 23
+  it("counts a failed teacher send and keeps the class's stamp", async () => {
+    const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'email' });
+    sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
+
+    const result = await run(f, MORNING);
+
+    expect(result).toEqual({ studentReminders: 0, teacherReminders: 1, emailFailures: 1 });
+    expect(sendsTo(f.teacherEmail)).toBe(1);
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toEqual(MORNING);
   });
 });
