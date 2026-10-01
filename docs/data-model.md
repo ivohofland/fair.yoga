@@ -794,15 +794,15 @@ Three-layer delivery: in-app notification (real-time) → in-app inbox (retained
 |---|---|---|
 | **id** (PK) | uuid | |
 | *teacher_id* (FK) | → Teacher | |
-| *class_id* (FK) | → Class, nullable | Set = class registrants. Null does not name the audience alone: with `audience_student_ids` empty it is the teacher-wide broadcast, otherwise a custom selection |
+| *class_id* (FK) | → Class, nullable, `ON DELETE SET NULL` | Whether the send was scoped to a class: set = that class's registrants; null = not class-scoped (teacher-wide or a custom selection), or the class has since been deleted. Who was notified is `audience_student_ids`, not this column |
 | message | text | |
-| recipient_count | int | Snapshot of how many received it |
+| recipient_count | int | Snapshot of how many this send notified; not changed by a later erasure |
 | sent_at | datetime | |
-| audience_student_ids | text[], default {} | Students actually notified by this send (sorted). What per-recipient dedupe reads; removed on student erasure |
+| audience_student_ids | text[], default {} | The students this send notified (sorted). What per-recipient dedupe reads; an erased student's id is removed from every row by `deleteStudentAccount` |
 
-When sent, creates one Notification per recipient student. Class-scoped (specific class registrants) or teacher-wide (all students, skipping any student this teacher has archived — TeacherStudent).
+When sent, creates one Notification per recipient not already told the same message by this teacher inside the dedupe window. Three audiences: class-scoped (that class's non-cancelled registrants), teacher-wide (every student with a non-cancelled registration in one of this teacher's classes, skipping any student this teacher has archived — TeacherStudent), or a custom selection. All three skip erased students and students who set `receive_comms` false for this teacher.
 
-A custom audience is a selection from the all-students audience, never wider.
+A custom audience is a selection from the teacher-wide audience, never wider.
 
 ---
 
