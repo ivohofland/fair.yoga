@@ -390,6 +390,7 @@ export class ErasureLockSetError extends Error {
  * - profile fields anonymized, email replaced with an unroutable unique one
  * - privacy rows, roster links, waitlist entries, notifications, sessions,
  *   magic-link tokens: deleted
+ * - their id removed from every `Announcement.audienceStudentIds`
  * - `Invitation` rows naming this address anonymized in place, keeping the
  *   teacher's filing state without the identity behind it
  * - `TeacherBlock` rows left standing on purpose — they are what carries the
@@ -761,6 +762,16 @@ export async function deleteStudentAccount(
         data: { body: 'A student (account since deleted) booked this class.' },
       });
     }
+
+    // A teacher's `Announcement` rows record who each send notified, and this
+    // student's id is one of those entries: removed here, `recipientCount`
+    // left as the snapshot it is. After the class pre-lock like every write
+    // here; which locks this takes and who else holds them:
+    // `docs/lock-order.md`, "`Announcement` rows: the audience scrub (#48)".
+    await tx.$executeRaw`
+      UPDATE "Announcement"
+      SET "audienceStudentIds" = array_remove("audienceStudentIds", ${studentId})
+      WHERE "audienceStudentIds" @> ARRAY[${studentId}]::text[]`;
 
     // Every class here is held: `waitingClassIds` is read only over
     // `lockedClassIds`, which the ordered pre-lock above took before this

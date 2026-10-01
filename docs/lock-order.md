@@ -1468,6 +1468,71 @@ and one call each in `gdpr.ts`, `waitlist.ts`,
 `src/app/api/registrations/route.ts`, and `student-privacy.ts`, and two in
 `invitations.ts` (`acceptInvitation` and `unlinkTeacher`).
 
+### `Announcement` rows: the audience scrub (#48)
+
+`Announcement.audienceStudentIds` holds the ids of the students a send
+notified, so `deleteStudentAccount` removes its subject's id from every row
+that holds it (`array_remove`, filtered by `@>`). That makes `Announcement` a
+node in the erasure's lock set: the statement takes `FOR NO KEY UPDATE` on each
+row it rewrites. The column is in no unique index, so the lock never escalates
+to `FOR UPDATE`, and it is no foreign key, so the `UPDATE` fires no RI check
+and takes no `FOR KEY SHARE` on the row's `Teacher` or `Class`.
+
+It runs after the class pre-lock, like every write in that transaction, so the
+erasure's order is `Student → Class → Announcement`. Who else locks an
+EXISTING `Announcement` row, and what each meeting does:
+
+- **`sendAnnouncement` never does.** Its dedupe read is a plain `findMany`, no
+  `FOR UPDATE`, and its one write inserts a new row. A row a send has inserted
+  but not committed is invisible to the scrub, which therefore never waits on a
+  send, so no cycle runs through this node with one. The other direction is
+  older than this node: a send's `Announcement` and `Notification` inserts take
+  `FOR KEY SHARE` on their `Class`, which waits on an erasure holding that
+  class, while the erasure waits on nothing the send holds.
+- **The `ON DELETE SET NULL` of `Announcement_classId_fkey`.** Deleting a
+  `Class` rewrites `classId` on its announcements, `FOR NO KEY UPDATE` on each,
+  which conflicts with the scrub's. In `src/` a `Class` is deleted only by the
+  template archive's `calendarEntry.deleteMany` (`rule-lifecycle.ts`), through
+  `Class`'s cascade from its entry, and that transaction pre-locks its classes
+  first, so its order is `Class → Announcement` too. A class both transactions
+  need is met at the `Class` row, before either touches an announcement. A
+  scrub waiting on a row the archive has nulled waits, within its own 2s
+  `lock_timeout`, for a transaction that waits on nothing the erasure holds,
+  then re-checks `@>` on the committed version (the array is unchanged by the
+  null) and applies. The archive re-applies its null onto a row the scrub
+  committed the same way. The exception is the archive pre-lock's documented
+  residual (`gdpr.ts`, the comment above the erasure's first write): an entry
+  rescheduled into the delete's predicate after the pre-lock is deleted
+  without its `Class` held, and if the erasure holds that class, the archive
+  can hold an announcement row the scrub wants while waiting on the class.
+  That is a cycle Postgres resolves with `40P01`, through the same window, and
+  it is accepted with it.
+- **The `ON DELETE CASCADE` of `Announcement_teacherId_fkey`.** No production
+  code deletes a `Teacher`; erasure anonymises it.
+
+The census of `Announcement` writers and of `Class`/`Teacher` deletes:
+
+    git grep -n -i -E 'announcement[[:space:]]*\.[[:space:]]*(update|updateMany|upsert|delete|deleteMany|create|createMany)\(|"Announcement"' -- src ':!*.test.ts'
+    git grep -n -E '(class|teacher|calendarEntry)[[:space:]]*\.[[:space:]]*(delete|deleteMany)\(' -- src ':!*.test.ts'
+
+On 2026-10-01 the first returned `sendAnnouncement`'s `create` and the scrub
+itself; the second the archive's `calendarEntry.deleteMany` and the studio
+class route's `calendarEntry.delete`, whose entry is a studio one and has no
+`Class` beneath it.
+
+**A send that commits after the scrub writes the id back.** The scrub cleans
+rows that exist when it runs; nothing stops a later send's new row from naming
+the erased profile, and the erasure does not run again. A send whose
+recipients were read before the erasure and that commits after the scrub is
+the race-shaped case, and it is accepted: the id is an opaque uuid of a profile
+that no longer names anyone, and it stops being read once the row leaves the
+dedupe window. It is not the only case. Both audience reads in
+`POST /api/announcements` — `listAnnouncementAudience` and the class-scoped
+`registration.findMany` — select by registration status with no
+`deletedAt: null` on the student, and the erasure keeps every past
+registration, so a send made any time after the erasure can include the erased
+profile and write its id into the new row.
+
 ## The `TeacherStudent` row is the archive's gate (#265)
 
 Archiving a student (`archiveStudent`, `src/services/student-archive.ts`)

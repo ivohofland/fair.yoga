@@ -341,6 +341,37 @@ let studentAccountId: string;
     expect(teacherCopy?.body).toContain('deleted');
   });
 
+  it('removes the erased student from every announcement audience', async () => {
+    const mkStudent = (tag: string) =>
+      prisma.student.create({
+        data: {
+          firstName: 'Audience',
+          lastName: tag,
+          email: `gdpr-audience-${tag}-${uniqueSuffix}@test.local`,
+          incomeTier: 3,
+        },
+      });
+    const keep = await mkStudent('keep');
+    const gone = await mkStudent('gone');
+    const a = await prisma.announcement.create({
+      data: {
+        teacherId,
+        message: `erase ${uniqueSuffix}`,
+        recipientCount: 2,
+        audienceStudentIds: [gone.id, keep.id].sort(),
+      },
+    });
+    try {
+      await deleteStudentAccount(prisma, gone.id);
+      const after = await prisma.announcement.findUniqueOrThrow({ where: { id: a.id } });
+      expect(after.audienceStudentIds).toEqual([keep.id]);
+      expect(after.recipientCount).toBe(2); // a snapshot of what was sent, not a live count
+    } finally {
+      await prisma.announcement.delete({ where: { id: a.id } });
+      await prisma.student.deleteMany({ where: { id: { in: [keep.id, gone.id] } } });
+    }
+  });
+
   /**
    * #112. `waiting: true, registered: false` is the load-bearing shape: a
    * class whose ONLY audience is its queue. `gdpr.ts` already closes these
