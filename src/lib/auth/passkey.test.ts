@@ -1,14 +1,29 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { log } from '@/lib/log';
+import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/types';
 import {
   storeChallenge,
   getAndDeleteChallenge,
   generatePasskeyRegistrationOptions,
   generatePasskeyAuthenticationOptions,
+  verifyPasskeyRegistration,
+  verifyPasskeyAuthentication,
   _getChallengeStore,
   _resetChallengeStores,
   CHALLENGE_CAPACITIES,
 } from './passkey';
+
+/**
+ * A base64url `clientDataJSON` naming a challenge other than the one that
+ * will be passed as `expectedChallenge`. The library reads this field before
+ * the attestation object or signature, so a fixture built from it reaches
+ * the challenge check unsigned — "wrong-challenge", not "signed".
+ */
+function wrongChallengeClientDataJSON(type: 'webauthn.create' | 'webauthn.get'): string {
+  return Buffer.from(JSON.stringify({ type, challenge: 'not-the-issued-challenge' })).toString(
+    'base64url',
+  );
+}
 
 describe('passkey challenge store', () => {
   beforeEach(() => {
@@ -263,5 +278,86 @@ describe('generatePasskeyAuthenticationOptions', () => {
     // The library builds the key unconditionally and leaves it undefined, which
     // JSON.stringify then drops — the integration test asserts the wire form.
     expect(options.allowCredentials).toBeUndefined();
+  });
+});
+
+describe('verifyPasskeyRegistration', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resolves to a refusal, not a rejection, for a response naming another challenge', async () => {
+    const id = Buffer.from('registration-credential-id').toString('base64url');
+    const response: RegistrationResponseJSON = {
+      id,
+      rawId: id,
+      type: 'public-key',
+      response: {
+        clientDataJSON: wrongChallengeClientDataJSON('webauthn.create'),
+        attestationObject: '',
+      },
+      clientExtensionResults: {},
+    };
+    const warnSpy = vi.spyOn(log, 'warn');
+    const errorSpy = vi.spyOn(log, 'error');
+
+    const result = await verifyPasskeyRegistration({
+      response,
+      expectedChallenge: 'the-issued-challenge',
+    });
+
+    if (result.verified) {
+      throw new Error('expected a refusal');
+    }
+    expect(result.reason).toMatch(/challenge/);
+
+    const refusalWarnings = warnSpy.mock.calls.filter(
+      (call) => (call[0] as { ceremony?: string }).ceremony === 'registration',
+    );
+    expect(refusalWarnings).toHaveLength(1);
+    expect(refusalWarnings[0]?.[1]).toBe('passkey verification refused');
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifyPasskeyAuthentication', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resolves to a refusal, not a rejection, for a response naming another challenge', async () => {
+    const id = Buffer.from('authentication-credential-id').toString('base64url');
+    const response: AuthenticationResponseJSON = {
+      id,
+      rawId: id,
+      type: 'public-key',
+      response: {
+        clientDataJSON: wrongChallengeClientDataJSON('webauthn.get'),
+        authenticatorData: '',
+        signature: '',
+      },
+      clientExtensionResults: {},
+    };
+    const warnSpy = vi.spyOn(log, 'warn');
+    const errorSpy = vi.spyOn(log, 'error');
+
+    const result = await verifyPasskeyAuthentication({
+      response,
+      expectedChallenge: 'the-issued-challenge',
+      credentialPublicKey: new Uint8Array(),
+      credentialCounter: 0,
+    });
+
+    if (result.verified) {
+      throw new Error('expected a refusal');
+    }
+    expect(result.reason).toMatch(/challenge/);
+
+    const refusalWarnings = warnSpy.mock.calls.filter(
+      (call) => (call[0] as { ceremony?: string }).ceremony === 'authentication',
+    );
+    expect(refusalWarnings).toHaveLength(1);
+    expect(refusalWarnings[0]?.[1]).toBe('passkey verification refused');
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });
