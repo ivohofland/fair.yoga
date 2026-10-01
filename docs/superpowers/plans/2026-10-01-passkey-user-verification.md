@@ -8,7 +8,7 @@ require it, from one declaration, so options and verification can no longer disa
 **Architecture:** One module-level constant in `src/lib/auth/passkey.ts` feeds the two option
 generators and, through `requireUserVerification`, the two verifiers. Unit tests pin each side
 against real library-verified responses with only the UV flag varied; an e2e test pins that
-Chrome stops a UV-less authenticator before anything reaches the server.
+Chrome stops a UV-less authenticator at registration before anything is sent for verification.
 
 **Tech Stack:** `@simplewebauthn/server` 13.3.2, `@simplewebauthn/browser` 13.3.0,
 `@simplewebauthn/types`, Vitest, Playwright (Chromium CDP virtual authenticator).
@@ -524,6 +524,8 @@ status line and a recorded verify request. Record the exact failure text. Restor
 **Stop condition:** if either new test is red with `'required'` in place, or green with
 `'preferred'`, stop and report what Chrome did. Do not adjust assertions to fit — the case for
 the chosen posture rests on this behaviour (spec, E2e).
+
+> Measured: the sign-in test stayed green under 'preferred', so it was dropped (Review Focus 2); the registration test went red as predicted.
 
 - [ ] **Step 4: Lint, typecheck, commit**
 

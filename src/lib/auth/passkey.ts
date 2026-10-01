@@ -285,11 +285,11 @@ function isKnownTransport(value: unknown): value is AuthenticatorTransportFuture
 // ---------------------------------------------------------------------------
 
 /**
- * What both ceremonies ask the authenticator for, and — through
- * `requireUserVerification` below — what both verifiers then demand. One
+ * What the ceremonies ask the authenticator for, and — through
+ * `requireUserVerification` below — what the verifiers then demand. One
  * declaration so the request and the check cannot disagree. See
- * docs/technical-architecture.md ("Passkey user verification") for why it is
- * `'required'`.
+ * docs/technical-architecture.md ("Passkey user verification") for the
+ * decision.
  */
 const USER_VERIFICATION: UserVerificationRequirement = 'required';
 

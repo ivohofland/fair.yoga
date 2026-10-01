@@ -672,11 +672,22 @@ cannot disagree (#732). A passkey is therefore two-factor: the device, plus the
 PIN or biometric that unlocks it.
 
 The options used to ask for `'preferred'` while the verifiers, by
-`@simplewebauthn/server`'s default, required verification anyway. An
-authenticator that honours "preferred" by skipping it — a roaming security key
-with no PIN set — completed the browser ceremony and was then refused by the
-server, behind generic copy. With `'required'` the browser stops that key up
-front, where its own UI can say why (Chrome typically offers to set a PIN).
+`@simplewebauthn/server`'s default, required verification anyway. Adding a
+passkey with an authenticator that honours "preferred" by skipping it — a
+roaming security key with no PIN set — completed the browser ceremony and was
+then refused by the server, behind generic copy. With `'required'` the browser
+stops that key before anything is sent for verification. That the browser's
+own UI then says why (Chrome typically offers to set a PIN on the key) is
+inference about real browsers, not measurement: the e2e test drives Chromium's
+CDP virtual authenticator, which has no UI.
+
+Sign-in is different. Chromium's virtual authenticator refused a UV-less
+authenticator holding a discoverable credential under `'preferred'` as well as
+`'required'` — this app's sign-in sends no `allowCredentials` (see "Passkey
+authentication options"), the likely reason, not isolated further. No browser
+test can therefore tell the two values apart at sign-in, and the authentication
+options' `'required'` is pinned only by the unit tests in
+`src/lib/auth/passkey.test.ts`. A physical key may behave differently.
 
 Nobody who could use a passkey before is affected: the server already demanded
 verification, so every stored credential was registered with it and every
