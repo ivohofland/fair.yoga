@@ -194,7 +194,7 @@ Classes move through states: `draft → open → in_progress → completed` (eve
 
 1. In-app notification (real-time via SSE)
 2. In-app inbox (kept for a year; waitlist spot alerts for 30 days — `src/lib/notification-retention.ts`)
-3. Email fallback (unread after 30 min — sooner when the linked class starts within 2 h, and on the next sweep regardless of either for a waitlist promotion or a walk-in; students can opt out of optional messages, essential booking messages always email)
+3. Email fallback (unread after 30 min — sooner when the linked class starts within 2 h, and on the next sweep regardless of either for a waitlist promotion or a walk-in; students can opt out of optional messages, essential booking messages always email; teachers choose per event in Settings → Notifications, and an auto-cancel always emails)
 
 One-to-many only. No group chat. Teachers use external tools for community.
 

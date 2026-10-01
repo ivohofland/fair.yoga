@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { log } from '@/lib/log';
 
 // The dry-run tests in email-fallback.test.ts can't tell "emailed" from
 // "skipped and marked" — both end in emailSent=true. This file makes the
@@ -15,6 +16,10 @@ vi.mock('resend', () => ({
   Resend: class {
     emails = { send: sendMock };
   },
+}));
+
+vi.mock('@/lib/log', () => ({
+  log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 const prisma = new PrismaClient();
@@ -236,5 +241,101 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
     // Unmarked, so the next sweep retries it.
     const after = await prisma.notification.findUniqueOrThrow({ where: { id: failing.id } });
     expect(after.emailSent).toBe(false);
+  });
+});
+
+describe('processEmailFallback — teacher preferences (#49)', () => {
+  const sfx = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const teacherEmail = `prefs-teacher-${sfx}@test.local`;
+  let teacherId: string;
+  let dualStudentId: string;
+  const ids: string[] = [];
+
+  async function note(type: 'booking_confirmed' | 'class_cancelled' | 'payment_request' | 'teacher_invitation' | 'announcement') {
+    const n = await prisma.notification.create({
+      data: {
+        recipientType: 'teacher', recipientId: teacherId, type,
+        title: 'Prefs test', body: 'Prefs test body', isRead: false, emailSent: false,
+        createdAt: new Date(Date.now() - 45 * 60 * 1000),
+      },
+    });
+    ids.push(n.id);
+    return n;
+  }
+
+  async function setPrefs(data: {
+    bookingNotifications?: 'inbox_and_email' | 'inbox_only' | 'off';
+    emailOnClassCompleted?: boolean;
+    emailOnInvitation?: boolean;
+  }) {
+    await prisma.teacher.update({ where: { id: teacherId }, data });
+  }
+
+  beforeAll(async () => {
+    process.env.RESEND_API_KEY = 're_test_dummy';
+    delete process.env.EMAIL_DRY_RUN;
+    const t = await prisma.teacher.create({
+      data: {
+        firstName: 'Prefs', lastName: 'Teacher', email: teacherEmail,
+        account: { create: { email: teacherEmail } },
+        bio: 'Teacher prefs tests', pageSlug: `prefs-teacher-${sfx}`, defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = t.id;
+    // The same account wears a student hat that has opted out.
+    const s = await prisma.student.create({
+      data: { firstName: 'Prefs', lastName: 'Dual', email: teacherEmail, emailNotifications: false, accountId: t.accountId, claimedAt: new Date() },
+    });
+    dualStudentId = s.id;
+  });
+
+  afterAll(async () => {
+    if (ids.length) await prisma.notification.deleteMany({ where: { id: { in: ids } } });
+    if (dualStudentId) await prisma.student.delete({ where: { id: dualStudentId } });
+    if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
+  });
+
+  beforeEach(async () => {
+    sendMock.mockReset();
+    sendMock.mockResolvedValue({ error: null });
+    vi.mocked(log.warn).mockClear();
+    await setPrefs({ bookingNotifications: 'inbox_and_email', emailOnClassCompleted: true, emailOnInvitation: true });
+  });
+
+  it('emails every teacher type by default, despite the student hat having opted out', async () => {
+    for (const t of ['booking_confirmed', 'payment_request', 'teacher_invitation'] as const) await note(t);
+    await processEmailFallback(prisma);
+    expect(sendsTo(teacherEmail)).toBe(3);
+  });
+
+  it.each([
+    ['booking_confirmed', { bookingNotifications: 'inbox_only' }],
+    ['booking_confirmed', { bookingNotifications: 'off' }],
+    ['payment_request', { emailOnClassCompleted: false }],
+    ['teacher_invitation', { emailOnInvitation: false }],
+  ] as const)('skips %s when %o, and marks it sent', async (type, prefs) => {
+    const n = await note(type); // created first: the preference changes after the row exists
+    await setPrefs(prefs);
+    await processEmailFallback(prisma);
+    expect(sendsTo(teacherEmail)).toBe(0);
+    expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).emailSent).toBe(true);
+  });
+
+  it('always emails an auto-cancel, with every preference off', async () => {
+    await setPrefs({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
+    await note('class_cancelled');
+    await processEmailFallback(prisma);
+    expect(sendsTo(teacherEmail)).toBe(1);
+  });
+
+  it('fails open on a teacher row outside TeacherNotificationType: emailed, and warned', async () => {
+    await setPrefs({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
+    const n = await note('announcement'); // only reachable by a direct write — the typed path refuses it
+    await processEmailFallback(prisma);
+    expect(sendsTo(teacherEmail)).toBe(1);
+    expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+      expect.objectContaining({ notificationId: n.id }),
+      expect.any(String),
+    );
   });
 });
