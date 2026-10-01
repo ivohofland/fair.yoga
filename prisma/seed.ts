@@ -1176,9 +1176,9 @@ async function main() {
       {
         recipientType: 'teacher',
         recipientId: ivo.id,
-        type: 'payment_received',
-        title: 'Payment received',
-        body: 'Anna de Vries has paid for Vinyasa class.',
+        type: 'payment_request',
+        title: 'Class completed',
+        body: 'Payment requests for Vinyasa class have gone out.',
         relatedClassId: completedClass.id,
         isRead: false,
         emailSent: false,
