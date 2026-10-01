@@ -18,6 +18,8 @@ import {
   teacherProfileSchema,
   updateStudentSchema,
   archiveStudentBodySchema,
+  createAnnouncementSchema,
+  MAX_CUSTOM_AUDIENCE,
   isSafeRelativePath,
   isLoginRedirectTarget,
   MAX_CLASS_SIZE,
@@ -1128,5 +1130,32 @@ describe('archiveStudentBodySchema bounds (#265)', () => {
 
   it('refuses a key it does not know', () => {
     expect(archiveStudentBodySchema.safeParse({ waivePaymentIds: [], extra: true }).success).toBe(false);
+  });
+});
+
+describe('createAnnouncementSchema audience (#48)', () => {
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+  it('accepts a class audience, a custom audience, and neither', () => {
+    expect(createAnnouncementSchema.safeParse({ message: 'hi' }).success).toBe(true);
+    expect(createAnnouncementSchema.safeParse({ message: 'hi', classId: id(1) }).success).toBe(true);
+    expect(createAnnouncementSchema.safeParse({ message: 'hi', studentIds: [id(2)] }).success).toBe(true);
+  });
+
+  it('refuses a body naming two audiences', () => {
+    const r = createAnnouncementSchema.safeParse({ message: 'hi', classId: id(1), studentIds: [id(2)] });
+    expect(r.success).toBe(false);
+  });
+
+  it('refuses an empty list and a list past MAX_CUSTOM_AUDIENCE', () => {
+    expect(createAnnouncementSchema.safeParse({ message: 'hi', studentIds: [] }).success).toBe(false);
+    const over = Array.from({ length: MAX_CUSTOM_AUDIENCE + 1 }, (_, i) => id(i));
+    expect(createAnnouncementSchema.safeParse({ message: 'hi', studentIds: over }).success).toBe(false);
+    const atCap = over.slice(0, MAX_CUSTOM_AUDIENCE);
+    expect(createAnnouncementSchema.safeParse({ message: 'hi', studentIds: atCap }).success).toBe(true);
+  });
+
+  it('refuses a non-uuid entry', () => {
+    expect(createAnnouncementSchema.safeParse({ message: 'hi', studentIds: ['nope'] }).success).toBe(false);
   });
 });

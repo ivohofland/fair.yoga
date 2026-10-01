@@ -642,10 +642,19 @@ export const markPaidSchema = z.object({
 // NOTIFICATIONS & ANNOUNCEMENTS
 // ============================================================================
 
-export const createAnnouncementSchema = z.object({
-  classId: z.string().uuid().optional(),
-  message: z.string().trim().min(1),
-});
+/** One request's fan-out ceiling for a hand-picked audience. */
+export const MAX_CUSTOM_AUDIENCE = 500;
+
+export const createAnnouncementSchema = z
+  .object({
+    classId: z.string().uuid().optional(),
+    studentIds: z.array(z.string().uuid()).min(1).max(MAX_CUSTOM_AUDIENCE).optional(),
+    message: z.string().trim().min(1),
+  })
+  .refine((body) => !(body.classId !== undefined && body.studentIds !== undefined), {
+    message: 'Name one audience: a class or a list of students, not both.',
+    path: ['studentIds'],
+  });
 
 // ============================================================================
 // TOGGLE STATE (PATCH query params)

@@ -1107,6 +1107,8 @@ model Announcement {
   recipientCount Int
   sentAt         DateTime @default(now())
 
+  audienceStudentIds String[] @default([])
+
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   class   Class?  @relation(fields: [classId], references: [id], onDelete: SetNull)
 }
