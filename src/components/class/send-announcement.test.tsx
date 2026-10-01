@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SendAnnouncement } from './send-announcement';
 
 /**
@@ -246,5 +246,130 @@ describe('SendAnnouncement', () => {
     );
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.getByText('Send another')).toBeInTheDocument();
+  });
+});
+
+describe('SendAnnouncement audience choice', () => {
+  const AUDIENCE = [
+    { id: 'a', displayName: 'Anna K.' },
+    { id: 'b', displayName: 'Ben L.' },
+  ];
+
+  /** Routes the picker's GET and the composer's POST to separate answers. */
+  function stubRoutes(post: { status: number; data: Record<string, unknown> }) {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/announcements/audience') {
+        return { ok: true, status: 200, json: async () => ({ data: { students: AUDIENCE } }) };
+      }
+      return { ok: post.status < 400, status: post.status, json: async () => ({ data: post.data }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function postBody(fetchMock: ReturnType<typeof stubRoutes>): Record<string, unknown> {
+    const call = fetchMock.mock.calls.find(([url]) => url === '/api/announcements');
+    if (!call) throw new Error('no POST made');
+    const init = (call as unknown as [string, { body: string }])[1];
+    return JSON.parse(init.body) as Record<string, unknown>;
+  }
+
+  async function openChoosing() {
+    fireEvent.click(screen.getByText('Send announcement'));
+    fireEvent.click(screen.getByLabelText('Choose students'));
+    return screen.findByLabelText('Anna K.');
+  }
+
+  it('offers no audience choice when scoped to a class', () => {
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+    fireEvent.click(screen.getByText('Send announcement'));
+    expect(screen.queryByLabelText('Choose students')).toBeNull();
+    expect(screen.queryByLabelText('Everyone')).toBeNull();
+  });
+
+  it('defaults to everyone and fetches no audience', () => {
+    const fetchMock = stubRoutes({ status: 201, data: { recipientCount: 1 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(screen.getByText('Send announcement'));
+    expect((screen.getByLabelText('Everyone') as HTMLInputElement).checked).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('POSTs studentIds and no classId for a chosen audience', async () => {
+    const fetchMock = stubRoutes({ status: 201, data: { recipientCount: 1, duplicateSuppressed: false } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.change(screen.getByLabelText('Announcement to 1 selected'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    await screen.findByText('Sent to 1 student');
+    expect(postBody(fetchMock)).toEqual({ message: 'Hello.', studentIds: ['a'] });
+  });
+
+  it('disables Send while nobody is ticked', async () => {
+    stubRoutes({ status: 201, data: { recipientCount: 1 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    await openChoosing();
+    fireEvent.change(screen.getByLabelText('Announcement to 0 selected'), { target: { value: 'Hello.' } });
+    expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('Anna K.'));
+    expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('sends to everyone with no studentIds after switching back', async () => {
+    const fetchMock = stubRoutes({ status: 201, data: { recipientCount: 2 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.click(screen.getByLabelText('Everyone'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    await screen.findByText('Sent to 2 students');
+    expect(postBody(fetchMock)).toEqual({ message: 'Hello.' });
+  });
+
+  it('reports how many already had the message', async () => {
+    stubRoutes({ status: 201, data: { recipientCount: 1, duplicateSuppressed: false, alreadyNotified: 2 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.change(screen.getByLabelText('Announcement to 1 selected'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    expect(await screen.findByText('Sent to 1 student (2 already had it)')).toBeInTheDocument();
+  });
+
+  it('keeps the ticked students when the teacher sends another', async () => {
+    const fetchMock = stubRoutes({ status: 201, data: { recipientCount: 1 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.change(screen.getByLabelText('Announcement to 1 selected'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+    await screen.findByText('Sent to 1 student');
+
+    fireEvent.click(screen.getByText('Send another'));
+    expect((await screen.findByLabelText('Anna K.') as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByLabelText('Ben L.'));
+    fireEvent.change(screen.getByLabelText('Announcement to 2 selected'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(([url]) => url === '/api/announcements');
+      expect(posts).toHaveLength(2);
+    });
+    const last = fetchMock.mock.calls.filter(([url]) => url === '/api/announcements')[1] as unknown as [string, { body: string }];
+    expect(JSON.parse(last[1].body)).toEqual({ message: 'Hello.', studentIds: ['a', 'b'] });
+  });
+
+  it('keeps the suppressed wording when every chosen student already had it', async () => {
+    stubRoutes({ status: 200, data: { recipientCount: 2, duplicateSuppressed: true, alreadyNotified: 2 } });
+    render(<SendAnnouncement recipientHint="your students" />);
+    fireEvent.click(await openChoosing());
+    fireEvent.click(screen.getByLabelText('Ben L.'));
+    fireEvent.change(screen.getByLabelText('Announcement to 2 selected'), { target: { value: 'Hello.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    const caption = await screen.findByText(/Not sent again/);
+    expect(caption).toHaveTextContent('Not sent again — the same message reached 2 students moments ago.');
+    expect(caption.textContent).not.toMatch(/already had it/);
   });
 });

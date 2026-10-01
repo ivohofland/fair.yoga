@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { AudiencePicker } from '@/components/class/audience-picker';
 
 interface SendAnnouncementProps {
   /** Scope to one class; omit to message all the teacher's students. */
@@ -16,6 +17,8 @@ interface SentState {
   /** `null` when a 2xx body couldn't be read — the send still happened. */
   count: number | null;
   suppressed: boolean;
+  /** Chosen students who already had this exact message; 0 when not reported. */
+  alreadyNotified: number;
 }
 
 // One-to-many only, by design: an announcement creates one notification
@@ -27,8 +30,14 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   const [sent, setSent] = useState<SentState | null>(null);
   const [error, setError] = useState('');
   const [showRecipients, setShowRecipients] = useState(false);
+  const [audience, setAudience] = useState<'all' | 'chosen'>('all');
+  const [chosen, setChosen] = useState<string[]>([]);
 
-  const recipientExplanation = classId
+  const choosing = !classId && audience === 'chosen';
+
+  const recipientExplanation = choosing
+    ? "Only the students you tick, and only those who have booked with you and haven't muted your messages. Anyone who already got this exact message in the last two minutes is skipped."
+    : classId
     ? "Everyone registered for this class (late cancellations included), unless they've muted your messages. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes — sooner when class is about to start — also gets it by email, unless they've turned email off."
     : "Students with a booking in any of your classes, unless they've muted your messages — contacts who've never booked (or only cancelled) aren't included. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes also gets it by email, unless they've turned email off.";
 
@@ -42,7 +51,11 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       res = await fetch('/api/announcements', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message.trim(), ...(classId ? { classId } : {}) }),
+        body: JSON.stringify({
+          message: message.trim(),
+          ...(classId ? { classId } : {}),
+          ...(choosing ? { studentIds: chosen } : {}),
+        }),
       });
     } catch (err) {
       logRequestFailure('send-announcement', { classId }, err);
@@ -64,18 +77,22 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
     // ignore.
     try {
       const json = (await res.json()) as {
-        data: { recipientCount: number; duplicateSuppressed?: boolean };
+        data: { recipientCount: number; duplicateSuppressed?: boolean; alreadyNotified?: number };
       };
       if (typeof json?.data?.recipientCount !== 'number') {
         throw new Error('missing recipientCount');
       }
-      setSent({ count: json.data.recipientCount, suppressed: json.data.duplicateSuppressed === true });
+      setSent({
+        count: json.data.recipientCount,
+        suppressed: json.data.duplicateSuppressed === true,
+        alreadyNotified: typeof json.data.alreadyNotified === 'number' ? json.data.alreadyNotified : 0,
+      });
     } catch (err) {
       // A 2xx here means the send already happened (or was suppressed) —
       // an unreadable body is not a failure to report, and inviting a resend
       // would risk a genuine duplicate. Settle on what IS known: it went out.
       console.error('[send-announcement] sent, but the response was unreadable', { classId, err });
-      setSent({ count: null, suppressed: false });
+      setSent({ count: null, suppressed: false, alreadyNotified: 0 });
     }
     setMessage('');
     setOpen(false);
@@ -93,7 +110,9 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       ? 'Announcement sent.'
       : sent.suppressed
         ? `Not sent again — the same message reached ${students} moments ago.`
-        : `Sent to ${students}`;
+        : sent.alreadyNotified > 0
+          ? `Sent to ${students} (${sent.alreadyNotified} already had it)`
+          : `Sent to ${students}`;
     return (
       <div className="flex items-center gap-3">
         <span className={neutral ? 'type-caption' : 'type-caption text-teal'}>
@@ -120,8 +139,31 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
 
   return (
     <div className="flex flex-col gap-3 w-full max-w-[480px]">
+      {!classId && (
+        <div className="flex flex-col gap-1">
+          <label className="flex items-center gap-3 min-h-12 type-body">
+            <input
+              type="radio"
+              name="announcement-audience"
+              checked={audience === 'all'}
+              onChange={() => setAudience('all')}
+            />
+            Everyone
+          </label>
+          <label className="flex items-center gap-3 min-h-12 type-body">
+            <input
+              type="radio"
+              name="announcement-audience"
+              checked={audience === 'chosen'}
+              onChange={() => setAudience('chosen')}
+            />
+            Choose students
+          </label>
+        </div>
+      )}
+      {choosing && <AudiencePicker selected={chosen} onChange={setChosen} />}
       <Textarea
-        label={`Announcement to ${recipientHint}`}
+        label={choosing ? `Announcement to ${chosen.length} selected` : `Announcement to ${recipientHint}`}
         value={message}
         onChange={(e) => setMessage(e.target.value)}
         rows={3}
@@ -141,7 +183,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
         )}
       </div>
       <div className="flex gap-3">
-        <Button variant="primary" onClick={handleSend} disabled={sending || !message.trim()}>
+        <Button variant="primary" onClick={handleSend} disabled={sending || !message.trim() || (choosing && chosen.length === 0)}>
           {sending ? 'Sending...' : 'Send'}
         </Button>
         <Button variant="ghost" onClick={() => { setOpen(false); setError(''); }}>
