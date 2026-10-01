@@ -57,14 +57,15 @@ function clientDataJSON(type: 'webauthn.create' | 'webauthn.get', expected: Expe
 }
 
 /**
- * A registration response the real library VERIFIES: a `fmt: 'none'`
- * attestation carries no signature, so anything that knows the issued
- * challenge, the origin and the RP ID can build one. `authDataCredentialId`
- * is the id written into the authenticator data — the one the library
- * returns — independently of `responseId`. The credential key is a fresh
- * P-256 key; nothing verifies a signature with it.
+ * A registration response the real library VERIFIES, unless `userVerified`
+ * is false: a `fmt: 'none'` attestation carries no signature, so anything
+ * that knows the issued challenge, the origin and the RP ID can build one.
+ * `authDataCredentialId` is the id written into the authenticator data — the
+ * one the library returns — independently of `responseId`. The credential
+ * key is a fresh P-256 key; nothing verifies a signature with it.
  *
- * `userVerified: false` clears the UV flag and nothing else.
+ * `userVerified: false` clears the UV flag and nothing else, so the library
+ * refuses the response at its user-verification check.
  */
 export function forgedNoneRegistration(
   params: ExpectedCeremony & {
@@ -116,11 +117,12 @@ export function forgedNoneRegistration(
 /**
  * An authentication response signed with `privateKey` over
  * `authenticatorData ‖ sha256(clientDataJSON)`, as an ES256 authenticator
- * signs. Given a `counter` above the stored one, it passes every check before
- * the signature, so whether it verifies is whether `privateKey` pairs with
- * the public key the verifier is given.
+ * signs. Given a `counter` above the stored one and `userVerified` left
+ * unset, it passes every check before the signature, so whether it verifies
+ * is whether `privateKey` pairs with the public key the verifier is given.
  *
- * `userVerified: false` clears the UV flag and nothing else.
+ * `userVerified: false` clears the UV flag and nothing else, so the library
+ * refuses the response at its user-verification check, whichever key signed.
  */
 export function signedAssertion(
   params: ExpectedCeremony & {
