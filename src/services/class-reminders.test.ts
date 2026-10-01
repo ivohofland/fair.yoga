@@ -63,21 +63,23 @@ describe('processClassReminders (DB)', () => {
   }
 
   /**
-   * `base` with a hook that runs `between` once, after the sweep's candidate
-   * `Class` read returns and before any claim — the read is a tick's worth of
-   * sends old by the time a later class is claimed. Attached under the scope,
-   * so it sees the sweep's own args.
+   * A sweep over `f` whose client runs `between` once, after the class's
+   * registration read returns and before any of its claims: the reads it
+   * judged due on are stale by the time it claims. The hook is attached
+   * before `scopeSweep`, so it sees the sweep's own args.
    */
-  function interposeAfterClassRead(f: Fixture, between: () => Promise<void>) {
+  function interposeBeforeClaims(f: Fixture, registrationId: string, between: () => Promise<void>) {
     const state = { interposed: 0, sawFixture: false };
     const client = prisma.$extends({
       query: {
-        class: {
+        registration: {
           async findMany({ args, query }) {
             const rows = await query(args);
-            if (state.interposed > 0) return rows;
+            // Keyed on the candidate read's shape, as in 2b.
+            const where = args.where as { classReminderSentAt?: unknown } | undefined;
+            if (where?.classReminderSentAt !== null || state.interposed > 0) return rows;
             state.interposed += 1;
-            state.sawFixture = rows.some((r) => r.id === f.classId);
+            state.sawFixture = rows.some((r) => r.id === registrationId);
             await between();
             return rows;
           },
@@ -594,7 +596,7 @@ describe('processClassReminders (DB)', () => {
   it('reminds no one when the entry is cancelled between the candidate read and the claims', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
-    const { state, sweep } = interposeAfterClassRead(f, async () => {
+    const { state, sweep } = interposeBeforeClaims(f, registration.id, async () => {
       await prisma.calendarEntry.update({ where: { id: f.calendarEntryId }, data: { cancelledAt: MORNING } });
     });
 
@@ -613,7 +615,7 @@ describe('processClassReminders (DB)', () => {
   it('reminds no one when the class leaves open between the candidate read and the claims', async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
-    const { state, sweep } = interposeAfterClassRead(f, async () => {
+    const { state, sweep } = interposeBeforeClaims(f, registration.id, async () => {
       await prisma.class.update({ where: { id: f.classId }, data: { status: 'in_progress' } });
     });
 
@@ -633,7 +635,7 @@ describe('processClassReminders (DB)', () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
     const rebookedAt = new Date(MORNING.getTime() + 5 * MINUTE);
-    const { state, sweep } = interposeAfterClassRead(f, async () => {
+    const { state, sweep } = interposeBeforeClaims(f, registration.id, async () => {
       await prisma.registration.update({
         where: { id: registration.id },
         data: { status: 'cancelled', cancelledAt: rebookedAt },
