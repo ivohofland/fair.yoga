@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Icon } from '@/components/ui/icon';
 import { installStore, useInstallSupport } from '@/components/layout/install-store';
+import { canOfferInstall, installStepsVariant } from '@/lib/install-support';
 import { InstallSteps } from './install-steps';
 
 /**
@@ -13,7 +14,7 @@ export function InstallAppRow() {
   const support = useInstallSupport();
   const [open, setOpen] = useState(false);
 
-  if (support !== 'ios-safari' && support !== 'prompt' && support !== 'manual') return null;
+  if (!canOfferInstall(support)) return null;
 
   function handleClick(): void {
     if (support === 'prompt' && installStore) {
@@ -40,7 +41,7 @@ export function InstallAppRow() {
       </button>
       {open && (
         <div className="pb-4">
-          <InstallSteps variant={support === 'ios-safari' ? 'ios' : 'manual'} />
+          <InstallSteps variant={installStepsVariant(support)} />
         </div>
       )}
     </div>
