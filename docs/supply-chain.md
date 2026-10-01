@@ -671,7 +671,7 @@ high), even though the whole-tree number moved.
 a description of any image this repo builds.** Neither of the two stages
 that ship matches it:
 
-- The `runner` stage (`Dockerfile:45-59`) is **narrower**. The only
+- The `runner` stage (`Dockerfile:53-67`) is **narrower**. The only
   `node_modules` it gets is the one inside `.next-build/standalone`, which
   Next populates by tracing actual imports — so it holds far less than the
   production dependency tree. (It copies two other trees,
@@ -688,7 +688,7 @@ that ship matches it:
   ```
   after a build — every one of them, `browserslist` and `@babel/core`
   included, comes back `absent`.
-- The `migrate` stage (`Dockerfile:39`) is **wider**. It is `FROM deps`, i.e.
+- The `migrate` stage (`Dockerfile:47`) is **wider**. It is `FROM deps`, i.e.
   the same frozen `pnpm install --frozen-lockfile` as the `deps` stage with
   nothing filtered out, so it ships the entire tree — every devDependency
   included.

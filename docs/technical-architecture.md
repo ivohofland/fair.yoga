@@ -582,9 +582,9 @@ prefetching it — without ever asking the user which one this is:
 5. Redirect to dashboard (teacher) or bookings (student), once a session exists
 ```
 
-An installed home-screen app keeps its own cookie jar, separate from the
-browser's, so a link tapped in Mail opens in the browser and takes the code
-branch; the app redeems the code like any second browser (#723). `/login`
+On iOS, an installed home-screen app keeps its own cookie jar, separate from
+the browser's, so a link tapped in Mail opens in the browser and takes the
+code branch; the app redeems the code like any second browser (#723). `/login`
 offers the code field without a fresh request ("Have a code from the email
 link?"), because iOS may reload a backgrounded installed app while the
 person is reading their mail.

@@ -246,7 +246,7 @@ Completion card → Share the booking page → Dismiss
 
 Each row takes the teacher to the real screen where they'll do this task in the future — no overlay, no tour. Share is a one-time completion card rather than a fifth row: nothing in the schema records that a page has been shared, so there is no state for a row to show. The checklist disappears for good only once that card is dismissed.
 
-**Install card.** Above the checklist, on a phone where the browser can install the app, a one-time card offers to add fair.yoga to the Home Screen. It does not wait for the checklist — a teacher who set up on a laptop meets it on their first phone visit — and it retires for good on Dismiss, on Done after the iOS steps, on an accepted install prompt, or when the Schedule first opens inside the installed app. Its dismissal is the `install` member of `OnboardingStep`, stored on the teacher, so it holds across devices.
+**Install card.** Above the checklist, on a phone where the browser can install the app, a one-time card offers to add fair.yoga to the Home Screen. It does not wait for the checklist — a teacher who set up on a laptop meets it on their first phone visit — and it retires for good on Dismiss, on Done after the steps, on an accepted install prompt, or when the Schedule first opens inside the installed app. Its dismissal is the `install` member of `OnboardingStep`, stored on the teacher, so it holds across devices.
 
 ---
 

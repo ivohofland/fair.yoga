@@ -897,9 +897,10 @@ describe('POST /api/account/onboarding', () => {
   });
 
   /**
-   * `install` (#723) dismisses the install card, which shows whatever the
-   * checklist's state, so its dismissal carries no settlement gate. The
-   * fixture is still unsettled here (empty bio, no room, no class).
+   * `install` (#723) dismisses the install card. Its render rule lives in
+   * `docs/information-architecture.md` (Onboarding flow → Install card); its
+   * dismissal carries no settlement gate. The fixture is still unsettled
+   * here (empty bio, no room, no class).
    */
   it('records install while the checklist is still unsettled', async () => {
     const res = await fetch(`${BASE_URL}/api/account/onboarding`, {
