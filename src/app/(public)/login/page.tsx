@@ -97,7 +97,11 @@ function LoginForm() {
           ) : (
             <p className="mt-6 type-caption">
               Have a code from the email link?{' '}
-              <button type="button" className="text-teal rounded-field focus:outline-none focus-visible:shadow-focus" onClick={() => setShowCode(true)}>
+              <button
+                type="button"
+                className="text-teal hover:text-teal underline decoration-[0.5px] underline-offset-[3px] rounded-field focus:outline-none focus-visible:shadow-focus"
+                onClick={() => setShowCode(true)}
+              >
                 Enter it
               </button>
             </p>
