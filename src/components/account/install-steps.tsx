@@ -1,7 +1,8 @@
 /**
  * How to add fair.yoga to the Home Screen, in words. No arrow pointing at a
  * toolbar: where Safari's Share button sits differs by layout and device.
- * `manual` is Chromium after its one-shot prompt was used.
+ * `manual` gives the browser-menu route, for a browser whose own install
+ * prompt is no longer available.
  */
 export function InstallSteps({ variant }: { variant: 'ios' | 'manual' }) {
   if (variant === 'manual') {
