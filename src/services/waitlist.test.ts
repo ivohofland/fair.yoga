@@ -845,6 +845,36 @@ describe('promoteNext (DB)', () => {
     ).toBe(0);
   });
 
+  it('reactivating a cancelled registration is a new booking for reminders (#721)', async () => {
+    const seeded = await seedPromotable('2099-07-16', 'Reactivate');
+    const old = new Date('2000-01-01T00:00:00Z');
+    await prisma.registration.create({
+      data: {
+        classId: seeded.classId,
+        studentId: seeded.waiterId,
+        status: 'cancelled',
+        cancelledAt: old,
+        tierAtBooking: 3,
+        registeredAt: old,
+        classReminderSentAt: old,
+      },
+    });
+    const before = Date.now();
+    await prisma.$transaction(async (tx) => {
+      const lock = await lockClassRow(tx, seeded.classId);
+      return activateRegistration(tx, lock, {
+        classId: seeded.classId,
+        studentId: seeded.waiterId,
+        tierAtBooking: 3,
+      });
+    });
+    const row = await prisma.registration.findUniqueOrThrow({
+      where: { classId_studentId: { classId: seeded.classId, studentId: seeded.waiterId } },
+    });
+    expect(row.registeredAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(row.classReminderSentAt).toBeNull();
+  });
+
   it('names the free-cancel time in the notification, anchored on the injected promotedAt (#236)', async () => {
     const now = new Date('2099-07-01T12:00:00Z'); // after the HOURS_24 deadline, still > 1h before start
     const extra = await prisma.student.create({

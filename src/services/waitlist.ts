@@ -137,6 +137,9 @@ export async function activateRegistration(
           cancelledAt: null,
           tierAtBooking: input.tierAtBooking,
           isWalkIn: input.isWalkIn ?? false,
+          // A reused row is a new booking: its reminder is judged from now.
+          registeredAt: new Date(),
+          classReminderSentAt: null,
         },
       })
     : await tx.registration.create({

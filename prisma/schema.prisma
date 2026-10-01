@@ -1026,7 +1026,7 @@ model Registration {
   registeredAt  DateTime           @default(now())
   cancelledAt   DateTime?
   /// Set once when this booking's class reminder is sent; cleared when the row
-  /// is reactivated as a new booking (`activateRegistration`).
+  /// is reactivated as a new booking.
   classReminderSentAt DateTime?
   updatedAt     DateTime           @updatedAt
 

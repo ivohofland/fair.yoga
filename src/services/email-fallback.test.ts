@@ -511,5 +511,44 @@ describe('processEmailFallback (DB)', () => {
       });
       expect(after.emailSent).toBe(false);
     });
+
+    it('never emails a class reminder row the reminder sweep wrote (#721)', async () => {
+      const studentEmail = `fallback-reminded-${uniqueSuffix}@test.local`;
+      const student = await prisma.student.create({
+        data: { firstName: 'Reminded', lastName: 'Student', email: studentEmail },
+      });
+      try {
+        // Unread, past the 30-minute wait, and its class inside the urgent
+        // window: every fallback trigger holds, so only `emailSent` decides.
+        const common = {
+          recipientType: 'student' as const,
+          recipientId: student.id,
+          type: 'class_reminder' as const,
+          body: 'Your Vinyasa is coming up.',
+          isRead: false,
+          createdAt: new Date(Date.now() - 60 * 60 * 1000),
+          relatedClassId: soonClassId,
+        };
+        const written = await prisma.notification.create({
+          data: { ...common, title: 'Class reminder', emailSent: true },
+        });
+        // The control: the same row unsent, which the fallback does email.
+        const control = await prisma.notification.create({
+          data: { ...common, title: 'Class reminder control', emailSent: false },
+        });
+        perTestNotificationIds.push(written.id, control.id);
+
+        const scoped = scopeSweep(prisma, { Notification: { id: { in: [written.id, control.id] } } });
+        await processEmailFallback(scoped.db);
+
+        expect(sendsTo(studentEmail)).toBe(1);
+        const subjects = sendMock.mock.calls.map(([args]) => args.subject);
+        expect(subjects).toContain('Class reminder control');
+        expect(subjects).not.toContain('Class reminder');
+      } finally {
+        await prisma.notification.deleteMany({ where: { recipientId: student.id } });
+        await prisma.student.delete({ where: { id: student.id } });
+      }
+    });
   });
 });

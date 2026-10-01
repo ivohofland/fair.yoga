@@ -98,7 +98,7 @@ overlaps its own tick — `src/lib/scheduler.ts`'s header says which were:
 
 ```bash
 curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/daily-cleanup
-# also: /api/cron/transition-classes  /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders
+# also: /api/cron/transition-classes  /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/class-reminders
 ```
 
 `--fail` is not optional here, and `/api/cron/daily-cleanup` is why. That route

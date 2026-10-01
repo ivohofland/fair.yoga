@@ -53,6 +53,7 @@ export interface SchedulerSweeps {
   runStudioClassGenerationTick: (db: PrismaClient) => Promise<unknown>;
   processEmailFallback: (db: PrismaClient) => Promise<unknown>;
   processPaymentReminders: (db: PrismaClient) => Promise<unknown>;
+  processClassReminders: (db: PrismaClient) => Promise<unknown>;
   cleanupExpiredAuth: (db: PrismaClient) => Promise<unknown>;
   /**
    * The WRAPPER, never `reconcileWaitlists` itself — and the name is the
@@ -154,6 +155,7 @@ export async function startScheduler(): Promise<void> {
   const { runStudioClassGenerationTick } = await import('@/services/studio-class-generator');
   const { processEmailFallback } = await import('@/services/email-fallback');
   const { processPaymentReminders } = await import('@/services/payment-reminders');
+  const { processClassReminders } = await import('@/services/class-reminders');
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
   const { runWaitlistReconciliationTick } = await import('@/services/waitlist-reconciliation');
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
@@ -168,6 +170,7 @@ export async function startScheduler(): Promise<void> {
     runStudioClassGenerationTick,
     processEmailFallback,
     processPaymentReminders,
+    processClassReminders,
     cleanupExpiredAuth,
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
@@ -278,6 +281,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     runStudioClassGenerationTick,
     processEmailFallback,
     processPaymentReminders,
+    processClassReminders,
     cleanupExpiredAuth,
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
@@ -315,6 +319,13 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       name: 'payment-reminders',
       intervalMs: 60 * MINUTE,
       run: (db) => processPaymentReminders(db),
+    },
+    {
+      // 5 minutes bounds how late a reminder lands after its moment; the
+      // sweep never sends at or after the class's start.
+      name: 'class-reminders',
+      intervalMs: 5 * MINUTE,
+      run: (db) => processClassReminders(db),
     },
     {
       // Renamed from `auth-cleanup` when waitlist retention joined it (#238):
