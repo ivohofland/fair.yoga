@@ -106,13 +106,13 @@ The exact shape of the table is the plan's to decide. Two properties are fixed:
 
    Without (2), the union is a list in a comment that the compiler can't check. With it, a fifth teacher notification does not compile until its type joins the union, and joining the union does not compile until the table classifies it. That missing forcing step is how all four types came to be emailed unconditionally.
 
-**The fallback sweep reads the type as `NotificationType`, from the database.** It narrows to the teacher union with a runtime guard: an `isTeacherNotificationType` that reads the table's keys, not a second list. A teacher-recipient row whose type is outside the union cannot be written through the typed path. If one is found anyway (from the seed or a direct SQL write), it is **emailed, as today, and logged at `warn`**, rather than silently dropped. Failing open keeps today's behaviour for a state the typed path rules out, and the log makes it visible.
+**The fallback sweep reads the type as `NotificationType`, from the database.** It narrows to the teacher union with a runtime guard: an `isTeacherNotificationType` that reads the table's keys, not a second list. A teacher-recipient row whose type is outside the union cannot be written through the typed path without a cast. If one is found anyway (from a cast, the seed, or a direct SQL write), it is **emailed, as today, and logged at `warn`**, rather than silently dropped. Failing open keeps today's behaviour for a state the typed path rules out, and the log makes it visible.
 
-**Ways the tether can be widened without a compile error.** Each one goes in the plan's review checklist, because each compiles cleanly while disabling the check:
+**What does and doesn't disable the tether.** Measured with `tsc --strict` against a reduced model of the union:
 
-- **`Omit<CreateNotificationInput, …>` flattens the union into one shape and loses the variants.** `notifyCancellation`'s `CancellationNoticeInput` does exactly this today. It must be rebuilt on the student variant, and since every caller passes `'student'`, nothing changes at runtime.
-- **A cast that widens a type** (`as NotificationType`, `as CreateNotificationInput`) at a teacher call site.
-- **A variable `recipientType` typed as `RecipientType` instead of a literal.**
+- **A widening cast** (`as NotificationType`, `as CreateNotificationInput`) at a teacher call site compiles cleanly and disables the check. This is the only silent hole, and it goes in the plan's review checklist.
+- **`Omit<CreateNotificationInput, …>`** flattens the union into one shape that fits neither variant. Passing the result to `createNotification` is a **compile error** (TS2345), not a silent widening. `notifyCancellation`'s `CancellationNoticeInput` is built this way today, so it must be rebuilt on the student variant. Every caller passes `'student'`, so nothing changes at runtime.
+- **A variable `recipientType: RecipientType`** is checked soundly. TypeScript tests each possible value of the variable against the union. A teacher-valid type compiles, and a type outside `TeacherNotificationType` is TS2345.
 
 The plan mutation-tests the tether against a realistic regression: a new teacher call site with a type outside the union, and the same site with the table entry deleted. The exact compiler error text for each is recorded.
 
