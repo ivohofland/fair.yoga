@@ -48,10 +48,6 @@ describe('sendHtmlEmail', () => {
       delete process.env.RESEND_API_KEY;
     });
 
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
-
     it('fails in production rather than dry-running', async () => {
       vi.stubEnv('NODE_ENV', 'production');
 
@@ -92,8 +88,6 @@ describe('sendHtmlEmail', () => {
   });
 });
 
-// The link is the credential: logging it is the leak the production guard
-// exists to stop, so every dry-run case checks what reached stdout.
 const LINK = 'https://fair.test/verify?token=secret-token' as BoundSignInLink;
 
 function logSpy() {
@@ -104,6 +98,8 @@ function loggedText(spy: ReturnType<typeof logSpy>): string {
   return spy.mock.calls.flat().join(' ');
 }
 
+// The link is the credential: logging it is the leak the production guard
+// exists to stop, so every magic-link dry-run case checks what reached stdout.
 describe('sendMagicLinkEmail', () => {
   describe('with no key configured', () => {
     beforeEach(() => {
@@ -188,7 +184,7 @@ describe('sendMagicLinkEmail', () => {
 describe('sendInvitationEmail', () => {
   const URL = 'https://fair.test/sign-in?invite=abc';
 
-  it('has no production throw: a missing key logs, as email-fallback does', async () => {
+  it('has no production throw: a missing key logs', async () => {
     delete process.env.EMAIL_DRY_RUN;
     delete process.env.RESEND_API_KEY;
     vi.stubEnv('NODE_ENV', 'production');
@@ -220,6 +216,7 @@ describe('sendInvitationEmail', () => {
 
       await sendInvitationEmail('a@test.local', 'Teacher T', URL);
 
+      expect(sendMock).toHaveBeenCalledTimes(1);
       expect(sendMock).toHaveBeenCalledWith(
         expect.objectContaining({ to: 'a@test.local', subject, html }),
       );
