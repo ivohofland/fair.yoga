@@ -72,10 +72,12 @@ shared contract, and the classifier would still need the helper to wrap the libr
 1. **Helpers never reject for a refused response.** Each helper's return type becomes a
    discriminated union — `{ verified: true; …fields }` | `{ verified: false; reason: string }` —
    replacing the registration helper's sentinel `credentialId: ''` / empty-key shape. The `try`
-   encloses only the library call: nothing else in either helper is about the client's response.
-   `reason` is `error instanceof Error ? error.message : String(error)`, truncated to 300
-   characters (several library messages echo client-sent strings of unbounded length), or a fixed
-   string when the library returned `verified: false`. **`reason` goes to the log only, never to
+   encloses only the library call. The registration helper's verified result is still
+   client-derived past it (a `fmt: 'none'` attestation verifies with no signature), so that
+   helper also checks what it returns — Design 3 and 4. `reason` is
+   `error instanceof Error ? error.message : String(error)`, truncated to 300 characters (several
+   library messages echo client-sent strings of unbounded length), or a fixed string when the
+   library returned `verified: false` or the helper refused a verified result. **`reason` goes to the log only, never to
    the client.**
 2. **One `warn` line per refusal, from the helper,** carrying the ceremony
    (`'registration' | 'authentication'`) and the reason — never `error`, never
@@ -102,10 +104,22 @@ shared contract, and the classifier would still need the helper to wrap the libr
    base64url characters). Closes row 7 and its NUL-byte sibling at the request boundary, before
    the challenge is consumed. Applied to `passkeyRegisterVerifySchema` too so the two stay one
    shape; row 6 then answers at `parseBody` as well.
-4. **The registration helper keeps only transports it knows.** The library's `transports` is
-   filtered to `AuthenticatorTransportFuture` members, with the set tethered to the type by
-   `satisfies Record<AuthenticatorTransportFuture, true>`, and the `as string[]` cast goes. Closes
-   the post-verification 500 and stops arbitrary client strings landing in the column.
+
+   On registration the schema bound reaches the stored id only through **the id binding**: the id
+   the library returns is parsed from the client-supplied authenticator data (a uint16 length, so
+   up to 65535 bytes), and the library never checks it against `response.id`. A 4000-byte id
+   verified and Postgres refused it as a btree key (SQLSTATE 54000) — a 500 on the `create`. The
+   registration helper therefore refuses, through the same `{ verified: false, reason }` + one
+   `warn` path, a result whose credential id differs from `response.id`; a genuine authenticator
+   always satisfies this. With it, the stored id is the schema-checked one, and `.max(1364)` is
+   what keeps an oversized id out of the primary key.
+4. **The registration helper keeps only transports it knows.** The library passes the client's
+   `response.transports` through untouched. **A value that is not an array is treated as no
+   transports** (`.filter` on a string, object or number throws a `TypeError` after
+   verification, past the catch — a 500), and an array is filtered to `AuthenticatorTransportFuture` members, with the set tethered
+   to the type by `satisfies Record<AuthenticatorTransportFuture, true>`; the `as string[]` cast
+   goes. The container check and the filter together close the post-verification 500 and stop
+   arbitrary client strings landing in the column.
 5. **Two refusals gain registered 400 codes, shared by both routes.** Status unchanged.
    `PASSKEY_NOT_VERIFIED` is sent by each route's `!result.verified` branch;
    `PASSKEY_CHALLENGE_MISSING` by each route's missing-challenge branch. Why codes: today both of
@@ -135,7 +149,8 @@ shared contract, and the classifier would still need the helper to wrap the libr
     validation 400; no pending challenge → `PASSKEY_CHALLENGE_MISSING`; after `register/options`,
     `{ response: {} }` → validation 400 (a body the old schema accepted, so it sees a revert);
     after `register/options`, a wrong-challenge response → `PASSKEY_NOT_VERIFIED`, and the same
-    body again → `PASSKEY_CHALLENGE_MISSING` (the refused attempt burned the challenge).
+    body again → `PASSKEY_CHALLENGE_MISSING` (the refused attempt burned the challenge); a
+    1365-character base64url `response.id` → validation 400 (pins `.max(1364)`).
   - `authenticate/verify`: live `challengeId`, `response: {}` → validation 400; live
     `challengeId`, `response.id` containing a NUL byte → validation 400; wrong-challenge response
     against a seeded credential row → `PASSKEY_NOT_VERIFIED`. The existing "fails only on the
@@ -150,6 +165,14 @@ shared contract, and the classifier would still need the helper to wrap the libr
   result whose `transports` mixes known members with junk (a number, a NUL-bearing string, an
   unknown name), returns only the known members. In its own file, since `passkey.test.ts` runs the
   real library.
+- **Unit, forged `fmt: 'none'` attestation (real library, `passkey.test.ts`):** a registration
+  response built without an authenticator — `clientDataJSON` with the issued challenge,
+  `webauthn.create` and the expected origin; authData = sha256(rpId) ‖ flags UP|UV|AT ‖ counter ‖
+  AAGUID ‖ id length ‖ id ‖ COSE ES256 key; attestation object CBOR
+  `{ fmt: 'none', attStmt: {}, authData }`. With `response.id` equal to the authData id it
+  verifies (proving every case below reaches the post-verification code); with
+  `transports: 'usb'` it verifies with `transports: []`; with the authData id differing from
+  `response.id` it resolves `{ verified: false }` with one `registration` warn and no `error`.
 - **How the route-level half follows:** no HTTP test can read the server log. The claim that a
   refused response no longer produces `unhandled API error` rests on the coded 400: a
   `PASSKEY_NOT_VERIFIED` answer comes from the route's own `respondError`, and `withErrorHandler`'s
@@ -182,6 +205,11 @@ these cases do not depend on the server's configured origin or port.
   (challenge pending) answers `PASSKEY_NOT_VERIFIED` instead of the validation 400.
 - Change a helper's `log.warn` to `log.error` → its unit case fails on the no-`error` assertion.
 - Drop the transports filter → the transports unit case fails.
+- Drop the registration helper's `Array.isArray` container check → the forged-attestation
+  `transports: 'usb'` case rejects with a `TypeError`.
+- Drop the registration helper's credential-id binding → the forged-attestation id-mismatch case
+  resolves `verified: true`.
+- Drop `.max(1364)` from the credential id schema → the register 1365-character id case fails.
 - Drop `PASSKEY_NOT_VERIFIED` from `register/verify`'s refusal → the register wrong-challenge case
   fails.
 
