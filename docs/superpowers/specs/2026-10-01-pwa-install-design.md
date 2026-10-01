@@ -92,20 +92,24 @@ line.
 
 - `classifyInstall(env): InstallSupport` is **pure**, so a table test can
   cover it. `InstallSupport` is
-  `'unknown' | 'installed' | 'ios-safari' | 'prompt' | 'unsupported'`, and
-  `env` carries user agent, `maxTouchPoints`, standalone media match,
-  `navigator.standalone`, and whether a deferred prompt is held.
-  - `installed`: `(display-mode: standalone)` matches, or
-    `navigator.standalone === true`. Checked first.
+  `'unknown' | 'installed' | 'ios-safari' | 'prompt' | 'manual' | 'unsupported'`,
+  and `env` carries user agent, `maxTouchPoints`, standalone media match,
+  `navigator.standalone`, whether a deferred prompt is held, whether one was
+  already used, and whether `appinstalled` fired.
+  - `installed`: `(display-mode: standalone)` matches,
+    `navigator.standalone === true`, or `appinstalled` fired. Checked first.
   - `ios-safari`: iOS or iPadOS (a `Macintosh` user agent with
     `maxTouchPoints > 1` is an iPad) **and** real Safari. Excluded: Chrome
     (`CriOS`), Firefox (`FxiOS`), Edge (`EdgiOS`), Opera (`OPiOS`), the
     Google app (`GSA`), and in-app webviews, which carry no `Safari/` token
     or carry their own marker (`FBAN`/`FBAV`, `Instagram`, `Line`).
   - `prompt`: a captured `beforeinstallprompt` is held.
+  - `manual`: a held prompt was used and nothing new arrived since.
   - otherwise `unsupported`.
-- A module-level store holds the deferred prompt event. `InstallListener`,
-  a client component mounted once in the root layout, attaches
+- A store in `src/components/layout/install-store.ts` holds the deferred
+  prompt event, created once when the module loads in a browser.
+  `InstallListener`, a client component mounted once in the root layout,
+  exists so that module loads on every page. The store attaches
   `beforeinstallprompt` (calling `preventDefault()`, which suppresses
   Chromium's own mini-infobar so the card is the only prompt) and
   `appinstalled`.
@@ -113,9 +117,9 @@ line.
   `'unknown'` as the server snapshot. `'unknown'` renders nothing, so
   install surfaces only appear after hydration and never flicker out.
 - A deferred prompt can be used once. After the person cancels Chrome's
-  dialog the store keeps a `promptUsed` flag rather than dropping to
-  `unsupported`, so a visible row does not vanish. Its next tap shows the
-  manual route, "Use the browser menu (⋮) → Install app".
+  dialog the store answers `manual` rather than dropping to `unsupported`,
+  so a visible row or card does not vanish. Its next tap shows the manual
+  route: open the browser menu (⋮) and choose Install app.
 
 ### 3.5 The one-time card (teachers)
 
@@ -124,8 +128,8 @@ line.
   shell. The page passes
   `dismissed = teacher.skippedOnboarding.includes('install')` and renders
   nothing server-side when it is set.
-- Client rule: render when support is `ios-safari`, or `prompt` while
-  `matchMedia('(pointer: coarse)')` matches. An iOS Safari install is always
+- Client rule: render when support is `ios-safari`, or `prompt` or `manual`
+  while `matchMedia('(pointer: coarse)')` matches. An iOS Safari install is always
   on a touch device; the coarse check keeps the card off desktop Chrome.
 - Copy: title **"Use fair.yoga as an app"**; caption "Open it from your Home
   Screen, full screen, one tap away."
@@ -160,8 +164,8 @@ island, styled as the surrounding ≥56px rows:
 
 - Teacher: end of the Settings index list, before Sign out.
 - Student: end of `/account`'s settings list.
-- It reads **"Add to Home Screen"** and renders when support is `ios-safari`
-  or `prompt` (desktop Chrome included). iOS expands `InstallSteps` inline;
+- It reads **"Add to Home Screen"** and renders when support is
+  `ios-safari`, `prompt` or `manual` (desktop Chrome included). iOS expands `InstallSteps` inline;
   `prompt` calls `prompt()`, then the manual route as in §3.4.
 - No dismissal; it records nothing.
 
@@ -208,7 +212,9 @@ a toolbar position, which differs by Safari layout and device.
   - widen the settlement gate to include `install`
   - drop the coarse-pointer check
   - drop the standalone check
-  - drop each non-Safari iOS marker
+  - drop the `Version/` requirement, and drop the one denylist marker
+    (`EdgiOS`) whose browser carries `Version/`. The other markers back up
+    the `Version/` rule, so dropping one alone is inert by design.
   - ignore the server `dismissed` flag
   - drop `start` from `RESERVED_SLUGS`
 
