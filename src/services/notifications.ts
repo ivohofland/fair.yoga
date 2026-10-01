@@ -18,6 +18,7 @@ import type {
 import { notificationBus } from '@/lib/event-bus';
 import { log } from '@/lib/log';
 import { isEmailEligible, IMMEDIATE_EMAIL_TYPES } from './notification-policy';
+import type { TeacherNotificationType } from './notification-policy';
 import { classStartInstant } from '@/lib/timezone';
 import { studentNotificationHref, teacherNotificationHref } from '@/lib/notification-links';
 import { encodeNotificationCursor, type NotificationCursor } from '@/lib/notification-paging';
@@ -31,14 +32,19 @@ type Db = PrismaClient | Prisma.TransactionClient;
 // Types
 // ---------------------------------------------------------------------------
 
-export interface CreateNotificationInput {
-  recipientType: RecipientType; // 'teacher' | 'student'
+interface NotificationFields {
   recipientId: string;
-  type: NotificationType; // booking_confirmed, class_cancelled, etc.
   title: string;
   body: string;
   relatedClassId?: string;
 }
+
+/** The teacher variant accepts only `TeacherNotificationType`, so a teacher
+ *  notification cannot be created until `TEACHER_EMAIL_POLICY` classifies it
+ *  (`notification-policy.ts`). */
+export type CreateNotificationInput =
+  | (NotificationFields & { recipientType: 'teacher'; type: TeacherNotificationType })
+  | (NotificationFields & { recipientType: 'student'; type: NotificationType });
 
 // ---------------------------------------------------------------------------
 // Core operations
