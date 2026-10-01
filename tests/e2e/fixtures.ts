@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, type BrowserContext } from '@playwright/test';
 
 /**
  * The e2e `test`, extended with browser-side log capture. Import `test` and
@@ -33,16 +33,23 @@ import { test as base, expect } from '@playwright/test';
  */
 const MAX_LINES = 500;
 
+/**
+ * Whether this Chromium fires `beforeinstallprompt` is not ours to pin: when
+ * it does, the install card and row would appear on some runs. A capture
+ * listener registered before any spec's own code runs stops the page's own
+ * listener from ever seeing the event. Context-level because an init script
+ * applies to every page the context opens, not just the one it was armed on.
+ */
+export async function suppressInstallPromptOn(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    window.addEventListener('beforeinstallprompt', (event) => event.stopImmediatePropagation(), { capture: true });
+  });
+}
+
 export const test = base.extend<{ browserLogs: void; suppressInstallPrompt: void }>({
-  // Whether this Chromium fires `beforeinstallprompt` is not ours to pin:
-  // when it does, the install card and row would appear on some runs. A
-  // capture listener registered before any spec's own code runs stops the
-  // page's own listener from ever seeing the event.
   suppressInstallPrompt: [
     async ({ page }, use) => {
-      await page.addInitScript(() => {
-        window.addEventListener('beforeinstallprompt', (event) => event.stopImmediatePropagation(), { capture: true });
-      });
+      await suppressInstallPromptOn(page.context());
       await use();
     },
     { auto: true },

@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, suppressInstallPromptOn } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs/promises';
 import { accountIdOfStudent, accountIdOfTeacher } from './account-helpers';
@@ -153,6 +153,7 @@ test.describe('Account — GDPR export and deletion', () => {
     await privacySaved;
 
     const teacherContext = await browser.newContext({ baseURL });
+    await suppressInstallPromptOn(teacherContext);
     try {
       await teacherContext.addCookies([sessionCookie(teacherSessionToken)]);
       const teacherPage = await teacherContext.newPage();

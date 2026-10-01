@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { test, expect, suppressInstallPromptOn } from './fixtures';
 import { PrismaClient, type MagicLinkPurpose } from '@prisma/client';
 import crypto from 'crypto';
 import { uniqueSuffix, hashToken } from '../helpers';
@@ -188,6 +188,7 @@ test.describe('Magic link device handoff', () => {
     const nonceOther = crypto.randomBytes(16).toString('hex');
     const tokenOther = await createBoundToken(teacherEmail, nonceOther);
     const strangerContext = await browser.newContext();
+    await suppressInstallPromptOn(strangerContext);
     const strangerPage = await strangerContext.newPage();
     await strangerPage.goto(`/verify?token=${tokenOther}`);
 
@@ -221,10 +222,12 @@ test.describe('Magic link device handoff', () => {
     });
 
     const requesterContext = await browser.newContext();
+    await suppressInstallPromptOn(requesterContext);
     await asOriginBrowser(requesterContext, nonce);
     const requesterPage = await requesterContext.newPage();
 
     const strangerContext = await browser.newContext();
+    await suppressInstallPromptOn(strangerContext);
     const strangerPage = await strangerContext.newPage();
     await strangerPage.goto(`/verify?token=${token}`);
     await expect(
@@ -300,6 +303,7 @@ test.describe('Magic link device handoff', () => {
     const nonce = await readOriginNonceCookie(page.context());
 
     const strangerContext = await browser.newContext();
+    await suppressInstallPromptOn(strangerContext);
     const strangerPage = await strangerContext.newPage();
     const token = await createBoundToken(newStudentEmail, nonce, {
       redirectTo: classPath,
@@ -333,6 +337,7 @@ test.describe('Magic link device handoff', () => {
     const token = await createBoundToken(teacherEmail, nonce);
 
     const scannerContext = await browser.newContext();
+    await suppressInstallPromptOn(scannerContext);
     const scannerPage = await scannerContext.newPage();
     await scannerPage.goto(`/verify?token=${token}`);
     await expect(
