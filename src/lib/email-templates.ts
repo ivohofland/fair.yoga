@@ -65,6 +65,7 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   announcement: 'A message from your teacher.',
   teacher_invitation: 'A teacher would like to connect with you.',
   walk_in_added: 'Your teacher added you to a class.',
+  class_reminder: 'Your class is coming up.',
 };
 
 const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
@@ -73,6 +74,7 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
   payment_received: 'A payment was received.',
   payment_request: 'A class has been priced.',
   reminder: 'A gentle reminder.',
+  class_reminder: 'You have a class coming up.',
 };
 
 /**
@@ -96,11 +98,13 @@ const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; pa
   waitlist_promoted: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
   spot_available: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
   walk_in_added: { label: 'Sign in', path: '/login' },
+  class_reminder: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
 };
 
 /** The teacher reader's counterpart to `STUDENT_ACTION_LINKS` (#172). */
 const TEACHER_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
   teacher_invitation: { label: TEACHER_INVITATION_LABEL, path: TEACHER_INVITATION_PATH },
+  class_reminder: { label: 'Open your schedule', path: '/schedule' },
 };
 
 export interface NotificationEmailInput {

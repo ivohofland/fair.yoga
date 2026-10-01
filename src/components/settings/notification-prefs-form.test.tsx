@@ -7,6 +7,8 @@ const DEFAULTS: TeacherNotificationPrefs = {
   bookingNotifications: 'inbox_and_email',
   emailOnClassCompleted: true,
   emailOnInvitation: true,
+  classReminder: 'evening_before',
+  classReminderChannel: 'inbox',
 };
 
 describe('NotificationPrefsForm', () => {
@@ -26,7 +28,7 @@ describe('NotificationPrefsForm', () => {
   }
 
   it('renders the stored values', () => {
-    render(<NotificationPrefsForm teacherId="t1" initial={{ bookingNotifications: 'inbox_only', emailOnClassCompleted: false, emailOnInvitation: true }} />);
+    render(<NotificationPrefsForm teacherId="t1" initial={{ ...DEFAULTS, bookingNotifications: 'inbox_only', emailOnClassCompleted: false, emailOnInvitation: true }} />);
     const group = screen.getByRole('group', { name: /new booking/i });
     expect(group).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'In the inbox only' })).toBeChecked();
@@ -38,7 +40,7 @@ describe('NotificationPrefsForm', () => {
     expect(within(other).getByRole('checkbox', { name: /invitation/i })).toBeInTheDocument();
   });
 
-  it('sends exactly the three preference keys to the teacher route, each at a non-default value', async () => {
+  it('sends exactly the five preference keys to the teacher route, each at a non-default value', async () => {
     stubFetch();
     render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} />);
     fireEvent.click(screen.getByRole('radio', { name: 'Off' }));
@@ -47,7 +49,13 @@ describe('NotificationPrefsForm', () => {
     const { url, method, body } = await save();
     expect(url).toBe('/api/teachers/t1');
     expect(method).toBe('PUT');
-    expect(body).toEqual({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
+    expect(body).toEqual({
+      bookingNotifications: 'off',
+      emailOnClassCompleted: false,
+      emailOnInvitation: false,
+      classReminder: 'evening_before',
+      classReminderChannel: 'inbox',
+    });
   });
 
   it('clears the saved notice when edited after a save', async () => {

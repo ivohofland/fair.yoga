@@ -13,7 +13,6 @@ const initial = {
   pageSlug: 'anna',
   defaultCurrency: 'EUR',
   defaultTimezone: 'Europe/Amsterdam',
-  defaultReminder: 'morning_of',
   bankIban: null,
   bankAccountName: null,
 };

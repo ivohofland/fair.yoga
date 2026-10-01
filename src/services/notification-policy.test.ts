@@ -123,11 +123,15 @@ const ALL_ON: TeacherNotificationPrefs = {
   bookingNotifications: 'inbox_and_email',
   emailOnClassCompleted: true,
   emailOnInvitation: true,
+  classReminder: 'morning_of',
+  classReminderChannel: 'inbox_and_email',
 };
 const ALL_OFF: TeacherNotificationPrefs = {
   bookingNotifications: 'off',
   emailOnClassCompleted: false,
   emailOnInvitation: false,
+  classReminder: 'off',
+  classReminderChannel: 'inbox',
 };
 
 describe('shouldEmailTeacher', () => {
@@ -152,6 +156,11 @@ describe('shouldEmailTeacher', () => {
     expect(shouldEmailTeacher('payment_request', { ...ALL_OFF, emailOnClassCompleted: true })).toBe(true);
   });
 
+  it('never emails a class reminder through the fallback, whatever the preferences (#721)', () => {
+    expect(shouldEmailTeacher('class_reminder', ALL_ON)).toBe(false);
+    expect(shouldEmailTeacher('class_reminder', ALL_OFF)).toBe(false);
+  });
+
   it('teacher_invitation follows emailOnInvitation only', () => {
     expect(shouldEmailTeacher('teacher_invitation', { ...ALL_ON, emailOnInvitation: false })).toBe(false);
     expect(shouldEmailTeacher('teacher_invitation', { ...ALL_OFF, emailOnInvitation: true })).toBe(true);
@@ -160,7 +169,7 @@ describe('shouldEmailTeacher', () => {
 
 describe('isTeacherNotificationType', () => {
   it('accepts every type a teacher can receive', () => {
-    for (const t of ['booking_confirmed', 'class_cancelled', 'payment_request', 'teacher_invitation'] as const) {
+    for (const t of ['booking_confirmed', 'class_cancelled', 'payment_request', 'teacher_invitation', 'class_reminder'] as const) {
       expect(isTeacherNotificationType(t)).toBe(true);
     }
   });

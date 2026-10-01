@@ -34,4 +34,5 @@ export const NOTIFICATION_RETENTION_DAYS = {
   announcement: STANDARD_RETENTION_DAYS,
   teacher_invitation: STANDARD_RETENTION_DAYS,
   walk_in_added: STANDARD_RETENTION_DAYS,
+  class_reminder: STANDARD_RETENTION_DAYS,
 } as const satisfies Record<NotificationType, RetentionDays>;

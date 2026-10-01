@@ -198,7 +198,14 @@ export async function processEmailFallback(
       // has already shipped too many of.
       const teacher = await db.teacher.findUnique({
         where: { id: notification.recipientId },
-        select: { email: true, bookingNotifications: true, emailOnClassCompleted: true, emailOnInvitation: true },
+        select: {
+          email: true,
+          bookingNotifications: true,
+          emailOnClassCompleted: true,
+          emailOnInvitation: true,
+          classReminder: true,
+          classReminderChannel: true,
+        },
       });
       email = teacher?.email ?? null;
       if (teacher) {

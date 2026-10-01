@@ -22,7 +22,6 @@ export interface ProfileFormValues {
   pageSlug: string;
   defaultCurrency: string;
   defaultTimezone: string;
-  defaultReminder: string;
   bankIban: string | null;
   bankAccountName: string | null;
 }
@@ -62,12 +61,6 @@ const CURRENCY_OPTIONS = [
   { value: 'CZK', label: 'CZK (Kč)' },
   { value: 'CAD', label: 'CAD ($)' },
   { value: 'AUD', label: 'AUD ($)' },
-];
-
-const REMINDER_OPTIONS = [
-  { value: 'morning_of', label: 'Morning of class' },
-  { value: 'evening_before', label: 'Evening before' },
-  { value: 'one_hour_before', label: '1 hour before' },
 ];
 
 export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: ProfileFormProps) {
@@ -110,7 +103,6 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         pageSlug: form.pageSlug.trim(),
         defaultCurrency: form.defaultCurrency,
         defaultTimezone: form.defaultTimezone,
-        defaultReminder: form.defaultReminder,
         bankIban: form.bankIban?.trim() || null,
         bankAccountName: form.bankAccountName?.trim() || null,
       };
@@ -209,16 +201,6 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </optgroup>
-          ))}
-        </Select>
-        <Select
-          id="reminder"
-          label="Default reminder"
-          value={form.defaultReminder}
-          onChange={(e) => update('defaultReminder', e.target.value)}
-        >
-          {REMINDER_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </Select>
       </section>

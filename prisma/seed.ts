@@ -169,7 +169,7 @@ async function main() {
       pageSlug: 'ivo',
       defaultCurrency: 'EUR',
       defaultTimezone: 'Europe/Amsterdam',
-      defaultReminder: 'morning_of',
+      classReminder: 'morning_of',
       paymentLevel: 'LEVEL_1',
       bankIban: 'NL91ABNA0417164300',
       bankAccountName: 'I. Hofland',
@@ -186,7 +186,7 @@ async function main() {
       pageSlug: 'sarah',
       defaultCurrency: 'GBP',
       defaultTimezone: 'Europe/London',
-      defaultReminder: 'evening_before',
+      classReminder: 'evening_before',
       paymentLevel: 'LEVEL_1',
       bankIban: 'GB29NWBK60161331926819',
       bankAccountName: 'S. Mitchell',
@@ -214,7 +214,7 @@ async function main() {
       pageSlug: 'maya',
       defaultCurrency: 'USD',
       defaultTimezone: 'America/Los_Angeles',
-      defaultReminder: 'evening_before',
+      classReminder: 'evening_before',
       paymentLevel: 'LEVEL_1',
       // Null rather than a fabricated IBAN: she is in the US, and `bankIban`
       // is nullable precisely because not every teacher has one.
@@ -234,14 +234,14 @@ async function main() {
       email: 'anna@example.com',
       incomeTier: 1,
       phone: '+31612345001',
-      reminderPref: 'morning',
+      classReminder: 'morning_of',
     },
     {
       firstName: 'Ben',
       lastName: 'Bakker',
       email: 'ben@example.com',
       incomeTier: 1,
-      reminderPref: 'eve',
+      classReminder: 'evening_before',
     },
     // Tier 2
     {
@@ -251,14 +251,14 @@ async function main() {
       incomeTier: 2,
       phone: '+31612345003',
       birthday: new Date('1990-06-15'),
-      reminderPref: 'morning',
+      classReminder: 'morning_of',
     },
     {
       firstName: 'David',
       lastName: 'Smit',
       email: 'david@example.com',
       incomeTier: 2,
-      reminderPref: 'one_hour',
+      classReminder: 'one_hour_before',
     },
     // Tier 3
     {
@@ -268,7 +268,7 @@ async function main() {
       incomeTier: 3,
       phone: '+31612345005',
       address: 'Prinsengracht 100, 1015 DV Amsterdam',
-      reminderPref: 'morning',
+      classReminder: 'morning_of',
     },
     {
       firstName: 'Finn',
@@ -276,7 +276,7 @@ async function main() {
       email: 'finn@example.com',
       incomeTier: 3,
       birthday: new Date('1985-11-22'),
-      reminderPref: 'off',
+      classReminder: 'off',
     },
     // Tier 4
     {
@@ -287,14 +287,14 @@ async function main() {
       phone: '+31612345007',
       address: 'Keizersgracht 200, 1016 DZ Amsterdam',
       birthday: new Date('1988-03-10'),
-      reminderPref: 'morning',
+      classReminder: 'morning_of',
     },
     {
       firstName: 'Hugo',
       lastName: 'Visser',
       email: 'hugo@example.com',
       incomeTier: 4,
-      reminderPref: 'eve',
+      classReminder: 'evening_before',
     },
     // Tier 5
     {
@@ -305,14 +305,14 @@ async function main() {
       phone: '+31612345009',
       address: 'Herengracht 300, 1016 CG Amsterdam',
       birthday: new Date('1992-08-05'),
-      reminderPref: 'morning',
+      classReminder: 'morning_of',
     },
     {
       firstName: 'Jan',
       lastName: 'de Groot',
       email: 'jan@example.com',
       incomeTier: 5,
-      reminderPref: 'morning',
+      classReminder: 'morning_of',
     },
   ];
 

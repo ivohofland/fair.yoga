@@ -40,38 +40,38 @@ describe('NotificationsForm', () => {
     };
   }
 
-  it('sends exactly emailNotifications and reminderPref', async () => {
+  it('sends exactly emailNotifications and classReminder', async () => {
     stubFetch();
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} reminderPref="morning" />,
+      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" />,
     );
     const { url, method, body } = await save();
     expect(url).toBe('/api/students/student-1');
     expect(method).toBe('PUT');
-    expect(Object.keys(body).sort()).toEqual(['emailNotifications', 'reminderPref']);
-    expect(body).toEqual({ emailNotifications: true, reminderPref: 'morning' });
+    expect(Object.keys(body).sort()).toEqual(['classReminder', 'emailNotifications']);
+    expect(body).toEqual({ emailNotifications: true, classReminder: 'morning_of' });
   });
 
   it('sends a toggled and reselected value, not just the initial ones', async () => {
     stubFetch();
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} reminderPref="morning" />,
+      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" />,
     );
     fireEvent.click(screen.getByLabelText(/email me when I miss/i));
     fireEvent.change(screen.getByLabelText('Class reminder'), { target: { value: 'off' } });
     const { body } = await save();
-    expect(body).toEqual({ emailNotifications: false, reminderPref: 'off' });
+    expect(body).toEqual({ emailNotifications: false, classReminder: 'off' });
   });
 
   it('renders all four reminder options, in order, from the extracted array', () => {
     stubFetch();
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} reminderPref="morning" />,
+      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" />,
     );
     expect(screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)).toEqual([
-      'eve',
-      'morning',
-      'one_hour',
+      'evening_before',
+      'morning_of',
+      'one_hour_before',
       'off',
     ]);
     expect(screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).textContent)).toEqual([
@@ -87,7 +87,7 @@ describe('NotificationsForm', () => {
     fetchMock.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} reminderPref="morning" />,
+      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /save notifications/i }));
@@ -107,7 +107,7 @@ describe('NotificationsForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} reminderPref="morning" />,
+      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /save notifications/i }));

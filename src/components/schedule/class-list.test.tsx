@@ -120,6 +120,7 @@ function classRow(
     totalStudents: null,
     totalRevenue: null,
     spotBroadcastAt: null,
+    teacherReminderSentAt: null,
     createdAt: AT,
     updatedAt: AT,
     _count: { registrations: payments?.length ?? 0 },

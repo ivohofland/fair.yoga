@@ -250,7 +250,8 @@
         <div class="section-label">Defaults</div>
         <div class="field"><span class="field-name">default_currency</span><span class="field-type">string, default 'EUR'</span></div>
         <div class="field"><span class="field-name">default_timezone</span><span class="field-type">string, e.g. 'Europe/Amsterdam'</span></div>
-        <div class="field"><span class="field-name">default_reminder</span><span class="field-type">enum: morning_of, evening_before, 1h_before</span></div>
+        <div class="field"><span class="field-name">class_reminder</span><span class="field-type">enum: evening_before, morning_of, one_hour_before, off</span></div>
+        <div class="field"><span class="field-name">class_reminder_channel</span><span class="field-type">enum: inbox, email, inbox_and_email</span></div>
         <div class="section-label">Notifications</div>
         <div class="field"><span class="field-name">booking_notifications</span><span class="field-type">enum: inbox_and_email, inbox_only, off, default inbox_and_email</span></div>
         <div class="field"><span class="field-name">email_on_class_completed</span><span class="field-type">boolean, default true</span></div>
@@ -279,7 +280,8 @@
         <div class="field"><span class="field-name">birthday</span><span class="field-type">date, nullable</span></div>
         <div class="field"><span class="field-name">address</span><span class="field-type">string, nullable</span></div>
         <div class="section-label">Preferences</div>
-        <div class="field"><span class="field-name">reminder_pref</span><span class="field-type">enum: eve, morning, 1h, off</span></div>
+        <div class="field"><span class="field-name">class_reminder</span><span class="field-type">enum: evening_before, morning_of, one_hour_before, off</span></div>
+        <div class="field"><span class="field-name">class_reminder_channel</span><span class="field-type">enum: inbox, email, inbox_and_email</span></div>
         <div class="field"><span class="field-name">email_notifications</span><span class="field-type">boolean, default true</span></div>
         <div class="section-label">Timestamps</div>
         <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>

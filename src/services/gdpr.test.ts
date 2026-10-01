@@ -282,6 +282,15 @@ let studentAccountId: string;
     await prisma.$disconnect();
   });
 
+  it('exports the student’s class reminder choice as stored (#721)', async () => {
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { classReminder: 'evening_before', classReminderChannel: 'inbox' },
+    });
+    const exported = await exportStudentData(prisma, studentId);
+    expect(exported.profile).toMatchObject({ classReminder: 'evening_before', classReminderChannel: 'inbox' });
+  });
+
   it('export contains profile, bookings, and payment state', async () => {
     const data = await exportStudentData(prisma, studentId);
     expect(data.profile.email).toContain('gdpr-student');
@@ -3251,6 +3260,16 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     const teacherId = await makeTeacher();
     const exported = await exportTeacherData(prisma, teacherId);
     expect(exported.profile.photo).toBeNull();
+  });
+
+  it('exports the teacher’s class reminder choice as stored (#721)', async () => {
+    const teacherId = await makeTeacher();
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { classReminder: 'one_hour_before', classReminderChannel: 'email' },
+    });
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.profile).toMatchObject({ classReminder: 'one_hour_before', classReminderChannel: 'email' });
   });
 
   it('exports the teacher’s notification preferences as stored', async () => {
