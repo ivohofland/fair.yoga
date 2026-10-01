@@ -38,7 +38,7 @@ Agreed at the brainstorming gate:
 | New booking | `booking_confirmed` | **Inbox and email** / **Inbox only** / **Off** | Inbox and email |
 | Class completed | `payment_request` | email on/off (always in the inbox) | on |
 | Invitation from another teacher | `teacher_invitation` | email on/off (always in the inbox) | on |
-| Class auto-cancelled | `class_cancelled` | none; always emailed | — |
+| Class auto-cancelled | `class_cancelled` | none; emailed if missed | — |
 
 - **Auto-cancel is essential.** The system cancelled the teacher's class without the teacher acting. Missing that email means turning up to a class that isn't running.
 - **Only the new-booking notification can be switched off entirely.** It is the highest-volume type, and it is the only one that adds nothing the teacher cannot see elsewhere: the booking is on the schedule's class card, in both the registration bar and the registrant list. The completion summary is one per class and is the teacher's record that payment requests went out. The inbox entry is how the teacher reaches an invitation.
@@ -143,7 +143,7 @@ The plan mutation-tests the tether against a realistic regression: a new teacher
 - **New booking:** a `<fieldset>` with a `<legend>` and three native radio inputs (`accent-teal`, minimum height 48px per row). Labels: "In the inbox, and emailed if I miss it" / "In the inbox only" / "Off". A caption under the group: "Bookings always show on your schedule — this only changes whether you're told about each one." The repo has no radio component yet. This page uses native inputs styled like the student checkbox, and does not add a component used in one place only.
 - **Class completed:** checkbox, "Email me when I miss a class-completed summary".
 - **Invitation from another teacher:** checkbox, "Email me when I miss an invitation".
-- **Class auto-cancelled:** text, no control. "Always emailed — so you know the class won't run."
+- **Class auto-cancelled:** text, no control. "Always emailed if you miss it — so you know the class won't run."
 - **Copy and layout:** Georgia headings and system-sans body, following `docs/design-brief.md`. No hover motion, and danger colour is used for errors only.
 
 **Information architecture:** `docs/information-architecture.md`'s Settings tree already lists "Notifications → Per-event email on/off toggles". That line is updated to describe the shipped controls. The tree's other missing entries (Reporting, Recurring, Studio) are not this issue's to fix.
@@ -162,7 +162,7 @@ Test-first throughout. Each guard named here gets a mutation step in the plan: b
 ## 9. Docs updated in the same branch
 
 - `docs/data-model.md`: the Teacher table gains the three columns. The paragraph beginning "The teacher branch consults no email preference" becomes false and is **replaced** with what is true now, including where the policy lives.
-- `CLAUDE.md` (Communication, layer 3): states that teachers choose email per optional event, and that auto-cancel always emails.
+- `CLAUDE.md` (Communication, layer 3): states that teachers choose email per optional event, and that an auto-cancel is emailed if missed, whatever the settings.
 - `docs/teacher-screens.md` 9.4: describes the shipped screen.
 - `docs/information-architecture.md`: the Settings → Notifications line.
 - **Not edited:** `2026-07-21-notification-delivery-policy-design.md` ("no teacher-facing knobs") and the dispatch-cap spec §10. These are records of past decisions, not live documentation.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { NotificationPrefsForm } from './notification-prefs-form';
 import type { TeacherNotificationPrefs } from '@/services/notification-policy';
 
@@ -32,7 +32,10 @@ describe('NotificationPrefsForm', () => {
     expect(screen.getByRole('radio', { name: 'In the inbox only' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /class-completed summary/i })).not.toBeChecked();
     expect(screen.getByRole('checkbox', { name: /invitation/i })).toBeChecked();
-    expect(screen.getByText(/always emailed/i)).toBeInTheDocument();
+    expect(screen.getByText(/always emailed if you miss it/i)).toBeInTheDocument();
+    const other = screen.getByRole('group', { name: /other emails/i });
+    expect(within(other).getByRole('checkbox', { name: /class-completed summary/i })).toBeInTheDocument();
+    expect(within(other).getByRole('checkbox', { name: /invitation/i })).toBeInTheDocument();
   });
 
   it('sends exactly the three preference keys to the teacher route', async () => {

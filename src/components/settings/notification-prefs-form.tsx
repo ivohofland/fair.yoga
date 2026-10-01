@@ -100,7 +100,8 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
         </p>
       </fieldset>
 
-      <section>
+      <fieldset>
+        <legend className="type-subtitle">Other emails</legend>
         <label className="flex items-center gap-3 min-h-12">
           <input
             type="checkbox"
@@ -119,12 +120,12 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
           />
           <span className="type-body">Email me when I miss an invitation</span>
         </label>
-      </section>
+      </fieldset>
 
       <section>
         <h2 className="type-subtitle">Class auto-cancelled</h2>
         <p className="type-caption mt-1 max-w-[420px]">
-          Always emailed — so you know the class won&apos;t run.
+          Always emailed if you miss it — so you know the class won&apos;t run.
         </p>
       </section>
 
