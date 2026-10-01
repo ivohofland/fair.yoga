@@ -1785,12 +1785,13 @@ releasing the holder:
 
 `lockAnnouncementSlot` (`src/services/announcements.ts`) is the first and so far only
 advisory lock in this project. It takes
-`pg_advisory_xact_lock(196, hash32("<teacherId>|<classId ?? ''>|<message>"))`
-— note the empty middle segment for an all-students send — the
+`pg_advisory_xact_lock(196, hash32("<teacherId>|<message>"))` — the
 two-int form, first argument a constant namespace — as the **first statement**
 of the transaction in `sendAnnouncement` (`src/services/announcements.ts`), so that two
-identical sends cannot both read an empty duplicate check and both fan out one
-`Notification` per recipient.
+sends of the same text from one teacher cannot both read an empty duplicate check and both fan out one
+`Notification` per recipient. The key names the same two columns the transaction's
+`findMany` dedupe compare filters on, and no class: dedupe is per recipient, so a
+class-scoped and an all-students send of one text contend for the same lock.
 
 It is not a row of any table, so nothing about the canonical line applies to it
 directly. What does apply:

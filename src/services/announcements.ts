@@ -2,7 +2,8 @@
  * Announcement Service — Manages announcement dispatch and deduplication.
  *
  * Announcements broadcast messages from a teacher to their students (either scoped
- * to a specific class, or to all active students of that teacher).
+ * to a specific class, or to all active students of that teacher). Dedupe is per
+ * recipient, keyed on `(teacherId, message)` within `ANNOUNCEMENT_DEDUPE_WINDOW_MS`.
  *
  * Business logic lives here per CLAUDE.md:
  * - Pure functions with typed inputs and typed outputs.
@@ -65,8 +66,8 @@ function hash32(value: string): number {
 }
 
 /**
- * Serialises concurrent sends of one `(teacher, class, message)` for the rest
- * of the calling transaction.
+ * Serialises concurrent sends of one `(teacher, message)` for the rest of the
+ * calling transaction.
  *
  * `pg_advisory_xact_lock`, never `pg_advisory_lock`: the transaction-scoped
  * variant releases on commit or rollback however the transaction ends, while
@@ -108,9 +109,10 @@ function hash32(value: string): number {
  * hands back had to change.
  *
  * `slot` is the tuple, not a pre-composed key, and that is the point of the
- * signature. The caller's dedupe compare is a `findFirst` on exactly these
- * three columns, so the key and that predicate have to describe the same
- * thing — and when the caller composed the key itself, nothing said so.
+ * signature. The caller's dedupe compare is a `findMany` on exactly these
+ * two columns, `(teacherId, message)`, so the key and that predicate have to
+ * describe the same thing — and when the caller composed the key itself,
+ * nothing said so.
  * Changing the composition without changing the predicate would have given
  * two identical sends two DIFFERENT locks: neither waits, each reads an empty
  * compare, and both fan out — the exact failure this lock exists to prevent,
@@ -131,9 +133,9 @@ function hash32(value: string): number {
  */
 async function lockAnnouncementSlot(
   tx: TransactionClientOnly,
-  slot: { teacherId: string; classId: string | null; message: string },
+  slot: { teacherId: string; message: string },
 ): Promise<void> {
-  const key = `${slot.teacherId}|${slot.classId ?? ''}|${slot.message}`;
+  const key = `${slot.teacherId}|${slot.message}`;
   await tx.$queryRaw`
     SELECT 1 AS locked
     FROM (
@@ -150,16 +152,44 @@ export type SendAnnouncementInput = {
 
 export type SendAnnouncementResult = {
   announcement: Announcement;
+  /** True only when every requested recipient was already told. */
   deduped: boolean;
+  /** How many of the requested recipients were already told. */
+  alreadyNotified: number;
 };
+
+/**
+ * Student ids of the all-students audience: everyone with a live registration
+ * in one of this teacher's classes, minus students this teacher has archived.
+ * Before the opt-out subtraction, which belongs to the caller that knows
+ * whether it is listing for a picker (muted students stay visible there).
+ */
+export async function listAnnouncementAudience(
+  db: PrismaClient,
+  teacherId: string,
+): Promise<string[]> {
+  const registrations = await db.registration.findMany({
+    where: {
+      class: { calendarEntry: { teacherId } },
+      status: { not: 'cancelled' },
+      student: { teacherStudents: { none: { teacherId, isArchived: true } } },
+    },
+    select: { studentId: true },
+    distinct: ['studentId'],
+  });
+  return registrations.map((r) => r.studentId);
+}
 
 /**
  * Sends an announcement to students, wrapped in an interactive transaction that
  * serialises concurrent sends using a transaction-scoped advisory lock.
  *
- * If a matching announcement for the same `(teacherId, classId, message)` was
- * already sent within `ANNOUNCEMENT_DEDUPE_WINDOW_MS`, duplicate creation is
- * suppressed and the existing recent record is returned with `deduped: true`.
+ * Dedupe is per recipient, keyed on `(teacherId, message)`: a student named in
+ * an announcement with the same text sent within `ANNOUNCEMENT_DEDUPE_WINDOW_MS`
+ * is not notified again, whatever class that earlier send was scoped to. Only
+ * the students not yet told get a notification, and the new `Announcement`
+ * records exactly them. When nobody is left to tell, the latest recent record
+ * is returned with `deduped: true` and nothing is written.
  */
 export async function sendAnnouncement(
   db: PrismaClient,
@@ -178,54 +208,52 @@ export async function sendAnnouncement(
 
   const result = await db.$transaction(async (tx) => {
     // First statement in the transaction, so the compare below and both writes
-    // after it are serialised against an identical concurrent send. Without
-    // it, two racers each read an empty `findFirst` — neither has committed
-    // anything the other can see — and both fan out.
+    // after it are serialised against a concurrent send of the same text.
+    // Without it, two racers each read an empty `findMany` — neither has
+    // committed anything the other can see — and both fan out.
     //
-    // The three fields go in as a tuple and the key is composed inside
-    // `lockAnnouncementSlot`, deliberately: they are the same three the
-    // `findFirst` below compares, and a key composed here could drift from
+    // The two fields go in as a tuple and the key is composed inside
+    // `lockAnnouncementSlot`, deliberately: they are the same two the
+    // `findMany` below compares, and a key composed here could drift from
     // that predicate without anything failing.
-    await lockAnnouncementSlot(tx, {
-      teacherId,
-      classId,
-      message,
-    });
+    await lockAnnouncementSlot(tx, { teacherId, message });
 
-    const recent = await tx.announcement.findFirst({
+    const recent = await tx.announcement.findMany({
       where: {
         teacherId,
-        // `classId` is nullable (the all-students case) and a Prisma `where`
-        // given `undefined` OMITS the clause rather than matching `NULL` —
-        // which would make an all-students send match every announcement this
-        // teacher ever sent. `sendAnnouncement` is safe because
-        // `SendAnnouncementInput.classId` is typed `string | null`, so the
-        // route's `body.classId ?? null` coercion travels all the way down as
-        // `null`, and `WHERE "classId" IS NULL` is queried.
-        classId,
         message,
         // `sentAt`, not `createdAt` — this model has no `createdAt`.
         sentAt: { gte: new Date(Date.now() - ANNOUNCEMENT_DEDUPE_WINDOW_MS) },
       },
       orderBy: { sentAt: 'desc' },
     });
-    if (recent) return { announcement: recent, deduped: true };
+    const told = new Set(recent.flatMap((a) => a.audienceStudentIds));
+
+    const wanted = [...new Map(recipients.map((r) => [r.recipientId, r])).values()];
+    const fresh = wanted.filter((r) => !told.has(r.recipientId));
+    const alreadyNotified = wanted.length - fresh.length;
+
+    const latest = recent[0];
+    if (fresh.length === 0 && latest) {
+      return { announcement: latest, deduped: true, alreadyNotified };
+    }
 
     // Below the compare, because this is the write that reaches people: one
-    // `Notification` per recipient. It emits on the SSE bus per input inside
-    // the call, so a rollback here leaves bus events already emitted — that is
-    // pre-existing shape, accepted in the spec, and the reason this
-    // transaction is kept to two statements.
-    const count = await createBulkNotifications(tx, recipients);
+    // `Notification` per recipient not yet told. It emits on the SSE bus per
+    // input inside the call, so a rollback here leaves bus events already
+    // emitted — that is pre-existing shape, accepted in the spec, and the
+    // reason this transaction is kept to two statements.
+    const count = await createBulkNotifications(tx, fresh);
     const created = await tx.announcement.create({
       data: {
         teacherId,
         classId,
         message,
         recipientCount: count,
+        audienceStudentIds: fresh.map((r) => r.recipientId).sort(),
       },
     });
-    return { announcement: created, deduped: false };
+    return { announcement: created, deduped: false, alreadyNotified };
   });
 
   // Outcome only, after the transaction committed — a rolled-back send logged

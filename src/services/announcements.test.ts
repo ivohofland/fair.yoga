@@ -9,11 +9,25 @@ import type { CreateNotificationInput } from './notifications';
 const prisma = new PrismaClient();
 const suffix = `announce-svc-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
+function to(
+  studentIds: string[],
+  message: string,
+  classId: string | null,
+): CreateNotificationInput[] {
+  return studentIds.map((recipientId) => ({
+    recipientType: 'student',
+    recipientId,
+    type: 'announcement',
+    title: 'New announcement',
+    body: message,
+    ...(classId ? { relatedClassId: classId } : {}),
+  }));
+}
+
 describe('Announcement Service', () => {
   let teacherId: string;
   let otherTeacherId: string;
   let class1Id: string;
-  let class2Id: string;
   let student1Id: string;
   let student2Id: string;
 
@@ -76,22 +90,6 @@ describe('Announcement Service', () => {
       status: 'open',
     });
     class1Id = cls1.id;
-
-    const cls2 = await createClassFixture(prisma, {
-      teacherId,
-      teacherRoomId: teacherRoom.id,
-      classType: 'Hatha',
-      date,
-      startTime: hhmmToTime('12:00'),
-      durationMinutes: 60,
-      roomCost: 30,
-      minRate: 15,
-      targetRate: 25,
-      minStudents: 2,
-      maxStudents: 10,
-      status: 'open',
-    });
-    class2Id = cls2.id;
 
     const s1 = await prisma.student.create({
       data: {
@@ -251,66 +249,51 @@ describe('Announcement Service', () => {
     expect(other.announcement.id).not.toBe(first.announcement.id);
   });
 
-  it('does not deduplicate when classId differs', async () => {
-    const message = `Class diff test ${suffix}`;
-    const recipients: CreateNotificationInput[] = [
-      {
-        recipientType: 'student',
-        recipientId: student1Id,
-        type: 'announcement',
-        title: 'New announcement',
-        body: message,
-        relatedClassId: class1Id,
-      },
-    ];
-
+  it('a superset resend notifies only the students not yet told', async () => {
+    const message = `Superset ${suffix}`;
     const first = await sendAnnouncement(prisma, {
-      teacherId,
-      classId: class1Id,
-      message,
-      recipients,
+      teacherId, classId: null, message, recipients: to([student1Id], message, null),
     });
     expect(first.deduped).toBe(false);
 
     const second = await sendAnnouncement(prisma, {
-      teacherId,
-      classId: class2Id,
-      message,
-      recipients,
+      teacherId, classId: null, message, recipients: to([student1Id, student2Id], message, null),
     });
     expect(second.deduped).toBe(false);
-    expect(second.announcement.id).not.toBe(first.announcement.id);
+    expect(second.alreadyNotified).toBe(1);
+    expect(second.announcement.recipientCount).toBe(1);
+    expect(second.announcement.audienceStudentIds).toEqual([student2Id]);
+
+    const rows = await prisma.notification.findMany({ where: { type: 'announcement', body: message } });
+    expect(rows.map((r) => r.recipientId).sort()).toEqual([student1Id, student2Id].sort());
   });
 
-  it('does not let an all-students announcement (classId null) dedupe against a class-scoped one', async () => {
-    const message = `Null class diff test ${suffix}`;
-    const recipients: CreateNotificationInput[] = [
-      {
-        recipientType: 'student',
-        recipientId: student1Id,
-        type: 'announcement',
-        title: 'New announcement',
-        body: message,
-        relatedClassId: class1Id,
-      },
-    ];
+  it('an identical resend tells nobody new and reports deduped', async () => {
+    const message = `Identical ${suffix}`;
+    await sendAnnouncement(prisma, { teacherId, classId: null, message, recipients: to([student1Id, student2Id], message, null) });
+    const again = await sendAnnouncement(prisma, { teacherId, classId: null, message, recipients: to([student1Id], message, null) });
+    expect(again.deduped).toBe(true);
+    expect(again.alreadyNotified).toBe(1);
+    const rows = await prisma.notification.findMany({ where: { type: 'announcement', body: message } });
+    expect(rows).toHaveLength(2);
+  });
 
-    const classScoped = await sendAnnouncement(prisma, {
-      teacherId,
-      classId: class1Id,
-      message,
-      recipients,
-    });
-    expect(classScoped.deduped).toBe(false);
+  it('a class send then an all-students send does not tell the registrants twice', async () => {
+    const message = `Class then all ${suffix}`;
+    await sendAnnouncement(prisma, { teacherId, classId: class1Id, message, recipients: to([student1Id], message, class1Id) });
+    const all = await sendAnnouncement(prisma, { teacherId, classId: null, message, recipients: to([student1Id, student2Id], message, null) });
+    expect(all.alreadyNotified).toBe(1);
+    const rows = await prisma.notification.findMany({ where: { type: 'announcement', body: message, recipientId: student1Id } });
+    expect(rows).toHaveLength(1);
+  });
 
-    const allStudents = await sendAnnouncement(prisma, {
-      teacherId,
-      classId: null,
-      message,
-      recipients,
+  it('lists one student once when recipients repeats them', async () => {
+    const message = `Repeated ${suffix}`;
+    const r = await sendAnnouncement(prisma, {
+      teacherId, classId: null, message, recipients: to([student1Id, student1Id], message, null),
     });
-    expect(allStudents.deduped).toBe(false);
-    expect(allStudents.announcement.id).not.toBe(classScoped.announcement.id);
+    expect(r.announcement.recipientCount).toBe(1);
+    expect(r.announcement.audienceStudentIds).toEqual([student1Id]);
   });
 
   it('deduplicates a second identical all-students send (both classId null)', async () => {
@@ -333,9 +316,6 @@ describe('Announcement Service', () => {
     });
     expect(first.deduped).toBe(false);
 
-    // The positive case for the `classId IS NULL` predicate: the findFirst on
-    // a null `classId` must find the earlier all-students send, not only the
-    // class-scoped ones.
     const second = await sendAnnouncement(prisma, {
       teacherId,
       classId: null,
@@ -433,7 +413,7 @@ describe('Announcement Service', () => {
     ];
 
     // Compute the exact 32-bit hash for the slot tuple
-    const key = `${teacherId}|${class1Id}|${message}`;
+    const key = `${teacherId}|${message}`;
     const hash = crypto.createHash('sha256').update(key).digest().readInt32BE(0);
 
     let release!: () => void;
@@ -497,17 +477,16 @@ describe('Announcement Service', () => {
         relatedClassId: class1Id,
       },
     ];
-    // Each neighbour shares two of the held slot's three fields. A key
+    // Each neighbour shares one of the held slot's two fields. A key
     // composition that dropped a field would put a neighbour on the held key,
     // and its send would park below instead of passing.
     const held: SendAnnouncementInput = { teacherId, classId: class1Id, message, recipients };
     const neighbours: SendAnnouncementInput[] = [
       { teacherId: otherTeacherId, classId: class1Id, message, recipients },
-      { teacherId, classId: null, message, recipients },
       { teacherId, classId: class1Id, message: `Key neighbour test ${suffix} two`, recipients },
     ];
 
-    const key = `${held.teacherId}|${held.classId}|${held.message}`;
+    const key = `${held.teacherId}|${held.message}`;
     const hash = crypto.createHash('sha256').update(key).digest().readInt32BE(0);
 
     let release!: () => void;
