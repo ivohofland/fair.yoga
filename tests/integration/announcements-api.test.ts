@@ -337,7 +337,8 @@ describe('POST /api/announcements', () => {
       // not happen. `recipientCount` on a suppressed answer is the number of
       // requested students who already had it.
       expect(data.duplicateSuppressed).toBe(true);
-      expect(data.recipientCount).toBeGreaterThan(0);
+      expect(data.recipientCount).toBe(1); // S1, the class's one reachable registrant
+      expect(data.alreadyNotified).toBe(1);
     });
 
     it('sends a genuinely later identical announcement', async () => {
@@ -369,6 +370,20 @@ describe('POST /api/announcements', () => {
       const rows = await announcementNotifications({ body: message });
       expect(rows.map((r) => r.recipientId).sort()).toEqual([s1Id, s4Id].sort());
       expect(await prisma.announcement.count({ where: { teacherId, message } })).toBe(2);
+    });
+
+    it("does not re-notify an all-students send's students on a same-message class send", async () => {
+      const message = `Reverse cross-scope dedupe ${suffix}`;
+      expect((await sendAnnouncement({ message })).status).toBe(201);
+      // S1 is class 1's one reachable registrant and was told above, so the
+      // class send has nobody new to tell.
+      const second = await sendAnnouncement({ classId: class1Id, message });
+      const s1Rows = await announcementNotifications({ body: message, recipientId: s1Id });
+      expect(s1Rows).toHaveLength(1);
+      expect(s1Rows[0]!.relatedClassId).toBeNull();
+      expect(second.status).toBe(200);
+      expect((await second.json()).data.alreadyNotified).toBe(1);
+      expect(await prisma.announcement.count({ where: { teacherId, message } })).toBe(1);
     });
 
     /**
@@ -694,8 +709,35 @@ describe('POST /api/announcements', () => {
     });
 
     it('collapses duplicate ids in the list to one notification', async () => {
-      await sendAnnouncement({ studentIds: [s1Id, s1Id], message: 'Custom H' });
+      const res = await sendAnnouncement({ studentIds: [s1Id, s1Id], message: 'Custom H' });
       expect(await announcementNotifications({ body: 'Custom H' })).toHaveLength(1);
+      const { data } = await res.json();
+      expect(data.recipientCount).toBe(1);
+      const stored = await prisma.announcement.findUniqueOrThrow({ where: { id: data.id } });
+      expect(stored.audienceStudentIds).toEqual([s1Id]);
+    });
+
+    it('stores the audience sorted, whatever order the list came in', async () => {
+      const descending = [s1Id, s4Id].sort().reverse();
+      const res = await sendAnnouncement({ studentIds: descending, message: 'Custom H2' });
+      const { data } = await res.json();
+      const stored = await prisma.announcement.findUniqueOrThrow({ where: { id: data.id } });
+      expect(stored.audienceStudentIds).toEqual([...descending].reverse());
+    });
+
+    it('drops a contact who is linked but never booked, 400 when nothing remains', async () => {
+      const res = await sendAnnouncement({ studentIds: [linkedOnlyId], message: 'Custom J' });
+      expect(res.status).toBe(400);
+      expect(await prisma.announcement.count({ where: { teacherId, message: 'Custom J' } })).toBe(0);
+    });
+
+    it('drops a cancelled-only student and tells the rest', async () => {
+      const res = await sendAnnouncement({ studentIds: [s1Id, s3Id], message: 'Custom K' });
+      expect(res.status).toBe(201);
+      expect((await res.json()).data.recipientCount).toBe(1);
+      const rows = await announcementNotifications({ body: 'Custom K' });
+      expect(rows.map((r) => r.recipientId)).toEqual([s1Id]);
+      expect(await prisma.notification.count({ where: { recipientId: s3Id, body: 'Custom K' } })).toBe(0);
     });
 
     it('a suppressed answer counts the requested students already told, not the latest row', async () => {
@@ -729,10 +771,57 @@ describe('POST /api/announcements', () => {
       expect(ids).not.toContain(linkedOnlyId);
     });
 
+    it('answers each student as exactly an id and a name', async () => {
+      const students = (await (await getAudience()).json()).data.students as Record<string, unknown>[];
+      expect(students.length).toBeGreaterThan(0);
+      for (const s of students) expect(Object.keys(s).sort()).toEqual(['displayName', 'id']);
+    });
+
+    describe('order', () => {
+      // Inserted in the reverse of their name order, so an answer in
+      // insertion order fails.
+      let zedId: string;
+      let abeId: string;
+
+      beforeAll(async () => {
+        for (const name of ['Zed', 'Abe']) {
+          const s = await prisma.student.create({
+            data: {
+              firstName: name,
+              lastName: 'Order',
+              email: `announce-order-${name.toLowerCase()}-${suffix}@test.local`,
+              incomeTier: 3,
+            },
+          });
+          await prisma.registration.create({
+            data: { classId: class2Id, studentId: s.id, status: 'registered', tierAtBooking: 3 },
+          });
+          if (name === 'Zed') zedId = s.id;
+          else abeId = s.id;
+        }
+      });
+
+      afterAll(async () => {
+        const ids = [zedId, abeId].filter(Boolean);
+        if (ids.length) await prisma.student.deleteMany({ where: { id: { in: ids } } });
+      });
+
+      it('sorts by the name shown', async () => {
+        const students = (await (await getAudience()).json()).data.students as {
+          id: string;
+          displayName: string;
+        }[];
+        const names = students.map((s) => s.displayName);
+        expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+        const ids = students.map((s) => s.id);
+        expect(ids.indexOf(abeId)).toBeLessThan(ids.indexOf(zedId));
+      });
+    });
+
     it('shows first name plus initial unless the student shares their full name', async () => {
       const res = await getAudience();
       const s1 = (await res.json()).data.students.find((s: { id: string }) => s.id === s1Id);
-      expect(s1.displayName).not.toContain('Student'); // surname withheld by default
+      expect(s1.displayName).toBe('Dedup s.'); // surname withheld by default
 
       await prisma.studentPrivacy.create({
         data: { studentId: s4Id, teacherId, shareFullName: true },
