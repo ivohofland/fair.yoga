@@ -16,6 +16,7 @@ import { readGenerationCandidates } from './class-generator';
 import { readStudioGenerationCandidates } from './studio-class-generator';
 import { getUnreadForEmailFallback } from './notifications';
 import { readDuePayments, REMIND_EVERY_DAYS } from './payment-reminders';
+import { processClassReminders } from './class-reminders';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   CEILING_ROWS,
@@ -683,4 +684,46 @@ describe('readDuePayments', () => {
     expect(ids.has(recentId)).toBe(false);
     await expectLowered(low);
   });
+});
+
+describe('processClassReminders', () => {
+  let low: PrismaClient;
+  let teachers: SeededTeachers | undefined;
+  // Every row is stored on tomorrow and has no registration, and no teacher
+  // reminder is due by `now`: the read is all this exercises.
+  const { tomorrow, justAfterMidnight: now } = todayUtc();
+  let classIds: string[] = [];
+
+  beforeAll(async () => {
+    low = await lowStackClient();
+    teachers = await seedTeachers(prisma, 11, 'ceiling-class-reminders');
+    ({ classIds } = await seedClasses(prisma, teachers, {
+      rows: CEILING_ROWS,
+      dates: [tomorrow],
+      status: 'open',
+      minStudents: 0,
+      maxStudents: 10,
+    }));
+  }, 60_000);
+
+  afterAll(async () => {
+    await teachers?.cleanup();
+    await low?.$disconnect();
+  });
+
+  it('reads CEILING_ROWS in-window open classes under the lowered stack', async () => {
+    if (!teachers) throw new Error('seed failed');
+    const recorded = recordClassReads(low);
+    const scoped = scopeSweep(recorded.client, {
+      Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
+    });
+    await expect(processClassReminders(scoped.db, now)).resolves.toEqual({
+      studentReminders: 0,
+      teacherReminders: 0,
+      emailFailures: 0,
+    });
+    expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
+    expectReadExactlyOnce(recorded.ids, classIds);
+    await expectLowered(scoped.db);
+  }, 60_000);
 });

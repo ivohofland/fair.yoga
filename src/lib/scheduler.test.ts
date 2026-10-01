@@ -32,6 +32,7 @@ const SWEEP_NAMES = [
   'runStudioClassGenerationTick',
   'processEmailFallback',
   'processPaymentReminders',
+  'processClassReminders',
   'cleanupExpiredAuth',
   'runWaitlistReconciliationTick',
   'reapClosedWaitlistEntries',
@@ -130,6 +131,7 @@ describe('buildJobs', () => {
       ['email-fallback', 5 * MINUTE],
       ['class-generation', 60 * MINUTE],
       ['payment-reminders', 60 * MINUTE],
+      ['class-reminders', 5 * MINUTE],
       ['daily-cleanup', 24 * 60 * MINUTE],
       ['waitlist-reconciliation', 1 * MINUTE],
     ]);
@@ -167,6 +169,7 @@ describe('buildJobs', () => {
       'email-fallback': ['processEmailFallback'],
       'class-generation': ['runClassGenerationTick', 'runStudioClassGenerationTick'],
       'payment-reminders': ['processPaymentReminders'],
+      'class-reminders': ['processClassReminders'],
       // The ORDER here is pinned without being load-bearing. `isolatedSweeps`
       // order is meaningful for `class-transitions` — a class must transition
       // to in-progress before it can be completed — and this assertion is a

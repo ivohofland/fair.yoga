@@ -14,6 +14,7 @@
 // `include` and `unit`'s `exclude`, so the two cannot drift apart.
 export const SWEEP_TESTS = [
   'src/lib/auth/magic-link.test.ts',
+  'src/services/class-reminders.test.ts',
   'src/services/class-transitions.test.ts',
   'src/services/waitlist-reconciliation.test.ts',
   'src/services/waitlist-retention.test.ts',
