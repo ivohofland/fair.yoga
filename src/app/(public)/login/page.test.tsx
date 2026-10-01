@@ -139,6 +139,15 @@ describe('LoginPage', () => {
     expect(body).not.toHaveProperty('redirect');
   });
 
+  it('reveals the handoff code entry without sending a link first', () => {
+    render(<LoginPage />);
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enter it' }));
+
+    expect(screen.getByLabelText('Code')).toBeInTheDocument();
+  });
+
   it('renders fallback when search params suspend', () => {
     suspendSearchParams = true;
     const { container } = render(<LoginPage />);

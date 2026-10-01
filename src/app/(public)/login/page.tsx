@@ -18,6 +18,7 @@ function LoginForm() {
 
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [showCode, setShowCode] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -88,8 +89,22 @@ function LoginForm() {
             <PasskeySignIn redirect={redirect} />
           </div>
 
+          {/* A link opened in another browser shows a code. This reaches the
+              field even when this page was reloaded in the meantime, as an
+              installed app can be while the person is in Mail. */}
+          {showCode ? (
+            <HandoffCodeEntry />
+          ) : (
+            <p className="mt-6 type-caption">
+              Have a code from the email link?{' '}
+              <button type="button" className="text-teal rounded-field focus:outline-none focus-visible:shadow-focus" onClick={() => setShowCode(true)}>
+                Enter it
+              </button>
+            </p>
+          )}
+
           {/* For anyone who bookmarked /login before they had an account. */}
-          <p className="mt-6 type-caption">
+          <p className="mt-2 type-caption">
             New here?{' '}
             <Link href="/signup" className="text-teal">
               Start teaching on fair.yoga
