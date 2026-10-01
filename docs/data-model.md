@@ -794,12 +794,15 @@ Three-layer delivery: in-app notification (real-time) → in-app inbox (retained
 |---|---|---|
 | **id** (PK) | uuid | |
 | *teacher_id* (FK) | → Teacher | |
-| *class_id* (FK) | → Class, nullable | Null = broadcast to all teacher's students |
+| *class_id* (FK) | → Class, nullable | Set = class registrants. Null does not name the audience alone: with `audience_student_ids` empty it is the teacher-wide broadcast, otherwise a custom selection |
 | message | text | |
 | recipient_count | int | Snapshot of how many received it |
 | sent_at | datetime | |
+| audience_student_ids | text[], default {} | Students actually notified by this send (sorted). What per-recipient dedupe reads; removed on student erasure |
 
 When sent, creates one Notification per recipient student. Class-scoped (specific class registrants) or teacher-wide (all students, skipping any student this teacher has archived — TeacherStudent).
+
+A custom audience is a selection from the all-students audience, never wider.
 
 ---
 
