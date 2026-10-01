@@ -124,7 +124,8 @@ describe('the student reminder claim takes Class before Registration', () => {
     const holder = new PrismaClient();
     const held = latch(); const release = latch();
     let holderPid = 0;
-    // What an erasure holds before it updates the class's registrations.
+    // The class held `FOR UPDATE`, as `docs/lock-order.md` records the
+    // erasures holding it before they update its registrations.
     const holding = holder.$transaction(async (tx) => {
       holderPid = await ownPid(tx);
       await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${f.classId} FOR UPDATE`;
@@ -143,8 +144,8 @@ describe('the student reminder claim takes Class before Registration', () => {
       void running.catch(() => undefined);
 
       expect(await waiterOf(holderPid, () => settled)).not.toBeNull(); // the claim is parked on the class
-      // Parked before its registration update: an erasure holding the class
-      // can still take the registration, so the two cannot form a cycle.
+      // Parked before its registration update: a writer holding the class can
+      // still take the registration, so the two cannot form a cycle.
       expect(await probeRegistration(f.registrationId)).toBe('free');
 
       release.open();

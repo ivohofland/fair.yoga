@@ -566,7 +566,8 @@ model Class {
   /// the fill, so the null check does not.
   spotBroadcastAt DateTime?
 
-  /// Set once when the teacher's class reminder for this class is sent.
+  /// Set once when the teacher's class reminder for this class is claimed,
+  /// before it is delivered; a failed email leaves it set.
   teacherReminderSentAt DateTime?
 
   calendarEntry   CalendarEntry   @relation(fields: [calendarEntryId, kind, entryLive], references: [id, kind, live], onDelete: Cascade)
@@ -1025,8 +1026,8 @@ model Registration {
   tierRatio           Decimal?           @db.Decimal(5, 4)
   registeredAt        DateTime           @default(now())
   cancelledAt         DateTime?
-  /// Set once when this booking's class reminder is sent; cleared when the row
-  /// is reactivated as a new booking.
+  /// Set once when this booking's class reminder is claimed, before it is
+  /// delivered; a failed email leaves it set.
   classReminderSentAt DateTime?
   updatedAt           DateTime           @updatedAt
 

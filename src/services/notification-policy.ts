@@ -91,6 +91,10 @@ export type TeacherNotificationType =
   | 'teacher_invitation'
   | 'class_reminder';
 
+/**
+ * The teacher's notification settings. `TEACHER_EMAIL_POLICY` reads only those
+ * that govern a fallback email; the class-reminder settings govern none.
+ */
 export interface TeacherNotificationPrefs {
   bookingNotifications: TeacherBookingNotifications;
   emailOnClassCompleted: boolean;

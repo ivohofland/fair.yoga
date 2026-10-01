@@ -31,7 +31,8 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | **Defaults** | | |
 | default_currency | string, default 'EUR' | |
 | default_timezone | string | IANA identifier, e.g. 'Europe/Amsterdam'; V8's old spellings are stored renamed — see Design Notes |
-| class_reminder | enum: evening_before, morning_of, one_hour_before, off, default morning_of | When the teacher is reminded of each class they teach |
+| **Notifications** | | |
+| class_reminder | enum: evening_before, morning_of, one_hour_before, off, default morning_of | When the teacher is reminded of each regular class they teach (studio classes get none) |
 | class_reminder_channel | enum: inbox, email, inbox_and_email, default inbox_and_email | How that reminder arrives |
 | booking_notifications | enum: inbox_and_email, inbox_only, off, default inbox_and_email | New-booking notification: inbox and fallback email, inbox only, or none |
 | email_on_class_completed | boolean, default true | Fallback email for the class-completed summary |
@@ -292,7 +293,7 @@ The fact that tells the two apart is read off the roster link's own write, not f
 
 An account holding both LIVE profiles therefore always takes the student branch — the `Student` lookup runs first and does not consult the teacher side at all. An account holding a LIVE teacher beside an ERASED student takes the teacher branch instead: erasure tombstones `Student.email` (see `deleteStudentAccount`, `services/gdpr.ts`), so the lookup above misses and falls through.
 
-**The teacher branch reads the teacher's own email preferences, never the student's.** `processEmailFallback` (`src/services/email-fallback.ts`) selects the teacher's `TeacherNotificationPrefs` columns (`src/services/notification-policy.ts`) for a teacher recipient — the class-reminder members are there because the type requires them, and the fallback never consults them, since its policy answers `false` for `class_reminder` — and decides through `shouldEmailTeacher` (`src/services/notification-policy.ts`), at sweep time, so a preference changed after a row was created applies to that row. The policy table is keyed by `TeacherNotificationType`, which the teacher variant of `CreateNotificationInput` enforces at creation. `class_cancelled` (an auto-cancel) ignores every preference. A teacher row whose type is outside `TeacherNotificationType` was written around the type: directly, or by a cast, mutation or `Object.assign` that defeats it; it is emailed rather than dropped, and logged at `error`. `Student.emailNotifications` is the student arm's alone: an account holding both profiles is governed by each profile's own setting for the notifications addressed to it. `Teacher.classReminder` is the teacher's own class-reminder timing, sent directly rather than as a fallback, and `StudentPrivacy.receiveComms` is student-side per-teacher announcement muting; neither is an email preference.
+**The teacher branch reads the teacher's own email preferences, never the student's.** `processEmailFallback` (`src/services/email-fallback.ts`) selects the teacher's `TeacherNotificationPrefs` columns (`src/services/notification-policy.ts`) for a teacher recipient — the class-reminder members are there because `shouldEmailTeacher` takes the whole `TeacherNotificationPrefs`; no fallback policy arm reads them — and decides through `shouldEmailTeacher` (`src/services/notification-policy.ts`), at sweep time, so a preference changed after a row was created applies to that row. The policy table is keyed by `TeacherNotificationType`, which the teacher variant of `CreateNotificationInput` enforces at creation. `class_cancelled` (an auto-cancel) ignores every preference. A teacher row whose type is outside `TeacherNotificationType` was written around the type: directly, or by a cast, mutation or `Object.assign` that defeats it; it is emailed rather than dropped, and logged at `error`. `Student.emailNotifications` is the student arm's alone: an account holding both profiles is governed by each profile's own setting for the notifications addressed to it. `Teacher.classReminder` and `classReminderChannel` decide when and how the teacher's class reminder is sent, and that email is sent by the class-reminder sweep, never by this fallback. `StudentPrivacy.receiveComms` is student-side per-teacher announcement muting and is not an email preference.
 
 `teacher_invitation` stays out of `ESSENTIAL_NOTIFICATION_TYPES` (`src/services/notification-policy.ts`), which is what lets a *student* invitee opt out of its email; a teacher invitee's email is governed by `Teacher.emailOnInvitation`, and the one-notification cap above bounds how many such notifications a single invitation can produce.
 
@@ -579,7 +580,7 @@ child, and the reverse does not.
 | status | enum | draft → open → in_progress → completed. `full` is derived, not stored; cancellation is the entry's `cancelled_at`, not a member |
 | settings_locked | boolean | Flips to true on first registration |
 | spot_broadcast_at | datetime, nullable | When the first-come-first-claimed broadcast last went out for the seat that is currently free (#220) |
-| teacher_reminder_sent_at | datetime, nullable | Set when the teacher's reminder for this class is sent |
+| teacher_reminder_sent_at | datetime, nullable | Set when the teacher's reminder for this class is claimed, before it is delivered; a failed email leaves it set (at most once) |
 | **Calculated** | | Populated after class ends |
 | effective_teacher_rate | decimal, nullable | What the teacher actually earned per student |
 | total_students | int, nullable | Final attendance count |
@@ -626,9 +627,9 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | price | decimal, nullable | Actual amount this student pays |
 | tier_ratio | decimal, nullable | Multiplier applied to this tier |
 | **Timestamps** | | |
-| registered_at | datetime | |
+| registered_at | datetime | When the current booking was made. Reset when an earlier booking's row is reused for a new booking, so a rebooked student sorts as booked then |
 | cancelled_at | datetime, nullable | |
-| class_reminder_sent_at | datetime, nullable | Set when this booking's reminder is sent; cleared on reactivation |
+| class_reminder_sent_at | datetime, nullable | Set when this booking's reminder is claimed, before it is delivered; a failed email leaves it set (at most once). Cleared when an earlier booking's row is reused for a new booking |
 | updated_at | datetime | |
 
 **A booking that meets its student's erasure at the `Student` row is refused
@@ -780,7 +781,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | body | text | |
 | *related_class_id* (FK) | → Class, nullable | |
 | is_read | boolean, default false | |
-| email_sent | boolean, default false | True once no fallback email may be sent for this row: set when the fallback claims the row (cleared again if its send fails), and written true at creation for every `class_reminder` row, whose email (if its channel has one) the class-reminder sweep sends directly |
+| email_sent | boolean, default false | True once no fallback email may be sent for this row: set by the fallback when it claims the row for a send (cleared again if the send fails) or marks it without sending (an opted-out or missing recipient, or a dry run), and written true at creation for every `class_reminder` row, whose email (if its channel has one) the class-reminder sweep sends directly |
 | created_at | datetime | |
 | updated_at | datetime | |
 
