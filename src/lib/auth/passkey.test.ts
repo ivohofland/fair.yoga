@@ -374,7 +374,7 @@ const FORGED_CHALLENGE = 'the-issued-challenge';
 
 // What the responses below are built for; each describe stubs
 // `NEXT_PUBLIC_APP_URL` and `PASSKEY_RP_ID` to the same origin and RP ID.
-const FORGED ={ challenge: FORGED_CHALLENGE, origin: FORGED_ORIGIN, rpId: FORGED_RP_ID };
+const FORGED = { challenge: FORGED_CHALLENGE, origin: FORGED_ORIGIN, rpId: FORGED_RP_ID };
 
 describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
   beforeEach(() => {
