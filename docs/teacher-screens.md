@@ -36,6 +36,7 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 - Profile is the bio specifically: the one genuinely optional part of setup. A skipped row can still be completed later from the same link
 - Once every row is done or skipped, the checklist is replaced by a one-time completion card: share the booking page, then Dismiss
 - Share is a completion card, not a fifth row — nothing in the schema records that a page was shared, so there is no state for a row to show or return to
+- Above the checklist, on a phone that can install the app, a one-time install card (Show me how / Install, Dismiss). It does not wait for the checklist, and retires on Dismiss, on Done, on an accepted install, or when the Schedule opens in the installed app
 - *Leads to:* 2.1 Room Creation (row 3), 3.1 Class Creation (row 4), 4.3 Class Share (the completion card's Share action)
 
 ---

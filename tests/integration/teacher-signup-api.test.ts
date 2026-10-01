@@ -896,6 +896,27 @@ describe('POST /api/account/onboarding', () => {
     expect(teacher?.skippedOnboarding).not.toContain('share');
   });
 
+  /**
+   * `install` (#723) dismisses the install card, which shows whatever the
+   * checklist's state, so its dismissal carries no settlement gate. The
+   * fixture is still unsettled here (empty bio, no room, no class).
+   */
+  it('records install while the checklist is still unsettled', async () => {
+    const res = await fetch(`${BASE_URL}/api/account/onboarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(onboardingToken), ...freshIp() },
+      body: JSON.stringify({ step: 'install' }),
+    });
+    expect(res.status).toBe(200);
+
+    const teacher = await prisma.teacher.findUnique({
+      where: { id: onboardingTeacherId },
+      select: { skippedOnboarding: true },
+    });
+    expect(teacher?.skippedOnboarding).toContain('install');
+    expect(teacher?.skippedOnboarding).not.toContain('share');
+  });
+
   it('accepts step: share once every other step is settled', async () => {
     let accountId: string | undefined;
     let roomId: string | undefined;

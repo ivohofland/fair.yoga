@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
+import { InstallCard } from '@/components/schedule/install-card';
 import { Avatar } from '@/components/ui/avatar';
 import { isOnboardingComplete } from '@/lib/onboarding';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
@@ -94,6 +95,8 @@ export default async function SchedulePage() {
           + Add class
         </Link>
       </div>
+
+      <InstallCard dismissed={teacher.skippedOnboarding.includes('install')} />
 
       {!isOnboardingComplete(onboardingInput) && (
         <GettingStarted {...onboardingInput} pageSlug={teacher.pageSlug} />
