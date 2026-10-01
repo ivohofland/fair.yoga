@@ -110,7 +110,7 @@ describe('AudiencePicker', () => {
       const onChange = vi.fn();
       render(<AudiencePicker selected={[]} onChange={onChange} />);
       fireEvent.click(await screen.findByText('Select all'));
-      const ids = onChange.mock.calls[0][0] as string[];
+      const ids = onChange.mock.calls[0]?.[0] as string[];
       expect(ids).toHaveLength(MAX_CUSTOM_AUDIENCE);
       expect(ids[0]).toBe('id-0');
       expect(ids[MAX_CUSTOM_AUDIENCE - 1]).toBe(`id-${MAX_CUSTOM_AUDIENCE - 1}`);

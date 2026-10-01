@@ -144,6 +144,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
           <label className="flex items-center gap-3 min-h-12 type-body">
             <input
               type="radio"
+              className="h-5 w-5 accent-teal"
               name="announcement-audience"
               checked={audience === 'all'}
               onChange={() => setAudience('all')}
@@ -153,6 +154,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
           <label className="flex items-center gap-3 min-h-12 type-body">
             <input
               type="radio"
+              className="h-5 w-5 accent-teal"
               name="announcement-audience"
               checked={audience === 'chosen'}
               onChange={() => setAudience('chosen')}
