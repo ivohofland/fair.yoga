@@ -95,6 +95,16 @@ describe('NotificationsForm', () => {
     expect(screen.getByLabelText('How')).toHaveValue('email');
   });
 
+  it('starts from the stored values: Off shows Off with How disabled, and saves Off (#721)', async () => {
+    stubFetch();
+    render(<NotificationsForm studentId="student-1" emailNotifications={true} classReminder="off" classReminderChannel="email" />);
+    expect(screen.getByLabelText('When')).toHaveValue('off');
+    expect(screen.getByLabelText('How')).toHaveValue('email');
+    expect(screen.getByLabelText('How')).toBeDisabled();
+    const { body } = await save();
+    expect(body).toEqual({ emailNotifications: true, classReminder: 'off', classReminderChannel: 'email' });
+  });
+
   it('logs the failure and tells the student when fetch itself fails', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockRejectedValue(new Error('offline'));
