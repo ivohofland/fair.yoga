@@ -12,6 +12,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import * as timezone from '@/lib/timezone';
 import * as emailTemplates from '@/lib/email-templates';
+import { STUDENT_BOOKINGS_PATH } from '@/lib/notification-links';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 
@@ -34,9 +35,17 @@ function sendsTo(email: string): number {
   return sendMock.mock.calls.filter(([args]) => args.to === email).length;
 }
 
+/** The one email sent to `email`, as handed to Resend. */
+function mailTo(email: string): { subject: string; html: string } {
+  const calls = sendMock.mock.calls.filter(([args]) => args.to === email);
+  expect(calls).toHaveLength(1);
+  return calls[0]![0] as { subject: string; html: string };
+}
+
 const START = new Date('2099-06-10T18:00:00Z');
 const MORNING = new Date('2099-06-10T07:00:00Z');
 const MINUTE = 60 * 1000;
+const { CLASS_REMINDER_EMAIL_FOOTER } = emailTemplates;
 
 describe('reminderCandidateDates', () => {
   it('spans two UTC days back to three forward, at midnight', () => {
@@ -103,7 +112,7 @@ describe('processClassReminders (DB)', () => {
       classReminderChannel: ReminderChannel;
       defaultTimezone: string;
     }> = {},
-    classOverrides: Partial<{ status: ClassStatus; cancelledAt: Date }> = {},
+    classOverrides: Partial<{ status: ClassStatus; cancelledAt: Date; startTime: string }> = {},
   ): Promise<Fixture> {
     const k = n++;
     const teacherEmail = `classrem-teacher-${uniqueSuffix}-${k}@test.local`;
@@ -142,7 +151,7 @@ describe('processClassReminders (DB)', () => {
       teacherRoomId: teacherRoom.id,
       classType: 'Flow',
       date: new Date('2099-06-10'),
-      startTime: hhmmToTime('18:00'),
+      startTime: hhmmToTime(classOverrides.startTime ?? '18:00'),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
@@ -247,7 +256,13 @@ describe('processClassReminders (DB)', () => {
     expect(rows[0]!.emailSent).toBe(true);
     expect(rows[0]!.relatedClassId).toBe(f.classId);
     expect(rows[0]!.title).toBe('Class reminder');
-    expect(sendsTo(student.email)).toBe(1);
+    expect(rows[0]!.body).toBe('Your Flow on Wednesday, 10 Jun at 18:00 with Remy.');
+    const mail = mailTo(student.email);
+    expect(mail.subject).toBe('Class reminder');
+    expect(mail.html).toContain('Your Flow on Wednesday, 10 Jun at 18:00 with Remy.');
+    expect(mail.html).toContain(CLASS_REMINDER_EMAIL_FOOTER);
+    expect(mail.html).toContain(`${STUDENT_BOOKINGS_PATH}"`);
+    expect(mail.html).not.toContain('/schedule"');
     expect(await stampOf(registration.id)).toEqual(MORNING);
   });
 
@@ -452,16 +467,25 @@ describe('processClassReminders (DB)', () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
     await book(f, { classReminder: 'off' });
     await book(f, { classReminder: 'off' });
+    // Neither counts as registered.
+    await book(f, { classReminder: 'off' }, { status: 'cancelled' });
+    await book(f, { classReminder: 'off' }, { status: 'late_cancel' });
+    expect(await prisma.registration.count({ where: { classId: f.classId } })).toBe(4);
 
     const first = await run(f, MORNING);
 
     expect(first.teacherReminders).toBe(1);
     const rows = await teacherRows(f.teacherId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.body).toContain('2 registered');
+    expect(rows[0]!.body).toBe('Flow on Wednesday, 10 Jun at 18:00 — 2 registered so far.');
     expect(rows[0]!.emailSent).toBe(true);
     expect(rows[0]!.relatedClassId).toBe(f.classId);
-    expect(sendsTo(f.teacherEmail)).toBe(1);
+    const mail = mailTo(f.teacherEmail);
+    expect(mail.subject).toBe('Class reminder');
+    expect(mail.html).toContain('Flow on Wednesday, 10 Jun at 18:00 — 2 registered so far.');
+    expect(mail.html).toContain(CLASS_REMINDER_EMAIL_FOOTER);
+    expect(mail.html).toContain('/schedule"');
+    expect(mail.html).not.toContain(`${STUDENT_BOOKINGS_PATH}"`);
     const cls = await prisma.class.findUniqueOrThrow({ where: { id: f.classId } });
     expect(cls.teacherReminderSentAt).toEqual(MORNING);
 
@@ -501,6 +525,21 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(f.teacherEmail)).toBe(1);
     expect(await teacherRows(f.teacherId)).toHaveLength(1);
     expect(outer.teacherReminders).toBe(0);
+  });
+
+  // 13c
+  it('skips the teacher of a class created after their moment, and still reminds its students', async () => {
+    const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox' });
+    await prisma.class.update({ where: { id: f.classId }, data: { createdAt: new Date(MORNING.getTime() + MINUTE) } });
+    const { student, registration } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox' });
+
+    const result = await run(f, new Date(MORNING.getTime() + 10 * MINUTE));
+
+    expect(result).toEqual({ studentReminders: 1, teacherReminders: 0, emailFailures: 0 });
+    expect(await stampOf(registration.id)).toEqual(new Date(MORNING.getTime() + 10 * MINUTE));
+    expect(await studentRows(student.id)).toHaveLength(1);
+    expect(await teacherRows(f.teacherId)).toHaveLength(0);
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: f.classId } })).teacherReminderSentAt).toBeNull();
   });
 
   // 14
@@ -777,8 +816,29 @@ describe('processClassReminders (DB)', () => {
     const result = await run(f, new Date('2099-06-10T21:00:00Z'));
 
     expect(result).toEqual({ studentReminders: 1, teacherReminders: 1, emailFailures: 0 });
-    expect(await studentRows(student.id)).toHaveLength(1);
+    const rows = await studentRows(student.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.body).toBe('Your Flow on Wednesday, 10 Jun at 18:00 with Remy.');
     expect(await teacherRows(f.teacherId)).toHaveLength(1);
+    // The teacher chose the inbox: no email, though the reminder went out.
+    expect(sendsTo(f.teacherEmail)).toBe(0);
+  });
+
+  // 22c
+  it("names the class's local day when its start falls on the next UTC day (America/New_York)", async () => {
+    // 21:00 EDT on 10 June is 01:00Z on 11 June; one hour before is 00:00Z.
+    const f = await seed(
+      { defaultTimezone: 'America/New_York', classReminder: 'off' },
+      { startTime: '21:00' },
+    );
+    const { student } = await book(f, { classReminder: 'one_hour_before', classReminderChannel: 'inbox' });
+
+    const result = await run(f, new Date('2099-06-11T00:00:00Z'));
+
+    expect(result.studentReminders).toBe(1);
+    const rows = await studentRows(student.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.body).toBe('Your Flow on Wednesday, 10 Jun at 21:00 with Remy.');
   });
 
   // 23
