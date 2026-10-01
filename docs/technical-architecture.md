@@ -661,6 +661,34 @@ which this codebase neither requests nor stores; `transports` is the only proxy
 (a row without `'internal'`). The decision rests on inference about
 authenticator behaviour, not measurement.
 
+### Passkey user verification
+
+Both ceremonies ask the authenticator for user verification (`'required'`) and
+both verifiers require it, derived from one declaration in
+`src/lib/auth/passkey.ts` (`USER_VERIFICATION`) so the request and the check
+cannot disagree (#732). A passkey is therefore two-factor: the device, plus the
+PIN or biometric that unlocks it.
+
+The options used to ask for `'preferred'` while the verifiers, by
+`@simplewebauthn/server`'s default, required verification anyway. An
+authenticator that honours "preferred" by skipping it — a roaming security key
+with no PIN set — completed the browser ceremony and was then refused by the
+server, behind generic copy. With `'required'` the browser stops that key up
+front, where its own UI can say why (Chrome typically offers to set a PIN).
+
+Nobody who could use a passkey before is affected: the server already demanded
+verification, so every stored credential was registered with it and every
+successful sign-in supplied it.
+
+Rejected:
+
+- **Accept possession alone** (`requireUserVerification: false`). A PIN-less
+  key would work, but a stolen key would become a full sign-in for any
+  authenticator that skips verification — a looser posture for everyone, to
+  rescue a population that has the magic link to fall back on.
+- **Split by ceremony** (presence for registration, verification for sign-in).
+  A key registered without verification could then never sign in.
+
 ### Passkey challenge store
 
 `src/lib/auth/passkey.ts` keeps WebAuthn challenges in memory, one bounded

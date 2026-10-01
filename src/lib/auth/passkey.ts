@@ -14,6 +14,7 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
+  UserVerificationRequirement,
 } from '@simplewebauthn/types';
 import { log } from '@/lib/log';
 
@@ -280,6 +281,19 @@ function isKnownTransport(value: unknown): value is AuthenticatorTransportFuture
 }
 
 // ---------------------------------------------------------------------------
+// User verification
+// ---------------------------------------------------------------------------
+
+/**
+ * What both ceremonies ask the authenticator for, and — through
+ * `requireUserVerification` below — what both verifiers then demand. One
+ * declaration so the request and the check cannot disagree. See
+ * docs/technical-architecture.md ("Passkey user verification") for why it is
+ * `'required'`.
+ */
+const USER_VERIFICATION: UserVerificationRequirement = 'required';
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -300,7 +314,7 @@ export async function generatePasskeyRegistrationOptions(params: {
     excludeCredentials: (existingCredentialIds ?? []).map((id) => ({ id })),
     authenticatorSelection: {
       residentKey: 'preferred',
-      userVerification: 'preferred',
+      userVerification: USER_VERIFICATION,
     },
   });
 
@@ -326,16 +340,10 @@ export async function generatePasskeyRegistrationOptions(params: {
  *
  * The catch does not branch on what was thrown: every refusal gets one
  * `warn`, never `error`, and the warn's `errorName` is what separates a
- * library-named error (`UnexpectedRPIDHash`) from a plain `Error`. Causes
- * other than a hostile response are refused the same way:
- * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails with a plain
- *   `Error`, and `reason` names the origin this function expected;
- * - the user-verification mismatch: `generatePasskeyRegistrationOptions`
- *   asks for `userVerification: 'preferred'`, but this function does not
- *   pass `requireUserVerification`, so the library's own default of `true`
- *   still demands it — refusing an authenticator that honours "preferred" by
- *   skipping UV. Such a refusal is a plain `Error` whose `reason` names user
- *   verification. Decision tracked as #732.
+ * library-named error (`UnexpectedRPIDHash`) from a plain `Error`. A cause
+ * other than a hostile response is refused the same way: a wrong
+ * `NEXT_PUBLIC_APP_URL` fails every origin check with a plain `Error`, and
+ * `reason` names the origin this function expected.
  */
 export async function verifyPasskeyRegistration(params: {
   response: RegistrationResponseJSON;
@@ -357,6 +365,7 @@ export async function verifyPasskeyRegistration(params: {
       expectedChallenge: params.expectedChallenge,
       expectedOrigin: getExpectedOrigin(),
       expectedRPID: getRpId(),
+      requireUserVerification: USER_VERIFICATION === 'required',
     });
   } catch (error) {
     const cause = describeCaught(error);
@@ -414,7 +423,7 @@ export async function verifyPasskeyRegistration(params: {
 export async function generatePasskeyAuthenticationOptions(): Promise<PublicKeyCredentialRequestOptionsJSON> {
   return generateAuthenticationOptions({
     rpID: getRpId(),
-    userVerification: 'preferred',
+    userVerification: USER_VERIFICATION,
   });
 }
 
@@ -433,12 +442,6 @@ export async function generatePasskeyAuthenticationOptions(): Promise<PublicKeyC
  * other than a hostile response are refused the same way:
  * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails with a plain
  *   `Error`, and `reason` names the origin this function expected;
- * - the user-verification mismatch: `generatePasskeyAuthenticationOptions`
- *   asks for `userVerification: 'preferred'`, but this function does not
- *   pass `requireUserVerification`, so the library's own default of `true`
- *   still demands it — refusing an authenticator that honours "preferred" by
- *   skipping UV. Such a refusal is a plain `Error` whose `reason` names user
- *   verification. Decision tracked as #732;
  * - a counter at or below a non-zero stored counter, the library's
  *   cloned-authenticator signal: a cloned credential, or a hostile
  *   response; its `reason` names both counters;
@@ -457,6 +460,7 @@ export async function verifyPasskeyAuthentication(params: {
       expectedChallenge: params.expectedChallenge,
       expectedOrigin: getExpectedOrigin(),
       expectedRPID: getRpId(),
+      requireUserVerification: USER_VERIFICATION === 'required',
       credential: {
         id: params.response.id,
         publicKey: new Uint8Array(params.credentialPublicKey),
