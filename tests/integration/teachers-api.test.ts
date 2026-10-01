@@ -140,7 +140,7 @@ describe('PUT /api/teachers/[id]', () => {
     expect(after.bookingNotifications).toBe('inbox_only');
     expect(after.emailOnClassCompleted).toBe(false);
     expect(after.emailOnInvitation).toBe(false);
-    // Review Focus 4
+    // every other column is untouched; only the three preferences moved
     expect({ ...after, bookingNotifications: before.bookingNotifications, emailOnClassCompleted: before.emailOnClassCompleted, emailOnInvitation: before.emailOnInvitation, updatedAt: before.updatedAt })
       .toEqual(before);
   });
