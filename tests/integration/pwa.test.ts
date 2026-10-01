@@ -75,13 +75,17 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+// Pathname AND search, so a signed-out redirect that picked up a ?redirect=
+// query (which it would if /start were ever added to src/proxy.ts's
+// matcher) fails this assertion rather than passing on the pathname alone.
 async function startDestination(token: string | null): Promise<string> {
   const res = await fetch(`${BASE_URL}/start`, {
     redirect: 'manual',
     headers: { ...(token ? cookie(token) : {}), ...freshIp() },
   });
   expect(res.status).toBe(307);
-  return new URL(res.headers.get('location') ?? '', BASE_URL).pathname;
+  const location = new URL(res.headers.get('location') ?? '', BASE_URL);
+  return location.pathname + location.search;
 }
 
 describe('GET /start', () => {
