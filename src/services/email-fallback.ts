@@ -206,8 +206,8 @@ export async function processEmailFallback(
           emailEnabled = shouldEmailTeacher(notification.type, teacher);
         } else {
           // Unreachable through `createNotification`'s teacher variant; a row
-          // here came from a direct write. Emailed as before rather than
-          // dropped, and logged so it is seen.
+          // here came from a direct write or a double cast. Emailed as before
+          // rather than dropped, and logged so it is seen.
           log.warn(
             { notificationId: notification.id, type: notification.type },
             'teacher notification outside TeacherNotificationType',
