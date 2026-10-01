@@ -248,6 +248,7 @@ describe('POST /api/auth/passkey/authenticate/options', () => {
     for (const options of [hasPasskey, hasAccount, unknown, omitted]) {
       expect('allowCredentials' in options).toBe(false);
     }
+    expect(hasPasskey.userVerification).toBe('required');
 
     // Not byte-identical — challenge and challengeId are random per request —
     // so the assertable property is the key set.
@@ -340,8 +341,11 @@ describe('POST /api/auth/passkey/register/options', () => {
       headers: { ...cookie(token), ...freshIp() },
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { user: { displayName: string } } };
+    const body = (await res.json()) as {
+      data: { user: { displayName: string }; authenticatorSelection: { userVerification: string } };
+    };
     expect(body.data.user.displayName).toBe('Live Student');
+    expect(body.data.authenticatorSelection.userVerification).toBe('required');
   });
 });
 
