@@ -226,6 +226,45 @@ describe('processClassReminders (DB)', () => {
     expect(sendsTo(student.email)).toBe(1);
   });
 
+  // 2b
+  it('sends once when two sweeps overlap on the same registration', async () => {
+    const f = await seed({ classReminder: 'off' });
+    const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+
+    let interposed = 0;
+    const overlapping = prisma.$extends({
+      query: {
+        registration: {
+          async findMany({ args, query }) {
+            const rows = await query(args);
+            // Keyed on the candidate read's shape: the only registration read
+            // asking for unstamped rows.
+            const where = args.where as { classReminderSentAt?: unknown } | undefined;
+            if (where?.classReminderSentAt !== null || interposed > 0) return rows;
+            interposed += 1;
+            // A whole second sweep, on a client built from the plain one so it
+            // never re-enters this hook, landing between this sweep's read and
+            // its claim — the scheduler tick and a cron request overlapping.
+            await run(f, MORNING);
+            return rows;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`; every method used is the real one.
+    }) as unknown as PrismaClient;
+
+    const outer = await processClassReminders(
+      scopeSweep(overlapping, { Class: { calendarEntry: { teacherId: f.teacherId } } }).db,
+      MORNING,
+    );
+
+    expect(interposed).toBe(1);
+    expect(sendsTo(student.email)).toBe(1);
+    expect(await studentRows(student.id)).toHaveLength(1);
+    // The interposed sweep won the claim; this one found it taken and skipped.
+    expect(outer.studentReminders).toBe(0);
+  });
+
   // 3
   it('inbox-only writes a row and sends no email', async () => {
     const f = await seed({ classReminder: 'off' });
@@ -391,6 +430,38 @@ describe('processClassReminders (DB)', () => {
     expect(second.teacherReminders).toBe(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(1);
     expect(sendsTo(f.teacherEmail)).toBe(1);
+  });
+
+  // 13b
+  it('reminds the teacher once when two sweeps overlap on the same class', async () => {
+    const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+
+    let interposed = 0;
+    const overlapping = prisma.$extends({
+      query: {
+        class: {
+          async findMany({ args, query }) {
+            const rows = await query(args);
+            if (interposed > 0) return rows;
+            interposed += 1;
+            // Same interleaving as the student case, on the candidate read.
+            await run(f, MORNING);
+            return rows;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`; every method used is the real one.
+    }) as unknown as PrismaClient;
+
+    const outer = await processClassReminders(
+      scopeSweep(overlapping, { Class: { calendarEntry: { teacherId: f.teacherId } } }).db,
+      MORNING,
+    );
+
+    expect(interposed).toBe(1);
+    expect(sendsTo(f.teacherEmail)).toBe(1);
+    expect(await teacherRows(f.teacherId)).toHaveLength(1);
+    expect(outer.teacherReminders).toBe(0);
   });
 
   // 14
