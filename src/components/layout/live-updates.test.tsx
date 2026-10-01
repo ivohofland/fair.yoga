@@ -137,4 +137,72 @@ describe('LiveUpdates', () => {
     vi.advanceTimersByTime(10_000);
     expect(routerRefresh).not.toHaveBeenCalled();
   });
+
+  describe('after an error', () => {
+    /** Fails the newest stream for good and asserts the reconnect lands at exactly `delay`. */
+    function expectReconnectAfter(delay: number): void {
+      const failed = latest();
+      const before = sources.length;
+
+      failed.failPermanently();
+      expect(failed.close).toHaveBeenCalled();
+
+      vi.advanceTimersByTime(delay - 1);
+      expect(sources).toHaveLength(before);
+
+      vi.advanceTimersByTime(1);
+      expect(sources).toHaveLength(before + 1);
+    }
+
+    it('leaves a stream the browser is still retrying alone', () => {
+      render(<LiveUpdates />);
+      const source = latest();
+
+      source.dropAndRetry();
+      vi.advanceTimersByTime(10 * 60_000);
+
+      expect(source.close).not.toHaveBeenCalled();
+      expect(sources).toHaveLength(1);
+    });
+
+    it('rebuilds a closed stream after 4 s, doubling per attempt, capped at 60 s', () => {
+      render(<LiveUpdates />);
+
+      // 2 s × 2^attempts, with attempts counted before the first delay; 2 s × 2^5 = 64 s is the first capped step.
+      for (const delay of [4_000, 8_000, 16_000, 32_000, 60_000, 60_000, 60_000]) {
+        expectReconnectAfter(delay);
+      }
+    });
+
+    it('restarts the backoff from 4 s once a rebuilt stream opens', () => {
+      render(<LiveUpdates />);
+
+      expectReconnectAfter(4_000);
+      expectReconnectAfter(8_000);
+      expectReconnectAfter(16_000);
+
+      latest().open();
+      expectReconnectAfter(4_000);
+    });
+
+    it('wires the rebuilt stream to refresh', () => {
+      render(<LiveUpdates />);
+      expectReconnectAfter(4_000);
+
+      latest().message();
+      vi.advanceTimersByTime(500);
+
+      expect(routerRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens no stream after an unmount during the reconnect wait', () => {
+      const { unmount } = render(<LiveUpdates />);
+
+      latest().failPermanently();
+      unmount();
+      vi.advanceTimersByTime(10 * 60_000);
+
+      expect(sources).toHaveLength(1);
+    });
+  });
 });
