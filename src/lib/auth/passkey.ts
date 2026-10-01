@@ -5,11 +5,15 @@ import {
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 import type {
+  AuthenticatorTransportFuture,
+  VerifiedRegistrationResponse,
+  VerifiedAuthenticationResponse,
+} from '@simplewebauthn/server';
+import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
 } from '@simplewebauthn/types';
 import { log } from '@/lib/log';
 
@@ -235,7 +239,7 @@ const KNOWN_TRANSPORTS = {
 } as const satisfies Record<AuthenticatorTransportFuture, true>;
 
 function isKnownTransport(value: unknown): value is AuthenticatorTransportFuture {
-  return typeof value === 'string' && value in KNOWN_TRANSPORTS;
+  return typeof value === 'string' && Object.hasOwn(KNOWN_TRANSPORTS, value);
 }
 
 // ---------------------------------------------------------------------------
@@ -275,9 +279,9 @@ export async function generatePasskeyRegistrationOptions(params: {
  * that as a 500 logged `unhandled API error`, so the `try` below encloses
  * only the library call — nothing else here is about the client's response.
  *
- * Server-side causes now answer 400 + warn instead of 500 + error, same as a
- * hostile response — the library's `Error`s are untyped, so this catch
- * cannot tell them apart:
+ * The library's `Error`s are untyped, so this catch cannot distinguish a
+ * hostile response from a server-side cause — every one of the following is
+ * refused the same way, one `warn`, never `error`:
  * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails, and `reason`
  *   names the origin this function expected;
  * - the user-verification mismatch: `generatePasskeyRegistrationOptions`
@@ -286,8 +290,7 @@ export async function generatePasskeyRegistrationOptions(params: {
  *   still demands it — refusing an authenticator that honours "preferred" by
  *   skipping UV. Such a refusal is identifiable by its `reason` naming user
  *   verification. Decision tracked as #732, not fixed here;
- * - a counter regression — the library's cloned-authenticator signal;
- * - a corrupt stored public key, or a runtime without WebCrypto.
+ * - a runtime without WebCrypto.
  */
 export async function verifyPasskeyRegistration(params: {
   response: RegistrationResponseJSON;
@@ -302,7 +305,7 @@ export async function verifyPasskeyRegistration(params: {
     }
   | { verified: false; reason: string }
 > {
-  let verification;
+  let verification: VerifiedRegistrationResponse;
   try {
     verification = await verifyRegistrationResponse({
       response: params.response,
@@ -367,9 +370,9 @@ export async function generatePasskeyAuthenticationOptions(): Promise<PublicKeyC
  * that as a 500 logged `unhandled API error`, so the `try` below encloses
  * only the library call — nothing else here is about the client's response.
  *
- * Server-side causes now answer 400 + warn instead of 500 + error, same as a
- * hostile response — the library's `Error`s are untyped, so this catch
- * cannot tell them apart:
+ * The library's `Error`s are untyped, so this catch cannot distinguish a
+ * hostile response from a server-side cause — every one of the following is
+ * refused the same way, one `warn`, never `error`:
  * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails, and `reason`
  *   names the origin this function expected;
  * - the user-verification mismatch: `generatePasskeyAuthenticationOptions`
@@ -387,7 +390,7 @@ export async function verifyPasskeyAuthentication(params: {
   credentialPublicKey: Uint8Array;
   credentialCounter: number;
 }): Promise<{ verified: true; newCounter: number } | { verified: false; reason: string }> {
-  let verification;
+  let verification: VerifiedAuthenticationResponse;
   try {
     verification = await verifyAuthenticationResponse({
       response: params.response,
