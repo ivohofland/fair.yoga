@@ -6,6 +6,7 @@ import {
   transitionClassSchema,
   magicLinkSendSchema,
   passkeyAuthVerifySchema,
+  passkeyRegisterVerifySchema,
   createClassSchema,
   createClassTemplateSchema,
   createStudioClassSchema,
@@ -109,6 +110,35 @@ describe('redirect path validation', () => {
     expect(isSafeRelativePath('/\r/evil.com')).toBe(false);
     expect(isSafeRelativePath('/\n/evil.com')).toBe(false);
   });
+});
+
+describe('passkey verify schemas — response.id', () => {
+  // Both verify schemas share one credential id schema; each is run, so
+  // neither can drift from the table.
+  const parsers: Record<string, (id: string) => boolean> = {
+    passkeyRegisterVerifySchema: (id) =>
+      passkeyRegisterVerifySchema.safeParse({ response: { id } }).success,
+    passkeyAuthVerifySchema: (id) =>
+      passkeyAuthVerifySchema.safeParse({ response: { id }, challengeId: 'x' }).success,
+  };
+  const cases: ReadonlyArray<[label: string, id: string, accepted: boolean]> = [
+    ['1364 characters, the bound', 'A'.repeat(1364), true],
+    ['both base64url-only characters', 'ab-cd_ef', true],
+    ['1365 characters', 'A'.repeat(1365), false],
+    ['empty', '', false],
+    ['padded', 'AAAA=', false],
+    ['standard base64 +', 'ab+cd', false],
+    ['standard base64 /', 'ab/cd', false],
+    ['a NUL byte', 'ab\u0000cd', false],
+  ];
+
+  for (const [name, parse] of Object.entries(parsers)) {
+    describe(name, () => {
+      it.each(cases)('%s → accepted: %s', (_label, id, accepted) => {
+        expect(parse(id)).toBe(accepted);
+      });
+    });
+  }
 });
 
 describe('isLoginRedirectTarget', () => {

@@ -8,6 +8,7 @@ import {
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
 import type { AuthenticationResponseJSON } from '@simplewebauthn/types';
 import { passkeyAuthVerifySchema, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { liveProfile } from '@/lib/live-profile';
@@ -32,6 +33,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     where: { id: response.id },
   });
   if (!credential) {
+    log.warn({ ceremony: 'authentication', credentialId: response.id }, 'passkey credential not found');
     return respondError('Credential not found', 400);
   }
 

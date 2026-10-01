@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { storeChallenge } from '@/lib/auth';
+import { log } from '@/lib/log';
 
 /**
  * #439. `passkey/authenticate/verify`'s destination logic claimed to mirror
@@ -75,6 +76,25 @@ function primeCredential(accountId: string) {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+});
+
+describe('POST /api/auth/passkey/authenticate/verify — a credential id with no stored row', () => {
+  it('answers 400 and logs one warn naming the credential id', async () => {
+    passkeyCredentialFindUnique.mockResolvedValue(null);
+    storeChallenge('authentication', 'chal-unknown', 'expected-challenge');
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+
+    const res = await POST(verify('chal-unknown'));
+
+    expect(res.status).toBe(400);
+    const notFoundWarnings = warnSpy.mock.calls.filter(
+      (call) => call[1] === 'passkey credential not found',
+    );
+    expect(notFoundWarnings).toHaveLength(1);
+    expect(notFoundWarnings[0]?.[0]).toEqual({ ceremony: 'authentication', credentialId: 'cred-1' });
+    expect(verifyPasskeyAuthentication).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destination for an existing account', () => {

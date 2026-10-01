@@ -1,6 +1,6 @@
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { cose, isoBase64URL, isoCBOR, toHash } from '@simplewebauthn/server/helpers';
+import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { log } from '@/lib/log';
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/types';
 import {
@@ -14,18 +14,12 @@ import {
   _resetChallengeStores,
   CHALLENGE_CAPACITIES,
 } from './passkey';
-
-/**
- * A base64url `clientDataJSON` naming a challenge other than the one that
- * will be passed as `expectedChallenge`. The library reads this field before
- * the attestation object or signature, so a fixture built from it reaches
- * the challenge check unsigned — "wrong-challenge", not "signed".
- */
-function wrongChallengeClientDataJSON(type: 'webauthn.create' | 'webauthn.get'): string {
-  return Buffer.from(JSON.stringify({ type, challenge: 'not-the-issued-challenge' })).toString(
-    'base64url',
-  );
-}
+import {
+  coseES256PublicKey,
+  forgedNoneRegistration,
+  signedAssertion,
+  wrongChallengeClientDataJSON,
+} from '../../../tests/passkey-fixtures';
 
 describe('passkey challenge store', () => {
   beforeEach(() => {
@@ -318,6 +312,11 @@ describe('verifyPasskeyRegistration', () => {
     );
     expect(refusalWarnings).toHaveLength(1);
     expect(refusalWarnings[0]?.[1]).toBe('passkey verification refused');
+    expect(refusalWarnings[0]?.[0]).toMatchObject({
+      credentialId: id,
+      errorName: 'Error',
+      frame: expect.stringMatching(/^at verifyRegistrationResponse /),
+    });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 });
@@ -360,6 +359,11 @@ describe('verifyPasskeyAuthentication', () => {
     );
     expect(refusalWarnings).toHaveLength(1);
     expect(refusalWarnings[0]?.[1]).toBe('passkey verification refused');
+    expect(refusalWarnings[0]?.[0]).toMatchObject({
+      credentialId: id,
+      errorName: 'Error',
+      frame: expect.stringMatching(/^at verifyAuthenticationResponse /),
+    });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 });
@@ -368,80 +372,9 @@ const FORGED_RP_ID = 'forged.test';
 const FORGED_ORIGIN = 'https://forged.test';
 const FORGED_CHALLENGE = 'the-issued-challenge';
 
-/**
- * A registration response the real library VERIFIES without any
- * authenticator: a `fmt: 'none'` attestation carries no signature, so
- * anything that knows the issued challenge, the origin and the RP ID can
- * build one. `authDataCredentialId` is the id written into the authenticator
- * data — the one the library returns — independently of `response.id`.
- * The caller pins `NEXT_PUBLIC_APP_URL` and `PASSKEY_RP_ID` to
- * `FORGED_ORIGIN` / `FORGED_RP_ID`.
- */
-async function forgedNoneRegistration(params: {
-  authDataCredentialId: Uint8Array;
-  responseId: string;
-}): Promise<RegistrationResponseJSON> {
-  const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const jwk = publicKey.export({ format: 'jwk' });
-  if (jwk.x === undefined || jwk.y === undefined) {
-    throw new Error('expected an EC public key with x and y');
-  }
-  const cosePublicKey = isoCBOR.encode(
-    new Map<number, number | Uint8Array>([
-      [cose.COSEKEYS.kty, cose.COSEKTY.EC2],
-      [cose.COSEKEYS.alg, cose.COSEALG.ES256],
-      [cose.COSEKEYS.crv, cose.COSECRV.P256],
-      [cose.COSEKEYS.x, isoBase64URL.toBuffer(jwk.x)],
-      [cose.COSEKEYS.y, isoBase64URL.toBuffer(jwk.y)],
-    ]),
-  );
-
-  const rpIdHash = await toHash(FORGED_RP_ID);
-  // UP | UV | AT: user present, user verified, attested credential data.
-  const flags = Uint8Array.of(0x01 | 0x04 | 0x40);
-  const counter = new Uint8Array(4);
-  const aaguid = new Uint8Array(16);
-  const credentialIdLength = new Uint8Array(2);
-  new DataView(credentialIdLength.buffer).setUint16(0, params.authDataCredentialId.byteLength);
-  const authData = new Uint8Array(
-    Buffer.concat([
-      rpIdHash,
-      flags,
-      counter,
-      aaguid,
-      credentialIdLength,
-      params.authDataCredentialId,
-      cosePublicKey,
-    ]),
-  );
-
-  const attestationObject = isoCBOR.encode(
-    new Map<string, string | Uint8Array | Map<string, never>>([
-      ['fmt', 'none'],
-      ['attStmt', new Map<string, never>()],
-      ['authData', authData],
-    ]),
-  );
-  const clientDataJSON = isoBase64URL.fromUTF8String(
-    JSON.stringify({
-      type: 'webauthn.create',
-      challenge: FORGED_CHALLENGE,
-      origin: FORGED_ORIGIN,
-      crossOrigin: false,
-    }),
-  );
-
-  return {
-    id: params.responseId,
-    rawId: params.responseId,
-    type: 'public-key',
-    response: {
-      clientDataJSON,
-      attestationObject: isoBase64URL.fromBuffer(attestationObject),
-    },
-    clientExtensionResults: {},
-  };
-}
+// What the responses below are built for; each describe stubs
+// `NEXT_PUBLIC_APP_URL` and `PASSKEY_RP_ID` to the same origin and RP ID.
+const FORGED ={ challenge: FORGED_CHALLENGE, origin: FORGED_ORIGIN, rpId: FORGED_RP_ID };
 
 describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
   beforeEach(() => {
@@ -457,7 +390,8 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
   it('verifies when response.id matches the authenticator data id', async () => {
     const credentialId = new Uint8Array(randomBytes(16));
     const responseId = isoBase64URL.fromBuffer(credentialId);
-    const response = await forgedNoneRegistration({
+    const response = forgedNoneRegistration({
+      ...FORGED,
       authDataCredentialId: credentialId,
       responseId,
     });
@@ -475,11 +409,12 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
 
   it('treats a transports value that is not an array as no transports', async () => {
     const credentialId = new Uint8Array(randomBytes(16));
-    const forged = await forgedNoneRegistration({
+    const forged = forgedNoneRegistration({
+      ...FORGED,
       authDataCredentialId: credentialId,
       responseId: isoBase64URL.fromBuffer(credentialId),
     });
-    // The library passes `response.transports` through untouched, so a
+    // The library passes `response.response.transports` through untouched, so a
     // string here reaches the helper as its resolved `transports` — a value
     // the declared type rules out, hence the cast.
     const response = {
@@ -499,9 +434,12 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
   });
 
   it('refuses, with one warn, an authenticator data id that differs from response.id', async () => {
-    const response = await forgedNoneRegistration({
+    // Different lengths, so the reason's two counts cannot be swapped unseen.
+    const responseId = isoBase64URL.fromBuffer(new Uint8Array(randomBytes(32)));
+    const response = forgedNoneRegistration({
+      ...FORGED,
       authDataCredentialId: new Uint8Array(randomBytes(16)),
-      responseId: isoBase64URL.fromBuffer(new Uint8Array(randomBytes(16))),
+      responseId,
     });
     const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
@@ -511,11 +449,83 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
       expectedChallenge: FORGED_CHALLENGE,
     });
 
-    expect(result.verified).toBe(false);
+    if (result.verified) {
+      throw new Error('expected a refusal');
+    }
+    expect(result.reason).toBe(
+      'Authenticator data credential id (22 chars) does not match response.id (43 chars)',
+    );
     const refusalWarnings = warnSpy.mock.calls.filter(
       (call) => (call[0] as { ceremony?: string }).ceremony === 'registration',
     );
     expect(refusalWarnings).toHaveLength(1);
+    expect(refusalWarnings[0]?.[0]).toMatchObject({ credentialId: responseId });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifyPasskeyAuthentication, signed assertion', () => {
+  const keyA = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const keyB = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const credentialId = isoBase64URL.fromBuffer(new Uint8Array(randomBytes(16)));
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', FORGED_ORIGIN);
+    vi.stubEnv('PASSKEY_RP_ID', FORGED_RP_ID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('verifies an assertion signed by the key whose public half is stored', async () => {
+    const response = signedAssertion({
+      ...FORGED,
+      credentialId,
+      counter: 1,
+      privateKey: keyA.privateKey,
+    });
+
+    const result = await verifyPasskeyAuthentication({
+      response,
+      expectedChallenge: FORGED_CHALLENGE,
+      credentialPublicKey: coseES256PublicKey(keyA.publicKey),
+      credentialCounter: 0,
+    });
+
+    if (!result.verified) {
+      throw new Error(`expected a verified result, got: ${result.reason}`);
+    }
+    expect(result.newCounter).toBe(1);
+  });
+
+  it('refuses, with one warn, an assertion signed by another key', async () => {
+    const response = signedAssertion({
+      ...FORGED,
+      credentialId,
+      counter: 1,
+      privateKey: keyB.privateKey,
+    });
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+
+    const result = await verifyPasskeyAuthentication({
+      response,
+      expectedChallenge: FORGED_CHALLENGE,
+      credentialPublicKey: coseES256PublicKey(keyA.publicKey),
+      credentialCounter: 0,
+    });
+
+    if (result.verified) {
+      throw new Error('expected a refusal');
+    }
+    expect(result.reason).toBe('Signature did not verify against the stored public key');
+    const refusalWarnings = warnSpy.mock.calls.filter(
+      (call) => (call[0] as { ceremony?: string }).ceremony === 'authentication',
+    );
+    expect(refusalWarnings).toHaveLength(1);
+    expect(refusalWarnings[0]?.[0]).toMatchObject({ credentialId });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 });
