@@ -681,6 +681,24 @@ describe('processClassReminders (DB)', () => {
     expect(await studentRows(student.id)).toHaveLength(1);
   });
 
+  // 22b
+  it("reads the class's start in the teacher's zone (America/New_York, summer time)", async () => {
+    // 18:00 EDT is 22:00Z, so one hour before is 21:00Z. Read in UTC the start
+    // would be 18:00Z, already past at 21:00Z.
+    const f = await seed({
+      defaultTimezone: 'America/New_York',
+      classReminder: 'one_hour_before',
+      classReminderChannel: 'inbox',
+    });
+    const { student } = await book(f, { classReminder: 'one_hour_before', classReminderChannel: 'inbox' });
+
+    const result = await run(f, new Date('2099-06-10T21:00:00Z'));
+
+    expect(result).toEqual({ studentReminders: 1, teacherReminders: 1, emailFailures: 0 });
+    expect(await studentRows(student.id)).toHaveLength(1);
+    expect(await teacherRows(f.teacherId)).toHaveLength(1);
+  });
+
   // 23
   it("counts a failed teacher send and keeps the class's stamp", async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'email' });

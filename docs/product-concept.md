@@ -313,7 +313,7 @@ Rather than introducing monthly caps or commitment discounts (which would shift 
 ## Authentication
 
 No passwords. Two authentication methods:
-- **Magic link via email** — primary method. Student clicks a link, they're in. Class reminder emails and fallback emails carry no magic link: they link to the page, where a signed-out student signs in.
+- **Magic link via email** — primary method. Student clicks a link, they're in. Class reminder emails and fallback emails carry no magic link; where one has a link, it goes to a page, and a signed-out student signs in there.
 - **Passkeys** — optional upgrade for convenience. Face ID, fingerprint, no typing. Ideal for mobile-first yoga booking flow.
 
 No SMS-based magic links — per-message costs contradict the free platform model.
