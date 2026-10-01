@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OnboardingStep } from '@prisma/client';
+import { OnboardingStep, TeacherBookingNotifications } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
@@ -287,6 +287,9 @@ export const updateTeacherSchema = z.object({
   defaultCurrency: z.string().optional(),
   defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').transform(modernTimeZone).optional(),
   defaultReminder: z.enum(['morning_of', 'evening_before', 'one_hour_before']).optional(),
+  bookingNotifications: z.enum(TeacherBookingNotifications).optional(),
+  emailOnClassCompleted: z.boolean().optional(),
+  emailOnInvitation: z.boolean().optional(),
   bankIban: z.string().nullable().optional(),
   bankAccountName: z.string().nullable().optional(),
 }).strict();

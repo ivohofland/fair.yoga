@@ -128,6 +128,40 @@ describe('PUT /api/teachers/[id]', () => {
     expect(persisted.bio).toBe('Ownership fixture');
   });
 
+  it('round-trips the notification preferences without touching the profile (#49)', async () => {
+    const before = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    const res = await putTeacher(teacherId, {
+      bookingNotifications: 'inbox_only',
+      emailOnClassCompleted: false,
+      emailOnInvitation: false,
+    }, teacherToken);
+    expect(res.status).toBe(200);
+    const after = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(after.bookingNotifications).toBe('inbox_only');
+    expect(after.emailOnClassCompleted).toBe(false);
+    expect(after.emailOnInvitation).toBe(false);
+    // Review Focus 4
+    expect({ ...after, bookingNotifications: before.bookingNotifications, emailOnClassCompleted: before.emailOnClassCompleted, emailOnInvitation: before.emailOnInvitation, updatedAt: before.updatedAt })
+      .toEqual(before);
+  });
+
+  it('refuses an unknown bookingNotifications value (#49)', async () => {
+    const res = await putTeacher(teacherId, { bookingNotifications: 'sometimes' }, teacherToken);
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a non-boolean email toggle (#49)', async () => {
+    const res = await putTeacher(teacherId, { emailOnInvitation: 'no' }, teacherToken);
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses another teacher writing these preferences (#49)', async () => {
+    const res = await putTeacher(otherTeacherId, { bookingNotifications: 'off' }, teacherToken);
+    expect(res.status).toBe(403);
+    const other = await prisma.teacher.findUniqueOrThrow({ where: { id: otherTeacherId } });
+    expect(other.bookingNotifications).toBe('inbox_and_email');
+  });
+
   it('rejects an unauthenticated request', async () => {
     const res = await putTeacher(teacherId, { bio: 'Anonymous' });
     expect(res.status).toBe(401);
