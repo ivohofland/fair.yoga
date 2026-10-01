@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, onTestFinished } from 'vitest';
 import { randomUUID } from 'crypto';
 import { PrismaClient, type CancelDeadline } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
@@ -2580,5 +2580,35 @@ describe('DELETE /api/registrations/[id] — a late cancel promotes the queue he
         where: { relatedClassId: classId, recipientId: studentIds[1]!, type: 'waitlist_promoted' },
       }),
     ).toBe(1);
+  });
+});
+
+describe('POST /api/registrations — teacher bookingNotifications (#49)', () => {
+  afterEach(async () => {
+    await prisma.teacher.update({ where: { id: ownerId }, data: { bookingNotifications: 'inbox_and_email' } });
+  });
+
+  async function bookUnder(pref: 'inbox_and_email' | 'inbox_only' | 'off') {
+    await prisma.teacher.update({ where: { id: ownerId }, data: { bookingNotifications: pref } });
+    const classId = await makeClass(5);
+    const res = await post(studentTokens[0]!, { classId });
+    expect(res.status).toBe(201); // the booking itself is never refused
+    const rows = await prisma.notification.findMany({
+      where: { relatedClassId: classId, type: 'booking_confirmed' },
+      select: { recipientType: true },
+    });
+    return rows.map((r) => r.recipientType).sort();
+  }
+
+  it('off: the student is confirmed, the teacher gets no row', async () => {
+    expect(await bookUnder('off')).toEqual(['student']);
+  });
+
+  it('inbox_only: both rows exist (email is the sweep’s decision, not this one)', async () => {
+    expect(await bookUnder('inbox_only')).toEqual(['student', 'teacher']);
+  });
+
+  it('inbox_and_email: both rows exist', async () => {
+    expect(await bookUnder('inbox_and_email')).toEqual(['student', 'teacher']);
   });
 });
