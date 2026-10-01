@@ -138,10 +138,22 @@ nominal moment. The calculation is a pure function in its own module, taking
   and `Class.createdAt < moment`.
 
 **The `registeredAt < moment` rule** skips anyone who booked after their
-reminder moment. That covers a late booking, a walk-in, and a waitlist
-promotion, since a promotion writes the registration at promotion time. Each of
+reminder moment: a late booking, a walk-in, or a waitlist promotion. Each of
 them just received a notification about this class, so a reminder would repeat
-it. The teacher's `createdAt` rule does the same for a class created inside its
+it.
+
+**A reactivated registration counts as a new booking.** `activateRegistration`
+(`src/services/waitlist.ts`) reuses a student's earlier, cancelled row for the
+same class instead of creating one. Its update branch therefore writes
+`registeredAt = now` and `classReminderSentAt = null`. Without that, a rebooking
+would keep its first booking's time and escape the skip rule. A stamp from the
+first booking would also suppress the new booking's reminder. As a side effect,
+a rebooked student moves to the end of the registrant lists, which are ordered
+by `registeredAt`. That order reflects when they actually booked.
+
+**Erased profiles are filtered explicitly.** The candidate query requires
+`deletedAt: null` on the student and on the teacher, as payment reminders do,
+rather than relying on erasure having cancelled their rows. The teacher's `createdAt` rule does the same for a class created inside its
 own reminder window. A draft created early and published late is still
 reminded, once, at the next sweep. That case is accepted rather than adding a
 `publishedAt` column.
@@ -184,12 +196,28 @@ channel includes `email`.
   sent directly, that entry answers "never by fallback".
 - **Content.** The title is "Class reminder". The body names the class type,
   day and start time. The teacher's version adds the registration count so far.
-  `relatedClassId` is set, so the inbox row links to the class detail. The
-  email reuses the existing email template and the magic-link pattern used by
-  fallback emails.
-- **The recipient address.** The student's is the address the fallback email
-  uses for a student (an unclaimed walk-in `Student` still has one); the
-  teacher's is their account email.
+  `relatedClassId` is set, so the inbox row links to the class through the
+  existing `studentNotificationHref` / `teacherNotificationHref`.
+- **The email** is rendered by `renderNotificationEmail`
+  (`src/lib/email-templates.ts`), with a plain static action link like every
+  fallback email. No magic link: fallback emails carry none either. `wrapEmail`
+  takes an optional footer, because its fixed footer ("when an in-app message
+  goes unread") is false for a reminder. The reminder footer says the email was
+  sent because the recipient chose class reminders by email, and where to
+  change that. The send goes through a new `sendHtmlEmail` in `src/lib/email.ts`,
+  which honours `emailDryRun()`, rather than a third private Resend client.
+- **The inbox row** is written through `createNotification`, which gains an
+  optional `emailSent` input. Writing the row directly would skip the
+  notification bus that pushes it to an open inbox.
+- **The recipient address.** The student's is `Student.email`, which is
+  required, so an unclaimed walk-in has one. The teacher's is `Teacher.email`,
+  the copy the fallback also reads.
+- **The new teacher fields join `TeacherNotificationPrefs`.** The profile
+  form's compile pin requires every key of `updateTeacherSchema` outside
+  `ProfileFormValues` to be one, and `processEmailFallback`'s teacher `select`
+  must grow to match.
+- **A cron route,** `/api/cron/class-reminders`, like every other job except
+  waitlist reconciliation.
 
 ## 6. UI
 
@@ -227,7 +255,11 @@ channel includes `email`.
   with `emailSent = true`; skips a registration with `registeredAt` after the
   moment, a cancelled registration, a cancelled entry, a draft class, a studio
   class, and timing `off`; sends nothing at or after start; the email-fallback
-  sweep does not email a `class_reminder` row.
+  sweep does not email a `class_reminder` row; an erased student or teacher is
+  not reminded.
+- **Reactivation:** `activateRegistration` resets `registeredAt` and clears
+  `classReminderSentAt` on a reused row, so a rebooking after the moment is
+  skipped and a rebooking before it is reminded again.
 - **Integration (settings and export):** both PUT routes accept and validate
   the new fields, the teacher profile PUT refuses `defaultReminder`, and the
   GDPR export carries both new fields for both profiles, pinned on non-default
