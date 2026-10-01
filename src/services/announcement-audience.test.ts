@@ -12,11 +12,12 @@ describe('listAnnouncementAudience', () => {
   let teacherId: string;
   let otherTeacherId: string;
   let roomId: string;
-  let classIds: string[] = [];
+  const classIds: string[] = [];
   let liveId: string;
   let cancelledOnlyId: string;
   let archivedId: string;
   let foreignId: string;
+  let erasedId: string;
 
   async function makeStudent(name: string): Promise<string> {
     const s = await prisma.student.create({
@@ -92,6 +93,11 @@ describe('listAnnouncementAudience', () => {
     cancelledOnlyId = await makeStudent('Cancelled');
     archivedId = await makeStudent('Archived');
     foreignId = await makeStudent('Foreign');
+    erasedId = await makeStudent('Erased');
+    // Erasure leaves a registration in a started or completed class
+    // uncancelled. The audience read filters on registration status, not
+    // class status, so a `registered` row on an open class stands in for one.
+    await prisma.student.update({ where: { id: erasedId }, data: { deletedAt: new Date() } });
 
     const register = (classId: string, studentId: string, status: 'registered' | 'cancelled') =>
       prisma.registration.create({ data: { classId, studentId, status, tierAtBooking: 3 } });
@@ -100,13 +106,14 @@ describe('listAnnouncementAudience', () => {
     await register(classA1, cancelledOnlyId, 'cancelled');
     await register(classA1, archivedId, 'registered');
     await register(classB, foreignId, 'registered');
+    await register(classA1, erasedId, 'registered');
     await prisma.teacherStudent.create({
       data: { teacherId, studentId: archivedId, isArchived: true },
     });
   });
 
   afterAll(async () => {
-    const studentIds = [liveId, cancelledOnlyId, archivedId, foreignId].filter(Boolean);
+    const studentIds = [liveId, cancelledOnlyId, archivedId, foreignId, erasedId].filter(Boolean);
     if (classIds.length) {
       await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     }
@@ -132,6 +139,10 @@ describe('listAnnouncementAudience', () => {
 
   it('excludes a student this teacher has archived', async () => {
     expect(await listAnnouncementAudience(prisma, teacherId)).not.toContain(archivedId);
+  });
+
+  it('excludes an erased student whose registration is still live', async () => {
+    expect(await listAnnouncementAudience(prisma, teacherId)).not.toContain(erasedId);
   });
 
   it("does not include another teacher's students", async () => {

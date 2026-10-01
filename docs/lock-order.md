@@ -278,8 +278,11 @@ the derivation below it. The table is gone rather than corrected a fifth time.
 template lock — between that call and the `deleteMany` is deleted without
 ever having been held. The AB-BA cycle against
 `deleteStudentAccount` can still form through that window. It is narrow (it
-needs a concurrent reschedule *and* an erasure of a student waitlisted across
-both classes, timed into the same gap), it is measured rather than theorised,
+needs a concurrent reschedule *and* an erasure timed into the same gap, of a
+student in one of two shapes: waitlisted across both classes, or waitlisted on
+the rescheduled class and named in the audience of an announcement scoped to
+another class the same delete removes first — the second shape since #48, see
+"`Announcement` rows: the audience scrub"), it is measured rather than theorised,
 and it is no worse than the pre-#180 state, which had no ordering at all — but
 it is not closed. Widening the call past `today` would lock history for no
 gain, and #86/#112 require the delete's live predicate re-evaluation regardless.
@@ -1501,12 +1504,16 @@ EXISTING `Announcement` row, and what each meeting does:
   then re-checks `@>` on the committed version (the array is unchanged by the
   null) and applies. The archive re-applies its null onto a row the scrub
   committed the same way. The exception is the archive pre-lock's documented
-  residual (`gdpr.ts`, the comment above the erasure's first write): an entry
-  rescheduled into the delete's predicate after the pre-lock is deleted
-  without its `Class` held, and if the erasure holds that class, the archive
-  can hold an announcement row the scrub wants while waiting on the class.
-  That is a cycle Postgres resolves with `40P01`, through the same window, and
-  it is accepted with it.
+  residual ("Ordering WITHIN `Class`", "One exception survives"; `gdpr.ts`,
+  the comment above the erasure's first write): an entry rescheduled into the
+  delete's predicate after the pre-lock is deleted without its `Class` held.
+  If the erasure holds that class (the subject has an entry there), and the
+  same delete has already nulled an announcement, scoped to another of its
+  classes, whose audience names the subject, the archive holds a row the scrub
+  wants while waiting on the class the erasure holds: `40P01`. This is a
+  second shape of that residual, beside the original one (the subject
+  waitlisted in both classes), through the same window, and it is accepted
+  with it.
 - **The `ON DELETE CASCADE` of `Announcement_teacherId_fkey`.** No production
   code deletes a `Teacher`; erasure anonymises it.
 
@@ -1520,18 +1527,18 @@ itself; the second the archive's `calendarEntry.deleteMany` and the studio
 class route's `calendarEntry.delete`, whose entry is a studio one and has no
 `Class` beneath it.
 
-**A send that commits after the scrub writes the id back.** The scrub cleans
-rows that exist when it runs; nothing stops a later send's new row from naming
-the erased profile, and the erasure does not run again. A send whose
-recipients were read before the erasure and that commits after the scrub is
-the race-shaped case, and it is accepted: the id is an opaque uuid of a profile
-that no longer names anyone, and it stops being read once the row leaves the
-dedupe window. It is not the only case. Both audience reads in
-`POST /api/announcements` — `listAnnouncementAudience` and the class-scoped
-`registration.findMany` — select by registration status with no
-`deletedAt: null` on the student, and the erasure keeps every past
-registration, so a send made any time after the erasure can include the erased
-profile and write its id into the new row.
+**A send that read before the erasure and commits after the scrub writes the
+id back.** The scrub cleans the rows that exist when it runs. A send that
+starts after the erasure has committed reads an audience without the erased
+profile: both audience reads in `POST /api/announcements`
+(`listAnnouncementAudience`, and the class-scoped `registration.findMany`)
+require `deletedAt: null` on the student. But the route reads its audience
+before `sendAnnouncement`'s transaction opens and takes no `Student` lock, so a
+send that read the audience before the erasure committed, and whose row is not
+yet committed when the scrub runs, writes the erased id into that new row, and
+nothing scrubs it afterwards. This is accepted: the id is an opaque uuid of a profile that no
+longer names anyone, and it stops being read once the row leaves the dedupe
+window.
 
 ## The `TeacherStudent` row is the archive's gate (#265)
 

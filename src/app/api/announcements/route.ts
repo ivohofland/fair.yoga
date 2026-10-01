@@ -33,9 +33,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       return respondError('Not your class', 403);
     }
 
-    // Get all non-cancelled registrations for this class
+    // Every non-cancelled registration for this class, minus erased profiles:
+    // erasure leaves a started or completed class's registration uncancelled.
     const registrations = await prisma.registration.findMany({
-      where: { classId: body.classId, status: { not: 'cancelled' } },
+      where: { classId: body.classId, status: { not: 'cancelled' }, student: { deletedAt: null } },
       select: { studentId: true },
     });
 

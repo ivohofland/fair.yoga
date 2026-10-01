@@ -163,7 +163,9 @@ export type SendAnnouncementResult = {
 
 /**
  * Student ids of the all-students audience: everyone with a live registration
- * in one of this teacher's classes, minus students this teacher has archived.
+ * in one of this teacher's classes, minus students this teacher has archived
+ * and erased profiles (erasure leaves a started or completed class's
+ * registration uncancelled).
  * Before the opt-out subtraction, which belongs to the caller that knows
  * whether it is listing for a picker (muted students stay visible there).
  */
@@ -175,7 +177,7 @@ export async function listAnnouncementAudience(
     where: {
       class: { calendarEntry: { teacherId } },
       status: { not: 'cancelled' },
-      student: { teacherStudents: { none: { teacherId, isArchived: true } } },
+      student: { deletedAt: null, teacherStudents: { none: { teacherId, isArchived: true } } },
     },
     select: { studentId: true },
     distinct: ['studentId'],

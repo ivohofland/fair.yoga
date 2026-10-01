@@ -510,6 +510,114 @@ describe('POST /api/announcements', () => {
     });
   });
 
+  describe('an erased student (#48)', () => {
+    // Own class and students, for the same reason as the archived-link block
+    // above. The erased profile keeps a `registered` row, standing in for the
+    // started or completed class whose registration erasure leaves uncancelled.
+    let erasedClassId: string;
+    let liveStudentId: string;
+    let erasedStudentId: string;
+
+    beforeAll(async () => {
+      const date = new Date();
+      date.setDate(date.getDate() + 35);
+      date.setUTCHours(0, 0, 0, 0);
+      const cls = await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        classType: 'Vinyasa',
+        date,
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'open',
+      });
+      erasedClassId = cls.id;
+      const live = await prisma.student.create({
+        data: {
+          firstName: 'Present',
+          lastName: 'Student',
+          email: `announce-present-${suffix}@test.local`,
+          incomeTier: 3,
+        },
+      });
+      liveStudentId = live.id;
+      const erased = await prisma.student.create({
+        data: {
+          firstName: 'Deleted',
+          lastName: 'Student',
+          email: `announce-erased-${suffix}@test.local`,
+          incomeTier: 3,
+          deletedAt: new Date(),
+        },
+      });
+      erasedStudentId = erased.id;
+      for (const studentId of [liveStudentId, erasedStudentId]) {
+        await prisma.registration.create({
+          data: { classId: erasedClassId, studentId, status: 'registered', tierAtBooking: 3 },
+        });
+      }
+    });
+
+    afterAll(async () => {
+      const studentIds = [liveStudentId, erasedStudentId].filter(Boolean);
+      if (studentIds.length) {
+        await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+      }
+      if (erasedClassId) {
+        await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: erasedClassId } } } });
+      }
+      if (studentIds.length) {
+        await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+      }
+    });
+
+    async function erasedWasTold(message: string): Promise<boolean> {
+      const rows = await prisma.notification.count({
+        where: { type: 'announcement', recipientId: erasedStudentId, body: message },
+      });
+      const recorded = await prisma.announcement.count({
+        where: { teacherId, message, audienceStudentIds: { has: erasedStudentId } },
+      });
+      return rows + recorded > 0;
+    }
+
+    it('a class-scoped send skips the erased registrant', async () => {
+      const message = `Erased class ${suffix}`;
+      const res = await sendAnnouncement({ classId: erasedClassId, message });
+      expect(res.status).toBe(201);
+      expect((await res.json()).data.recipientCount).toBe(1);
+      expect(await erasedWasTold(message)).toBe(false);
+    });
+
+    it('an all-students send skips the erased student', async () => {
+      const message = `Erased all ${suffix}`;
+      const res = await sendAnnouncement({ message });
+      expect(res.status).toBe(201);
+      expect(await erasedWasTold(message)).toBe(false);
+    });
+
+    it('a custom list naming the erased student drops them', async () => {
+      const message = `Erased custom ${suffix}`;
+      const res = await sendAnnouncement({ studentIds: [liveStudentId, erasedStudentId], message });
+      expect(res.status).toBe(201);
+      expect((await res.json()).data.recipientCount).toBe(1);
+      expect(await erasedWasTold(message)).toBe(false);
+    });
+
+    it('is absent from the audience picker', async () => {
+      const res = await fetch(`${BASE_URL}/api/announcements/audience`, { headers: cookie(teacherToken) });
+      expect(res.status).toBe(200);
+      const ids = (await res.json()).data.students.map((s: { id: string }) => s.id);
+      expect(ids).toContain(liveStudentId);
+      expect(ids).not.toContain(erasedStudentId);
+    });
+  });
+
   describe('custom audience (#48)', () => {
     it('notifies exactly the selected, eligible, unmuted students', async () => {
       const res = await sendAnnouncement({ studentIds: [s1Id, s4Id], message: 'Custom A' });
