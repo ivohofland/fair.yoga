@@ -9,6 +9,7 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
+  AuthenticatorTransportFuture,
 } from '@simplewebauthn/types';
 import { log } from '@/lib/log';
 
@@ -185,6 +186,59 @@ function getExpectedOrigin(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Verification refusals
+// ---------------------------------------------------------------------------
+
+/** Which ceremony a verification refusal belongs to, carried on its warn line. */
+type PasskeyCeremony = 'registration' | 'authentication';
+
+/**
+ * Several of the library's thrown messages echo a client-sent string
+ * (`clientDataJSON`'s own challenge or origin) of unbounded length, so a
+ * caught reason is capped before it reaches the log.
+ */
+const REASON_MAX_LENGTH = 300;
+
+function formatCaughtReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, REASON_MAX_LENGTH);
+}
+
+/**
+ * The one `warn` a verification refusal emits, never `error`: the refusal
+ * already answers 400, so there is nothing here for an on-call alert to do.
+ * `reason` is for this line only — neither verify helper returns it to a
+ * route for sending to the client.
+ */
+function warnRefused(ceremony: PasskeyCeremony, reason: string): void {
+  log.warn({ ceremony, reason }, 'passkey verification refused');
+}
+
+/**
+ * Transport names this app will persist. `credential.transports` crosses an
+ * attacker-controlled boundary despite its declared type: a `fmt: 'none'`
+ * attestation verifies with no signature, so a signed-in caller can make the
+ * library resolve with whatever `response.transports` they sent, including
+ * values that are not `AuthenticatorTransportFuture` members at all.
+ * `satisfies Record<AuthenticatorTransportFuture, true>` makes a new member
+ * of that type a compile error here, rather than a filter silently missing
+ * it.
+ */
+const KNOWN_TRANSPORTS = {
+  ble: true,
+  cable: true,
+  hybrid: true,
+  internal: true,
+  nfc: true,
+  'smart-card': true,
+  usb: true,
+} as const satisfies Record<AuthenticatorTransportFuture, true>;
+
+function isKnownTransport(value: unknown): value is AuthenticatorTransportFuture {
+  return typeof value === 'string' && value in KNOWN_TRANSPORTS;
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -214,33 +268,60 @@ export async function generatePasskeyRegistrationOptions(params: {
   return options;
 }
 
+/**
+ * Verifies a registration response, resolving to a refusal rather than
+ * rejecting. `@simplewebauthn/server` signals almost every refused response
+ * by throwing a plain `Error`; left uncaught, `withErrorHandler` would answer
+ * that as a 500 logged `unhandled API error`, so the `try` below encloses
+ * only the library call — nothing else here is about the client's response.
+ *
+ * Server-side causes now answer 400 + warn instead of 500 + error, same as a
+ * hostile response — the library's `Error`s are untyped, so this catch
+ * cannot tell them apart:
+ * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails, and `reason`
+ *   names the origin this function expected;
+ * - the user-verification mismatch: `generatePasskeyRegistrationOptions`
+ *   asks for `userVerification: 'preferred'`, but this function does not
+ *   pass `requireUserVerification`, so the library's own default of `true`
+ *   still demands it — refusing an authenticator that honours "preferred" by
+ *   skipping UV. Such a refusal is identifiable by its `reason` naming user
+ *   verification. Decision tracked as #732, not fixed here;
+ * - a counter regression — the library's cloned-authenticator signal;
+ * - a corrupt stored public key, or a runtime without WebCrypto.
+ */
 export async function verifyPasskeyRegistration(params: {
   response: RegistrationResponseJSON;
   expectedChallenge: string;
-}): Promise<{
-  verified: boolean;
-  credentialId: string;
-  publicKey: Uint8Array;
-  counter: number;
-  transports: string[];
-}> {
-  const verification = await verifyRegistrationResponse({
-    response: params.response,
-    expectedChallenge: params.expectedChallenge,
-    expectedOrigin: getExpectedOrigin(),
-    expectedRPID: getRpId(),
-  });
+}): Promise<
+  | {
+      verified: true;
+      credentialId: string;
+      publicKey: Uint8Array;
+      counter: number;
+      transports: AuthenticatorTransportFuture[];
+    }
+  | { verified: false; reason: string }
+> {
+  let verification;
+  try {
+    verification = await verifyRegistrationResponse({
+      response: params.response,
+      expectedChallenge: params.expectedChallenge,
+      expectedOrigin: getExpectedOrigin(),
+      expectedRPID: getRpId(),
+    });
+  } catch (error) {
+    const reason = formatCaughtReason(error);
+    warnRefused('registration', reason);
+    return { verified: false, reason };
+  }
 
   const { verified, registrationInfo } = verification;
 
   if (!verified || !registrationInfo) {
-    return {
-      verified: false,
-      credentialId: '',
-      publicKey: new Uint8Array(),
-      counter: 0,
-      transports: [],
-    };
+    const reason = 'Registration response was not verified';
+    warnRefused('registration', reason);
+    return { verified: false, reason };
   }
 
   const { credential } = registrationInfo;
@@ -250,7 +331,7 @@ export async function verifyPasskeyRegistration(params: {
     credentialId: credential.id,
     publicKey: new Uint8Array(credential.publicKey),
     counter: credential.counter,
-    transports: (credential.transports ?? []) as string[],
+    transports: (credential.transports ?? []).filter(isKnownTransport),
   };
 }
 
@@ -279,29 +360,60 @@ export async function generatePasskeyAuthenticationOptions(): Promise<PublicKeyC
   });
 }
 
+/**
+ * Verifies an authentication response, resolving to a refusal rather than
+ * rejecting. `@simplewebauthn/server` signals almost every refused response
+ * by throwing a plain `Error`; left uncaught, `withErrorHandler` would answer
+ * that as a 500 logged `unhandled API error`, so the `try` below encloses
+ * only the library call — nothing else here is about the client's response.
+ *
+ * Server-side causes now answer 400 + warn instead of 500 + error, same as a
+ * hostile response — the library's `Error`s are untyped, so this catch
+ * cannot tell them apart:
+ * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails, and `reason`
+ *   names the origin this function expected;
+ * - the user-verification mismatch: `generatePasskeyAuthenticationOptions`
+ *   asks for `userVerification: 'preferred'`, but this function does not
+ *   pass `requireUserVerification`, so the library's own default of `true`
+ *   still demands it — refusing an authenticator that honours "preferred" by
+ *   skipping UV. Such a refusal is identifiable by its `reason` naming user
+ *   verification. Decision tracked as #732, not fixed here;
+ * - a counter regression — the library's cloned-authenticator signal;
+ * - a corrupt stored public key, or a runtime without WebCrypto.
+ */
 export async function verifyPasskeyAuthentication(params: {
   response: AuthenticationResponseJSON;
   expectedChallenge: string;
   credentialPublicKey: Uint8Array;
   credentialCounter: number;
-}): Promise<{
-  verified: boolean;
-  newCounter: number;
-}> {
-  const verification = await verifyAuthenticationResponse({
-    response: params.response,
-    expectedChallenge: params.expectedChallenge,
-    expectedOrigin: getExpectedOrigin(),
-    expectedRPID: getRpId(),
-    credential: {
-      id: params.response.id,
-      publicKey: new Uint8Array(params.credentialPublicKey),
-      counter: params.credentialCounter,
-    },
-  });
+}): Promise<{ verified: true; newCounter: number } | { verified: false; reason: string }> {
+  let verification;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response: params.response,
+      expectedChallenge: params.expectedChallenge,
+      expectedOrigin: getExpectedOrigin(),
+      expectedRPID: getRpId(),
+      credential: {
+        id: params.response.id,
+        publicKey: new Uint8Array(params.credentialPublicKey),
+        counter: params.credentialCounter,
+      },
+    });
+  } catch (error) {
+    const reason = formatCaughtReason(error);
+    warnRefused('authentication', reason);
+    return { verified: false, reason };
+  }
+
+  if (!verification.verified) {
+    const reason = 'Authentication response was not verified';
+    warnRefused('authentication', reason);
+    return { verified: false, reason };
+  }
 
   return {
-    verified: verification.verified,
+    verified: true,
     newCounter: verification.authenticationInfo.newCounter,
   };
 }
