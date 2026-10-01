@@ -103,10 +103,88 @@ describe('AudiencePicker', () => {
     expect(await screen.findByText('2 selected')).toBeTruthy();
   });
 
-  it('says so when the fetch fails instead of showing an empty list', async () => {
+  it('says so, and logs the status, when the fetch fails instead of showing an empty list', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }));
     render(<AudiencePicker selected={[]} onChange={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not load your students.'));
+    expect(consoleError).toHaveBeenCalledWith(
+      '[audience-picker] request failed',
+      expect.objectContaining({ status: 500 }),
+    );
+  });
+
+  it("shows the server's own words when a failed response carries them", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { message: 'The server is busy. Try again in a moment.' } }),
+      }),
+    );
+    render(<AudiencePicker selected={[]} onChange={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('The server is busy. Try again in a moment.'),
+    );
+  });
+
+  it('loads again on Try again after a failure', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { students: STUDENTS } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AudiencePicker selected={[]} onChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(await screen.findByLabelText('Anna K.')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('reports its load state, so the composer can hold Send until the list is in', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { students: STUDENTS } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const onLoadStateChange = vi.fn();
+    render(<AudiencePicker selected={[]} onChange={vi.fn()} onLoadStateChange={onLoadStateChange} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await screen.findByLabelText('Anna K.');
+    expect(onLoadStateChange.mock.calls.map(([state]) => state)).toEqual([
+      'loading',
+      'failed',
+      'loading',
+      'ready',
+    ]);
+  });
+
+  it('says how many ticks it removed because they left the audience', async () => {
+    stubAudience(STUDENTS);
+    render(<AudiencePicker selected={['a', 'gone', 'left']} onChange={vi.fn()} />);
+    const notice = await screen.findByText(
+      "2 students you'd chosen are no longer in your audience and were unticked.",
+    );
+    expect(notice.getAttribute('role')).toBe('status');
+  });
+
+  it('names a single removed tick in the singular', async () => {
+    stubAudience(STUDENTS);
+    render(<AudiencePicker selected={['a', 'gone']} onChange={vi.fn()} />);
+    expect(
+      await screen.findByText("1 student you'd chosen is no longer in your audience and was unticked."),
+    ).toBeTruthy();
+  });
+
+  it('says nothing about removed ticks when none were removed', async () => {
+    stubAudience(STUDENTS);
+    render(<AudiencePicker selected={['a']} onChange={vi.fn()} />);
+    await screen.findByLabelText('Anna K.');
+    expect(screen.queryByText(/no longer in your audience/)).toBeNull();
   });
 
   it('logs and says so when the request itself throws', async () => {
