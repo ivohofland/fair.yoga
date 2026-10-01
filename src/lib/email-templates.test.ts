@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CLASS_REMINDER_EMAIL_FOOTER,
   escapeHtml,
   renderNotificationEmail,
   renderMagicLinkEmail,
@@ -8,6 +9,21 @@ import {
 import { STUDENT_INVITATION_PATH, STUDENT_BOOKINGS_PATH, TEACHER_INVITATION_PATH } from './notification-links';
 
 describe('email templates', () => {
+  it('uses the reminder footer, not the unread-fallback one, when given (#721)', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'class_reminder', title: 'Class reminder', body: 'Flow on Wed 10 Jun at 18:00.', recipientType: 'student' },
+      'https://fair.yoga',
+      CLASS_REMINDER_EMAIL_FOOTER,
+    );
+    expect(html).toContain(CLASS_REMINDER_EMAIL_FOOTER);
+    expect(html).not.toContain('when an in-app message goes unread');
+  });
+
+  it('keeps the unread-fallback footer by default', () => {
+    const { html } = renderNotificationEmail({ type: 'announcement', title: 't', body: 'b' }, 'https://fair.yoga');
+    expect(html).toContain('when an in-app message goes unread');
+  });
+
   it('escapes HTML in notification titles and bodies', () => {
     const { html } = renderNotificationEmail({
       type: 'announcement',

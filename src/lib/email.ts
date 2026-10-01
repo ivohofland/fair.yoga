@@ -1,6 +1,7 @@
 import { Resend } from 'resend';
 import { renderMagicLinkEmail, renderInvitationEmail } from '@/lib/email-templates';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
+import { log } from '@/lib/log';
 
 // Lazy: constructing Resend without a key throws, which would crash any
 // import of this module in keyless environments (Docker image build,
@@ -85,4 +86,21 @@ export async function sendInvitationEmail(
   if (error) {
     throw new Error(`Failed to send invitation email: ${error.message}`);
   }
+}
+
+/** Sends one HTML email. Resend reports failure as `{ error }`, not a throw; so does this. */
+export async function sendHtmlEmail(input: {
+  to: string;
+  subject: string;
+  html: string;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (emailDryRun()) {
+    log.info({ to: input.to, subject: input.subject }, 'email dry-run');
+    return { ok: true };
+  }
+  const { error } = await resend().emails.send({
+    from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
+    ...input,
+  });
+  return error ? { ok: false, reason: error.message } : { ok: true };
 }

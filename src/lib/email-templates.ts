@@ -25,8 +25,19 @@ export function escapeHtml(text: string): string {
     .replaceAll("'", '&#39;');
 }
 
+const UNREAD_FALLBACK_FOOTER =
+  'You get emails like this when an in-app message goes unread; turn them off in your settings.';
+
+/** Footer for a class reminder, sent at its moment because the reader chose email for reminders. */
+export const CLASS_REMINDER_EMAIL_FOOTER =
+  'You get this email because you chose class reminders by email; change that in your notification settings.';
+
 /** The shared shell: wordmark, one content block, quiet footer. */
-export function wrapEmail(heading: string, bodyHtml: string): string {
+export function wrapEmail(
+  heading: string,
+  bodyHtml: string,
+  footer: string = UNREAD_FALLBACK_FOOTER,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <body style="margin:0;padding:0;background-color:#F7F4EF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif;color:#6B5B4E;">
@@ -38,7 +49,7 @@ export function wrapEmail(heading: string, bodyHtml: string): string {
     </div>
     <p style="font-size:13px;line-height:1.4;color:#71645A;margin:24px 0 0;">
       fair.yoga — free, open tools for independent yoga teachers.<br>
-      You get emails like this when an in-app message goes unread; turn them off in your settings.
+      ${escapeHtml(footer)}
     </p>
   </div>
 </body>
@@ -125,6 +136,7 @@ export interface NotificationEmailInput {
 export function renderNotificationEmail(
   notification: NotificationEmailInput,
   baseUrl: string = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+  footer?: string,
 ): {
   subject: string;
   html: string;
@@ -144,6 +156,7 @@ export function renderNotificationEmail(
     escapeHtml(notification.title),
     `<p style="margin:0 0 8px;color:#71645A;font-size:13px;">${escapeHtml(intro)}</p>
      <p style="margin:0;">${escapeHtml(notification.body)}</p>${actionHtml}`,
+    footer,
   );
   return { subject: notification.title, html };
 }

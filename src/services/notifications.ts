@@ -37,6 +37,7 @@ interface NotificationFields {
   readonly title: string;
   readonly body: string;
   readonly relatedClassId?: string;
+  readonly emailSent?: boolean;
 }
 
 /** The teacher variant accepts only `TeacherNotificationType`. */
@@ -96,7 +97,7 @@ export async function createNotification(
       body: input.body,
       relatedClassId: input.relatedClassId ?? null,
       isRead: false,
-      emailSent: false,
+      emailSent: input.emailSent ?? false,
     },
   });
   emitToBus(input, notification.id);
@@ -121,7 +122,7 @@ export async function createBulkNotifications(
       body: input.body,
       relatedClassId: input.relatedClassId ?? null,
       isRead: false,
-      emailSent: false,
+      emailSent: input.emailSent ?? false,
     })),
   });
 
