@@ -390,7 +390,9 @@ export class ErasureLockSetError extends Error {
  * - profile fields anonymized, email replaced with an unroutable unique one
  * - privacy rows, roster links, waitlist entries, notifications, sessions,
  *   magic-link tokens: deleted
- * - their id removed from every `Announcement.audienceStudentIds`
+ * - their id removed from the `Announcement.audienceStudentIds` rows that
+ *   exist when this runs (a send in flight can still write it back;
+ *   `docs/lock-order.md`, "`Announcement` rows: the audience scrub (#48)")
  * - `Invitation` rows naming this address anonymized in place, keeping the
  *   teacher's filing state without the identity behind it
  * - `TeacherBlock` rows left standing on purpose — they are what carries the

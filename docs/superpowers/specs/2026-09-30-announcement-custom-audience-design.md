@@ -122,6 +122,6 @@ column makes one possible.
 ## 7. Rulings during build
 
 - **Erased students are not in any audience.** `Student.deletedAt` is filtered at both audience reads (`listAnnouncementAudience` and the class-scoped registration read in `POST /api/announcements`), because erasure leaves a started or completed class's registration uncancelled and the profile would otherwise be notified and listed in the picker.
-- **The Announcement scrub is a new lock node**, ordered Student -> Class -> Announcement; the census and the accepted write-back race are in `docs/lock-order.md`, "`Announcement` rows: the audience scrub".
+- **The Announcement scrub is a new lock node**, ordered Student -> Class -> Announcement; the census and the accepted write-back race are in `docs/lock-order.md`, "`Announcement` rows: the audience scrub (#48)".
 - **A fully-deduped send answers 200** with `{ recipientCount (= alreadyNotified), duplicateSuppressed: true, alreadyNotified }`: how many of this request's students already had the message, not the size of any earlier send.
 - **Dedupe ignores `classId` across scopes, by decision.** A student booked in two classes who gets the identical message for both within two minutes is told once, with the first send's class link. Flagged for the user's reaffirmation in the PR.

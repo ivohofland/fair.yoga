@@ -3,9 +3,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SendAnnouncement } from './send-announcement';
 
 /**
- * #196. `POST /api/announcements` suppresses an identical resend inside a
- * two-minute window and answers 200 with `duplicateSuppressed: true`, where a
- * genuine send answers 201. This component checked only `res.ok`, so both
+ * #196. `POST /api/announcements` answers 200 with `duplicateSuppressed: true`
+ * (and `outcome: 'unchanged'` beside the data) when every student it was asked
+ * to tell had already had the message inside `ANNOUNCEMENT_DEDUPE_WINDOW_MS`,
+ * and 201 when it told anyone. This component checked only `res.ok`, so both
  * outcomes rendered "Sent to 12 students" — a tool reporting a send that did
  * not happen. Suppressing the duplicate is right; hiding the suppression is
  * not, and these tests are what makes the honesty load-bearing rather than

@@ -260,7 +260,7 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 
 ### 8.3 — Send Announcement
 - Select audience: all students, students in a specific class, or custom selection
-- Custom selection draws from the same students as "all students" (a live booking, not archived); it never reaches further.
+- Custom selection draws from the same students as "all students" (a live booking, not archived); it never reaches further. Capped at `MAX_CUSTOM_AUDIENCE` (`src/lib/schemas.ts`); offered on the Students tab only — a class detail send stays class-scoped.
 - Write message
 - Preview
 - Send (respects student communication preferences — skips opted-out students)
