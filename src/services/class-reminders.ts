@@ -134,6 +134,10 @@ export async function processClassReminders(db: PrismaClient, now: Date = new Da
       const title = 'Class reminder';
       const body = `Your ${when} with ${entry.teacher.firstName}.`;
       const claimed = await db.$transaction(async (tx) => {
+        // `Class` before `Registration`, the order `docs/lock-order.md` fixes:
+        // the inbox row's `relatedClassId` takes this same lock, and taken there
+        // it would land after the registration's.
+        await tx.$queryRaw`SELECT 1 FROM "Class" WHERE id = ${cls.id} FOR KEY SHARE`;
         const { count } = await tx.registration.updateMany({
           where: {
             id: reg.id,
