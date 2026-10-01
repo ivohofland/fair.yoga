@@ -3251,5 +3251,10 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     const teacherId = await makeTeacher();
     const exported = await exportTeacherData(prisma, teacherId);
     expect(exported.profile.photo).toBeNull();
+    expect(exported.profile).toMatchObject({
+      bookingNotifications: 'inbox_and_email',
+      emailOnClassCompleted: true,
+      emailOnInvitation: true,
+    });
   });
 });
