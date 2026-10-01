@@ -20,6 +20,7 @@ import {
 } from '@/services/notifications';
 import { type TransactionClientOnly } from '@/lib/db-locks';
 import { log } from '@/lib/log';
+import { studentNameSelect, teacherVisibleName } from '@/lib/student-visibility';
 
 /**
  * How long a student who was told a message is not told it again: the window
@@ -180,6 +181,25 @@ export async function listAnnouncementAudience(
     distinct: ['studentId'],
   });
   return registrations.map((r) => r.studentId);
+}
+
+/**
+ * The all-students audience as a picker lists it: muted students included
+ * (the composer shows them as unreachable), named the way this teacher may see
+ * them, sorted by that name.
+ */
+export async function listAnnouncementAudienceStudents(
+  db: PrismaClient,
+  teacherId: string,
+): Promise<{ id: string; displayName: string }[]> {
+  const ids = await listAnnouncementAudience(db, teacherId);
+  const students = await db.student.findMany({
+    where: { id: { in: ids } },
+    select: studentNameSelect(teacherId),
+  });
+  return students
+    .map((s) => ({ id: s.id, displayName: teacherVisibleName(s, teacherId) }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 /**

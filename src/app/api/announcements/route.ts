@@ -10,7 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { type CreateNotificationInput } from '@/services/notifications';
 import { createAnnouncementSchema } from '@/lib/schemas';
-import { sendAnnouncement } from '@/services/announcements';
+import { listAnnouncementAudience, sendAnnouncement } from '@/services/announcements';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -40,21 +40,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
 
     studentIds = registrations.map((r) => r.studentId);
+  } else if (body.studentIds) {
+    // Gate 4: the client names students, so each must be proven to be in this
+    // teacher's audience. An id outside it — another teacher's student, an
+    // archived one, a stale picker row, a made-up uuid — is dropped without
+    // saying which, so the answer is no oracle on who exists or is linked elsewhere.
+    const audience = new Set(await listAnnouncementAudience(prisma, session.teacherId));
+    studentIds = [...new Set(body.studentIds)].filter((id) => audience.has(id));
   } else {
-    // Get ALL students who have any registration with this teacher, minus
-    // anyone this teacher has archived — archiving means no longer this
-    // teacher's active student (docs/data-model.md, TeacherStudent).
-    const registrations = await prisma.registration.findMany({
-      where: {
-        class: { calendarEntry: { teacherId: session.teacherId } },
-        status: { not: 'cancelled' },
-        student: { teacherStudents: { none: { teacherId: session.teacherId, isArchived: true } } },
-      },
-      select: { studentId: true },
-      distinct: ['studentId'],
-    });
-
-    studentIds = registrations.map((r) => r.studentId);
+    studentIds = await listAnnouncementAudience(prisma, session.teacherId);
   }
 
   // Honor the per-teacher communication opt-out: students who set
@@ -86,7 +80,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const classId = body.classId ?? null;
 
-  const { announcement, deduped } = await sendAnnouncement(prisma, {
+  const { announcement, deduped, alreadyNotified } = await sendAnnouncement(prisma, {
     teacherId: session.teacherId,
     classId,
     message: body.message,
@@ -95,15 +89,24 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // 201 created, 200 suppressed — and `duplicateSuppressed` in the body,
   // because the status alone is not enough: a client that checked only
-  // `res.ok` — which is what `send-announcement.tsx` did before #196, and what
-  // any other caller may still do — would go on reporting a
-  // send that did not happen. Suppressing the duplicate is right; hiding the
-  // suppression would be a small lie told by a tool whose premise is being an
-  // honest one.
+  // `res.ok` would go on reporting a send that did not happen. Suppressing
+  // the duplicate is right; hiding the suppression would be a small lie told
+  // by a tool whose premise is being an honest one.
   //
-  // `recipientCount` on the suppressed branch belongs to the most recent
-  // matching send inside the window (`orderBy: sentAt desc` above) — which the
-  // dedupe makes the only one, but the ordering is what decides it. Either
-  // way it is the honest number: those students really did receive it.
-  return respondOk({ ...announcement, duplicateSuppressed: deduped }, deduped ? 200 : 201);
+  // `alreadyNotified` is how many of the students this request named had
+  // already been told this message inside the window. `recipientCount` is the
+  // number of students this request's own response is about: on a created
+  // announcement, those it newly notified (the stored row's count); on a
+  // suppressed one, `alreadyNotified` — the stored row is whichever send was
+  // latest, which may never have named these students, so its count would
+  // describe someone else's send.
+  return respondOk(
+    {
+      ...announcement,
+      recipientCount: deduped ? alreadyNotified : announcement.recipientCount,
+      duplicateSuppressed: deduped,
+      alreadyNotified,
+    },
+    deduped ? 200 : 201,
+  );
 });

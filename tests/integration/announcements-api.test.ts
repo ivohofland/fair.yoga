@@ -21,6 +21,8 @@ let foreignClassId: string;
 let s1Id: string;
 let s2Id: string;
 let s3Id: string;
+let s4Id: string;
+let foreignStudentId: string;
 
 async function sendAnnouncement(body: Record<string, unknown>): Promise<Response> {
   return fetch(`${BASE_URL}/api/announcements`, {
@@ -34,7 +36,7 @@ function announcementNotifications(where: Record<string, unknown>) {
   return prisma.notification.findMany({
     where: {
       type: 'announcement',
-      recipientId: { in: [s1Id, s2Id, s3Id] },
+      recipientId: { in: [s1Id, s2Id, s3Id, s4Id, foreignStudentId].filter(Boolean) },
       ...where,
     },
   });
@@ -123,6 +125,8 @@ describe('POST /api/announcements', () => {
     s1Id = await makeStudent('Dedup');
     s2Id = await makeStudent('Muted');
     s3Id = await makeStudent('Cancelled');
+    s4Id = await makeStudent('Second');
+    foreignStudentId = await makeStudent('Foreign');
 
     async function register(classId: string, studentId: string, status: 'registered' | 'cancelled') {
       await prisma.registration.create({
@@ -140,6 +144,10 @@ describe('POST /api/announcements', () => {
     });
     // S3: cancelled in class 1 only.
     await register(class1Id, s3Id, 'cancelled');
+    // S4: class 2 only, unmuted — the second selectable student.
+    await register(class2Id, s4Id, 'registered');
+    // Foreign: booked only with the other teacher.
+    await register(foreignClassId, foreignStudentId, 'registered');
 
     teacherToken = await seedSession(prisma, teacherAccountId);
   });
@@ -148,7 +156,7 @@ describe('POST /api/announcements', () => {
     if (teacherAccountId) {
       await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
     }
-    const studentIds = [s1Id, s2Id, s3Id].filter(Boolean);
+    const studentIds = [s1Id, s2Id, s3Id, s4Id, foreignStudentId].filter(Boolean);
     if (studentIds.length) {
       await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
       await prisma.studentPrivacy.deleteMany({ where: { studentId: { in: studentIds } } });
@@ -193,11 +201,10 @@ describe('POST /api/announcements', () => {
     const res = await sendAnnouncement({ message: 'Studio closed next week.' });
     expect(res.status).toBe(201);
     const { data } = await res.json();
-    expect(data.recipientCount).toBe(1); // S1 deduped; S2 muted; S3 cancelled-only
+    expect(data.recipientCount).toBe(2); // S1 (two classes, once) and S4; S2 muted; S3 cancelled-only
 
     const rows = await announcementNotifications({ createdAt: { gt: before } });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.recipientId).toBe(s1Id);
+    expect(rows.map((r) => r.recipientId).sort()).toEqual([s1Id, s4Id].sort());
   });
 
   it("rejects another teacher's class", async () => {
@@ -321,8 +328,8 @@ describe('POST /api/announcements', () => {
       expect(second.status).toBe(200);
       const { data } = await second.json();
       // The teacher is told, rather than shown a success for a send that did
-      // not happen. `recipientCount` is the FIRST send's, which is the honest
-      // number: those students did receive it.
+      // not happen. `recipientCount` on a suppressed answer is the number of
+      // requested students who already had it.
       expect(data.duplicateSuppressed).toBe(true);
       expect(data.recipientCount).toBeGreaterThan(0);
     });
@@ -343,13 +350,18 @@ describe('POST /api/announcements', () => {
       expect(await announcementNotifications({ body: message })).toHaveLength(2);
     });
 
-    it('does not let an all-students announcement match a class-scoped one', async () => {
-      const message = `Nullable classId ${suffix}`;
+    it('does not re-notify a class send\'s registrants on a same-message all-students send', async () => {
+      const message = `Cross-scope dedupe ${suffix}`;
       expect((await sendAnnouncement({ classId: class1Id, message })).status).toBe(201);
-      // No `classId` at all — a different announcement, and the case a Prisma
-      // `where` given `undefined` silently widens to "every announcement this
-      // teacher ever sent".
-      expect((await sendAnnouncement({ message })).status).toBe(201);
+      // Dedupe is per recipient and ignores scope: S1 was told by the class
+      // send, so only S4 (not in class 1) is new to the all-students send.
+      const second = await sendAnnouncement({ message });
+      expect(second.status).toBe(201);
+      const { data } = await second.json();
+      expect(data.recipientCount).toBe(1);
+      expect(data.alreadyNotified).toBe(1);
+      const rows = await announcementNotifications({ body: message });
+      expect(rows.map((r) => r.recipientId).sort()).toEqual([s1Id, s4Id].sort());
       expect(await prisma.announcement.count({ where: { teacherId, message } })).toBe(2);
     });
 
@@ -373,7 +385,7 @@ describe('POST /api/announcements', () => {
 
       // Notifications first, as everywhere in this block: the doubled fan-out
       // is the cost, the status is only how it is reported.
-      expect(await announcementNotifications({ body: message })).toHaveLength(1);
+      expect(await announcementNotifications({ body: message })).toHaveLength(2); // S1 and S4, once each
       expect(await prisma.announcement.count({ where: { teacherId, classId: null, message } }))
         .toBe(1);
 
@@ -497,6 +509,113 @@ describe('POST /api/announcements', () => {
       // Archived with a different teacher: the exclusion must not reach
       // across teachers, so this teacher's send still notifies them.
       expect(recipientIds).toContain(crossTeacherArchivedStudentId);
+    });
+  });
+
+  describe('custom audience (#48)', () => {
+    it('notifies exactly the selected, eligible, unmuted students', async () => {
+      const res = await sendAnnouncement({ studentIds: [s1Id, s4Id], message: 'Custom A' });
+      expect(res.status).toBe(201);
+      expect((await res.json()).data.recipientCount).toBe(2);
+      const rows = await announcementNotifications({ body: 'Custom A' });
+      expect(rows.map((r) => r.recipientId).sort()).toEqual([s1Id, s4Id].sort());
+      expect(rows[0]!.relatedClassId).toBeNull();
+    });
+
+    it("never notifies another teacher's student, and answers as if the id were absent", async () => {
+      const res = await sendAnnouncement({ studentIds: [s1Id, foreignStudentId], message: 'Custom B' });
+      expect(res.status).toBe(201);
+      expect((await res.json()).data.recipientCount).toBe(1);
+      const foreign = await prisma.notification.findMany({
+        where: { recipientId: foreignStudentId, body: 'Custom B' },
+      });
+      expect(foreign).toHaveLength(0);
+    });
+
+    it('answers a foreign id and an unknown id identically', async () => {
+      const unknown = '00000000-0000-4000-8000-00000000dead';
+      const a = await sendAnnouncement({ studentIds: [foreignStudentId], message: 'Custom C' });
+      const b = await sendAnnouncement({ studentIds: [unknown], message: 'Custom C' });
+      expect(a.status).toBe(400);
+      expect(b.status).toBe(400);
+      expect(await a.json()).toEqual(await b.json());
+    });
+
+    it('drops muted and cancelled-only students, 400 when nothing remains', async () => {
+      const res = await sendAnnouncement({ studentIds: [s2Id, s3Id], message: 'Custom D' });
+      expect(res.status).toBe(400);
+      expect(await prisma.announcement.count({ where: { teacherId, message: 'Custom D' } })).toBe(0);
+    });
+
+    it('drops an archived student', async () => {
+      await prisma.teacherStudent.upsert({
+        where: { teacherId_studentId: { teacherId, studentId: s4Id } },
+        create: { teacherId, studentId: s4Id, isArchived: true },
+        update: { isArchived: true },
+      });
+      try {
+        const res = await sendAnnouncement({ studentIds: [s1Id, s4Id], message: 'Custom E' });
+        expect((await res.json()).data.recipientCount).toBe(1);
+      } finally {
+        await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: s4Id } });
+      }
+    });
+
+    it('refuses a class and a list together', async () => {
+      const res = await sendAnnouncement({ classId: class1Id, studentIds: [s1Id], message: 'Custom F' });
+      expect(res.status).toBe(400);
+    });
+
+    it('tells only the additions when the list grows inside the window', async () => {
+      await sendAnnouncement({ studentIds: [s1Id], message: 'Custom G' });
+      const res = await sendAnnouncement({ studentIds: [s1Id, s4Id], message: 'Custom G' });
+      expect(res.status).toBe(201);
+      const { data } = await res.json();
+      expect(data.recipientCount).toBe(1);
+      expect(data.alreadyNotified).toBe(1);
+      const rows = await announcementNotifications({ body: 'Custom G' });
+      expect(rows.map((r) => r.recipientId).sort()).toEqual([s1Id, s4Id].sort());
+    });
+
+    it('collapses duplicate ids in the list to one notification', async () => {
+      await sendAnnouncement({ studentIds: [s1Id, s1Id], message: 'Custom H' });
+      expect(await announcementNotifications({ body: 'Custom H' })).toHaveLength(1);
+    });
+
+    it('a suppressed answer counts the requested students already told, not the latest row', async () => {
+      await sendAnnouncement({ studentIds: [s1Id, s4Id], message: 'Custom I' });
+      const res = await sendAnnouncement({ studentIds: [s1Id], message: 'Custom I' });
+      expect(res.status).toBe(200);
+      const { data } = await res.json();
+      expect(data.duplicateSuppressed).toBe(true);
+      expect(data.alreadyNotified).toBe(1);
+      expect(data.recipientCount).toBe(1); // the latest row's own count is 2
+    });
+  });
+
+  describe('GET /api/announcements/audience (#48)', () => {
+    async function getAudience() {
+      return fetch(`${BASE_URL}/api/announcements/audience`, { headers: cookie(teacherToken) });
+    }
+
+    it('lists the audience including muted students, excluding cancelled-only and foreign ones', async () => {
+      const res = await getAudience();
+      expect(res.status).toBe(200);
+      const ids = (await res.json()).data.students.map((s: { id: string }) => s.id);
+      expect(ids).toEqual(expect.arrayContaining([s1Id, s2Id, s4Id]));
+      expect(ids).not.toContain(s3Id);
+      expect(ids).not.toContain(foreignStudentId);
+    });
+
+    it('shows first name plus initial unless the student shares their full name', async () => {
+      const res = await getAudience();
+      const s1 = (await res.json()).data.students.find((s: { id: string }) => s.id === s1Id);
+      expect(s1.displayName).not.toContain('Student'); // surname withheld by default
+    });
+
+    it('401 without a session', async () => {
+      const res = await fetch(`${BASE_URL}/api/announcements/audience`);
+      expect(res.status).toBe(401);
     });
   });
 });
