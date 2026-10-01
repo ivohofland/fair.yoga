@@ -1,16 +1,23 @@
 import { NextRequest } from 'next/server';
+import type { Announcement } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
-  respondOk,
+  respondTyped,
+  respondUnchanged,
   respondError,
   requireTeacher,
   parseBody,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import type { AnnouncementSendResponse } from '@/lib/api-types';
+import { log } from '@/lib/log';
 import { type CreateNotificationInput } from '@/services/notifications';
 import { createAnnouncementSchema } from '@/lib/schemas';
 import { listAnnouncementAudience, sendAnnouncement } from '@/services/announcements';
+import { NO_RECIPIENTS_MESSAGE } from './shared';
+
+type CreatedResponse = Omit<Announcement, 'audienceStudentIds'> & AnnouncementSendResponse;
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -33,8 +40,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       return respondError('Not your class', 403);
     }
 
-    // Every non-cancelled registration for this class, minus erased profiles:
-    // erasure leaves a started or completed class's registration uncancelled.
+    // Every non-cancelled registration for this class whose student is not
+    // erased (`docs/data-model.md`, Announcement).
     const registrations = await prisma.registration.findMany({
       where: { classId: body.classId, status: { not: 'cancelled' }, student: { deletedAt: null } },
       select: { studentId: true },
@@ -45,9 +52,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Gate 4: the client names students, so each must be proven to be in this
     // teacher's audience. An id outside it — another teacher's student, an
     // archived one, a stale picker row, a made-up uuid — is dropped without
-    // saying which, so the answer is no oracle on who exists or is linked elsewhere.
+    // saying which, so the answer is no oracle on who exists or is linked
+    // elsewhere. The log line carries counts for the same reason.
     const audience = new Set(await listAnnouncementAudience(prisma, session.teacherId));
-    studentIds = [...new Set(body.studentIds)].filter((id) => audience.has(id));
+    const requested = [...new Set(body.studentIds)];
+    studentIds = requested.filter((id) => audience.has(id));
+    if (studentIds.length < requested.length) {
+      log.info(
+        { teacherId: session.teacherId, requested: requested.length, accepted: studentIds.length },
+        'announcement: custom audience ids outside the audience dropped',
+      );
+    }
   } else {
     studentIds = await listAnnouncementAudience(prisma, session.teacherId);
   }
@@ -66,7 +81,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   studentIds = studentIds.filter((id) => !optedOut.has(id));
 
   if (studentIds.length === 0) {
-    return respondError('No students to notify', 400);
+    return respondError(
+      body.studentIds ? NO_RECIPIENTS_MESSAGE.chosen : NO_RECIPIENTS_MESSAGE.audience,
+      400,
+    );
   }
 
   // Create notification for each student
@@ -96,16 +114,31 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   //
   // `alreadyNotified` is how many of the students this request named had
   // already been told this message inside the window. A created announcement
-  // answers with its own row plus that count. A suppressed one answers with
-  // only what is true of THIS request — `recipientCount` is `alreadyNotified`
-  // and nothing of the stored row — because the latest row in the window may
-  // belong to another send (another class, another list), and its id, class,
-  // time and count would describe that one.
+  // answers with its own row, minus the ids of everyone it told, plus that
+  // count. A suppressed one is a request whose goal already holds, so it
+  // answers `respondUnchanged` with only what is true of THIS request —
+  // `recipientCount` is `alreadyNotified` and nothing of the stored row —
+  // because the latest row in the window may belong to another send (another
+  // class, another list), and its id, class, time and count would describe
+  // that one.
   if (deduped) {
-    return respondOk(
-      { recipientCount: alreadyNotified, duplicateSuppressed: true, alreadyNotified },
-      200,
-    );
+    return respondUnchanged<AnnouncementSendResponse>({
+      recipientCount: alreadyNotified,
+      duplicateSuppressed: true,
+      alreadyNotified,
+    });
   }
-  return respondOk({ ...announcement, duplicateSuppressed: false, alreadyNotified }, 201);
+  return respondTyped<CreatedResponse>(
+    {
+      id: announcement.id,
+      teacherId: announcement.teacherId,
+      classId: announcement.classId,
+      message: announcement.message,
+      recipientCount: announcement.recipientCount,
+      sentAt: announcement.sentAt,
+      duplicateSuppressed: false,
+      alreadyNotified,
+    },
+    201,
+  );
 });

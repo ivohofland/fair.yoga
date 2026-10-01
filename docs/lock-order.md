@@ -1863,7 +1863,7 @@ of the transaction in `sendAnnouncement` (`src/services/announcements.ts`), so t
 sends of the same text from one teacher cannot both read an empty duplicate check and both fan out one
 `Notification` per recipient. The key names the same two columns the transaction's
 `findMany` dedupe compare filters on, and no class: dedupe is per recipient, so a
-class-scoped and an all-students send of one text contend for the same lock.
+class-scoped and an all-students or custom send of one text contend for the same lock.
 
 It is not a row of any table, so nothing about the canonical line applies to it
 directly. What does apply:

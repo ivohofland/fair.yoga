@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/services/announcements';
+import { NO_RECIPIENTS_MESSAGE } from '@/app/api/announcements/shared';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
@@ -222,6 +223,7 @@ describe('POST /api/announcements', () => {
     const before = new Date();
     const res = await sendAnnouncement({ classId: class3Id, message: 'Nobody hears this.' });
     expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toBe(NO_RECIPIENTS_MESSAGE.audience);
     expect(await announcementNotifications({ createdAt: { gt: before } })).toHaveLength(0);
     const records = await prisma.announcement.findMany({
       where: { teacherId, classId: class3Id },
@@ -622,7 +624,12 @@ describe('POST /api/announcements', () => {
     it('notifies exactly the selected, eligible, unmuted students', async () => {
       const res = await sendAnnouncement({ studentIds: [s1Id, s4Id], message: 'Custom A' });
       expect(res.status).toBe(201);
-      expect((await res.json()).data.recipientCount).toBe(2);
+      const { data } = await res.json();
+      expect(data.recipientCount).toBe(2);
+      // The stored audience is read from the row, never handed back.
+      expect(data).not.toHaveProperty('audienceStudentIds');
+      const stored = await prisma.announcement.findUniqueOrThrow({ where: { id: data.id } });
+      expect(stored.audienceStudentIds).toEqual([s1Id, s4Id].sort());
       const rows = await announcementNotifications({ body: 'Custom A' });
       expect(rows.map((r) => r.recipientId).sort()).toEqual([s1Id, s4Id].sort());
       expect(rows[0]!.relatedClassId).toBeNull();
@@ -650,6 +657,9 @@ describe('POST /api/announcements', () => {
     it('drops muted and cancelled-only students, 400 when nothing remains', async () => {
       const res = await sendAnnouncement({ studentIds: [s2Id, s3Id], message: 'Custom D' });
       expect(res.status).toBe(400);
+      // Both empty-audience refusals are 400 with no code, so the sentence is
+      // the only thing that says which audience was empty.
+      expect((await res.json()).error.message).toBe(NO_RECIPIENTS_MESSAGE.chosen);
       expect(await prisma.announcement.count({ where: { teacherId, message: 'Custom D' } })).toBe(0);
     });
 
@@ -692,7 +702,10 @@ describe('POST /api/announcements', () => {
       await sendAnnouncement({ studentIds: [s1Id, s4Id], message: 'Custom I' });
       const res = await sendAnnouncement({ studentIds: [s1Id], message: 'Custom I' });
       expect(res.status).toBe(200);
-      const { data } = await res.json();
+      const body = await res.json();
+      // The goal — every requested student has the message — already holds.
+      expect(body.outcome).toBe('unchanged');
+      const { data } = body;
       expect(data.duplicateSuppressed).toBe(true);
       expect(data.alreadyNotified).toBe(1);
       expect(data.recipientCount).toBe(1); // the latest row's own count is 2
