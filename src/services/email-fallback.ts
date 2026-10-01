@@ -184,7 +184,7 @@ export async function processEmailFallback(
       //    makes it cover both. So even a row that slipped through carries
       //    no real address to send to: `email` above still comes back
       //    truthy (the rewritten address, not null), so the send below is
-      //    still attempted — nothing here stops that — it only guarantees
+      //    still attempted — no liveness check here stops that — it only guarantees
       //    the attempt lands on an address `.invalid` guarantees can never
       //    be delivered. (A `completeClass`-shaped regression gets a second,
       //    independent backstop too: `class_terminal_status_guard`, the DB
@@ -205,12 +205,12 @@ export async function processEmailFallback(
         if (isTeacherNotificationType(notification.type)) {
           emailEnabled = shouldEmailTeacher(notification.type, teacher);
         } else {
-          // Unreachable through `createNotification`'s teacher variant; a row
-          // here came from a direct write or a double cast. Emailed as before
-          // rather than dropped, and logged so it is seen.
-          log.warn(
+          // A row outside `TeacherNotificationType` was written around the
+          // type: directly, or by a cast, mutation or `Object.assign` that
+          // defeats it. Emailed rather than dropped, and logged so it is seen.
+          log.error(
             { notificationId: notification.id, type: notification.type },
-            'teacher notification outside TeacherNotificationType',
+            'teacher notification outside TeacherNotificationType; emailed ignoring preferences',
           );
         }
       }
@@ -233,6 +233,7 @@ export async function processEmailFallback(
         {
           notificationId: notification.id,
           recipientType: notification.recipientType,
+          type: notification.type,
           reason: !email ? 'recipient-missing' : 'opted-out',
         },
         'email fallback skipped',

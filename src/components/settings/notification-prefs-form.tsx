@@ -34,15 +34,8 @@ type BookingOption = (typeof BOOKING_OPTIONS)[number]['value'];
 const _offersEveryChoice: NoneOf<Exclude<TeacherBookingNotifications, BookingOption>> = true;
 void _offersEveryChoice;
 
-/** Narrows a plain string (a prop, or an input's value) to `BookingOption` without an assertion. */
-function isBookingOption(v: string): v is BookingOption {
-  return BOOKING_OPTIONS.some((o) => o.value === v);
-}
-
 export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsFormProps) {
-  const [booking, setBooking] = useState<BookingOption>(
-    isBookingOption(initial.bookingNotifications) ? initial.bookingNotifications : BOOKING_OPTIONS[0].value,
-  );
+  const [booking, setBooking] = useState<TeacherBookingNotifications>(initial.bookingNotifications);
   const [completed, setCompleted] = useState(initial.emailOnClassCompleted);
   const [invitation, setInvitation] = useState(initial.emailOnInvitation);
   const [saving, setSaving] = useState(false);

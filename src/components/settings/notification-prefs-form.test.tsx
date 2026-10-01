@@ -38,15 +38,16 @@ describe('NotificationPrefsForm', () => {
     expect(within(other).getByRole('checkbox', { name: /invitation/i })).toBeInTheDocument();
   });
 
-  it('sends exactly the three preference keys to the teacher route', async () => {
+  it('sends exactly the three preference keys to the teacher route, each at a non-default value', async () => {
     stubFetch();
     render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} />);
     fireEvent.click(screen.getByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /class-completed summary/i }));
     fireEvent.click(screen.getByRole('checkbox', { name: /invitation/i }));
     const { url, method, body } = await save();
     expect(url).toBe('/api/teachers/t1');
     expect(method).toBe('PUT');
-    expect(body).toEqual({ bookingNotifications: 'off', emailOnClassCompleted: true, emailOnInvitation: false });
+    expect(body).toEqual({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
   });
 
   it('clears the saved notice when edited after a save', async () => {
@@ -64,5 +65,18 @@ describe('NotificationPrefsForm', () => {
     render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} />);
     await save();
     expect(await screen.findByText('Nope from server')).toBeInTheDocument();
+  });
+
+  it('shows network copy and logs when the request itself fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} />);
+    fireEvent.click(screen.getByRole('button', { name: /save notifications/i }));
+    expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[notification-prefs-form] request failed',
+      expect.objectContaining({ err: expect.any(TypeError) }),
+    );
   });
 });

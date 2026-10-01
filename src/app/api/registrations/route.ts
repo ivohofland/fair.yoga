@@ -406,7 +406,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         });
 
         // Unlocked: a preference changed mid-booking lands either side of
-        // this read, and either answer is acceptable (spec §5).
+        // this read, and either answer is acceptable.
         const { bookingNotifications } = await tx.teacher.findUniqueOrThrow({
           where: { id: cls.calendarEntry.teacherId },
           select: { bookingNotifications: true },
@@ -414,7 +414,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
         // Layer 1+2 of the comms model: confirmation for the student,
         // heads-up for the teacher unless they turned new-booking
-        // notifications off. Email fallback picks these up if unread.
+        // notifications off. The email fallback emails an unread one unless
+        // the recipient's preferences say otherwise.
         await createBulkNotifications(tx, [
           {
             recipientType: 'student',

@@ -33,18 +33,16 @@ type Db = PrismaClient | Prisma.TransactionClient;
 // ---------------------------------------------------------------------------
 
 interface NotificationFields {
-  recipientId: string;
-  title: string;
-  body: string;
-  relatedClassId?: string;
+  readonly recipientId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly relatedClassId?: string;
 }
 
-/** The teacher variant accepts only `TeacherNotificationType`, so a teacher
- *  notification cannot be created until `TEACHER_EMAIL_POLICY` classifies it
- *  (`notification-policy.ts`). */
+/** The teacher variant accepts only `TeacherNotificationType`. */
 export type CreateNotificationInput =
-  | (NotificationFields & { recipientType: 'teacher'; type: TeacherNotificationType })
-  | (NotificationFields & { recipientType: 'student'; type: NotificationType });
+  | (NotificationFields & { readonly recipientType: 'teacher'; readonly type: TeacherNotificationType })
+  | (NotificationFields & { readonly recipientType: 'student'; readonly type: NotificationType });
 
 // ---------------------------------------------------------------------------
 // Core operations

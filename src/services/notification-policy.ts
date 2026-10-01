@@ -76,10 +76,8 @@ export function shouldEmailStudent(
 }
 
 /**
- * What a teacher recipient can be sent. Enforced at creation by
- * `CreateNotificationInput`'s teacher variant (`notifications.ts`). Joining
- * this union fails `TEACHER_EMAIL_POLICY`'s `satisfies` until the type is
- * classified there.
+ * What a teacher recipient can be sent. Adding a member fails
+ * `TEACHER_EMAIL_POLICY`'s `satisfies` until it is classified there.
  */
 export type TeacherNotificationType =
   | 'booking_confirmed'
@@ -95,10 +93,9 @@ export interface TeacherNotificationPrefs {
 
 /**
  * The teacher's own counterpart to `ESSENTIAL_NOTIFICATION_TYPES`, kept apart
- * because essentiality depends on the recipient: `payment_request` is a debt
- * to a student but a summary to a teacher. `class_cancelled` here is the
- * auto-cancel — the system ended the teacher's class without them, so it
- * ignores every preference.
+ * because whether an email is essential depends on the recipient (see
+ * `ESSENTIAL_NOTIFICATION_TYPES`). A teacher's `class_cancelled` ignores every
+ * preference, because the system ended the class without the teacher acting.
  */
 const TEACHER_EMAIL_POLICY = {
   class_cancelled: () => true,

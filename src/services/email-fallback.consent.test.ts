@@ -298,7 +298,7 @@ describe('processEmailFallback — teacher preferences (#49)', () => {
   beforeEach(async () => {
     sendMock.mockReset();
     sendMock.mockResolvedValue({ error: null });
-    vi.mocked(log.warn).mockClear();
+    vi.mocked(log.error).mockClear();
     await setPrefs({ bookingNotifications: 'inbox_and_email', emailOnClassCompleted: true, emailOnInvitation: true });
   });
 
@@ -348,12 +348,12 @@ describe('processEmailFallback — teacher preferences (#49)', () => {
     }
   });
 
-  it('fails open on a teacher row outside TeacherNotificationType: emailed, and warned', async () => {
+  it('fails open on a teacher row outside TeacherNotificationType: emailed, and logged as an error', async () => {
     await setPrefs({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
     const n = await note('announcement'); // only reachable by a direct write — the typed path refuses it
     await processEmailFallback(prisma);
     expect(sendsTo(teacherEmail)).toBe(1);
-    expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+    expect(vi.mocked(log.error)).toHaveBeenCalledWith(
       expect.objectContaining({ notificationId: n.id }),
       expect.any(String),
     );
