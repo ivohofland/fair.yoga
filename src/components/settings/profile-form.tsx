@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updateTeacherSchema } from '@/lib/schemas';
+import type { TeacherNotificationPrefs } from '@/services/notification-policy';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -28,14 +29,15 @@ export interface ProfileFormValues {
 
 /**
  * Forward: a field added to `updateTeacherSchema` with no matching key in
- * `ProfileFormValues` fails the build, naming it. Reverse: a key in
+ * `ProfileFormValues` fails the build, naming it — except the notification
+ * preferences, which have their own form and are not this one's to send. Reverse: a key in
  * `ProfileFormValues` the schema dropped fails the build too — `.strict()`
  * would 400 it at runtime; this catches it at compile time. Both pins reach
  * the wire body because `handleSubmit` builds it as a `payload` literal typed
  * `ProfileFormValues` and stringifies that literal directly: the same excess-
  * property check that guards this alias guards the object actually sent.
  */
-const _formCoversSchema: NoneOf<Exclude<keyof UpdateTeacherWire, keyof ProfileFormValues>> = true;
+const _formCoversSchema: NoneOf<Exclude<Exclude<keyof UpdateTeacherWire, keyof TeacherNotificationPrefs>, keyof ProfileFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof ProfileFormValues, keyof UpdateTeacherWire>> = true;
 void _formCoversSchema;
 void _formHasNoExtras;

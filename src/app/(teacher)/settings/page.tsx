@@ -10,6 +10,7 @@ const SETTINGS_ITEMS = [
   { href: '/settings/recurring', label: 'Recurring classes' },
   { href: '/settings/studio-classes', label: 'Studio classes' },
   { href: '/settings/rooms', label: 'Rooms' },
+  { href: '/settings/notifications', label: 'Notifications' },
   { href: '/settings/profile', label: 'Profile' },
 ];
 
