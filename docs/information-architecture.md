@@ -215,7 +215,7 @@ Settings
 │   └── New booking: inbox and email / inbox only / off; class completed and invitations: email on/off; auto-cancel: emailed if missed, whatever the settings
 │
 ├── Add to Home Screen
-│   └── Only where this browser can install the app: iOS Safari gets the steps, Chromium its own prompt. Students have the same row on Account
+│   └── Only where this browser can install the app: iOS Safari, and a browser whose own install prompt is already used, get the steps in words; a live Chromium install prompt opens the browser's own dialog. Students have the same row on Account
 │
 └── Personal page preview
     └── See what students see
