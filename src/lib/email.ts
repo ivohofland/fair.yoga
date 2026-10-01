@@ -92,6 +92,12 @@ export async function sendInvitationEmail(
  * Sends one HTML email. An API failure Resend reports as `{ error }` comes back
  * as `{ ok: false }`; an error the SDK throws (network, serialisation)
  * propagates.
+ *
+ * In production with no key and no explicit `EMAIL_DRY_RUN=1` it answers
+ * `{ ok: false }` rather than dry-running. `sendInvitationEmail` dry-runs there
+ * because something else still reaches the invitee; for an email-only class
+ * reminder the email is the whole delivery, so a dry-run would lose it with
+ * nothing above an `info` line to say so.
  */
 export async function sendHtmlEmail(input: {
   to: string;
@@ -99,6 +105,9 @@ export async function sendHtmlEmail(input: {
   html: string;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (emailDryRun()) {
+    if (process.env.NODE_ENV === 'production' && process.env.EMAIL_DRY_RUN !== '1') {
+      return { ok: false, reason: 'RESEND_API_KEY is not configured' };
+    }
     log.info({ to: input.to, subject: input.subject }, 'email dry-run');
     return { ok: true };
   }
