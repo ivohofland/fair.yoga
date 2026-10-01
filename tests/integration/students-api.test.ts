@@ -2151,6 +2151,14 @@ describe('PUT /api/students/[id]', () => {
     expect(after).toEqual({ classReminder: 'one_hour_before', classReminderChannel: 'email' });
   });
 
+  it.each([
+    ['a retired timing value', { classReminder: 'eve' }],
+    ['an unknown channel', { classReminderChannel: 'sms' }],
+    ['the retired reminderPref key', { reminderPref: 'morning_of' }],
+  ])('refuses %s with 400 (#721)', async (_label, body) => {
+    expect((await put(alice.id, body, alice.token)).status).toBe(400);
+  });
+
   it('refuses a whitespace-only first name (#405 §1, over the wire)', async () => {
     const before = await firstNameOf(alice.id);
     const res = await put(alice.id, { firstName: '   ' }, alice.token);
