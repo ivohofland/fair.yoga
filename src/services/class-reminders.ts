@@ -84,9 +84,9 @@ function dueMoment(
 const LIVE_CLASS = { status: 'open', calendarEntry: { cancelledAt: null } } as const;
 
 /**
- * Sends one reminder email and reports whether it went out. Never throws: the
- * stamp has already committed, so a failure — reported or thrown — is logged
- * and not retried.
+ * Renders and sends one reminder email and reports whether it went out. Never
+ * throws: the stamp has already committed, so a failure — reported or thrown,
+ * rendering included — is logged and not retried.
  */
 async function emailReminder(
   to: string,
@@ -95,21 +95,21 @@ async function emailReminder(
   body: string,
   context: { classId: string; recipientId: string },
 ): Promise<boolean> {
-  const { subject, html } = renderNotificationEmail(
-    { type: 'class_reminder', title, body, recipientType },
-    undefined,
-    CLASS_REMINDER_EMAIL_FOOTER,
-  );
-  let result: Awaited<ReturnType<typeof sendHtmlEmail>>;
   try {
-    result = await sendHtmlEmail({ to, subject, html });
+    const { subject, html } = renderNotificationEmail(
+      { type: 'class_reminder', title, body, recipientType },
+      undefined,
+      CLASS_REMINDER_EMAIL_FOOTER,
+    );
+    const result = await sendHtmlEmail({ to, subject, html });
+    if (!result.ok) {
+      log.error({ ...context, recipientType, reason: result.reason }, 'class reminder email failed; not retried');
+    }
+    return result.ok;
   } catch (err) {
-    result = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    log.error({ ...context, recipientType, err }, 'class reminder email failed; not retried');
+    return false;
   }
-  if (!result.ok) {
-    log.error({ ...context, recipientType, reason: result.reason }, 'class reminder email failed; not retried');
-  }
-  return result.ok;
 }
 
 export async function processClassReminders(db: PrismaClient, now: Date = new Date()): Promise<ClassReminderResult> {
@@ -117,85 +117,118 @@ export async function processClassReminders(db: PrismaClient, now: Date = new Da
   const { from, to } = reminderCandidateDates(now);
   const classes = await readInPages<Candidate>((after, take) => readCandidatePage(db, from, to, after?.id, take));
 
+  // One class failing must not starve the classes after it in `id` order: a
+  // failure on the same row would otherwise recur on every tick.
+  let classFailures = 0;
   for (const cls of classes) {
-    const entry = cls.calendarEntry;
-    const start = classStartInstant(entry, entry.teacher.defaultTimezone);
-    if (now >= start) continue;
-    const when = `${entry.classType} on ${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)}`;
+    try {
+      await remindForClass(db, cls, now, result);
+    } catch (err) {
+      classFailures++;
+      log.error({ classId: cls.id, err }, 'class reminders failed for this class; the sweep carries on');
+    }
+  }
 
-    const registrations = await db.registration.findMany({
-      where: { classId: cls.id, status: 'registered', classReminderSentAt: null, student: { deletedAt: null } },
-      select: { id: true, registeredAt: true, student: { select: { id: true, email: true, classReminder: true, classReminderChannel: true } } },
-    });
-    for (const reg of registrations) {
-      const { student } = reg;
-      const moment = dueMoment(entry, student.classReminder, reg.registeredAt, start, now);
-      if (moment === null) continue;
-      const title = 'Class reminder';
-      const body = `Your ${when} with ${entry.teacher.firstName}.`;
-      const claimed = await db.$transaction(async (tx) => {
-        // `Class` before `Registration`, the order `docs/lock-order.md` fixes:
-        // the inbox row's `relatedClassId` takes this same lock, and taken there
-        // it would land after the registration's.
-        await tx.$queryRaw`SELECT 1 FROM "Class" WHERE id = ${cls.id} FOR KEY SHARE`;
-        const { count } = await tx.registration.updateMany({
-          where: {
-            id: reg.id,
-            status: 'registered',
-            classReminderSentAt: null,
-            registeredAt: { lt: moment },
-            class: LIVE_CLASS,
-          },
-          data: { classReminderSentAt: now },
-        });
-        if (count === 0) return false;
-        if (wantsInbox(student.classReminderChannel)) {
-          await createNotification(tx, {
-            recipientType: 'student', recipientId: student.id, type: 'class_reminder',
-            title, body, relatedClassId: cls.id, emailSent: true,
-          });
-        }
-        return true;
+  // Surface failures to the caller once the whole sweep has run: the scheduler
+  // records this as lastError, so /api/health cannot show green through a send
+  // outage. Every claim this sweep made has already committed, so throwing here
+  // changes no retry: a failed email stays sent-once, and a failed class's
+  // uncommitted claim is due again on the next tick.
+  if (result.emailFailures > 0 || classFailures > 0) {
+    throw new Error(
+      `class reminders: ${result.emailFailures} reminder email(s) failed and will not be retried, ` +
+        `${classFailures} class(es) failed (${result.studentReminders} student, ` +
+        `${result.teacherReminders} teacher reminders claimed)`,
+    );
+  }
+  return result;
+}
+
+/**
+ * One class's due reminders: each student's claim, then the teacher's. Counts
+ * into `result` as it claims, so a throw part-way keeps what already went out.
+ */
+async function remindForClass(db: PrismaClient, cls: Candidate, now: Date, result: ClassReminderResult): Promise<void> {
+  const entry = cls.calendarEntry;
+  const start = classStartInstant(entry, entry.teacher.defaultTimezone);
+  if (Number.isNaN(start.getTime())) {
+    log.error({ classId: cls.id }, 'class reminders: unreadable class start; skipped');
+    return;
+  }
+  if (now >= start) return;
+  const when = `${entry.classType} on ${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)}`;
+
+  const registrations = await db.registration.findMany({
+    where: { classId: cls.id, status: 'registered', classReminderSentAt: null, student: { deletedAt: null } },
+    select: { id: true, registeredAt: true, student: { select: { id: true, email: true, classReminder: true, classReminderChannel: true } } },
+  });
+  for (const reg of registrations) {
+    const { student } = reg;
+    const moment = dueMoment(entry, student.classReminder, reg.registeredAt, start, now);
+    if (moment === null) continue;
+    const title = 'Class reminder';
+    const body = `Your ${when} with ${entry.teacher.firstName}.`;
+    const claimed = await db.$transaction(async (tx) => {
+      // `Class` before `Registration`, the order `docs/lock-order.md` fixes:
+      // the inbox row's `relatedClassId` takes this same lock, and taken there
+      // it would land after the registration's.
+      await tx.$queryRaw`SELECT 1 FROM "Class" WHERE id = ${cls.id} FOR KEY SHARE`;
+      const { count } = await tx.registration.updateMany({
+        where: {
+          id: reg.id,
+          status: 'registered',
+          classReminderSentAt: null,
+          registeredAt: { lt: moment },
+          class: LIVE_CLASS,
+        },
+        data: { classReminderSentAt: now },
       });
-      if (!claimed) continue;
-      result.studentReminders++;
+      if (count === 0) return false;
+      if (wantsInbox(student.classReminderChannel)) {
+        await createNotification(tx, {
+          recipientType: 'student', recipientId: student.id, type: 'class_reminder',
+          title, body, relatedClassId: cls.id, emailSent: true,
+        });
+      }
+      return true;
+    });
+    if (!claimed) continue;
+    result.studentReminders++;
+    if (
+      wantsEmail(student.classReminderChannel) &&
+      !(await emailReminder(student.email, 'student', title, body, { classId: cls.id, recipientId: student.id }))
+    ) {
+      result.emailFailures++;
+    }
+  }
+
+  const { teacher } = entry;
+  if (cls.teacherReminderSentAt === null && dueMoment(entry, teacher.classReminder, cls.createdAt, start, now) !== null) {
+    const title = 'Class reminder';
+    const registered = await db.registration.count({ where: { classId: cls.id, status: 'registered' } });
+    const body = `${when} — ${registered} registered so far.`;
+    const claimed = await db.$transaction(async (tx) => {
+      const { count } = await tx.class.updateMany({
+        where: { id: cls.id, teacherReminderSentAt: null, ...LIVE_CLASS },
+        data: { teacherReminderSentAt: now },
+      });
+      if (count === 0) return false;
+      if (wantsInbox(teacher.classReminderChannel)) {
+        await createNotification(tx, {
+          recipientType: 'teacher', recipientId: entry.teacherId, type: 'class_reminder',
+          title, body, relatedClassId: cls.id, emailSent: true,
+        });
+      }
+      return true;
+    });
+    if (claimed) {
+      result.teacherReminders++;
       if (
-        wantsEmail(student.classReminderChannel) &&
-        !(await emailReminder(student.email, 'student', title, body, { classId: cls.id, recipientId: student.id }))
+        wantsEmail(teacher.classReminderChannel) &&
+        !(await emailReminder(teacher.email, 'teacher', title, body, { classId: cls.id, recipientId: entry.teacherId }))
       ) {
         result.emailFailures++;
       }
     }
-
-    const { teacher } = entry;
-    if (cls.teacherReminderSentAt === null && dueMoment(entry, teacher.classReminder, cls.createdAt, start, now) !== null) {
-      const title = 'Class reminder';
-      const registered = await db.registration.count({ where: { classId: cls.id, status: 'registered' } });
-      const body = `${when} — ${registered} registered so far.`;
-      const claimed = await db.$transaction(async (tx) => {
-        const { count } = await tx.class.updateMany({
-          where: { id: cls.id, teacherReminderSentAt: null, ...LIVE_CLASS },
-          data: { teacherReminderSentAt: now },
-        });
-        if (count === 0) return false;
-        if (wantsInbox(teacher.classReminderChannel)) {
-          await createNotification(tx, {
-            recipientType: 'teacher', recipientId: entry.teacherId, type: 'class_reminder',
-            title, body, relatedClassId: cls.id, emailSent: true,
-          });
-        }
-        return true;
-      });
-      if (claimed) {
-        result.teacherReminders++;
-        if (
-          wantsEmail(teacher.classReminderChannel) &&
-          !(await emailReminder(teacher.email, 'teacher', title, body, { classId: cls.id, recipientId: entry.teacherId }))
-        ) {
-          result.emailFailures++;
-        }
-      }
-    }
   }
-  return result;
 }
