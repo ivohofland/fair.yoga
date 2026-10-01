@@ -2,12 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { log } from '@/lib/log';
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/types';
 
-// Mocks `@simplewebauthn/server`'s verify calls directly. Two of the branches
-// these cases exercise — the library resolving `verified: false`, and
-// throwing something other than an `Error` — are not reachable by building a
-// real attestation/assertion through this module's public API. The
-// transports filter is reachable with a forged `fmt: 'none'` attestation; it
-// is mocked here so the case can name its junk members directly.
+// Mocks `@simplewebauthn/server`'s verify calls directly, so each case states
+// the library outcome it needs instead of building a response that produces
+// it.
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@simplewebauthn/server')>();
   return {
@@ -24,6 +21,8 @@ const { verifyPasskeyRegistration, verifyPasskeyAuthentication } = await import(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(verifyRegistrationResponse).mockReset();
+  vi.mocked(verifyAuthenticationResponse).mockReset();
 });
 
 describe('verifyPasskeyRegistration transports filter', () => {
@@ -96,7 +95,7 @@ describe('verifyPasskeyRegistration, library mocked', () => {
     if (result.verified) {
       throw new Error('expected a refusal');
     }
-    expect(result.reason).toBe('Registration response was not verified');
+    expect(result.reason).toBe('Attestation statement did not verify');
     const refusalWarnings = warnSpy.mock.calls.filter(
       (call) => (call[0] as { ceremony?: string }).ceremony === 'registration',
     );
@@ -133,6 +132,69 @@ describe('verifyPasskeyRegistration, library mocked', () => {
     }
     expect(result.reason).toBe(String('a plain string throw'));
   });
+
+  it("logs a caught error's name and first stack frame beside its reason", async () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    vi.mocked(verifyRegistrationResponse).mockRejectedValue(new TypeError('boom'));
+
+    await verifyPasskeyRegistration({
+      response: { id: 'cred-id' } as RegistrationResponseJSON,
+      expectedChallenge: 'irrelevant-with-the-library-mocked',
+    });
+
+    expect(warnSpy.mock.calls[0]?.[0]).toEqual({
+      ceremony: 'registration',
+      credentialId: 'cred-id',
+      reason: 'boom',
+      errorName: 'TypeError',
+      frame: expect.stringMatching(/^at \S/),
+    });
+  });
+
+  it('takes the first frame after the message, so a message cannot forge one', async () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    vi.mocked(verifyRegistrationResponse).mockRejectedValue(
+      new Error('challenge "x\n    at forged (fake.js:1:1)"'),
+    );
+
+    await verifyPasskeyRegistration({
+      response: {} as RegistrationResponseJSON,
+      expectedChallenge: 'irrelevant-with-the-library-mocked',
+    });
+
+    const fields = warnSpy.mock.calls[0]?.[0] as { frame?: string };
+    expect(fields.frame).toMatch(/^at /);
+    expect(fields.frame).not.toContain('forged');
+  });
+
+  it('caps the logged frame at 200 characters', async () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const error = new Error('boom');
+    error.stack = `Error: boom\n    at ${'f'.repeat(400)} (x.js:1:1)`;
+    vi.mocked(verifyRegistrationResponse).mockRejectedValue(error);
+
+    await verifyPasskeyRegistration({
+      response: {} as RegistrationResponseJSON,
+      expectedChallenge: 'irrelevant-with-the-library-mocked',
+    });
+
+    const fields = warnSpy.mock.calls[0]?.[0] as { frame?: string };
+    expect(fields.frame).toBe(`at ${'f'.repeat(197)}`);
+  });
+
+  it('logs no name or frame for a non-Error throw', async () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    vi.mocked(verifyRegistrationResponse).mockRejectedValue('a plain string throw');
+
+    await verifyPasskeyRegistration({
+      response: {} as RegistrationResponseJSON,
+      expectedChallenge: 'irrelevant-with-the-library-mocked',
+    });
+
+    const fields = warnSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(fields.errorName).toBeUndefined();
+    expect(fields.frame).toBeUndefined();
+  });
 });
 
 describe('verifyPasskeyAuthentication, library mocked', () => {
@@ -162,7 +224,7 @@ describe('verifyPasskeyAuthentication, library mocked', () => {
     if (result.verified) {
       throw new Error('expected a refusal');
     }
-    expect(result.reason).toBe('Authentication response was not verified');
+    expect(result.reason).toBe('Signature did not verify against the stored public key');
     const refusalWarnings = warnSpy.mock.calls.filter(
       (call) => (call[0] as { ceremony?: string }).ceremony === 'authentication',
     );

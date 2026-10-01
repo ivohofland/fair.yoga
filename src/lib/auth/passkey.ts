@@ -197,35 +197,73 @@ function getExpectedOrigin(): string {
 type PasskeyCeremony = 'registration' | 'authentication';
 
 /**
- * Several of the library's thrown messages echo a client-sent string
- * (`clientDataJSON`'s own challenge or origin) of unbounded length, so a
- * caught reason is capped before it reaches the log.
+ * Several of the library's thrown messages echo client-sent strings verbatim,
+ * at unbounded length, so a caught reason is capped before it reaches the log.
  */
 const REASON_MAX_LENGTH = 300;
 
-function formatCaughtReason(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.slice(0, REASON_MAX_LENGTH);
+const FRAME_MAX_LENGTH = 200;
+
+/** Why a verification was refused, as the refusal's warn line carries it. */
+interface RefusalCause {
+  reason: string;
+  /** A caught `Error`'s `name`, e.g. `TypeError` or `UnexpectedRPIDHash`. */
+  errorName?: string;
+  /** A caught `Error`'s first stack frame, trimmed: where it was thrown. */
+  frame?: string;
 }
 
 /**
- * The one `warn` a verification refusal emits, never `error`: a refused
- * response is a client fault, not something for an on-call alert to act on.
- * `reason` is written for this log line; callers decide what the client sees.
+ * The first `at …` line of `error.stack` after the message. A V8 stack starts
+ * with the error's name and message, and the message can echo client-sent
+ * text containing a newline and an `at`, so the search starts past it; a
+ * stack that does not contain the message yields no frame rather than a
+ * guess.
  */
-function warnRefused(ceremony: PasskeyCeremony, reason: string): void {
-  log.warn({ ceremony, reason }, 'passkey verification refused');
+function firstStackFrame(error: Error): string | undefined {
+  const stack = error.stack;
+  if (stack === undefined) return undefined;
+  const messageStart = stack.indexOf(error.message);
+  if (messageStart === -1) return undefined;
+  return stack
+    .slice(messageStart + error.message.length)
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.startsWith('at '))
+    ?.slice(0, FRAME_MAX_LENGTH);
+}
+
+function describeCaught(error: unknown): RefusalCause {
+  if (!(error instanceof Error)) {
+    return { reason: String(error).slice(0, REASON_MAX_LENGTH) };
+  }
+  return {
+    reason: error.message.slice(0, REASON_MAX_LENGTH),
+    errorName: error.name,
+    frame: firstStackFrame(error),
+  };
 }
 
 /**
- * Transport names this app will persist. `credential.transports` crosses an
- * attacker-controlled boundary despite its declared type: a `fmt: 'none'`
- * attestation verifies with no signature, so a signed-in caller can make the
- * library resolve with whatever `response.transports` they sent, including
- * values that are not `AuthenticatorTransportFuture` members at all.
- * `satisfies Record<AuthenticatorTransportFuture, true>` makes a new member
- * of that type a compile error here, rather than a filter silently missing
- * it.
+ * Logs a verification refusal: one `warn` per refusal, never `error`,
+ * whatever the cause — a hostile response and a misconfigured server both
+ * arrive here. It names the credential id the caller sent and, for a caught
+ * throw, the error's `name` and first stack frame. `reason` is written for
+ * this log line; callers decide what the client sees.
+ */
+function warnRefused(ceremony: PasskeyCeremony, credentialId: string, cause: RefusalCause): void {
+  log.warn({ ceremony, credentialId, ...cause }, 'passkey verification refused');
+}
+
+/**
+ * Transport names this app will persist. `credential.transports` is the
+ * caller's own `params.response.response.transports`: the library passes it
+ * through unchecked, and no attestation format's signature covers it, so
+ * despite its declared type it can hold any value the caller sent —
+ * including values that are not `AuthenticatorTransportFuture` members at
+ * all. `satisfies Record<AuthenticatorTransportFuture, true>` makes a new
+ * member of that type a compile error here, rather than a filter silently
+ * missing it.
  */
 const KNOWN_TRANSPORTS = {
   ble: true,
@@ -273,31 +311,31 @@ export async function generatePasskeyRegistrationOptions(params: {
 
 /**
  * Verifies a registration response, resolving to a refusal rather than
- * rejecting. `@simplewebauthn/server` signals almost every refused response
- * by throwing a plain `Error`; left uncaught, `withErrorHandler` would answer
- * that as a 500 logged `unhandled API error`, so the `try` below encloses the
- * library call.
+ * rejecting: `@simplewebauthn/server` signals almost every refused response
+ * by throwing, and the `try` below encloses the library call so that a throw
+ * becomes `{ verified: false, reason }`.
  *
  * A verified result is still client-derived past the `try`: a `fmt: 'none'`
- * attestation verifies with no signature, and the library neither checks
- * that the credential id it parses from the authenticator data equals
- * `response.id` nor validates `transports`. This function therefore refuses
- * an id mismatch the same way as a library throw — the id it returns is
- * always the caller's `response.id` — and keeps only known transport names,
- * treating a `transports` that is not an array as none.
+ * attestation is signed by nothing, no attestation format's signature covers
+ * `transports`, and the library neither checks that the credential id it
+ * parses from the authenticator data equals `response.id` nor validates
+ * `transports`. This function therefore refuses an id mismatch the same way
+ * as a library throw — the id it returns is always the caller's
+ * `response.id` — and keeps only known transport names, treating a
+ * `transports` that is not an array as none.
  *
- * The library's `Error`s are untyped, so this catch cannot distinguish a
- * hostile response from a server-side cause — every one of the following is
- * refused the same way, one `warn`, never `error`:
- * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails, and `reason`
- *   names the origin this function expected;
+ * The catch does not branch on what was thrown: every refusal gets one
+ * `warn`, never `error`, and the warn's `errorName` is what separates a
+ * library-named error (`UnexpectedRPIDHash`) from a plain `Error`. Causes
+ * other than a hostile response are refused the same way:
+ * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails with a plain
+ *   `Error`, and `reason` names the origin this function expected;
  * - the user-verification mismatch: `generatePasskeyRegistrationOptions`
  *   asks for `userVerification: 'preferred'`, but this function does not
  *   pass `requireUserVerification`, so the library's own default of `true`
  *   still demands it — refusing an authenticator that honours "preferred" by
- *   skipping UV. Such a refusal is identifiable by its `reason` naming user
- *   verification. Decision tracked as #732, not fixed here;
- * - a runtime without WebCrypto.
+ *   skipping UV. Such a refusal is a plain `Error` whose `reason` names user
+ *   verification. Decision tracked as #732.
  */
 export async function verifyPasskeyRegistration(params: {
   response: RegistrationResponseJSON;
@@ -321,24 +359,26 @@ export async function verifyPasskeyRegistration(params: {
       expectedRPID: getRpId(),
     });
   } catch (error) {
-    const reason = formatCaughtReason(error);
-    warnRefused('registration', reason);
-    return { verified: false, reason };
+    const cause = describeCaught(error);
+    warnRefused('registration', params.response.id, cause);
+    return { verified: false, reason: cause.reason };
   }
 
   const { verified, registrationInfo } = verification;
 
   if (!verified || !registrationInfo) {
-    const reason = 'Registration response was not verified';
-    warnRefused('registration', reason);
+    const reason = 'Attestation statement did not verify';
+    warnRefused('registration', params.response.id, { reason });
     return { verified: false, reason };
   }
 
   const { credential } = registrationInfo;
 
   if (credential.id !== params.response.id) {
-    const reason = 'Authenticator data credential id does not match response.id';
-    warnRefused('registration', reason);
+    // Lengths only: the authenticator data id is client-supplied and can run
+    // to 65535 bytes.
+    const reason = `Authenticator data credential id (${credential.id.length} chars) does not match response.id (${params.response.id.length} chars)`;
+    warnRefused('registration', params.response.id, { reason });
     return { verified: false, reason };
   }
 
@@ -380,25 +420,29 @@ export async function generatePasskeyAuthenticationOptions(): Promise<PublicKeyC
 
 /**
  * Verifies an authentication response, resolving to a refusal rather than
- * rejecting. `@simplewebauthn/server` signals almost every refused response
- * by throwing a plain `Error`; left uncaught, `withErrorHandler` would answer
- * that as a 500 logged `unhandled API error`, so the `try` below encloses the
- * library call. What it returns past the `try` is the library's own counter,
- * read from a response it verified against the stored public key.
+ * rejecting: `@simplewebauthn/server` signals almost every refused response
+ * by throwing, and the `try` below encloses the library call so that a throw
+ * becomes `{ verified: false, reason }`. The one refusal the library resolves
+ * rather than throws is a signature that does not verify against the stored
+ * public key. What this returns past both is the library's own counter, read
+ * from a response it verified against that key.
  *
- * The library's `Error`s are untyped, so this catch cannot distinguish a
- * hostile response from a server-side cause — every one of the following is
- * refused the same way, one `warn`, never `error`:
- * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails, and `reason`
- *   names the origin this function expected;
+ * The catch does not branch on what was thrown: every refusal gets one
+ * `warn`, never `error`, and the warn's `errorName` is what separates a
+ * library-named error (`UnexpectedRPIDHash`) from a plain `Error`. Causes
+ * other than a hostile response are refused the same way:
+ * - a wrong `NEXT_PUBLIC_APP_URL`: every origin check fails with a plain
+ *   `Error`, and `reason` names the origin this function expected;
  * - the user-verification mismatch: `generatePasskeyAuthenticationOptions`
  *   asks for `userVerification: 'preferred'`, but this function does not
  *   pass `requireUserVerification`, so the library's own default of `true`
  *   still demands it — refusing an authenticator that honours "preferred" by
- *   skipping UV. Such a refusal is identifiable by its `reason` naming user
- *   verification. Decision tracked as #732, not fixed here;
- * - a counter regression — the library's cloned-authenticator signal;
- * - a corrupt stored public key, or a runtime without WebCrypto.
+ *   skipping UV. Such a refusal is a plain `Error` whose `reason` names user
+ *   verification. Decision tracked as #732;
+ * - a counter at or below a non-zero stored counter, the library's
+ *   cloned-authenticator signal: a cloned credential, or a hostile
+ *   response; its `reason` names both counters;
+ * - a stored public key the library cannot use.
  */
 export async function verifyPasskeyAuthentication(params: {
   response: AuthenticationResponseJSON;
@@ -420,14 +464,14 @@ export async function verifyPasskeyAuthentication(params: {
       },
     });
   } catch (error) {
-    const reason = formatCaughtReason(error);
-    warnRefused('authentication', reason);
-    return { verified: false, reason };
+    const cause = describeCaught(error);
+    warnRefused('authentication', params.response.id, cause);
+    return { verified: false, reason: cause.reason };
   }
 
   if (!verification.verified) {
-    const reason = 'Authentication response was not verified';
-    warnRefused('authentication', reason);
+    const reason = 'Signature did not verify against the stored public key';
+    warnRefused('authentication', params.response.id, { reason });
     return { verified: false, reason };
   }
 
