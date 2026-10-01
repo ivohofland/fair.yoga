@@ -97,12 +97,37 @@ describe('InstallCard', () => {
   it('records the dismissal when the browser prompt is accepted', async () => {
     support = 'prompt';
     promptInstall.mockResolvedValue('accepted');
-    render(<InstallCard dismissed={false} />);
+    const { container } = render(<InstallCard dismissed={false} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Install' }));
 
     await waitFor(() => expect(postedSteps()).toEqual(['install']));
     expect(routerRefresh).toHaveBeenCalled();
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('hides the card on an accepted install even when the dismissal post fails, without refreshing', async () => {
+    support = 'prompt';
+    promptInstall.mockResolvedValue('accepted');
+    fetchMock.mockResolvedValue({ ok: false });
+    const { container } = render(<InstallCard dismissed={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+
+    await waitFor(() => expect(postedSteps()).toEqual(['install']));
+    expect(container).toBeEmptyDOMElement();
+    expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('opens the manual steps when the prompt reports unavailable', async () => {
+    support = 'prompt';
+    promptInstall.mockResolvedValue('unavailable');
+    render(<InstallCard dismissed={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+
+    await waitFor(() => expect(screen.getByText(/browser’s menu/)).toBeInTheDocument());
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('records nothing when the browser prompt is cancelled', async () => {
@@ -141,5 +166,16 @@ describe('InstallCard', () => {
 
     await waitFor(() => expect(postedSteps()).toEqual(['install']));
     expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('does not self-retire on a desktop standalone window or tab', async () => {
+    support = 'installed';
+    coarse = false;
+    render(<InstallCard dismissed={false} />);
+
+    // Give the effect a tick to run; there is nothing to await success on,
+    // so this asserts the negative stays true rather than racing a promise.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

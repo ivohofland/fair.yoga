@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { OnboardingStep } from '@prisma/client';
 import { Button } from '@/components/ui/button';
 import { InstallSteps } from '@/components/account/install-steps';
 import { installStore, useCoarsePointer, useInstallSupport } from '@/components/layout/install-store';
+import { canOfferInstall, installStepsVariant } from '@/lib/install-support';
 import { logRequestFailure } from '@/lib/client-errors';
 import { OnboardingSkipButton } from './onboarding-skip-button';
 
@@ -17,7 +19,7 @@ function recordInstallOnce(): Promise<boolean> {
   recording ??= fetch('/api/account/onboarding', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ step: 'install' }),
+    body: JSON.stringify({ step: 'install' } satisfies { step: OnboardingStep }),
   }).then(
     (res) => {
       if (!res.ok) console.error('[install-card] refused', { status: res.status });
@@ -42,19 +44,24 @@ export function InstallCard({ dismissed }: { dismissed: boolean }) {
   const coarse = useCoarsePointer();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [accepted, setAccepted] = useState(false);
   const stepsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!dismissed && support === 'installed') void recordInstallOnce();
-  }, [dismissed, support]);
+    // Gated on a coarse pointer: an `installed` desktop standalone window, or
+    // a desktop tab right after `appinstalled`, is not the phone this card
+    // targets, and posting there would retire it on the teacher's actual
+    // phone too — dismissal is per teacher, not per device.
+    if (!dismissed && support === 'installed' && coarse) void recordInstallOnce();
+  }, [dismissed, support, coarse]);
 
   useEffect(() => {
     if (open) stepsRef.current?.focus();
   }, [open]);
 
-  if (dismissed) return null;
-  const visible = support === 'ios-safari' || ((support === 'prompt' || support === 'manual') && coarse);
-  if (!visible) return null;
+  if (dismissed || accepted) return null;
+  if (!canOfferInstall(support)) return null;
+  if (support !== 'ios-safari' && !coarse) return null;
 
   async function handlePrimary(): Promise<void> {
     if (support !== 'prompt' || !installStore) {
@@ -62,7 +69,15 @@ export function InstallCard({ dismissed }: { dismissed: boolean }) {
       return;
     }
     const outcome = await installStore.promptInstall();
-    if (outcome === 'accepted' && (await recordInstallOnce())) router.refresh();
+    if (outcome === 'accepted') {
+      // The person just installed — show nothing more regardless of
+      // whether the dismissal post below succeeds, so a failed post never
+      // leaves someone who installed looking at manual add-it-yourself steps.
+      setAccepted(true);
+      if (await recordInstallOnce()) router.refresh();
+      return;
+    }
+    if (outcome === 'unavailable') setOpen(true);
   }
 
   return (
@@ -74,7 +89,7 @@ export function InstallCard({ dismissed }: { dismissed: boolean }) {
       {open ? (
         <>
           <div ref={stepsRef} tabIndex={-1} className="focus:outline-none">
-            <InstallSteps variant={support === 'ios-safari' ? 'ios' : 'manual'} />
+            <InstallSteps variant={installStepsVariant(support)} />
           </div>
           <div className="mt-4">
             <OnboardingSkipButton
