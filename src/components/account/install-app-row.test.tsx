@@ -22,16 +22,28 @@ describe('InstallAppRow', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('expands the iOS steps in place', () => {
+  it('expands the iOS steps in place and rotates the chevron', () => {
     support = 'ios-safari';
-    render(<InstallAppRow />);
+    const { container } = render(<InstallAppRow />);
     const row = screen.getByRole('button', { name: 'Add to Home Screen' });
     expect(row).toHaveAttribute('aria-expanded', 'false');
+    expect(container.querySelector('svg')).not.toHaveClass('rotate-90');
 
     fireEvent.click(row);
 
     expect(row).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(/Add to Home Screen\. You may need to scroll/)).toBeInTheDocument();
+    expect(container.querySelector('svg')).toHaveClass('rotate-90');
+  });
+
+  it('does not rotate the chevron for a browser prompt', () => {
+    support = 'prompt';
+    promptInstall.mockResolvedValue('accepted');
+    const { container } = render(<InstallAppRow />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to Home Screen' }));
+
+    expect(container.querySelector('svg')).not.toHaveClass('rotate-90');
   });
 
   it('opens the browser prompt when one is held', () => {

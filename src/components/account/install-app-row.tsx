@@ -32,7 +32,11 @@ export function InstallAppRow() {
         className="flex items-center gap-3 w-full min-h-14 py-2 text-left focus:outline-none focus-visible:shadow-focus"
       >
         <span className="flex-1 text-base text-ink">Add to Home Screen</span>
-        <Icon name="chevron-right" size={20} className="text-brown-light" />
+        <Icon
+          name="chevron-right"
+          size={20}
+          className={`text-brown-light ${open ? 'rotate-90' : ''}`.trim()}
+        />
       </button>
       {open && (
         <div className="pb-4">
