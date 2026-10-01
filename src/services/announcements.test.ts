@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { sendAnnouncement, ANNOUNCEMENT_DEDUPE_WINDOW_MS, type SendAnnouncementInput } from './announcements';
+import { sendAnnouncement, ANNOUNCEMENT_DEDUPE_WINDOW_MS } from './announcements';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import type { CreateNotificationInput } from './notifications';
@@ -464,68 +464,96 @@ describe('Announcement Service', () => {
     expect(order).toEqual(['first released', 'sending resolved']);
   });
 
-  it('does not make a send wait on a slot differing in any one field (lock-key composition)', async () => {
-    const other = new PrismaClient();
+  it('parks a send on the same teacher and message in any scope, and only on that (lock-key composition)', async () => {
     const message = `Key neighbour test ${suffix}`;
-    const recipients: CreateNotificationInput[] = [
-      {
-        recipientType: 'student',
-        recipientId: student1Id,
-        type: 'announcement',
-        title: 'New announcement',
-        body: message,
-        relatedClassId: class1Id,
-      },
-    ];
-    // Each neighbour shares one of the held slot's two fields. A key
-    // composition that dropped a field would put a neighbour on the held key,
-    // and its send would park below instead of passing.
-    const held: SendAnnouncementInput = { teacherId, classId: class1Id, message, recipients };
-    const neighbours: SendAnnouncementInput[] = [
-      { teacherId: otherTeacherId, classId: class1Id, message, recipients },
-      { teacherId, classId: class1Id, message: `Key neighbour test ${suffix} two`, recipients },
-    ];
-
-    const key = `${held.teacherId}|${held.message}`;
-    const hash = crypto.createHash('sha256').update(key).digest().readInt32BE(0);
+    // The holder is a real class-scoped send: it takes the advisory lock the
+    // implementation computes, then parks on its Notification insert while a
+    // second connection holds the Class row FOR UPDATE. The key is never
+    // recomputed here, so a key that drops or adds a column changes which of
+    // the sends below park. The neighbours carry no relatedClassId, so none of
+    // them needs the Class row and only the advisory lock can park them.
+    const holderClient = new PrismaClient();
+    const classHolder = new PrismaClient();
+    const parkedClient = new PrismaClient();
 
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => {
       release = r;
     });
-    const parked = new Promise<void>((r) => {
+    const classLocked = new Promise<void>((r) => {
       locked = r;
     });
-
-    const holding = other.$transaction(
+    const holdingClass = classHolder.$transaction(
       async (tx) => {
-        await tx.$queryRaw`
-          SELECT 1 FROM (
-            SELECT pg_advisory_xact_lock(196::int4, ${hash}::int4)
-          ) AS taken`;
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${class1Id} FOR UPDATE`;
         locked();
         await released;
       },
       { timeout: 20_000 },
     );
-    await parked;
+    await classLocked;
+
+    const holderSend = sendAnnouncement(holderClient, {
+      teacherId,
+      classId: class1Id,
+      message,
+      recipients: to([student1Id], message, class1Id),
+    });
+    await new Promise((r) => setTimeout(r, 300));
+
+    const outcome = (p: Promise<unknown>, ms: number) =>
+      Promise.race([
+        p.then(() => 'sent' as const),
+        new Promise<'parked'>((resolve) => setTimeout(() => resolve('parked'), ms)),
+      ]);
+
+    // Same (teacher, message), different scope: shares the holder's key.
+    const sameSlot = sendAnnouncement(parkedClient, {
+      teacherId,
+      classId: null,
+      message,
+      recipients: to([student2Id], message, null),
+    });
 
     try {
-      // Each neighbour must complete while the held key is still taken; the
-      // race turns a regression that parks a neighbour into a red, not a hang.
-      for (const slot of neighbours) {
-        const result = await Promise.race([
-          sendAnnouncement(prisma, slot).then(() => 'sent' as const),
-          new Promise<'parked'>((resolve) => setTimeout(() => resolve('parked'), 3000)),
-        ]);
-        expect(result).toBe('sent');
-      }
+      expect(
+        await outcome(
+          sendAnnouncement(prisma, {
+            teacherId: otherTeacherId,
+            classId: null,
+            message,
+            recipients: to([student2Id], message, null),
+          }),
+          1500,
+        ),
+      ).toBe('sent');
+      expect(
+        await outcome(
+          sendAnnouncement(prisma, {
+            teacherId,
+            classId: null,
+            message: `${message} two`,
+            recipients: to([student2Id], `${message} two`, null),
+          }),
+          1500,
+        ),
+      ).toBe('sent');
+
+      let sameSlotSettled = false;
+      void sameSlot.then(() => {
+        sameSlotSettled = true;
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(sameSlotSettled).toBe(false);
     } finally {
       release();
-      await holding;
+      await holdingClass;
     }
-    await other.$disconnect();
+    await Promise.all([holderSend, sameSlot]);
+    await holderClient.$disconnect();
+    await classHolder.$disconnect();
+    await parkedClient.$disconnect();
   });
 
   it('serialises concurrent sends with the same slot so only one creates and the other dedupes', async () => {
@@ -543,8 +571,8 @@ describe('Announcement Service', () => {
 
     // Deterministic lever: holding the Class row FOR UPDATE forces the first
     // send to park on its Notification insert (which takes FOR KEY SHARE on Class).
-    // The second send must then park on the advisory lock before its own findFirst.
-    // Without the advisory lock, the second send passes findFirst, sees no committed
+    // The second send must then park on the advisory lock before its own findMany.
+    // Without the advisory lock, the second send passes findMany, sees no committed
     // announcement, and also attempts to insert, creating duplicates.
     const holder = new PrismaClient();
     const clientA = new PrismaClient();
