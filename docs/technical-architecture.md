@@ -599,6 +599,17 @@ person is reading their mail.
 5. Redirect to dashboard
 ```
 
+### Installed app start URL
+
+`/start` (`src/app/(public)/start/page.tsx`) is the installed app's
+`manifest.ts` `start_url`. It routes by profile — a teacher to `/schedule`, a
+student-only account to `/bookings`, a two-hat account to the teacher home,
+and a signed-out visitor to `/login` rather than the public pitch `/` shows —
+and it stays outside `src/proxy.ts`'s matcher deliberately: the matcher would
+turn the signed-out case into `/login?redirect=/start`, trading `/start`'s
+own per-profile routing for a fixed redirect target nobody asked for. Pinned
+by `tests/integration/pwa.test.ts`.
+
 ### Unauthenticated API routes
 
 `find src/app/api -name route.ts` finds **67** routes. **10** carry no session
