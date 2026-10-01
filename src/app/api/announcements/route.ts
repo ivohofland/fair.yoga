@@ -94,19 +94,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // by a tool whose premise is being an honest one.
   //
   // `alreadyNotified` is how many of the students this request named had
-  // already been told this message inside the window. `recipientCount` is the
-  // number of students this request's own response is about: on a created
-  // announcement, those it newly notified (the stored row's count); on a
-  // suppressed one, `alreadyNotified` — the stored row is whichever send was
-  // latest, which may never have named these students, so its count would
-  // describe someone else's send.
-  return respondOk(
-    {
-      ...announcement,
-      recipientCount: deduped ? alreadyNotified : announcement.recipientCount,
-      duplicateSuppressed: deduped,
-      alreadyNotified,
-    },
-    deduped ? 200 : 201,
-  );
+  // already been told this message inside the window. A created announcement
+  // answers with its own row plus that count. A suppressed one answers with
+  // only what is true of THIS request — `recipientCount` is `alreadyNotified`
+  // and nothing of the stored row — because the latest row in the window may
+  // belong to another send (another class, another list), and its id, class,
+  // time and count would describe that one.
+  if (deduped) {
+    return respondOk(
+      { recipientCount: alreadyNotified, duplicateSuppressed: true, alreadyNotified },
+      200,
+    );
+  }
+  return respondOk({ ...announcement, duplicateSuppressed: false, alreadyNotified }, 201);
 });

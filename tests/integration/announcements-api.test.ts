@@ -23,6 +23,7 @@ let s2Id: string;
 let s3Id: string;
 let s4Id: string;
 let foreignStudentId: string;
+let linkedOnlyId: string;
 
 async function sendAnnouncement(body: Record<string, unknown>): Promise<Response> {
   return fetch(`${BASE_URL}/api/announcements`, {
@@ -127,6 +128,9 @@ describe('POST /api/announcements', () => {
     s3Id = await makeStudent('Cancelled');
     s4Id = await makeStudent('Second');
     foreignStudentId = await makeStudent('Foreign');
+    // Linked as a CRM contact but never booked: not in the audience.
+    linkedOnlyId = await makeStudent('Linked');
+    await prisma.teacherStudent.create({ data: { teacherId, studentId: linkedOnlyId } });
 
     async function register(classId: string, studentId: string, status: 'registered' | 'cancelled') {
       await prisma.registration.create({
@@ -156,7 +160,7 @@ describe('POST /api/announcements', () => {
     if (teacherAccountId) {
       await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
     }
-    const studentIds = [s1Id, s2Id, s3Id, s4Id, foreignStudentId].filter(Boolean);
+    const studentIds = [s1Id, s2Id, s3Id, s4Id, foreignStudentId, linkedOnlyId].filter(Boolean);
     if (studentIds.length) {
       await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
       await prisma.studentPrivacy.deleteMany({ where: { studentId: { in: studentIds } } });
@@ -366,16 +370,10 @@ describe('POST /api/announcements', () => {
     });
 
     /**
-     * The positive half of the nullable `classId`, and the half that was
-     * missing: two identical ALL-STUDENTS sends must dedupe each other.
-     *
-     * The negative above only proves the two shapes do not collide, which a
-     * dedupe that matches NOTHING when `classId` is null satisfies just as
-     * well — `classId: { equals: undefined }`, an `if (classId)` guard around
-     * the compare, a lock key that varies per request. Every other case in
-     * this block sends `classId`, so nothing else in the suite would notice:
-     * the all-students path would fan out twice, silently, for every teacher
-     * who double-clicked Send on the message that goes to everyone.
+     * Two identical all-students sends notify each student once and write one
+     * Announcement row. Every other case in this block sends a `classId`, so
+     * this is the one that pins the all-students path against a double-click
+     * on Send fanning out twice.
      */
     it('suppresses an identical all-students resend inside the window', async () => {
       const message = `All-students dedupe ${suffix}`;
@@ -590,6 +588,8 @@ describe('POST /api/announcements', () => {
       expect(data.duplicateSuppressed).toBe(true);
       expect(data.alreadyNotified).toBe(1);
       expect(data.recipientCount).toBe(1); // the latest row's own count is 2
+      // Only what is true of this request: nothing of the stored row leaks.
+      expect(Object.keys(data).sort()).toEqual(['alreadyNotified', 'duplicateSuppressed', 'recipientCount']);
     });
   });
 
@@ -605,6 +605,7 @@ describe('POST /api/announcements', () => {
       expect(ids).toEqual(expect.arrayContaining([s1Id, s2Id, s4Id]));
       expect(ids).not.toContain(s3Id);
       expect(ids).not.toContain(foreignStudentId);
+      expect(ids).not.toContain(linkedOnlyId);
     });
 
     it('shows first name plus initial unless the student shares their full name', async () => {
