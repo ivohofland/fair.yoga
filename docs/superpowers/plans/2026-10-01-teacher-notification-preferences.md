@@ -17,7 +17,7 @@
 
 ## Global Constraints
 
-- `strict: true`. No `any`, and no widening casts (`as NotificationType`, `as CreateNotificationInput`) at notification call sites. Spec §4 measured a cast as the one change that silently disables the tether.
+- `strict: true`. No `any`, and no widening casts (`as NotificationType`, `as CreateNotificationInput`) at notification call sites. Spec §4 measured that a single cast is refused, and that both casts together (or `as unknown as`) silently disable the tether.
 - Defaults reproduce today's behaviour: `bookingNotifications = inbox_and_email`, `emailOnClassCompleted = true`, `emailOnInvitation = true`.
 - `class_cancelled` to a teacher is always emailed. No setting reaches it.
 - Only `booking_confirmed` can be switched off for the inbox. The other types are always created.
@@ -294,7 +294,7 @@ Every caller already passes `'student'`, so nothing else changes. If its docbloc
 
 - [ ] **Step 6: Prove the tether bites at the creation site.** Make each mutation, run `pnpm run typecheck`, record the exact error, then restore:
   1. In `class-transitions.ts`'s teacher auto-cancel notification, change `type: 'class_cancelled'` to `type: 'announcement'`. Expected: "Type '"announcement"' is not assignable to type 'TeacherNotificationType'" (or the union-level equivalent).
-  2. In `api/registrations/route.ts`'s teacher entry, cast the type: `type: 'announcement' as NotificationType`. Expected: TS2345, because the object's `recipientType: 'teacher'` literal still selects the teacher variant. Then cast the whole object (`{ … } as CreateNotificationInput`). Expected: **compiles**. Record both. The second is the hole spec §4 names, and it is why Global Constraints bans the cast. A reviewer catches it; the compiler does not.
+  2. In `api/registrations/route.ts`'s teacher entry, cast the type: `type: 'announcement' as NotificationType`. Expected: TS2345, because the object's `recipientType: 'teacher'` literal still selects the teacher variant. Then cast the whole object alone (`{ … } as CreateNotificationInput`). Expected: TS2352. Then apply both casts together (or `as unknown as CreateNotificationInput`). Expected: **compiles**. Record all three. The last is the hole spec §4 names, and it is why Global Constraints bans the casts. A reviewer catches it; the compiler does not.
 
   Finish with `git status` clean apart from this task's intended edits.
 
