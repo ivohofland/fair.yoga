@@ -135,15 +135,23 @@ line.
   Screen, full screen, one tap away."
   - iOS: **"Show me how"** expands `InstallSteps` inline. The panel ends
     with **Done**, which records `install`.
-  - Prompt: **"Install"** calls `prompt()`. An `accepted` outcome records
-    `install`. A `dismissed` outcome leaves the card, whose next tap shows
-    the manual route.
+  - Prompt: **"Install"** calls `prompt()`. An `accepted` outcome hides the
+    card immediately — a failed dismissal post never leaves someone who just
+    installed looking at manual steps — and still posts `install` best-effort,
+    refreshing only once that post succeeds. A `dismissed` outcome leaves the
+    card, whose next tap shows the manual route. An `unavailable` outcome
+    (`prompt()` itself threw) opens the manual steps immediately, so the tap
+    that failed still shows something.
   - **Dismiss**: `OnboardingSkipButton step="install"`.
-- Self-retire: when the Schedule mounts with support `installed` and
-  `dismissed` false, it posts `install` once, without waiting on the
-  answer and without a refresh; a failed post only means the next standalone
-  launch tries again. The copy of the card still open in Safari then disappears on its
-  next load. No UI is shown for this.
+- Self-retire: on a phone (a coarse pointer) only — a desktop standalone
+  window, or a desktop tab right after `appinstalled`, is `installed` too but
+  self-retiring there would hide the card on the teacher's actual phone,
+  since dismissal is per teacher, not per device. When the Schedule mounts on
+  a phone with support `installed` and `dismissed` false, it posts `install`
+  once, without waiting on the answer and without a refresh; a failed post
+  only means the next standalone launch tries again. The copy of the card
+  still open in Safari then disappears on its next load. No UI is shown for
+  this.
 
 ### 3.6 Persistence
 
