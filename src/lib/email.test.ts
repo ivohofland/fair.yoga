@@ -37,4 +37,53 @@ describe('sendHtmlEmail', () => {
     expect(result).toEqual({ ok: true });
     expect(sendMock).not.toHaveBeenCalled();
   });
+
+  describe('with no key configured', () => {
+    beforeEach(() => {
+      delete process.env.EMAIL_DRY_RUN;
+      delete process.env.RESEND_API_KEY;
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('fails in production rather than dry-running', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+
+      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+
+      expect(result).toEqual({ ok: false, reason: 'RESEND_API_KEY is not configured' });
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+
+    it('fails in production on the placeholder key too', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      process.env.RESEND_API_KEY = 're_placeholder';
+
+      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+
+      expect(result).toEqual({ ok: false, reason: 'RESEND_API_KEY is not configured' });
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+
+    it('dry-runs in production when EMAIL_DRY_RUN=1 asks for it', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      process.env.EMAIL_DRY_RUN = '1';
+
+      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+
+      expect(result).toEqual({ ok: true });
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+
+    it('dry-runs outside production', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+
+      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+
+      expect(result).toEqual({ ok: true });
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+  });
 });
