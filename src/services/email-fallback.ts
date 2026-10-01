@@ -12,7 +12,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { Resend } from 'resend';
 import { getUnreadForEmailFallback, claimEmailFallback } from './notifications';
-import { shouldEmailStudent } from './notification-policy';
+import { shouldEmailStudent, shouldEmailTeacher, isTeacherNotificationType } from './notification-policy';
 import { renderNotificationEmail } from '@/lib/email-templates';
 import { emailDryRun } from '@/lib/email';
 import { log } from '@/lib/log';
@@ -198,9 +198,22 @@ export async function processEmailFallback(
       // has already shipped too many of.
       const teacher = await db.teacher.findUnique({
         where: { id: notification.recipientId },
-        select: { email: true },
+        select: { email: true, bookingNotifications: true, emailOnClassCompleted: true, emailOnInvitation: true },
       });
       email = teacher?.email ?? null;
+      if (teacher) {
+        if (isTeacherNotificationType(notification.type)) {
+          emailEnabled = shouldEmailTeacher(notification.type, teacher);
+        } else {
+          // Unreachable through `createNotification`'s teacher variant; a row
+          // here came from a direct write. Emailed as before rather than
+          // dropped, and logged so it is seen.
+          log.warn(
+            { notificationId: notification.id, type: notification.type },
+            'teacher notification outside TeacherNotificationType',
+          );
+        }
+      }
     } else {
       const student = await db.student.findUnique({
         where: { id: notification.recipientId },
