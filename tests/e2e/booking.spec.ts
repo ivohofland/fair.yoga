@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { test, expect, suppressInstallPromptOn } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { accountIdOfStudent } from './account-helpers';
@@ -443,6 +443,7 @@ test.describe('Public booking flow', () => {
     // A fresh signed-out visitor while these bookings exist: nobody's
     // booked state leaks into the anonymous view.
     const anon = await browser.newContext();
+    await suppressInstallPromptOn(anon);
     const anonPage = await anon.newPage();
     await anonPage.goto(`/${slug}`);
     await expect(anonPage.getByText('✓ Booked')).toHaveCount(0);
