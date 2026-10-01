@@ -24,8 +24,8 @@ const BASE_CLASSES =
 
 /**
  * Records a skip via `POST /api/account/onboarding` and refreshes the page
- * so the checklist re-renders against the teacher's updated
- * `skippedOnboarding`. A thin wrapper over that endpoint — a call site
+ * so whatever rendered this control re-renders against the teacher's
+ * updated `skippedOnboarding`. A thin wrapper over that endpoint — a call site
  * supplies its own label, aria text and colours, and gets back the same
  * idempotent append under whichever `step` it names.
  */
