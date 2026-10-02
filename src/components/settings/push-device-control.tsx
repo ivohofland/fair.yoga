@@ -41,7 +41,7 @@ export function PushDeviceControl({
         try {
           subscription = await currentPushSubscription();
         } catch (err) {
-          logRequestFailure('push-device-control', {}, err);
+          logRequestFailure('push-device-control', { step: 'read' }, err);
           subscription = null;
         }
       }
