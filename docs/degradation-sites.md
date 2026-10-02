@@ -379,8 +379,10 @@ SELECT conname FROM pg_constraint
 row is the symptom, the bypass is the bug. Then: a `Student` row is the
 student's own choice, so ask them to pick their tier again; a `Registration.tierAtBooking` is income
 history used at completion, so set it to the tier the student held when they
-booked if that is known, otherwise to 3, which is what the pricing already
-assumed.
+booked if that is known, otherwise to 3. Completion does not substitute:
+`completeClass` reads the tier through `toIncomeTierOrThrow`, which throws and
+rolls the completion back, so the class cannot complete until the row is
+fixed. Only the price previews substituted 3.
 
 ### `TIMEZONE_INVALID_FALLBACK_UTC`
 
@@ -400,8 +402,9 @@ SELECT id, "defaultTimezone" FROM "Teacher" WHERE "defaultTimezone" = '<timeZone
 
 `node -e "new Intl.DateTimeFormat('en', { timeZone: '<timeZone>' })"` throws for
 an unresolvable zone. The daily `auditTeacherTimezones` sweep
-(`src/services/timezone-audit.ts`) finds the same rows and fails
-`daily-cleanup`'s health while any exist.
+(`src/services/timezone-audit.ts`) finds those rows and more: it checks with
+`isValidTimeZone`, which also refuses offset identifiers such as `+01:00`
+that `Intl` resolves, and it fails `daily-cleanup`'s health while any exist.
 
 **Correct.** Set `defaultTimezone` to the teacher's real IANA zone (ask them;
 `Europe/Amsterdam`, not an offset). Then check that teacher's classes since
@@ -457,13 +460,15 @@ for the sample's `classId` (`registrationId` is the row whose page showed it).
 ```sql
 SELECT id, status, "totalRevenue", "totalStudents" FROM "Class"
  WHERE status = 'completed' AND ("totalRevenue" IS NULL OR "totalStudents" IS NULL);
-SELECT status, amount FROM "Payment" WHERE "classId" = '<classId>';
+SELECT p.status, p.amount FROM "Payment" p
+  JOIN "Registration" r ON p."registrationId" = r.id
+ WHERE r."classId" = '<classId>';
 ```
 
 **Correct.** Find what completed the class outside `completeClass` (a manual
 `UPDATE`, a data migration) — that is the bug. Then restore the snapshot from
-the class's `Payment` rows: `totalStudents` is their count, `totalRevenue`
-their summed `amount` (within a cent or so of what the pricing engine would
+the `Payment` rows the second query lists, one per charged registration:
+`totalStudents` is their count, `totalRevenue` their summed `amount` (within a cent or so of what the pricing engine would
 have written, since each amount was rounded). With no `Payment` rows,
 completion writes `0` for both. Reporting (`/settings/reporting`) reads
 `totalRevenue`, so this class's revenue was missing there until the fix.
