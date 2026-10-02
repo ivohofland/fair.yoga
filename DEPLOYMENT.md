@@ -27,6 +27,7 @@ Edit `.env` — every value matters in production:
 | `OPERATOR_EMAIL` | required in production; the daily degradation digest goes here (§7). Unset, a degradation event fails the `daily-cleanup` job instead of reaching you |
 | `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
 | `PASSKEY_RP_ID` | your bare domain |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | generate with `pnpm run vapid:keys`; unset disables push, and rotating the pair silently orphans every existing subscription (browsers re-subscribe only when the user turns push on again) |
 
 Then:
 

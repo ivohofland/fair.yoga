@@ -1183,6 +1183,13 @@ MOLLIE_API_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 
+# Push — generate with `pnpm run vapid:keys`. Unset disables push. Rotating
+# the pair silently orphans every existing subscription — browsers
+# re-subscribe only when the user turns push on again.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=              # e.g. "mailto:ops@fair.yoga"
+
 # App
 NEXT_PUBLIC_APP_URL=        # e.g. "https://ethicalyoga.app"
 ```
