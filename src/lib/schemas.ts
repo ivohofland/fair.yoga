@@ -296,6 +296,11 @@ export const updateTeacherSchema = z.object({
   bookingNotifications: z.enum(TeacherBookingNotifications).optional(),
   emailOnClassCompleted: z.boolean().optional(),
   emailOnInvitation: z.boolean().optional(),
+  pushAutoCancelled: z.boolean().optional(),
+  pushBookings: z.boolean().optional(),
+  pushClassCompleted: z.boolean().optional(),
+  pushClassReminders: z.boolean().optional(),
+  pushInvitations: z.boolean().optional(),
   bankIban: z.string().nullable().optional(),
   bankAccountName: z.string().nullable().optional(),
 }).strict();
@@ -392,6 +397,12 @@ export const updateStudentSchema = z.object({
   classReminder: z.enum(ReminderTiming).optional(),
   classReminderChannel: z.enum(ReminderChannel).optional(),
   emailNotifications: z.boolean().optional(),
+  pushWaitlist: z.boolean().optional(),
+  pushClassChanges: z.boolean().optional(),
+  pushPayments: z.boolean().optional(),
+  pushClassReminders: z.boolean().optional(),
+  pushAnnouncements: z.boolean().optional(),
+  pushInvitations: z.boolean().optional(),
 }).strict();
 
 export const updatePrivacySchema = z.object({

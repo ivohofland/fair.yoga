@@ -4,9 +4,11 @@ import { useState } from 'react';
 import type { z } from 'zod';
 import type { ReminderChannel, ReminderTiming } from '@prisma/client';
 import type { updateStudentSchema } from '@/lib/schemas';
+import type { StudentPushPrefs } from '@/lib/push-policy';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import { PushDeviceControl } from '@/components/settings/push-device-control';
 import {
   REMINDER_CHANNEL_OPTIONS,
   REMINDER_TIMING_OPTIONS,
@@ -15,16 +17,17 @@ import {
 } from '@/lib/reminder-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
-interface NotificationsFormProps {
+interface NotificationsFormProps extends StudentPushPrefs {
   studentId: string;
   emailNotifications: boolean;
   classReminder: ReminderTiming;
   classReminderChannel: ReminderChannel;
+  vapidPublicKey: string | null;
 }
 
 type UpdateStudentWire = z.infer<typeof updateStudentSchema>;
 
-interface NotificationsBody {
+interface NotificationsBody extends StudentPushPrefs {
   emailNotifications: boolean;
   classReminder: ReminderTiming;
   classReminderChannel: ReminderChannel;
@@ -44,10 +47,23 @@ export function NotificationsForm({
   emailNotifications,
   classReminder,
   classReminderChannel,
+  pushWaitlist,
+  pushClassChanges,
+  pushPayments,
+  pushClassReminders,
+  pushAnnouncements,
+  pushInvitations,
+  vapidPublicKey,
 }: NotificationsFormProps) {
   const [emails, setEmails] = useState(emailNotifications);
   const [reminder, setReminder] = useState(classReminder);
   const [reminderChannel, setReminderChannel] = useState(classReminderChannel);
+  const [waitlist, setWaitlist] = useState(pushWaitlist);
+  const [classChanges, setClassChanges] = useState(pushClassChanges);
+  const [payments, setPayments] = useState(pushPayments);
+  const [pushReminders, setPushReminders] = useState(pushClassReminders);
+  const [announcements, setAnnouncements] = useState(pushAnnouncements);
+  const [invitations, setInvitations] = useState(pushInvitations);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -61,6 +77,12 @@ export function NotificationsForm({
         emailNotifications: emails,
         classReminder: reminder,
         classReminderChannel: reminderChannel,
+        pushWaitlist: waitlist,
+        pushClassChanges: classChanges,
+        pushPayments: payments,
+        pushClassReminders: pushReminders,
+        pushAnnouncements: announcements,
+        pushInvitations: invitations,
       };
       const res = await fetch(`/api/students/${studentId}`, {
         method: 'PUT',
@@ -135,6 +157,72 @@ export function NotificationsForm({
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </Select>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend className="type-subtitle">Push notifications</legend>
+        <div className="mt-3">
+          <PushDeviceControl vapidPublicKey={vapidPublicKey} />
+        </div>
+        <div className="mt-4 flex flex-col gap-1">
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={waitlist}
+              onChange={(e) => { setWaitlist(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Waitlist spots</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={classChanges}
+              onChange={(e) => { setClassChanges(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Class changes</span>
+          </label>
+          <p className="type-caption -mt-1 ml-8 max-w-[420px]">
+            Cancellations, a booking your teacher removed, being added as a walk-in
+          </p>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={payments}
+              onChange={(e) => { setPayments(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Payments</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={pushReminders}
+              onChange={(e) => { setPushReminders(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Class reminders</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={announcements}
+              onChange={(e) => { setAnnouncements(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Announcements</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={invitations}
+              onChange={(e) => { setInvitations(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Invitations</span>
+          </label>
         </div>
       </fieldset>
 

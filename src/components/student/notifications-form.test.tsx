@@ -3,6 +3,12 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { NotificationsForm } from './notifications-form';
 import { REMINDER_TIMING_OPTIONS } from '@/lib/reminder-options';
 
+vi.mock('@/components/settings/push-device-control', () => ({
+  PushDeviceControl: ({ vapidPublicKey }: { vapidPublicKey: string | null }) => (
+    <div data-testid="push-device-control" data-vapid-public-key={vapidPublicKey ?? ''} />
+  ),
+}));
+
 /**
  * #136. The reverse pin in `notifications-form.tsx` proves its keys are ones
  * `updateStudentSchema` accepts, but cannot see what reaches the API. That is
@@ -14,9 +20,22 @@ import { REMINDER_TIMING_OPTIONS } from '@/lib/reminder-options';
  * business rendering.
  *
  * Nothing fetches on mount, so the save click is the first (and only) call.
+ *
+ * `PushDeviceControl` is stubbed throughout: its own behaviour is covered by
+ * `push-device-control.test.tsx`; here only the prop it is handed and the
+ * six push checkboxes beside it are this form's concern.
  */
 describe('NotificationsForm', () => {
   const fetchMock = vi.fn();
+
+  const DEFAULT_PUSH = {
+    pushWaitlist: true,
+    pushClassChanges: true,
+    pushPayments: false,
+    pushClassReminders: false,
+    pushAnnouncements: false,
+    pushInvitations: false,
+  };
 
   afterEach(() => {
     fetchMock.mockReset();
@@ -41,33 +60,74 @@ describe('NotificationsForm', () => {
     };
   }
 
-  it('sends exactly emailNotifications, classReminder and classReminderChannel', async () => {
+  it('sends exactly emailNotifications, classReminder, classReminderChannel and the six push columns', async () => {
     stubFetch();
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" classReminderChannel="inbox_and_email" />,
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
     );
     const { url, method, body } = await save();
     expect(url).toBe('/api/students/student-1');
     expect(method).toBe('PUT');
-    expect(Object.keys(body).sort()).toEqual(['classReminder', 'classReminderChannel', 'emailNotifications']);
-    expect(body).toEqual({ emailNotifications: true, classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+    expect(Object.keys(body).sort()).toEqual([
+      'classReminder',
+      'classReminderChannel',
+      'emailNotifications',
+      'pushAnnouncements',
+      'pushClassChanges',
+      'pushClassReminders',
+      'pushInvitations',
+      'pushPayments',
+      'pushWaitlist',
+    ]);
+    expect(body).toEqual({
+      emailNotifications: true,
+      classReminder: 'morning_of',
+      classReminderChannel: 'inbox_and_email',
+      ...DEFAULT_PUSH,
+    });
   });
 
   it('sends a toggled and reselected value, not just the initial ones', async () => {
     stubFetch();
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" classReminderChannel="inbox_and_email" />,
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
     );
     fireEvent.click(screen.getByLabelText(/email me when I miss/i));
     fireEvent.change(screen.getByLabelText('When'), { target: { value: 'off' } });
     const { body } = await save();
-    expect(body).toEqual({ emailNotifications: false, classReminder: 'off', classReminderChannel: 'inbox_and_email' });
+    expect(body).toEqual({
+      emailNotifications: false,
+      classReminder: 'off',
+      classReminderChannel: 'inbox_and_email',
+      ...DEFAULT_PUSH,
+    });
   });
 
   it('renders every timing option, in order, from REMINDER_TIMING_OPTIONS', () => {
     stubFetch();
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" classReminderChannel="inbox_and_email" />,
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
     );
     const when = within(screen.getByLabelText('When'));
     expect(when.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)).toEqual(
@@ -80,7 +140,16 @@ describe('NotificationsForm', () => {
 
   it('offers a Class reminder timing and channel, and sends both (#721)', async () => {
     stubFetch();
-    render(<NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" classReminderChannel="inbox_and_email" />);
+    render(
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
+    );
     fireEvent.change(screen.getByLabelText('When'), { target: { value: 'one_hour_before' } });
     fireEvent.change(screen.getByLabelText('How'), { target: { value: 'email' } });
     const { body } = await save();
@@ -88,7 +157,16 @@ describe('NotificationsForm', () => {
   });
 
   it('disables How while When is Off, and keeps the chosen channel (#721)', () => {
-    render(<NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" classReminderChannel="email" />);
+    render(
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
+    );
     fireEvent.change(screen.getByLabelText('When'), { target: { value: 'off' } });
     expect(screen.getByLabelText('How')).toBeDisabled();
     fireEvent.change(screen.getByLabelText('When'), { target: { value: 'evening_before' } });
@@ -97,12 +175,26 @@ describe('NotificationsForm', () => {
 
   it('starts from the stored values: Off shows Off with How disabled, and saves Off (#721)', async () => {
     stubFetch();
-    render(<NotificationsForm studentId="student-1" emailNotifications={true} classReminder="off" classReminderChannel="email" />);
+    render(
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="off"
+        classReminderChannel="email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
+    );
     expect(screen.getByLabelText('When')).toHaveValue('off');
     expect(screen.getByLabelText('How')).toHaveValue('email');
     expect(screen.getByLabelText('How')).toBeDisabled();
     const { body } = await save();
-    expect(body).toEqual({ emailNotifications: true, classReminder: 'off', classReminderChannel: 'email' });
+    expect(body).toEqual({
+      emailNotifications: true,
+      classReminder: 'off',
+      classReminderChannel: 'email',
+      ...DEFAULT_PUSH,
+    });
   });
 
   it('logs the failure and tells the student when fetch itself fails', async () => {
@@ -110,7 +202,14 @@ describe('NotificationsForm', () => {
     fetchMock.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" classReminderChannel="inbox_and_email" />,
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /save notifications/i }));
@@ -130,7 +229,14 @@ describe('NotificationsForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <NotificationsForm studentId="student-1" emailNotifications={true} classReminder="morning_of" classReminderChannel="inbox_and_email" />,
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /save notifications/i }));
@@ -138,5 +244,55 @@ describe('NotificationsForm', () => {
       expect(screen.getByText('Invalid reminder preference')).toBeInTheDocument();
     });
     expect(logged).toHaveBeenCalledWith('student notification prefs save failed (HTTP)', 400);
+  });
+
+  it('passes the server VAPID key to PushDeviceControl', () => {
+    render(
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
+    );
+    expect(screen.getByTestId('push-device-control')).toHaveAttribute('data-vapid-public-key', 'KEY');
+  });
+
+  it('renders the six push checkboxes at their stored values and saves a toggle', async () => {
+    stubFetch();
+    render(
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
+    );
+    expect(screen.getByRole('checkbox', { name: 'Waitlist spots' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Class changes' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Payments' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Class reminders' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Announcements' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Invitations' })).not.toBeChecked();
+    expect(screen.getByText(/being added as a walk-in/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Payments' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Waitlist spots' }));
+    const { body } = await save();
+    expect(body).toEqual({
+      emailNotifications: true,
+      classReminder: 'morning_of',
+      classReminderChannel: 'inbox_and_email',
+      pushWaitlist: false,
+      pushClassChanges: true,
+      pushPayments: true,
+      pushClassReminders: false,
+      pushAnnouncements: false,
+      pushInvitations: false,
+    });
   });
 });
