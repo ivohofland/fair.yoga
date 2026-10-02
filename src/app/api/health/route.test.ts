@@ -36,22 +36,23 @@ async function read(): Promise<{ status: number; body: HealthBody }> {
 
 afterEach(() => {
   globalThis.__fairYogaJobHealth = undefined;
+  vi.useRealTimers();
 });
 
 describe('GET /api/health', () => {
   it('reports how many degradation events were seen in the last 24 hours, and leaves status alone', async () => {
+    vi.useFakeTimers();
+    const now = new Date('2026-09-29T12:00:00.000Z');
+    vi.setSystemTime(now);
     count.mockResolvedValueOnce(2);
-    const before = Date.now();
 
     const { status, body } = await read();
 
     expect(status).toBe(200);
     expect(body.status).toBe('ok');
     expect(body.degradations).toEqual({ open: 2 });
-    const where = (count.mock.calls[0]![0] as { where: { lastSeenAt: { gte: Date } } }).where;
-    const cutoff = where.lastSeenAt.gte.getTime();
-    expect(before - cutoff).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 - 1000);
-    expect(before - cutoff).toBeLessThanOrEqual(24 * 60 * 60 * 1000 + 5000);
+    const where = (count.mock.lastCall![0] as { where: { lastSeenAt: { gte: Date } } }).where;
+    expect(where.lastSeenAt.gte.getTime()).toBe(now.getTime() - 24 * 60 * 60 * 1000);
   });
 
   it('carries no code, sample or timestamp from the degradation table', async () => {
@@ -72,6 +73,22 @@ describe('GET /api/health', () => {
 
     expect(status).toBe(503);
     expect(body.degradations).toBeUndefined();
+  });
+
+  it('keeps db up and omits the block when only the degradation count fails', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    const cause = new Error('relation "DegradationEvent" does not exist');
+    count.mockRejectedValueOnce(cause);
+
+    const { status, body } = await read();
+
+    expect(status).toBe(200);
+    expect(body.db).toBe('up');
+    expect(body.status).toBe('ok');
+    expect('degradations' in body).toBe(false);
+    expect(error).toHaveBeenCalledWith({ err: cause }, 'health check: degradation count failed');
+    expect(error).not.toHaveBeenCalledWith(expect.anything(), 'health check: database probe failed');
   });
 
   it('reports a stalled job unhealthy and the service degraded, though its last completed run succeeded', async () => {
