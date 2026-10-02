@@ -39,6 +39,7 @@ const SWEEP_NAMES = [
   'reapExpiredNotifications',
   'notifyOperatorOfDegradations',
   'auditTeacherTimezones',
+  'dispatchPushes',
 ] as const;
 
 type StubbedName = (typeof SWEEP_NAMES)[number];
@@ -135,6 +136,7 @@ describe('buildJobs', () => {
       ['class-reminders', 5 * MINUTE],
       ['daily-cleanup', 24 * 60 * MINUTE],
       ['waitlist-reconciliation', 1 * MINUTE],
+      ['push-dispatch', 10 * 1000],
     ]);
   });
 
@@ -186,6 +188,7 @@ describe('buildJobs', () => {
         'auditTeacherTimezones',
       ],
       'waitlist-reconciliation': ['runWaitlistReconciliationTick'],
+      'push-dispatch': ['dispatchPushes'],
     });
   });
 });
