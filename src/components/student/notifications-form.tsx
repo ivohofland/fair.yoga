@@ -163,7 +163,7 @@ export function NotificationsForm({
       <fieldset>
         <legend className="type-subtitle">Push notifications</legend>
         <div className="mt-3">
-          <PushDeviceControl vapidPublicKey={vapidPublicKey} />
+          <PushDeviceControl vapidPublicKey={vapidPublicKey} installHref="/account" />
         </div>
         <div className="mt-4 flex flex-col gap-1">
           <label className="flex items-center gap-3 min-h-12">

@@ -2,7 +2,13 @@
 // this worker never sits between the page and the network.
 
 function safePath(url) {
-  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//') ? url : '/';
+  if (typeof url !== 'string') return '/';
+  try {
+    const u = new URL(url, self.location.origin);
+    return u.origin === self.location.origin ? u.pathname + u.search + u.hash : '/';
+  } catch {
+    return '/';
+  }
 }
 
 self.addEventListener('push', (event) => {

@@ -63,4 +63,37 @@ describe('enablePush', () => {
     await expect(enablePush('KEY')).resolves.toBe('failed');
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
+
+  it('POSTs exactly { endpoint, keys: { p256dh, auth } } and resolves on, on success', async () => {
+    const subscription = {
+      endpoint: 'https://push.example/abc',
+      toJSON: () => ({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } }),
+      unsubscribe: vi.fn(async () => true),
+    };
+    const fetchMock = vi.fn<(url: string, init: { method: string; body: string }) => Promise<{ ok: boolean }>>(
+      async () => ({ ok: true }),
+    );
+    vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'granted') });
+    vi.stubGlobal('navigator', {
+      serviceWorker: {
+        register: vi.fn(async () => ({
+          pushManager: {
+            getSubscription: vi.fn(async () => null),
+            subscribe: vi.fn(async () => subscription),
+          },
+        })),
+        ready: Promise.resolve(),
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(enablePush('KEY')).resolves.toBe('on');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/push/subscriptions');
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(['endpoint', 'keys']);
+    expect(body).toEqual({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } });
+  });
 });

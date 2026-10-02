@@ -26,7 +26,7 @@ const DEFAULTS: TeacherNotificationPrefs & TeacherPushPrefs = {
 
 // `PushDeviceControl` is stubbed throughout: its own behaviour is covered by
 // `push-device-control.test.tsx`; here only the prop it is handed and the
-// five push checkboxes beside it are this form's concern.
+// TeacherPushPrefs checkboxes beside it are this form's concern.
 describe('NotificationPrefsForm', () => {
   const fetchMock = vi.fn();
   afterEach(() => { fetchMock.mockReset(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -62,11 +62,26 @@ describe('NotificationPrefsForm', () => {
 
   it('sends exactly the NotificationPrefsBody keys to the teacher route, each at a non-default value', async () => {
     stubFetch();
-    render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} vapidPublicKey="KEY" />);
+    // `pushClassReminders` is overridden to differ from `pushClassCompleted`
+    // (both are `false` in DEFAULTS): negating both from equal starting
+    // values would still land them on the same final value, so a bug that
+    // swapped which state fed which key would go undetected below.
+    render(
+      <NotificationPrefsForm
+        teacherId="t1"
+        initial={{ ...DEFAULTS, pushClassReminders: true }}
+        vapidPublicKey="KEY"
+      />,
+    );
     const otherEmails = screen.getByRole('group', { name: /other emails/i });
     fireEvent.click(screen.getByRole('radio', { name: 'Off' }));
     fireEvent.click(within(otherEmails).getByRole('checkbox', { name: /class-completed summary/i }));
     fireEvent.click(within(otherEmails).getByRole('checkbox', { name: /invitation/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Auto-cancelled classes' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'New bookings' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Class completed' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Class reminders' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Invitations' }));
     const { url, method, body } = await save();
     expect(url).toBe('/api/teachers/t1');
     expect(method).toBe('PUT');
@@ -88,11 +103,11 @@ describe('NotificationPrefsForm', () => {
       emailOnInvitation: false,
       classReminder: 'evening_before',
       classReminderChannel: 'inbox',
-      pushAutoCancelled: true,
-      pushBookings: false,
-      pushClassCompleted: false,
+      pushAutoCancelled: false,
+      pushBookings: true,
+      pushClassCompleted: true,
       pushClassReminders: false,
-      pushInvitations: false,
+      pushInvitations: true,
     });
   });
 
@@ -180,7 +195,7 @@ describe('NotificationPrefsForm', () => {
     expect(screen.getByTestId('push-device-control')).toHaveAttribute('data-vapid-public-key', 'KEY');
   });
 
-  it('renders the five push checkboxes at their stored values and saves a toggle', async () => {
+  it('renders the TeacherPushPrefs checkboxes at their stored values and saves a toggle', async () => {
     stubFetch();
     render(
       <NotificationPrefsForm
