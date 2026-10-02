@@ -540,6 +540,48 @@ describe('dispatchPushes', () => {
     }
   });
 
+  describe('with VAPID_* set to keys that do not form a pair', () => {
+    const vapidPrivate = crypto.createECDH('prime256v1');
+    vapidPrivate.generateKeys();
+    const otherPair = crypto.createECDH('prime256v1');
+    otherPair.generateKeys();
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    it.each([
+      ['belongs to a different private key', otherPair.getPublicKey()],
+      ['is not a point on the curve', Buffer.alloc(65, 4)],
+    ])('retires the row without sending and keeps the subscription when the public key %s', async (_label, publicKey) => {
+      vi.stubEnv('VAPID_PUBLIC_KEY', publicKey.toString('base64url'));
+      vi.stubEnv('VAPID_PRIVATE_KEY', vapidPrivate.getPrivateKey().toString('base64url'));
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no network in this test'));
+      // A browser key the encryption step accepts, so nothing about the
+      // subscription itself can fail the send.
+      const browser = crypto.createECDH('prime256v1');
+      browser.generateKeys();
+      const sub = await prisma.pushSubscription.create({
+        data: {
+          accountId: studentAccountId,
+          endpoint: `https://push.invalid/misconfigured-${crypto.randomUUID()}`,
+          p256dh: browser.getPublicKey().toString('base64url'),
+          auth: crypto.randomBytes(16).toString('base64url'),
+        },
+      });
+      const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+
+      const result = await dispatchPushes(scoped([n.id]).db);
+
+      expect(result).toMatchObject({ claimed: 1, sent: 0, gone: 0, failed: 0 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).not.toBeNull();
+      expect(await prisma.pushSubscription.findUnique({ where: { id: sub.id } })).not.toBeNull();
+    });
+  });
+
   it('retires rows without sending when push is not configured', async () => {
     const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
     const result = await dispatchPushes(scoped([n.id]).db, null);

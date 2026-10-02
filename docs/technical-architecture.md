@@ -494,7 +494,8 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
   minutes) when a tick reads it is retired without sending — a row still
   within the cutoff at that read can still be sent even if it ages past it
   before the tick finishes. When `readVapidConfig()` finds no valid
-  `VAPID_*` environment, every row is retired without sending.
+  `VAPID_*` environment — unset, malformed, or a public key that is not the
+  one the private key derives — every row is retired without sending.
 
 ### Entry Generator (`services/entry-generation.ts`)
 
