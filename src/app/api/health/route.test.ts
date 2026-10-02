@@ -2,8 +2,13 @@ import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import { STALLED_AFTER_SKIPPED_TICKS, type JobHealth } from '@/lib/scheduler';
 import { log } from '@/lib/log';
 
-const { queryRaw } = vi.hoisted(() => ({ queryRaw: vi.fn(async () => [{ ok: 1 }]) }));
-vi.mock('@/lib/db', () => ({ prisma: { $queryRaw: queryRaw } }));
+const { queryRaw, count } = vi.hoisted(() => ({
+  queryRaw: vi.fn(async () => [{ ok: 1 }]),
+  count: vi.fn(async (_args: unknown) => 0),
+}));
+vi.mock('@/lib/db', () => ({
+  prisma: { $queryRaw: queryRaw, degradationEvent: { count } },
+}));
 
 const { GET } = await import('./route');
 
@@ -11,6 +16,7 @@ interface HealthBody {
   status: string;
   db: string;
   jobs: Record<string, Record<string, unknown>>;
+  degradations?: { open: number };
 }
 
 function entry(overrides: Partial<JobHealth>): JobHealth {
@@ -33,6 +39,41 @@ afterEach(() => {
 });
 
 describe('GET /api/health', () => {
+  it('reports how many degradation events were seen in the last 24 hours, and leaves status alone', async () => {
+    count.mockResolvedValueOnce(2);
+    const before = Date.now();
+
+    const { status, body } = await read();
+
+    expect(status).toBe(200);
+    expect(body.status).toBe('ok');
+    expect(body.degradations).toEqual({ open: 2 });
+    const where = (count.mock.calls[0]![0] as { where: { lastSeenAt: { gte: Date } } }).where;
+    const cutoff = where.lastSeenAt.gte.getTime();
+    expect(before - cutoff).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 - 1000);
+    expect(before - cutoff).toBeLessThanOrEqual(24 * 60 * 60 * 1000 + 5000);
+  });
+
+  it('carries no code, sample or timestamp from the degradation table', async () => {
+    count.mockResolvedValueOnce(3);
+
+    const { body } = await read();
+
+    expect(Object.keys(body.degradations ?? {})).toEqual(['open']);
+    expect(JSON.stringify(body)).not.toMatch(/INCOME_TIER|TIMEZONE|sample|lastSeen/);
+  });
+
+  it('omits the block when the database probe fails', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    queryRaw.mockRejectedValueOnce(new Error('down'));
+
+    const { status, body } = await read();
+
+    expect(status).toBe(503);
+    expect(body.degradations).toBeUndefined();
+  });
+
   it('reports a stalled job unhealthy and the service degraded, though its last completed run succeeded', async () => {
     globalThis.__fairYogaJobHealth = {
       stalled: entry({ skippedTicks: STALLED_AFTER_SKIPPED_TICKS }),
