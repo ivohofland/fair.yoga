@@ -90,8 +90,10 @@ ethical-yoga/
 │   │   ├── class-lifecycle.test.ts
 │   │   ├── waitlist.ts        # Hybrid waitlist promotion
 │   │   ├── waitlist.test.ts
-│   │   ├── notifications.ts   # Three-layer notification dispatch
+│   │   ├── notifications.ts   # Notification row writer + SSE emit
 │   │   ├── notifications.test.ts
+│   │   ├── push-dispatch.ts   # Web push sweep — see Web Push below
+│   │   ├── push-dispatch.test.ts
 │   │   ├── payments.ts        # Payment creation & tracking
 │   │   ├── payments.test.ts
 │   │   └── class-generator.ts # Class family's half — see Entry Generator below
@@ -466,8 +468,8 @@ as a refresh hint, never as the payload itself. Neither function schedules
 email or push — those are separate sweeps, each reading committed
 `Notification` rows on its own column and its own cutoff: `email-fallback.ts`
 (layer 4, `emailSent`/`isRead`, see Cron Jobs) and `push-dispatch.ts` (layer 3,
-`pushHandledAt`, see Cron Jobs and Web Push below). A row's three outcomes are
-therefore decided independently of one another and of this module.
+`pushHandledAt`, see Cron Jobs and Web Push below). Push and email are
+decided independently of each other.
 
 ### Web Push (`lib/push/`, `services/push-dispatch.ts`)
 
@@ -488,9 +490,11 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
   with a compare-and-swap on `pushHandledAt` so overlapping ticks send once,
   sends to every subscription on the resolved recipient's account, deletes a
   subscription the push service reports `gone`, and never retries a `failed`
-  one. A row older than `PUSH_STALE_AFTER_MS` (15 minutes) is retired without
-  sending, and when `readVapidConfig()` finds no valid `VAPID_*` environment
-  every row is retired without sending.
+  one. A row already older than the stale cutoff (`PUSH_STALE_AFTER_MS`, 15
+  minutes) when a tick reads it is retired without sending — a row still
+  within the cutoff at that read can still be sent even if it ages past it
+  before the tick finishes. When `readVapidConfig()` finds no valid
+  `VAPID_*` environment, every row is retired without sending.
 
 ### Entry Generator (`services/entry-generation.ts`)
 
@@ -978,7 +982,7 @@ Every job skips a tick while its own previous run is still in flight, and from t
 | Class reminders | Every 5 minutes | Reminds registered students and the teacher of an open class at each one's chosen moment (`reminderMoment`, `src/lib/reminder-moment.ts`), in the inbox and/or by direct email — once, and never at or after the class's start |
 | Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), emails the operator the degradation events that are new or have fired again, and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable or an offset identifier (`isValidTimeZone`) |
 | Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before class start |
-| Push dispatch | Every 10 seconds | Reads committed `Notification` rows with `pushHandledAt: null`, sends to the recipient's subscribed devices where preference allows, and retires (stamps `pushHandledAt` without sending) any row older than `PUSH_STALE_AFTER_MS` (15 minutes, `src/services/push-dispatch.ts`) |
+| Push dispatch | Every 10 seconds | Reads committed `Notification` rows with `pushHandledAt: null`, sends to the recipient's subscribed devices where preference allows, and retires (stamps `pushHandledAt` without sending) any row already older than `PUSH_STALE_AFTER_MS` (15 minutes) when this sweep reads it (`src/services/push-dispatch.ts`) |
 
 ### Overlapping triggers
 

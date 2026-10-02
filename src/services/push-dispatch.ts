@@ -44,8 +44,9 @@ export async function dispatchPushes(
   send: PushSender | null | undefined = undefined,
   now: Date = new Date(),
 ): Promise<PushDispatchResult> {
-  const sender = send === undefined ? defaultSender() : send;
-  if (!sender && !warnedUnconfigured) {
+  const usingDefaultSender = send === undefined;
+  const sender = usingDefaultSender ? defaultSender() : send;
+  if (usingDefaultSender && !sender && !warnedUnconfigured) {
     warnedUnconfigured = true;
     log.warn('push is not configured (VAPID_* unset or malformed); notifications are retired without sending');
   }
@@ -66,6 +67,12 @@ export async function dispatchPushes(
   });
 
   const limit = createConcurrencyLimit(SEND_CONCURRENCY);
+  // Every subscription's send, across every notification in this batch,
+  // through the one shared `limit` — collected here and awaited once after
+  // the loop, rather than per notification, so a tick's sends share
+  // concurrency instead of running one notification at a time.
+  const tasks: Array<Promise<void>> = [];
+
   for (const n of candidates) {
     const claim = await db.notification.updateMany({
       where: { id: n.id, pushHandledAt: null },
@@ -81,20 +88,40 @@ export async function dispatchPushes(
     const subscriptions = await db.pushSubscription.findMany({ where: { accountId: resolved.accountId } });
     const payload = buildPushPayload(n);
     const urgency = pushUrgency(n.recipientType, n.type);
-    await Promise.all(subscriptions.map((sub) => limit(async () => {
-      const { outcome, status } = await sender(sub, payload, urgency);
-      if (outcome === 'delivered') {
-        result.sent += 1;
-        await db.pushSubscription.updateMany({ where: { id: sub.id }, data: { lastUsedAt: now } });
-      } else if (outcome === 'gone') {
-        result.gone += 1;
-        await db.pushSubscription.deleteMany({ where: { id: sub.id } });
-      } else {
-        result.failed += 1;
-        log.warn({ notificationId: n.id, subscriptionId: sub.id, status }, 'push send failed; not retried');
-      }
-    })));
+    for (const sub of subscriptions) {
+      tasks.push(limit(async () => {
+        let outcome: PushOutcome;
+        let status: number | null;
+        try {
+          ({ outcome, status } = await sender(sub, payload, urgency));
+        } catch (err) {
+          // A stored key the sender cannot even encrypt against (a
+          // malformed `p256dh`, for instance) never will — the same
+          // standing as `gone`. Caught here, scoped to this subscription,
+          // so one bad row cannot abort the rest of the tick's sends.
+          result.failed += 1;
+          log.warn({ notificationId: n.id, subscriptionId: sub.id, err }, 'push send threw; subscription removed');
+          await db.pushSubscription.deleteMany({ where: { id: sub.id } });
+          return;
+        }
+        if (outcome === 'delivered') {
+          result.sent += 1;
+          await db.pushSubscription.updateMany({ where: { id: sub.id }, data: { lastUsedAt: now } });
+        } else if (outcome === 'gone') {
+          result.gone += 1;
+          await db.pushSubscription.deleteMany({ where: { id: sub.id } });
+        } else {
+          result.failed += 1;
+          log.warn({ notificationId: n.id, subscriptionId: sub.id, status }, 'push send failed; not retried');
+        }
+      }));
+    }
   }
+
+  const settled = await Promise.allSettled(tasks);
+  const firstRejected = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+  if (firstRejected) throw firstRejected.reason;
+
   return result;
 }
 

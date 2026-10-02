@@ -1,11 +1,9 @@
 /**
- * Notification Dispatcher — Creates notification records, manages read state,
- * and schedules email fallback.
- *
- * Notifications are the first layer of the three-layer communication system:
- * 1. In-app notification (real-time via SSE)
- * 2. In-app inbox (kept per NOTIFICATION_RETENTION_DAYS — this service)
- * 3. Email fallback (unread past a threshold — sooner when the linked class starts soon)
+ * Notification Dispatcher — writes `Notification` rows, emits a
+ * fire-and-forget hint to the in-process SSE bus so a connected client
+ * refreshes (`emitToBus`), marks a row read, and reads a page of the inbox.
+ * Also exports the unread-candidate read and claim helpers
+ * (`getUnreadForEmailFallback`, `claimEmailFallback`).
  */
 
 import type {
