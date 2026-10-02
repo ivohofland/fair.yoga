@@ -98,6 +98,7 @@ export default defineConfig(({ mode }) => {
             fileParallelism: true,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
+            setupFiles: ['./tests/setup/degradation-store.ts'],
           },
         },
         {
@@ -122,6 +123,7 @@ export default defineConfig(({ mode }) => {
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
+            setupFiles: ['./tests/setup/degradation-store.ts'],
           },
         },
         {
