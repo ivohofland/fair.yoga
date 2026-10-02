@@ -165,6 +165,29 @@ describe('buildPushPayload', () => {
     expect(payload.body).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
   });
 
+  it('finds the maximal fitting prefix on astral-heavy input, never ending in a lone surrogate', () => {
+    const id = 'clxxxxxxxxxxxxxxxxxxxxxxx'; // 25 chars, the shape a cuid takes
+    const dense = '\u0001😀'.repeat(274);
+    const payload = buildPushPayload({ id, title: '\u0001'.repeat(200), body: dense, recipientType: 'student', type: 'announcement' });
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(PUSH_PLAINTEXT_MAX_BYTES);
+
+    const fitted = payload.body.slice(0, -1); // drop the trailing …
+    expect(fitted).not.toMatch(/[\uD800-\uDBFF]$/);
+
+    const originalCodePoints = Array.from(dense);
+    const next = originalCodePoints[Array.from(fitted).length];
+    expect(next).toBeDefined();
+    const oneMore = { ...payload, body: `${fitted}${next}…` };
+    expect(Buffer.byteLength(JSON.stringify(oneMore))).toBeGreaterThan(PUSH_PLAINTEXT_MAX_BYTES);
+  });
+
+  it('keeps a maximal redacted payload as REDACTED_BODY exactly, never refit from the notification body', () => {
+    const dense = '\u0001'.repeat(2000);
+    const payload = buildPushPayload({ id: 'n1', title: '\u0001'.repeat(200), body: dense, recipientType: 'student', type: 'payment_request' });
+    expect(payload.body).toBe(REDACTED_BODY);
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(PUSH_PLAINTEXT_MAX_BYTES);
+  });
+
   it('leaves a body that already fits as truncate made it', () => {
     const plain = 'a'.repeat(PUSH_BODY_MAX_BYTES + 10);
     const body = buildPushPayload({ ...base, body: plain, recipientType: 'student', type: 'announcement' }).body;
