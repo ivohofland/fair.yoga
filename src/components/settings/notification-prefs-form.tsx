@@ -18,7 +18,7 @@ import {
 } from '@/lib/reminder-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
-type NotificationPrefsBody = TeacherNotificationPrefs & TeacherPushPrefs;
+export type NotificationPrefsBody = TeacherNotificationPrefs & TeacherPushPrefs;
 
 interface NotificationPrefsFormProps {
   teacherId: string;
@@ -188,7 +188,7 @@ export function NotificationPrefsForm({ teacherId, initial, vapidPublicKey }: No
       <fieldset>
         <legend className="type-subtitle">Push notifications</legend>
         <div className="mt-3">
-          <PushDeviceControl vapidPublicKey={vapidPublicKey} />
+          <PushDeviceControl vapidPublicKey={vapidPublicKey} installHref="/settings" />
         </div>
         <div className="mt-4 flex flex-col gap-1">
           <label className="flex items-center gap-3 min-h-12">

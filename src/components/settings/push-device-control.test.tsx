@@ -7,12 +7,6 @@ vi.mock('@/components/layout/install-store', () => ({
   useInstallSupport: () => support,
 }));
 
-let pathname = '/account/notifications';
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
-  usePathname: () => pathname,
-}));
-
 const currentPushSubscriptionMock = vi.fn<() => Promise<{ endpoint: string } | null>>();
 const enablePushMock = vi.fn<(vapidPublicKey: string) => Promise<'on' | 'blocked' | 'failed'>>();
 const disablePushMock = vi.fn<() => Promise<void>>();
@@ -60,8 +54,11 @@ function setBrowserCapabilities(opts: {
   return { register };
 }
 
-async function renderResolved(vapidPublicKey: string | null = 'KEY') {
-  const utils = render(<PushDeviceControl vapidPublicKey={vapidPublicKey} />);
+async function renderResolved(
+  vapidPublicKey: string | null = 'KEY',
+  installHref: '/account' | '/settings' = '/account',
+) {
+  const utils = render(<PushDeviceControl vapidPublicKey={vapidPublicKey} installHref={installHref} />);
   // Classification runs in an effect; give it a tick to settle before assertions.
   await waitFor(() => expect(screen.queryByTestId('push-device-control-pending')).not.toBeInTheDocument());
   return utils;
@@ -70,7 +67,6 @@ async function renderResolved(vapidPublicKey: string | null = 'KEY') {
 describe('PushDeviceControl', () => {
   beforeEach(() => {
     support = 'installed';
-    pathname = '/account/notifications';
     currentPushSubscriptionMock.mockReset();
     currentPushSubscriptionMock.mockResolvedValue(null);
     enablePushMock.mockReset();
@@ -96,16 +92,38 @@ describe('PushDeviceControl', () => {
     async (installSupport) => {
       support = installSupport;
       const { register } = setBrowserCapabilities({});
-      await renderResolved();
+      await renderResolved('KEY', '/settings');
       expect(
         screen.getByText('Notifications arrive in the fair.yoga app. Add it to your home screen to turn them on.'),
       ).toBeInTheDocument();
       const link = screen.getByRole('link');
-      expect(link).toHaveAttribute('href', '/account');
+      expect(link).toHaveAttribute('href', '/settings');
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
       expect(register).not.toHaveBeenCalled();
+      expect(enablePushMock).not.toHaveBeenCalled();
     },
   );
+
+  it.each(['/account', '/settings'] as const)(
+    'links the install steps to the installHref prop (%s)',
+    async (installHref) => {
+      support = 'prompt';
+      setBrowserCapabilities({});
+      await renderResolved('KEY', installHref);
+      expect(screen.getByRole('link')).toHaveAttribute('href', installHref);
+    },
+  );
+
+  it('shows the needs-install copy with no link when the browser offers no install route', async () => {
+    support = 'unsupported';
+    setBrowserCapabilities({});
+    await renderResolved();
+    expect(
+      screen.getByText('Notifications arrive in the fair.yoga app. Add it to your home screen to turn them on.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
 
   it('offers Turn on for this phone when capable and not subscribed, and does not call enablePush on render', async () => {
     setBrowserCapabilities({ permission: 'default' });
@@ -158,5 +176,15 @@ describe('PushDeviceControl', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Turn off for this phone' }));
     await waitFor(() => expect(disablePushMock).toHaveBeenCalledTimes(1));
     await screen.findByRole('button', { name: 'Turn on for this phone' });
+  });
+
+  it('resolves past a rejected currentPushSubscription instead of staying on the placeholder', async () => {
+    setBrowserCapabilities({ permission: 'default' });
+    currentPushSubscriptionMock.mockRejectedValue(new Error('getRegistration failed'));
+    await renderResolved();
+    // Falls back to `subscribed: false`; capable + unsubscribed + default
+    // permission classifies to the off state, proving the effect finished
+    // rather than hanging on the placeholder forever.
+    expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
   });
 });

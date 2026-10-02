@@ -51,9 +51,25 @@ describe('public/sw.js', () => {
     expect(none.self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n3');
   });
 
-  it('refuses a url that is not a same-origin path', async () => {
+  it('redacts a cross-origin push url to the site root before showing the notification', async () => {
     const { self, listeners } = loadWorker([]);
-    const e = { ...extendable(), notification: { close: vi.fn(), data: { url: 'https://evil.example/' } } };
+    const e = { ...extendable(), data: { json: () => ({ id: 'n4', title: 'Title', body: 'Body', url: 'https://evil.example/' }) } };
+    listeners.push!(e);
+    await e.done();
+    expect(self.registration.showNotification).toHaveBeenCalledWith('Title', expect.objectContaining({ data: { url: '/' } }));
+  });
+
+  it.each([
+    'https://evil.example/',
+    // WHATWG URL parsing treats a leading backslash as a path separator for
+    // special schemes, so this looks like a same-origin absolute path but
+    // resolves to a different host.
+    '/\\evil.example',
+    // Protocol-relative: no scheme, but still a different host.
+    '//evil.example',
+  ])('refuses %s as not a same-origin path', async (maliciousUrl) => {
+    const { self, listeners } = loadWorker([]);
+    const e = { ...extendable(), notification: { close: vi.fn(), data: { url: maliciousUrl } } };
     listeners.notificationclick!(e);
     await e.done();
     expect(self.clients.openWindow).toHaveBeenCalledWith('/');

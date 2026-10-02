@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { useInstallSupport } from '@/components/layout/install-store';
+import { canOfferInstall } from '@/lib/install-support';
+import { logRequestFailure } from '@/lib/client-errors';
 import {
   classifyPushDevice,
   currentPushSubscription,
@@ -14,15 +15,17 @@ import {
   type PushDeviceState,
 } from '@/lib/push-client';
 
-/** The settings row that turns push on or off for this phone. Renders a
- *  neutral placeholder through server render and the first client render —
- *  `useInstallSupport` answers `unknown` until hydration settles (see the
- *  project memory on client components SSRing against stale server state) —
- *  and resolves its real state in an effect once the browser APIs it reads
- *  are available. */
-export function PushDeviceControl({ vapidPublicKey }: { vapidPublicKey: string | null }) {
+/** The settings row that turns push on or off for this phone. Shows a
+ *  placeholder until the effect below resolves the device's actual state. */
+export function PushDeviceControl({
+  vapidPublicKey,
+  installHref,
+}: {
+  vapidPublicKey: string | null;
+  /** Where this role's settings index offers the install steps (`InstallAppRow`, #723) — passed by the caller, which owns the role. */
+  installHref: '/account' | '/settings';
+}) {
   const install = useInstallSupport();
-  const pathname = usePathname();
   const [state, setState] = useState<PushDeviceState | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -33,7 +36,15 @@ export function PushDeviceControl({ vapidPublicKey }: { vapidPublicKey: string |
       const hasServiceWorker = 'serviceWorker' in navigator;
       const hasPushManager = 'PushManager' in window;
       const hasNotification = 'Notification' in window;
-      const subscription = hasServiceWorker && hasPushManager ? await currentPushSubscription() : null;
+      let subscription: PushSubscription | null = null;
+      if (hasServiceWorker && hasPushManager) {
+        try {
+          subscription = await currentPushSubscription();
+        } catch (err) {
+          logRequestFailure('push-device-control', {}, err);
+          subscription = null;
+        }
+      }
       if (cancelled) return;
       const env: PushDeviceEnv = {
         vapidConfigured: vapidPublicKey !== null,
@@ -84,18 +95,23 @@ export function PushDeviceControl({ vapidPublicKey }: { vapidPublicKey: string |
       return <p className="type-body">Push notifications aren&apos;t available on this server yet.</p>;
 
     case 'needs-install': {
-      // This control always renders one path segment below the settings
-      // index that offers the install steps; dropping the last segment
-      // reaches it without needing to know which role is viewing.
-      const installHref = pathname ? pathname.split('/').slice(0, -1).join('/') || '/' : '/';
+      // `install` carries the finer-grained InstallSupport value; a browser
+      // with no install route at all (`unsupported`) has nowhere for this
+      // link to lead, so the copy stands alone.
+      const offerLink = canOfferInstall(install);
       return (
         <div className="flex flex-col gap-2">
           <p className="type-body">
             Notifications arrive in the fair.yoga app. Add it to your home screen to turn them on.
           </p>
-          <Link href={installHref} className="type-label text-teal no-underline">
-            Add to Home Screen
-          </Link>
+          {offerLink && (
+            <Link
+              href={installHref}
+              className="type-label text-teal no-underline inline-flex items-center min-h-12"
+            >
+              Add to Home Screen
+            </Link>
+          )}
         </div>
       );
     }
@@ -123,7 +139,7 @@ export function PushDeviceControl({ vapidPublicKey }: { vapidPublicKey: string |
     case 'off':
       return (
         <div className="flex flex-col gap-2">
-          <Button onClick={() => void handleEnable()} disabled={busy}>
+          <Button variant="secondary" onClick={() => void handleEnable()} disabled={busy}>
             Turn on for this phone
           </Button>
           <p className="type-caption">

@@ -17,7 +17,7 @@ export function classifyPushDevice(env: PushDeviceEnv): PushDeviceState {
   if (!env.vapidConfigured) return 'unavailable';
   // Push is an installed-app feature on every platform (spec §2.9), not only
   // where iOS forces it. `unknown` (server render, first client render) also
-  // lands here; the control renders nothing actionable until it resolves.
+  // lands here, since it is not `'installed'` either.
   if (env.install !== 'installed') return 'needs-install';
   if (!env.hasServiceWorker || !env.hasPushManager || !env.hasNotification) return 'unsupported';
   if (env.permission === 'denied') return 'blocked';
@@ -66,7 +66,7 @@ export async function enablePush(vapidPublicKey: string): Promise<'on' | 'blocke
     });
     if (res.ok) return 'on';
   } catch (err) {
-    logRequestFailure('push-client', {}, err);
+    logRequestFailure('push-client', { step: 'enable' }, err);
   }
   // A browser subscription the server never recorded would receive nothing.
   await subscription?.unsubscribe().catch(() => false);
@@ -79,7 +79,7 @@ export async function disablePush(): Promise<void> {
   try {
     subscription = await currentPushSubscription();
   } catch (err) {
-    logRequestFailure('push-client', {}, err);
+    logRequestFailure('push-client', { step: 'read' }, err);
     return;
   }
   if (!subscription) return;
@@ -90,11 +90,11 @@ export async function disablePush(): Promise<void> {
       body: JSON.stringify({ endpoint: subscription.endpoint }),
     });
   } catch (err) {
-    logRequestFailure('push-client', {}, err);
+    logRequestFailure('push-client', { step: 'delete' }, err);
   }
   try {
     await subscription.unsubscribe();
   } catch (err) {
-    logRequestFailure('push-client', {}, err);
+    logRequestFailure('push-client', { step: 'unsubscribe' }, err);
   }
 }

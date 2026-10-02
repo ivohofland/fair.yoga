@@ -23,7 +23,7 @@ vi.mock('@/components/settings/push-device-control', () => ({
  *
  * `PushDeviceControl` is stubbed throughout: its own behaviour is covered by
  * `push-device-control.test.tsx`; here only the prop it is handed and the
- * six push checkboxes beside it are this form's concern.
+ * StudentPushPrefs checkboxes beside it are this form's concern.
  */
 describe('NotificationsForm', () => {
   const fetchMock = vi.fn();
@@ -60,8 +60,12 @@ describe('NotificationsForm', () => {
     };
   }
 
-  it('sends exactly emailNotifications, classReminder, classReminderChannel and the six push columns', async () => {
+  it('sends exactly the NotificationsBody keys', async () => {
     stubFetch();
+    // `pushAnnouncements` is overridden to differ from `pushClassReminders`
+    // (both are `false` in DEFAULT_PUSH): negating both from equal starting
+    // values would still land them on the same final value, so a bug that
+    // swapped which state fed which key would go undetected below.
     render(
       <NotificationsForm
         studentId="student-1"
@@ -69,9 +73,16 @@ describe('NotificationsForm', () => {
         classReminder="morning_of"
         classReminderChannel="inbox_and_email"
         {...DEFAULT_PUSH}
+        pushAnnouncements={true}
         vapidPublicKey="KEY"
       />,
     );
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Waitlist spots' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Class changes' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Payments' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Class reminders' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Announcements' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Invitations' }));
     const { url, method, body } = await save();
     expect(url).toBe('/api/students/student-1');
     expect(method).toBe('PUT');
@@ -90,7 +101,12 @@ describe('NotificationsForm', () => {
       emailNotifications: true,
       classReminder: 'morning_of',
       classReminderChannel: 'inbox_and_email',
-      ...DEFAULT_PUSH,
+      pushWaitlist: false,
+      pushClassChanges: false,
+      pushPayments: true,
+      pushClassReminders: true,
+      pushAnnouncements: false,
+      pushInvitations: true,
     });
   });
 
@@ -260,7 +276,7 @@ describe('NotificationsForm', () => {
     expect(screen.getByTestId('push-device-control')).toHaveAttribute('data-vapid-public-key', 'KEY');
   });
 
-  it('renders the six push checkboxes at their stored values and saves a toggle', async () => {
+  it('renders the StudentPushPrefs checkboxes at their stored values and saves a toggle', async () => {
     stubFetch();
     render(
       <NotificationsForm
