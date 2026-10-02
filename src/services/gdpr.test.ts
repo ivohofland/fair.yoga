@@ -583,12 +583,12 @@ describe('GDPR on dual-role accounts', () => {
 });
 
 /**
- * Four accounts, one per keep/delete combination erasure's `PushSubscription`
+ * One account per keep/delete combination erasure's `PushSubscription`
  * guard has to get right: a student erased with and without a surviving
  * teacher profile on the same account, and the mirror for a teacher erasure.
- * The two "survives" fixtures also carry the export assertions, run before
- * their profile is erased, so one fixture each covers both a non-default
- * push-column export and the all-false state erasure leaves behind.
+ * The "survives" fixtures also carry the export assertions, run before
+ * their profile is erased, so each covers both a non-default push-column
+ * export and the all-false state erasure leaves behind.
  */
 describe('GDPR erasure carries PushSubscription and push preferences (#724)', () => {
   const prisma = new PrismaClient();
@@ -611,6 +611,14 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
       data: { accountId, endpoint: endpointFor(tag), p256dh: 'unused-by-test', auth: 'unused' },
     });
 
+  // Narrows to the ids `beforeAll` actually assigned before any throw cut it
+  // short, so a partial failure there cleans up what exists instead of
+  // handing `deleteMany` an `in` array still holding `undefined` entries —
+  // which fails the cleanup call itself, masking `beforeAll`'s own error
+  // behind a second one about the array rather than the original failure.
+  const liveIds = (ids: (string | undefined)[]): string[] =>
+    ids.filter((id): id is string => id !== undefined);
+
   beforeAll(async () => {
     // Student erased while the teacher on the same account survives.
     const dualTeacher = await prisma.teacher.create({
@@ -627,9 +635,9 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
       data: {
         firstName: 'Dual', lastName: 'Push', email: `${suffix}-dual-s@test.local`,
         claimedAt: new Date(), account: { connect: { id: dualAccountId } },
-        // Every one of the six flipped to `true` (not left at the mixed
-        // defaults) — the erasure test below only shows a real write if
-        // every column it checks started `true`; one left at its
+        // Every push column below starts `true`, not left at its mixed
+        // default — the erasure test that checks them afterward only shows
+        // a real write if each one started `true`; one left at its
         // already-`false` default would stay `false` whether or not the
         // erasure ever touched it.
         pushWaitlist: true, pushClassChanges: true, pushPayments: true,
@@ -645,6 +653,11 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
       data: {
         firstName: 'Solo', lastName: 'Push', email: `${suffix}-solo-s@test.local`,
         claimedAt: new Date(), account: { create: { email: `${suffix}-solo-s@test.local` } },
+        // Same reasoning as the dual student fixture above: every push
+        // column below starts `true`, so the erasure test's all-false
+        // check is a real write, not an already-false column staying put.
+        pushWaitlist: true, pushClassChanges: true, pushPayments: true,
+        pushClassReminders: true, pushAnnouncements: true, pushInvitations: true,
       },
       select: { id: true, accountId: true },
     });
@@ -658,9 +671,9 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
         firstName: 'Reverse', lastName: 'Push', email: `${suffix}-rev@test.local`,
         bio: 'push erasure fixture', pageSlug: `${suffix}-rev`,
         account: { create: { email: `${suffix}-rev@test.local` } },
-        // Same reasoning as the dual student fixture above: every one of
-        // the five flipped to `true` so the erasure test's all-false check
-        // is a real write, not an already-false column staying put.
+        // Same reasoning as the dual student fixture above: every push
+        // column below starts `true`, so the erasure test's all-false
+        // check is a real write, not an already-false column staying put.
         pushAutoCancelled: true, pushBookings: true, pushClassCompleted: true,
         pushClassReminders: true, pushInvitations: true,
       },
@@ -684,6 +697,11 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
         firstName: 'SoloT', lastName: 'Push', email: `${suffix}-solo-t@test.local`,
         bio: 'push erasure fixture', pageSlug: `${suffix}-solo-t`,
         account: { create: { email: `${suffix}-solo-t@test.local` } },
+        // Same reasoning as the dual student fixture above: every push
+        // column below starts `true`, so the erasure test's all-false
+        // check is a real write, not an already-false column staying put.
+        pushAutoCancelled: true, pushBookings: true, pushClassCompleted: true,
+        pushClassReminders: true, pushInvitations: true,
       },
       select: { id: true, accountId: true },
     });
@@ -693,28 +711,28 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
   });
 
   afterAll(async () => {
-    await prisma.pushSubscription.deleteMany({
-      where: {
-        accountId: {
-          in: [dualAccountId, soloStudentAccountId, reverseDualAccountId, soloTeacherAccountId],
-        },
-      },
-    });
-    await prisma.student.deleteMany({
-      where: { id: { in: [dualStudentId, soloStudentId, reverseDualStudentId] } },
-    });
-    await prisma.teacher.deleteMany({
-      where: { id: { in: [dualTeacherId, reverseDualTeacherId, soloTeacherId] } },
-    });
-    await prisma.account.deleteMany({
-      where: {
-        id: { in: [dualAccountId, soloStudentAccountId, reverseDualAccountId, soloTeacherAccountId] },
-      },
-    });
+    const accountIds = liveIds([
+      dualAccountId, soloStudentAccountId, reverseDualAccountId, soloTeacherAccountId,
+    ]);
+    const studentIds = liveIds([dualStudentId, soloStudentId, reverseDualStudentId]);
+    const teacherIds = liveIds([dualTeacherId, reverseDualTeacherId, soloTeacherId]);
+
+    if (accountIds.length > 0) {
+      await prisma.pushSubscription.deleteMany({ where: { accountId: { in: accountIds } } });
+    }
+    if (studentIds.length > 0) {
+      await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    }
+    if (teacherIds.length > 0) {
+      await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    }
+    if (accountIds.length > 0) {
+      await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    }
     await prisma.$disconnect();
   });
 
-  it('exports a student’s six push columns with their current values, and no PushSubscription field', async () => {
+  it('exports a student’s push columns with their current values, and no PushSubscription field', async () => {
     const exported = await exportStudentData(prisma, dualStudentId);
     expect(exported.profile).toMatchObject({
       pushWaitlist: true,
@@ -727,7 +745,7 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
     expect(JSON.stringify(exported)).not.toContain(endpointFor('dual'));
   });
 
-  it('exports a teacher’s five push columns with their current values, and no PushSubscription field', async () => {
+  it('exports a teacher’s push columns with their current values, and no PushSubscription field', async () => {
     const exported = await exportTeacherData(prisma, reverseDualTeacherId);
     expect(exported.profile).toMatchObject({
       pushAutoCancelled: true,
@@ -756,6 +774,15 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
   it('erasing a student whose account has no other live profile deletes the PushSubscription', async () => {
     await expectErased(deleteStudentAccount(prisma, soloStudentId));
     expect(await prisma.pushSubscription.count({ where: { accountId: soloStudentAccountId } })).toBe(0);
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: soloStudentId } });
+    expect(student).toMatchObject({
+      pushWaitlist: false,
+      pushClassChanges: false,
+      pushPayments: false,
+      pushClassReminders: false,
+      pushAnnouncements: false,
+      pushInvitations: false,
+    });
   });
 
   it('erasing a teacher whose account still has a live student profile keeps the PushSubscription', async () => {
@@ -774,6 +801,14 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
   it('erasing a teacher whose account has no other live profile deletes the PushSubscription', async () => {
     await expectErased(deleteTeacherAccount(prisma, soloTeacherId));
     expect(await prisma.pushSubscription.count({ where: { accountId: soloTeacherAccountId } })).toBe(0);
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: soloTeacherId } });
+    expect(teacher).toMatchObject({
+      pushAutoCancelled: false,
+      pushBookings: false,
+      pushClassCompleted: false,
+      pushClassReminders: false,
+      pushInvitations: false,
+    });
   });
 });
 
