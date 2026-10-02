@@ -83,10 +83,10 @@ and in production they must — nothing to configure.
 own clocks, so CI does not need the in-process scheduler running. It is not a
 production mode. With it set, no scheduled job runs in the app: classes don't
 start, auto-cancel, or complete; recurring classes aren't generated; fallback
-emails, payment reminders and class reminders don't send; daily cleanup (retention, expired
-sessions and auth tokens, the timezone audit, the degradation digest) doesn't run. Waitlist
-reconciliation is worse off than the rest — it has no endpoint, so it cannot
-be run any other way — and a seat freed by a cancellation whose spot-freed
+emails, payment reminders and class reminders don't send; daily cleanup
+(retention, expired sessions and auth tokens, the timezone audit, the
+degradation digest) doesn't run. Waitlist reconciliation is worse off than the
+rest — it has no endpoint, so it cannot be run any other way — and a seat freed by a cancellation whose spot-freed
 hook was dropped (§7) is never offered to the queue. `/api/health` still
 answers `ok` — its job list is simply empty — so the boot warning is the only
 sign. The app logs a warning at boot when the scheduler is off.
@@ -109,9 +109,9 @@ ran, 503 when every failure was a lost lock race (retry, and back off), 500
 otherwise (a permanent fault — retrying will not clear it). The body carries
 every outcome either way, so `data.auth.ok`, `data.waitlistRetention.ok`,
 `data.notificationRetention.ok`, `data.timezoneAudit.ok`, and
-`data.degradationDigest.ok` say which one failed. Without `--fail`, `curl` exits 0 on all of those, so a script or a
-manual call that skips the flag reports success for a run in which a sweep did
-not run.
+`data.degradationDigest.ok` say which one failed. Without `--fail`, `curl`
+exits 0 on all of those, so a script or a manual call that skips the flag
+reports success for a run in which a sweep did not run.
 
 ## 6. Updates
 
