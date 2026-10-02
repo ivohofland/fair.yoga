@@ -47,7 +47,7 @@ describe('logDegraded, recorded', () => {
           expect((found?.sample as Record<string, unknown> | undefined)?.timeZone).toBe(zone);
           return found!;
         },
-        { timeout: 5_000, interval: 50 },
+        { timeout: 3_000, interval: 50 },
       );
 
       expect(row.occurrences).toBeGreaterThanOrEqual(1);
