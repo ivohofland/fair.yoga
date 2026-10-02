@@ -11,6 +11,7 @@ function row(id: string, iso: string, over: Partial<Notification> = {}): Notific
   return {
     id, recipientType: 'teacher', recipientId: 't-1', type: 'announcement',
     title: id, body: 'b', relatedClassId: null, isRead: false, emailSent: false,
+    pushHandledAt: null,
     createdAt: new Date(iso), updatedAt: new Date(iso), ...over,
   };
 }

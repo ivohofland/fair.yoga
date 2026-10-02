@@ -17,6 +17,26 @@
 
 One Account per human. Teacher and Student are profiles optionally linked to it, each holding at most one LIVE profile of its kind per account — enforced by the partial unique indexes `Teacher_account_live_unique` and `Student_account_live_unique` (`ON ("accountId") WHERE "deletedAt" IS NULL`) rather than a plain `@unique` — a dual-role person (a teacher who also attends classes) has one Account with both profiles attached. See Design Notes below for the claim path that links an Account to an unclaimed Student.
 
+### PushSubscription (one browser's push endpoint, #724)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| account_id | string | Not a foreign key, deliberately: see below. |
+| endpoint | string, unique | The push service's own subscription URL; identifies the device/browser pairing. |
+| p256dh | string | The subscription's public key, base64url. |
+| auth | string | The subscription's auth secret, base64url. |
+| created_at | datetime | |
+| last_used_at | datetime, nullable | Set on a successful send; never on a failed or skipped one. |
+
+No `account_id` foreign key and no `onDelete: Cascade`: `Account` rows are
+never deleted (erasure anonymises `Teacher`/`Student`, it never removes the
+`Account`), so a cascade here would never fire. Instead this row is deleted
+explicitly, on three paths: GDPR erasure (`gdpr.ts`, Task 7), a 404/410
+response from the push service (the endpoint is gone), and sign-out. No user
+agent or device label is stored — privacy first; one row per device is
+identity enough for dispatch and cleanup.
+
 ### Teacher (core)
 
 | Field | Type | Notes |
@@ -37,6 +57,11 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | booking_notifications | enum: inbox_and_email, inbox_only, off, default inbox_and_email | New-booking notification: inbox and fallback email, inbox only, or none |
 | email_on_class_completed | boolean, default true | Fallback email for the class-completed summary |
 | email_on_invitation | boolean, default true | Fallback email for an invitation from another teacher |
+| push_auto_cancelled | boolean, default true | Push for an auto-cancelled class |
+| push_bookings | boolean, default false | Push for a new booking |
+| push_class_completed | boolean, default false | Push for the class-completed summary |
+| push_class_reminders | boolean, default false | Push for the teacher's own class reminder |
+| push_invitations | boolean, default false | Push for an invitation from another teacher |
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
 | bank_iban | string, nullable | Level 1 only |
@@ -46,6 +71,11 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
+
+Which `NotificationType`s each `push_*` group covers is owned by the spec's
+decision table and `src/services/push-policy.ts`
+(`docs/superpowers/specs/2026-10-02-web-push-design.md`, §2 decision 4) — not
+restated here.
 
 ### TeacherPhoto (avatar, #46)
 
@@ -78,6 +108,12 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | class_reminder | enum: evening_before, morning_of, one_hour_before, off, default morning_of | When the student is reminded of each class they booked |
 | class_reminder_channel | enum: inbox, email, inbox_and_email, default inbox_and_email | How that reminder arrives |
 | email_notifications | boolean, default true | Fallback email on/off |
+| push_waitlist | boolean, default true | Push for a waitlist spot |
+| push_class_changes | boolean, default true | Push for a class cancellation or change to a class they're booked into |
+| push_payments | boolean, default false | Push for a payment request or reminder |
+| push_class_reminders | boolean, default false | Push for the student's own class reminder |
+| push_announcements | boolean, default false | Push for a teacher announcement |
+| push_invitations | boolean, default false | Push for an invitation from a teacher |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
@@ -85,6 +121,11 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | **Constraints** | | |
 | check | `Student_claim_link_check`: `(claimed_at IS NULL) = (account_id IS NULL)` | |
 | unique (partial) | `Student_account_live_unique` on `(account_id)` `WHERE deleted_at IS NULL` | At most one LIVE student profile per account (#623) |
+
+Which `NotificationType`s each `push_*` group covers is owned by the spec's
+decision table and `src/services/push-policy.ts`
+(`docs/superpowers/specs/2026-10-02-web-push-design.md`, §2 decision 4) — not
+restated here.
 
 Nothing in the database requires an erased row to keep its `account_id`. A future erasure that nulled it would, via `Student_claim_link_check`, be forced to null `claimed_at` too — producing a row `resolveOrClaimAccount`'s claim probe (`db.student.findFirst({ where: { email, claimedAt: null } })`) would treat as claimable. Today the tombstoned email is what keeps that unreachable: the erased row's `email` no longer matches the address anyone signs in with.
 
@@ -782,6 +823,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | *related_class_id* (FK) | → Class, nullable | |
 | is_read | boolean, default false | |
 | email_sent | boolean, default false | True once no fallback email may be sent for this row: set by the fallback when it claims the row for a send (cleared again if the send fails) or marks it without sending (an opted-out or missing recipient, or a dry run), and written true at creation for every `class_reminder` row, whose email (if its channel has one) the class-reminder sweep sends directly |
+| push_handled_at | datetime, nullable, indexed with `created_at` (#724) | Set by the `push-dispatch` sweep once it has decided about this row — sent, skipped by preference, or retired as stale past the 15-minute push cutoff. Independent of `email_sent`: the two channels are claimed and decided separately, and neither reads the other. Never read by email or the inbox. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
