@@ -42,6 +42,65 @@ describe('NotificationList — where a teacher row goes (#172)', () => {
   });
 });
 
+// #724. A push notification's tap opens `/updates?n=<id>` or `/inbox?n=<id>`;
+// the page passes that id through as `highlightId` so the reader can find the
+// row the push was about without it being marked read for them.
+describe('NotificationList — highlighted row (#724)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const rowOf = (name: RegExp) => screen.getByRole('button', { name }).closest('div.border-b') as HTMLElement;
+
+  it('marks only the matching row current, and nothing read, on render', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(
+      <NotificationList
+        notifications={[
+          notification({ id: 'n1', title: 'First' }),
+          notification({ id: 'n2', title: 'Second' }),
+          notification({ id: 'n3', title: 'Third' }),
+        ]}
+        highlightId="n2"
+      />,
+    );
+
+    const highlighted = rowOf(/^Second/);
+    expect(highlighted).toHaveAttribute('aria-current', 'true');
+    expect(highlighted).toHaveAttribute('data-highlighted');
+
+    for (const name of [/^First/, /^Third/]) {
+      const row = rowOf(name);
+      expect(row).not.toHaveAttribute('aria-current');
+      expect(row).not.toHaveAttribute('data-highlighted');
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('still marks the highlighted row read, and navigates, when it is tapped', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    render(
+      <NotificationList
+        notifications={[
+          notification({ id: 'n1', title: 'First' }),
+          notification({
+            id: 'n2',
+            title: 'Second',
+            type: 'booking_confirmed',
+            relatedClassId: 'class-9',
+          }),
+        ]}
+        highlightId="n2"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second/ }));
+
+    await vi.waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith('/api/notifications/n2/read', { method: 'POST' }),
+    );
+    await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith('/class/class-9'));
+  });
+});
+
 describe('NotificationList — retention note (#223)', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 

@@ -10,7 +10,11 @@ import { NOTIFICATION_PAGE_SIZE } from '@/lib/notification-paging';
 export const dynamic = 'force-dynamic';
 
 // The student's notifications, newest first; older ones load on request (communication layer 2).
-export default async function StudentUpdatesPage() {
+export default async function StudentUpdatesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ n?: string | string[] }>;
+}) {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);
 
@@ -19,6 +23,7 @@ export default async function StudentUpdatesPage() {
     [{ recipientType: 'student', recipientId: session.studentId }],
     { limit: NOTIFICATION_PAGE_SIZE },
   );
+  const { n } = await searchParams;
 
   return (
     <div>
@@ -34,6 +39,7 @@ export default async function StudentUpdatesPage() {
         notifications={notifications}
         hrefById={hrefById}
         paging={{ audience: 'student', nextCursor }}
+        highlightId={typeof n === 'string' ? n : undefined}
       />
     </div>
   );
