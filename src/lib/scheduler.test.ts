@@ -684,4 +684,53 @@ describe('startScheduler', () => {
 
     expect(error).not.toHaveBeenCalledWith(expect.stringContaining('OPERATOR_EMAIL'));
   });
+
+  function stubBootForDryRun(nodeEnv: string, dryRun: string): ReturnType<typeof vi.spyOn> {
+    vi.stubEnv('CRON_SCHEDULER', '');
+    vi.stubEnv('NODE_ENV', nodeEnv);
+    vi.stubEnv('OPERATOR_EMAIL', 'ops@example.com');
+    vi.stubEnv('EMAIL_DRY_RUN', dryRun);
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    resetGlobals();
+    onTestFinished(() => {
+      // The spy first: it restores the function it wrapped, which is the fake,
+      // so restoring it after useRealTimers() would put the fake back.
+      setIntervalSpy.mockRestore();
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      info.mockRestore();
+      warn.mockRestore();
+      resetGlobals();
+    });
+    return warn;
+  }
+
+  it('warns at boot in production when EMAIL_DRY_RUN=1 turns the digest into a log line', async () => {
+    const warn = stubBootForDryRun('production', '1');
+
+    await startScheduler();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('EMAIL_DRY_RUN'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('DEPLOYMENT.md §7'));
+  });
+
+  it('does not warn about dry-run in production when EMAIL_DRY_RUN is unset', async () => {
+    const warn = stubBootForDryRun('production', '');
+
+    await startScheduler();
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('EMAIL_DRY_RUN'));
+  });
+
+  it('does not warn about dry-run outside production', async () => {
+    const warn = stubBootForDryRun('development', '1');
+
+    await startScheduler();
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('EMAIL_DRY_RUN'));
+  });
 });
