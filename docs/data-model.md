@@ -32,10 +32,17 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 No `account_id` foreign key and no `onDelete: Cascade`: `Account` rows are
 never deleted (erasure anonymises `Teacher`/`Student`, it never removes the
 `Account`), so a cascade here would never fire. Instead this row is deleted
-explicitly, on three paths: GDPR erasure (`gdpr.ts`, Task 7), a 404/410
-response from the push service (the endpoint is gone), and sign-out. No user
-agent or device label is stored — privacy first; one row per device is
-identity enough for dispatch and cleanup.
+explicitly, on three paths: a 404/410 response from the push service (the
+endpoint is gone), sign-out, and GDPR erasure. An erasure
+(`deleteStudentAccount`/`deleteTeacherAccount`, `gdpr.ts`) deletes every
+`PushSubscription` on the account only when the profile being erased leaves no
+other live profile on it — a surviving profile still has notifications to
+receive, so the device is kept. Either erasure also sets that profile's own
+`push_*` columns (Teacher/Student, below) to `false`, and the matching export
+(`exportStudentData`/`exportTeacherData`) carries their current values —
+never a `PushSubscription` field, which identifies a device rather than
+describing the subject. No user agent or device label is stored — privacy
+first; one row per device is identity enough for dispatch and cleanup.
 
 ### Teacher (core)
 

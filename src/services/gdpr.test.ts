@@ -582,6 +582,201 @@ describe('GDPR on dual-role accounts', () => {
   });
 });
 
+/**
+ * Four accounts, one per keep/delete combination erasure's `PushSubscription`
+ * guard has to get right: a student erased with and without a surviving
+ * teacher profile on the same account, and the mirror for a teacher erasure.
+ * The two "survives" fixtures also carry the export assertions, run before
+ * their profile is erased, so one fixture each covers both a non-default
+ * push-column export and the all-false state erasure leaves behind.
+ */
+describe('GDPR erasure carries PushSubscription and push preferences (#724)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-push-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+  let dualAccountId: string;
+  let dualTeacherId: string;
+  let dualStudentId: string;
+  let soloStudentAccountId: string;
+  let soloStudentId: string;
+  let reverseDualAccountId: string;
+  let reverseDualTeacherId: string;
+  let reverseDualStudentId: string;
+  let soloTeacherAccountId: string;
+  let soloTeacherId: string;
+
+  const endpointFor = (tag: string) => `https://push.invalid/${suffix}-${tag}`;
+  const seedPush = (accountId: string, tag: string) =>
+    prisma.pushSubscription.create({
+      data: { accountId, endpoint: endpointFor(tag), p256dh: 'unused-by-test', auth: 'unused' },
+    });
+
+  beforeAll(async () => {
+    // Student erased while the teacher on the same account survives.
+    const dualTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Dual', lastName: 'Push', email: `${suffix}-dual@test.local`,
+        bio: 'push erasure fixture', pageSlug: `${suffix}-dual`,
+        account: { create: { email: `${suffix}-dual@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    dualTeacherId = dualTeacher.id;
+    dualAccountId = dualTeacher.accountId;
+    const dualStudent = await prisma.student.create({
+      data: {
+        firstName: 'Dual', lastName: 'Push', email: `${suffix}-dual-s@test.local`,
+        claimedAt: new Date(), account: { connect: { id: dualAccountId } },
+        // Every one of the six flipped to `true` (not left at the mixed
+        // defaults) — the erasure test below only shows a real write if
+        // every column it checks started `true`; one left at its
+        // already-`false` default would stay `false` whether or not the
+        // erasure ever touched it.
+        pushWaitlist: true, pushClassChanges: true, pushPayments: true,
+        pushClassReminders: true, pushAnnouncements: true, pushInvitations: true,
+      },
+      select: { id: true },
+    });
+    dualStudentId = dualStudent.id;
+    await seedPush(dualAccountId, 'dual');
+
+    // Student erased with no other live profile on the account.
+    const soloStudent = await prisma.student.create({
+      data: {
+        firstName: 'Solo', lastName: 'Push', email: `${suffix}-solo-s@test.local`,
+        claimedAt: new Date(), account: { create: { email: `${suffix}-solo-s@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    soloStudentId = soloStudent.id;
+    soloStudentAccountId = soloStudent.accountId!;
+    await seedPush(soloStudentAccountId, 'solo-student');
+
+    // Teacher erased while the student on the same account survives.
+    const reverseTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Reverse', lastName: 'Push', email: `${suffix}-rev@test.local`,
+        bio: 'push erasure fixture', pageSlug: `${suffix}-rev`,
+        account: { create: { email: `${suffix}-rev@test.local` } },
+        // Same reasoning as the dual student fixture above: every one of
+        // the five flipped to `true` so the erasure test's all-false check
+        // is a real write, not an already-false column staying put.
+        pushAutoCancelled: true, pushBookings: true, pushClassCompleted: true,
+        pushClassReminders: true, pushInvitations: true,
+      },
+      select: { id: true, accountId: true },
+    });
+    reverseDualTeacherId = reverseTeacher.id;
+    reverseDualAccountId = reverseTeacher.accountId;
+    const reverseStudent = await prisma.student.create({
+      data: {
+        firstName: 'Reverse', lastName: 'Push', email: `${suffix}-rev-s@test.local`,
+        claimedAt: new Date(), account: { connect: { id: reverseDualAccountId } },
+      },
+      select: { id: true },
+    });
+    reverseDualStudentId = reverseStudent.id;
+    await seedPush(reverseDualAccountId, 'reverse-dual');
+
+    // Teacher erased with no other live profile on the account.
+    const soloTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'SoloT', lastName: 'Push', email: `${suffix}-solo-t@test.local`,
+        bio: 'push erasure fixture', pageSlug: `${suffix}-solo-t`,
+        account: { create: { email: `${suffix}-solo-t@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    soloTeacherId = soloTeacher.id;
+    soloTeacherAccountId = soloTeacher.accountId;
+    await seedPush(soloTeacherAccountId, 'solo-teacher');
+  });
+
+  afterAll(async () => {
+    await prisma.pushSubscription.deleteMany({
+      where: {
+        accountId: {
+          in: [dualAccountId, soloStudentAccountId, reverseDualAccountId, soloTeacherAccountId],
+        },
+      },
+    });
+    await prisma.student.deleteMany({
+      where: { id: { in: [dualStudentId, soloStudentId, reverseDualStudentId] } },
+    });
+    await prisma.teacher.deleteMany({
+      where: { id: { in: [dualTeacherId, reverseDualTeacherId, soloTeacherId] } },
+    });
+    await prisma.account.deleteMany({
+      where: {
+        id: { in: [dualAccountId, soloStudentAccountId, reverseDualAccountId, soloTeacherAccountId] },
+      },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('exports a student’s six push columns with their current values, and no PushSubscription field', async () => {
+    const exported = await exportStudentData(prisma, dualStudentId);
+    expect(exported.profile).toMatchObject({
+      pushWaitlist: true,
+      pushClassChanges: true,
+      pushPayments: true,
+      pushClassReminders: true,
+      pushAnnouncements: true,
+      pushInvitations: true,
+    });
+    expect(JSON.stringify(exported)).not.toContain(endpointFor('dual'));
+  });
+
+  it('exports a teacher’s five push columns with their current values, and no PushSubscription field', async () => {
+    const exported = await exportTeacherData(prisma, reverseDualTeacherId);
+    expect(exported.profile).toMatchObject({
+      pushAutoCancelled: true,
+      pushBookings: true,
+      pushClassCompleted: true,
+      pushClassReminders: true,
+      pushInvitations: true,
+    });
+    expect(JSON.stringify(exported)).not.toContain(endpointFor('reverse-dual'));
+  });
+
+  it('erasing a student whose account still has a live teacher profile keeps the PushSubscription', async () => {
+    await expectErased(deleteStudentAccount(prisma, dualStudentId));
+    expect(await prisma.pushSubscription.count({ where: { accountId: dualAccountId } })).toBe(1);
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: dualStudentId } });
+    expect(student).toMatchObject({
+      pushWaitlist: false,
+      pushClassChanges: false,
+      pushPayments: false,
+      pushClassReminders: false,
+      pushAnnouncements: false,
+      pushInvitations: false,
+    });
+  });
+
+  it('erasing a student whose account has no other live profile deletes the PushSubscription', async () => {
+    await expectErased(deleteStudentAccount(prisma, soloStudentId));
+    expect(await prisma.pushSubscription.count({ where: { accountId: soloStudentAccountId } })).toBe(0);
+  });
+
+  it('erasing a teacher whose account still has a live student profile keeps the PushSubscription', async () => {
+    await expectErased(deleteTeacherAccount(prisma, reverseDualTeacherId));
+    expect(await prisma.pushSubscription.count({ where: { accountId: reverseDualAccountId } })).toBe(1);
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: reverseDualTeacherId } });
+    expect(teacher).toMatchObject({
+      pushAutoCancelled: false,
+      pushBookings: false,
+      pushClassCompleted: false,
+      pushClassReminders: false,
+      pushInvitations: false,
+    });
+  });
+
+  it('erasing a teacher whose account has no other live profile deletes the PushSubscription', async () => {
+    await expectErased(deleteTeacherAccount(prisma, soloTeacherId));
+    expect(await prisma.pushSubscription.count({ where: { accountId: soloTeacherAccountId } })).toBe(0);
+  });
+});
+
 // #166 added two tables holding a person's email address plus the first and
 // last name a TEACHER typed for them. Neither erasure nor the subject-access
 // export knew they existed (re-review I2). The tests below are ordered:
