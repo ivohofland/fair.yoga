@@ -142,6 +142,11 @@ export async function startScheduler(): Promise<void> {
       'OPERATOR_EMAIL is not set — a degradation event will fail the daily-cleanup job instead of reaching a person (DEPLOYMENT.md §7)',
     );
   }
+  if (process.env.NODE_ENV === 'production' && process.env.EMAIL_DRY_RUN === '1') {
+    log.warn(
+      'EMAIL_DRY_RUN=1 — email is in dry-run, so the degradation digest is logged and not sent while its events are marked told (DEPLOYMENT.md §7)',
+    );
+  }
 
   // Dynamic imports keep instrumentation.ts loadable in the edge runtime,
   // where these modules (and the scheduler itself) must not run.
