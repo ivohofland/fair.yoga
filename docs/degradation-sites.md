@@ -63,7 +63,7 @@ grep -rnE "\blog\[" src --include='*.ts' --include='*.tsx' | grep -vc '\.test\.'
 grep -rnE "logDegraded\(" src --include='*.ts' --include='*.tsx' | grep -vc '\.test\.'
 ```
 
-Measured on the commit that added this file:
+Measured when the tables below were last brought up to date:
 
 | command | count |
 |---|---|
@@ -72,14 +72,14 @@ Measured on the commit that added this file:
 | surface (`log.warn(` or `log.error(`) | **78 + 67 = 145** |
 | split `.warn(` / `.error(` continuation lines | 0 |
 | `log[…](` lines | 17 |
-| `logDegraded(` call lines | 10 |
+| `logDegraded(` call lines | 11 |
 
 One of the 145 is not a call: `src/lib/log.ts:5` is a usage example inside
-that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:71`
+that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:74`
 is the line `logDegraded` itself emits. So 144 static calls and 16
-computed-level calls were classified, beside the 10 `logDegraded` calls.
+computed-level calls were classified, beside the 11 `logDegraded` calls.
 
-Line numbers below are as of that commit and drift with every edit; the
+Line numbers below are as of that update and drift with every edit; the
 commands are the source of truth. A new `log.warn(` or `log.error(` raises the
 first count and appears in the first command's output without a row here —
 that row is what the next audit owes.
@@ -160,8 +160,9 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | site (file:line) | level | verdict | code or reason |
 |---|---|---|---|
 | `src/lib/entry-conflict.ts:282` | error | degradation | `ENTRY_CONFLICT_KIND_UNKNOWN` |
-| `src/lib/finish-window.ts:61` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/finish-window.ts:62` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
 | `src/lib/payment-breakdown.server.ts:24` | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
+| `src/lib/rule-slot-holder.ts:137` | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
 | `src/lib/tiers.server.ts:43` | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
 | `src/lib/timezone.ts:114` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
 | `src/lib/timezone.ts:227` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
@@ -236,11 +237,11 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/auth/signup-ticket.ts:194` | error | routine | failure, surfaced as an error (unreachable `never` branch) |
 | `src/lib/degradation.ts:51` | error | routine | failure (an exception or outage), not impossible data (recording the event failed) |
 | `src/lib/entry-conflict.ts:301` | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
-| `src/lib/finish-window.ts:48` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/finish-window.ts:49` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
 | `src/lib/log.ts:5` | error | — | not a call: a usage example in the docblock |
 | `src/lib/rate-limit.ts:123` | warn | routine | rate-limit throttle (bucket evicted under memory pressure) |
 | `src/lib/rate-limit.ts:256` | warn | routine | configuration fault, not data; see close calls |
-| `src/lib/rule-slot-holder.ts:131` | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
+| `src/lib/rule-slot-holder.ts:144` | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
 | `src/lib/scheduler.ts:79` | error | routine | operational state, reported through job health |
 | `src/lib/scheduler.ts:132` | warn | routine | configuration (`CRON_SCHEDULER=off`), logged at boot |
 | `src/lib/scheduler.ts:141` | error | routine | configuration (`OPERATOR_EMAIL` unset), logged at boot |
@@ -333,7 +334,7 @@ Each picks its level at run time, mostly through `transientDbFailure` (`src/lib/
 | `src/app/api/registrations/route.ts:480` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/waitlist/route.ts:64` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/lib/api-utils.ts:217` | dynamic | routine | `withErrorHandler`; every uncaught route error, surfaced as an error |
-| `src/lib/degradation.ts:71` | dynamic | — | not a site: the line `logDegraded` itself emits |
+| `src/lib/degradation.ts:74` | dynamic | — | not a site: the line `logDegraded` itself emits |
 | `src/services/class-template-lifecycle.ts:1109` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts:1012` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts:1168` | dynamic | routine | failure (an exception or outage), not impossible data (completion refused during erasure) |
