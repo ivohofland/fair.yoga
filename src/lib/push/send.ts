@@ -45,6 +45,9 @@ export async function sendPush(
         Urgency: urgency,
       },
       body: new Uint8Array(body),
+      // A redirect is never followed: the endpoint was checked against the
+      // push-service allowlist, and its redirect target was not.
+      redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
