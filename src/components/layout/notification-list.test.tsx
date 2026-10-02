@@ -66,11 +66,17 @@ describe('NotificationList — highlighted row (#724)', () => {
     const highlighted = rowOf(/^Second/);
     expect(highlighted).toHaveAttribute('aria-current', 'true');
     expect(highlighted).toHaveAttribute('data-highlighted');
+    // The one-step tint (spec §3.4), in place of the unread tint, with the
+    // same inset as every other row.
+    expect(highlighted).toHaveClass('bg-teal-tint', 'px-3');
+    expect(highlighted).not.toHaveClass('bg-sand-soft');
 
     for (const name of [/^First/, /^Third/]) {
       const row = rowOf(name);
       expect(row).not.toHaveAttribute('aria-current');
       expect(row).not.toHaveAttribute('data-highlighted');
+      expect(row).not.toHaveClass('bg-teal-tint');
+      expect(row).toHaveClass('bg-sand-soft', 'px-3');
     }
     expect(fetch).not.toHaveBeenCalled();
   });

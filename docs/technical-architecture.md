@@ -649,7 +649,7 @@ Re-derive with:
 ```sh
 find src/app/api -name route.ts | wc -l
 for f in $(find src/app/api -name route.ts | sort); do
-  ids=$(grep -ohE "require[A-Za-z]+\(|getSession[A-Za-z]*\(|CRON_SECRET|checkIpRateLimit\(|checkRateLimit\(|checkStudentWriteLimit\(" "$f" \
+  ids=$(grep -ohE "require[A-Za-z]+\(|getSession[A-Za-z]*\(|resolveProfileAuthorization\(|resolveTicketOnlyProfileAuthorization\(|CRON_SECRET|checkIpRateLimit\(|checkRateLimit\(|checkStudentWriteLimit\(" "$f" \
         | tr -d '(' | sort -u | tr '\n' ' ')
   printf "%-60s %s\n" "${f#src/app/api/}" "$ids"
 done
@@ -664,10 +664,13 @@ Two further limits worth knowing: `sort -u` collapses a file to one row per
 unique identifier, so a file with one guarded method and one unguarded method
 beside it (a guarded `GET` next to a wide-open `POST`, say) reads as a single
 guarded row — the command finds unguarded *files*, not unguarded *methods*.
-And it only recognizes the guard helpers named in the pattern:
-`account/teacher-profile/route.ts` also authorizes via `consumeSignupTicket`
-on one branch, invisible to this grep, though the file still reads correctly
-here because `requireSession` is also present on its other branch.
+And it only recognizes the guard helpers named in the pattern: the two
+profile routes, `account/teacher-profile` and `account/student-profile`,
+call no `require*` helper themselves — each authorizes through a resolver in
+`src/lib/auth/profile-authorization.ts` (`resolveProfileAuthorization`,
+`resolveTicketOnlyProfileAuthorization`) that accepts a signup ticket or a
+live session, which is why the pattern names those resolvers. A route that
+guards through a helper the pattern does not name prints an empty row.
 
 ### Passkey authentication options
 

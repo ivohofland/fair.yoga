@@ -75,7 +75,7 @@ export async function dispatchPushes(
   // Each task is wrapped with `.then(() => undefined, (err) => err)` at the
   // moment it is pushed, before the loop does anything else — a plain
   // rejected promise gets its first handler only when something later
-  // awaits it, and the claim loop above keeps awaiting the DB (the next
+  // awaits it, and the claim loop below keeps awaiting the DB (the next
   // notification's claim, `resolveRecipient`, `pushSubscription.findMany`)
   // in the meantime, so an early task rejecting there would have no
   // handler attached yet: a process-level `unhandledRejection`. Wrapping

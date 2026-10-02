@@ -120,18 +120,25 @@ describe('SignOutButton', () => {
     }
   });
 
-  it('proceeds when disablePush rejects', async () => {
-    disablePushMock.mockRejectedValue(new Error('unsubscribe failed'));
+  it('proceeds when disablePush rejects, and logs the rejection', async () => {
+    const failure = new Error('unsubscribe failed');
+    disablePushMock.mockRejectedValue(failure);
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton />);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      render(<SignOutButton />);
 
-    fireEvent.click(screen.getByRole('button'));
+      fireEvent.click(screen.getByRole('button'));
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' }),
-    );
-    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' }),
+      );
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+      expect(consoleError).toHaveBeenCalledWith('[sign-out-button] request failed', { step: 'push', err: failure });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   // #431. The signup flow mounts this button to open a door, and landing on
