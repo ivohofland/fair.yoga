@@ -467,7 +467,7 @@ fire-and-forget publish to the in-process SSE bus (layer 1) that clients treat
 as a refresh hint, never as the payload itself. Neither function schedules
 email or push — those are separate sweeps, each reading committed
 `Notification` rows on its own column and its own cutoff: `email-fallback.ts`
-(layer 4, `emailSent`/`isRead`, see Cron Jobs) and `push-dispatch.ts` (layer 3,
+(layer 3, `emailSent`/`isRead`, see Cron Jobs) and `push-dispatch.ts` (layer 4,
 `pushHandledAt`, see Cron Jobs and Web Push below). Push and email are
 decided independently of each other.
 

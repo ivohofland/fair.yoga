@@ -840,7 +840,7 @@ Rows are deleted by the daily `daily-cleanup` job once older than their type's r
 
 The inbox pages (`/inbox`, `/updates`) and `GET /api/notifications` read through one service, `listNotificationPage` (`src/services/notifications.ts`): newest first, `createdAt desc, id desc`, in keyset pages of `NOTIFICATION_PAGE_SIZE` (`src/lib/notification-paging.ts`). The id breaks ties between rows created in the same instant, which lets a page boundary fall inside a batch insert without repeating or dropping a row; a cursor is the last row's `(createdAt, id)`, so rows arriving at the head while a reader scrolls never shift what comes next. The read filters on `(recipientType, recipientId)`, the prefix of the existing `(recipientType, recipientId, isRead)` index, and sorts within the rows of the recipients it names (the pages name one; `GET /api/notifications`, absent `recipientType`, names the account's whole set); there is no index on `createdAt`, for the write-cost reason above.
 
-Three-layer delivery: in-app notification (real-time) → in-app inbox (retained per type) → email (fallback for unread).
+Delivery: in-app notification (real-time), in-app inbox (retained per type), email (fallback for unread) and web push (to devices the person turned on, decided independently of email) — the layers are set out in CLAUDE.md, Communication.
 
 ### Announcement (teacher → students)
 
