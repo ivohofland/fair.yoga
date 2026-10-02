@@ -55,6 +55,7 @@ export interface SchedulerSweeps {
   runWaitlistReconciliationTick: (db: PrismaClient) => Promise<unknown>;
   reapClosedWaitlistEntries: (db: PrismaClient) => Promise<unknown>;
   reapExpiredNotifications: (db: PrismaClient) => Promise<unknown>;
+  notifyOperatorOfDegradations: (db: PrismaClient) => Promise<unknown>;
   auditTeacherTimezones: (db: PrismaClient) => Promise<unknown>;
 }
 
@@ -136,6 +137,12 @@ export async function startScheduler(): Promise<void> {
   if (globalThis.__fairYogaSchedulerStarted) return;
   globalThis.__fairYogaSchedulerStarted = true;
 
+  if (process.env.NODE_ENV === 'production' && !process.env.OPERATOR_EMAIL) {
+    log.error(
+      'OPERATOR_EMAIL is not set — a degradation event will fail the daily-cleanup job instead of reaching a person (DEPLOYMENT.md §7)',
+    );
+  }
+
   // Dynamic imports keep instrumentation.ts loadable in the edge runtime,
   // where these modules (and the scheduler itself) must not run.
   const { prisma } = await import('@/lib/db');
@@ -150,6 +157,7 @@ export async function startScheduler(): Promise<void> {
   const { runWaitlistReconciliationTick } = await import('@/services/waitlist-reconciliation');
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
   const { reapExpiredNotifications } = await import('@/services/notification-retention');
+  const { notifyOperatorOfDegradations } = await import('@/services/degradation-digest');
   const { auditTeacherTimezones } = await import('@/services/timezone-audit');
 
   const jobs = buildJobs({
@@ -165,6 +173,7 @@ export async function startScheduler(): Promise<void> {
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
+    notifyOperatorOfDegradations,
     auditTeacherTimezones,
   });
 
@@ -276,6 +285,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
+    notifyOperatorOfDegradations,
     auditTeacherTimezones,
   } = sweeps;
 
@@ -334,6 +344,8 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         cleanupExpiredAuth,
         reapClosedWaitlistEntries,
         reapExpiredNotifications,
+        // Before the audit, which stays last (see below): a standing bad zone reports every run and would otherwise be the first error this job rethrows.
+        notifyOperatorOfDegradations,
         // LAST, and the position is a default rather than a guarantee.
         // `isolatedSweeps` runs every sweep and rethrows the FIRST error, so a
         // standing bad timezone — which reports every run until a row is

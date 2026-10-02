@@ -5,6 +5,7 @@ import {
   renderNotificationEmail,
   renderMagicLinkEmail,
   renderInvitationEmail,
+  renderDegradationDigestEmail,
 } from './email-templates';
 import { STUDENT_INVITATION_PATH, STUDENT_BOOKINGS_PATH, TEACHER_INVITATION_PATH } from './notification-links';
 
@@ -230,5 +231,41 @@ describe('email templates', () => {
     );
     expect(html).not.toContain(TEACHER_INVITATION_PATH);
     expect(html).not.toContain(STUDENT_INVITATION_PATH);
+  });
+});
+
+describe('renderDegradationDigestEmail', () => {
+  const entry = {
+    code: 'INCOME_TIER_OUT_OF_RANGE',
+    description: 'A stored income tier was outside 1–5.',
+    firstSeenAt: new Date('2026-10-01T08:00:00.000Z'),
+    lastSeenAt: new Date('2026-10-02T09:30:00.000Z'),
+    occurrences: 12,
+    sample: { tier: 9, studentId: 's-1' },
+  };
+
+  it('names the code in the subject for one event and the number for several', () => {
+    expect(renderDegradationDigestEmail([entry]).subject).toContain('INCOME_TIER_OUT_OF_RANGE');
+    expect(renderDegradationDigestEmail([entry, { ...entry, code: 'B' }]).subject).toContain('2');
+  });
+
+  it('shows the code, description, both times, the count and the sample', () => {
+    const { html } = renderDegradationDigestEmail([entry]);
+    expect(html).toContain('INCOME_TIER_OUT_OF_RANGE');
+    expect(html).toContain('A stored income tier was outside 1–5.');
+    expect(html).toContain('2026-10-01T08:00:00.000Z');
+    expect(html).toContain('2026-10-02T09:30:00.000Z');
+    expect(html).toContain('12');
+    expect(html).toContain('studentId');
+    expect(html).toContain('s-1');
+  });
+
+  it('escapes every interpolated value', () => {
+    const { html } = renderDegradationDigestEmail([
+      { ...entry, description: '<script>x</script>', sample: { timeZone: '"><img src=x>' } },
+    ]);
+    expect(html).not.toContain('<script>x</script>');
+    expect(html).not.toContain('<img src=x>');
+    expect(html).toContain('&lt;script&gt;');
   });
 });
