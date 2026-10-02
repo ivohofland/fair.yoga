@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createDecipheriv, createECDH, hkdfSync, randomBytes, type ECDH } from 'node:crypto';
 import { sendPush, PUSH_TTL_SECONDS } from './send';
 import { encryptPayload } from './encrypt';
+import { generateVapidKeyPair } from './test-support';
 import { REDACTED_BODY, buildPushPayload } from '../push-policy';
 
 // The real encryption, wrapped so one test can make it throw something other
@@ -12,9 +13,7 @@ vi.mock('./encrypt', async (importOriginal) => {
 });
 
 function keys() {
-  const e = createECDH('prime256v1');
-  e.generateKeys();
-  return { publicKey: e.getPublicKey().toString('base64url'), privateKey: e.getPrivateKey().toString('base64url'), subject: 'mailto:ops@fair.yoga' };
+  return { ...generateVapidKeyPair(), subject: 'mailto:ops@fair.yoga' };
 }
 function target() {
   const ua = createECDH('prime256v1');
