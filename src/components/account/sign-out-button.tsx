@@ -28,8 +28,10 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
       // A device left subscribed would keep receiving this account's
       // notifications after someone else signs in on it. Bounded so a stuck
       // service worker never blocks leaving; a failure never skips the DELETE.
-      // eslint-disable-next-line no-restricted-syntax -- disablePush is never the reason sign-out fails; its outcome is discarded on purpose
-      await Promise.race([disablePush().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 3_000))]);
+      await Promise.race([
+        disablePush().catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'push' }, err)),
+        new Promise((resolve) => setTimeout(resolve, 3_000)),
+      ]);
       const res = await fetch('/api/auth/session', { method: 'DELETE' });
       cleared = res.ok;
     } catch (err) {

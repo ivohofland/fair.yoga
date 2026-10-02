@@ -31,9 +31,64 @@ import {
 } from '@/lib/db-locks';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 import { startOfLocalDay } from '@/lib/timezone';
 import { withSlot as withClassSlot } from './class-template-lifecycle';
 import { withSlot as withStudioSlot } from './studio-class-template-lifecycle';
+
+// ---------------------------------------------------------------------------
+// Push preference columns — the export's copy and the erased value
+// ---------------------------------------------------------------------------
+
+/**
+ * The erased value of every student push column. Typed against
+ * `StudentPushPrefs`, so a push column added there does not compile until
+ * erasure resets it.
+ */
+const STUDENT_PUSH_ERASED = {
+  pushWaitlist: false,
+  pushClassChanges: false,
+  pushPayments: false,
+  pushClassReminders: false,
+  pushAnnouncements: false,
+  pushInvitations: false,
+} as const satisfies Record<keyof StudentPushPrefs, false>;
+
+/** The teacher twin of `STUDENT_PUSH_ERASED`, typed against `TeacherPushPrefs`. */
+const TEACHER_PUSH_ERASED = {
+  pushAutoCancelled: false,
+  pushBookings: false,
+  pushClassCompleted: false,
+  pushClassReminders: false,
+  pushInvitations: false,
+} as const satisfies Record<keyof TeacherPushPrefs, false>;
+
+/**
+ * The student's push columns as the export carries them. The return type is
+ * `StudentPushPrefs`, so a push column added there does not compile until it
+ * is exported.
+ */
+function exportedStudentPushPrefs(student: StudentPushPrefs): StudentPushPrefs {
+  return {
+    pushWaitlist: student.pushWaitlist,
+    pushClassChanges: student.pushClassChanges,
+    pushPayments: student.pushPayments,
+    pushClassReminders: student.pushClassReminders,
+    pushAnnouncements: student.pushAnnouncements,
+    pushInvitations: student.pushInvitations,
+  };
+}
+
+/** The teacher twin of `exportedStudentPushPrefs`, typed `TeacherPushPrefs`. */
+function exportedTeacherPushPrefs(teacher: TeacherPushPrefs): TeacherPushPrefs {
+  return {
+    pushAutoCancelled: teacher.pushAutoCancelled,
+    pushBookings: teacher.pushBookings,
+    pushClassCompleted: teacher.pushClassCompleted,
+    pushClassReminders: teacher.pushClassReminders,
+    pushInvitations: teacher.pushInvitations,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Export
@@ -136,12 +191,7 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       classReminder: student.classReminder,
       classReminderChannel: student.classReminderChannel,
       emailNotifications: student.emailNotifications,
-      pushWaitlist: student.pushWaitlist,
-      pushClassChanges: student.pushClassChanges,
-      pushPayments: student.pushPayments,
-      pushClassReminders: student.pushClassReminders,
-      pushAnnouncements: student.pushAnnouncements,
-      pushInvitations: student.pushInvitations,
+      ...exportedStudentPushPrefs(student),
       createdAt: student.createdAt,
     },
     privacySettings: student.studentPrivacy.map((p) => ({
@@ -241,11 +291,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       bookingNotifications: teacher.bookingNotifications,
       emailOnClassCompleted: teacher.emailOnClassCompleted,
       emailOnInvitation: teacher.emailOnInvitation,
-      pushAutoCancelled: teacher.pushAutoCancelled,
-      pushBookings: teacher.pushBookings,
-      pushClassCompleted: teacher.pushClassCompleted,
-      pushClassReminders: teacher.pushClassReminders,
-      pushInvitations: teacher.pushInvitations,
+      ...exportedTeacherPushPrefs(teacher),
       classReminder: teacher.classReminder,
       classReminderChannel: teacher.classReminderChannel,
       bankIban: teacher.bankIban,
@@ -826,12 +872,7 @@ export async function deleteStudentAccount(
         address: null,
         incomeTier: DEFAULT_INCOME_TIER,
         emailNotifications: false,
-        pushWaitlist: false,
-        pushClassChanges: false,
-        pushPayments: false,
-        pushClassReminders: false,
-        pushAnnouncements: false,
-        pushInvitations: false,
+        ...STUDENT_PUSH_ERASED,
         deletedAt: new Date(),
       },
     });
@@ -1567,11 +1608,7 @@ export async function deleteTeacherAccount(
           customDomain: null,
           processorType: null,
           processorAccountId: null,
-          pushAutoCancelled: false,
-          pushBookings: false,
-          pushClassCompleted: false,
-          pushClassReminders: false,
-          pushInvitations: false,
+          ...TEACHER_PUSH_ERASED,
           deletedAt: new Date(),
         },
       });

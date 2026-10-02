@@ -164,14 +164,14 @@ export function NotificationList({ notifications, hrefById, paging, highlightId 
             key={notification.id}
             aria-current={isHighlighted ? 'true' : undefined}
             data-highlighted={isHighlighted || undefined}
-            // One row shape for both states: identical geometry, constant
+            // One row shape for every state: identical geometry, constant
             // separator. Read/unread differ only in tint, title weight, dot,
             // and Mark-read visibility — nothing moves on state change. The
-            // highlighted row's inset is held constant too: the left border
-            // takes the width `pl-2` gives up from `px-3`.
-            className={`flex items-start justify-between gap-2 min-h-14 py-3 -mx-3 border-b border-border ${
-              isHighlighted ? 'pl-2 pr-3 border-l-4 border-l-teal' : 'px-3'
-            } ${isRead ? '' : 'bg-sand-soft'}`}
+            // highlighted row differs only in tint: teal-tint, in place of
+            // the unread tint, so the two never compete.
+            className={`flex items-start justify-between gap-2 min-h-14 px-3 py-3 -mx-3 border-b border-border ${
+              isHighlighted ? 'bg-teal-tint' : isRead ? '' : 'bg-sand-soft'
+            }`}
           >
             <div className="flex flex-col min-w-0 flex-1">
               <button
