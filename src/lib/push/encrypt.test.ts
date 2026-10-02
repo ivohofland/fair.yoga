@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createECDH } from 'node:crypto';
-import { encryptPayload, isP256PublicKey } from './encrypt';
+import { encryptPayload, InvalidSubscriptionKeysError, isP256PublicKey } from './encrypt';
 
 // RFC 8291 §5 and Appendix A, verbatim (whitespace removed).
 const RFC = {
@@ -32,8 +32,13 @@ describe('encryptPayload (RFC 8291 aes128gcm)', () => {
     expect(a.subarray(0, 16).equals(b.subarray(0, 16))).toBe(false);
   });
 
-  it('refuses a malformed browser key', () => {
-    expect(() => encryptPayload(Buffer.from('x'), { p256dh: 'AAAA', auth: RFC.authSecret })).toThrow();
+  it('refuses a browser key of the wrong length with InvalidSubscriptionKeysError', () => {
+    expect(() => encryptPayload(Buffer.from('x'), { p256dh: 'AAAA', auth: RFC.authSecret })).toThrow(InvalidSubscriptionKeysError);
+  });
+
+  it('refuses a 65-byte browser key that is off the curve with InvalidSubscriptionKeysError', () => {
+    const offCurve = Buffer.alloc(65, 4).toString('base64url');
+    expect(() => encryptPayload(Buffer.from('x'), { p256dh: offCurve, auth: RFC.authSecret })).toThrow(InvalidSubscriptionKeysError);
   });
 });
 
