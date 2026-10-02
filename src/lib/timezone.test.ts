@@ -229,7 +229,7 @@ describe('classStartInstant', () => {
     expect(message).toMatch(/date/i);
     expect(message).not.toMatch(/startTime/i);
     expect(message).not.toMatch(/timezone/i);
-    expect(payload).toMatchObject({ classDate: null });
+    expect(payload).toMatchObject({ code: 'CLASS_START_UNREADABLE', site: 'date' });
   });
 
   // `startTime` is a `Date` now, not a raw string — so the only way for it to
@@ -244,7 +244,7 @@ describe('classStartInstant', () => {
     const [payload, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
     expect(message).toMatch(/startTime/i);
     expect(message).not.toMatch(/timezone/i);
-    expect(payload).toMatchObject({ startTime: null });
+    expect(payload).toMatchObject({ code: 'CLASS_START_UNREADABLE', site: 'start-time' });
   });
 });
 
@@ -408,7 +408,7 @@ describe('startsInPast', () => {
         new Date(),
       );
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ startTime: null }),
+      expect.objectContaining({ code: 'CLASS_START_UNREADABLE', site: 'start-time' }),
       expect.stringContaining('startTime'),
     );
     for (const [, msg] of warn.mock.calls) {

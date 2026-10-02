@@ -358,4 +358,14 @@ describe('processEmailFallback — teacher preferences (#49)', () => {
       expect.any(String),
     );
   });
+
+  it('reports a teacher row outside TeacherNotificationType as TEACHER_NOTIFICATION_TYPE_UNKNOWN', async () => {
+    await setPrefs({ bookingNotifications: 'off', emailOnClassCompleted: false, emailOnInvitation: false });
+    const n = await note('announcement');
+    await processEmailFallback(prisma);
+    expect(vi.mocked(log.error)).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'TEACHER_NOTIFICATION_TYPE_UNKNOWN', notificationId: n.id, type: 'announcement' }),
+      'teacher notification outside TeacherNotificationType; emailed ignoring preferences',
+    );
+  });
 });

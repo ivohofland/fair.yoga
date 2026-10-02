@@ -1160,9 +1160,9 @@ describe('generateClassInstances (DB)', () => {
      * inventing the defect.
      *
      * What is pinned is that the branch is ACTIONABLE if the write path is
-     * ever widened. `classStartInstant`'s own warn carries `{ startTime }` and
-     * nothing else, so an operator reading it learns that A template was
-     * unreadable and never which one.
+     * ever widened. `classStartInstant`'s own warn names which half was
+     * unreadable and no row, so an operator reading it learns that A template
+     * was unreadable and never which one.
      */
     it('names the template when an unreadable startTime empties the window', async () => {
       const base = await freshTemplate();

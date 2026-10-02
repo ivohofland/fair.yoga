@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { probeConflictingEntry, entryConflictMessage } from './entry-conflict';
 import { hhmmToTime } from './time-of-day';
+import { log } from './log';
 
 const prisma = new PrismaClient();
 const suffix = `entry-conflict-${Date.now()}`;
@@ -198,6 +199,25 @@ describe('probeConflictingEntry', () => {
       })).resolves.toBeNull();
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it('reports ENTRY_CONFLICT_KIND_UNKNOWN and answers null for a holder whose kind it cannot name', async () => {
+    const spy = vi.spyOn(prisma, '$queryRaw').mockResolvedValueOnce([
+      { id: 'entry-1', kind: 'retreat', date: day('2033-03-12'), startTime: hhmmToTime('09:00'), durationMinutes: 60 },
+    ]);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(probeConflictingEntry(prisma, teacherId, {
+        date: day('2033-03-12'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
+      })).resolves.toBeNull();
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'ENTRY_CONFLICT_KIND_UNKNOWN', entryId: 'entry-1', kind: 'retreat' }),
+        'entry conflict probe found a holder whose kind this module has no noun for',
+      );
+    } finally {
+      spy.mockRestore();
+      error.mockRestore();
     }
   });
 

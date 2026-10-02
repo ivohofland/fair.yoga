@@ -24,6 +24,30 @@ export const DEGRADATION_CODES = {
       'A stored timezone would not resolve. A calendar day, a time label or a wall-clock instant was computed in UTC instead.',
     contextKeys: ['timeZone', 'site'],
   },
+  CLASS_START_UNREADABLE: {
+    level: 'warn',
+    description:
+      'A class date or start time was not a readable Date, so no start instant could be computed. Every caller got an Invalid Date: the class never starts or completes on its own, and its times and deadlines do not render.',
+    contextKeys: ['site'],
+  },
+  PAYMENT_SNAPSHOT_MISSING: {
+    level: 'warn',
+    description:
+      'A completed class had no pricing snapshot (totalRevenue or totalStudents is null) although completion writes both. The student was not shown where their payment went.',
+    contextKeys: ['classId', 'registrationId'],
+  },
+  ENTRY_CONFLICT_KIND_UNKNOWN: {
+    level: 'error',
+    description:
+      'A calendar entry holding the slot a teacher asked for had a kind this code has no name for. The 409 the teacher saw said the time was taken without naming the class, its time or its date.',
+    contextKeys: ['teacherId', 'entryId', 'kind'],
+  },
+  TEACHER_NOTIFICATION_TYPE_UNKNOWN: {
+    level: 'error',
+    description:
+      'A notification addressed to a teacher had a type outside the teacher notification types. It was emailed without consulting the email preferences of the teacher.',
+    contextKeys: ['notificationId', 'type'],
+  },
 } as const satisfies Record<
   string,
   { level: 'warn' | 'error'; description: string; contextKeys: readonly string[] }

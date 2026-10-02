@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { ClassFamily, PrismaClient } from '@prisma/client';
 import { formatDateWithYear } from './format';
 import { log } from './log';
+import { logDegraded } from './degradation';
 import { timeToHHmm } from './time-of-day';
 
 /**
@@ -274,11 +275,12 @@ export async function probeConflictingEntry(
       // Compile-tethered and unreachable: `FAMILY_NOUN` is a
       // `Record<ClassFamily, string>` and `FAMILIES` reads its membership off
       // that object, so a third family cannot enter the enum without landing
-      // here first. Logged anyway, because the one thing this branch must not
-      // do is discard a row it FOUND and answer as though the slot were free —
-      // the caller then says "that time is taken" with no time and no date,
-      // about a holder the query had in hand.
-      log.error(
+      // here first. Recorded anyway, as `ENTRY_CONFLICT_KIND_UNKNOWN`
+      // (`docs/degradation-sites.md`), because what this branch withholds is
+      // a row it FOUND — the caller then says "that time is taken" with no
+      // time and no date, about a holder the query had in hand.
+      logDegraded(
+        'ENTRY_CONFLICT_KIND_UNKNOWN',
         { teacherId, entryId: row.id, kind: row.kind },
         'entry conflict probe found a holder whose kind this module has no noun for',
       );
