@@ -11,6 +11,11 @@ function safePath(url) {
   }
 }
 
+// Take control of windows already open, so a tap can navigate them.
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener('push', (event) => {
   let payload = null;
   try {
@@ -35,7 +40,9 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
       const existing = windows.find((w) => w.url.startsWith(self.location.origin));
-      if (existing) return existing.navigate(url).then(() => existing.focus());
+      // `navigate` rejects for a window this worker does not control (one
+      // opened before it activated); a new window opens at `url` instead.
+      if (existing) return existing.navigate(url).then(() => existing.focus(), () => self.clients.openWindow(url));
       return self.clients.openWindow(url);
     }),
   );

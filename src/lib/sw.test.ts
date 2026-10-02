@@ -7,7 +7,7 @@ function loadWorker(clientsList: Array<{ url: string; focus: () => Promise<unkno
   const self = {
     addEventListener: (type: string, fn: (event: unknown) => void) => { listeners[type] = fn; },
     registration: { showNotification: vi.fn(async () => {}) },
-    clients: { matchAll: vi.fn(async () => clientsList), openWindow: vi.fn(async () => null) },
+    clients: { matchAll: vi.fn(async () => clientsList), openWindow: vi.fn(async () => null), claim: vi.fn(async () => {}) },
     location: { origin: 'https://fair.yoga' },
   };
   const source = readFileSync(path.join(process.cwd(), 'public/sw.js'), 'utf8');
@@ -49,6 +49,28 @@ describe('public/sw.js', () => {
     none.listeners.notificationclick!(e2);
     await e2.done();
     expect(none.self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n3');
+  });
+
+  it('opens a window at the url when the open window refuses to navigate', async () => {
+    const focus = vi.fn(async () => {});
+    const navigate = vi.fn(async () => {
+      throw new TypeError('This service worker is not the client\'s active service worker.');
+    });
+    const { self, listeners } = loadWorker([{ url: 'https://fair.yoga/schedule', focus, navigate }]);
+    const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n5' } } };
+    listeners.notificationclick!(e);
+    await e.done();
+    expect(navigate).toHaveBeenCalledWith('/inbox?n=n5');
+    expect(self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n5');
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it('takes control of open windows when it activates', async () => {
+    const { self, listeners } = loadWorker([]);
+    const e = extendable();
+    listeners.activate!(e);
+    await e.done();
+    expect(self.clients.claim).toHaveBeenCalledTimes(1);
   });
 
   it('redacts a cross-origin push url to the site root before showing the notification', async () => {
