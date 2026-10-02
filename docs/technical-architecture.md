@@ -1008,15 +1008,16 @@ the rest do not, and one runbook section per code.
   `sample` (`docs/data-model.md`).
 - **Allowlist.** The context a site passes is filtered to the code's
   `contextKeys`, and to strings (truncated) and finite numbers, at runtime as
-  well as in the types. Keys hold ids, enums, numbers or an IANA zone string,
+  well as in the types. Keys hold ids, enums, numbers or a zone string,
   never anything a person typed, so the row and the email carry no personal
   data by construction.
 - **Coalescing.** The log line is written on every occurrence; the database
   write is coalesced to at most one per code per `COALESCE_WINDOW_MS`. The
   first occurrence after a quiet window writes at once; later ones are held as
   a count plus the latest sample and written when the window ends, so the last
-  occurrence before silence is never left unwritten. The count is approximate
-  by construction: what is held when the process exits is lost.
+  occurrence before silence is never left unwritten while the process lives.
+  The count is approximate by construction: what is held when the process
+  exits is lost.
 - **Digest.** A code is due when `lastNotifiedAt` is null or older than
   `lastSeenAt`. The `daily-cleanup` job (`notifyOperatorOfDegradations`,
   `src/services/degradation-digest.ts`) claims each due row with an
@@ -1170,7 +1171,7 @@ PASSKEY_RP_NAME=            # Display name (e.g. "Ethical Yoga")
 
 # Email
 RESEND_API_KEY=             # Transactional email
-OPERATOR_EMAIL=            # Receives the daily degradation digest
+OPERATOR_EMAIL=             # Receives the daily degradation digest
 EMAIL_FROM=                 # e.g. "noreply@ethicalyoga.app"
 
 # Payments (Level 2, added later)
