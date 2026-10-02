@@ -631,7 +631,7 @@ by `tests/integration/pwa.test.ts`.
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **67** routes. **10** carry no session
+`find src/app/api -name route.ts` finds **70** routes. **10** carry no session
 guard; **6** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
 `passkey/authenticate/options`), leaving **4** with neither:

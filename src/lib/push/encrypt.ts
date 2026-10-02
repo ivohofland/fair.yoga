@@ -1,4 +1,4 @@
-import { createCipheriv, createECDH, hkdfSync, randomBytes } from 'node:crypto';
+import { createCipheriv, createECDH, hkdfSync, randomBytes, ECDH } from 'node:crypto';
 
 /** The browser's keys, base64url, as `PushSubscription.toJSON().keys` gives them. */
 export interface UserAgentKeys {
@@ -52,4 +52,19 @@ export function encryptPayload(
   const recordSize = Buffer.alloc(4);
   recordSize.writeUInt32BE(RECORD_SIZE);
   return Buffer.concat([salt, recordSize, Buffer.from([asPublic.length]), asPublic, ciphertext]);
+}
+
+/**
+ * True when `p256dh` (base64url) decodes to a point actually on the P-256
+ * curve. A 65-byte buffer can still fail this — `encryptPayload`'s ECDH
+ * computation throws on an off-curve point, so a subscription that passes
+ * only the length check could never receive a push.
+ */
+export function isP256PublicKey(p256dh: string): boolean {
+  try {
+    ECDH.convertKey(Buffer.from(p256dh, 'base64url'), 'prime256v1', undefined, undefined, 'uncompressed');
+    return true;
+  } catch {
+    return false;
+  }
 }

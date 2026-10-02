@@ -696,3 +696,20 @@ export const archiveStateQuerySchema = z.object({
 export const archiveStudentBodySchema = z.object({
   waivePaymentIds: z.array(z.string().min(1).max(64)).max(500).optional(),
 }).strict();
+
+// ============================================================================
+// WEB PUSH
+// ============================================================================
+
+function base64urlOfLength(bytes: number, name: string) {
+  return z.string().refine((v) => /^[A-Za-z0-9_-]+$/.test(v) && Buffer.from(v, 'base64url').length === bytes, `${name} is malformed`);
+}
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(2048).refine((v) => v.startsWith('https://'), 'Push endpoint must be https'),
+  keys: z.object({ p256dh: base64urlOfLength(65, 'p256dh'), auth: base64urlOfLength(16, 'auth') }).strict(),
+}).strict();
+
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().url().max(2048),
+}).strict();

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { encryptPayload } from './encrypt';
+import { createECDH } from 'node:crypto';
+import { encryptPayload, isP256PublicKey } from './encrypt';
 
 // RFC 8291 §5 and Appendix A, verbatim (whitespace removed).
 const RFC = {
@@ -33,5 +34,17 @@ describe('encryptPayload (RFC 8291 aes128gcm)', () => {
 
   it('refuses a malformed browser key', () => {
     expect(() => encryptPayload(Buffer.from('x'), { p256dh: 'AAAA', auth: RFC.authSecret })).toThrow();
+  });
+});
+
+describe('isP256PublicKey', () => {
+  it('accepts a real generated public key', () => {
+    const ecdh = createECDH('prime256v1');
+    ecdh.generateKeys();
+    expect(isP256PublicKey(ecdh.getPublicKey().toString('base64url'))).toBe(true);
+  });
+
+  it('rejects a 65-byte buffer that is not a point on the curve', () => {
+    expect(isP256PublicKey(Buffer.alloc(65, 4).toString('base64url'))).toBe(false);
   });
 });
