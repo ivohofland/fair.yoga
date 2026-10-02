@@ -12,9 +12,9 @@ const OPEN_WINDOW_MS = 24 * 60 * 60 * 1000;
  * Public by design; reveals liveness, DB reachability, per-job scheduler state
  * (timestamps + `isJobHealthy`'s verdict — error text stays in the server log),
  * and how many degradation events fired in the last day, as a bare number. Which
- * ones, and what they carried, reach only the operator's inbox
- * (`docs/technical-architecture.md`, Cron Jobs → Degradation events). Nothing
- * else.
+ * ones, and what they carried, appear only in the operator's digest email and
+ * the server log (`docs/technical-architecture.md`, Cron Jobs → Degradation
+ * events). Nothing else.
  */
 export async function GET() {
   const jobs = Object.fromEntries(

@@ -143,9 +143,11 @@ Migrations run automatically via the `migrate` service on every deploy.
   `degradations.open` is the number of degradation events that fired in the
   last 24 hours: a bare count, with no codes, so the endpoint stays public.
   Which ones fired is in the digest email and, per code, in
-  `docs/degradation-sites.md`. If the digest cannot be sent (`OPERATOR_EMAIL`
-  unset, or the provider refusing), `daily-cleanup` reads unhealthy, and its
-  server log line names the codes. Point your uptime monitor here.
+  `docs/degradation-sites.md`. If the digest cannot be sent, `daily-cleanup`
+  reads unhealthy. With `OPERATOR_EMAIL` unset, the server log line names the
+  due codes. When the provider refuses, the thrown error carries its reason
+  (`degradation digest not delivered: …`), and the events stay due, so the next
+  daily run retries. Point your uptime monitor here.
 - `waitlist-reconciliation` tolerates contention for
   `MAX_CONSECUTIVE_CONTENDED_TICKS` ticks before its own failures flip it; a
   pass still in flight flips it at its second refused tick, like any job,
