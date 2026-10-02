@@ -328,16 +328,18 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     },
     {
       // Renamed from `auth-cleanup` when waitlist retention joined it (#238):
-      // the job is the daily retention slot now, not the auth one. Every
-      // sweep in this job runs through `isolatedSweeps` rather than getting
-      // its own job, so there is one daily timer and one obvious slot for the
-      // next retention policy.
+      // the job is the daily slot now, not the auth one, and not only for
+      // retention: the array below is what it runs. Every sweep in this job
+      // runs through `isolatedSweeps` rather than getting its own job, so
+      // there is one daily timer and one obvious slot for the next daily sweep.
       //
       // The cost, recorded rather than glossed: `/api/health` reports one
-      // `lastRunAt` for every sweep in this job instead of one each.
-      // Acceptable here and not for `waitlist-reconciliation`, which took its
+      // `lastRunAt` and one verdict for every sweep in this job instead of one
+      // each, so a digest that cannot be sent and a failed retention sweep
+      // read the same there; the server log tells them apart. Acceptable for
+      // daily sweeps and not for `waitlist-reconciliation`, which took its
       // own job name deliberately — a 60-second correctness sweep needs its
-      // own health signal in a way a daily retention sweep does not.
+      // own health signal in a way a daily one does not.
       name: 'daily-cleanup',
       intervalMs: 24 * 60 * MINUTE,
       run: isolatedSweeps('daily-cleanup', [
