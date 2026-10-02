@@ -32,8 +32,17 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 No `account_id` foreign key and no `onDelete: Cascade`: `Account` rows are
 never deleted (erasure anonymises `Teacher`/`Student`, it never removes the
 `Account`), so a cascade here would never fire. Instead this row is deleted
-explicitly, on three paths: a 404/410 response from the push service (the
-endpoint is gone), sign-out, and GDPR erasure. An erasure
+explicitly, by each of these:
+
+- a 404/410 response from the push service (the endpoint is gone);
+- the dispatch sweep's sender throwing for it — a stored key the sender
+  cannot encrypt to (`dispatchPushes`, `push-dispatch.ts`);
+- "Turn off for this phone" in the notification settings (`disablePush`,
+  `DELETE /api/push/subscriptions`);
+- sign-out, which runs the same `disablePush` before ending the session;
+- GDPR erasure.
+
+An erasure
 (`deleteStudentAccount`/`deleteTeacherAccount`, `gdpr.ts`) deletes every
 `PushSubscription` on the account only when the profile being erased leaves no
 other live profile on it — a surviving profile still has notifications to
@@ -79,10 +88,8 @@ first; one row per device is identity enough for dispatch and cleanup.
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Which `NotificationType`s each `push_*` group covers is owned by the spec's
-decision table and `src/lib/push-policy.ts`
-(`docs/superpowers/specs/2026-10-02-web-push-design.md`, §2 decision 4) — not
-restated here.
+Which `NotificationType`s each `push_*` group covers is owned by
+`src/lib/push-policy.ts` — not restated here.
 
 ### TeacherPhoto (avatar, #46)
 
@@ -129,10 +136,8 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | check | `Student_claim_link_check`: `(claimed_at IS NULL) = (account_id IS NULL)` | |
 | unique (partial) | `Student_account_live_unique` on `(account_id)` `WHERE deleted_at IS NULL` | At most one LIVE student profile per account (#623) |
 
-Which `NotificationType`s each `push_*` group covers is owned by the spec's
-decision table and `src/lib/push-policy.ts`
-(`docs/superpowers/specs/2026-10-02-web-push-design.md`, §2 decision 4) — not
-restated here.
+Which `NotificationType`s each `push_*` group covers is owned by
+`src/lib/push-policy.ts` — not restated here.
 
 Nothing in the database requires an erased row to keep its `account_id`. A future erasure that nulled it would, via `Student_claim_link_check`, be forced to null `claimed_at` too — producing a row `resolveOrClaimAccount`'s claim probe (`db.student.findFirst({ where: { email, claimedAt: null } })`) would treat as claimable. Today the tombstoned email is what keeps that unreachable: the erased row's `email` no longer matches the address anyone signs in with.
 

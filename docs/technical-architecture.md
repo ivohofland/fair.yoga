@@ -489,8 +489,8 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
   scheduler (Cron Jobs, above): it claims each committed `Notification` row
   with a compare-and-swap on `pushHandledAt` so overlapping ticks send once,
   sends to every subscription on the resolved recipient's account, deletes a
-  subscription the push service reports `gone`, and never retries a `failed`
-  one. A row already older than the stale cutoff (`PUSH_STALE_AFTER_MS`, 15
+  subscription the push service reports `gone` or the sender throws for (a
+  stored key it cannot encrypt to), and never retries a `failed` one. A row already older than the stale cutoff (`PUSH_STALE_AFTER_MS`, 15
   minutes) when a tick reads it is retired without sending — a row still
   within the cutoff at that read can still be sent even if it ages past it
   before the tick finishes. When `readVapidConfig()` finds no valid
