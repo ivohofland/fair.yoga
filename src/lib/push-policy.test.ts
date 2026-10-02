@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { NotificationType } from '@prisma/client';
 import {
   STUDENT_PUSH_GROUP, TEACHER_PUSH_GROUP, shouldPush, buildPushPayload, pushUrgency,
-  REDACTED_BODY, PUSH_BODY_MAX_BYTES, type StudentPushPrefs, type TeacherPushPrefs,
+  REDACTED_BODY, PUSH_BODY_MAX_BYTES, PUSH_PLAINTEXT_MAX_BYTES, type StudentPushPrefs, type TeacherPushPrefs,
 } from './push-policy';
 
 const allStudentOn: StudentPushPrefs = {
@@ -145,6 +145,30 @@ describe('buildPushPayload', () => {
     expect(Buffer.byteLength(body)).toBeLessThanOrEqual(PUSH_BODY_MAX_BYTES);
     expect(body.endsWith('…')).toBe(true);
     expect(body).not.toContain('�');
+  });
+
+  it('shrinks a body whose JSON escaping would overflow the push limit, keeping whole code points', () => {
+    const dense = '\u0001'.repeat(1500);
+    const payload = buildPushPayload({ id: 'n1', title: dense, body: dense, recipientType: 'student', type: 'announcement' });
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(PUSH_PLAINTEXT_MAX_BYTES);
+    expect(payload.body.endsWith('…')).toBe(true);
+    expect(payload.body.slice(0, -1)).toMatch(/^\u0001+$/);
+    // As long as fits: one more character would not.
+    const longer = { ...payload, body: `${payload.body.slice(0, -1)}\u0001…` };
+    expect(Buffer.byteLength(JSON.stringify(longer))).toBeGreaterThan(PUSH_PLAINTEXT_MAX_BYTES);
+  });
+
+  it('never splits a surrogate pair when it shrinks the body', () => {
+    const dense = '\u0001😀'.repeat(300);
+    const payload = buildPushPayload({ id: 'n1', title: '\u0001'.repeat(200), body: dense, recipientType: 'student', type: 'announcement' });
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(PUSH_PLAINTEXT_MAX_BYTES);
+    expect(payload.body).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+
+  it('leaves a body that already fits as truncate made it', () => {
+    const plain = 'a'.repeat(PUSH_BODY_MAX_BYTES + 10);
+    const body = buildPushPayload({ ...base, body: plain, recipientType: 'student', type: 'announcement' }).body;
+    expect(Buffer.byteLength(body)).toBe(PUSH_BODY_MAX_BYTES);
   });
 });
 

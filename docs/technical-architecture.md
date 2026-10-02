@@ -478,9 +478,10 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
 - `lib/push-policy.ts` decides WHETHER (`shouldPush`, keyed by the
   `StudentPushGroup`/`TeacherPushGroup` preference columns a notification
   type maps to), WHAT (`buildPushPayload` — redacts the body to a fixed line
-  for money groups, truncates title/body to the byte budgets that leave room
-  for RFC 8291's encryption overhead under the push service's 4096-byte
-  payload limit), and urgency (`pushUrgency`).
+  for money groups, caps title and body in raw UTF-8 bytes, then shrinks the
+  body further when JSON escaping would take the serialised payload past
+  `PUSH_PLAINTEXT_MAX_BYTES` — the push service's 4096-byte limit less RFC
+  8291's encryption overhead), and urgency (`pushUrgency`).
 - `lib/push/{vapid,encrypt,send}.ts` implement RFC 8292 VAPID and RFC 8291
   payload encryption on `node:crypto`. `sendPush` never throws for an HTTP
   status or a network failure: a 404/410 means the subscription is dead

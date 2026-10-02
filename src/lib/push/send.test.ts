@@ -116,6 +116,15 @@ describe('sendPush', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  it('keeps a payload dense in JSON-escaped characters under the 4096-byte push limit', async () => {
+    const fetchImpl = fetchReturning(201);
+    const dense = '\u0001'.repeat(1500);
+    const big = buildPushPayload({ id: 'n1', recipientType: 'student', type: 'announcement', title: dense, body: dense });
+    await sendPush(target(), big, keys(), { urgency: 'normal', fetchImpl });
+    const body = fetchImpl.mock.calls[0]![1]!.body as Uint8Array;
+    expect(body.byteLength).toBeLessThanOrEqual(4096);
+  });
+
   it('keeps the largest possible payload under the 4096-byte push limit', async () => {
     const fetchImpl = fetchReturning(201);
     const big = buildPushPayload({ id: 'n1', recipientType: 'student', type: 'announcement', title: '€'.repeat(2000), body: '€'.repeat(2000) });
