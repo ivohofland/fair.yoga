@@ -5,6 +5,7 @@ import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { NotificationsForm } from '@/components/student/notifications-form';
+import { readVapidConfig } from '@/lib/push/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,18 @@ export default async function NotificationSettingsPage() {
 
   const student = await prisma.student.findUnique({
     where: { id: session.studentId },
-    select: { id: true, emailNotifications: true, classReminder: true, classReminderChannel: true },
+    select: {
+      id: true,
+      emailNotifications: true,
+      classReminder: true,
+      classReminderChannel: true,
+      pushWaitlist: true,
+      pushClassChanges: true,
+      pushPayments: true,
+      pushClassReminders: true,
+      pushAnnouncements: true,
+      pushInvitations: true,
+    },
   });
   if (!student) redirect('/login');
 
@@ -33,6 +45,13 @@ export default async function NotificationSettingsPage() {
         emailNotifications={student.emailNotifications}
         classReminder={student.classReminder}
         classReminderChannel={student.classReminderChannel}
+        pushWaitlist={student.pushWaitlist}
+        pushClassChanges={student.pushClassChanges}
+        pushPayments={student.pushPayments}
+        pushClassReminders={student.pushClassReminders}
+        pushAnnouncements={student.pushAnnouncements}
+        pushInvitations={student.pushInvitations}
+        vapidPublicKey={readVapidConfig()?.publicKey ?? null}
       />
     </div>
   );

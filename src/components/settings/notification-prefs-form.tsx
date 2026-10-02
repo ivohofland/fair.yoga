@@ -5,9 +5,11 @@ import type { z } from 'zod';
 import type { TeacherBookingNotifications } from '@prisma/client';
 import type { updateTeacherSchema } from '@/lib/schemas';
 import type { TeacherNotificationPrefs } from '@/services/notification-policy';
+import type { TeacherPushPrefs } from '@/lib/push-policy';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import { PushDeviceControl } from '@/components/settings/push-device-control';
 import {
   REMINDER_CHANNEL_OPTIONS,
   REMINDER_TIMING_OPTIONS,
@@ -16,9 +18,12 @@ import {
 } from '@/lib/reminder-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
+type NotificationPrefsBody = TeacherNotificationPrefs & TeacherPushPrefs;
+
 interface NotificationPrefsFormProps {
   teacherId: string;
-  initial: TeacherNotificationPrefs;
+  initial: NotificationPrefsBody;
+  vapidPublicKey: string | null;
 }
 
 type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
@@ -27,7 +32,7 @@ type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
  * Reverse pin: `updateTeacherSchema` is `.strict()`, so a key sent here that
  * the schema dropped would 400 at runtime; this fails at compile time instead.
  */
-const _formHasNoExtras: NoneOf<Exclude<keyof TeacherNotificationPrefs, keyof UpdateTeacherWire>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof NotificationPrefsBody, keyof UpdateTeacherWire>> = true;
 void _formHasNoExtras;
 
 const BOOKING_OPTIONS = [
@@ -41,12 +46,17 @@ type BookingOption = (typeof BOOKING_OPTIONS)[number]['value'];
 const _offersEveryChoice: NoneOf<Exclude<TeacherBookingNotifications, BookingOption>> = true;
 void _offersEveryChoice;
 
-export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsFormProps) {
+export function NotificationPrefsForm({ teacherId, initial, vapidPublicKey }: NotificationPrefsFormProps) {
   const [booking, setBooking] = useState<TeacherBookingNotifications>(initial.bookingNotifications);
   const [completed, setCompleted] = useState(initial.emailOnClassCompleted);
   const [invitation, setInvitation] = useState(initial.emailOnInvitation);
   const [reminder, setReminder] = useState(initial.classReminder);
   const [reminderChannel, setReminderChannel] = useState(initial.classReminderChannel);
+  const [autoCancelled, setAutoCancelled] = useState(initial.pushAutoCancelled);
+  const [pushNewBookings, setPushNewBookings] = useState(initial.pushBookings);
+  const [pushCompleted, setPushCompleted] = useState(initial.pushClassCompleted);
+  const [pushReminders, setPushReminders] = useState(initial.pushClassReminders);
+  const [pushInvitation, setPushInvitation] = useState(initial.pushInvitations);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -56,12 +66,17 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
     setSaved(false);
     setError('');
     try {
-      const payload: TeacherNotificationPrefs = {
+      const payload: NotificationPrefsBody = {
         bookingNotifications: booking,
         emailOnClassCompleted: completed,
         emailOnInvitation: invitation,
         classReminder: reminder,
         classReminderChannel: reminderChannel,
+        pushAutoCancelled: autoCancelled,
+        pushBookings: pushNewBookings,
+        pushClassCompleted: pushCompleted,
+        pushClassReminders: pushReminders,
+        pushInvitations: pushInvitation,
       };
       const res = await fetch(`/api/teachers/${teacherId}`, {
         method: 'PUT',
@@ -169,6 +184,60 @@ export function NotificationPrefsForm({ teacherId, initial }: NotificationPrefsF
           Always emailed if you miss it — so you know the class won&apos;t run.
         </p>
       </section>
+
+      <fieldset>
+        <legend className="type-subtitle">Push notifications</legend>
+        <div className="mt-3">
+          <PushDeviceControl vapidPublicKey={vapidPublicKey} />
+        </div>
+        <div className="mt-4 flex flex-col gap-1">
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={autoCancelled}
+              onChange={(e) => { setAutoCancelled(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Auto-cancelled classes</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={pushNewBookings}
+              onChange={(e) => { setPushNewBookings(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">New bookings</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={pushCompleted}
+              onChange={(e) => { setPushCompleted(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Class completed</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={pushReminders}
+              onChange={(e) => { setPushReminders(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Class reminders</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-12">
+            <input
+              type="checkbox"
+              checked={pushInvitation}
+              onChange={(e) => { setPushInvitation(e.target.checked); setSaved(false); }}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="type-body">Invitations</span>
+          </label>
+        </div>
+      </fieldset>
 
       <div className="flex items-center gap-3">
         <Button variant="primary" onClick={handleSave} disabled={saving}>

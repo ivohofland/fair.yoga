@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updateTeacherSchema } from '@/lib/schemas';
 import type { TeacherNotificationPrefs } from '@/services/notification-policy';
+import type { TeacherPushPrefs } from '@/lib/push-policy';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -29,15 +30,15 @@ export interface ProfileFormValues {
 /**
  * Forward: a field added to `updateTeacherSchema` with no matching key in
  * `ProfileFormValues` fails the build, naming it — except the keys of
- * `TeacherNotificationPrefs`, which `NotificationPrefsForm` sends. Reverse: a
- * key in `ProfileFormValues` the schema dropped fails the build too —
- * `.strict()` would 400 it at runtime; this catches it at compile time. Both
- * pins reach the wire body because `handleSubmit` builds it as a `payload`
- * literal typed `ProfileFormValues` and stringifies that literal directly: the
- * same excess-property check that guards this alias guards the object actually
- * sent.
+ * `TeacherNotificationPrefs` and `TeacherPushPrefs`, which `NotificationPrefsForm`
+ * sends. Reverse: a key in `ProfileFormValues` the schema dropped fails the
+ * build too — `.strict()` would 400 it at runtime; this catches it at compile
+ * time. Both pins reach the wire body because `handleSubmit` builds it as a
+ * `payload` literal typed `ProfileFormValues` and stringifies that literal
+ * directly: the same excess-property check that guards this alias guards the
+ * object actually sent.
  */
-const _formCoversSchema: NoneOf<Exclude<Exclude<keyof UpdateTeacherWire, keyof TeacherNotificationPrefs>, keyof ProfileFormValues>> = true;
+const _formCoversSchema: NoneOf<Exclude<Exclude<keyof UpdateTeacherWire, keyof TeacherNotificationPrefs | keyof TeacherPushPrefs>, keyof ProfileFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof ProfileFormValues, keyof UpdateTeacherWire>> = true;
 void _formCoversSchema;
 void _formHasNoExtras;
