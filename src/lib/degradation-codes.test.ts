@@ -64,3 +64,18 @@ describe('logDegraded call sites', () => {
     for (const code of used) expect(Object.keys(DEGRADATION_CODES)).toContain(code);
   });
 });
+
+// The digest footer sends the operator to this file for what each code means.
+const RUNBOOK = readFileSync(path.resolve(SRC, '..', 'docs', 'degradation-sites.md'), 'utf8');
+const RUNBOOK_HEADINGS = new Set(
+  RUNBOOK.split('\n').flatMap((line) => {
+    const m = /^### `([A-Z0-9_]+)`$/.exec(line);
+    return m ? [m[1]!] : [];
+  }),
+);
+
+describe('docs/degradation-sites.md', () => {
+  it.each(Object.keys(DEGRADATION_CODES))('%s has a runbook section in docs/degradation-sites.md', (code) => {
+    expect(RUNBOOK_HEADINGS.has(code), `no "### \`${code}\`" heading`).toBe(true);
+  });
+});
