@@ -1,6 +1,7 @@
 import type { ClassStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
+import { logDegraded } from '@/lib/degradation';
 
 /**
  * How long before its end a teacher may finish a class, and how long after its
@@ -37,8 +38,9 @@ export function autoFinishAt(end: Date): Date {
 }
 
 /**
- * `HH:MM` in `timeZone`. An unreadable zone formats in UTC, says so, and logs
- * at `error` (#145). An unreadable instant is checked before the `try`, because
+ * `HH:MM` in `timeZone`. An unreadable zone formats in UTC, says so, and is
+ * recorded as `TIMEZONE_INVALID_FALLBACK_UTC`, which reaches the operator by
+ * email (`docs/degradation-sites.md`) (#145). An unreadable instant is checked before the `try`, because
  * it throws in every zone, UTC included, and would escape the fallback.
  */
 export function formatClockInZone(instant: Date, timeZone: string): string {
@@ -56,7 +58,12 @@ export function formatClockInZone(instant: Date, timeZone: string): string {
   try {
     return format(timeZone);
   } catch (err) {
-    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC formatting');
+    logDegraded(
+      'TIMEZONE_INVALID_FALLBACK_UTC',
+      { timeZone, site: 'finish-window' },
+      'invalid timezone, falling back to UTC formatting',
+      err,
+    );
     return `${format('UTC')} (UTC)`;
   }
 }

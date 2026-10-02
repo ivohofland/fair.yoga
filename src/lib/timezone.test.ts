@@ -71,6 +71,51 @@ describe('startOfLocalDay', () => {
     );
   });
 
+  it('reports TIMEZONE_INVALID_FALLBACK_UTC from startOfLocalDay, naming its site', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    startOfLocalDay(new Date('2026-07-26T13:45:00Z'), 'Not/AZone');
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'TIMEZONE_INVALID_FALLBACK_UTC',
+        site: 'local-day',
+        timeZone: 'Not/AZone',
+        err: expect.any(Error),
+      }),
+      expect.stringContaining('falling back to UTC'),
+    );
+  });
+
+  it('reports TIMEZONE_INVALID_FALLBACK_UTC from formatInstantInZone, naming its site', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    formatInstantInZone(new Date('2026-07-26T13:45:00Z'), 'Not/AZone');
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'TIMEZONE_INVALID_FALLBACK_UTC',
+        site: 'format',
+        timeZone: 'Not/AZone',
+        err: expect.any(Error),
+      }),
+      expect.stringContaining('falling back to UTC formatting'),
+    );
+  });
+
+  it('reports TIMEZONE_INVALID_FALLBACK_UTC from classStartInstant, naming its site', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    classStartInstant(
+      { date: new Date('2026-07-26T00:00:00.000Z'), startTime: hhmmToTime('09:00') },
+      'Not/AZone',
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'TIMEZONE_INVALID_FALLBACK_UTC',
+        site: 'interpret',
+        timeZone: 'Not/AZone',
+        err: expect.any(Error),
+      }),
+      expect.stringContaining('falling back to UTC interpretation'),
+    );
+  });
+
   /**
    * `formatToParts` throws `RangeError: Invalid time value` on an Invalid
    * Date, so before #145 an unreadable INSTANT arrived at the catch and was

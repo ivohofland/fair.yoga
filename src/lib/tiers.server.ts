@@ -1,5 +1,11 @@
-import { log } from '@/lib/log';
+import { logDegraded } from '@/lib/degradation';
 import { DEFAULT_INCOME_TIER, isIncomeTier, type IncomeTier } from '@/lib/tiers';
+
+/** The ids a tier read may name, so a warning points at the row. */
+export interface TierReadContext {
+  studentId?: string;
+  registrationId?: string;
+}
 
 /**
  * Read a tier from the database, answering `null` when the stored value is
@@ -19,23 +25,26 @@ import { DEFAULT_INCOME_TIER, isIncomeTier, type IncomeTier } from '@/lib/tiers'
  * for "someone else's row is corrupt", and one substituted ratio only nudges
  * a shared price.
  *
- * If this ever warns, the constraint was circumvented. That is the bug to
- * chase, and the log line is the only thing that would tell you.
+ * If this ever fires, the constraint was circumvented. That is the bug to
+ * chase; it is recorded as `INCOME_TIER_OUT_OF_RANGE` and emailed to the
+ * operator (`docs/degradation-sites.md`).
  *
  * This file is separate from `tiers.ts` solely because it imports `@/lib/log`
  * (pino, server-only) and `tiers.ts` is value-imported by `'use client'`
  * components. Do not move it, and do not import it from a client component.
  *
- * `context` is merged into the log payload — pass whichever id is in hand at
- * the call site (`registrationId` when a registration is in hand, `studentId`
- * on a profile read) so a warning points at the row, not just the bad value.
+ * `context` names the row in the recorded event — pass whichever id is in hand
+ * at the call site (`registrationId` when a registration is in hand,
+ * `studentId` on a profile read) so a warning points at the row, not just the
+ * bad value.
  */
-export function readIncomeTier(
-  n: number,
-  context?: Record<string, string>,
-): IncomeTier | null {
+export function readIncomeTier(n: number, context?: TierReadContext): IncomeTier | null {
   if (isIncomeTier(n)) return n;
-  log.warn({ tier: n, ...context }, 'income tier outside 1-5; DB constraint bypassed');
+  logDegraded(
+    'INCOME_TIER_OUT_OF_RANGE',
+    { tier: n, ...context },
+    'income tier outside 1-5; DB constraint bypassed',
+  );
   return null;
 }
 
@@ -56,7 +65,7 @@ export function readIncomeTier(
  * Warning and log payload are `readIncomeTier`'s — this is the same read with
  * a substitution on the end, not a second one.
  */
-export function toIncomeTier(n: number, context?: Record<string, string>): IncomeTier {
+export function toIncomeTier(n: number, context?: TierReadContext): IncomeTier {
   return readIncomeTier(n, context) ?? DEFAULT_INCOME_TIER;
 }
 
