@@ -47,6 +47,39 @@ function keyBytes(base64url: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/**
+ * True when `subscription` was made with `vapidPublicKey`, compared as bytes.
+ * A subscription made with a key the server no longer signs with receives
+ * nothing, and one that reports no key cannot be shown to match.
+ */
+export function subscriptionUsesKey(subscription: PushSubscription, vapidPublicKey: string): boolean {
+  const used = subscription.options?.applicationServerKey;
+  if (!used) return false;
+  const usedBytes = new Uint8Array(used);
+  const expected = keyBytes(vapidPublicKey);
+  return usedBytes.length === expected.length && usedBytes.every((byte, i) => byte === expected[i]);
+}
+
+/**
+ * Records `subscription` for the account signed in now: the server's upsert
+ * moves an endpoint another account held, and writes nothing when this
+ * account already holds it unchanged. Never throws.
+ */
+export async function syncPushSubscription(subscription: PushSubscription): Promise<boolean> {
+  try {
+    const json = subscription.toJSON();
+    const res = await fetch('/api/push/subscriptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: json.endpoint, keys: { p256dh: json.keys?.p256dh, auth: json.keys?.auth } }),
+    });
+    return res.ok;
+  } catch (err) {
+    logRequestFailure('push-client', { step: 'sync' }, err);
+    return false;
+  }
+}
+
 /** Call only from a click handler: the permission prompt needs the gesture. Never throws. */
 export async function enablePush(vapidPublicKey: string): Promise<'on' | 'blocked' | 'failed'> {
   let subscription: PushSubscription | null = null;
@@ -58,13 +91,7 @@ export async function enablePush(vapidPublicKey: string): Promise<'on' | 'blocke
     subscription =
       (await registration.pushManager.getSubscription()) ??
       (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(vapidPublicKey) }));
-    const json = subscription.toJSON();
-    const res = await fetch('/api/push/subscriptions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ endpoint: json.endpoint, keys: { p256dh: json.keys?.p256dh, auth: json.keys?.auth } }),
-    });
-    if (res.ok) return 'on';
+    if (await syncPushSubscription(subscription)) return 'on';
   } catch (err) {
     logRequestFailure('push-client', { step: 'enable' }, err);
   }

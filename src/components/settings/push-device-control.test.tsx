@@ -7,9 +7,10 @@ vi.mock('@/components/layout/install-store', () => ({
   useInstallSupport: () => support,
 }));
 
-const currentPushSubscriptionMock = vi.fn<() => Promise<{ endpoint: string } | null>>();
+const currentPushSubscriptionMock = vi.fn<() => Promise<PushSubscription | null>>();
 const enablePushMock = vi.fn<(vapidPublicKey: string) => Promise<'on' | 'blocked' | 'failed'>>();
 const disablePushMock = vi.fn<() => Promise<void>>();
+const syncPushSubscriptionMock = vi.fn<(subscription: PushSubscription) => Promise<boolean>>();
 vi.mock('@/lib/push-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/push-client')>();
   return {
@@ -18,10 +19,27 @@ vi.mock('@/lib/push-client', async (importOriginal) => {
       currentPushSubscriptionMock(...args),
     enablePush: (...args: Parameters<typeof actual.enablePush>) => enablePushMock(...args),
     disablePush: (...args: Parameters<typeof actual.disablePush>) => disablePushMock(...args),
+    syncPushSubscription: (...args: Parameters<typeof actual.syncPushSubscription>) => syncPushSubscriptionMock(...args),
   };
 });
 
 import { PushDeviceControl } from './push-device-control';
+
+/** A 65-byte key filled with `fill`, as base64url — the form the server hands the control. */
+function keyOf(fill: number): string {
+  return btoa(String.fromCharCode(...new Uint8Array(65).fill(fill))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+const CURRENT_KEY = keyOf(4);
+
+/** A browser subscription made with the key filled with `keyFill`; only the members the control reads. */
+function browserSubscription(keyFill: number): PushSubscription & { unsubscribe: ReturnType<typeof vi.fn> } {
+  return {
+    endpoint: 'https://push.example/x',
+    options: { applicationServerKey: new Uint8Array(65).fill(keyFill).buffer, userVisibleOnly: true },
+    unsubscribe: vi.fn(async () => true),
+  } as unknown as PushSubscription & { unsubscribe: ReturnType<typeof vi.fn> };
+}
 
 /** Removes/sets the three capability globals the control's effect reads
  *  straight off `navigator`/`window`, independent of the mocked install store. */
@@ -72,6 +90,8 @@ describe('PushDeviceControl', () => {
     enablePushMock.mockReset();
     disablePushMock.mockReset();
     disablePushMock.mockResolvedValue(undefined);
+    syncPushSubscriptionMock.mockReset();
+    syncPushSubscriptionMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -170,8 +190,8 @@ describe('PushDeviceControl', () => {
 
   it('turns off: clicking Turn off for this phone calls disablePush and returns to off', async () => {
     setBrowserCapabilities({ permission: 'granted' });
-    currentPushSubscriptionMock.mockResolvedValue({ endpoint: 'https://push.example/x' });
-    await renderResolved();
+    currentPushSubscriptionMock.mockResolvedValue(browserSubscription(4));
+    await renderResolved(CURRENT_KEY);
     await screen.findByText('On for this phone');
     fireEvent.click(screen.getByRole('button', { name: 'Turn off for this phone' }));
     await waitFor(() => expect(disablePushMock).toHaveBeenCalledTimes(1));
@@ -186,5 +206,40 @@ describe('PushDeviceControl', () => {
     // permission classifies to the off state, proving the effect finished
     // rather than hanging on the placeholder forever.
     expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
+  });
+
+  it('re-records a subscription made with the current key for the account signed in now, then shows on', async () => {
+    setBrowserCapabilities({ permission: 'granted' });
+    const subscription = browserSubscription(4);
+    currentPushSubscriptionMock.mockResolvedValue(subscription);
+    await renderResolved(CURRENT_KEY);
+    expect(syncPushSubscriptionMock).toHaveBeenCalledTimes(1);
+    expect(syncPushSubscriptionMock).toHaveBeenCalledWith(subscription);
+    expect(screen.getByText('On for this phone')).toBeInTheDocument();
+    expect(subscription.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('drops a subscription made with a rotated key and shows off without re-recording it', async () => {
+    setBrowserCapabilities({ permission: 'granted' });
+    const subscription = browserSubscription(5);
+    currentPushSubscriptionMock.mockResolvedValue(subscription);
+    await renderResolved(CURRENT_KEY);
+    expect(subscription.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(syncPushSubscriptionMock).not.toHaveBeenCalled();
+    expect(enablePushMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
+    expect(screen.queryByText("Notifications weren't turned on. Try again.")).not.toBeInTheDocument();
+  });
+
+  it('shows off with the failure line, keeping the browser subscription, when re-recording fails', async () => {
+    setBrowserCapabilities({ permission: 'granted' });
+    const subscription = browserSubscription(4);
+    currentPushSubscriptionMock.mockResolvedValue(subscription);
+    syncPushSubscriptionMock.mockResolvedValue(false);
+    await renderResolved(CURRENT_KEY);
+    expect(syncPushSubscriptionMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
+    expect(screen.getByText("Notifications weren't turned on. Try again.")).toHaveAttribute('role', 'alert');
+    expect(subscription.unsubscribe).not.toHaveBeenCalled();
   });
 });

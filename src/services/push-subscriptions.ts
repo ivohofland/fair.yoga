@@ -1,15 +1,24 @@
 import type { PrismaClient } from '@prisma/client';
 
+export type SavePushSubscriptionResult = 'created' | 'updated' | 'moved' | 'unchanged';
+
 /**
- * Upsert by endpoint. Returns `'moved'` when the endpoint already belonged to
- * a different account, and reassigns it to `accountId`.
+ * Upsert by endpoint. Returns `'unchanged'`, writing nothing, when this
+ * account already holds the endpoint with the same keys; `'moved'` when the
+ * endpoint belonged to a different account, and reassigns it to `accountId`.
  */
 export async function savePushSubscription(
   db: PrismaClient,
   accountId: string,
   sub: { endpoint: string; p256dh: string; auth: string },
-): Promise<'created' | 'updated' | 'moved'> {
-  const existing = await db.pushSubscription.findUnique({ where: { endpoint: sub.endpoint }, select: { accountId: true } });
+): Promise<SavePushSubscriptionResult> {
+  const existing = await db.pushSubscription.findUnique({
+    where: { endpoint: sub.endpoint },
+    select: { accountId: true, p256dh: true, auth: true },
+  });
+  if (existing && existing.accountId === accountId && existing.p256dh === sub.p256dh && existing.auth === sub.auth) {
+    return 'unchanged';
+  }
   await db.pushSubscription.upsert({
     where: { endpoint: sub.endpoint },
     create: { accountId, ...sub },
