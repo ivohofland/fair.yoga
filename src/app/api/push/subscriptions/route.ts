@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
 import { isErrorResponse, parseBody, requireSession, respondError, respondTyped, respondUnchanged, withErrorHandler } from '@/lib/api-utils';
 import { checkRateLimit, rateLimitKey, respondRateLimited } from '@/lib/rate-limit';
 import { pushSubscriptionSchema, pushUnsubscribeSchema } from '@/lib/schemas';
@@ -42,6 +43,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   const status = await savePushSubscription(prisma, session.accountId, { endpoint, p256dh: keys.p256dh, auth: keys.auth });
+  // A device changing hands between accounts; the endpoint is a secret, so it stays out of the log.
+  if (status === 'moved') log.info({ accountId: session.accountId }, 'push subscription moved to this account');
   // Same shape either way; `outcome: 'unchanged'` beside it says nothing was written.
   return status === 'unchanged'
     ? respondUnchanged<SubscriptionSaved>({ status })

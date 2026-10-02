@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 
-const disablePushMock = vi.fn<() => Promise<void>>();
+const disablePushMock = vi.fn<() => Promise<'off' | 'failed'>>();
 vi.mock('@/lib/push-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/push-client')>();
   return {
@@ -27,7 +27,7 @@ describe('SignOutButton', () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
-    disablePushMock.mockResolvedValue(undefined);
+    disablePushMock.mockResolvedValue('off');
   });
 
   afterEach(() => {
@@ -86,6 +86,7 @@ describe('SignOutButton', () => {
     const order: string[] = [];
     disablePushMock.mockImplementation(async () => {
       order.push('disablePush');
+      return 'off';
     });
     fetchMock.mockImplementation(async () => {
       order.push('fetch');
@@ -102,9 +103,10 @@ describe('SignOutButton', () => {
 
   it('proceeds within 3s when disablePush never resolves', async () => {
     vi.useFakeTimers();
-    disablePushMock.mockReturnValue(new Promise<void>(() => {}));
+    disablePushMock.mockReturnValue(new Promise<'off' | 'failed'>(() => {}));
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       render(<SignOutButton />);
 
@@ -115,8 +117,36 @@ describe('SignOutButton', () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
       expect(routerPush).toHaveBeenCalledWith('/login');
+      expect(consoleError).toHaveBeenCalledWith(
+        '[sign-out-button] request failed',
+        expect.objectContaining({ step: 'push-timeout' }),
+      );
     } finally {
       vi.useRealTimers();
+      consoleError.mockRestore();
+    }
+  });
+
+  it('logs no timeout when disablePush settles first', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      render(<SignOutButton />);
+
+      fireEvent.click(screen.getByRole('button'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(consoleError).not.toHaveBeenCalledWith(
+        '[sign-out-button] request failed',
+        expect.objectContaining({ step: 'push-timeout' }),
+      );
+    } finally {
+      vi.useRealTimers();
+      consoleError.mockRestore();
     }
   });
 

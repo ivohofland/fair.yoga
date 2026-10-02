@@ -28,10 +28,17 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
       // A device left subscribed would keep receiving this account's
       // notifications after someone else signs in on it. Bounded so a stuck
       // service worker never blocks leaving; a failure never skips the DELETE.
-      await Promise.race([
-        disablePush().catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'push' }, err)),
-        new Promise((resolve) => setTimeout(resolve, 3_000)),
-      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          logRequestFailure('sign-out-button', { step: 'push-timeout' }, new Error('push teardown exceeded 3s'));
+          resolve();
+        }, 3_000);
+      });
+      const pushDone = disablePush()
+        .catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'push' }, err))
+        .finally(() => clearTimeout(timer));
+      await Promise.race([pushDone, timedOut]);
       const res = await fetch('/api/auth/session', { method: 'DELETE' });
       cleared = res.ok;
     } catch (err) {

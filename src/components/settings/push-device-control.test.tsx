@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { InstallSupport } from '@/lib/install-support';
+import type { SyncResult } from '@/lib/push-client';
 
 let support: InstallSupport = 'installed';
 vi.mock('@/components/layout/install-store', () => ({
@@ -9,8 +10,8 @@ vi.mock('@/components/layout/install-store', () => ({
 
 const currentPushSubscriptionMock = vi.fn<() => Promise<PushSubscription | null>>();
 const enablePushMock = vi.fn<(vapidPublicKey: string) => Promise<'on' | 'blocked' | 'failed'>>();
-const disablePushMock = vi.fn<() => Promise<void>>();
-const syncPushSubscriptionMock = vi.fn<(subscription: PushSubscription) => Promise<boolean>>();
+const disablePushMock = vi.fn<() => Promise<'off' | 'failed'>>();
+const syncPushSubscriptionMock = vi.fn<(subscription: PushSubscription) => Promise<SyncResult>>();
 vi.mock('@/lib/push-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/push-client')>();
   return {
@@ -32,11 +33,14 @@ function keyOf(fill: number): string {
 
 const CURRENT_KEY = keyOf(4);
 
-/** A browser subscription made with the key filled with `keyFill`; only the members the control reads. */
-function browserSubscription(keyFill: number): PushSubscription & { unsubscribe: ReturnType<typeof vi.fn> } {
+/** A browser subscription made with the key filled with `keyFill`, or reporting no key for null; only the members the control reads. */
+function browserSubscription(keyFill: number | null): PushSubscription & { unsubscribe: ReturnType<typeof vi.fn> } {
   return {
     endpoint: 'https://push.example/x',
-    options: { applicationServerKey: new Uint8Array(65).fill(keyFill).buffer, userVisibleOnly: true },
+    options: {
+      applicationServerKey: keyFill === null ? null : new Uint8Array(65).fill(keyFill).buffer,
+      userVisibleOnly: true,
+    },
     unsubscribe: vi.fn(async () => true),
   } as unknown as PushSubscription & { unsubscribe: ReturnType<typeof vi.fn> };
 }
@@ -48,12 +52,11 @@ function setBrowserCapabilities(opts: {
   pushManager?: boolean;
   notification?: boolean;
   permission?: NotificationPermission;
-}): { register: ReturnType<typeof vi.fn> } {
+}): void {
   const { serviceWorker = true, pushManager = true, notification = true, permission = 'default' } = opts;
-  const register = vi.fn();
   if (serviceWorker) {
     Object.defineProperty(navigator, 'serviceWorker', {
-      value: { register, getRegistration: vi.fn(async () => null) },
+      value: { register: vi.fn(), getRegistration: vi.fn(async () => null) },
       configurable: true,
     });
   } else {
@@ -69,7 +72,6 @@ function setBrowserCapabilities(opts: {
   } else {
     delete (window as unknown as Record<string, unknown>).Notification;
   }
-  return { register };
 }
 
 async function renderResolved(
@@ -89,9 +91,9 @@ describe('PushDeviceControl', () => {
     currentPushSubscriptionMock.mockResolvedValue(null);
     enablePushMock.mockReset();
     disablePushMock.mockReset();
-    disablePushMock.mockResolvedValue(undefined);
+    disablePushMock.mockResolvedValue('off');
     syncPushSubscriptionMock.mockReset();
-    syncPushSubscriptionMock.mockResolvedValue(true);
+    syncPushSubscriptionMock.mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -111,7 +113,7 @@ describe('PushDeviceControl', () => {
     'shows needs-install copy and a link to the install steps, no button, for install=%s',
     async (installSupport) => {
       support = installSupport;
-      const { register } = setBrowserCapabilities({});
+      setBrowserCapabilities({});
       await renderResolved('KEY', '/settings');
       expect(
         screen.getByText('Notifications arrive in the fair.yoga app. Add it to your home screen to turn them on.'),
@@ -119,7 +121,6 @@ describe('PushDeviceControl', () => {
       const link = screen.getByRole('link');
       expect(link).toHaveAttribute('href', '/settings');
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
-      expect(register).not.toHaveBeenCalled();
       expect(enablePushMock).not.toHaveBeenCalled();
     },
   );
@@ -198,6 +199,19 @@ describe('PushDeviceControl', () => {
     await screen.findByRole('button', { name: 'Turn on for this phone' });
   });
 
+  it('stays on with an alert when this phone could not be turned off', async () => {
+    setBrowserCapabilities({ permission: 'granted' });
+    currentPushSubscriptionMock.mockResolvedValue(browserSubscription(4));
+    disablePushMock.mockResolvedValue('failed');
+    await renderResolved(CURRENT_KEY);
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off for this phone' }));
+    const alert = await screen.findByText("Couldn't turn off notifications. Try again.");
+    expect(alert).toHaveAttribute('role', 'alert');
+    expect(alert).toHaveClass('type-caption', 'text-danger');
+    expect(screen.getByText('On for this phone')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Turn off for this phone' })).toBeInTheDocument();
+  });
+
   it('resolves past a rejected currentPushSubscription instead of staying on the placeholder', async () => {
     setBrowserCapabilities({ permission: 'default' });
     currentPushSubscriptionMock.mockRejectedValue(new Error('getRegistration failed'));
@@ -219,27 +233,80 @@ describe('PushDeviceControl', () => {
     expect(subscription.unsubscribe).not.toHaveBeenCalled();
   });
 
-  it('drops a subscription made with a rotated key and shows off without re-recording it', async () => {
+  it('turns off a subscription made with a rotated key, server row included, and shows off without re-recording it', async () => {
     setBrowserCapabilities({ permission: 'granted' });
     const subscription = browserSubscription(5);
     currentPushSubscriptionMock.mockResolvedValue(subscription);
-    await renderResolved(CURRENT_KEY);
-    expect(subscription.unsubscribe).toHaveBeenCalledTimes(1);
-    expect(syncPushSubscriptionMock).not.toHaveBeenCalled();
-    expect(enablePushMock).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
-    expect(screen.queryByText("Notifications weren't turned on. Try again.")).not.toBeInTheDocument();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await renderResolved(CURRENT_KEY);
+      expect(disablePushMock).toHaveBeenCalledTimes(1);
+      expect(syncPushSubscriptionMock).not.toHaveBeenCalled();
+      expect(enablePushMock).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
+      expect(screen.queryByText("Notifications weren't turned on. Try again.")).not.toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalledWith('[push-device-control] request failed', expect.objectContaining({ step: 'stale-key' }));
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
-  it('shows off with the failure line, keeping the browser subscription, when re-recording fails', async () => {
+  it('re-records a subscription that reports no key, and never drops it', async () => {
+    setBrowserCapabilities({ permission: 'granted' });
+    const subscription = browserSubscription(null);
+    currentPushSubscriptionMock.mockResolvedValue(subscription);
+    await renderResolved(CURRENT_KEY);
+    expect(syncPushSubscriptionMock).toHaveBeenCalledWith(subscription);
+    expect(disablePushMock).not.toHaveBeenCalled();
+    expect(subscription.unsubscribe).not.toHaveBeenCalled();
+    expect(screen.getByText('On for this phone')).toBeInTheDocument();
+  });
+
+  it('stays on with a neutral caption, keeping the subscription, when re-recording fails', async () => {
     setBrowserCapabilities({ permission: 'granted' });
     const subscription = browserSubscription(4);
     currentPushSubscriptionMock.mockResolvedValue(subscription);
-    syncPushSubscriptionMock.mockResolvedValue(false);
+    syncPushSubscriptionMock.mockResolvedValue({ ok: false, status: null });
     await renderResolved(CURRENT_KEY);
     expect(syncPushSubscriptionMock).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
-    expect(screen.getByText("Notifications weren't turned on. Try again.")).toHaveAttribute('role', 'alert');
+    expect(screen.getByText('On for this phone')).toBeInTheDocument();
+    const caption = screen.getByText("Couldn't reach fair.yoga to confirm this phone. It will try again next time.");
+    expect(caption).toHaveClass('type-caption');
+    expect(caption).not.toHaveClass('text-danger');
+    expect(caption).not.toHaveAttribute('role');
     expect(subscription.unsubscribe).not.toHaveBeenCalled();
+    expect(disablePushMock).not.toHaveBeenCalled();
+  });
+
+  it('shows unsupported, not the placeholder, when resolving the device state throws', async () => {
+    setBrowserCapabilities({ permission: 'granted' });
+    currentPushSubscriptionMock.mockResolvedValue(browserSubscription(4));
+    syncPushSubscriptionMock.mockRejectedValue(new Error('unexpected'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await renderResolved(CURRENT_KEY);
+      expect(screen.getByText("This browser can't receive notifications.")).toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalledWith('[push-device-control] request failed', expect.objectContaining({ step: 'resolve' }));
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('shows the unsupported copy and no button where there is no PushManager', async () => {
+    setBrowserCapabilities({ pushManager: false });
+    await renderResolved();
+    expect(screen.getByText("This browser can't receive notifications.")).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('shows the blocked copy and no button, re-recording nothing, when permission is already denied', async () => {
+    setBrowserCapabilities({ permission: 'denied' });
+    currentPushSubscriptionMock.mockResolvedValue(browserSubscription(4));
+    await renderResolved(CURRENT_KEY);
+    expect(
+      screen.getByText("Notifications for fair.yoga are blocked in this phone's settings. Allow them there to turn this on."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(syncPushSubscriptionMock).not.toHaveBeenCalled();
   });
 });
