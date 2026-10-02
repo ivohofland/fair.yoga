@@ -76,6 +76,12 @@ edit to any of them.
 7. **The sender is ours, on `node:crypto`**, pinned byte-exact to RFC 8291's
    own test vector.
 8. **No app-icon badge** — `setAppBadge` is never called.
+9. **Installed app only.** Push is offered only where fair.yoga runs as the
+   installed app (`display-mode: standalone`, #723's `useInstallSupport()` →
+   `installed`), on every platform — no browser-tab or desktop-browser
+   notifications. A browser tab shows how to install instead. This is a
+   client-side gate: the server cannot tell an installed app's subscription
+   from a tab's, and does not try.
 
 ## 3. Design
 
@@ -148,7 +154,8 @@ logs once per process; the settings section reports push unavailable.
   revokes a subscription whose pushes show nothing; every push here shows).
   `notificationclick` → focus an open fair.yoga window and navigate it to
   `url`, else `openWindow(url)`.
-- Registered from the push settings section only, not on every page.
+- Registered from the push settings section only, and only inside the
+  installed app (§2.9) — never on every page.
   Same-origin `/sw.js` is already allowed by the CSP (`next.config.ts`:
   `script-src 'self'`, no `worker-src`); scope `/` needs no
   `Service-Worker-Allowed`.
@@ -178,8 +185,8 @@ error until it is filed. `shouldPush` is the lookup plus the column.
   endpoint is an unguessable capability, so the uniform answer discloses
   nothing.
 - **Settings section**, on both notification pages. Device states:
-  `unsupported` · `needs-install` (#723's `classifyInstall` → `ios-safari`;
-  points at the existing install steps) · `off` · `on` · `blocked`
+  `unsupported` · `needs-install` (anything but #723's `installed`, on every
+  platform — §2.9; points at the existing install steps) · `off` · `on` · `blocked`
   (permission denied: explains the OS setting, cannot re-ask) ·
   `unavailable` (no VAPID config). "Turn on for this phone" requests
   permission only on that tap. Group checkboxes save through the existing
@@ -244,9 +251,10 @@ restored.
 - **E2E**: none for delivery — headless Chromium cannot reach a real push
   service.
 - **Manual acceptance** (real devices, recorded in the PR): an installed
-  iPhone and Android Chrome receive a push for a default-on group with the app
-  closed, and the tap lands on the highlighted inbox row; turning push off,
-  and signing out, stops delivery to that device.
+  iPhone and an installed Android app receive a push for a default-on group
+  with the app closed, and the tap lands on the highlighted inbox row; turning
+  push off, and signing out, stops delivery to that device. A plain browser
+  tab shows the install steps and no button.
 
 ## 6. Docs
 
