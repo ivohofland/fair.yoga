@@ -33,6 +33,7 @@
  */
 
 import { log } from '@/lib/log';
+import { logDegraded } from '@/lib/degradation';
 
 /** Milliseconds the zone's wall clock is ahead of UTC at the given instant. */
 function timeZoneOffsetMs(instant: Date, timeZone: string): number {
@@ -76,9 +77,10 @@ function timeZoneOffsetMs(instant: Date, timeZone: string): number {
  * #86's archive boundary, where one spares a class and the other deletes it.
  *
  * Unknown timezones fall back to the UTC calendar date rather than throwing,
- * matching `classStartInstant`, and log at `error` — the fallback is a
- * wrong-but-bounded answer that nothing else would report (#145). An
- * unreadable instant is a different fault and says so.
+ * matching `classStartInstant`, and record it as `TIMEZONE_INVALID_FALLBACK_UTC`,
+ * which reaches the operator by email (`docs/degradation-sites.md`) — the
+ * fallback is a wrong-but-bounded answer that nothing else would report (#145).
+ * An unreadable instant is a different fault and says so.
  */
 export function startOfLocalDay(instant: Date, timeZone: string): Date {
   // CHECKED BEFORE THE `try`, for the reason `classStartInstant` sets out at
@@ -109,7 +111,12 @@ export function startOfLocalDay(instant: Date, timeZone: string): Date {
 
     return new Date(Date.UTC(parts.year!, parts.month! - 1, parts.day!));
   } catch (err) {
-    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC calendar date');
+    logDegraded(
+      'TIMEZONE_INVALID_FALLBACK_UTC',
+      { timeZone, site: 'local-day' },
+      'invalid timezone, falling back to UTC calendar date',
+      err,
+    );
     const utc = new Date(instant);
     utc.setUTCHours(0, 0, 0, 0);
     return utc;
@@ -184,8 +191,9 @@ export function mondayOf(date: Date): WeekKey {
  * log it as an invalid timezone, naming a zone that was never the problem.
  *
  * Falls back to UTC on an unreadable timezone rather than throwing, the same
- * fallback `classStartInstant` and `startOfLocalDay` use (#145), and logs at
- * `error` for the same reason: a wrong-but-bounded answer beats a crashed
+ * fallback `classStartInstant` and `startOfLocalDay` use (#145), and records it
+ * as `TIMEZONE_INVALID_FALLBACK_UTC`, which reaches the operator by email
+ * (`docs/degradation-sites.md`): a wrong-but-bounded answer beats a crashed
  * notification. The fallback is suffixed " (UTC)", so a student reading it
  * can see which clock it is on.
  */
@@ -216,7 +224,12 @@ export function formatInstantInZone(instant: Date, timeZone: string): string {
   try {
     return fmt(timeZone);
   } catch (err) {
-    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC formatting');
+    logDegraded(
+      'TIMEZONE_INVALID_FALLBACK_UTC',
+      { timeZone, site: 'format' },
+      'invalid timezone, falling back to UTC formatting',
+      err,
+    );
     return `${fmt('UTC')} (UTC)`;
   }
 }
@@ -248,8 +261,10 @@ export function formatInstantInZone(instant: Date, timeZone: string): string {
  * cannot join the swap.
  *
  * Unknown timezones fall back to UTC interpretation rather than throwing —
- * a wrong-but-bounded answer beats a crashed cron run — and log at `error`,
- * because nothing else reports that the answer is the wrong one (#145).
+ * a wrong-but-bounded answer beats a crashed cron run — and record it as
+ * `TIMEZONE_INVALID_FALLBACK_UTC`, which reaches the operator by email
+ * (`docs/degradation-sites.md`), because nothing else reports that the answer
+ * is the wrong one (#145).
  */
 export function classStartInstant(
   cls: { date: Date; startTime: Date },
@@ -306,7 +321,12 @@ export function classStartInstant(
     ts = wallUtc - timeZoneOffsetMs(new Date(ts), timeZone);
     return new Date(ts);
   } catch (err) {
-    log.error({ timeZone, err }, 'invalid timezone, falling back to UTC interpretation');
+    logDegraded(
+      'TIMEZONE_INVALID_FALLBACK_UTC',
+      { timeZone, site: 'interpret' },
+      'invalid timezone, falling back to UTC interpretation',
+      err,
+    );
     return new Date(wallUtc);
   }
 }

@@ -64,6 +64,36 @@ describe('toIncomeTierOrThrow', () => {
   });
 });
 
+describe('readIncomeTier degradation', () => {
+  it('reports INCOME_TIER_OUT_OF_RANGE with the tier and the id it was handed, and answers null', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+
+    expect(readIncomeTier(9, { studentId: 'student-1' })).toBeNull();
+
+    expect(warn).toHaveBeenCalledWith(
+      { tier: 9, studentId: 'student-1', code: 'INCOME_TIER_OUT_OF_RANGE' },
+      expect.stringContaining('income tier outside 1-5'),
+    );
+  });
+
+  it('toIncomeTier substitutes the median and reports the same code', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+
+    expect(toIncomeTier(9, { registrationId: 'reg-1' })).toBe(3);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'INCOME_TIER_OUT_OF_RANGE', registrationId: 'reg-1' }),
+      expect.any(String),
+    );
+  });
+
+  it('is silent for a valid tier', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(readIncomeTier(2)).toBe(2);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('readIncomeTier', () => {
   it('passes every in-range tier through unchanged', () => {
     expect([1, 2, 3, 4, 5].map((n) => readIncomeTier(n))).toEqual([1, 2, 3, 4, 5]);

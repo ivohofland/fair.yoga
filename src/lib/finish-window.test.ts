@@ -78,6 +78,20 @@ describe('finish window', () => {
       );
     });
 
+    it('reports TIMEZONE_INVALID_FALLBACK_UTC, naming the finish-window site', () => {
+      const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
+      formatClockInZone(new Date('2026-06-01T17:30:00Z'), 'Not/AZone');
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: 'TIMEZONE_INVALID_FALLBACK_UTC',
+          site: 'finish-window',
+          timeZone: 'Not/AZone',
+          err: expect.any(Error),
+        }),
+        expect.stringContaining('falling back to UTC formatting'),
+      );
+    });
+
     /**
      * An Invalid Date throws from `Intl.DateTimeFormat.format` in every zone,
      * UTC included, so without its own check it escapes the fallback and the
