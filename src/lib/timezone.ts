@@ -265,6 +265,9 @@ export function formatInstantInZone(instant: Date, timeZone: string): string {
  * `TIMEZONE_INVALID_FALLBACK_UTC`, which reaches the operator by email
  * (`docs/degradation-sites.md`), because nothing else reports that the answer
  * is the wrong one (#145).
+ *
+ * An unreadable date or start time answers an Invalid Date instead, recorded
+ * as `CLASS_START_UNREADABLE` (`docs/degradation-sites.md`).
  */
 export function classStartInstant(
   cls: { date: Date; startTime: Date },
@@ -294,22 +297,25 @@ export function classStartInstant(
   // …)` logged the date's own `startTime` value under "unparseable startTime".
   //
   // Returning early keeps the same Invalid Date this has always returned —
-  // callers that compare it are unchanged — while making the cause greppable,
-  // and letting `startsInPast` fail closed on these and not on a bad timezone.
+  // callers that compare it are unchanged — while naming the cause, and
+  // letting `startsInPast` fail closed on these and not on a bad timezone.
+  //
+  // Both are recorded as `CLASS_START_UNREADABLE`, which reaches the operator
+  // by email (`docs/degradation-sites.md`): the Invalid Date is a substitute
+  // every caller acts on silently. `site` is the point of splitting the
+  // branches — it says which half broke.
   if (Number.isNaN(d.getTime())) {
-    // `startTime` alongside it, showing it was fine — the point of splitting
-    // these branches is that a reader can tell which half broke.
-    // `isoOrNull` is hoisted; it is declared below only to keep it beside its
-    // other callers.
-    log.warn(
-      { classDate: isoOrNull(d), startTime: isoOrNull(startTime) },
+    logDegraded(
+      'CLASS_START_UNREADABLE',
+      { site: 'date' },
       'unreadable class date, cannot compute class start instant',
     );
     return new Date(NaN);
   }
   if (Number.isNaN(wallUtc)) {
-    log.warn(
-      { startTime: isoOrNull(startTime) },
+    logDegraded(
+      'CLASS_START_UNREADABLE',
+      { site: 'start-time' },
       'unparseable startTime, cannot compute class start instant',
     );
     return new Date(NaN);
@@ -345,9 +351,8 @@ export function classStartInstant(
  *
  * A function rather than the check written out at each site, because it was
  * written out at each site and one of the four was missed — while a comment at
- * a fifth asserted that "the callers NaN-check their own instants". Three call
- * sites and a name is cheap; a claim that has to stay true by inspection is
- * not.
+ * a fifth asserted that "the callers NaN-check their own instants". A name is
+ * cheap; a claim that has to stay true by inspection is not.
  */
 export function isoOrNull(date: Date): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();

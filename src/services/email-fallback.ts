@@ -16,6 +16,7 @@ import { shouldEmailStudent, shouldEmailTeacher, isTeacherNotificationType } fro
 import { renderNotificationEmail } from '@/lib/email-templates';
 import { emailDryRun } from '@/lib/email';
 import { log } from '@/lib/log';
+import { logDegraded } from '@/lib/degradation';
 
 // Lazy for the same reason as lib/email: a keyless environment must be
 // able to import this module (the dry-run path never constructs).
@@ -214,8 +215,11 @@ export async function processEmailFallback(
         } else {
           // A row outside `TeacherNotificationType` was written around the
           // type: directly, or by a cast, mutation or `Object.assign` that
-          // defeats it. Emailed rather than dropped, and logged so it is seen.
-          log.error(
+          // defeats it. Emailed rather than dropped, and recorded as
+          // `TEACHER_NOTIFICATION_TYPE_UNKNOWN` (`docs/degradation-sites.md`),
+          // since the preference it skipped is one the teacher set.
+          logDegraded(
+            'TEACHER_NOTIFICATION_TYPE_UNKNOWN',
             { notificationId: notification.id, type: notification.type },
             'teacher notification outside TeacherNotificationType; emailed ignoring preferences',
           );

@@ -24,7 +24,7 @@ import { isUpcomingRegistration } from '@/lib/booking-ledger';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { log } from '@/lib/log';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
-import { resolvePaymentBreakdown } from '@/lib/payment-breakdown';
+import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -357,19 +357,16 @@ export default async function StudentBookingsPage() {
             const payment = reg.payment;
             const outstanding = payment ? isOutstanding(payment.status) : false;
             const cancelled = cls.calendarEntry.cancelledAt !== null;
-            const breakdown = resolvePaymentBreakdown({
-              classStatus: cls.status,
-              roomCost: cls.roomCost,
-              totalRevenue: cls.totalRevenue,
-              totalStudents: cls.totalStudents,
-              payment,
-            });
-            if (breakdown.kind === 'snapshot_missing') {
-              log.warn(
-                { classId: cls.id, registrationId: reg.id },
-                'completed class has no pricing snapshot; payment breakdown not rendered',
-              );
-            }
+            const breakdown = resolveReportedPaymentBreakdown(
+              {
+                classStatus: cls.status,
+                roomCost: cls.roomCost,
+                totalRevenue: cls.totalRevenue,
+                totalStudents: cls.totalStudents,
+                payment,
+              },
+              { classId: cls.id, registrationId: reg.id },
+            );
             return (
               <div key={reg.id} className="min-h-14 py-3 border-b border-border last:border-b-0">
                 <div className="flex items-center justify-between gap-3">
