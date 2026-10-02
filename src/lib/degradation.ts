@@ -68,7 +68,9 @@ export function logDegraded<C extends DegradationCode>(
   message: string,
   err?: unknown,
 ): FireAndForget {
-  const safe = allowlisted(code, context);
+  // `?? {}`: the types forbid a null context, but a cast does not, and this
+  // must not throw into the page it is reporting on.
+  const safe = allowlisted(code, context ?? {});
   log[DEGRADATION_CODES[code].level](
     { ...safe, code, ...(err === undefined ? {} : { err }) },
     message,

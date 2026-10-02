@@ -123,4 +123,18 @@ describe('logDegraded', () => {
     // @ts-expect-error — `email` is not a context key of this code
     logDegraded('INCOME_TIER_OUT_OF_RANGE', { email: 'x' }, 'm');
   });
+
+  it('does not throw when a cast smuggles in a null context', async () => {
+    const { log, logDegraded } = await load();
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+
+    expect(() =>
+      logDegraded(
+        'INCOME_TIER_OUT_OF_RANGE',
+        null as unknown as DegradationContext<'INCOME_TIER_OUT_OF_RANGE'>,
+        'm',
+      ),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledWith({ code: 'INCOME_TIER_OUT_OF_RANGE' }, 'm');
+  });
 });
