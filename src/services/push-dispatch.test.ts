@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
-import { dispatchPushes, PUSH_STALE_AFTER_MS, type PushSender } from './push-dispatch';
-import { sendPush } from '@/lib/push/send';
+import { dispatchPushes, PUSH_BATCH, PUSH_STALE_AFTER_MS, type PushSender } from './push-dispatch';
+import { PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 import { log } from '@/lib/log';
 
@@ -665,7 +665,7 @@ describe('dispatchPushes', () => {
     });
   });
 
-  describe('with VAPID_* set to keys that do not form a pair', () => {
+  describe('with VAPID_* set', () => {
     const vapidPrivate = crypto.createECDH('prime256v1');
     vapidPrivate.generateKeys();
     const otherPair = crypto.createECDH('prime256v1');
@@ -705,12 +705,130 @@ describe('dispatchPushes', () => {
       expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).not.toBeNull();
       expect(await prisma.pushSubscription.findUnique({ where: { id: sub.id } })).not.toBeNull();
     });
+
+    it('sends through the production sender when the keys form a pair', async () => {
+      const pair = crypto.createECDH('prime256v1');
+      pair.generateKeys();
+      vi.stubEnv('VAPID_PUBLIC_KEY', pair.getPublicKey().toString('base64url'));
+      vi.stubEnv('VAPID_PRIVATE_KEY', pair.getPrivateKey().toString('base64url'));
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 201 }));
+      const browser = crypto.createECDH('prime256v1');
+      browser.generateKeys();
+      const sub = await prisma.pushSubscription.create({
+        data: {
+          accountId: studentAccountId,
+          endpoint: `https://fcm.googleapis.com/fcm/send/production-${crypto.randomUUID()}`,
+          p256dh: browser.getPublicKey().toString('base64url'),
+          auth: crypto.randomBytes(16).toString('base64url'),
+        },
+      });
+      const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+
+      const result = await dispatchPushes(scoped([n.id]).db);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe(sub.endpoint);
+      expect(new Headers(init?.headers).get('Urgency')).toBe('high');
+      expect(result.sent).toBe(1);
+      expect((await prisma.pushSubscription.findUniqueOrThrow({ where: { id: sub.id } })).lastUsedAt).not.toBeNull();
+    });
   });
 
   it('retires rows without sending when push is not configured', async () => {
-    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
-    const result = await dispatchPushes(scoped([n.id]).db, null);
-    expect(result.sent).toBe(0);
+    // A usable environment, device and sender's network, so that only the
+    // `null` sender stands between this row and a delivered push.
+    const pair = crypto.createECDH('prime256v1');
+    pair.generateKeys();
+    vi.stubEnv('VAPID_PUBLIC_KEY', pair.getPublicKey().toString('base64url'));
+    vi.stubEnv('VAPID_PRIVATE_KEY', pair.getPrivateKey().toString('base64url'));
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 201 }));
+    try {
+      const browser = crypto.createECDH('prime256v1');
+      browser.generateKeys();
+      await prisma.pushSubscription.create({
+        data: {
+          accountId: studentAccountId,
+          endpoint: `https://fcm.googleapis.com/fcm/send/unconfigured-${crypto.randomUUID()}`,
+          p256dh: browser.getPublicKey().toString('base64url'),
+          auth: crypto.randomBytes(16).toString('base64url'),
+        },
+      });
+      const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+      const result = await dispatchPushes(scoped([n.id]).db, null);
+      expect(result).toMatchObject({ claimed: 1, sent: 0 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).not.toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('holds the push TTL inside the stale cutoff, and the cutoff at fifteen minutes', () => {
+    expect(PUSH_TTL_SECONDS * 1000).toBeLessThan(PUSH_STALE_AFTER_MS);
+    expect(PUSH_STALE_AFTER_MS).toBe(15 * 60_000);
+  });
+
+  it('retires a row from sixteen minutes ago and sends one from fourteen', async () => {
+    const sub = await subscribe(studentAccountId, 'freshness');
+    const now = new Date();
+    const stale = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(now.getTime() - 16 * 60_000) });
+    const fresh = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(now.getTime() - 14 * 60_000) });
+    const { send, calls } = recordingSender();
+
+    const result = await dispatchPushes(scoped([stale.id, fresh.id]).db, send, now);
+
+    expect(result).toMatchObject({ retired: 1, claimed: 1, sent: 1 });
+    expect(calls.map((c) => c.url)).toEqual([`/updates?n=${fresh.id}`]);
+    expect(calls.map((c) => c.endpoint)).toEqual([sub.endpoint]);
+    expect((await prisma.notification.findUniqueOrThrow({ where: { id: stale.id } })).pushHandledAt).not.toBeNull();
+  });
+
+  it('claims the oldest candidates first when there are more than one batch', async () => {
+    const now = new Date();
+    const createdAt = (i: number) => new Date(now.getTime() - 10 * 60_000 + i * 1000);
+    // Written newest first, so an order that follows insertion would claim
+    // the newest row and leave the oldest.
+    const ids: string[] = [];
+    for (let i = PUSH_BATCH; i >= 0; i--) {
+      const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'announcement', createdAt: createdAt(i) });
+      ids.unshift(n.id);
+    }
+
+    const result = await dispatchPushes(scoped(ids).db, null, now);
+
+    expect(result.claimed).toBe(PUSH_BATCH);
+    const rows = await prisma.notification.findMany({ where: { id: { in: ids } }, select: { id: true, pushHandledAt: true } });
+    const unhandled = rows.filter((r) => r.pushHandledAt === null).map((r) => r.id);
+    expect(unhandled).toEqual([ids[PUSH_BATCH]]);
+  });
+
+  it('retires without sending for an erased teacher profile', async () => {
+    const account = await prisma.account.create({ data: { email: `push-erased-teacher-${uniqueSuffix}@test.local` } });
+    accountIds.push(account.id);
+    const teacher = await prisma.teacher.create({
+      data: {
+        accountId: account.id,
+        firstName: 'Deleted',
+        lastName: 'Teacher',
+        email: `push-erased-teacher-deleted-${uniqueSuffix}@test.local`,
+        bio: 'Push dispatch erased teacher',
+        pageSlug: `push-erased-teacher-${uniqueSuffix}`,
+        deletedAt: new Date(),
+      },
+    });
+    teacherIds.push(teacher.id);
+    await subscribe(account.id, 'erased-teacher');
+    const n = await notify({ recipientType: 'teacher', recipientId: teacher.id, type: 'class_cancelled' });
+    const { send, calls } = recordingSender();
+
+    const result = await dispatchPushes(scoped([n.id]).db, send);
+
+    expect(result.claimed).toBe(1);
+    expect(calls).toHaveLength(0);
     expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).not.toBeNull();
   });
 });
