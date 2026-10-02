@@ -3,6 +3,11 @@ import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
 import { dispatchPushes, PUSH_STALE_AFTER_MS, type PushSender } from './push-dispatch';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
+import { log } from '@/lib/log';
+
+vi.mock('@/lib/log', () => ({
+  log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -46,7 +51,10 @@ function twoPartyBarrier(timeoutMs = 2000): () => Promise<void> {
   });
   return async () => {
     arrived += 1;
-    if (arrived >= 2) release();
+    if (arrived > 2) {
+      throw new Error('twoPartyBarrier: called a third time — only two parties were expected');
+    }
+    if (arrived === 2) release();
     await Promise.race([
       bothArrived,
       new Promise<never>((_, reject) => {
@@ -96,8 +104,9 @@ describe('dispatchPushes', () => {
   let erasedStudentId: string;
 
   // Keyed arrays filled in beforeAll as each row is created, so a partial
-  // failure there still leaves afterAll something safe to clean up — an
-  // unguarded `in: []`/`in: undefined` filter deletes the whole table.
+  // failure there still leaves afterAll something safe to clean up: Prisma
+  // treats `in: []` as matching no rows, and each cleanup below is guarded
+  // by `.length > 0` only to skip that no-op query.
   const accountIds: string[] = [];
   const studentIds: string[] = [];
   const teacherIds: string[] = [];
@@ -178,8 +187,7 @@ describe('dispatchPushes', () => {
     unclaimedStudentId = unclaimedStudent.id;
     studentIds.push(unclaimedStudentId);
 
-    // Real erasure shape (R10): `deletedAt` set, `accountId` KEPT — that is
-    // what `src/services/gdpr.ts` erasure leaves (see `eraseStudent`).
+    // Real erasure shape: `deletedAt` set, `accountId` kept.
     const erasedAccount = await prisma.account.create({
       data: { email: `push-erased-${uniqueSuffix}@test.local` },
     });
@@ -281,11 +289,15 @@ describe('dispatchPushes', () => {
 
   it('redacts the money body on the lock screen', async () => {
     await prisma.student.update({ where: { id: studentId }, data: { pushPayments: true } });
-    await subscribe(studentAccountId, 'money');
-    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'payment_request', body: 'Your price is €14.20.' });
-    const { send, calls } = recordingSender();
-    await dispatchPushes(scoped([n.id]).db, send);
-    expect(calls[0]!.body).toBe('Open fair.yoga to see the details.');
+    try {
+      await subscribe(studentAccountId, 'money');
+      const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'payment_request', body: 'Your price is €14.20.' });
+      const { send, calls } = recordingSender();
+      await dispatchPushes(scoped([n.id]).db, send);
+      expect(calls[0]!.body).toBe('Open fair.yoga to see the details.');
+    } finally {
+      await prisma.student.update({ where: { id: studentId }, data: { pushPayments: false } });
+    }
   });
 
   it('deletes a subscription the push service reports gone, and does not retry a failure', async () => {
@@ -303,8 +315,33 @@ describe('dispatchPushes', () => {
     expect(await prisma.pushSubscription.findUnique({ where: { id: kept.id } })).not.toBeNull();
   });
 
+  it('keeps the tick alive when one subscription throws, and removes only that row (R14)', async () => {
+    const bad = await subscribe(studentAccountId, 'bad');
+    const good = await subscribe(studentAccountId, 'good');
+    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const calls: string[] = [];
+    const send: PushSender = vi.fn(async (target, _payload, _urgency) => {
+      if (target.endpoint === bad.endpoint) {
+        throw new Error('ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY');
+      }
+      calls.push(target.endpoint);
+      return { outcome: 'delivered' as const, status: 201 };
+    });
+
+    const result = await dispatchPushes(scoped([n.id]).db, send);
+
+    expect(calls).toEqual([good.endpoint]);
+    expect(await prisma.pushSubscription.findUnique({ where: { id: bad.id } })).toBeNull();
+    expect(await prisma.pushSubscription.findUnique({ where: { id: good.id } })).not.toBeNull();
+    expect(result.failed).toBe(1);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ notificationId: n.id, subscriptionId: bad.id }),
+      expect.any(String),
+    );
+  });
+
   it('sends once when two ticks overlap', async () => {
-    await subscribe(studentAccountId, 'overlap');
+    const sub = await subscribe(studentAccountId, 'overlap');
     const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'waitlist_promoted' });
     const { send, calls } = recordingSender();
     // Both ticks share one racing+scoped client, so their `findMany`s hit
@@ -313,17 +350,25 @@ describe('dispatchPushes', () => {
     // row still unclaimed — the exact race the CAS exists for.
     const s = scopedRacing([n.id]);
     await Promise.all([dispatchPushes(s.db, send), dispatchPushes(s.db, send)]);
-    expect(calls.filter((c) => c.title === 'T')).toHaveLength(1);
+    expect(calls.map((c) => c.endpoint)).toEqual([sub.endpoint]);
   });
 
   it('reaches a dual-role account for both profiles, each by its own prefs', async () => {
     const device = await subscribe(dualAccountId, 'dual');
-    const asStudent = await notify({ recipientType: 'student', recipientId: dualStudentId, type: 'spot_available' });
-    const asTeacher = await notify({ recipientType: 'teacher', recipientId: dualTeacherId, type: 'class_cancelled' });
-    const { send, calls } = recordingSender();
-    await dispatchPushes(scoped([asStudent.id, asTeacher.id]).db, send);
-    expect(calls.map((c) => c.url).sort()).toEqual([`/inbox?n=${asTeacher.id}`, `/updates?n=${asStudent.id}`].sort());
-    expect(new Set(calls.map((c) => c.endpoint))).toEqual(new Set([device.endpoint]));
+    // Turn off only the teacher profile's group for this notification type,
+    // so a push reaching the student side but not the teacher side can only
+    // be explained by each profile reading its own preference columns.
+    await prisma.teacher.update({ where: { id: dualTeacherId }, data: { pushAutoCancelled: false } });
+    try {
+      const asStudent = await notify({ recipientType: 'student', recipientId: dualStudentId, type: 'spot_available' });
+      const asTeacher = await notify({ recipientType: 'teacher', recipientId: dualTeacherId, type: 'class_cancelled' });
+      const { send, calls } = recordingSender();
+      await dispatchPushes(scoped([asStudent.id, asTeacher.id]).db, send);
+      expect(calls.map((c) => c.url)).toEqual([`/updates?n=${asStudent.id}`]);
+      expect(new Set(calls.map((c) => c.endpoint))).toEqual(new Set([device.endpoint]));
+    } finally {
+      await prisma.teacher.update({ where: { id: dualTeacherId }, data: { pushAutoCancelled: true } });
+    }
   });
 
   it('retires without sending for an unclaimed student and for an erased profile', async () => {
@@ -334,6 +379,9 @@ describe('dispatchPushes', () => {
     const { send, calls } = recordingSender();
     await expect(dispatchPushes(scoped([unclaimed.id, missing.id, erased.id]).db, send)).resolves.toBeDefined();
     expect(calls).toHaveLength(0);
+    for (const id of [unclaimed.id, missing.id, erased.id]) {
+      expect((await prisma.notification.findUniqueOrThrow({ where: { id } })).pushHandledAt).not.toBeNull();
+    }
   });
 
   it('retires rows without sending when push is not configured', async () => {
