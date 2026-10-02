@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { DEGRADATION_CODES } from './degradation-codes';
+import { DEGRADATION_CODES, isDegradationCode } from './degradation-codes';
 
 const PERSONAL_DATA_KEY = /name|email|phone|address|birth|note|message|text/i;
 
@@ -21,6 +21,16 @@ describe('DEGRADATION_CODES', () => {
     for (const key of entry.contextKeys) {
       expect(key, `context key "${key}"`).not.toMatch(PERSONAL_DATA_KEY);
     }
+  });
+});
+
+describe('isDegradationCode', () => {
+  it.each(Object.keys(DEGRADATION_CODES))('accepts %s', (code) => {
+    expect(isDegradationCode(code)).toBe(true);
+  });
+
+  it.each(['toString', 'constructor', '__proto__', 'NOT_A_CODE'])('rejects %s', (code) => {
+    expect(isDegradationCode(code)).toBe(false);
   });
 });
 

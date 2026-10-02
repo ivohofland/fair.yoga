@@ -4,22 +4,23 @@
  * `daily-cleanup` job; the mechanism is `docs/technical-architecture.md`
  * (Cron Jobs → Degradation events).
  *
- * CLAIM BEFORE SEND, the shape `email-fallback.ts` and `payment-reminders.ts`
- * use against a manual `/api/cron/daily-cleanup` overlapping a scheduled tick:
- * each row is claimed with a conditional `updateMany` keyed on the
- * `lastSeenAt` this run read, and a claim count other than 1 means another run
- * or a newer event got there first.
+ * CLAIM BEFORE SEND, against a manual `/api/cron/daily-cleanup` overlapping a
+ * scheduled tick (the precedent is `docs/technical-architecture.md`, Cron Jobs
+ * → Overlapping triggers): each row is claimed with a conditional `updateMany`
+ * keyed on the `lastSeenAt` this run read, and a claim count other than 1 means
+ * another run or a newer event got there first.
  *
  * The claim stamps `lastNotifiedAt` with the `lastSeenAt` it read, never with
  * the clock. An event landing after the stamp leaves `lastSeenAt` ahead of it,
  * so that row is due again next run instead of being swallowed.
  *
- * A failed send puts every claim back and throws, which flips the job unhealthy
- * on the verdict `/api/health` already publishes.
+ * Any failure from the first claim through the send (a claim, the render, the
+ * send) puts back every claim made so far and throws, which flips the job
+ * unhealthy on the verdict `/api/health` already publishes.
  */
 
 import type { PrismaClient } from '@prisma/client';
-import { DEGRADATION_CODES } from '@/lib/degradation-codes';
+import { DEGRADATION_CODES, isDegradationCode } from '@/lib/degradation-codes';
 import { sendHtmlEmail } from '@/lib/email';
 import { renderDegradationDigestEmail, type DegradationDigestEntry } from '@/lib/email-templates';
 import { log } from '@/lib/log';
@@ -40,9 +41,12 @@ export class DegradationDigestError extends Error {
 const UNREGISTERED_DESCRIPTION = 'This code is no longer registered; see the code history in git.';
 
 function describeCode(code: string): string {
-  return code in DEGRADATION_CODES
-    ? DEGRADATION_CODES[code as keyof typeof DEGRADATION_CODES].description
-    : UNREGISTERED_DESCRIPTION;
+  return isDegradationCode(code) ? DEGRADATION_CODES[code].description : UNREGISTERED_DESCRIPTION;
+}
+
+/** A stored `sample` is JSON; only a non-array object reads as context keys. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function notifyOperatorOfDegradations(
@@ -64,31 +68,30 @@ export async function notifyOperatorOfDegradations(
   }
 
   const claimed: typeof due = [];
-  for (const row of due) {
-    const { count } = await db.degradationEvent.updateMany({
-      where: {
-        code: row.code,
-        lastSeenAt: row.lastSeenAt,
-        OR: [{ lastNotifiedAt: null }, { lastNotifiedAt: { lt: row.lastSeenAt } }],
-      },
-      data: { lastNotifiedAt: row.lastSeenAt },
-    });
-    if (count === 1) claimed.push(row);
-  }
-  if (claimed.length === 0) return { emailed: 0 };
-
-  const entries: DegradationDigestEntry[] = claimed.map((r) => ({
-    code: r.code,
-    description: describeCode(r.code),
-    firstSeenAt: r.firstSeenAt,
-    lastSeenAt: r.lastSeenAt,
-    occurrences: r.occurrences,
-    sample: (r.sample ?? {}) as Record<string, unknown>,
-  }));
-  const { subject, html } = renderDegradationDigestEmail(entries);
-
   let failure: unknown = null;
   try {
+    for (const row of due) {
+      const { count } = await db.degradationEvent.updateMany({
+        where: {
+          code: row.code,
+          lastSeenAt: row.lastSeenAt,
+          OR: [{ lastNotifiedAt: null }, { lastNotifiedAt: { lt: row.lastSeenAt } }],
+        },
+        data: { lastNotifiedAt: row.lastSeenAt },
+      });
+      if (count === 1) claimed.push(row);
+    }
+    if (claimed.length === 0) return { emailed: 0 };
+
+    const entries: DegradationDigestEntry[] = claimed.map((r) => ({
+      code: r.code,
+      description: describeCode(r.code),
+      firstSeenAt: r.firstSeenAt,
+      lastSeenAt: r.lastSeenAt,
+      occurrences: r.occurrences,
+      sample: isPlainObject(r.sample) ? r.sample : {},
+    }));
+    const { subject, html } = renderDegradationDigestEmail(entries);
     const sent = await sendHtmlEmail({ to: operatorEmail, subject, html });
     if (!sent.ok) failure = new Error(sent.reason);
   } catch (err) {
@@ -105,12 +108,18 @@ export async function notifyOperatorOfDegradations(
       });
     } catch (err) {
       stranded += 1;
-      log.error({ err, code: row.code }, 'could not release a degradation digest claim');
+      log.error(
+        { err, code: row.code },
+        'could not release a degradation digest claim; the event is now marked told without an email (DEPLOYMENT.md §7 makes it due again)',
+      );
     }
   }
   const reason = failure instanceof Error ? failure.message : String(failure);
-  throw new DegradationDigestError(
-    `degradation digest not delivered: ${reason}${stranded > 0 ? ` (${stranded} claim(s) could not be released)` : ''}`,
-    { cause: failure },
-  );
+  const outcome =
+    stranded > 0
+      ? `${stranded} claim(s) could not be released, so those events are marked told without an email`
+      : 'the events stay due; the next daily run retries';
+  throw new DegradationDigestError(`degradation digest not delivered: ${reason}; ${outcome}`, {
+    cause: failure,
+  });
 }

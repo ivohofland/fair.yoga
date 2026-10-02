@@ -1,7 +1,7 @@
 /**
  * Every degradation the app records, each with the severity its log line has
- * and the context keys it may carry. Imports nothing, so a test or a doc
- * generator can read it without pulling in the database.
+ * and the context keys it may carry. Imports nothing, so a test can read it
+ * without pulling in the database.
  *
  * A code names one intentional fallback: a place that substitutes or withholds
  * a value because data that should have been impossible turned up. Which sites
@@ -60,6 +60,11 @@ export const DEGRADATION_CODES = {
 >;
 
 export type DegradationCode = keyof typeof DEGRADATION_CODES;
+
+/** True for a registered code only; `in` would also accept `'toString'`. */
+export function isDegradationCode(code: string): code is DegradationCode {
+  return Object.hasOwn(DEGRADATION_CODES, code);
+}
 
 /** The context a call site may pass for `C`; every key optional. */
 export type DegradationContext<C extends DegradationCode> = {
