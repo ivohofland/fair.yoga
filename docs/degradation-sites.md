@@ -144,10 +144,12 @@ The sites where the verdict took judgment, and why each landed where it did.
   a stored value, and the edit itself saved.
 - **The slot-holder probes** — `entry-conflict.ts` and `rule-slot-holder.ts`
   when their own query fails. The 409 the teacher sees is less specific. Ruled
-  *failure, not impossible data*. Their unknown-*kind* branches differ:
-  `probeConflictingEntry`'s is converted (`ENTRY_CONFLICT_KIND_UNKNOWN`), while
-  `ruleSlotHolder` maps an unnamed kind to `'unknown'` without logging at all,
-  so it has no line for this audit to classify — the one silent twin found.
+  *failure, not impossible data*. Their unknown-*kind* branches are
+  degradations, recorded as `ENTRY_CONFLICT_KIND_UNKNOWN` and
+  `RULE_SLOT_KIND_UNKNOWN`: a holder the query found, withheld from the 409
+  because its kind has no name here. `ruleSlotHolder` keeps its routine
+  "no holder row" outcome (the rule was archived meanwhile) silent and apart
+  from that branch.
 
 ## Classification
 
@@ -486,6 +488,29 @@ SELECT id, kind, "teacherId", date, "startTime" FROM "CalendarEntry" WHERE id = 
 
 **Correct.** Deploy the code that knows the new family, or roll the migration
 back. The entry itself is not wrong; nothing in the row needs editing.
+
+### `RULE_SLOT_KIND_UNKNOWN`
+
+**What happened.** A teacher's recurring-class write was refused because a
+schedule rule holds that weekday slot, and that rule's `kind` is not a family
+this code can name. The 409 said the slot was taken without naming which kind
+of class holds it. The sibling of `ENTRY_CONFLICT_KIND_UNKNOWN`, one layer up.
+
+**Where the bad value lives.** `ScheduleRule.kind` for a live rule of the
+sample's `teacherId` on its `dayOfWeek`; `kind` is the value found. Like
+`CalendarEntry.kind` it is the Postgres enum `ClassFamily`, so the cause is the
+same: the database has an enum member the running code does not.
+
+**Confirm.**
+
+```sql
+SELECT enum_range(NULL::"ClassFamily");
+SELECT id, kind, "startTime", "durationMinutes" FROM "ScheduleRule"
+ WHERE "teacherId" = '<teacherId>' AND "dayOfWeek" = <dayOfWeek> AND "isArchived" = false;
+```
+
+**Correct.** Deploy the code that knows the new family, or roll the migration
+back. The rule itself is not wrong; nothing in the row needs editing.
 
 ### `TEACHER_NOTIFICATION_TYPE_UNKNOWN`
 

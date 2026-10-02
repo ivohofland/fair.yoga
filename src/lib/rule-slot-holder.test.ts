@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { ruleSlotHolder } from './rule-slot-holder';
+import { log } from './log';
 
 const prisma = new PrismaClient();
 const suffix = `holder-${Date.now()}`;
@@ -152,6 +153,39 @@ describe('ruleSlotHolder', () => {
       })).resolves.toBe('unknown');
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it('reports RULE_SLOT_KIND_UNKNOWN and answers unknown for a holder whose kind it cannot name', async () => {
+    const spy = vi.spyOn(prisma, '$queryRaw').mockResolvedValueOnce([{ kind: 'retreat' }]);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(ruleSlotHolder(prisma, {
+        teacherId, dayOfWeek: 2, startMinutes: 9 * 60, durationMinutes: 60,
+      })).resolves.toBe('unknown');
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'RULE_SLOT_KIND_UNKNOWN', teacherId, kind: 'retreat', dayOfWeek: 2 }),
+        'rule slot holder probe found a holder whose kind this module has no family for',
+      );
+    } finally {
+      spy.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('stays silent when no rule holds the slot — the ordinary archive race', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      // The other teacher has no rules on dayOfWeek 6.
+      await expect(ruleSlotHolder(prisma, {
+        teacherId: otherTeacherId, dayOfWeek: 6, startMinutes: 9 * 60, durationMinutes: 60,
+      })).resolves.toBe('unknown');
+      expect(error).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
     }
   });
 });

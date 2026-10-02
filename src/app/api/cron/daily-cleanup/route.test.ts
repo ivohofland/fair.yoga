@@ -112,6 +112,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     expect(body.data.auth.ok).toBe(true);
     expect(body.data.waitlistRetention.ok).toBe(true);
     expect(body.data.notificationRetention.ok).toBe(true);
+    expect(body.data.degradationDigest.ok).toBe(true);
     expect(body.data.timezoneAudit.ok).toBe(true);
   });
 
@@ -129,6 +130,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     expect(body.data.notificationRetention.ok).toBe(false);
     expect(body.data.auth.ok).toBe(true);
     expect(body.data.waitlistRetention.ok).toBe(true);
+    expect(body.data.degradationDigest.ok).toBe(true);
     expect(body.data.timezoneAudit.ok).toBe(true);
   });
 

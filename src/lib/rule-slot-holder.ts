@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { log } from './log';
+import { logDegraded } from './degradation';
 
 /**
  * Which family's rule occupies a slot, asked after `ScheduleRule_teacher_slot_excl`
@@ -125,8 +126,20 @@ export async function ruleSlotHolder(
          AND (${probe.excludeRuleId ?? null}::text IS NULL OR "id" <> ${probe.excludeRuleId ?? null}::text)
        LIMIT 1
     `;
-    const kind = rows[0]?.kind;
-    return kind === 'regular' || kind === 'studio' ? kind : 'unknown';
+    const row = rows[0];
+    // No row is the ordinary outcome: the refusing rule was archived meanwhile.
+    if (row === undefined) return 'unknown';
+    if (row.kind === 'regular' || row.kind === 'studio') return row.kind;
+    // A holder the query FOUND, with a kind this module has no family for, so
+    // the refusal names neither. Recorded as `RULE_SLOT_KIND_UNKNOWN`
+    // (`docs/degradation-sites.md`), the sibling of `probeConflictingEntry`'s
+    // `ENTRY_CONFLICT_KIND_UNKNOWN`.
+    logDegraded(
+      'RULE_SLOT_KIND_UNKNOWN',
+      { teacherId: probe.teacherId, kind: row.kind, dayOfWeek: probe.dayOfWeek },
+      'rule slot holder probe found a holder whose kind this module has no family for',
+    );
+    return 'unknown';
   } catch (err) {
     log.warn(
       {

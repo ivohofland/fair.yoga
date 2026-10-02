@@ -42,6 +42,12 @@ export const DEGRADATION_CODES = {
       'A calendar entry holding the slot a teacher asked for had a kind this code has no name for. The 409 the teacher saw said the time was taken without naming the class, its time or its date.',
     contextKeys: ['teacherId', 'entryId', 'kind'],
   },
+  RULE_SLOT_KIND_UNKNOWN: {
+    level: 'error',
+    description:
+      'A recurring rule holding the weekday slot a teacher asked for had a kind this code has no name for. The 409 the teacher saw said the slot was taken without naming which kind of class holds it.',
+    contextKeys: ['teacherId', 'kind', 'dayOfWeek'],
+  },
   TEACHER_NOTIFICATION_TYPE_UNKNOWN: {
     level: 'error',
     description:

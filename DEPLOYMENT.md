@@ -32,7 +32,7 @@ Then:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
-curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...}}
+curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...},"degradations":{"open":0}}
 ```
 
 The `migrate` service applies Prisma migrations before the app starts.
@@ -84,7 +84,7 @@ own clocks, so CI does not need the in-process scheduler running. It is not a
 production mode. With it set, no scheduled job runs in the app: classes don't
 start, auto-cancel, or complete; recurring classes aren't generated; fallback
 emails, payment reminders and class reminders don't send; daily cleanup (retention, expired
-sessions and auth tokens, the timezone audit) doesn't run. Waitlist
+sessions and auth tokens, the timezone audit, the degradation digest) doesn't run. Waitlist
 reconciliation is worse off than the rest — it has no endpoint, so it cannot
 be run any other way — and a seat freed by a cancellation whose spot-freed
 hook was dropped (§7) is never offered to the queue. `/api/health` still
@@ -108,8 +108,8 @@ runs several sweeps and its **status is the verdict**: 200 only when every sweep
 ran, 503 when every failure was a lost lock race (retry, and back off), 500
 otherwise (a permanent fault — retrying will not clear it). The body carries
 every outcome either way, so `data.auth.ok`, `data.waitlistRetention.ok`,
-`data.notificationRetention.ok`, and `data.timezoneAudit.ok` say which one
-failed. Without `--fail`, `curl` exits 0 on all of those, so a script or a
+`data.notificationRetention.ok`, `data.timezoneAudit.ok`, and
+`data.degradationDigest.ok` say which one failed. Without `--fail`, `curl` exits 0 on all of those, so a script or a
 manual call that skips the flag reports success for a run in which a sweep did
 not run.
 
@@ -147,7 +147,8 @@ Migrations run automatically via the `migrate` service on every deploy.
   reads unhealthy. With `OPERATOR_EMAIL` unset, the server log line names the
   due codes. When the provider refuses, the thrown error carries its reason
   (`degradation digest not delivered: …`), and the events stay due, so the next
-  daily run retries. Point your uptime monitor here.
+  daily run retries. `SELECT code FROM "DegradationEvent" WHERE "lastNotifiedAt" IS NULL OR "lastNotifiedAt" < "lastSeenAt"`
+  lists the codes the next digest will carry. Point your uptime monitor here.
 - `waitlist-reconciliation` tolerates contention for
   `MAX_CONSECUTIVE_CONTENDED_TICKS` ticks before its own failures flip it; a
   pass still in flight flips it at its second refused tick, like any job,
