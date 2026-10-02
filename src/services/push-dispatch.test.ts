@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
 import { dispatchPushes, PUSH_STALE_AFTER_MS, type PushSender } from './push-dispatch';
-import { scopeSweep } from '../../tests/scoped-sweep';
+import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -32,6 +32,55 @@ async function notify(data: { recipientType: 'student' | 'teacher'; recipientId:
 
 function scoped(ids: string[]) {
   return scopeSweep(prisma, { Notification: { id: { in: ids } } });
+}
+
+/**
+ * Resolves once two parties have arrived; a party calling it a third+ time
+ * (or alone, past `timeoutMs`) gets a clear rejection instead of a hang.
+ */
+function twoPartyBarrier(timeoutMs = 2000): () => Promise<void> {
+  let arrived = 0;
+  let release!: () => void;
+  const bothArrived = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return async () => {
+    arrived += 1;
+    if (arrived >= 2) release();
+    await Promise.race([
+      bothArrived,
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('twoPartyBarrier: timed out waiting for the second notification.findMany')),
+          timeoutMs,
+        );
+      }),
+    ]);
+  };
+}
+
+/**
+ * A scoped sweep whose `notification.findMany` does not return until a
+ * second call has also read — staging the exact interleaving the claim's
+ * CAS exists for. The hook goes on the base client, before `scopeSweep`
+ * wraps it (`tests/scoped-sweep.ts`'s own docblock), and awaits the real
+ * query before the barrier, so it delays the RESULT rather than the read —
+ * no sleep, so it cannot serialize the two callers into never racing at all.
+ */
+function scopedRacing(ids: string[]): ScopedSweep {
+  const wait = twoPartyBarrier();
+  const racing = prisma.$extends({
+    query: {
+      notification: {
+        async findMany({ args, query }) {
+          const result = await query(args);
+          await wait();
+          return result;
+        },
+      },
+    },
+  });
+  return scopeSweep(racing as unknown as PrismaClient, { Notification: { id: { in: ids } } });
 }
 
 describe('dispatchPushes', () => {
@@ -258,7 +307,12 @@ describe('dispatchPushes', () => {
     await subscribe(studentAccountId, 'overlap');
     const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'waitlist_promoted' });
     const { send, calls } = recordingSender();
-    await Promise.all([dispatchPushes(scoped([n.id]).db, send), dispatchPushes(scoped([n.id]).db, send)]);
+    // Both ticks share one racing+scoped client, so their `findMany`s hit
+    // the same barrier: neither returns its candidate until the other has
+    // also read it, which is what makes both ticks reach the claim with the
+    // row still unclaimed — the exact race the CAS exists for.
+    const s = scopedRacing([n.id]);
+    await Promise.all([dispatchPushes(s.db, send), dispatchPushes(s.db, send)]);
     expect(calls.filter((c) => c.title === 'T')).toHaveLength(1);
   });
 
