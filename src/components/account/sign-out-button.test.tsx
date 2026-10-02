@@ -1,7 +1,17 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { SignOutButton } from './sign-out-button';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
+
+const disablePushMock = vi.fn<() => Promise<void>>();
+vi.mock('@/lib/push-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/push-client')>();
+  return {
+    ...actual,
+    disablePush: (...args: Parameters<typeof actual.disablePush>) => disablePushMock(...args),
+  };
+});
+
+import { SignOutButton } from './sign-out-button';
 
 /**
  * #40. This was the only component in the codebase that reset its pending flag
@@ -16,8 +26,13 @@ import { routerPush, routerRefresh } from '../../../tests/setup/components';
 describe('SignOutButton', () => {
   const fetchMock = vi.fn();
 
+  beforeEach(() => {
+    disablePushMock.mockResolvedValue(undefined);
+  });
+
   afterEach(() => {
     fetchMock.mockReset();
+    disablePushMock.mockReset();
     vi.unstubAllGlobals();
   });
 
@@ -63,6 +78,60 @@ describe('SignOutButton', () => {
       err: offline,
     });
     consoleError.mockRestore();
+  });
+
+  // #724. A device left subscribed after sign-out would keep receiving the
+  // signed-out account's pushes once someone else signs in on it.
+  it('unsubscribes this device before clearing the session', async () => {
+    const order: string[] = [];
+    disablePushMock.mockImplementation(async () => {
+      order.push('disablePush');
+    });
+    fetchMock.mockImplementation(async () => {
+      order.push('fetch');
+      return { ok: true };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(order).toEqual(['disablePush', 'fetch']);
+  });
+
+  it('proceeds within 3s when disablePush never resolves', async () => {
+    vi.useFakeTimers();
+    disablePushMock.mockReturnValue(new Promise<void>(() => {}));
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(<SignOutButton />);
+
+      fireEvent.click(screen.getByRole('button'));
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
+      expect(routerPush).toHaveBeenCalledWith('/login');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('proceeds when disablePush rejects', async () => {
+    disablePushMock.mockRejectedValue(new Error('unsubscribe failed'));
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' }),
+    );
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
   });
 
   // #431. The signup flow mounts this button to open a door, and landing on

@@ -5,7 +5,11 @@ import { NotificationList } from '@/components/layout/notification-list';
 import { listNotificationPage } from '@/services/notifications';
 import { NOTIFICATION_PAGE_SIZE } from '@/lib/notification-paging';
 
-export default async function InboxPage() {
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ n?: string | string[] }>;
+}) {
   const session = await requireTeacherSession();
 
   const { notifications, hrefById, nextCursor } = await listNotificationPage(
@@ -13,6 +17,7 @@ export default async function InboxPage() {
     [{ recipientType: 'teacher', recipientId: session.teacherId }],
     { limit: NOTIFICATION_PAGE_SIZE },
   );
+  const { n } = await searchParams;
 
   return (
     <>
@@ -21,6 +26,7 @@ export default async function InboxPage() {
         notifications={notifications}
         hrefById={hrefById}
         paging={{ audience: 'teacher', nextCursor }}
+        highlightId={typeof n === 'string' ? n : undefined}
       />
     </>
   );

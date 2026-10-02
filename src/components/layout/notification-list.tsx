@@ -19,6 +19,9 @@ interface NotificationListProps {
   hrefById?: Record<string, string | null>;
   /** Enables the "Show older messages" control: which recipient hat to read, and where to resume (`nextCursor`, null when nothing is older). */
   paging?: { audience: RecipientType; nextCursor: string | null };
+  /** The row a push notification's tap named (`?n=<id>`). Marks that row
+   * current so the reader can find it; never marks it read on its own. */
+  highlightId?: string;
 }
 
 /** A naked type parameter distributes over a union, so `Date | null` becomes `string | null`. */
@@ -47,7 +50,7 @@ function reviveNotification(n: Serialized<Notification>): Notification {
 
 const rowButtonId = (id: string) => `notification-row-${id}`;
 
-export function NotificationList({ notifications, hrefById, paging }: NotificationListProps) {
+export function NotificationList({ notifications, hrefById, paging, highlightId }: NotificationListProps) {
   const router = useRouter();
   const [readState, setReadState] = useState<Record<string, boolean>>(
     Object.fromEntries(notifications.map((n) => [n.id, n.isRead])),
@@ -154,16 +157,21 @@ export function NotificationList({ notifications, hrefById, paging }: Notificati
       {rows.map((notification) => {
         const isRead = readState[notification.id] ?? notification.isRead;
         const href = resolveHref(notification);
+        const isHighlighted = notification.id === highlightId;
 
         return (
           <div
             key={notification.id}
+            aria-current={isHighlighted ? 'true' : undefined}
+            data-highlighted={isHighlighted || undefined}
             // One row shape for both states: identical geometry, constant
             // separator. Read/unread differ only in tint, title weight, dot,
-            // and Mark-read visibility — nothing moves on state change.
-            className={`flex items-start justify-between gap-2 min-h-14 py-3 -mx-3 px-3 border-b border-border ${
-              isRead ? '' : 'bg-sand-soft'
-            }`}
+            // and Mark-read visibility — nothing moves on state change. The
+            // highlighted row's inset is held constant too: the left border
+            // takes the width `pl-2` gives up from `px-3`.
+            className={`flex items-start justify-between gap-2 min-h-14 py-3 -mx-3 border-b border-border ${
+              isHighlighted ? 'pl-2 pr-3 border-l-4 border-l-teal' : 'px-3'
+            } ${isRead ? '' : 'bg-sand-soft'}`}
           >
             <div className="flex flex-col min-w-0 flex-1">
               <button
