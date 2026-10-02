@@ -610,6 +610,58 @@ describe('dispatchPushes', () => {
     }
   });
 
+  describe('reporting a VAPID environment it cannot use', () => {
+    // The report is once per process, so each case loads its own copy of
+    // the module, and starts the mocked log's record empty.
+    async function freshModule() {
+      vi.resetModules();
+      const { dispatchPushes: freshDispatch } = await import('./push-dispatch');
+      const { log: freshLog } = await import('@/lib/log');
+      vi.mocked(freshLog.error).mockClear();
+      vi.mocked(freshLog.warn).mockClear();
+      return { freshDispatch, freshLog };
+    }
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('logs an error naming the reason, once, and no key, for a misconfiguration', async () => {
+      const pair = crypto.createECDH('prime256v1');
+      pair.generateKeys();
+      const other = crypto.createECDH('prime256v1');
+      other.generateKeys();
+      const privateKey = pair.getPrivateKey().toString('base64url');
+      const publicKey = other.getPublicKey().toString('base64url');
+      vi.stubEnv('VAPID_PUBLIC_KEY', publicKey);
+      vi.stubEnv('VAPID_PRIVATE_KEY', privateKey);
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+      const { freshDispatch, freshLog } = await freshModule();
+
+      await freshDispatch(scoped([]).db);
+      await freshDispatch(scoped([]).db);
+
+      expect(freshLog.error).toHaveBeenCalledTimes(1);
+      expect(freshLog.error).toHaveBeenCalledWith({ reason: 'pair-mismatch' }, expect.any(String));
+      expect(freshLog.warn).not.toHaveBeenCalled();
+      const logged = JSON.stringify([vi.mocked(freshLog.error).mock.calls, vi.mocked(freshLog.warn).mock.calls]);
+      expect(logged).not.toContain(privateKey);
+      expect(logged).not.toContain(publicKey);
+    });
+
+    it('only warns when no VAPID variable is set', async () => {
+      vi.stubEnv('VAPID_PUBLIC_KEY', undefined);
+      vi.stubEnv('VAPID_PRIVATE_KEY', undefined);
+      vi.stubEnv('VAPID_SUBJECT', undefined);
+      const { freshDispatch, freshLog } = await freshModule();
+
+      await freshDispatch(scoped([]).db);
+
+      expect(freshLog.warn).toHaveBeenCalledTimes(1);
+      expect(freshLog.error).not.toHaveBeenCalled();
+    });
+  });
+
   describe('with VAPID_* set to keys that do not form a pair', () => {
     const vapidPrivate = crypto.createECDH('prime256v1');
     vapidPrivate.generateKeys();
