@@ -5,6 +5,7 @@ import { checkRateLimit, rateLimitKey, respondRateLimited } from '@/lib/rate-lim
 import { pushSubscriptionSchema, pushUnsubscribeSchema } from '@/lib/schemas';
 import { formatIssues } from '@/lib/validation-message';
 import { isP256PublicKey } from '@/lib/push/encrypt';
+import { isPushServiceEndpoint } from '@/lib/push/endpoint';
 import { removePushSubscription, savePushSubscription, type SavePushSubscriptionResult } from '@/services/push-subscriptions';
 
 type SubscriptionSaved = { status: SavePushSubscriptionResult };
@@ -21,6 +22,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, pushSubscriptionSchema);
   if ('error' in parsed) return parsed.error;
   const { endpoint, keys } = parsed.data;
+
+  // The dispatch sweep POSTs to this endpoint, so only a known push service
+  // may be stored; the schema checks only that it is an https URL.
+  if (!isPushServiceEndpoint(endpoint)) {
+    return respondError(
+      formatIssues([{ path: ['endpoint'], message: 'Push endpoint is not a known push service' }]),
+      400,
+    );
+  }
 
   // A length-valid p256dh can still be off the curve; the schema only checks
   // decoded length, so the curve check happens here, past parseBody.

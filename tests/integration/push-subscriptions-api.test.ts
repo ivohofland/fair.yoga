@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import crypto from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, freshIp } from '../helpers';
+import { MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT } from '@/services/push-subscriptions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -11,6 +12,8 @@ let tokenA: string;
 let tokenB: string;
 let accountIdA: string;
 let accountIdB: string;
+let tokenC: string;
+let accountIdC: string;
 
 function post(token: string | null, body: unknown) {
   return fetch(`${BASE_URL}/api/push/subscriptions`, {
@@ -71,6 +74,21 @@ describe('POST/DELETE /api/push/subscriptions', () => {
     accountIds.push(accountIdA, accountIdB);
     tokenA = await seedSession(prisma, accountIdA);
     tokenB = await seedSession(prisma, accountIdB);
+    // Its own account, so the cap case's run of posts stays clear of A's
+    // per-account rate limit.
+    const studentC = await prisma.student.create({
+      data: {
+        firstName: 'PushStudentC',
+        lastName: 'Test',
+        email: `push-api-${suffix}-c@test.local`,
+        incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email: `push-api-${suffix}-c@test.local` } },
+      },
+    });
+    accountIdC = studentC.accountId!;
+    accountIds.push(accountIdC);
+    tokenC = await seedSession(prisma, accountIdC);
   });
 
   afterAll(async () => {
@@ -142,6 +160,15 @@ describe('POST/DELETE /api/push/subscriptions', () => {
     expect(row).toBeNull();
   });
 
+  it('rejects an https endpoint that is not a known push service, writing nothing', async () => {
+    const bad = `https://evil.example/${suffix}-ssrf`;
+    const res = await post(tokenA, { endpoint: bad, keys });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toMatch(/^endpoint: /);
+    const row = await prisma.pushSubscription.findUnique({ where: { endpoint: bad } });
+    expect(row).toBeNull();
+  });
+
   it('rejects a non-URL endpoint', async () => {
     const res = await post(tokenA, { endpoint: 'not-a-url', keys });
     expect(res.status).toBe(400);
@@ -203,5 +230,23 @@ describe('POST/DELETE /api/push/subscriptions', () => {
     expect(res2.status).toBe(200);
     const body2 = await res2.json();
     expect(body2.outcome).toBe('unchanged');
+  });
+
+  it('keeps an account to the cap, evicting its oldest row', async () => {
+    const capped = (i: number) => endpoint(`cap-${i}`);
+    for (let i = 0; i < MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT; i++) {
+      const res = await post(tokenC, { endpoint: capped(i), keys });
+      expect(await res.json()).toMatchObject({ data: { status: 'created' } });
+    }
+    expect(await prisma.pushSubscription.count({ where: { accountId: accountIdC } })).toBe(MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT);
+
+    const res = await post(tokenC, { endpoint: capped(MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT), keys });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.status).toBe('created');
+
+    const rows = await prisma.pushSubscription.findMany({ where: { accountId: accountIdC }, select: { endpoint: true } });
+    expect(rows).toHaveLength(MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT);
+    expect(rows.map((r) => r.endpoint)).not.toContain(capped(0));
+    expect(rows.map((r) => r.endpoint)).toContain(capped(MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT));
   });
 });

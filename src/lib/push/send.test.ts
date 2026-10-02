@@ -42,6 +42,14 @@ describe('sendPush', () => {
     expect(await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl: fetchReturning(status) })).toEqual({ outcome: 'failed', status });
   });
 
+  it('follows no redirect: a 307 is failed after exactly one request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 307, headers: { Location: 'http://127.0.0.1:5432/' } }));
+    const result = await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl });
+    expect(result.outcome).toBe('failed');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]![1]?.redirect).toBe('manual');
+  });
+
   it('reports a network error as failed', async () => {
     const fetchImpl = vi.fn(async () => { throw new TypeError('fetch failed'); });
     expect(await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl })).toEqual({ outcome: 'failed', status: null });
