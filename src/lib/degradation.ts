@@ -53,8 +53,9 @@ const coalescer = createCoalescer({
 });
 
 /**
- * Reports an intentional fallback: logs it exactly as the site did before, and
- * records it so the operator is told (`docs/degradation-sites.md`).
+ * Reports an intentional fallback: logs the message and the allowlisted
+ * context, and records the event so the operator is told
+ * (`docs/degradation-sites.md`).
  *
  * `FireAndForget`: recording must never delay, fail or reveal anything about
  * the page that tripped the fallback, so there is no promise to await. If the

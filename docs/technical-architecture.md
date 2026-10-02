@@ -961,7 +961,7 @@ Every job skips a tick while its own previous run is still in flight, and from t
 | Class generation | Every hour | Extends recurring class and studio-class instances on the rolling 4-week window |
 | Payment reminders | Every hour | Flips pending payments to overdue after 7 days, then reminds on overdue payments not reminded in the last 7 days |
 | Class reminders | Every 5 minutes | Reminds registered students and the teacher of an open class at each one's chosen moment (`reminderMoment`, `src/lib/reminder-moment.ts`), in the inbox and/or by direct email — once, and never at or after the class's start |
-| Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable or an offset identifier (`isValidTimeZone`) |
+| Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), emails the operator the degradation events that are new or have fired again, and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable or an offset identifier (`isValidTimeZone`) |
 | Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before class start |
 
 ### Overlapping triggers
@@ -980,12 +980,70 @@ measured:
   its stamp (`Registration.classReminderSentAt`, `Class.teacherReminderSentAt`),
   count checked, before writing an inbox row or sending anything
   (`class-reminders.ts`).
+- **The degradation digest** claims each due event with a conditional
+  `updateMany` keyed on the `lastSeenAt` it read, count checked, before
+  sending, and puts the claims back if the send fails
+  (`degradation-digest.ts`; Degradation events, below).
 
 That is a statement about the jobs it names, NOT a survey. Class transitions
 also sends recipient-visible notifications — `autoCancelClasses` writes a
 `class_cancelled` set (`class-transitions.ts`) and `autoCompleteClasses`
 reaches `completeClass`'s `payment_request` set (`class-lifecycle.ts`) — and
 neither was examined for this.
+
+### Degradation events
+
+A degradation is a place where the app substitutes or withholds a value because
+data that should have been impossible turned up: a tier outside 1–5, a timezone
+that will not resolve. The user sees a page that works; nobody sees that a
+fallback ran. Such a site calls `logDegraded` (`src/lib/degradation.ts`), which
+logs the line it always logged and records the event so the operator is told.
+`docs/degradation-sites.md` holds the audit of which log sites qualify and why
+the rest do not, and one runbook section per code.
+
+- **Registry.** `DEGRADATION_CODES` (`src/lib/degradation-codes.ts`) names every
+  code with its log level, a description and its allowed context keys. The
+  `DegradationEvent` table keeps one row per code, not one per occurrence:
+  `occurrences`, `firstSeenAt`, `lastSeenAt`, `lastNotifiedAt` and the latest
+  `sample` (`docs/data-model.md`).
+- **Allowlist.** The context a site passes is filtered to the code's
+  `contextKeys`, and to strings (truncated) and finite numbers, at runtime as
+  well as in the types. Keys hold ids, enums, numbers or an IANA zone string,
+  never anything a person typed, so the row and the email carry no personal
+  data by construction.
+- **Coalescing.** The log line is written on every occurrence; the database
+  write is coalesced to at most one per code per `COALESCE_WINDOW_MS`. The
+  first occurrence after a quiet window writes at once; later ones are held as
+  a count plus the latest sample and written when the window ends, so the last
+  occurrence before silence is never left unwritten. The count is approximate
+  by construction: what is held when the process exits is lost.
+- **Digest.** A code is due when `lastNotifiedAt` is null or older than
+  `lastSeenAt`. The `daily-cleanup` job (`notifyOperatorOfDegradations`,
+  `src/services/degradation-digest.ts`) claims each due row with an
+  `updateMany` conditional on the `lastSeenAt` it read, emails the claimed rows
+  as one message, and on a failed send puts every claim back and throws, which
+  flips the job unhealthy on the verdict `/api/health` already publishes. The
+  sweep sits just before the timezone audit, which stays last
+  (`src/lib/scheduler.ts`).
+- **Why `lastNotifiedAt` takes the `lastSeenAt` value.** Stamping the clock
+  would swallow an event that lands between the read and the stamp: its
+  `lastSeenAt` would be older than the stamp and the row would look told.
+  Stamping the value that was read leaves a later event ahead of the stamp, so
+  that row is due again next run. For the same reason the claim's `where`
+  names that value, so a newer event makes the claim count 0 and the row is
+  left for the next run.
+- **A failed release.** If putting a claim back fails, the event stays marked
+  told without an email; `degradation-digest.ts` logs the code at `error` and
+  throws. That is the same exposure as a crash between claim and send, which
+  the claim-before-send design accepts: the alternative, sending before
+  claiming, lets overlapping runs email the same event twice.
+- **Unset `OPERATOR_EMAIL`.** The scheduler logs an `error` at boot in
+  production. When an event is due and the address is unset, the digest logs
+  the due codes at `error` and throws, so the job reads unhealthy on
+  `/api/health` instead of the events sitting unseen; nothing is claimed.
+- **Health.** `/api/health` reports `degradations.open`, the number of events
+  whose `lastSeenAt` is within the last 24 hours, as a bare number. Which codes
+  and what they carried reach only the inbox.
 
 ---
 
@@ -1034,6 +1092,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://yoga:${DB_PASSWORD}@db:5432/ethical_yoga
       - RESEND_API_KEY=${RESEND_API_KEY}
+      - OPERATOR_EMAIL=${OPERATOR_EMAIL}
     depends_on:
       - db
     restart: unless-stopped
@@ -1110,6 +1169,7 @@ PASSKEY_RP_NAME=            # Display name (e.g. "Ethical Yoga")
 
 # Email
 RESEND_API_KEY=             # Transactional email
+OPERATOR_EMAIL=            # Receives the daily degradation digest
 EMAIL_FROM=                 # e.g. "noreply@ethicalyoga.app"
 
 # Payments (Level 2, added later)
@@ -1130,6 +1190,6 @@ These are deferred, not forgotten:
 - **Native mobile app.** The teacher dashboard is mobile-first responsive web. If native is needed later, the services layer can be extracted into a standalone API.
 - **Multi-language / i18n.** English first. Next.js has built-in i18n routing for when we add languages.
 - **Rate limiting / abuse prevention.** Needed before public launch, but not for initial development.
-- **Monitoring / observability.** Simple logging first, structured observability (Grafana/Loki or similar) added when there's something to monitor.
+- **Log-based monitoring / observability.** A fallback that substitutes a value is recorded as a `DegradationEvent` row by `logDegraded` and emailed to `OPERATOR_EMAIL` in a daily digest, and `/api/health` carries the aggregate (Cron Jobs → Degradation events). Every other log line stays on stdout. A log backend (Grafana/Loki or similar) remains deferred until logs leave the box; the `err` serializer (#739) is a prerequisite for that, because a shipped log line must not carry an unredacted error.
 - **GDPR tooling.** Data export and account deletion endpoints. Required before launch, designed later.
 - **Level 2 payment retry logic.** Open question — parked for now.

@@ -171,12 +171,13 @@ describe('buildJobs', () => {
       'class-generation': ['runClassGenerationTick', 'runStudioClassGenerationTick'],
       'payment-reminders': ['processPaymentReminders'],
       'class-reminders': ['processClassReminders'],
-      // The ORDER here is pinned without being load-bearing. `isolatedSweeps`
-      // order is meaningful for `class-transitions` — a class must transition
-      // to in-progress before it can be completed — and this assertion is a
-      // whole-map equality, so it pins order everywhere. Nothing couples the
-      // sweeps in this job to one another; do not read a dependency into this
-      // line.
+      // This assertion is a whole-map equality, so it pins order everywhere.
+      // `isolatedSweeps` order is meaningful for `class-transitions` — a class
+      // must transition to in-progress before it can be completed — and in
+      // this job only the tail is placed on purpose: the audit is last and the
+      // digest sits just before it (see the comments in `scheduler.ts`). The
+      // sweeps above them do not depend on one another; do not read a
+      // dependency into their order.
       'daily-cleanup': [
         'cleanupExpiredAuth',
         'reapClosedWaitlistEntries',

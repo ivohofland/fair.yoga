@@ -270,7 +270,7 @@ describe('promoteNext (DB)', () => {
    * if the same class stays stuck for `MAX_CONSECUTIVE_CONTENDED_TICKS` in a
    * row. Neither level delivers anywhere on its own today — `lib/log.ts` is
    * pino to stdout with no transport, so nothing pages anyone off either one
-   * (#157); the lines sit in the server log for whoever reads it. What
+   * (`DEPLOYMENT.md` §7); the lines sit in the server log for whoever reads it. What
    * surfaces is `report`'s
    * `ReconciliationFailedError`, which `scheduler.ts` stores as the
    * job's `lastError` and `/api/health` surfaces as `degraded`, only under

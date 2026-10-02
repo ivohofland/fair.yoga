@@ -413,9 +413,8 @@ that silently: the class never starts, completes or is reminded about on its
 own, it sorts as past, and its times do not render. `site` says which half was
 unreadable (`date` or `start-time`).
 
-**Where the bad value lives.** Usually a `CalendarEntry` (`date`,
-`startTime`) or a `ScheduleRule.startTime`; possibly a value built in code
-that never touched the database. The sample has no row id, because
+**Where the bad value lives.** Usually a stored `CalendarEntry.date`;
+possibly a value built in code that never touched the database. The sample has no row id, because
 `classStartInstant` is not given one.
 
 **Confirm.** Find the row through the log first: within the same request or
@@ -424,8 +423,9 @@ with ids — `class reminders: unreadable class start; skipped` (`classId`),
 `… generation found no candidate dates because their start instants could not
 be read` (`templateId`, `teacherId`), `refusing completion: this class schedule
 is unreadable …` (`classId`). Then look at the row. A Postgres `date` can hold
-values no JavaScript `Date` can — `infinity`, or a year past 275760:
-Both `startTime` columns are `@db.Time`, whose every value (00:00 to 24:00) reads back as a valid `Date`, so `date` is the only stored culprit.
+values no JavaScript `Date` can — `infinity`, or a year past 275760. Both
+`startTime` columns are `@db.Time`, whose every value (00:00 to 24:00) reads
+back as a valid `Date`, so `date` is the only stored culprit:
 
 ```sql
 SELECT id, kind, date, "startTime" FROM "CalendarEntry"
@@ -435,10 +435,9 @@ SELECT id, kind, date, "startTime" FROM "CalendarEntry"
 If no stored row is unreadable, the Invalid Date was built in code: a defect
 in the caller the echo line names, and the fix is there.
 
-**Correct.** Set the entry's `date` (or the rule's `startTime`) to the value
-the teacher intended. A terminal class's schedule is frozen by
-`entry_frozen_schedule_guard`; changing it then is a deliberate migration-level
-repair, not an `UPDATE`.
+**Correct.** Set the entry's `date` to the value the teacher intended. A
+terminal class's schedule is frozen by `entry_frozen_schedule_guard`; changing
+it then is a deliberate migration-level repair, not an `UPDATE`.
 
 ### `PAYMENT_SNAPSHOT_MISSING`
 

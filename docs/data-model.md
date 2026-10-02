@@ -809,6 +809,19 @@ When sent, creates one Notification per recipient not already told the same mess
 
 A custom audience is a selection from the teacher-wide audience, never wider.
 
+### DegradationEvent (operator-facing fallbacks, #157)
+
+| Field | Type | Notes |
+|---|---|---|
+| **code** (PK) | text | A key of `DEGRADATION_CODES` (`src/lib/degradation-codes.ts`). One row per code, not per occurrence; a code retired from the registry keeps its row |
+| occurrences | int, default 1 | Approximate: occurrences held in memory when the process exits are lost. `CHECK (occurrences > 0)` |
+| first_seen_at | datetime | |
+| last_seen_at | datetime | When the latest recorded occurrence happened |
+| last_notified_at | datetime, nullable | Null until the operator has been emailed. Takes the `last_seen_at` value the digest read, never the clock; a row is due while it is null or older than `last_seen_at` |
+| sample | json | The latest occurrence's context, filtered to the code's allowlisted keys: ids, enums, numbers and IANA zone strings |
+
+No foreign keys, and no personal data by construction: the allowlist admits ids and enums, never a value a person typed. Not a node in `docs/lock-order.md`: the only writes are a single-statement `upsert` and the digest's single-row conditional `updateMany`, and no transaction holds this row together with another. The mechanism is `docs/technical-architecture.md` (Cron Jobs → Degradation events).
+
 ---
 
 ## Relationships
