@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classifyPushDevice, enablePush, subscriptionUsesKey, syncPushSubscription, type PushDeviceEnv } from './push-client';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { classifyPushDevice, disablePush, enablePush, subscriptionUsesKey, syncPushSubscription, type PushDeviceEnv } from './push-client';
 
 const capable: PushDeviceEnv = {
   vapidConfigured: true, install: 'installed', hasServiceWorker: true, hasPushManager: true,
@@ -26,9 +26,32 @@ describe('classifyPushDevice', () => {
 });
 
 describe('enablePush', () => {
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+    consoleError.mockRestore();
   });
+
+  /** A registration whose push manager holds `existing` and subscribes to `created`. */
+  function stubRegistration(options: {
+    existing: PushSubscription | null;
+    created?: PushSubscription;
+    ready?: Promise<unknown>;
+  }) {
+    const subscribe = vi.fn(async () => options.created ?? fakeSubscription(null, 'https://push.example/created'));
+    const register = vi.fn(async () => ({
+      pushManager: { getSubscription: vi.fn(async () => options.existing), subscribe },
+    }));
+    vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'granted') });
+    vi.stubGlobal('navigator', { serviceWorker: { register, ready: options.ready ?? Promise.resolve() } });
+    return { register, subscribe };
+  }
 
   it('resolves failed, not a rejection, when registration itself rejects', async () => {
     vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'granted') });
@@ -39,52 +62,90 @@ describe('enablePush', () => {
     await expect(enablePush('KEY')).resolves.toBe('failed');
   });
 
-  it('unsubscribes a browser subscription the server never recorded', async () => {
-    const unsubscribe = vi.fn(async () => true);
-    const subscription = {
-      endpoint: 'https://push.example/abc',
-      toJSON: () => ({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } }),
-      unsubscribe,
-    };
-    vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'granted') });
-    vi.stubGlobal('navigator', {
-      serviceWorker: {
-        register: vi.fn(async () => ({
-          pushManager: {
-            getSubscription: vi.fn(async () => null),
-            subscribe: vi.fn(async () => subscription),
-          },
-        })),
-        ready: Promise.resolve(),
-      },
-    });
+  it('resolves blocked, registering nothing, when permission is denied', async () => {
+    const register = vi.fn();
+    vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'denied') });
+    vi.stubGlobal('navigator', { serviceWorker: { register } });
+
+    await expect(enablePush('KEY')).resolves.toBe('blocked');
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('resolves failed, registering nothing, when the prompt is dismissed', async () => {
+    const register = vi.fn();
+    vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'default') });
+    vi.stubGlobal('navigator', { serviceWorker: { register } });
+
+    await expect(enablePush('KEY')).resolves.toBe('failed');
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('resolves failed, logging it, when the service worker is not ready within 10s', async () => {
+    vi.useFakeTimers();
+    const { subscribe } = stubRegistration({ existing: null, ready: new Promise(() => {}) });
+    vi.stubGlobal('fetch', vi.fn());
+
+    const pending = enablePush(keyOf(4));
+    await vi.advanceTimersByTimeAsync(9_999);
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toBe('failed');
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'ready' }));
+  });
+
+  it('POSTs an existing subscription made with this key, subscribing to nothing new', async () => {
+    const existing = fakeSubscription(new Uint8Array(65).fill(4).buffer, 'https://push.example/existing');
+    const { subscribe } = stubRegistration({ existing });
+    const fetchMock = vi.fn<(url: string, init: { body: string }) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(enablePush(keyOf(4))).resolves.toBe('on');
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).endpoint).toBe('https://push.example/existing');
+  });
+
+  it('replaces an existing subscription made with another key', async () => {
+    const existing = fakeSubscription(new Uint8Array(65).fill(5).buffer, 'https://push.example/stale');
+    const fresh = fakeSubscription(new Uint8Array(65).fill(4).buffer, 'https://push.example/fresh');
+    const { subscribe } = stubRegistration({ existing, created: fresh });
+    const fetchMock = vi.fn<(url: string, init: { body: string }) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(enablePush(keyOf(4))).resolves.toBe('on');
+    expect(existing.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(existing.unsubscribe).mock.invocationCallOrder[0]).toBeLessThan(subscribe.mock.invocationCallOrder[0]!);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).endpoint).toBe('https://push.example/fresh');
+  });
+
+  it('leaves a subscription that already existed in place when the server refuses it', async () => {
+    const existing = fakeSubscription(new Uint8Array(65).fill(4).buffer, 'https://push.example/existing');
+    stubRegistration({ existing });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
+
+    await expect(enablePush(keyOf(4))).resolves.toBe('failed');
+    expect(existing.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('unsubscribes a subscription it made when the server never recorded it', async () => {
+    const created = fakeSubscription(null, 'https://push.example/abc');
+    stubRegistration({ existing: null, created });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
 
     await expect(enablePush('KEY')).resolves.toBe('failed');
-    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(created.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it('POSTs exactly { endpoint, keys: { p256dh, auth } } and resolves on, on success', async () => {
-    const subscription = {
-      endpoint: 'https://push.example/abc',
-      toJSON: () => ({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } }),
-      unsubscribe: vi.fn(async () => true),
-    };
+    stubRegistration({ existing: null, created: fakeSubscription(null, 'https://push.example/abc') });
     const fetchMock = vi.fn<(url: string, init: { method: string; body: string }) => Promise<{ ok: boolean }>>(
       async () => ({ ok: true }),
     );
-    vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'granted') });
-    vi.stubGlobal('navigator', {
-      serviceWorker: {
-        register: vi.fn(async () => ({
-          pushManager: {
-            getSubscription: vi.fn(async () => null),
-            subscribe: vi.fn(async () => subscription),
-          },
-        })),
-        ready: Promise.resolve(),
-      },
-    });
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(enablePush('KEY')).resolves.toBe('on');
@@ -98,14 +159,116 @@ describe('enablePush', () => {
   });
 });
 
+describe('disablePush', () => {
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    consoleError.mockRestore();
+  });
+
+  /** `navigator.serviceWorker.getRegistration` answering a registration that holds `subscription`. */
+  function stubCurrent(subscription: PushSubscription | null) {
+    vi.stubGlobal('navigator', {
+      serviceWorker: {
+        getRegistration: vi.fn(async () => ({ pushManager: { getSubscription: vi.fn(async () => subscription) } })),
+      },
+    });
+  }
+
+  it('DELETEs { endpoint } and then unsubscribes the browser, resolving off', async () => {
+    const subscription = fakeSubscription(null, 'https://push.example/abc');
+    stubCurrent(subscription);
+    const fetchMock = vi.fn<(url: string, init: { method: string; body: string }) => Promise<{ ok: boolean }>>(
+      async () => ({ ok: true }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(disablePush()).resolves.toBe('off');
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/push/subscriptions');
+    expect(init.method).toBe('DELETE');
+    expect(JSON.parse(init.body)).toEqual({ endpoint: 'https://push.example/abc' });
+    expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(subscription.unsubscribe).mock.invocationCallOrder[0]!);
+  });
+
+  it('still unsubscribes the browser when the DELETE rejects', async () => {
+    const subscription = fakeSubscription(null);
+    stubCurrent(subscription);
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network down'); }));
+
+    await expect(disablePush()).resolves.toBe('off');
+    expect(subscription.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'delete' }));
+  });
+
+  it('logs a DELETE the server refused, and still unsubscribes', async () => {
+    const subscription = fakeSubscription(null);
+    stubCurrent(subscription);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 })));
+
+    await expect(disablePush()).resolves.toBe('off');
+    expect(subscription.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'delete', status: 503 }));
+  });
+
+  it('resolves failed when unsubscribe throws', async () => {
+    const subscription = fakeSubscription(null);
+    vi.mocked(subscription.unsubscribe).mockRejectedValue(new Error('unsubscribe refused'));
+    stubCurrent(subscription);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
+
+    await expect(disablePush()).resolves.toBe('failed');
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'unsubscribe' }));
+  });
+
+  it('resolves failed when unsubscribe resolves false', async () => {
+    const subscription = fakeSubscription(null);
+    vi.mocked(subscription.unsubscribe).mockResolvedValue(false);
+    stubCurrent(subscription);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
+
+    await expect(disablePush()).resolves.toBe('failed');
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'unsubscribe' }));
+  });
+
+  it('makes no request and resolves off when there is no subscription', async () => {
+    stubCurrent(null);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(disablePush()).resolves.toBe('off');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('resolves failed, not a rejection, when getRegistration rejects', async () => {
+    vi.stubGlobal('navigator', {
+      serviceWorker: { getRegistration: vi.fn(async () => { throw new Error('no registration'); }) },
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(disablePush()).resolves.toBe('failed');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'read' }));
+  });
+});
+
 /** A stand-in browser subscription; only the members these helpers read. */
-function fakeSubscription(applicationServerKey: ArrayBuffer | null): PushSubscription {
+function fakeSubscription(
+  applicationServerKey: ArrayBuffer | null,
+  endpoint = 'https://push.example/abc',
+): PushSubscription & { unsubscribe: ReturnType<typeof vi.fn<() => Promise<boolean>>> } {
   return {
-    endpoint: 'https://push.example/abc',
+    endpoint,
     options: { applicationServerKey, userVisibleOnly: true },
-    toJSON: () => ({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } }),
+    toJSON: () => ({ endpoint, keys: { p256dh: 'p', auth: 'a' } }),
     unsubscribe: vi.fn(async () => true),
-  } as unknown as PushSubscription;
+  } as unknown as PushSubscription & { unsubscribe: ReturnType<typeof vi.fn<() => Promise<boolean>>> };
 }
 
 /** A 65-byte key filled with `fill`, as base64url — the form the server hands the control. */
@@ -114,46 +277,54 @@ function keyOf(fill: number): string {
 }
 
 describe('syncPushSubscription', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('POSTs the same body enablePush sends and resolves true when the server accepts it', async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    consoleError.mockRestore();
+  });
+
+  it('POSTs the same body enablePush sends and resolves ok when the server accepts it', async () => {
     const fetchMock = vi.fn<(url: string, init: { method: string; body: string }) => Promise<{ ok: boolean }>>(
       async () => ({ ok: true }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(syncPushSubscription(fakeSubscription(null))).resolves.toBe(true);
+    await expect(syncPushSubscription(fakeSubscription(null))).resolves.toEqual({ ok: true });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('/api/push/subscriptions');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } });
   });
 
-  it('resolves false, not a rejection, when fetch rejects', async () => {
+  it('resolves not ok with no status, not a rejection, when fetch rejects', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network down'); }));
-    await expect(syncPushSubscription(fakeSubscription(null))).resolves.toBe(false);
+    await expect(syncPushSubscription(fakeSubscription(null))).resolves.toEqual({ ok: false, status: null });
   });
 
-  it('resolves false for a non-ok response', async () => {
+  it('resolves not ok with the status, and logs it, for a non-ok response', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
-    await expect(syncPushSubscription(fakeSubscription(null))).resolves.toBe(false);
+    await expect(syncPushSubscription(fakeSubscription(null))).resolves.toEqual({ ok: false, status: 500 });
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'sync', status: 500 }));
   });
 });
 
 describe('subscriptionUsesKey', () => {
   const key = keyOf(4);
 
-  it('is true when the subscription was made with this key', () => {
-    expect(subscriptionUsesKey(fakeSubscription(new Uint8Array(65).fill(4).buffer), key)).toBe(true);
+  it('is a match when the subscription was made with this key', () => {
+    expect(subscriptionUsesKey(fakeSubscription(new Uint8Array(65).fill(4).buffer), key)).toBe('match');
   });
 
-  it('is false for a subscription made with another key', () => {
-    expect(subscriptionUsesKey(fakeSubscription(new Uint8Array(65).fill(5).buffer), key)).toBe(false);
+  it('is a mismatch for a subscription made with another key', () => {
+    expect(subscriptionUsesKey(fakeSubscription(new Uint8Array(65).fill(5).buffer), key)).toBe('mismatch');
   });
 
-  it('is false for a subscription that reports no key', () => {
-    expect(subscriptionUsesKey(fakeSubscription(null), key)).toBe(false);
+  it('is unknown for a subscription that reports no key', () => {
+    expect(subscriptionUsesKey(fakeSubscription(null), key)).toBe('unknown');
   });
 });

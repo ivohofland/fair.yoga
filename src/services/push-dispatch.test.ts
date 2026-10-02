@@ -325,6 +325,9 @@ describe('dispatchPushes', () => {
     expect(after.emailSent).toBe(false);
   });
 
+  // Documents a Postgres guarantee rather than guarding code: another
+  // connection never reads an uncommitted row, so no edit to dispatchPushes
+  // can make this fail. It stays to show the sweep reads committed rows only.
   it('never pushes a notification whose transaction rolled back', async () => {
     await subscribe(studentAccountId, 'rb');
     let rolledBackId = '';

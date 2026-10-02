@@ -48,24 +48,26 @@ function keyBytes(base64url: string): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * True when `subscription` was made with `vapidPublicKey`, compared as bytes.
- * A subscription made with a key the server no longer signs with receives
- * nothing, and one that reports no key cannot be shown to match.
+ * Whether `subscription` was made with `vapidPublicKey`, compared as bytes.
+ * `unknown` when the browser reports no `applicationServerKey`: nothing can
+ * then be proven either way, so it is never grounds for dropping one.
  */
-export function subscriptionUsesKey(subscription: PushSubscription, vapidPublicKey: string): boolean {
+export function subscriptionUsesKey(subscription: PushSubscription, vapidPublicKey: string): 'match' | 'mismatch' | 'unknown' {
   const used = subscription.options?.applicationServerKey;
-  if (!used) return false;
+  if (!used) return 'unknown';
   const usedBytes = new Uint8Array(used);
   const expected = keyBytes(vapidPublicKey);
-  return usedBytes.length === expected.length && usedBytes.every((byte, i) => byte === expected[i]);
+  const same = usedBytes.length === expected.length && usedBytes.every((byte, i) => byte === expected[i]);
+  return same ? 'match' : 'mismatch';
 }
 
+export type SyncResult = { ok: true } | { ok: false; status: number | null };
+
 /**
- * Records `subscription` for the account signed in now: the server's upsert
- * moves an endpoint another account held, and writes nothing when this
- * account already holds it unchanged. Never throws.
+ * POSTs `subscription` for the account signed in now. `status` is null when
+ * the request itself failed. Never throws.
  */
-export async function syncPushSubscription(subscription: PushSubscription): Promise<boolean> {
+export async function syncPushSubscription(subscription: PushSubscription): Promise<SyncResult> {
   try {
     const json = subscription.toJSON();
     const res = await fetch('/api/push/subscriptions', {
@@ -73,55 +75,96 @@ export async function syncPushSubscription(subscription: PushSubscription): Prom
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: json.endpoint, keys: { p256dh: json.keys?.p256dh, auth: json.keys?.auth } }),
     });
-    return res.ok;
+    if (res.ok) return { ok: true };
+    logRequestFailure('push-client', { step: 'sync', status: res.status }, new Error(`push subscription POST answered ${res.status}`));
+    return { ok: false, status: res.status };
   } catch (err) {
     logRequestFailure('push-client', { step: 'sync' }, err);
-    return false;
+    return { ok: false, status: null };
+  }
+}
+
+const SERVICE_WORKER_READY_TIMEOUT_MS = 10_000;
+
+/** Resolves true once the service worker is active, false if that takes longer than the timeout. */
+async function serviceWorkerReady(): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), SERVICE_WORKER_READY_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([navigator.serviceWorker.ready.then(() => true as const), timedOut]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /** Call only from a click handler: the permission prompt needs the gesture. Never throws. */
 export async function enablePush(vapidPublicKey: string): Promise<'on' | 'blocked' | 'failed'> {
-  let subscription: PushSubscription | null = null;
+  let created: PushSubscription | null = null;
   try {
     const permission = await Notification.requestPermission();
-    if (permission !== 'granted') return permission === 'denied' ? 'blocked' : 'failed';
+    if (permission === 'denied') return 'blocked';
+    if (permission !== 'granted') return 'failed';
     const registration = await navigator.serviceWorker.register(SW_URL, { scope: '/' });
-    await navigator.serviceWorker.ready;
-    subscription =
-      (await registration.pushManager.getSubscription()) ??
-      (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(vapidPublicKey) }));
-    if (await syncPushSubscription(subscription)) return 'on';
+    if (!(await serviceWorkerReady())) {
+      logRequestFailure('push-client', { step: 'ready' }, new Error('service worker not ready within 10s'));
+      return 'failed';
+    }
+    const existing = await registration.pushManager.getSubscription();
+    const match = existing ? subscriptionUsesKey(existing, vapidPublicKey) : null;
+    let subscription: PushSubscription;
+    if (existing && match === 'match') {
+      subscription = existing;
+    } else {
+      if (existing && match === 'mismatch') await existing.unsubscribe();
+      // For `unknown`, `subscribe` itself decides: it hands back the existing
+      // subscription when that was made with this key, and refuses otherwise.
+      subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(vapidPublicKey) });
+      if (!existing || match === 'mismatch' || subscription.endpoint !== existing.endpoint) created = subscription;
+    }
+    if ((await syncPushSubscription(subscription)).ok) return 'on';
   } catch (err) {
     logRequestFailure('push-client', { step: 'enable' }, err);
   }
-  // A browser subscription the server never recorded would receive nothing.
-  await subscription?.unsubscribe().catch(() => false);
+  // A subscription this call made, which the server never recorded, would
+  // receive nothing. One that already existed is left alone: the server may
+  // hold it for this phone.
+  await created?.unsubscribe().catch((err: unknown) => logRequestFailure('push-client', { step: 'enable-cleanup' }, err));
   return 'failed';
 }
 
-/** Server row first (it needs the session), then the browser half, which is the one that stops delivery. Never throws. */
-export async function disablePush(): Promise<void> {
+/**
+ * Server row first (it needs the session), then the browser half, which is
+ * the one that stops delivery. `off` when there was no subscription or the
+ * browser confirmed the unsubscribe; `failed` otherwise. Never throws.
+ */
+export async function disablePush(): Promise<'off' | 'failed'> {
   let subscription: PushSubscription | null = null;
   try {
     subscription = await currentPushSubscription();
   } catch (err) {
     logRequestFailure('push-client', { step: 'read' }, err);
-    return;
+    return 'failed';
   }
-  if (!subscription) return;
+  if (!subscription) return 'off';
   try {
-    await fetch('/api/push/subscriptions', {
+    const res = await fetch('/api/push/subscriptions', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: subscription.endpoint }),
     });
+    if (!res.ok) {
+      logRequestFailure('push-client', { step: 'delete', status: res.status }, new Error(`push subscription DELETE answered ${res.status}`));
+    }
   } catch (err) {
     logRequestFailure('push-client', { step: 'delete' }, err);
   }
   try {
-    await subscription.unsubscribe();
+    if (await subscription.unsubscribe()) return 'off';
+    logRequestFailure('push-client', { step: 'unsubscribe' }, new Error('unsubscribe() resolved false'));
   } catch (err) {
     logRequestFailure('push-client', { step: 'unsubscribe' }, err);
   }
+  return 'failed';
 }

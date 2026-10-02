@@ -17,6 +17,9 @@ import {
   type PushDeviceState,
 } from '@/lib/push-client';
 
+/** A line under the control, set by the last thing that did not go as asked. */
+type Notice = null | 'enable-failed' | 'disable-failed' | 'unconfirmed';
+
 /** The settings row that turns push on or off for this phone. Shows a
  *  placeholder until the effect below resolves the device's actual state. */
 export function PushDeviceControl({
@@ -29,7 +32,7 @@ export function PushDeviceControl({
 }) {
   const install = useInstallSupport();
   const [state, setState] = useState<PushDeviceState | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -58,32 +61,33 @@ export function PushDeviceControl({
         subscribed: subscription !== null,
       };
       let resolved = classifyPushDevice(env);
-      let syncFailed = false;
+      let resolvedNotice: Notice = null;
       // The browser's subscription says nothing about which account the
       // server delivers it to, or whether the server still holds it — the
-      // previous account on a shared phone, or a row deleted since. 'on'
-      // is shown only once the server has it for the account signed in now.
+      // previous account on a shared phone, or a row deleted since — so a
+      // subscription that may still be good is re-recorded for the account
+      // signed in now.
       if (resolved === 'on' && subscription && vapidPublicKey) {
-        if (!subscriptionUsesKey(subscription, vapidPublicKey)) {
+        if (subscriptionUsesKey(subscription, vapidPublicKey) === 'mismatch') {
           // Made with a key the server no longer signs with: it can receive
           // nothing, and a new one needs the user's tap.
-          try {
-            await subscription.unsubscribe();
-          } catch (err) {
-            logRequestFailure('push-device-control', { step: 'unsubscribe-stale-key' }, err);
-          }
+          logRequestFailure('push-device-control', { step: 'stale-key' }, new Error('subscription made with another VAPID key'));
+          await disablePush();
           resolved = 'off';
-        } else if (!(await syncPushSubscription(subscription))) {
-          // Kept in the browser: the next "Turn on" re-posts it.
-          resolved = 'off';
-          syncFailed = true;
+        } else if (!(await syncPushSubscription(subscription)).ok) {
+          // Still subscribed in the browser, and possibly still held by the
+          // server; the next visit re-records it.
+          resolvedNotice = 'unconfirmed';
         }
         if (cancelled) return;
       }
-      setFailed(syncFailed);
+      setNotice(resolvedNotice);
       setState(resolved);
     }
-    void resolve();
+    resolve().catch((err: unknown) => {
+      logRequestFailure('push-device-control', { step: 'resolve' }, err);
+      if (!cancelled) setState('unsupported');
+    });
     return () => {
       cancelled = true;
     };
@@ -92,11 +96,11 @@ export function PushDeviceControl({
   async function handleEnable(): Promise<void> {
     if (!vapidPublicKey || busy) return;
     setBusy(true);
-    setFailed(false);
+    setNotice(null);
     const outcome = await enablePush(vapidPublicKey);
     setBusy(false);
     if (outcome === 'failed') {
-      setFailed(true);
+      setNotice('enable-failed');
       setState('off');
       return;
     }
@@ -106,9 +110,13 @@ export function PushDeviceControl({
   async function handleDisable(): Promise<void> {
     if (busy) return;
     setBusy(true);
-    await disablePush();
+    setNotice(null);
+    const outcome = await disablePush();
     setBusy(false);
-    setFailed(false);
+    if (outcome === 'failed') {
+      setNotice('disable-failed');
+      return;
+    }
     setState('off');
   }
 
@@ -159,6 +167,16 @@ export function PushDeviceControl({
           <Button variant="secondary" onClick={() => void handleDisable()} disabled={busy}>
             Turn off for this phone
           </Button>
+          {notice === 'unconfirmed' && (
+            <p className="type-caption">
+              Couldn&apos;t reach fair.yoga to confirm this phone. It will try again next time.
+            </p>
+          )}
+          {notice === 'disable-failed' && (
+            <p role="alert" className="type-caption text-danger">
+              Couldn&apos;t turn off notifications. Try again.
+            </p>
+          )}
         </div>
       );
 
@@ -171,7 +189,7 @@ export function PushDeviceControl({
           <p className="type-caption">
             You choose below which messages arrive. Email still comes as it does now.
           </p>
-          {failed && (
+          {notice === 'enable-failed' && (
             <p role="alert" className="type-caption text-danger">
               Notifications weren&apos;t turned on. Try again.
             </p>
