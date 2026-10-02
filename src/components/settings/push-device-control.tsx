@@ -84,8 +84,9 @@ export function PushDeviceControl({ vapidPublicKey }: { vapidPublicKey: string |
       return <p className="type-body">Push notifications aren&apos;t available on this server yet.</p>;
 
     case 'needs-install': {
-      // The settings index one level up from this page is where `InstallAppRow`
-      // (#723) lives — `/account/notifications` → `/account`, `/settings/notifications` → `/settings`.
+      // This control always renders one path segment below the settings
+      // index that offers the install steps; dropping the last segment
+      // reaches it without needing to know which role is viewing.
       const installHref = pathname ? pathname.split('/').slice(0, -1).join('/') || '/' : '/';
       return (
         <div className="flex flex-col gap-2">
