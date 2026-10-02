@@ -351,9 +351,9 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         cleanupExpiredAuth,
         reapClosedWaitlistEntries,
         reapExpiredNotifications,
-        // Before the audit, which stays last (see below). A standing digest
-        // failure (an unset address, a refusing provider) is itself the first
-        // error this job rethrows for as long as it stands.
+        // Just before the audit, which stays last (see below). A standing
+        // digest failure (an unset address, a refusing provider) is rethrown
+        // ahead of the audit's; a failure in a sweep above it still comes first.
         notifyOperatorOfDegradations,
         // LAST, and the position is a default rather than a guarantee.
         // `isolatedSweeps` runs every sweep and rethrows the FIRST error, so a
@@ -361,9 +361,9 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         // fixed — is not the rethrown error over a failure in a sweep above.
         //
         // What that buys is which error `lastError` holds (in-memory), and no
-        // more: a standing digest failure above takes that place instead, and
-        // every sweep's failure, the audit's included, is still logged
-        // separately through `isolatedSweeps`' `log.error`. It does NOT
+        // more: a standing digest failure above is rethrown ahead of the
+        // audit's, and every sweep's failure, the audit's included, is still
+        // logged separately through `isolatedSweeps`' `log.error`. It does NOT
         // protect this job's `isJobHealthy` verdict — one verdict, shared
         // across every sweep in this job, and a standing timezone problem
         // already holds it `false`. A real failure in a sweep above it while
