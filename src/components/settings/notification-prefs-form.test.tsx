@@ -219,6 +219,16 @@ describe('NotificationPrefsForm', () => {
     expect(screen.getByTestId('push-device-control')).toHaveAttribute('data-vapid-public-key', 'KEY');
   });
 
+  it.each(PUSH_LABEL_ENTRIES)('checks only the %s box when only that column is on', (key) => {
+    const oneHot = Object.fromEntries(PUSH_LABEL_ENTRIES.map(([k]) => [k, k === key])) as unknown as TeacherPushPrefs;
+    render(<NotificationPrefsForm teacherId="t1" initial={{ ...DEFAULTS, ...oneHot }} vapidPublicKey="KEY" />);
+    for (const [k, label] of PUSH_LABEL_ENTRIES) {
+      const box = screen.getByRole('checkbox', { name: label });
+      if (k === key) expect(box).toBeChecked();
+      else expect(box).not.toBeChecked();
+    }
+  });
+
   it('renders the TeacherPushPrefs checkboxes at their stored values and saves a toggle', async () => {
     stubFetch();
     render(

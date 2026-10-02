@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createECDH, randomBytes } from 'node:crypto';
+import { createDecipheriv, createECDH, hkdfSync, randomBytes, type ECDH } from 'node:crypto';
 import { sendPush, PUSH_TTL_SECONDS } from './send';
 import { encryptPayload } from './encrypt';
 import { REDACTED_BODY, buildPushPayload } from '../push-policy';
@@ -23,6 +23,28 @@ function target() {
 }
 const payload = { id: 'n1', title: 'A spot opened up', body: REDACTED_BODY, url: '/updates?n=n1' };
 
+/**
+ * The browser's side of RFC 8291: decrypts one `aes128gcm` record with the
+ * user agent's private key and auth secret, and drops the padding delimiter.
+ */
+function decryptAsUserAgent(body: Uint8Array, ua: ECDH, authSecret: Buffer): string {
+  const buf = Buffer.from(body);
+  const salt = buf.subarray(0, 16);
+  const idLength = buf.readUInt8(20);
+  const asPublic = buf.subarray(21, 21 + idLength);
+  const ciphertext = buf.subarray(21 + idLength);
+  const info = (label: string) => Buffer.from(`${label}\0`, 'latin1');
+  const ecdhSecret = ua.computeSecret(asPublic);
+  const ikm = Buffer.from(hkdfSync('sha256', ecdhSecret, authSecret, Buffer.concat([info('WebPush: info'), ua.getPublicKey(), asPublic]), 32));
+  const cek = Buffer.from(hkdfSync('sha256', ikm, salt, info('Content-Encoding: aes128gcm'), 16));
+  const nonce = Buffer.from(hkdfSync('sha256', ikm, salt, info('Content-Encoding: nonce'), 12));
+  const decipher = createDecipheriv('aes-128-gcm', cek, nonce);
+  decipher.setAuthTag(ciphertext.subarray(ciphertext.length - 16));
+  const padded = Buffer.concat([decipher.update(ciphertext.subarray(0, ciphertext.length - 16)), decipher.final()]);
+  expect(padded[padded.length - 1]).toBe(2);
+  return padded.subarray(0, padded.length - 1).toString('utf8');
+}
+
 function fetchReturning(status: number) {
   return vi.fn<typeof fetch>(async () => new Response(null, { status }));
 }
@@ -40,6 +62,25 @@ describe('sendPush', () => {
     expect(h.get('TTL')).toBe(String(PUSH_TTL_SECONDS));
     expect(h.get('Urgency')).toBe('high');
     expect(h.get('Authorization')).toMatch(/^vapid t=.+, k=.+$/);
+  });
+
+  it('signs for the endpoint origin and encrypts exactly the JSON payload to the browser key', async () => {
+    const ua = createECDH('prime256v1');
+    ua.generateKeys();
+    const authSecret = randomBytes(16);
+    const pushTarget = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/device-token',
+      p256dh: ua.getPublicKey().toString('base64url'),
+      auth: authSecret.toString('base64url'),
+    };
+    const fetchImpl = fetchReturning(201);
+    await sendPush(pushTarget, payload, keys(), { urgency: 'normal', fetchImpl });
+
+    const init = fetchImpl.mock.calls[0]![1]!;
+    const [, jwt] = /^vapid t=([^,]+), k=/.exec(new Headers(init.headers).get('Authorization') ?? '') ?? [];
+    const claims = JSON.parse(Buffer.from(jwt!.split('.')[1]!, 'base64url').toString()) as { aud: string };
+    expect(claims.aud).toBe('https://fcm.googleapis.com');
+    expect(decryptAsUserAgent(init.body as Uint8Array, ua, authSecret)).toBe(JSON.stringify(payload));
   });
 
   it.each([404, 410])('reports %i as gone', async (status) => {

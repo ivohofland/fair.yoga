@@ -16,10 +16,12 @@ describe('classifyPushDevice', () => {
     [{ install: 'unknown' }, 'needs-install'],
     [{ hasPushManager: false }, 'unsupported'],
     [{ hasServiceWorker: false }, 'unsupported'],
+    [{ hasNotification: false }, 'unsupported'],
     [{ permission: 'denied' }, 'blocked'],
     [{ permission: 'granted', subscribed: true }, 'on'],
     [{ permission: 'granted', subscribed: false }, 'off'],
     [{ permission: 'default', subscribed: false }, 'off'],
+    [{ permission: 'default', subscribed: true }, 'off'], // subscribed, but this origin may not show notifications
   ])('%o → %s', (overrides, expected) => {
     expect(classifyPushDevice({ ...capable, ...overrides })).toBe(expected);
   });

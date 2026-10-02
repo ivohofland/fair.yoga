@@ -15,6 +15,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { startOfLocalDay } from '@/lib/timezone';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
+import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -732,29 +733,50 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
     await prisma.$disconnect();
   });
 
+  // Each column gets its own pattern of values across the passes below (its
+  // index + 1, in binary), so an export that reads one column into another's
+  // field disagrees with at least one pass. The fixtures go back to all-true
+  // afterwards, which the erasure cases below rely on.
+  const mixedPatterns = <K extends string>(columns: readonly K[]): Array<Record<K, boolean>> =>
+    [0, 1, 2].map((bit) =>
+      Object.fromEntries(columns.map((column, i) => [column, (((i + 1) >> bit) & 1) === 1])) as Record<K, boolean>);
+
   it('exports a student’s push columns with their current values, and no PushSubscription field', async () => {
-    const exported = await exportStudentData(prisma, dualStudentId);
-    expect(exported.profile).toMatchObject({
-      pushWaitlist: true,
-      pushClassChanges: true,
-      pushPayments: true,
-      pushClassReminders: true,
-      pushAnnouncements: true,
-      pushInvitations: true,
-    });
-    expect(JSON.stringify(exported)).not.toContain(endpointFor('dual'));
+    const columns = [
+      'pushWaitlist', 'pushClassChanges', 'pushPayments', 'pushClassReminders', 'pushAnnouncements', 'pushInvitations',
+    ] as const satisfies ReadonlyArray<keyof StudentPushPrefs>;
+    try {
+      for (const values of mixedPatterns(columns)) {
+        await prisma.student.update({ where: { id: dualStudentId }, data: values });
+        const exported = await exportStudentData(prisma, dualStudentId);
+        expect(exported.profile).toMatchObject(values);
+        expect(JSON.stringify(exported)).not.toContain(endpointFor('dual'));
+      }
+    } finally {
+      await prisma.student.update({
+        where: { id: dualStudentId },
+        data: Object.fromEntries(columns.map((column) => [column, true])),
+      });
+    }
   });
 
   it('exports a teacher’s push columns with their current values, and no PushSubscription field', async () => {
-    const exported = await exportTeacherData(prisma, reverseDualTeacherId);
-    expect(exported.profile).toMatchObject({
-      pushAutoCancelled: true,
-      pushBookings: true,
-      pushClassCompleted: true,
-      pushClassReminders: true,
-      pushInvitations: true,
-    });
-    expect(JSON.stringify(exported)).not.toContain(endpointFor('reverse-dual'));
+    const columns = [
+      'pushAutoCancelled', 'pushBookings', 'pushClassCompleted', 'pushClassReminders', 'pushInvitations',
+    ] as const satisfies ReadonlyArray<keyof TeacherPushPrefs>;
+    try {
+      for (const values of mixedPatterns(columns)) {
+        await prisma.teacher.update({ where: { id: reverseDualTeacherId }, data: values });
+        const exported = await exportTeacherData(prisma, reverseDualTeacherId);
+        expect(exported.profile).toMatchObject(values);
+        expect(JSON.stringify(exported)).not.toContain(endpointFor('reverse-dual'));
+      }
+    } finally {
+      await prisma.teacher.update({
+        where: { id: reverseDualTeacherId },
+        data: Object.fromEntries(columns.map((column) => [column, true])),
+      });
+    }
   });
 
   it('erasing a student whose account still has a live teacher profile keeps the PushSubscription', async () => {

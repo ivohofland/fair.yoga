@@ -152,6 +152,23 @@ describe('POST/DELETE /api/push/subscriptions', () => {
     expect((await restore.json()).data.status).toBe('updated');
   });
 
+  it('A rotating only auth, with the same p256dh, updates the row', async () => {
+    const before = await rowVersion(endpoint('a'));
+    const rotatedAuth = { p256dh: keys.p256dh, auth: Buffer.alloc(16, 3).toString('base64url') };
+    const res = await post(tokenA, { endpoint: endpoint('a'), keys: rotatedAuth });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.outcome).toBeUndefined();
+    expect(body.data.status).toBe('updated');
+    expect(await rowVersion(endpoint('a'))).not.toBe(before);
+    const row = await prisma.pushSubscription.findUniqueOrThrow({ where: { endpoint: endpoint('a') } });
+    expect(row.auth).toBe(rotatedAuth.auth);
+
+    // Back to the shared keys, so the cases below post the stored subscription.
+    const restore = await post(tokenA, { endpoint: endpoint('a'), keys });
+    expect((await restore.json()).data.status).toBe('updated');
+  });
+
   it('rejects an http: endpoint', async () => {
     const bad = `http://fcm.googleapis.com/fcm/send/${suffix}-http`;
     const res = await post(tokenA, { endpoint: bad, keys });
