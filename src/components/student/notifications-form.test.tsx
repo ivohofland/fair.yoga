@@ -125,7 +125,13 @@ describe('NotificationsForm', () => {
         vapidPublicKey="KEY"
       />,
     );
-    fireEvent.click(screen.getByRole('checkbox', { name: label }));
+    const checkbox = screen.getByRole('checkbox', { name: label });
+    fireEvent.click(checkbox);
+    // Catches a `checked` prop bound to a sibling's state: onChange would
+    // still update the right variable (so the payload below could look
+    // correct), but this exact checkbox would keep displaying its sibling's
+    // unchanged value instead of its own toggle.
+    expect(checkbox).toHaveProperty('checked', !DEFAULT_PUSH[key]);
     const { body } = await save();
     const expectedPush: StudentPushPrefs = {
       pushWaitlist: DEFAULT_PUSH.pushWaitlist,

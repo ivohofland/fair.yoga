@@ -116,7 +116,13 @@ describe('NotificationPrefsForm', () => {
   it.each(PUSH_LABEL_ENTRIES)('toggles only %s, pinned to its own key', async (key, label) => {
     stubFetch();
     render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} vapidPublicKey="KEY" />);
-    fireEvent.click(screen.getByRole('checkbox', { name: label }));
+    const checkbox = screen.getByRole('checkbox', { name: label });
+    fireEvent.click(checkbox);
+    // Catches a `checked` prop bound to a sibling's state: onChange would
+    // still update the right variable (so the payload below could look
+    // correct), but this exact checkbox would keep displaying its sibling's
+    // unchanged value instead of its own toggle.
+    expect(checkbox).toHaveProperty('checked', !DEFAULTS[key]);
     const { body } = await save();
     const expectedPush: TeacherPushPrefs = {
       pushAutoCancelled: DEFAULTS.pushAutoCancelled,
