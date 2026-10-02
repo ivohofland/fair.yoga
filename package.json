@@ -27,6 +27,7 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
+    "vapid:keys": "tsx scripts/vapid-keys.ts",
     "worktree:setup": "tsx scripts/worktree-setup.ts",
     "worktree:up": "tsx scripts/worktree-up.ts",
     "worktree:down": "tsx scripts/worktree-down.ts"
