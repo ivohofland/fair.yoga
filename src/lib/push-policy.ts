@@ -111,11 +111,20 @@ export function shouldPush(recipient: PushRecipient, type: NotificationType): bo
 export const REDACTED_BODY = 'Open fair.yoga to see the details.';
 
 /**
- * UTF-8 bytes. Body + title + JSON framing + the 86-byte aes128gcm header and
- * 17 bytes of delimiter and tag stay under the 4096-byte push payload limit.
+ * First caps, in raw UTF-8 bytes, on the notification's own title and body.
+ * They do not by themselves keep the payload under the push limit: JSON
+ * escaping can grow a character to six bytes, so `buildPushPayload` then
+ * shrinks the body until the serialised payload fits `PUSH_PLAINTEXT_MAX_BYTES`.
  */
 export const PUSH_BODY_MAX_BYTES = 1500;
 export const PUSH_TITLE_MAX_BYTES = 200;
+
+/**
+ * The most `JSON.stringify(payload)` may weigh: the 4096-byte push message,
+ * less the 86-byte aes128gcm header (salt, record size, key id length, key)
+ * and 17 bytes of padding delimiter and authentication tag.
+ */
+export const PUSH_PLAINTEXT_MAX_BYTES = 4096 - 86 - 17;
 
 export interface PushPayload {
   id: string;
@@ -144,6 +153,28 @@ function truncate(text: string, maxBytes: number): string {
   return `${out}…`;
 }
 
+function serialisedBytes(payload: PushPayload): number {
+  return Buffer.byteLength(JSON.stringify(payload));
+}
+
+/**
+ * The longest code-point prefix of `body`, ending in `…`, that keeps the
+ * payload within `PUSH_PLAINTEXT_MAX_BYTES`. The serialised size only grows
+ * with the prefix, so a binary search finds it.
+ */
+function fitBody(payload: PushPayload, body: string): PushPayload {
+  const codePoints = Array.from(body);
+  const withPrefix = (length: number): PushPayload => ({ ...payload, body: `${codePoints.slice(0, length).join('')}…` });
+  let low = 0;
+  let high = codePoints.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (serialisedBytes(withPrefix(mid)) <= PUSH_PLAINTEXT_MAX_BYTES) low = mid;
+    else high = mid - 1;
+  }
+  return withPrefix(low);
+}
+
 export function buildPushPayload(n: {
   id: string;
   recipientType: RecipientType;
@@ -152,12 +183,16 @@ export function buildPushPayload(n: {
   body: string;
 }): PushPayload {
   const inbox = n.recipientType === 'student' ? '/updates' : '/inbox';
-  return {
+  const payload: PushPayload = {
     id: n.id,
     title: truncate(n.title, PUSH_TITLE_MAX_BYTES),
     body: isRedacted(n.recipientType, n.type) ? REDACTED_BODY : truncate(n.body, PUSH_BODY_MAX_BYTES),
     url: `${inbox}?n=${encodeURIComponent(n.id)}`,
   };
+  // A redacted body is a short constant and always fits; an own body dense
+  // in characters JSON escapes (control characters, quotes) may not.
+  if (serialisedBytes(payload) <= PUSH_PLAINTEXT_MAX_BYTES) return payload;
+  return fitBody(payload, n.body);
 }
 
 export function pushUrgency(audience: RecipientType, type: NotificationType): PushUrgency {
