@@ -1114,8 +1114,7 @@ model Notification {
   relatedClassId String?
   isRead         Boolean          @default(false)
   emailSent      Boolean          @default(false)
-  // Set by the push-dispatch sweep when it has decided about this row — sent,
-  // skipped or retired as stale. Never read by email or the inbox.
+  // When push dispatch decided about this row; see docs/data-model.md (Notification).
   pushHandledAt  DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
@@ -1134,8 +1133,8 @@ model Notification {
   @@index([pushHandledAt, createdAt])
 }
 
-/// One browser's push endpoint for one account. Deleted explicitly by erasure
-/// (`gdpr.ts`), on a 404/410 from the push service, and on sign-out.
+/// One browser's push endpoint for one account. No relation to Account —
+/// docs/data-model.md (PushSubscription) says why and what deletes it.
 model PushSubscription {
   id         String    @id @default(uuid())
   accountId  String

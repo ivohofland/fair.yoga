@@ -1,6 +1,6 @@
 # Data Model — Ethical Yoga App
 
-17 entities across 6 domains. This is the source of truth for the application's data layer.
+The source of truth for the application's data layer, across several domains.
 
 ---
 
@@ -73,7 +73,7 @@ identity enough for dispatch and cleanup.
 | updated_at | datetime | |
 
 Which `NotificationType`s each `push_*` group covers is owned by the spec's
-decision table and `src/services/push-policy.ts`
+decision table and `src/lib/push-policy.ts`
 (`docs/superpowers/specs/2026-10-02-web-push-design.md`, §2 decision 4) — not
 restated here.
 
@@ -123,7 +123,7 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | unique (partial) | `Student_account_live_unique` on `(account_id)` `WHERE deleted_at IS NULL` | At most one LIVE student profile per account (#623) |
 
 Which `NotificationType`s each `push_*` group covers is owned by the spec's
-decision table and `src/services/push-policy.ts`
+decision table and `src/lib/push-policy.ts`
 (`docs/superpowers/specs/2026-10-02-web-push-design.md`, §2 decision 4) — not
 restated here.
 
