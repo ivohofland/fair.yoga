@@ -89,8 +89,7 @@ export function toIncomeTier(n: number, context?: TierReadContext): IncomeTier {
  * `Student.incomeTier`, which carries the same constraint. If this ever throws,
  * the constraint was bypassed and that is the bug to chase.
  *
- * `context` is merged into the log payload and named in the error message —
- * see `toIncomeTier` above.
+ * `context` is named in the error message.
  */
 export function toIncomeTierOrThrow(n: number, context?: Record<string, string>): IncomeTier {
   if (isIncomeTier(n)) return n;
