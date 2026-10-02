@@ -54,8 +54,9 @@ const coalescer = createCoalescer({
 
 /**
  * Reports an intentional fallback: logs the message and the allowlisted
- * context, and records the event so the operator is told
- * (`docs/degradation-sites.md`).
+ * context, and records the event for the daily digest. Whether and when the
+ * operator is told is the digest's: see `docs/degradation-sites.md` and
+ * `docs/technical-architecture.md` (Cron Jobs → Degradation events).
  *
  * `FireAndForget`: recording must never delay, fail or reveal anything about
  * the page that tripped the fallback, so there is no promise to await. If the

@@ -75,7 +75,7 @@ Measured when the tables below were last brought up to date:
 | `logDegraded(` call lines | 11 |
 
 One of the 147 is not a call: `src/lib/log.ts:5` is a usage example inside
-that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:77`
+that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:78`
 is the line `logDegraded` itself emits. So 146 static calls and 16
 computed-level calls were classified, beside the 11 `logDegraded` calls.
 
@@ -336,7 +336,7 @@ Each picks its level at run time, mostly through `transientDbFailure` (`src/lib/
 | `src/app/api/registrations/route.ts:480` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/waitlist/route.ts:64` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/lib/api-utils.ts:217` | dynamic | routine | `withErrorHandler`; every uncaught route error, surfaced as an error |
-| `src/lib/degradation.ts:77` | dynamic | — | not a site: the line `logDegraded` itself emits |
+| `src/lib/degradation.ts:78` | dynamic | — | not a site: the line `logDegraded` itself emits |
 | `src/services/class-template-lifecycle.ts:1109` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts:1012` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts:1168` | dynamic | routine | failure (an exception or outage), not impossible data (completion refused during erasure) |
