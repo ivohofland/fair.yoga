@@ -84,8 +84,9 @@ edit to any of them.
 - **`PushSubscription`**: `id`, `accountId` (indexed, no FK cascade — see §1),
   `endpoint` (unique), `p256dh`, `auth`, `createdAt`, `lastUsedAt`. One row per
   device per account. No user agent or device label (privacy first).
-- **`Notification.pushHandledAt DateTime?`** with a partial index on
-  `createdAt` where `pushHandledAt IS NULL`.
+- **`Notification.pushHandledAt DateTime?`** with `@@index([pushHandledAt, createdAt])`
+  — expressible in Prisma, so no hand-authored SQL. The sweep retires every
+  row it sees (§3.2), so the unhandled set stays a few seconds' worth.
 - **Boolean push columns** on `Student` and `Teacher` (§2.4), following the
   existing `emailOnClassCompleted` / `emailOnInvitation` style.
 
@@ -93,9 +94,12 @@ edit to any of them.
 
 A scheduler job, `push-dispatch`, every 10 s (`src/lib/scheduler.ts`):
 
-1. Select rows with `pushHandledAt IS NULL AND createdAt > now() − 15 min`,
-   oldest first, capped per tick (the plan sets the cap). Rows only exist once committed, so a
-   rolled-back notification is never found.
+1. Retire stale rows: `pushHandledAt IS NULL AND createdAt <= now() − 15 min`
+   are marked handled without sending — rows written while the job was down,
+   or before this feature existed. Then select rows with
+   `pushHandledAt IS NULL AND createdAt > now() − 15 min`, oldest first,
+   capped per tick (the plan sets the cap). Rows only exist once committed,
+   so a rolled-back notification is never found.
 2. Claim each with a compare-and-swap
    (`UPDATE … SET pushHandledAt = now() WHERE id = ? AND pushHandledAt IS NULL`),
    the `claimEmailFallback` shape; an overlapping manual run cannot double-send.
@@ -104,7 +108,7 @@ A scheduler job, `push-dispatch`, every 10 s (`src/lib/scheduler.ts`):
 4. `shouldPush(audience, type, prefs)` (§3.5). If true, send to each of the
    account's subscriptions through `createConcurrencyLimit`
    (`src/lib/concurrency-limit.ts`).
-5. Rows older than the cutoff are never pushed. A "spot available" push for a
+5. Rows older than the cutoff are never pushed (step 1). A "spot available" push for a
    seat that went 50 minutes ago would mislead; inbox and email still carry it.
 
 Send outcomes: **404/410** deletes the subscription; **2xx** sets
