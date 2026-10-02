@@ -8,6 +8,18 @@ export interface UserAgentKeys {
 
 const RECORD_SIZE = 4096;
 
+/**
+ * The stored browser keys cannot be encrypted against: the wrong length, or a
+ * `p256dh` that is not a point on P-256. Such a subscription can never receive
+ * a push, so the sender reports it as `invalid` rather than as a fault.
+ */
+export class InvalidSubscriptionKeysError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'InvalidSubscriptionKeysError';
+  }
+}
+
 function info(label: string): Buffer {
   return Buffer.from(`${label}\0`, 'latin1');
 }
@@ -25,7 +37,7 @@ export function encryptPayload(
   const uaPublic = Buffer.from(keys.p256dh, 'base64url');
   const authSecret = Buffer.from(keys.auth, 'base64url');
   if (uaPublic.length !== 65 || authSecret.length !== 16) {
-    throw new Error('push subscription keys are malformed');
+    throw new InvalidSubscriptionKeysError('push subscription keys are the wrong length');
   }
 
   const ecdh = createECDH('prime256v1');
@@ -34,7 +46,12 @@ export function encryptPayload(
   const asPublic = ecdh.getPublicKey();
   const salt = seed?.salt ?? randomBytes(16);
 
-  const ecdhSecret = ecdh.computeSecret(uaPublic);
+  let ecdhSecret: Buffer;
+  try {
+    ecdhSecret = ecdh.computeSecret(uaPublic);
+  } catch (err) {
+    throw new InvalidSubscriptionKeysError('push subscription p256dh is not a P-256 point', { cause: err });
+  }
   const ikm = Buffer.from(
     hkdfSync('sha256', ecdhSecret, authSecret, Buffer.concat([info('WebPush: info'), uaPublic, asPublic]), 32),
   );

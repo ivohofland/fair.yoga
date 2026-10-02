@@ -1,7 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createECDH, randomBytes } from 'node:crypto';
 import { sendPush, PUSH_TTL_SECONDS } from './send';
+import { encryptPayload } from './encrypt';
 import { REDACTED_BODY, buildPushPayload } from '../push-policy';
+
+// The real encryption, wrapped so one test can make it throw something other
+// than InvalidSubscriptionKeysError.
+vi.mock('./encrypt', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./encrypt')>();
+  return { ...actual, encryptPayload: vi.fn(actual.encryptPayload) };
+});
 
 function keys() {
   const e = createECDH('prime256v1');
@@ -38,7 +46,7 @@ describe('sendPush', () => {
     expect((await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl: fetchReturning(status) })).outcome).toBe('gone');
   });
 
-  it.each([400, 413, 429, 500, 503])('reports %i as failed, never throwing', async (status) => {
+  it.each([400, 413, 429, 500, 503])('reports %i with an empty body as failed, never throwing', async (status) => {
     expect(await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl: fetchReturning(status) })).toEqual({ outcome: 'failed', status });
   });
 
@@ -50,9 +58,53 @@ describe('sendPush', () => {
     expect(fetchImpl.mock.calls[0]![1]?.redirect).toBe('manual');
   });
 
-  it('reports a network error as failed', async () => {
+  it('reports a network error as failed, carrying its name and message as the cause', async () => {
     const fetchImpl = vi.fn(async () => { throw new TypeError('fetch failed'); });
-    expect(await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl })).toEqual({ outcome: 'failed', status: null });
+    expect(await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl })).toEqual({
+      outcome: 'failed',
+      status: null,
+      cause: 'TypeError: fetch failed',
+    });
+  });
+
+  it('carries the start of a failed response body as the reason', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response('x'.repeat(150) + 'y'.repeat(150), { status: 403 }));
+    expect(await sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl })).toEqual({
+      outcome: 'failed',
+      status: 403,
+      reason: 'x'.repeat(150) + 'y'.repeat(50),
+    });
+  });
+
+  it('reports a stored p256dh that is off the curve as invalid, without a request', async () => {
+    const fetchImpl = fetchReturning(201);
+    const offCurve = { ...target(), p256dh: Buffer.alloc(65, 4).toString('base64url') };
+    expect(await sendPush(offCurve, payload, keys(), { urgency: 'normal', fetchImpl })).toEqual({ outcome: 'invalid', status: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('reports stored keys of the wrong length as invalid', async () => {
+    const fetchImpl = fetchReturning(201);
+    const short = { ...target(), auth: Buffer.alloc(15, 1).toString('base64url') };
+    expect(await sendPush(short, payload, keys(), { urgency: 'normal', fetchImpl })).toEqual({ outcome: 'invalid', status: null });
+  });
+
+  it('lets an encryption fault that is not about the keys propagate', async () => {
+    const fetchImpl = fetchReturning(201);
+    const fault = new Error('cipher unavailable');
+    vi.mocked(encryptPayload).mockImplementationOnce(() => {
+      throw fault;
+    });
+    await expect(sendPush(target(), payload, keys(), { urgency: 'normal', fetchImpl })).rejects.toBe(fault);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('lets a signing fault propagate rather than reporting an outcome', async () => {
+    const fetchImpl = fetchReturning(201);
+    // A public key off the curve: the JWK import that signs the VAPID token throws.
+    const broken = { ...keys(), publicKey: Buffer.alloc(65, 4).toString('base64url') };
+    await expect(sendPush(target(), payload, broken, { urgency: 'normal', fetchImpl })).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('gives up on a hanging push service after timeoutMs', async () => {

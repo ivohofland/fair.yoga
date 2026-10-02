@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
 import { dispatchPushes, PUSH_STALE_AFTER_MS, type PushSender } from './push-dispatch';
+import { sendPush } from '@/lib/push/send';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 import { log } from '@/lib/log';
 
@@ -10,6 +11,14 @@ vi.mock('@/lib/log', () => ({
 }));
 
 const prisma = new PrismaClient();
+
+const vapidPair = crypto.createECDH('prime256v1');
+vapidPair.generateKeys();
+const vapidKeys = {
+  publicKey: vapidPair.getPublicKey().toString('base64url'),
+  privateKey: vapidPair.getPrivateKey().toString('base64url'),
+  subject: 'mailto:ops@fair.yoga',
+};
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 function recordingSender(outcome: 'delivered' | 'gone' | 'failed' = 'delivered') {
@@ -379,29 +388,71 @@ describe('dispatchPushes', () => {
     expect(await prisma.pushSubscription.findUnique({ where: { id: kept.id } })).not.toBeNull();
   });
 
-  it('keeps the tick alive when one subscription throws, and removes only that row (R14)', async () => {
-    const bad = await subscribe(studentAccountId, 'bad');
-    const good = await subscribe(studentAccountId, 'good');
-    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
-    const calls: string[] = [];
-    const send: PushSender = vi.fn(async (target, _payload, _urgency) => {
-      if (target.endpoint === bad.endpoint) {
-        throw new Error('ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY');
-      }
-      calls.push(target.endpoint);
-      return { outcome: 'delivered' as const, status: 201 };
+  it('keeps the tick alive when one subscription has keys it cannot encrypt against, and removes only that row', async () => {
+    const browser = crypto.createECDH('prime256v1');
+    browser.generateKeys();
+    const bad = await prisma.pushSubscription.create({
+      data: {
+        accountId: studentAccountId,
+        endpoint: `https://fcm.googleapis.com/fcm/send/invalid-${crypto.randomUUID()}`,
+        p256dh: Buffer.alloc(65, 4).toString('base64url'), // 65 bytes, off the curve
+        auth: crypto.randomBytes(16).toString('base64url'),
+      },
     });
+    const good = await prisma.pushSubscription.create({
+      data: {
+        accountId: studentAccountId,
+        endpoint: `https://fcm.googleapis.com/fcm/send/valid-${crypto.randomUUID()}`,
+        p256dh: browser.getPublicKey().toString('base64url'),
+        auth: crypto.randomBytes(16).toString('base64url'),
+      },
+    });
+    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 201 }));
+    const send: PushSender = (target, payload, urgency) => sendPush(target, payload, vapidKeys, { urgency, fetchImpl });
 
     const result = await dispatchPushes(scoped([n.id]).db, send);
 
-    expect(calls).toEqual([good.endpoint]);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([good.endpoint]);
+    expect(result).toMatchObject({ sent: 1, invalid: 1, failed: 0 });
     expect(await prisma.pushSubscription.findUnique({ where: { id: bad.id } })).toBeNull();
     expect(await prisma.pushSubscription.findUnique({ where: { id: good.id } })).not.toBeNull();
-    expect(result.failed).toBe(1);
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ notificationId: n.id, subscriptionId: bad.id }),
+  });
+
+  it('keeps every subscription and rejects the tick when the sender throws a fault', async () => {
+    const first = await subscribe(studentAccountId, 'fault-1');
+    const second = await subscribe(studentAccountId, 'fault-2');
+    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const fault = new Error('sender bug');
+    const send: PushSender = vi.fn(async () => {
+      throw fault;
+    });
+
+    await expect(dispatchPushes(scoped([n.id]).db, send)).rejects.toBe(fault);
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.pushSubscription.findUnique({ where: { id: first.id } })).not.toBeNull();
+    expect(await prisma.pushSubscription.findUnique({ where: { id: second.id } })).not.toBeNull();
+    // One fault is rethrown; the other is logged with what it was sending.
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: fault, notificationId: n.id, subscriptionId: expect.stringMatching(new RegExp(`^(${first.id}|${second.id})$`)) }),
       expect.any(String),
     );
+  });
+
+  it('warns with the cause and reason of a failed send, and logs the tick counts', async () => {
+    const sub = await subscribe(teacherAccountId, 'failed-detail');
+    const n = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
+    const send: PushSender = vi.fn(async () => ({ outcome: 'failed' as const, status: 403, reason: 'invalid JWT' }));
+
+    const result = await dispatchPushes(scoped([n.id]).db, send);
+
+    expect(result).toMatchObject({ claimed: 1, failed: 1 });
+    expect(log.warn).toHaveBeenCalledWith(
+      { notificationId: n.id, subscriptionId: sub.id, status: 403, cause: undefined, reason: 'invalid JWT' },
+      expect.any(String),
+    );
+    expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ failed: 1, claimed: 1 }), expect.any(String));
   });
 
   it('never leaves an early task rejection unhandled while the loop still awaits the next notification (R16)', async () => {
@@ -494,6 +545,25 @@ describe('dispatchPushes', () => {
     sendGate.resolve({ outcome: 'delivered', status: 201 });
 
     await expect(pending).rejects.toBe(claimError);
+  });
+
+  it('logs a send fault when a claim failure is the error that propagates', async () => {
+    const sub1 = await subscribe(studentAccountId, 'fault-under-claim');
+    const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const n2 = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
+    const claimError = new Error('claim failed for n2');
+    const s = scopeSweep(failingClaim(n2.id, claimError) as unknown as PrismaClient, { Notification: { id: { in: [n1.id, n2.id] } } });
+    const fault = new Error('sender bug under a claim failure');
+    const send: PushSender = vi.fn(async () => {
+      throw fault;
+    });
+
+    await expect(dispatchPushes(s.db, send)).rejects.toBe(claimError);
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: fault, notificationId: n1.id, subscriptionId: sub1.id }),
+      expect.any(String),
+    );
   });
 
   it('sends once when two ticks overlap', async () => {
