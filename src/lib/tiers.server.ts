@@ -62,8 +62,9 @@ export function readIncomeTier(n: number, context?: TierReadContext): IncomeTier
  * `readIncomeTier` above and let `null` suppress the claim; where a wrong
  * value would be billed, use `toIncomeTierOrThrow` below.
  *
- * Warning and log payload are `readIncomeTier`'s — this is the same read with
- * a substitution on the end, not a second one.
+ * This is `readIncomeTier` with the median substituted for `null`: the log
+ * line and the recorded `INCOME_TIER_OUT_OF_RANGE` event are the ones it
+ * produces, not a second report.
  */
 export function toIncomeTier(n: number, context?: TierReadContext): IncomeTier {
   return readIncomeTier(n, context) ?? DEFAULT_INCOME_TIER;

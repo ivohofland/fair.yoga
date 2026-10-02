@@ -40,8 +40,9 @@ export function autoFinishAt(end: Date): Date {
 /**
  * `HH:MM` in `timeZone`. An unreadable zone formats in UTC, says so, and is
  * recorded as `TIMEZONE_INVALID_FALLBACK_UTC`, which reaches the operator by
- * email (`docs/degradation-sites.md`) (#145). An unreadable instant is checked before the `try`, because
- * it throws in every zone, UTC included, and would escape the fallback.
+ * email (`docs/degradation-sites.md`). An unreadable instant is checked before
+ * the `try`, because it throws in every zone, UTC included, and would escape
+ * the fallback.
  */
 export function formatClockInZone(instant: Date, timeZone: string): string {
   if (Number.isNaN(instant.getTime())) {

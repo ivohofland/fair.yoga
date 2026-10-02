@@ -642,7 +642,7 @@ async function reconcileOne(
     // `deleteStudentAccount`'s post-commit loop.
     //
     // What `error` does NOT currently buy: `lib/log.ts` is pino to stdout with
-    // no transport, so nothing pages anyone off either level today (#157). The
+    // no transport, so nothing pages anyone off either level today (`DEPLOYMENT.md` §7). The
     // level is the correct classification for when that is fixed; the thing
     // that actually surfaces a broken sweep NOW is `ReconciliationFailedError`,
     // which reaches `/api/health` through the scheduler.

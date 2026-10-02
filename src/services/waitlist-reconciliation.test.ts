@@ -1733,7 +1733,7 @@ describe('reconcileWaitlists (DB)', () => {
    * otherwise-working job at `degraded` indefinitely. What that line buys
    * today is a record in the server log and nothing more — `lib/log.ts` is
    * pino to stdout with no transport, so nothing pages anyone off either level
-   * (#157); the level is the correct classification for when that is fixed.
+   * (`DEPLOYMENT.md` §7); the level is the correct classification for when that is fixed.
    *
    * `P2028` (`tx_budget`), not `P2024`: this is the site the kind's own level
    * would otherwise defeat the point of — `pool_exhausted` logs at `error`

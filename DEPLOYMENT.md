@@ -24,6 +24,7 @@ Edit `.env` — every value matters in production:
 | `POSTGRES_PASSWORD` | generate one: `openssl rand -hex 24` |
 | `CRON_SECRET` | `openssl rand -hex 24` — without it the `/api/cron/*` endpoints stay disabled (the in-process scheduler runs regardless) |
 | `RESEND_API_KEY` / `EMAIL_FROM` | real key + verified sender; the app refuses to "send" silently without them |
+| `OPERATOR_EMAIL` | required in production; the daily degradation digest goes here (§7). Unset, a degradation event fails the `daily-cleanup` job instead of reaching you |
 | `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
 | `PASSKEY_RP_ID` | your bare domain |
 
@@ -139,7 +140,12 @@ Migrations run automatically via the `migrate` service on every deploy.
   on that run's own outcome. An idle-in-transaction session holding a
   lock is one cause — the `pg_blocking_pids()` / `pg_stat_activity` advice in
   the `class-generation` bullet below applies to any job, not only that one.
-  Point your uptime monitor here.
+  `degradations.open` is the number of degradation events that fired in the
+  last 24 hours: a bare count, with no codes, so the endpoint stays public.
+  Which ones fired is in the digest email and, per code, in
+  `docs/degradation-sites.md`. If the digest cannot be sent (`OPERATOR_EMAIL`
+  unset, or the provider refusing), `daily-cleanup` reads unhealthy, and its
+  server log line names the codes. Point your uptime monitor here.
 - `waitlist-reconciliation` tolerates contention for
   `MAX_CONSECUTIVE_CONTENDED_TICKS` ticks before its own failures flip it; a
   pass still in flight flips it at its second refused tick, like any job,
@@ -160,8 +166,10 @@ Migrations run automatically via the `migrate` service on every deploy.
   stuck class logs at `error` with a `classStreak` field naming it, and nothing
   delivers that line anywhere today: logs go to stdout with no transport
   configured, so watching for it means reading the server logs directly (the
-  `docker compose … logs` command below) — no automated alerting on log level
-  exists yet (issue #157).
+  `docker compose … logs` command below). Log lines are not alerted on.
+  What is alerted: a fallback that substitutes a value (a degradation event,
+  `docs/degradation-sites.md`) is emailed to `OPERATOR_EMAIL` once a day, when
+  it is new or has fired again since you were last told.
 - `class-generation` runs hourly and skips a recurring or studio template
   whose row is locked, since a teacher saving an edit at that moment is
   routine. A genuine failure reddens the job on the sweep it happens in; a

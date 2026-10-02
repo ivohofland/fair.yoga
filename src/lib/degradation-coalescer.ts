@@ -3,11 +3,11 @@
  *
  * The first occurrence after a quiet window writes at once. Later ones inside
  * the window are held as a count plus the latest sample, and an `unref`'d timer
- * writes them when the window ends — without that trailing write, an
- * occurrence landing just after a flush and followed by nothing would never
- * reach the row, and the digest's "fired again since last told" test could not
- * see it. Occurrences still held when the process exits are lost, so the count
- * is approximate by construction.
+ * writes them when the window ends. The trailing write is what lets an
+ * occurrence landing just after a flush, and followed by nothing, still reach
+ * the row (`docs/technical-architecture.md`, Cron Jobs → Degradation events,
+ * says why the digest needs that). Occurrences still held when the process
+ * exits are lost, so the count is approximate by construction.
  *
  * Pure: the clock, the write and the error sink are injected, so it is tested
  * with fake timers and no database.
