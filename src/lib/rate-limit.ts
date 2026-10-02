@@ -45,7 +45,8 @@ export type RateLimitPrefix =
   | 'teacher-signup'
   | 'teacher-signup:email'
   | 'slug-available'
-  | 'teacher-photo';
+  | 'teacher-photo'
+  | 'push-subscriptions';
 
 export const PREFIX_CAPACITIES = {
   'magic-link:email': 5_000,
@@ -59,6 +60,7 @@ export const PREFIX_CAPACITIES = {
   'teacher-signup:email': 2_000,
   'slug-available': 1_000,
   'teacher-photo': 1_000,
+  'push-subscriptions': 2_000,
 } as const satisfies Record<RateLimitPrefix, number>;
 
 // Longest first: this is now load-bearing, not inert. `'teacher-signup'` and
