@@ -175,17 +175,14 @@ describe('buildJobs', () => {
       // `isolatedSweeps` order is meaningful for `class-transitions` — a class
       // must transition to in-progress before it can be completed — and in
       // this job only the tail is placed on purpose: the audit is last and the
-      // digest sits just before it (see the comments in `scheduler.ts`). The
-      // sweeps above them do not depend on one another; do not read a
-      // dependency into their order.
+      // digest sits just before it (see the comments in `scheduler.ts`). This
+      // list pins the order of the sweeps above them without asserting why.
       'daily-cleanup': [
         'cleanupExpiredAuth',
         'reapClosedWaitlistEntries',
         'reapExpiredNotifications',
         'notifyOperatorOfDegradations',
-        // Last, so a real failure in any sweep above still surfaces as the
-        // job's `lastError` rather than being masked by a standing data
-        // problem this one reports every run until someone fixes the row.
+        // Last; what that buys, and what it does not, is in `scheduler.ts`.
         'auditTeacherTimezones',
       ],
       'waitlist-reconciliation': ['runWaitlistReconciliationTick'],

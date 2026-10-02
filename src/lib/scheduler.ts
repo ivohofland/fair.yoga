@@ -351,16 +351,20 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         cleanupExpiredAuth,
         reapClosedWaitlistEntries,
         reapExpiredNotifications,
-        // Before the audit, which stays last (see below): a standing bad zone reports every run and would otherwise be the first error this job rethrows.
+        // Before the audit, which stays last (see below). A standing digest
+        // failure (an unset address, a refusing provider) is itself the first
+        // error this job rethrows for as long as it stands.
         notifyOperatorOfDegradations,
         // LAST, and the position is a default rather than a guarantee.
         // `isolatedSweeps` runs every sweep and rethrows the FIRST error, so a
         // standing bad timezone — which reports every run until a row is
-        // fixed — would otherwise mask a real failure in any sweep above.
+        // fixed — is not the rethrown error over a failure in a sweep above.
         //
-        // That protects `lastError` here (in-memory; the full error already
-        // reached the server log through `isolatedSweeps`' `log.error`). It does
-        // NOT protect this job's `isJobHealthy` verdict — one verdict, shared
+        // What that buys is which error `lastError` holds (in-memory), and no
+        // more: a standing digest failure above takes that place instead, and
+        // every sweep's failure, the audit's included, is still logged
+        // separately through `isolatedSweeps`' `log.error`. It does NOT
+        // protect this job's `isJobHealthy` verdict — one verdict, shared
         // across every sweep in this job, and a standing timezone problem
         // already holds it `false`. A real failure in a sweep above it while
         // the timezone row stands produces no observable change there — the

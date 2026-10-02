@@ -26,8 +26,8 @@ export interface TierReadContext {
  * a shared price.
  *
  * If this ever fires, the constraint was circumvented. That is the bug to
- * chase; it is recorded as `INCOME_TIER_OUT_OF_RANGE` and emailed to the
- * operator (`docs/degradation-sites.md`).
+ * chase; it is recorded as `INCOME_TIER_OUT_OF_RANGE`
+ * (`docs/degradation-sites.md`).
  *
  * This file is separate from `tiers.ts` solely because it imports
  * `@/lib/degradation` (server-only, and through it pino) and `tiers.ts` is value-imported by `'use client'`
