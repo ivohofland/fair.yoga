@@ -1119,6 +1119,15 @@ model Notification {
   @@index([recipientType, recipientId, isRead])
 }
 
+model DegradationEvent {
+  code           String    @id
+  occurrences    Int       @default(1)
+  firstSeenAt    DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  lastNotifiedAt DateTime?
+  sample         Json
+}
+
 model Announcement {
   id             String   @id @default(uuid())
   teacherId      String
