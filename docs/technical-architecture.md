@@ -982,8 +982,8 @@ measured:
   (`class-reminders.ts`).
 - **The degradation digest** claims each due event with a conditional
   `updateMany` keyed on the `lastSeenAt` it read, count checked, before
-  sending, and puts the claims back if the send fails
-  (`degradation-digest.ts`; Degradation events, below).
+  sending, and puts the claims back if anything from the first claim through
+  the send fails (`degradation-digest.ts`; Degradation events, below).
 
 That is a statement about the jobs it names, NOT a survey. Class transitions
 also sends recipient-visible notifications — `autoCancelClasses` writes a
@@ -1022,10 +1022,10 @@ the rest do not, and one runbook section per code.
   `lastSeenAt`. The `daily-cleanup` job (`notifyOperatorOfDegradations`,
   `src/services/degradation-digest.ts`) claims each due row with an
   `updateMany` conditional on the `lastSeenAt` it read, emails the claimed rows
-  as one message, and on a failed send puts every claim back and throws, which
-  flips the job unhealthy on the verdict `/api/health` already publishes. The
-  sweep sits just before the timezone audit, which stays last
-  (`src/lib/scheduler.ts`).
+  as one message, and if a claim, the render or the send fails puts back
+  every claim made so far and throws, which flips the job unhealthy on the
+  verdict `/api/health` already publishes. The sweep sits just before the
+  timezone audit, which stays last (`src/lib/scheduler.ts`).
 - **Why `lastNotifiedAt` takes the `lastSeenAt` value.** Stamping the clock
   would swallow an event that lands between the read and the stamp: its
   `lastSeenAt` would be older than the stamp and the row would look told.
@@ -1045,7 +1045,8 @@ the rest do not, and one runbook section per code.
 - **Health.** `/api/health` reports `degradations.open`, the number of events
   whose `lastSeenAt` is within the last 24 hours, as a bare number. Which codes
   fired, and what they carried, appear only in the digest email and the server
-  log, never on `/api/health`.
+  log, never on `/api/health`. When the count cannot be read, `degradations` is
+  omitted and `db` still reports up.
 
 ---
 

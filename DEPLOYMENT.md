@@ -148,7 +148,13 @@ Migrations run automatically via the `migrate` service on every deploy.
   due codes. When the provider refuses, the thrown error carries its reason
   (`degradation digest not delivered: …`), and the events stay due, so the next
   daily run retries. `SELECT code FROM "DegradationEvent" WHERE "lastNotifiedAt" IS NULL OR "lastNotifiedAt" < "lastSeenAt"`
-  lists the codes the next digest will carry. Point your uptime monitor here.
+  lists the codes the next digest will carry. A claim that could not be put
+  back after a failed send leaves its event marked told without an email; the
+  `error` line `could not release a degradation digest claim` names its
+  `code`, and `UPDATE "DegradationEvent" SET "lastNotifiedAt" = NULL WHERE code = '<code>'`
+  makes it due again. With `EMAIL_DRY_RUN=1` the digest is logged and not
+  sent, and the scheduler warns about it at boot. Point your uptime monitor
+  here.
 - `waitlist-reconciliation` tolerates contention for
   `MAX_CONSECUTIVE_CONTENDED_TICKS` ticks before its own failures flip it; a
   pass still in flight flips it at its second refused tick, like any job,

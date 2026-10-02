@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { describe, it, expect, vi, beforeEach, afterAll, onTestFinished } from 'vitest';
+import { PrismaClient, type Prisma } from '@prisma/client';
+import { log } from '@/lib/log';
 
 const sendHtmlEmail = vi.fn();
 vi.mock('@/lib/email', () => ({ sendHtmlEmail: (...a: unknown[]) => sendHtmlEmail(...a) }));
@@ -17,14 +18,30 @@ const T1 = new Date('2026-10-01T10:00:00.000Z');
 const T2 = new Date('2026-10-02T10:00:00.000Z');
 
 type Hook = (delegate: PrismaClient['degradationEvent']) => Promise<void>;
+type UpdateManyArgs = Parameters<PrismaClient['degradationEvent']['updateMany']>[0];
+
+interface ScopedHooks {
+  afterRead?: Hook;
+  afterClaim?: Hook;
+  /** Runs before the sweep's nth claim, counting from 1; throw to fail it. */
+  beforeClaim?: (n: number) => void;
+  /** Runs before each release; throw to fail it. */
+  beforeRelease?: () => void;
+  /** Presents a stored code to the sweep under another name. */
+  alias?: Readonly<Record<string, string>>;
+}
 
 /**
  * A client that sees only this file's rows. `afterRead` runs after the sweep's
- * read and `afterClaim` after each of its claims, which is where a concurrent
- * event would land.
+ * read and `afterClaim` after each of its successful claims, which is where a
+ * concurrent event would land. A claim is an `updateMany` keyed on
+ * `lastSeenAt`; a release is one that is not.
  */
-function scoped(hooks: { afterRead?: Hook; afterClaim?: Hook } = {}): PrismaClient {
+function scoped(hooks: ScopedHooks = {}): PrismaClient {
   const real = prisma.degradationEvent;
+  const alias = hooks.alias ?? {};
+  const stored = Object.fromEntries(Object.entries(alias).map(([from, to]) => [to, from]));
+  let claims = 0;
   return {
     degradationEvent: {
       findMany: async (args: object) => {
@@ -33,22 +50,36 @@ function scoped(hooks: { afterRead?: Hook; afterClaim?: Hook } = {}): PrismaClie
           where: { code: { startsWith: `${PREFIX}${run}` } },
         });
         await hooks.afterRead?.(real);
-        return rows;
+        return rows.map((r) => ({ ...r, code: alias[r.code] ?? r.code }));
       },
-      updateMany: async (args: Parameters<typeof real.updateMany>[0]) => {
-        const result = await real.updateMany(args);
-        if (result.count === 1 && (args as { data: { lastNotifiedAt?: unknown } }).data.lastNotifiedAt) {
-          await hooks.afterClaim?.(real);
+      updateMany: async (args: UpdateManyArgs) => {
+        const where = args.where as { code: string; lastSeenAt?: Date };
+        const isClaim = where.lastSeenAt !== undefined;
+        if (isClaim) {
+          claims += 1;
+          hooks.beforeClaim?.(claims);
+        } else {
+          hooks.beforeRelease?.();
         }
+        const result = await real.updateMany({
+          ...args,
+          where: { ...args.where, code: stored[where.code] ?? where.code },
+        });
+        if (isClaim && result.count === 1) await hooks.afterClaim?.(real);
         return result;
       },
     },
   } as unknown as PrismaClient;
 }
 
-async function seed(code: string, lastSeenAt: Date, lastNotifiedAt: Date | null = null) {
+async function seed(
+  code: string,
+  lastSeenAt: Date,
+  lastNotifiedAt: Date | null = null,
+  sample: Prisma.InputJsonValue = { tier: 9 },
+) {
   await prisma.degradationEvent.create({
-    data: { code, occurrences: 4, firstSeenAt: T1, lastSeenAt, lastNotifiedAt, sample: { tier: 9 } },
+    data: { code, occurrences: 4, firstSeenAt: T1, lastSeenAt, lastNotifiedAt, sample },
   });
 }
 
@@ -208,5 +239,72 @@ describe('notifyOperatorOfDegradations', () => {
     await notifyOperatorOfDegradations(scoped(), OPERATOR);
 
     expect(JSON.stringify(sendHtmlEmail.mock.calls)).toContain('no longer registered');
+  });
+
+  it('describes a code named like an Object prototype key as unregistered', async () => {
+    await seed(A, T2);
+
+    await notifyOperatorOfDegradations(scoped({ alias: { [A]: 'toString' } }), OPERATOR);
+
+    expect(sendHtmlEmail).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(sendHtmlEmail.mock.calls)).toContain('no longer registered');
+  });
+
+  it.each([
+    ['an array', ['first', 'second']],
+    ['a string', 'tier nine'],
+  ])('renders a sample that is %s as no sample', async (_label, sample) => {
+    await seed(A, T2, null, sample);
+
+    await notifyOperatorOfDegradations(scoped(), OPERATOR);
+
+    const { html } = sendHtmlEmail.mock.calls[0]![0] as { html: string };
+    expect(html).not.toContain('Latest:');
+  });
+
+  it.each([
+    ['never told', null],
+    ['told before', T1],
+  ])('puts back the claims already made when a later claim throws (%s)', async (_label, previous) => {
+    await seed(A, T2, previous);
+    await seed(B, T2, previous);
+
+    const result = notifyOperatorOfDegradations(
+      scoped({
+        beforeClaim: (n) => {
+          if (n === 2) throw new Error('claim failed');
+        },
+      }),
+      OPERATOR,
+    );
+
+    await expect(result).rejects.toBeInstanceOf(DegradationDigestError);
+    await expect(result).rejects.toThrow(/claim failed/);
+    expect(sendHtmlEmail).not.toHaveBeenCalled();
+    const rows = await prisma.degradationEvent.findMany({ where: { code: { in: [A, B] } } });
+    expect(rows.map((r) => r.lastNotifiedAt)).toEqual([previous, previous]);
+  });
+
+  it('says so, and logs the code, when a claim cannot be released', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    await seed(A, T2, T1);
+    sendHtmlEmail.mockResolvedValue({ ok: false, reason: 'provider down' });
+
+    const result = notifyOperatorOfDegradations(
+      scoped({
+        beforeRelease: () => {
+          throw new Error('release failed');
+        },
+      }),
+      OPERATOR,
+    );
+
+    await expect(result).rejects.toBeInstanceOf(DegradationDigestError);
+    await expect(result).rejects.toThrow(/could not be released/);
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ code: A, err: expect.any(Error) }),
+      expect.stringContaining('could not release'),
+    );
   });
 });
