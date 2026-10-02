@@ -459,23 +459,38 @@ async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
 
 ### Notification Dispatcher (`services/notifications.ts`)
 
-Three-layer delivery:
+`createNotification` / `createBulkNotifications` do only two things: write the
+`Notification` row (the inbox, layer 2) and call `emitToBus`, a
+fire-and-forget publish to the in-process SSE bus (layer 1) that clients treat
+as a refresh hint, never as the payload itself. Neither function schedules
+email or push — those are separate sweeps, each reading committed
+`Notification` rows on its own column and its own cutoff: `email-fallback.ts`
+(layer 4, `emailSent`/`isRead`, see Cron Jobs) and `push-dispatch.ts` (layer 3,
+`pushHandledAt`, see Cron Jobs and Web Push below). A row's three outcomes are
+therefore decided independently of one another and of this module.
 
-```typescript
-async function dispatch(notification: CreateNotification): Promise<void> {
-  // Layer 1: Create in-app notification record (always)
-  await createNotificationRecord(notification);
+### Web Push (`lib/push/`, `services/push-dispatch.ts`)
 
-  // Layer 2: Push to real-time channel if recipient is online
-  // (WebSocket or Server-Sent Events)
-  await pushRealTime(notification);
+Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
 
-  // Layer 3: Schedule email fallback
-  // If not read within 30 minutes, send email — on the next sweep regardless
-  // of age for a waitlist promotion or a walk-in (IMMEDIATE_EMAIL_TYPES, notification-policy.ts)
-  await scheduleEmailFallback(notification, { delayMinutes: 30 });
-}
-```
+- `lib/push-policy.ts` decides WHETHER (`shouldPush`, keyed by the
+  `StudentPushGroup`/`TeacherPushGroup` preference columns a notification
+  type maps to), WHAT (`buildPushPayload` — redacts the body to a fixed line
+  for money groups, truncates title/body to the byte budgets that leave room
+  for RFC 8291's encryption overhead under the push service's 4096-byte
+  payload limit), and urgency (`pushUrgency`).
+- `lib/push/{vapid,encrypt,send}.ts` implement RFC 8292 VAPID and RFC 8291
+  payload encryption on `node:crypto`. `sendPush` never throws for an HTTP
+  status or a network failure: a 404/410 means the subscription is dead
+  (`gone`), anything else non-2xx or a timeout is `failed`.
+- `services/push-dispatch.ts`'s `dispatchPushes` is the sweep wired into the
+  scheduler (Cron Jobs, above): it claims each committed `Notification` row
+  with a compare-and-swap on `pushHandledAt` so overlapping ticks send once,
+  sends to every subscription on the resolved recipient's account, deletes a
+  subscription the push service reports `gone`, and never retries a `failed`
+  one. A row older than `PUSH_STALE_AFTER_MS` (15 minutes) is retired without
+  sending, and when `readVapidConfig()` finds no valid `VAPID_*` environment
+  every row is retired without sending.
 
 ### Entry Generator (`services/entry-generation.ts`)
 
@@ -963,6 +978,7 @@ Every job skips a tick while its own previous run is still in flight, and from t
 | Class reminders | Every 5 minutes | Reminds registered students and the teacher of an open class at each one's chosen moment (`reminderMoment`, `src/lib/reminder-moment.ts`), in the inbox and/or by direct email — once, and never at or after the class's start |
 | Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable or an offset identifier (`isValidTimeZone`) |
 | Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before class start |
+| Push dispatch | Every 10 seconds | Reads committed `Notification` rows with `pushHandledAt: null`, sends to the recipient's subscribed devices where preference allows, and retires (stamps `pushHandledAt` without sending) any row older than `PUSH_STALE_AFTER_MS` (15 minutes, `src/services/push-dispatch.ts`) |
 
 ### Overlapping triggers
 

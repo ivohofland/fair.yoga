@@ -56,6 +56,7 @@ export interface SchedulerSweeps {
   reapClosedWaitlistEntries: (db: PrismaClient) => Promise<unknown>;
   reapExpiredNotifications: (db: PrismaClient) => Promise<unknown>;
   auditTeacherTimezones: (db: PrismaClient) => Promise<unknown>;
+  dispatchPushes: (db: PrismaClient) => Promise<unknown>;
 }
 
 const MINUTE = 60 * 1000;
@@ -151,6 +152,7 @@ export async function startScheduler(): Promise<void> {
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
   const { reapExpiredNotifications } = await import('@/services/notification-retention');
   const { auditTeacherTimezones } = await import('@/services/timezone-audit');
+  const { dispatchPushes } = await import('@/services/push-dispatch');
 
   const jobs = buildJobs({
     autoTransitionToInProgress,
@@ -166,6 +168,7 @@ export async function startScheduler(): Promise<void> {
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
     auditTeacherTimezones,
+    dispatchPushes,
   });
 
   scheduleJobs(jobs, prisma, (globalThis.__fairYogaJobHealth ??= {}));
@@ -277,6 +280,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
     auditTeacherTimezones,
+    dispatchPushes,
   } = sweeps;
 
   return [
@@ -395,6 +399,13 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       name: 'waitlist-reconciliation',
       intervalMs: 1 * MINUTE,
       run: (db) => runWaitlistReconciliationTick(db),
+    },
+    {
+      // Push is a best-effort layer ahead of email; this interval is its
+      // latency (`docs/technical-architecture.md`, Cron Jobs).
+      name: 'push-dispatch',
+      intervalMs: 10 * 1000,
+      run: (db) => dispatchPushes(db),
     },
   ];
 }
