@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
-import { dispatchPushes, PUSH_BATCH, PUSH_STALE_AFTER_MS, type PushSender } from './push-dispatch';
+import { dispatchPushes, PUSH_BATCH, PUSH_STALE_AFTER_MS, PushSendFault, type PushSender } from './push-dispatch';
 import { PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 import { log } from '@/lib/log';
@@ -431,7 +431,13 @@ describe('dispatchPushes', () => {
       throw fault;
     });
 
-    await expect(dispatchPushes(scoped([n.id]).db, send)).rejects.toBe(fault);
+    const rejection: unknown = await dispatchPushes(scoped([n.id]).db, send).catch((err: unknown) => err);
+
+    expect(rejection).toBeInstanceOf(PushSendFault);
+    const sendFault = rejection as PushSendFault;
+    expect(sendFault.notificationId).toBe(n.id);
+    expect([first.id, second.id]).toContain(sendFault.subscriptionId);
+    expect(sendFault.cause).toBe(fault);
 
     expect(send).toHaveBeenCalledTimes(2);
     expect(await prisma.pushSubscription.findUnique({ where: { id: first.id } })).not.toBeNull();
@@ -500,7 +506,11 @@ describe('dispatchPushes', () => {
 
       gate.resolve();
 
-      await expect(pending).rejects.toBe(dbError);
+      const rejection: unknown = await pending.catch((err: unknown) => err);
+      expect(rejection).toBeInstanceOf(PushSendFault);
+      expect((rejection as PushSendFault).notificationId).toBe(n1.id);
+      expect((rejection as PushSendFault).subscriptionId).toBe(sub1.id);
+      expect((rejection as PushSendFault).cause).toBe(dbError);
       // n2's own send still went through despite n1's task failing —
       // one bad task does not stop the rest of the batch.
       expect(calls).toContain(sub2.endpoint);

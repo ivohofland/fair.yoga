@@ -183,14 +183,16 @@ export function buildPushPayload(n: {
   body: string;
 }): PushPayload {
   const inbox = n.recipientType === 'student' ? '/updates' : '/inbox';
+  const redacted = isRedacted(n.recipientType, n.type);
   const payload: PushPayload = {
     id: n.id,
     title: truncate(n.title, PUSH_TITLE_MAX_BYTES),
-    body: isRedacted(n.recipientType, n.type) ? REDACTED_BODY : truncate(n.body, PUSH_BODY_MAX_BYTES),
+    body: redacted ? REDACTED_BODY : truncate(n.body, PUSH_BODY_MAX_BYTES),
     url: `${inbox}?n=${encodeURIComponent(n.id)}`,
   };
-  // A redacted body is a short constant and always fits; an own body dense
-  // in characters JSON escapes (control characters, quotes) may not.
+  // A redacted body is REDACTED_BODY itself, never the notification's own —
+  // it must never be replaced by `fitBody`, which stitches in `n.body`.
+  if (redacted) return payload;
   if (serialisedBytes(payload) <= PUSH_PLAINTEXT_MAX_BYTES) return payload;
   return fitBody(payload, n.body);
 }

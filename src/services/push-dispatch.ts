@@ -166,7 +166,7 @@ export async function dispatchPushes(
   const [firstFailure, ...otherFailures] = taskResults.filter(isTaskFailure);
   if (firstFailure) {
     logTaskFailures(otherFailures);
-    throw firstFailure.err;
+    throw new PushSendFault(firstFailure.notificationId, firstFailure.subscriptionId, firstFailure.err);
   }
 
   if (result.failed + result.gone + result.invalid + result.retired > 0) {
@@ -179,6 +179,18 @@ interface TaskFailure {
   err: unknown;
   notificationId: string;
   subscriptionId: string;
+}
+
+/** What a rejected send task is rethrown as, so the ids it names reach the caller, not just the log. */
+export class PushSendFault extends Error {
+  constructor(
+    public readonly notificationId: string,
+    public readonly subscriptionId: string,
+    cause: unknown,
+  ) {
+    super(`push send failed for notification ${notificationId}, subscription ${subscriptionId}`, { cause });
+    this.name = 'PushSendFault';
+  }
 }
 
 function isTaskFailure(value: TaskFailure | undefined): value is TaskFailure {

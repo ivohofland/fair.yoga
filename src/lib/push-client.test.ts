@@ -134,6 +134,29 @@ describe('enablePush', () => {
     expect(existing.unsubscribe).not.toHaveBeenCalled();
   });
 
+  it('subscribes and POSTs for an existing subscription whose key comparison is unknown, resolving on', async () => {
+    const existing = fakeSubscription(null, 'https://push.example/existing');
+    const sameEndpoint = fakeSubscription(null, 'https://push.example/existing');
+    const { subscribe } = stubRegistration({ existing, created: sameEndpoint });
+    const fetchMock = vi.fn<(url: string, init: { body: string }) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(enablePush(keyOf(4))).resolves.toBe('on');
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).endpoint).toBe('https://push.example/existing');
+  });
+
+  it('does not unsubscribe when a key comparison of unknown leads subscribe back to the pre-existing endpoint and the server refuses it', async () => {
+    const existing = fakeSubscription(null, 'https://push.example/existing');
+    const sameEndpoint = fakeSubscription(null, 'https://push.example/existing');
+    stubRegistration({ existing, created: sameEndpoint });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
+
+    await expect(enablePush(keyOf(4))).resolves.toBe('failed');
+    expect(existing.unsubscribe).not.toHaveBeenCalled();
+    expect(sameEndpoint.unsubscribe).not.toHaveBeenCalled();
+  });
+
   it('unsubscribes a subscription it made when the server never recorded it', async () => {
     const created = fakeSubscription(null, 'https://push.example/abc');
     stubRegistration({ existing: null, created });
