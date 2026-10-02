@@ -67,16 +67,16 @@ Measured when the tables below were last brought up to date:
 
 | command | count |
 |---|---|
-| `log.warn(` lines | 78 |
-| `log.error(` lines | 67 |
-| surface (`log.warn(` or `log.error(`) | **78 + 67 = 145** |
+| `log.warn(` lines | 79 |
+| `log.error(` lines | 68 |
+| surface (`log.warn(` or `log.error(`) | **79 + 68 = 147** |
 | split `.warn(` / `.error(` continuation lines | 0 |
 | `log[…](` lines | 17 |
 | `logDegraded(` call lines | 11 |
 
-One of the 145 is not a call: `src/lib/log.ts:5` is a usage example inside
-that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:74`
-is the line `logDegraded` itself emits. So 144 static calls and 16
+One of the 147 is not a call: `src/lib/log.ts:5` is a usage example inside
+that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:77`
+is the line `logDegraded` itself emits. So 146 static calls and 16
 computed-level calls were classified, beside the 11 `logDegraded` calls.
 
 Line numbers below are as of that update and drift with every edit; the
@@ -160,15 +160,15 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | site (file:line) | level | verdict | code or reason |
 |---|---|---|---|
 | `src/lib/entry-conflict.ts:282` | error | degradation | `ENTRY_CONFLICT_KIND_UNKNOWN` |
-| `src/lib/finish-window.ts:62` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/payment-breakdown.server.ts:24` | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
+| `src/lib/finish-window.ts:61` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/payment-breakdown.server.ts:21` | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
 | `src/lib/rule-slot-holder.ts:137` | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
 | `src/lib/tiers.server.ts:43` | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
 | `src/lib/timezone.ts:114` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/timezone.ts:227` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/timezone.ts:308` | warn | degradation | `CLASS_START_UNREADABLE` |
-| `src/lib/timezone.ts:316` | warn | degradation | `CLASS_START_UNREADABLE` |
-| `src/lib/timezone.ts:330` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/timezone.ts:226` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/timezone.ts:306` | warn | degradation | `CLASS_START_UNREADABLE` |
+| `src/lib/timezone.ts:314` | warn | degradation | `CLASS_START_UNREADABLE` |
+| `src/lib/timezone.ts:328` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
 | `src/services/email-fallback.ts:221` | error | degradation | `TEACHER_NOTIFICATION_TYPE_UNKNOWN` |
 
 ### The `log.warn(` / `log.error(` surface
@@ -206,7 +206,8 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/classes/[id]/route.ts:198` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
 | `src/app/api/classes/route.ts:189` | warn | routine | documented race; the loser is refused or retried (room deleted) |
 | `src/app/api/classes/route.ts:208` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/health/route.ts:48` | error | routine | failure, surfaced as an error (503) |
+| `src/app/api/health/route.ts:40` | error | routine | failure, surfaced as an error (503) |
+| `src/app/api/health/route.ts:53` | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
 | `src/app/api/invitations/[id]/resend/route.ts:68` | warn | routine | rate-limit throttle |
 | `src/app/api/invitations/[id]/route.ts:97` | warn | routine | failure (an exception or outage), not impossible data; answered as a 409 |
 | `src/app/api/registrations/[id]/route.ts:500` | error | routine | failure (an exception or outage), not impossible data; the cancellation itself succeeded |
@@ -237,7 +238,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/auth/signup-ticket.ts:194` | error | routine | failure, surfaced as an error (unreachable `never` branch) |
 | `src/lib/degradation.ts:51` | error | routine | failure (an exception or outage), not impossible data (recording the event failed) |
 | `src/lib/entry-conflict.ts:301` | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
-| `src/lib/finish-window.ts:49` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/finish-window.ts:48` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
 | `src/lib/log.ts:5` | error | — | not a call: a usage example in the docblock |
 | `src/lib/rate-limit.ts:123` | warn | routine | rate-limit throttle (bucket evicted under memory pressure) |
 | `src/lib/rate-limit.ts:256` | warn | routine | configuration fault, not data; see close calls |
@@ -245,11 +246,12 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/scheduler.ts:79` | error | routine | operational state, reported through job health |
 | `src/lib/scheduler.ts:132` | warn | routine | configuration (`CRON_SCHEDULER=off`), logged at boot |
 | `src/lib/scheduler.ts:141` | error | routine | configuration (`OPERATOR_EMAIL` unset), logged at boot |
-| `src/lib/scheduler.ts:243` | error | routine | operational state, reported through job health |
-| `src/lib/scheduler.ts:257` | error | routine | operational state, reported through job health |
+| `src/lib/scheduler.ts:146` | warn | routine | configuration (`EMAIL_DRY_RUN=1` in production), logged at boot |
+| `src/lib/scheduler.ts:248` | error | routine | operational state, reported through job health |
+| `src/lib/scheduler.ts:262` | error | routine | operational state, reported through job health |
 | `src/lib/timezone.ts:95` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/lib/timezone.ts:202` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/lib/timezone.ts:412` | warn | routine | refusal (4xx); nothing substituted (`startsInPast` fails closed, 409) |
+| `src/lib/timezone.ts:201` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/timezone.ts:410` | warn | routine | refusal (4xx); nothing substituted (`startsInPast` fails closed, 409) |
 | `src/services/class-generator.ts:259` | warn | routine | lock contention (`isLockTimeout`) |
 | `src/services/class-generator.ts:265` | error | routine | operational state, reported through job health |
 | `src/services/class-lifecycle.ts:582` | warn | routine | documented race; the loser is refused or retried (room archived mid-request) |
@@ -265,8 +267,8 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/class-transitions.ts:744` | warn | routine | documented race; the loser is refused or retried (rescheduled or cancelled after the snapshot) |
 | `src/services/class-transitions.ts:746` | error | routine | operational state, reported through job health (completion refused) |
 | `src/services/class-transitions.ts:750` | error | routine | operational state, reported through job health |
-| `src/services/degradation-digest.ts:57` | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
-| `src/services/degradation-digest.ts:108` | error | routine | failure (an exception or outage), not impossible data; the job throws |
+| `src/services/degradation-digest.ts:61` | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
+| `src/services/degradation-digest.ts:111` | error | routine | failure (an exception or outage), not impossible data; the job throws |
 | `src/services/email-fallback.ts:80` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/email-fallback.ts:99` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/email-fallback.ts:134` | error | routine | documented race; the loser is refused or retried (claim no longer ours) |
@@ -275,10 +277,10 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/email-fallback.ts:327` | error | routine | failure (an exception or outage), not impossible data (send refused) |
 | `src/services/email-fallback.ts:334` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/entry-generation.ts:453` | warn | routine | documented race; the loser is refused or retried (EvalPlanQual re-check) |
-| `src/services/entry-generation.ts:591` | warn | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/services/entry-generation.ts:927` | warn | routine | skipped dates; the teacher is told why |
-| `src/services/entry-generation.ts:1153` | warn | routine | failure (an exception or outage), not impossible data; the edit saved, the confirmation names no week |
-| `src/services/entry-generation.ts:1208` | warn | routine | a defect in that function, not a stored value; see close calls |
+| `src/services/entry-generation.ts:589` | warn | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/services/entry-generation.ts:925` | warn | routine | skipped dates; the teacher is told why |
+| `src/services/entry-generation.ts:1151` | warn | routine | failure (an exception or outage), not impossible data; the edit saved, the confirmation names no week |
+| `src/services/entry-generation.ts:1206` | warn | routine | a defect in that function, not a stored value; see close calls |
 | `src/services/gdpr.ts:1027` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
 | `src/services/gdpr.ts:1658` | warn | routine | documented race; the loser is refused or retried (erasure CAS) |
 | `src/services/gdpr.ts:1681` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
@@ -334,7 +336,7 @@ Each picks its level at run time, mostly through `transientDbFailure` (`src/lib/
 | `src/app/api/registrations/route.ts:480` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/waitlist/route.ts:64` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/lib/api-utils.ts:217` | dynamic | routine | `withErrorHandler`; every uncaught route error, surfaced as an error |
-| `src/lib/degradation.ts:74` | dynamic | — | not a site: the line `logDegraded` itself emits |
+| `src/lib/degradation.ts:77` | dynamic | — | not a site: the line `logDegraded` itself emits |
 | `src/services/class-template-lifecycle.ts:1109` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts:1012` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts:1168` | dynamic | routine | failure (an exception or outage), not impossible data (completion refused during erasure) |
