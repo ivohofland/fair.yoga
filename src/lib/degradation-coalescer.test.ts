@@ -36,19 +36,43 @@ describe('createCoalescer', () => {
   it('holds later occurrences in the window and flushes them, batched, when it ends', async () => {
     const { coalescer, write } = make();
     coalescer.record('A', { n: 1 });
+    await vi.advanceTimersByTimeAsync(10_000);
     coalescer.record('A', { n: 2 });
+    await vi.advanceTimersByTimeAsync(10_000);
     coalescer.record('A', { n: 3 });
     expect(write).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(59_999);
+    await vi.advanceTimersByTimeAsync(39_999);
     expect(write).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1);
     expect(write).toHaveBeenCalledTimes(2);
     expect(write).toHaveBeenLastCalledWith('A', {
       count: 2,
-      at: new Date('2026-10-02T10:00:00.000Z'),
+      at: new Date('2026-10-02T10:00:20.000Z'),
       sample: { n: 3 },
+    });
+  });
+
+  it('holds and flushes again in the window after a trailing flush', async () => {
+    const { coalescer, write } = make();
+    coalescer.record('A', { n: 1 });
+    coalescer.record('A', { n: 2 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(write).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    coalescer.record('A', { n: 3 });
+    await vi.advanceTimersByTimeAsync(20_000);
+    coalescer.record('A', { n: 4 });
+    expect(write).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(write).toHaveBeenCalledTimes(3);
+    expect(write).toHaveBeenLastCalledWith('A', {
+      count: 2,
+      at: new Date('2026-10-02T10:01:30.000Z'),
+      sample: { n: 4 },
     });
   });
 
