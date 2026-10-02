@@ -997,7 +997,7 @@ A degradation is a place where the app substitutes or withholds a value because
 data that should have been impossible turned up: a tier outside 1–5, a timezone
 that will not resolve. The user sees a page that works; nobody sees that a
 fallback ran. Such a site calls `logDegraded` (`src/lib/degradation.ts`), which
-logs the line it always logged and records the event so the operator is told.
+logs the message and the allowlisted context and records the event so the operator is told.
 `docs/degradation-sites.md` holds the audit of which log sites qualify and why
 the rest do not, and one runbook section per code.
 
@@ -1043,7 +1043,8 @@ the rest do not, and one runbook section per code.
   `/api/health` instead of the events sitting unseen; nothing is claimed.
 - **Health.** `/api/health` reports `degradations.open`, the number of events
   whose `lastSeenAt` is within the last 24 hours, as a bare number. Which codes
-  and what they carried reach only the inbox.
+  fired, and what they carried, appear only in the digest email and the server
+  log, never on `/api/health`.
 
 ---
 
