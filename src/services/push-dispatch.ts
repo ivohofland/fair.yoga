@@ -68,59 +68,84 @@ export async function dispatchPushes(
 
   const limit = createConcurrencyLimit(SEND_CONCURRENCY);
   // Every subscription's send, across every notification in this batch,
-  // through the one shared `limit` — collected here and awaited once after
-  // the loop, rather than per notification, so a tick's sends share
-  // concurrency instead of running one notification at a time.
-  const tasks: Array<Promise<void>> = [];
+  // through the one shared `limit` — collected here and awaited once in
+  // the `finally` below, rather than per notification, so a tick's sends
+  // share concurrency instead of running one notification at a time.
+  //
+  // Each task is wrapped with `.then(() => undefined, (err) => err)` at the
+  // moment it is pushed, before the loop does anything else — a plain
+  // rejected promise gets its first handler only when something later
+  // awaits it, and the claim loop above keeps awaiting the DB (the next
+  // notification's claim, `resolveRecipient`, `pushSubscription.findMany`)
+  // in the meantime, so an early task rejecting there would have no
+  // handler attached yet: a process-level `unhandledRejection`. Wrapping
+  // immediately means a task's outcome is always carried as its RESOLVED
+  // value instead — `undefined` on success, the error on failure — so the
+  // wrapped promise itself never rejects at all.
+  const tasks: Array<Promise<unknown>> = [];
+  let taskResults: unknown[] = [];
 
-  for (const n of candidates) {
-    const claim = await db.notification.updateMany({
-      where: { id: n.id, pushHandledAt: null },
-      data: { pushHandledAt: now },
-    });
-    if (claim.count !== 1) continue;
-    result.claimed += 1;
-    if (!sender) continue;
+  try {
+    for (const n of candidates) {
+      const claim = await db.notification.updateMany({
+        where: { id: n.id, pushHandledAt: null },
+        data: { pushHandledAt: now },
+      });
+      if (claim.count !== 1) continue;
+      result.claimed += 1;
+      if (!sender) continue;
 
-    const resolved = await resolveRecipient(db, n.recipientType, n.recipientId);
-    if (!resolved || !shouldPush(resolved.recipient, n.type)) continue;
+      const resolved = await resolveRecipient(db, n.recipientType, n.recipientId);
+      if (!resolved || !shouldPush(resolved.recipient, n.type)) continue;
 
-    const subscriptions = await db.pushSubscription.findMany({ where: { accountId: resolved.accountId } });
-    const payload = buildPushPayload(n);
-    const urgency = pushUrgency(n.recipientType, n.type);
-    for (const sub of subscriptions) {
-      tasks.push(limit(async () => {
-        let outcome: PushOutcome;
-        let status: number | null;
-        try {
-          ({ outcome, status } = await sender(sub, payload, urgency));
-        } catch (err) {
-          // A stored key the sender cannot even encrypt against (a
-          // malformed `p256dh`, for instance) never will — the same
-          // standing as `gone`. Caught here, scoped to this subscription,
-          // so one bad row cannot abort the rest of the tick's sends.
-          result.failed += 1;
-          log.warn({ notificationId: n.id, subscriptionId: sub.id, err }, 'push send threw; subscription removed');
-          await db.pushSubscription.deleteMany({ where: { id: sub.id } });
-          return;
-        }
-        if (outcome === 'delivered') {
-          result.sent += 1;
-          await db.pushSubscription.updateMany({ where: { id: sub.id }, data: { lastUsedAt: now } });
-        } else if (outcome === 'gone') {
-          result.gone += 1;
-          await db.pushSubscription.deleteMany({ where: { id: sub.id } });
-        } else {
-          result.failed += 1;
-          log.warn({ notificationId: n.id, subscriptionId: sub.id, status }, 'push send failed; not retried');
-        }
-      }));
+      const subscriptions = await db.pushSubscription.findMany({ where: { accountId: resolved.accountId } });
+      const payload = buildPushPayload(n);
+      const urgency = pushUrgency(n.recipientType, n.type);
+      for (const sub of subscriptions) {
+        tasks.push(
+          limit(async () => {
+            let outcome: PushOutcome;
+            let status: number | null;
+            try {
+              ({ outcome, status } = await sender(sub, payload, urgency));
+            } catch (err) {
+              // A stored key the sender cannot even encrypt against (a
+              // malformed `p256dh`, for instance) never will — the same
+              // standing as `gone`. Caught here, scoped to this
+              // subscription, so one bad row cannot abort the rest of the
+              // tick's sends.
+              result.failed += 1;
+              log.warn({ notificationId: n.id, subscriptionId: sub.id, err }, 'push send threw; subscription removed');
+              await db.pushSubscription.deleteMany({ where: { id: sub.id } });
+              return;
+            }
+            if (outcome === 'delivered') {
+              result.sent += 1;
+              await db.pushSubscription.updateMany({ where: { id: sub.id }, data: { lastUsedAt: now } });
+            } else if (outcome === 'gone') {
+              result.gone += 1;
+              await db.pushSubscription.deleteMany({ where: { id: sub.id } });
+            } else {
+              result.failed += 1;
+              log.warn({ notificationId: n.id, subscriptionId: sub.id, status }, 'push send failed; not retried');
+            }
+          }).then(
+            () => undefined,
+            (err: unknown) => err,
+          ),
+        );
+      }
     }
+  } finally {
+    // Awaited whether the loop above threw or returned — a send must never
+    // outlive this tick on either path. If the loop threw, this still runs
+    // first and the original error then propagates on its own once this
+    // `finally` completes; execution never reaches the lines below.
+    taskResults = await Promise.all(tasks);
   }
 
-  const settled = await Promise.allSettled(tasks);
-  const firstRejected = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
-  if (firstRejected) throw firstRejected.reason;
+  const firstTaskError = taskResults.find((r) => r !== undefined);
+  if (firstTaskError !== undefined) throw firstTaskError;
 
   return result;
 }

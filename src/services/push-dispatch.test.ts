@@ -91,6 +91,70 @@ function scopedRacing(ids: string[]): ScopedSweep {
   return scopeSweep(racing as unknown as PrismaClient, { Notification: { id: { in: ids } } });
 }
 
+/** A promise the test resolves explicitly — no timers, no sleeps. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * A base client whose `pushSubscription.updateMany` throws `error` for the
+ * `lastUsedAt` write on `subscriptionId` — calling `onReject` first, so a
+ * test can wait for the throw without a sleep — and whose
+ * `notification.updateMany` (the claim) for `notificationId` waits on
+ * `gate` before running the real query, holding the claim loop at exactly
+ * that await until the test releases it.
+ */
+function rejectingLastUsedThenGatedClaim(options: {
+  subscriptionId: string;
+  error: Error;
+  onReject: () => void;
+  notificationId: string;
+  gate: Promise<void>;
+}) {
+  return prisma.$extends({
+    query: {
+      pushSubscription: {
+        async updateMany({ args, query }) {
+          const where = args.where as { id?: string } | undefined;
+          if (where?.id === options.subscriptionId) {
+            options.onReject();
+            throw options.error;
+          }
+          return query(args);
+        },
+      },
+      notification: {
+        async updateMany({ args, query }) {
+          const where = args.where as { id?: string } | undefined;
+          if (where?.id === options.notificationId) {
+            await options.gate;
+          }
+          return query(args);
+        },
+      },
+    },
+  });
+}
+
+/** A base client whose `notification.updateMany` (the claim) for `notificationId` throws `error`. */
+function failingClaim(notificationId: string, error: Error) {
+  return prisma.$extends({
+    query: {
+      notification: {
+        async updateMany({ args, query }) {
+          const where = args.where as { id?: string } | undefined;
+          if (where?.id === notificationId) throw error;
+          return query(args);
+        },
+      },
+    },
+  });
+}
+
 describe('dispatchPushes', () => {
   let studentId: string;
   let studentAccountId: string;
@@ -338,6 +402,98 @@ describe('dispatchPushes', () => {
       expect.objectContaining({ notificationId: n.id, subscriptionId: bad.id }),
       expect.any(String),
     );
+  });
+
+  it('never leaves an early task rejection unhandled while the loop still awaits the next notification (R16)', async () => {
+    const sub1 = await subscribe(studentAccountId, 'early-fail');
+    const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const sub2 = await subscribe(teacherAccountId, 'second');
+    const n2 = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
+
+    const dbError = new Error('lastUsedAt write failed');
+    const rejected = deferred<void>();
+    const gate = deferred<void>();
+    const hooked = rejectingLastUsedThenGatedClaim({
+      subscriptionId: sub1.id,
+      error: dbError,
+      onReject: rejected.resolve,
+      notificationId: n2.id,
+      gate: gate.promise,
+    });
+    const s = scopeSweep(hooked as unknown as PrismaClient, { Notification: { id: { in: [n1.id, n2.id] } } });
+
+    const calls: string[] = [];
+    const send: PushSender = vi.fn(async (target) => {
+      calls.push(target.endpoint);
+      return { outcome: 'delivered' as const, status: 201 };
+    });
+
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const pending = dispatchPushes(s.db, send);
+
+      // The first task's DB write rejects here, deliberately while the
+      // claim loop is still parked on `gate` for n2 — the exact window
+      // R16 names. No handler but the push-time `.then` wrap exists yet.
+      await rejected.promise;
+      // Flush a couple of microtask ticks so that wrap actually settles
+      // (converts the rejection into a resolved value) before we let n2's
+      // claim through — a flush, not a sleep.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      gate.resolve();
+
+      await expect(pending).rejects.toBe(dbError);
+      // n2's own send still went through despite n1's task failing —
+      // one bad task does not stop the rest of the batch.
+      expect(calls).toContain(sub2.endpoint);
+
+      // One more flush: a late `unhandledRejection` fires asynchronously,
+      // so give it a chance before asserting it never fired.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('holds every send for the tick before surfacing a claim failure, and lets none outlive it (R16)', async () => {
+    const sub1 = await subscribe(studentAccountId, 'pending-send');
+    const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const n2 = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
+
+    const claimError = new Error('claim failed for n2');
+    const hooked = failingClaim(n2.id, claimError);
+    const s = scopeSweep(hooked as unknown as PrismaClient, { Notification: { id: { in: [n1.id, n2.id] } } });
+
+    const sendGate = deferred<{ outcome: 'delivered' | 'gone' | 'failed'; status: number | null }>();
+    const send: PushSender = vi.fn(async (target) => {
+      if (target.endpoint === sub1.endpoint) return sendGate.promise;
+      return { outcome: 'delivered' as const, status: 201 };
+    });
+
+    const pending = dispatchPushes(s.db, send);
+    let settled = false;
+    pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalled());
+    // n2's claim has already thrown by now (it needs no real I/O to do
+    // so), but the tick cannot settle: the finally below is still awaiting
+    // sub1's send, which only this test can release.
+    expect(settled).toBe(false);
+
+    sendGate.resolve({ outcome: 'delivered', status: 201 });
+
+    await expect(pending).rejects.toBe(claimError);
   });
 
   it('sends once when two ticks overlap', async () => {
