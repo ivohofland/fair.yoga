@@ -275,7 +275,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/entry-generation.ts:591` | warn | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
 | `src/services/entry-generation.ts:927` | warn | routine | skipped dates; the teacher is told why |
 | `src/services/entry-generation.ts:1153` | warn | routine | failure (an exception or outage), not impossible data; the edit saved, the confirmation names no week |
-| `src/services/entry-generation.ts:1208` | warn | routine | failure (an exception or outage), not impossible data; see close calls |
+| `src/services/entry-generation.ts:1208` | warn | routine | a defect in that function, not a stored value; see close calls |
 | `src/services/gdpr.ts:1027` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
 | `src/services/gdpr.ts:1658` | warn | routine | documented race; the loser is refused or retried (erasure CAS) |
 | `src/services/gdpr.ts:1681` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
@@ -425,6 +425,7 @@ with ids — `class reminders: unreadable class start; skipped` (`classId`),
 be read` (`templateId`, `teacherId`), `refusing completion: this class schedule
 is unreadable …` (`classId`). Then look at the row. A Postgres `date` can hold
 values no JavaScript `Date` can — `infinity`, or a year past 275760:
+Both `startTime` columns are `@db.Time`, whose every value (00:00 to 24:00) reads back as a valid `Date`, so `date` is the only stored culprit.
 
 ```sql
 SELECT id, kind, date, "startTime" FROM "CalendarEntry"
