@@ -136,6 +136,12 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       classReminder: student.classReminder,
       classReminderChannel: student.classReminderChannel,
       emailNotifications: student.emailNotifications,
+      pushWaitlist: student.pushWaitlist,
+      pushClassChanges: student.pushClassChanges,
+      pushPayments: student.pushPayments,
+      pushClassReminders: student.pushClassReminders,
+      pushAnnouncements: student.pushAnnouncements,
+      pushInvitations: student.pushInvitations,
       createdAt: student.createdAt,
     },
     privacySettings: student.studentPrivacy.map((p) => ({
@@ -235,6 +241,11 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       bookingNotifications: teacher.bookingNotifications,
       emailOnClassCompleted: teacher.emailOnClassCompleted,
       emailOnInvitation: teacher.emailOnInvitation,
+      pushAutoCancelled: teacher.pushAutoCancelled,
+      pushBookings: teacher.pushBookings,
+      pushClassCompleted: teacher.pushClassCompleted,
+      pushClassReminders: teacher.pushClassReminders,
+      pushInvitations: teacher.pushInvitations,
       classReminder: teacher.classReminder,
       classReminderChannel: teacher.classReminderChannel,
       bankIban: teacher.bankIban,
@@ -730,8 +741,9 @@ export async function deleteStudentAccount(
     // refusal could otherwise have leaned on. Why they are kept rather than
     // scrubbed, hashed or expired: `docs/data-model.md` (TeacherBlock).
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
-    // Sessions and passkeys belong to the account. They die with the
-    // erased profile unless a live teacher profile still uses the account.
+    // Sessions, passkeys and push subscriptions belong to the account. They
+    // die with the erased profile unless a live teacher profile still uses
+    // the account.
     if (student.accountId) {
       const teacherOnAccount = await tx.teacher.findFirst({
         where: { accountId: student.accountId, deletedAt: null },
@@ -740,6 +752,7 @@ export async function deleteStudentAccount(
       if (!teacherOnAccount) {
         await tx.session.deleteMany({ where: { accountId: student.accountId } });
         await tx.passkeyCredential.deleteMany({ where: { accountId: student.accountId } });
+        await tx.pushSubscription.deleteMany({ where: { accountId: student.accountId } });
         // Last live profile erased: the account email is PII too.
         await tx.account.update({
           where: { id: student.accountId },
@@ -813,6 +826,12 @@ export async function deleteStudentAccount(
         address: null,
         incomeTier: DEFAULT_INCOME_TIER,
         emailNotifications: false,
+        pushWaitlist: false,
+        pushClassChanges: false,
+        pushPayments: false,
+        pushClassReminders: false,
+        pushAnnouncements: false,
+        pushInvitations: false,
         deletedAt: new Date(),
       },
     });
@@ -1480,8 +1499,9 @@ export async function deleteTeacherAccount(
       // Student erasure keeps them too — see `deleteStudentAccount` above.
       await tx.invitation.deleteMany({ where: { teacherId } });
       await tx.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: teacherId } });
-      // Sessions and passkeys belong to the account. They die with the
-      // erased profile unless a live student profile still uses the account.
+      // Sessions, passkeys and push subscriptions belong to the account.
+      // They die with the erased profile unless a live student profile
+      // still uses the account.
       {
         const studentOnAccount = await tx.student.findFirst({
           where: { accountId: teacher.accountId, deletedAt: null },
@@ -1490,6 +1510,7 @@ export async function deleteTeacherAccount(
         if (!studentOnAccount) {
           await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
           await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
+          await tx.pushSubscription.deleteMany({ where: { accountId: teacher.accountId } });
           // Last live profile erased: the account email is PII too.
           await tx.account.update({
             where: { id: teacher.accountId },
@@ -1546,6 +1567,11 @@ export async function deleteTeacherAccount(
           customDomain: null,
           processorType: null,
           processorAccountId: null,
+          pushAutoCancelled: false,
+          pushBookings: false,
+          pushClassCompleted: false,
+          pushClassReminders: false,
+          pushInvitations: false,
           deletedAt: new Date(),
         },
       });
