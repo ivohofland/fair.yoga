@@ -1,6 +1,7 @@
 import { encryptPayload, InvalidSubscriptionKeysError } from './encrypt';
 import { vapidAuthorization, type VapidKeys } from './vapid';
-import type { PushPayload } from '../push-policy';
+import type { PushPayload, PushUrgency } from '../push-policy';
+import type { UserAgentKeys } from './encrypt';
 
 /**
  * `delivered`: the push service accepted it. `gone`: 404/410, the subscription
@@ -10,11 +11,7 @@ import type { PushPayload } from '../push-policy';
  */
 export type PushOutcome = 'delivered' | 'gone' | 'invalid' | 'failed';
 
-export interface PushTarget {
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-}
+export type PushTarget = UserAgentKeys & { endpoint: string };
 
 export interface PushSendResult {
   outcome: PushOutcome;
@@ -26,7 +23,7 @@ export interface PushSendResult {
 }
 
 export interface SendOptions {
-  urgency: 'high' | 'normal';
+  urgency: PushUrgency;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }

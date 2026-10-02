@@ -3,7 +3,7 @@ import { log } from '@/lib/log';
 import { createConcurrencyLimit } from '@/lib/concurrency-limit';
 import { diagnoseVapidConfig, type VapidConfigProblem } from '@/lib/push/config';
 import { sendPush, type PushSendResult, type PushTarget } from '@/lib/push/send';
-import { buildPushPayload, pushUrgency, shouldPush, type PushPayload, type PushRecipient } from '@/lib/push-policy';
+import { buildPushPayload, pushUrgency, shouldPush, type PushPayload, type PushRecipient, type PushUrgency } from '@/lib/push-policy';
 
 /** A push older than this would describe a moment that has passed (a seat already claimed). */
 export const PUSH_STALE_AFTER_MS = 15 * 60 * 1000;
@@ -13,7 +13,7 @@ const SEND_CONCURRENCY = 4;
 export type PushSender = (
   target: PushTarget,
   payload: PushPayload,
-  urgency: 'high' | 'normal',
+  urgency: PushUrgency,
 ) => Promise<PushSendResult>;
 
 export interface PushDispatchResult {

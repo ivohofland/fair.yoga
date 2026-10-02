@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import type { PushTarget } from '@/lib/push/send';
 
 export type SavePushSubscriptionResult = 'created' | 'updated' | 'moved' | 'unchanged';
 
@@ -22,7 +23,7 @@ export const MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT = 10;
 export async function savePushSubscription(
   db: PrismaClient,
   accountId: string,
-  sub: { endpoint: string; p256dh: string; auth: string },
+  sub: PushTarget,
 ): Promise<SavePushSubscriptionResult> {
   return db.$transaction(async (tx) => {
     const existing = await tx.pushSubscription.findUnique({

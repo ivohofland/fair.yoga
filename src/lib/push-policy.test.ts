@@ -17,6 +17,10 @@ const allTeacherOn: TeacherPushPrefs = {
   pushAutoCancelled: true, pushBookings: true, pushClassCompleted: true,
   pushClassReminders: true, pushInvitations: true,
 };
+const allTeacherOff: TeacherPushPrefs = {
+  pushAutoCancelled: false, pushBookings: false, pushClassCompleted: false,
+  pushClassReminders: false, pushInvitations: false,
+};
 
 describe('STUDENT_PUSH_GROUP', () => {
   it('files every NotificationType', () => {
@@ -57,6 +61,61 @@ describe('shouldPush', () => {
     expect(Object.keys(TEACHER_PUSH_GROUP).sort()).toEqual(
       ['booking_confirmed', 'class_cancelled', 'class_reminder', 'payment_request', 'teacher_invitation'],
     );
+  });
+});
+
+// Written out here rather than read from the policy maps, so a map that files
+// a type under the wrong group disagrees with this table.
+const STUDENT_COLUMN_FOR = {
+  waitlist_promoted: 'pushWaitlist',
+  spot_available: 'pushWaitlist',
+  spot_taken: 'pushWaitlist',
+  class_cancelled: 'pushClassChanges',
+  booking_removed: 'pushClassChanges',
+  walk_in_added: 'pushClassChanges',
+  payment_request: 'pushPayments',
+  reminder: 'pushPayments',
+  class_reminder: 'pushClassReminders',
+  announcement: 'pushAnnouncements',
+  teacher_invitation: 'pushInvitations',
+  booking_confirmed: null,
+  booking_cancelled: null,
+  payment_received: null,
+} as const satisfies Record<NotificationType, keyof StudentPushPrefs | null>;
+
+const TEACHER_COLUMN_FOR = {
+  class_cancelled: 'pushAutoCancelled',
+  booking_confirmed: 'pushBookings',
+  payment_request: 'pushClassCompleted',
+  class_reminder: 'pushClassReminders',
+  teacher_invitation: 'pushInvitations',
+  waitlist_promoted: null,
+  spot_available: null,
+  spot_taken: null,
+  booking_removed: null,
+  walk_in_added: null,
+  reminder: null,
+  announcement: null,
+  booking_cancelled: null,
+  payment_received: null,
+} as const satisfies Record<NotificationType, keyof TeacherPushPrefs | null>;
+
+const STUDENT_COLUMNS = Object.keys(allStudentOff) as Array<keyof StudentPushPrefs>;
+const TEACHER_COLUMNS = Object.keys(allTeacherOff) as Array<keyof TeacherPushPrefs>;
+
+describe('shouldPush, every type against every single column', () => {
+  const studentCases = Object.values(NotificationType).flatMap((type) =>
+    STUDENT_COLUMNS.map((column) => [type, column] as const));
+  it.each(studentCases)('student %s with only %s on', (type, column) => {
+    const prefs = { ...allStudentOff, [column]: true };
+    expect(shouldPush({ audience: 'student', prefs }, type)).toBe(STUDENT_COLUMN_FOR[type] === column);
+  });
+
+  const teacherCases = Object.values(NotificationType).flatMap((type) =>
+    TEACHER_COLUMNS.map((column) => [type, column] as const));
+  it.each(teacherCases)('teacher %s with only %s on', (type, column) => {
+    const prefs = { ...allTeacherOff, [column]: true };
+    expect(shouldPush({ audience: 'teacher', prefs }, type)).toBe(TEACHER_COLUMN_FOR[type] === column);
   });
 });
 

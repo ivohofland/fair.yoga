@@ -1,5 +1,6 @@
 import type { NotificationType, RecipientType, Student, Teacher } from '@prisma/client';
-import type { TeacherNotificationType } from '@/services/notification-policy';
+import { isTeacherNotificationType, type TeacherNotificationType } from '@/services/notification-policy';
+import type { NoneOf } from '@/lib/type-pins';
 
 /**
  * Which push preference governs each notification. Push is for what happened
@@ -10,8 +11,15 @@ import type { TeacherNotificationType } from '@/services/notification-policy';
 export type StudentPushGroup = 'waitlist' | 'classChanges' | 'payments' | 'classReminders' | 'announcements' | 'invitations';
 export type TeacherPushGroup = 'autoCancelled' | 'bookings' | 'classCompleted' | 'classReminders' | 'invitations';
 
-export type StudentPushPrefs = Pick<Student, 'pushWaitlist' | 'pushClassChanges' | 'pushPayments' | 'pushClassReminders' | 'pushAnnouncements' | 'pushInvitations'>;
-export type TeacherPushPrefs = Pick<Teacher, 'pushAutoCancelled' | 'pushBookings' | 'pushClassCompleted' | 'pushClassReminders' | 'pushInvitations'>;
+/** Every profile column named `push…`: the preference columns, read off the schema. */
+export type StudentPushColumn = Extract<keyof Student, `push${string}`>;
+export type TeacherPushColumn = Extract<keyof Teacher, `push${string}`>;
+
+export type StudentPushPrefs = Pick<Student, StudentPushColumn>;
+export type TeacherPushPrefs = Pick<Teacher, TeacherPushColumn>;
+
+/** The push service's `Urgency` header values this app sends. */
+export type PushUrgency = 'high' | 'normal';
 
 export const STUDENT_PUSH_GROUP = {
   waitlist_promoted: 'waitlist',
@@ -45,7 +53,7 @@ export const STUDENT_PUSH_COLUMN = {
   classReminders: 'pushClassReminders',
   announcements: 'pushAnnouncements',
   invitations: 'pushInvitations',
-} as const satisfies Record<StudentPushGroup, keyof StudentPushPrefs>;
+} as const satisfies { readonly [G in StudentPushGroup]: `push${Capitalize<G>}` & StudentPushColumn };
 
 export const TEACHER_PUSH_COLUMN = {
   autoCancelled: 'pushAutoCancelled',
@@ -53,7 +61,13 @@ export const TEACHER_PUSH_COLUMN = {
   classCompleted: 'pushClassCompleted',
   classReminders: 'pushClassReminders',
   invitations: 'pushInvitations',
-} as const satisfies Record<TeacherPushGroup, keyof TeacherPushPrefs>;
+} as const satisfies { readonly [G in TeacherPushGroup]: `push${Capitalize<G>}` & TeacherPushColumn };
+
+// A `push…` column no group maps to would be a preference nothing reads; the
+// build names it here.
+const _everyStudentPushColumnHasAGroup: NoneOf<Exclude<StudentPushColumn, (typeof STUDENT_PUSH_COLUMN)[StudentPushGroup]>> = true;
+const _everyTeacherPushColumnHasAGroup: NoneOf<Exclude<TeacherPushColumn, (typeof TEACHER_PUSH_COLUMN)[TeacherPushGroup]>> = true;
+void [_everyStudentPushColumnHasAGroup, _everyTeacherPushColumnHasAGroup];
 
 /** Whether a group's lock-screen body is the notification's own or the fixed line (spec §4). */
 const STUDENT_LOCK_SCREEN = {
@@ -81,12 +95,8 @@ export type PushRecipient =
   | { audience: 'student'; prefs: StudentPushPrefs }
   | { audience: 'teacher'; prefs: TeacherPushPrefs };
 
-function isTeacherType(type: NotificationType): type is TeacherNotificationType {
-  return type in TEACHER_PUSH_GROUP;
-}
-
 function teacherGroup(type: NotificationType): TeacherPushGroup | 'never' {
-  return isTeacherType(type) ? TEACHER_PUSH_GROUP[type] : 'never';
+  return isTeacherNotificationType(type) ? TEACHER_PUSH_GROUP[type] : 'never';
 }
 
 export function shouldPush(recipient: PushRecipient, type: NotificationType): boolean {
@@ -150,7 +160,7 @@ export function buildPushPayload(n: {
   };
 }
 
-export function pushUrgency(audience: RecipientType, type: NotificationType): 'high' | 'normal' {
+export function pushUrgency(audience: RecipientType, type: NotificationType): PushUrgency {
   if (audience === 'student') {
     const group = STUDENT_PUSH_GROUP[type];
     return group !== 'never' && STUDENT_URGENT[group] ? 'high' : 'normal';
