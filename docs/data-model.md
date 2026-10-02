@@ -35,10 +35,16 @@ never deleted (erasure anonymises `Teacher`/`Student`, it never removes the
 explicitly, by each of these:
 
 - a 404/410 response from the push service (the endpoint is gone);
-- the dispatch sweep's sender throwing for it — a stored key the sender
-  cannot encrypt to (`dispatchPushes`, `push-dispatch.ts`);
+- stored keys the sender cannot encrypt against — the `invalid` outcome
+  (`dispatchPushes`, `push-dispatch.ts`);
+- eviction, when the account saves another endpoint while already holding
+  `MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT`: its least recently active row goes
+  (`savePushSubscription`, `push-subscriptions.ts`);
 - "Turn off for this phone" in the notification settings (`disablePush`,
   `DELETE /api/push/subscriptions`);
+- the settings section finding this browser's subscription was made with a
+  VAPID key the server no longer signs with, which runs the same
+  `disablePush`;
 - sign-out, which runs the same `disablePush` before ending the session;
 - GDPR erasure.
 
@@ -123,7 +129,7 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 | class_reminder_channel | enum: inbox, email, inbox_and_email, default inbox_and_email | How that reminder arrives |
 | email_notifications | boolean, default true | Fallback email on/off |
 | push_waitlist | boolean, default true | Push for a waitlist spot |
-| push_class_changes | boolean, default true | Push for a class cancellation or change to a class they're booked into |
+| push_class_changes | boolean, default true | Push for cancellations, a booking the teacher removed, or being added as a walk-in |
 | push_payments | boolean, default false | Push for a payment request or reminder |
 | push_class_reminders | boolean, default false | Push for the student's own class reminder |
 | push_announcements | boolean, default false | Push for a teacher announcement |
@@ -835,7 +841,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | *related_class_id* (FK) | → Class, nullable | |
 | is_read | boolean, default false | |
 | email_sent | boolean, default false | True once no fallback email may be sent for this row: set by the fallback when it claims the row for a send (cleared again if the send fails) or marks it without sending (an opted-out or missing recipient, or a dry run), and written true at creation for every `class_reminder` row, whose email (if its channel has one) the class-reminder sweep sends directly |
-| push_handled_at | datetime, nullable, indexed with `created_at` (#724) | Set by the `push-dispatch` sweep once it has decided about this row — sent, skipped by preference, or retired as stale past the 15-minute push cutoff. Independent of `email_sent`: the two channels are claimed and decided separately, and neither reads the other. Never read by email or the inbox. |
+| push_handled_at | datetime, nullable, indexed with `created_at` (#724) | Stamped by the `push-dispatch` sweep before any send: by its retire step, for a row already past the 15-minute push cutoff, or by the claim that takes the row for sending. Never cleared, so a push is never retried, whatever the send's outcome. Independent of `email_sent`: the two channels are claimed and decided separately, and neither reads the other. Never read by email or the inbox. |
 | created_at | datetime | |
 | updated_at | datetime | |
 

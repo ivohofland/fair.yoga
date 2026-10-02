@@ -26,8 +26,9 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
     let cleared = false;
     try {
       // A device left subscribed would keep receiving this account's
-      // notifications after someone else signs in on it. Bounded so a stuck
-      // service worker never blocks leaving; a failure never skips the DELETE.
+      // notifications after someone else signs in on it. Waiting at most 3
+      // seconds, so a stuck service worker never blocks leaving; a failure
+      // never skips the session DELETE below.
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timedOut = new Promise<void>((resolve) => {
         timer = setTimeout(() => {
@@ -45,9 +46,9 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
       // cleared stays false — surfaced below as well as logged.
       logRequestFailure('sign-out-button', {}, err);
     } finally {
-      // #40. Neither the push nor the refresh is guaranteed to commit on a
-      // starved or offline device, and both return `void`, so this component
-      // cannot learn whether they did. Resetting here means a dropped commit
+      // #40. Neither `router.push` nor `router.refresh` is guaranteed to
+      // commit on a starved or offline device, and both return `void`, so this
+      // component cannot learn whether they did. Resetting here means a dropped commit
       // leaves a tappable button rather than a stale authenticated shell with
       // no way out. DELETE /api/auth/session is idempotent, so a second tap
       // costs nothing.

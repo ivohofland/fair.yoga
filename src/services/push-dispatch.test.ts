@@ -458,7 +458,7 @@ describe('dispatchPushes', () => {
     expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ failed: 1, claimed: 1 }), expect.any(String));
   });
 
-  it('never leaves an early task rejection unhandled while the loop still awaits the next notification (R16)', async () => {
+  it('never leaves an early task rejection unhandled while the loop still awaits the next notification', async () => {
     const sub1 = await subscribe(studentAccountId, 'early-fail');
     const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
     const sub2 = await subscribe(teacherAccountId, 'second');
@@ -488,8 +488,9 @@ describe('dispatchPushes', () => {
       const pending = dispatchPushes(s.db, send);
 
       // The first task's DB write rejects here, deliberately while the
-      // claim loop is still parked on `gate` for n2 — the exact window
-      // R16 names. No handler but the push-time `.then` wrap exists yet.
+      // claim loop is still parked on `gate` for n2 — a task that settles
+      // before anything awaits it. No handler but the push-time `.then`
+      // wrap exists yet.
       await rejected.promise;
       // Flush a couple of microtask ticks so that wrap actually settles
       // (converts the rejection into a resolved value) before we let n2's
@@ -513,7 +514,7 @@ describe('dispatchPushes', () => {
     }
   });
 
-  it('holds every send for the tick before surfacing a claim failure, and lets none outlive it (R16)', async () => {
+  it('holds every send for the tick before surfacing a claim failure, and lets none outlive it', async () => {
     const sub1 = await subscribe(studentAccountId, 'pending-send');
     const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
     const n2 = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
@@ -541,8 +542,8 @@ describe('dispatchPushes', () => {
 
     await vi.waitFor(() => expect(send).toHaveBeenCalled());
     // n2's claim has already thrown by now (it needs no real I/O to do
-    // so), but the tick cannot settle: the finally below is still awaiting
-    // sub1's send, which only this test can release.
+    // so), but the tick cannot settle: `dispatchPushes`'s `finally` is
+    // still awaiting sub1's send, which only this test can release.
     expect(settled).toBe(false);
 
     sendGate.resolve({ outcome: 'delivered', status: 201 });

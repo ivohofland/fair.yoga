@@ -483,20 +483,36 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
   `PUSH_PLAINTEXT_MAX_BYTES` — the push service's 4096-byte limit less RFC
   8291's encryption overhead), and urgency (`pushUrgency`).
 - `lib/push/{vapid,encrypt,send}.ts` implement RFC 8292 VAPID and RFC 8291
-  payload encryption on `node:crypto`. `sendPush` never throws for an HTTP
-  status or a network failure: a 404/410 means the subscription is dead
-  (`gone`), anything else non-2xx or a timeout is `failed`.
+  payload encryption on `node:crypto`. `sendPush` follows no redirect
+  (`redirect: 'manual'`) and reports an outcome for everything the push
+  service or the network can do: a 2xx is `delivered`; a 404/410 is `gone`,
+  the subscription is dead; stored keys it cannot encrypt against
+  (`InvalidSubscriptionKeysError`) are `invalid`; any other status, a
+  redirect, a network error or a timeout is `failed`, carrying the error as
+  `cause` or the start of the response body as `reason`. Any other throw — a
+  signing or encryption fault — propagates.
+- `lib/push/endpoint.ts`'s `isPushServiceEndpoint` is the host allowlist
+  `POST /api/push/subscriptions` applies before it stores an endpoint:
+  `https:` on a known browser push service and nothing else, because the
+  sweep POSTs to whatever is stored. `savePushSubscription`
+  (`services/push-subscriptions.ts`) keeps each account to
+  `MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT` rows, evicting the least recently
+  active (`lastUsedAt ?? createdAt`) in the same transaction as the upsert.
 - `services/push-dispatch.ts`'s `dispatchPushes` is the sweep wired into the
-  scheduler (Cron Jobs, above): it claims each committed `Notification` row
-  with a compare-and-swap on `pushHandledAt` so overlapping ticks send once,
+  scheduler (Cron Jobs, below): it claims each committed `Notification` row
+  with a compare-and-swap on `pushHandledAt` so concurrent runs send once,
   sends to every subscription on the resolved recipient's account, deletes a
-  subscription the push service reports `gone` or the sender throws for (a
-  stored key it cannot encrypt to), and never retries a `failed` one. A row already older than the stale cutoff (`PUSH_STALE_AFTER_MS`, 15
-  minutes) when a tick reads it is retired without sending — a row still
-  within the cutoff at that read can still be sent even if it ages past it
-  before the tick finishes. When `readVapidConfig()` finds no valid
-  `VAPID_*` environment — unset, malformed, or a public key that is not the
-  one the private key derives — every row is retired without sending.
+  subscription whose outcome is `gone` or `invalid`, and never retries a
+  `failed` one. A sender throw is a fault, not a verdict on the row: it
+  rejects the tick, which the scheduler logs and records as `lastError`, and
+  the subscription stays. A row already older than the stale cutoff
+  (`PUSH_STALE_AFTER_MS`, 15 minutes) when a tick reads it is retired without
+  sending — a row still within the cutoff at that read can still be sent even
+  if it ages past it before the tick finishes. When `diagnoseVapidConfig()`
+  (`lib/push/config.ts`) finds the `VAPID_*` environment unusable, every row
+  is retired without sending; once per process the sweep warns when no
+  `VAPID_*` variable is set, and logs an error naming the reason for any
+  other problem.
 
 ### Entry Generator (`services/entry-generation.ts`)
 
@@ -976,7 +992,7 @@ export async function GET(request: Request) {
 
 ## Cron Jobs
 
-Every job skips a tick while its own previous run is still in flight, and from the second refused tick on it reads unhealthy (`STALLED_AFTER_SKIPPED_TICKS`, `src/lib/scheduler.ts`); Overlapping triggers, below, records which jobs were examined for a manual call overlapping a scheduled tick — a job it does not name was not examined. Each job's first run happens shortly after the Node server boots (15 seconds after the scheduler registers it), then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs alongside the scheduler — every job except waitlist reconciliation has one — and `CRON_SCHEDULER=off` is a CI setting, not a production mode (`DEPLOYMENT.md` §5).
+Every job skips a tick while its own previous run is still in flight, and from the second refused tick on it reads unhealthy (`STALLED_AFTER_SKIPPED_TICKS`, `src/lib/scheduler.ts`); Overlapping triggers, below, records which jobs were examined for a manual call overlapping a scheduled tick — a job it does not name was not examined. Each job's first run happens shortly after the Node server boots (15 seconds after the scheduler registers it), then on its own `setInterval` (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs alongside the scheduler: `ls src/app/api/cron` lists them, and a job in the table below with no directory there — waitlist reconciliation and push dispatch — runs only on the scheduler. `CRON_SCHEDULER=off` is a CI setting, not a production mode (`DEPLOYMENT.md` §5).
 
 | Job | Schedule | What it does |
 |---|---|---|
@@ -987,7 +1003,7 @@ Every job skips a tick while its own previous run is still in flight, and from t
 | Class reminders | Every 5 minutes | Reminds registered students and the teacher of an open class at each one's chosen moment (`reminderMoment`, `src/lib/reminder-moment.ts`), in the inbox and/or by direct email — once, and never at or after the class's start |
 | Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), emails the operator the degradation events that are new or have fired again, and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable or an offset identifier (`isValidTimeZone`) |
 | Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before class start |
-| Push dispatch | Every 10 seconds | Reads committed `Notification` rows with `pushHandledAt: null`, sends to the recipient's subscribed devices where preference allows, and retires (stamps `pushHandledAt` without sending) any row already older than `PUSH_STALE_AFTER_MS` (15 minutes) when this sweep reads it (`src/services/push-dispatch.ts`) |
+| Push dispatch | Every 10 seconds | Reads committed `Notification` rows with `pushHandledAt: null`, sends to the recipient's subscribed devices where preference allows, and retires (stamps `pushHandledAt` without sending) any row already older than `PUSH_STALE_AFTER_MS` (15 minutes) when this sweep reads it (`src/services/push-dispatch.ts`); a tick that retired a row or had a send come back `failed`, `gone` or `invalid` logs one `info` line with the tick's counts |
 
 ### Overlapping triggers
 
@@ -1213,7 +1229,7 @@ STRIPE_WEBHOOK_SECRET=
 # re-subscribe only when the user turns push on again.
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
-VAPID_SUBJECT=              # e.g. "mailto:ops@fair.yoga"
+VAPID_SUBJECT=              # a mailto: or https:// URL, e.g. "mailto:ops@fair.yoga"
 
 # App
 NEXT_PUBLIC_APP_URL=        # e.g. "https://ethicalyoga.app"

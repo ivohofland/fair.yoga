@@ -16,7 +16,7 @@ const good = {
 };
 
 describe('readVapidConfig', () => {
-  it('returns the keys when all three are set and well-formed', () => {
+  it('returns the keys when every `VAPID_*` value is set and well-formed', () => {
     expect(readVapidConfig(good)).toEqual({ publicKey: good.VAPID_PUBLIC_KEY, privateKey: good.VAPID_PRIVATE_KEY, subject: good.VAPID_SUBJECT });
   });
 
@@ -54,7 +54,7 @@ describe('readVapidConfig', () => {
 });
 
 describe('diagnoseVapidConfig', () => {
-  it('is ok with the keys when all three are set and well-formed', () => {
+  it('is ok with the keys when every `VAPID_*` value is set and well-formed', () => {
     expect(diagnoseVapidConfig(good)).toEqual({
       ok: true,
       keys: { publicKey: good.VAPID_PUBLIC_KEY, privateKey: good.VAPID_PRIVATE_KEY, subject: good.VAPID_SUBJECT },

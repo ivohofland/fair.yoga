@@ -55,7 +55,7 @@ function reportUnconfigured(reason: VapidConfigProblem): void {
 /**
  * The push layer's sweep. Reads only committed rows — a notification written
  * inside a transaction that rolls back is never seen — and claims each with a
- * compare-and-swap on `pushHandledAt`, so overlapping ticks send once. Never
+ * compare-and-swap on `pushHandledAt`, so concurrent runs send once. Never
  * writes `isRead` or `emailSent` (docs/technical-architecture.md, Notification
  * Dispatcher).
  */
