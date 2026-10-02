@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { NotificationsForm } from './notifications-form';
 import { REMINDER_TIMING_OPTIONS } from '@/lib/reminder-options';
+import type { StudentPushPrefs } from '@/lib/push-policy';
 
 vi.mock('@/components/settings/push-device-control', () => ({
   PushDeviceControl: ({ vapidPublicKey }: { vapidPublicKey: string | null }) => (
@@ -28,7 +29,7 @@ vi.mock('@/components/settings/push-device-control', () => ({
 describe('NotificationsForm', () => {
   const fetchMock = vi.fn();
 
-  const DEFAULT_PUSH = {
+  const DEFAULT_PUSH: StudentPushPrefs = {
     pushWaitlist: true,
     pushClassChanges: true,
     pushPayments: false,
@@ -36,6 +37,19 @@ describe('NotificationsForm', () => {
     pushAnnouncements: false,
     pushInvitations: false,
   };
+
+  // The brief's verbatim labels, typed against `StudentPushPrefs` so a new
+  // push column fails to compile here until it is given one.
+  const PUSH_LABELS = {
+    pushWaitlist: 'Waitlist spots',
+    pushClassChanges: 'Class changes',
+    pushPayments: 'Payments',
+    pushClassReminders: 'Class reminders',
+    pushAnnouncements: 'Announcements',
+    pushInvitations: 'Invitations',
+  } satisfies Record<keyof StudentPushPrefs, string>;
+
+  const PUSH_LABEL_ENTRIES = Object.entries(PUSH_LABELS) as Array<[keyof StudentPushPrefs, string]>;
 
   afterEach(() => {
     fetchMock.mockReset();
@@ -62,10 +76,6 @@ describe('NotificationsForm', () => {
 
   it('sends exactly the NotificationsBody keys', async () => {
     stubFetch();
-    // `pushAnnouncements` is overridden to differ from `pushClassReminders`
-    // (both are `false` in DEFAULT_PUSH): negating both from equal starting
-    // values would still land them on the same final value, so a bug that
-    // swapped which state fed which key would go undetected below.
     render(
       <NotificationsForm
         studentId="student-1"
@@ -73,16 +83,9 @@ describe('NotificationsForm', () => {
         classReminder="morning_of"
         classReminderChannel="inbox_and_email"
         {...DEFAULT_PUSH}
-        pushAnnouncements={true}
         vapidPublicKey="KEY"
       />,
     );
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Waitlist spots' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Class changes' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Payments' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Class reminders' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Announcements' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Invitations' }));
     const { url, method, body } = await save();
     expect(url).toBe('/api/students/student-1');
     expect(method).toBe('PUT');
@@ -101,13 +104,39 @@ describe('NotificationsForm', () => {
       emailNotifications: true,
       classReminder: 'morning_of',
       classReminderChannel: 'inbox_and_email',
-      pushWaitlist: false,
-      pushClassChanges: false,
-      pushPayments: true,
-      pushClassReminders: true,
-      pushAnnouncements: false,
-      pushInvitations: true,
+      ...DEFAULT_PUSH,
     });
+  });
+
+  // Booleans give a checkbox only two starting values, so a fixture with every
+  // push field at the same value can't tell a correct assignment from a swap
+  // between two keys that happen to start equal. Toggling exactly one key and
+  // pinning the rest to the fixture is what makes each key individually
+  // provable, whatever it starts at or shares a start value with.
+  it.each(PUSH_LABEL_ENTRIES)('toggles only %s, pinned to its own key', async (key, label) => {
+    stubFetch();
+    render(
+      <NotificationsForm
+        studentId="student-1"
+        emailNotifications={true}
+        classReminder="morning_of"
+        classReminderChannel="inbox_and_email"
+        {...DEFAULT_PUSH}
+        vapidPublicKey="KEY"
+      />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: label }));
+    const { body } = await save();
+    const expectedPush: StudentPushPrefs = {
+      pushWaitlist: DEFAULT_PUSH.pushWaitlist,
+      pushClassChanges: DEFAULT_PUSH.pushClassChanges,
+      pushPayments: DEFAULT_PUSH.pushPayments,
+      pushClassReminders: DEFAULT_PUSH.pushClassReminders,
+      pushAnnouncements: DEFAULT_PUSH.pushAnnouncements,
+      pushInvitations: DEFAULT_PUSH.pushInvitations,
+      [key]: !DEFAULT_PUSH[key],
+    };
+    expect(body).toMatchObject(expectedPush);
   });
 
   it('sends a toggled and reselected value, not just the initial ones', async () => {

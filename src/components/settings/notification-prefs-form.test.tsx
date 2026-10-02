@@ -24,6 +24,18 @@ const DEFAULTS: TeacherNotificationPrefs & TeacherPushPrefs = {
   pushInvitations: false,
 };
 
+// The brief's verbatim labels, typed against `TeacherPushPrefs` so a new push
+// column fails to compile here until it is given one.
+const PUSH_LABELS = {
+  pushAutoCancelled: 'Auto-cancelled classes',
+  pushBookings: 'New bookings',
+  pushClassCompleted: 'Class completed',
+  pushClassReminders: 'Class reminders',
+  pushInvitations: 'Invitations',
+} satisfies Record<keyof TeacherPushPrefs, string>;
+
+const PUSH_LABEL_ENTRIES = Object.entries(PUSH_LABELS) as Array<[keyof TeacherPushPrefs, string]>;
+
 // `PushDeviceControl` is stubbed throughout: its own behaviour is covered by
 // `push-device-control.test.tsx`; here only the prop it is handed and the
 // TeacherPushPrefs checkboxes beside it are this form's concern.
@@ -60,28 +72,13 @@ describe('NotificationPrefsForm', () => {
     expect(screen.getByText(/always emailed if you miss it/i)).toBeInTheDocument();
   });
 
-  it('sends exactly the NotificationPrefsBody keys to the teacher route, each at a non-default value', async () => {
+  it('sends exactly the NotificationPrefsBody keys', async () => {
     stubFetch();
-    // `pushClassReminders` is overridden to differ from `pushClassCompleted`
-    // (both are `false` in DEFAULTS): negating both from equal starting
-    // values would still land them on the same final value, so a bug that
-    // swapped which state fed which key would go undetected below.
-    render(
-      <NotificationPrefsForm
-        teacherId="t1"
-        initial={{ ...DEFAULTS, pushClassReminders: true }}
-        vapidPublicKey="KEY"
-      />,
-    );
+    render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} vapidPublicKey="KEY" />);
     const otherEmails = screen.getByRole('group', { name: /other emails/i });
     fireEvent.click(screen.getByRole('radio', { name: 'Off' }));
     fireEvent.click(within(otherEmails).getByRole('checkbox', { name: /class-completed summary/i }));
     fireEvent.click(within(otherEmails).getByRole('checkbox', { name: /invitation/i }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Auto-cancelled classes' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'New bookings' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Class completed' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Class reminders' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Invitations' }));
     const { url, method, body } = await save();
     expect(url).toBe('/api/teachers/t1');
     expect(method).toBe('PUT');
@@ -103,12 +100,33 @@ describe('NotificationPrefsForm', () => {
       emailOnInvitation: false,
       classReminder: 'evening_before',
       classReminderChannel: 'inbox',
-      pushAutoCancelled: false,
-      pushBookings: true,
-      pushClassCompleted: true,
+      pushAutoCancelled: true,
+      pushBookings: false,
+      pushClassCompleted: false,
       pushClassReminders: false,
-      pushInvitations: true,
+      pushInvitations: false,
     });
+  });
+
+  // Booleans give a checkbox only two starting values, so a fixture with every
+  // push field at the same value can't tell a correct assignment from a swap
+  // between two keys that happen to start equal. Toggling exactly one key and
+  // pinning the rest to the fixture is what makes each key individually
+  // provable, whatever it starts at or shares a start value with.
+  it.each(PUSH_LABEL_ENTRIES)('toggles only %s, pinned to its own key', async (key, label) => {
+    stubFetch();
+    render(<NotificationPrefsForm teacherId="t1" initial={DEFAULTS} vapidPublicKey="KEY" />);
+    fireEvent.click(screen.getByRole('checkbox', { name: label }));
+    const { body } = await save();
+    const expectedPush: TeacherPushPrefs = {
+      pushAutoCancelled: DEFAULTS.pushAutoCancelled,
+      pushBookings: DEFAULTS.pushBookings,
+      pushClassCompleted: DEFAULTS.pushClassCompleted,
+      pushClassReminders: DEFAULTS.pushClassReminders,
+      pushInvitations: DEFAULTS.pushInvitations,
+      [key]: !DEFAULTS[key],
+    };
+    expect(body).toMatchObject(expectedPush);
   });
 
   it('offers a Class reminder timing and channel, and sends both (#721)', async () => {
