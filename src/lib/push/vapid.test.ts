@@ -1,15 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { createECDH, createPublicKey, verify } from 'node:crypto';
+import { createPublicKey, verify } from 'node:crypto';
 import { vapidAuthorization } from './vapid';
+import { readVapidConfig } from './config';
+import { generateVapidKeyPair, generateUnpaddedVapidKeyPair } from './test-support';
 
-function keypair() {
-  const ecdh = createECDH('prime256v1');
-  ecdh.generateKeys();
-  return { publicKey: ecdh.getPublicKey().toString('base64url'), privateKey: ecdh.getPrivateKey().toString('base64url') };
+function verifiesAgainst(header: string, publicKey: string): boolean {
+  const [, jwt, k] = /^vapid t=([^,]+), k=(.+)$/.exec(header) ?? [];
+  if (k !== publicKey) return false;
+  const [h, p, s] = jwt!.split('.');
+  const pub = Buffer.from(publicKey, 'base64url');
+  const key = createPublicKey({
+    key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') },
+    format: 'jwk',
+  });
+  return verify('sha256', Buffer.from(`${h}.${p}`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(s!, 'base64url'));
 }
 
 describe('vapidAuthorization (RFC 8292)', () => {
-  const keys = { ...keypair(), subject: 'mailto:ops@fair.yoga' };
+  const keys = { ...generateVapidKeyPair(), subject: 'mailto:ops@fair.yoga' };
   const now = new Date('2026-10-02T12:00:00Z');
   const header = vapidAuthorization('https://fcm.googleapis.com/fcm/send/abc', keys, now);
   const [, jwt, k] = /^vapid t=([^,]+), k=(.+)$/.exec(header) ?? [];
@@ -36,5 +44,20 @@ describe('vapidAuthorization (RFC 8292)', () => {
       format: 'jwk',
     });
     expect(verify('sha256', Buffer.from(`${h}.${p}`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(s!, 'base64url'))).toBe(true);
+  });
+});
+
+describe('vapidAuthorization with a padded leading-zero private key', () => {
+  it('signs a JWT that verifies against the public key, for keys read through `readVapidConfig`', () => {
+    const unpadded = generateUnpaddedVapidKeyPair();
+    expect(Buffer.from(unpadded.privateKey, 'base64url').length).toBeLessThan(32);
+    const keys = readVapidConfig({
+      VAPID_PUBLIC_KEY: unpadded.publicKey,
+      VAPID_PRIVATE_KEY: unpadded.privateKey,
+      VAPID_SUBJECT: 'mailto:ops@fair.yoga',
+    });
+    expect(keys).not.toBeNull();
+    const header = vapidAuthorization('https://fcm.googleapis.com/fcm/send/abc', keys!);
+    expect(verifiesAgainst(header, unpadded.publicKey)).toBe(true);
   });
 });

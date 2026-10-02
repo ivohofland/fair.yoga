@@ -1,17 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { createECDH } from 'node:crypto';
-import { diagnoseVapidConfig, readVapidConfig } from './config';
+import { diagnoseVapidConfig, readVapidConfig, padPrivateKeyScalar } from './config';
+import { generateVapidKeyPair, generateUnpaddedVapidKeyPair } from './test-support';
 
-function generatedPair() {
-  const ecdh = createECDH('prime256v1');
-  ecdh.generateKeys();
-  return ecdh;
-}
-
-const ecdh = generatedPair();
+const pair = generateVapidKeyPair();
 const good = {
-  VAPID_PUBLIC_KEY: ecdh.getPublicKey().toString('base64url'),
-  VAPID_PRIVATE_KEY: ecdh.getPrivateKey().toString('base64url'),
+  VAPID_PUBLIC_KEY: pair.publicKey,
+  VAPID_PRIVATE_KEY: pair.privateKey,
   VAPID_SUBJECT: 'mailto:ops@fair.yoga',
 };
 
@@ -30,18 +24,18 @@ describe('readVapidConfig', () => {
   });
 
   it('returns the keys for a public key derived from the private key', () => {
-    const pair = generatedPair();
+    const other = generateVapidKeyPair();
     const env = {
       ...good,
-      VAPID_PUBLIC_KEY: pair.getPublicKey().toString('base64url'),
-      VAPID_PRIVATE_KEY: pair.getPrivateKey().toString('base64url'),
+      VAPID_PUBLIC_KEY: other.publicKey,
+      VAPID_PRIVATE_KEY: other.privateKey,
     };
     expect(readVapidConfig(env)).toEqual({ publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: good.VAPID_SUBJECT });
   });
 
   it('is null for a valid public key that belongs to a different private key', () => {
-    const other = generatedPair();
-    expect(readVapidConfig({ ...good, VAPID_PUBLIC_KEY: other.getPublicKey().toString('base64url') })).toBeNull();
+    const other = generateVapidKeyPair();
+    expect(readVapidConfig({ ...good, VAPID_PUBLIC_KEY: other.publicKey })).toBeNull();
   });
 
   it('is null for a 65-byte public key that is not a point on the curve', () => {
@@ -75,7 +69,24 @@ describe('diagnoseVapidConfig', () => {
   });
 
   it('names a private key of the wrong length private-length', () => {
-    expect(diagnoseVapidConfig({ ...good, VAPID_PRIVATE_KEY: Buffer.alloc(31, 1).toString('base64url') })).toEqual({ ok: false, reason: 'private-length' });
+    expect(diagnoseVapidConfig({ ...good, VAPID_PRIVATE_KEY: Buffer.alloc(33, 1).toString('base64url') })).toEqual({ ok: false, reason: 'private-length' });
+    // A non-empty, truthy string that decodes to zero bytes (Node's base64url
+    // decoding ignores characters outside its alphabet) — the "empty" case
+    // `private-length` names, distinct from an unset/falsy value ('partial').
+    expect(diagnoseVapidConfig({ ...good, VAPID_PRIVATE_KEY: '!!!' })).toEqual({ ok: false, reason: 'private-length' });
+  });
+
+  it('pads a private key shorter than 32 bytes — the leading-zero case `getPrivateKey()` can return', () => {
+    const unpadded = generateUnpaddedVapidKeyPair();
+    const raw = Buffer.from(unpadded.privateKey, 'base64url');
+    expect(raw.length).toBeLessThan(32);
+    const padded = padPrivateKeyScalar(raw);
+    expect(padded).toHaveLength(32);
+    const env = { ...good, VAPID_PUBLIC_KEY: unpadded.publicKey, VAPID_PRIVATE_KEY: unpadded.privateKey };
+    const diagnosis = diagnoseVapidConfig(env);
+    expect(diagnosis.ok).toBe(true);
+    if (!diagnosis.ok) throw new Error('unreachable');
+    expect(Buffer.from(diagnosis.keys.privateKey, 'base64url')).toEqual(padded);
   });
 
   it('names a subject that is neither mailto: nor https:// subject', () => {
@@ -89,8 +100,8 @@ describe('diagnoseVapidConfig', () => {
   });
 
   it('names a public key from another pair, or off the curve, pair-mismatch', () => {
-    const other = generatedPair();
-    expect(diagnoseVapidConfig({ ...good, VAPID_PUBLIC_KEY: other.getPublicKey().toString('base64url') })).toEqual({ ok: false, reason: 'pair-mismatch' });
+    const other = generateVapidKeyPair();
+    expect(diagnoseVapidConfig({ ...good, VAPID_PUBLIC_KEY: other.publicKey })).toEqual({ ok: false, reason: 'pair-mismatch' });
     expect(diagnoseVapidConfig({ ...good, VAPID_PUBLIC_KEY: Buffer.alloc(65, 4).toString('base64url') })).toEqual({ ok: false, reason: 'pair-mismatch' });
   });
 });

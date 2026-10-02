@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
 import { dispatchPushes, PUSH_BATCH, PUSH_STALE_AFTER_MS, PushSendFault, type PushSender } from './push-dispatch';
 import { PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send';
+import { generateVapidKeyPair } from '@/lib/push/test-support';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 import { log } from '@/lib/log';
 
@@ -12,13 +13,7 @@ vi.mock('@/lib/log', () => ({
 
 const prisma = new PrismaClient();
 
-const vapidPair = crypto.createECDH('prime256v1');
-vapidPair.generateKeys();
-const vapidKeys = {
-  publicKey: vapidPair.getPublicKey().toString('base64url'),
-  privateKey: vapidPair.getPrivateKey().toString('base64url'),
-  subject: 'mailto:ops@fair.yoga',
-};
+const vapidKeys = { ...generateVapidKeyPair(), subject: 'mailto:ops@fair.yoga' };
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 function recordingSender(outcome: 'delivered' | 'gone' | 'failed' = 'delivered') {
@@ -641,12 +636,10 @@ describe('dispatchPushes', () => {
     });
 
     it('logs an error naming the reason, once, and no key, for a misconfiguration', async () => {
-      const pair = crypto.createECDH('prime256v1');
-      pair.generateKeys();
-      const other = crypto.createECDH('prime256v1');
-      other.generateKeys();
-      const privateKey = pair.getPrivateKey().toString('base64url');
-      const publicKey = other.getPublicKey().toString('base64url');
+      const pair = generateVapidKeyPair();
+      const other = generateVapidKeyPair();
+      const privateKey = pair.privateKey;
+      const publicKey = other.publicKey;
       vi.stubEnv('VAPID_PUBLIC_KEY', publicKey);
       vi.stubEnv('VAPID_PRIVATE_KEY', privateKey);
       vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
@@ -677,10 +670,8 @@ describe('dispatchPushes', () => {
   });
 
   describe('with VAPID_* set', () => {
-    const vapidPrivate = crypto.createECDH('prime256v1');
-    vapidPrivate.generateKeys();
-    const otherPair = crypto.createECDH('prime256v1');
-    otherPair.generateKeys();
+    const vapidPrivate = generateVapidKeyPair();
+    const otherPair = generateVapidKeyPair();
 
     afterEach(() => {
       vi.unstubAllEnvs();
@@ -688,11 +679,11 @@ describe('dispatchPushes', () => {
     });
 
     it.each([
-      ['belongs to a different private key', otherPair.getPublicKey()],
-      ['is not a point on the curve', Buffer.alloc(65, 4)],
+      ['belongs to a different private key', otherPair.publicKey],
+      ['is not a point on the curve', Buffer.alloc(65, 4).toString('base64url')],
     ])('retires the row without sending and keeps the subscription when the public key %s', async (_label, publicKey) => {
-      vi.stubEnv('VAPID_PUBLIC_KEY', publicKey.toString('base64url'));
-      vi.stubEnv('VAPID_PRIVATE_KEY', vapidPrivate.getPrivateKey().toString('base64url'));
+      vi.stubEnv('VAPID_PUBLIC_KEY', publicKey);
+      vi.stubEnv('VAPID_PRIVATE_KEY', vapidPrivate.privateKey);
       vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no network in this test'));
       // A browser key the encryption step accepts, so nothing about the
@@ -718,10 +709,9 @@ describe('dispatchPushes', () => {
     });
 
     it('sends through the production sender when the keys form a pair', async () => {
-      const pair = crypto.createECDH('prime256v1');
-      pair.generateKeys();
-      vi.stubEnv('VAPID_PUBLIC_KEY', pair.getPublicKey().toString('base64url'));
-      vi.stubEnv('VAPID_PRIVATE_KEY', pair.getPrivateKey().toString('base64url'));
+      const pair = generateVapidKeyPair();
+      vi.stubEnv('VAPID_PUBLIC_KEY', pair.publicKey);
+      vi.stubEnv('VAPID_PRIVATE_KEY', pair.privateKey);
       vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 201 }));
       const browser = crypto.createECDH('prime256v1');
@@ -750,10 +740,9 @@ describe('dispatchPushes', () => {
   it('retires rows without sending when push is not configured', async () => {
     // A usable environment, device and sender's network, so that only the
     // `null` sender stands between this row and a delivered push.
-    const pair = crypto.createECDH('prime256v1');
-    pair.generateKeys();
-    vi.stubEnv('VAPID_PUBLIC_KEY', pair.getPublicKey().toString('base64url'));
-    vi.stubEnv('VAPID_PRIVATE_KEY', pair.getPrivateKey().toString('base64url'));
+    const pair = generateVapidKeyPair();
+    vi.stubEnv('VAPID_PUBLIC_KEY', pair.publicKey);
+    vi.stubEnv('VAPID_PRIVATE_KEY', pair.privateKey);
     vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 201 }));
     try {
