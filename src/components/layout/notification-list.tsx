@@ -37,7 +37,12 @@ interface Loaded {
 }
 
 function reviveNotification(n: Serialized<Notification>): Notification {
-  return { ...n, createdAt: new Date(n.createdAt), updatedAt: new Date(n.updatedAt) };
+  return {
+    ...n,
+    createdAt: new Date(n.createdAt),
+    updatedAt: new Date(n.updatedAt),
+    pushHandledAt: n.pushHandledAt === null ? null : new Date(n.pushHandledAt),
+  };
 }
 
 const rowButtonId = (id: string) => `notification-row-${id}`;

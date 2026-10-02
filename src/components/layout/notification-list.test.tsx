@@ -10,6 +10,7 @@ function notification(over: Partial<Notification>): Notification {
   return {
     id: 'n-1', recipientType: 'teacher', recipientId: 't-1', type: 'announcement',
     title: 'Title', body: 'Body', relatedClassId: null, isRead: false, emailSent: false,
+    pushHandledAt: null,
     createdAt: new Date('2026-09-15T10:00:00Z'), updatedAt: new Date('2026-09-15T10:00:00Z'),
     ...over,
   };

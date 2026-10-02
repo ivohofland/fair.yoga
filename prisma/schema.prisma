@@ -183,6 +183,11 @@ model Teacher {
   bookingNotifications  TeacherBookingNotifications @default(inbox_and_email)
   emailOnClassCompleted Boolean                     @default(true)
   emailOnInvitation     Boolean                     @default(true)
+  pushAutoCancelled     Boolean                     @default(true)
+  pushBookings          Boolean                     @default(false)
+  pushClassCompleted    Boolean                     @default(false)
+  pushClassReminders    Boolean                     @default(false)
+  pushInvitations       Boolean                     @default(false)
   skippedOnboarding     OnboardingStep[]            @default([])
   paymentLevel          PaymentLevel                @default(LEVEL_1)
   bankIban              String?
@@ -241,6 +246,12 @@ model Student {
   classReminder        ReminderTiming  @default(morning_of)
   classReminderChannel ReminderChannel @default(inbox_and_email)
   emailNotifications   Boolean         @default(true)
+  pushWaitlist         Boolean         @default(true)
+  pushClassChanges     Boolean         @default(true)
+  pushPayments         Boolean         @default(false)
+  pushClassReminders   Boolean         @default(false)
+  pushAnnouncements    Boolean         @default(false)
+  pushInvitations      Boolean         @default(false)
   claimedAt            DateTime?
   tierSelectedAt       DateTime?
   deletedAt            DateTime?
@@ -1103,6 +1114,9 @@ model Notification {
   relatedClassId String?
   isRead         Boolean          @default(false)
   emailSent      Boolean          @default(false)
+  // Set by the push-dispatch sweep when it has decided about this row — sent,
+  // skipped or retired as stale. Never read by email or the inbox.
+  pushHandledAt  DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
@@ -1117,6 +1131,21 @@ model Notification {
   // highest-volume table is not free: every notification insert maintains it.
   // The same commit that removed the query dropped the index.
   @@index([recipientType, recipientId, isRead])
+  @@index([pushHandledAt, createdAt])
+}
+
+/// One browser's push endpoint for one account. Deleted explicitly by erasure
+/// (`gdpr.ts`), on a 404/410 from the push service, and on sign-out.
+model PushSubscription {
+  id         String    @id @default(uuid())
+  accountId  String
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  @@index([accountId])
 }
 
 model Announcement {
