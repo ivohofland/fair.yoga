@@ -1,7 +1,7 @@
 import type { PrismaClient, RecipientType } from '@prisma/client';
 import { log } from '@/lib/log';
 import { createConcurrencyLimit } from '@/lib/concurrency-limit';
-import { readVapidConfig } from '@/lib/push/config';
+import { diagnoseVapidConfig, type VapidConfigProblem } from '@/lib/push/config';
 import { sendPush, type PushSendResult, type PushTarget } from '@/lib/push/send';
 import { buildPushPayload, pushUrgency, shouldPush, type PushPayload, type PushRecipient } from '@/lib/push-policy';
 
@@ -25,12 +25,31 @@ export interface PushDispatchResult {
   failed: number;
 }
 
-let warnedUnconfigured = false;
+let reportedUnconfigured = false;
 
 function defaultSender(): PushSender | null {
-  const keys = readVapidConfig();
-  if (!keys) return null;
+  const diagnosis = diagnoseVapidConfig();
+  if (!diagnosis.ok) {
+    reportUnconfigured(diagnosis.reason);
+    return null;
+  }
+  const { keys } = diagnosis;
   return (target, payload, urgency) => sendPush(target, payload, keys, { urgency });
+}
+
+/**
+ * Once per process. A deployment with no VAPID variable has chosen not to
+ * offer push, so that is a warning; any other problem is a deployment that
+ * meant to and cannot. Only the reason is logged, never a key.
+ */
+function reportUnconfigured(reason: VapidConfigProblem): void {
+  if (reportedUnconfigured) return;
+  reportedUnconfigured = true;
+  if (reason === 'unset') {
+    log.warn('push is not configured (VAPID_* unset); notifications are retired without sending');
+  } else {
+    log.error({ reason }, 'push is misconfigured (VAPID_*); notifications are retired without sending');
+  }
 }
 
 /**
@@ -45,12 +64,7 @@ export async function dispatchPushes(
   send: PushSender | null | undefined = undefined,
   now: Date = new Date(),
 ): Promise<PushDispatchResult> {
-  const usingDefaultSender = send === undefined;
-  const sender = usingDefaultSender ? defaultSender() : send;
-  if (usingDefaultSender && !sender && !warnedUnconfigured) {
-    warnedUnconfigured = true;
-    log.warn('push is not configured (VAPID_* unset or malformed); notifications are retired without sending');
-  }
+  const sender = send === undefined ? defaultSender() : send;
   const cutoff = new Date(now.getTime() - PUSH_STALE_AFTER_MS);
   const result: PushDispatchResult = { retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0 };
 
