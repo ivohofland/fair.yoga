@@ -24,8 +24,9 @@ const DEFAULTS: TeacherNotificationPrefs & TeacherPushPrefs = {
   pushInvitations: false,
 };
 
-// The brief's verbatim labels, typed against `TeacherPushPrefs` so a new push
-// column fails to compile here until it is given one.
+// The settings page's group labels (spec §2.4), typed against
+// `TeacherPushPrefs` so a new push column fails to compile here until it is
+// given one.
 const PUSH_LABELS = {
   pushAutoCancelled: 'Auto-cancelled classes',
   pushBookings: 'New bookings',

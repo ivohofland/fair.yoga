@@ -196,13 +196,15 @@ Lightweight teacher-facing tools for managing their student community.
 
 ### 6. Communication
 
-Three-layer communication model, same content, different delivery:
+Four-layer communication model, same content, different delivery:
 
 **In-app notifications:** Real-time alerts for time-sensitive events (waitlist promotion, class cancellation, booking confirmation).
 
 **In-app inbox:** Chronological log of notifications, kept for a year, a few short-lived types for 30 days (`NOTIFICATION_RETENTION_DAYS`). Acts as a personal activity history — booking confirmations, payment requests, class updates. Always available regardless of email settings. Important for Level 1: the student's outstanding payments, with bank details, are shown on `/bookings` from the payment record.
 
 **Email:** External fallback. The system sends in-app first; if the student hasn't seen it within a reasonable window, email follows. Student controls whether email notifications are on or off (on by default).
+
+**Web push:** A best-effort extra, never a replacement for email. It is offered only where fair.yoga runs as the app installed to the home screen, and reaches a device only once the person turns it on there and the phone allows notifications. Each person chooses, by group, which notifications push; a student is never pushed their own booking or cancellation. A push goes out within seconds of the notification or not at all: one not sent within 15 minutes is dropped, and a failed one is not retried. Notifications about money show a fixed line on the lock screen instead of their text. Tapping a push opens the inbox at that notification and marks nothing read, so the email fallback still follows if it stays unread.
 
 **Class reminders:** On by default, set to morning-of, in the app and by email. Each student chooses when (evening before, morning of, 1 hour before, or off) and how (in the app, by email, or both); the setting applies to all their bookings. Teachers get the same reminder for each regular class they teach (studio classes get none), with the same two choices, in Settings → Notifications.
 

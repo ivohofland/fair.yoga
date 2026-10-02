@@ -26,7 +26,7 @@ Edit `.env` — every value matters in production:
 | `RESEND_API_KEY` / `EMAIL_FROM` | real key + verified sender; the app refuses to "send" silently without them |
 | `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
 | `PASSKEY_RP_ID` | your bare domain |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | generate with `pnpm run vapid:keys`; unset disables push, and rotating the pair silently orphans every existing subscription (browsers re-subscribe only when the user turns push on again) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | generate the keys with `pnpm run vapid:keys`; `VAPID_SUBJECT` must be a `mailto:` or `https://` URL; unset disables push, and rotating the pair silently orphans every existing subscription (browsers re-subscribe only when the user turns push on again) |
 
 Then:
 

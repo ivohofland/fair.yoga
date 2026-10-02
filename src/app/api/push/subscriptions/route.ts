@@ -33,8 +33,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  // A length-valid p256dh can still be off the curve; the schema only checks
-  // decoded length, so the curve check happens here, past parseBody.
+  // A p256dh of the right alphabet and decoded length can still be off the
+  // curve; the schema checks only those two, so the curve check happens here.
   if (!isP256PublicKey(keys.p256dh)) {
     return respondError(
       formatIssues([{ path: ['keys', 'p256dh'], message: 'p256dh is not a point on the P-256 curve' }]),

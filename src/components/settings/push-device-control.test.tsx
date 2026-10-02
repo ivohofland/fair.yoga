@@ -45,7 +45,7 @@ function browserSubscription(keyFill: number | null): PushSubscription & { unsub
   } as unknown as PushSubscription & { unsubscribe: ReturnType<typeof vi.fn> };
 }
 
-/** Removes/sets the three capability globals the control's effect reads
+/** Removes/sets the capability globals the control's effect reads
  *  straight off `navigator`/`window`, independent of the mocked install store. */
 function setBrowserCapabilities(opts: {
   serviceWorker?: boolean;

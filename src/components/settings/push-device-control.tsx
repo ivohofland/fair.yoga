@@ -27,7 +27,7 @@ export function PushDeviceControl({
   installHref,
 }: {
   vapidPublicKey: string | null;
-  /** Where this role's settings index offers the install steps (`InstallAppRow`, #723) — passed by the caller, which owns the role. */
+  /** Where the install steps are, for the caller's role. */
   installHref: '/account' | '/settings';
 }) {
   const install = useInstallSupport();

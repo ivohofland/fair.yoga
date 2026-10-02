@@ -696,7 +696,7 @@ export async function notifyInvitee(
     // living only in `inviteContact`'s `delivered` value would not survive a
     // resend.
     if (student.teacherStudents.length > 0) return;
-    // The three-layer model handles email from here: the fallback cron
+    // The email layer handles this from here: the fallback cron
     // picks this up unread after the threshold (or sooner, near a linked
     // class — not applicable here, this notification has none), honouring
     // the student's own preference. No direct send alongside this.

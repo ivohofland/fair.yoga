@@ -1114,7 +1114,8 @@ model Notification {
   relatedClassId String?
   isRead         Boolean          @default(false)
   emailSent      Boolean          @default(false)
-  // When push dispatch decided about this row; see docs/data-model.md (Notification).
+  // Stamped by push dispatch's retire step or claim, before any send; never
+  // cleared, so no push is retried. docs/data-model.md (Notification).
   pushHandledAt  DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
