@@ -205,3 +205,45 @@ export function renderInvitationEmail(
   );
   return { subject, html };
 }
+
+export interface DegradationDigestEntry {
+  code: string;
+  description: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  occurrences: number;
+  sample: Readonly<Record<string, unknown>>;
+}
+
+const DEGRADATION_DIGEST_FOOTER =
+  'You get this because OPERATOR_EMAIL is set on this server. What each code means: docs/degradation-sites.md.';
+
+/** The operator's digest: one block per degradation that fired since they were last told. */
+export function renderDegradationDigestEmail(entries: readonly DegradationDigestEntry[]): {
+  subject: string;
+  html: string;
+} {
+  const subject =
+    entries.length === 1
+      ? `fair.yoga: ${entries[0]!.code} fired`
+      : `fair.yoga: ${entries.length} degradations fired`;
+
+  const blocks = entries
+    .map((e) => {
+      const sample = Object.entries(e.sample)
+        .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`)
+        .join(' · ');
+      return `<div style="margin:0 0 16px;">
+        <p style="margin:0;font-weight:700;color:#1A5653;">${escapeHtml(e.code)}</p>
+        <p style="margin:4px 0;">${escapeHtml(e.description)}</p>
+        <p style="margin:0;color:#71645A;font-size:13px;">First seen ${escapeHtml(e.firstSeenAt.toISOString())} · last seen ${escapeHtml(e.lastSeenAt.toISOString())} · about ${e.occurrences} times</p>
+        ${sample ? `<p style="margin:4px 0 0;color:#71645A;font-size:13px;">Latest: ${sample}</p>` : ''}
+      </div>`;
+    })
+    .join('');
+
+  return {
+    subject,
+    html: wrapEmail('A fallback fired', blocks, DEGRADATION_DIGEST_FOOTER),
+  };
+}

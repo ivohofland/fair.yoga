@@ -37,6 +37,7 @@ const SWEEP_NAMES = [
   'runWaitlistReconciliationTick',
   'reapClosedWaitlistEntries',
   'reapExpiredNotifications',
+  'notifyOperatorOfDegradations',
   'auditTeacherTimezones',
 ] as const;
 
@@ -180,6 +181,7 @@ describe('buildJobs', () => {
         'cleanupExpiredAuth',
         'reapClosedWaitlistEntries',
         'reapExpiredNotifications',
+        'notifyOperatorOfDegradations',
         // Last, so a real failure in any sweep above still surfaces as the
         // job's `lastError` rather than being masked by a standing data
         // problem this one reports every run until someone fixes the row.
@@ -641,5 +643,44 @@ describe('startScheduler', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('CRON_SCHEDULER=off'));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('not a production mode'));
     expect(info).not.toHaveBeenCalled();
+  });
+
+  function stubBootForOperatorEmail(operatorEmail: string): ReturnType<typeof vi.spyOn> {
+    vi.stubEnv('CRON_SCHEDULER', '');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('OPERATOR_EMAIL', operatorEmail);
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    resetGlobals();
+    onTestFinished(() => {
+      // The spy first: it restores the function it wrapped, which is the fake,
+      // so restoring it after useRealTimers() would put the fake back.
+      setIntervalSpy.mockRestore();
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      info.mockRestore();
+      error.mockRestore();
+      resetGlobals();
+    });
+    return error;
+  }
+
+  it('logs an error at boot in production when OPERATOR_EMAIL is not set', async () => {
+    const error = stubBootForOperatorEmail('');
+
+    await startScheduler();
+
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('OPERATOR_EMAIL'));
+  });
+
+  it('does not log that error when OPERATOR_EMAIL is set', async () => {
+    const error = stubBootForOperatorEmail('ops@example.com');
+
+    await startScheduler();
+
+    expect(error).not.toHaveBeenCalledWith(expect.stringContaining('OPERATOR_EMAIL'));
   });
 });

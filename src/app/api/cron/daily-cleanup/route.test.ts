@@ -34,7 +34,11 @@ const cleanupExpiredAuth = vi.fn();
 const reapClosedWaitlistEntries = vi.fn();
 const reapExpiredNotifications = vi.fn();
 const auditTeacherTimezones = vi.fn();
+const notifyOperatorOfDegradations = vi.fn();
 
+vi.mock('@/services/degradation-digest', () => ({
+  notifyOperatorOfDegradations: (...args: unknown[]) => notifyOperatorOfDegradations(...args),
+}));
 vi.mock('@/services/auth-cleanup', () => ({
   cleanupExpiredAuth: (...args: unknown[]) => cleanupExpiredAuth(...args),
 }));
@@ -67,6 +71,7 @@ interface Body {
     auth: { ok: boolean; error?: string };
     waitlistRetention: { ok: boolean; error?: string };
     notificationRetention: { ok: boolean; error?: string };
+    degradationDigest: { ok: boolean; error?: string };
     timezoneAudit: { ok: boolean; error?: string };
   };
 }
@@ -90,6 +95,9 @@ beforeEach(() => {
   auditTeacherTimezones.mockResolvedValue({ checked: 3, teachers: 0, invalid: [] });
   // Same reason, for notification retention.
   reapExpiredNotifications.mockResolvedValue({ deleted: 0, periods: [] });
+  // Same reason, for the degradation digest.
+  notifyOperatorOfDegradations.mockReset();
+  notifyOperatorOfDegradations.mockResolvedValue({ emailed: 0 });
 });
 
 describe('POST /api/cron/daily-cleanup — status contract', () => {
@@ -228,6 +236,20 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     expect(body.data.waitlistRetention.ok).toBe(true);
     expect(body.data.timezoneAudit.ok).toBe(false);
     expect(body.data.timezoneAudit.error).toContain('Invalid/Test_Zone_145');
+  });
+
+  it('answers 500 when only the degradation digest fails, and the audit still runs', async () => {
+    cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
+    reapClosedWaitlistEntries.mockResolvedValue({ deleted: 0, classes: 0 });
+    notifyOperatorOfDegradations.mockRejectedValue(new Error('degradation digest not delivered'));
+
+    const res = await POST(post());
+    const body = (await res.json()) as Body;
+
+    expect(res.status).toBe(500);
+    expect(body.data.degradationDigest.ok).toBe(false);
+    expect(auditTeacherTimezones).toHaveBeenCalledTimes(1);
+    expect(body.data.timezoneAudit.ok).toBe(true);
   });
 
   /**
