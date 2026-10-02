@@ -141,10 +141,11 @@ cannot starve the session purge and still surfaces in job health.
 - One email per run, listing the claimed codes: code, the registry description,
   first/last seen, approximate count, the allowlisted sample, and a pointer to
   the docs. Sent through the existing `sendHtmlEmail`; values are escaped.
-- **Dry-run.** In dev and CI (`emailDryRun()`) it logs the body and claims. In
-  production without `EMAIL_DRY_RUN=1` and without a Resend key it **throws
-  before claiming**, the same fail-loudly rule `sendMagicLinkEmail` follows —
-  otherwise the net would look intact while sending nothing.
+- **Dry-run.** In dev and CI (`emailDryRun()`) `sendHtmlEmail` logs and answers
+  `ok`, so the digest claims and moves on. In production without
+  `EMAIL_DRY_RUN=1` and without a Resend key it answers `{ ok: false }`; the
+  digest **releases its claims and throws**, so the event stays due and the job
+  reports unhealthy — otherwise the net would look intact while sending nothing.
 - **No `OPERATOR_EMAIL`** with something to send: the sweep throws, which flips
   `daily-cleanup` unhealthy on the existing public job verdict, so no new public
   surface is needed. `startScheduler` also logs at `error` once at boot in
@@ -203,9 +204,10 @@ and is expected to classify as routine.
 - **Digest (integration):** a new event is emailed once; not again until it
   re-fires; an event landing between read and stamp is emailed next run (not
   lost); a failed send releases the claim; two overlapping runs send exactly
-  one email, with the other side's row lock held on a second connection and no
-  sleep-based harness; unset `OPERATOR_EMAIL` with an event throws; production
-  without a key throws before claiming.
+  one email, with both runs held at a barrier after their read so neither can
+  claim first, and no sleep-based harness; unset `OPERATOR_EMAIL` with an event
+  throws; a refusal from the provider (production without a key answers
+  `{ ok: false }`) releases the claim and throws.
 - **Health:** `degradations.open` counts rows seen in 24 h, ignores older ones,
   and leaves `status` at `ok`. No code or sample appears in the body.
 - **Seeded sites:** a bad tier and an invalid zone each record exactly one event
