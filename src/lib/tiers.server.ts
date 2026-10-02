@@ -29,8 +29,8 @@ export interface TierReadContext {
  * chase; it is recorded as `INCOME_TIER_OUT_OF_RANGE` and emailed to the
  * operator (`docs/degradation-sites.md`).
  *
- * This file is separate from `tiers.ts` solely because it imports `@/lib/log`
- * (pino, server-only) and `tiers.ts` is value-imported by `'use client'`
+ * This file is separate from `tiers.ts` solely because it imports
+ * `@/lib/degradation` (server-only, and through it pino) and `tiers.ts` is value-imported by `'use client'`
  * components. Do not move it, and do not import it from a client component.
  *
  * `context` names the row in the recorded event — pass whichever id is in hand
