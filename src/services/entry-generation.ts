@@ -578,12 +578,10 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
   // is an ordinary outcome and stays silent, so this cannot become hourly
   // sweep noise on the legitimate case. A window emptied by an unreadable
   // start instant is the latent case above, and logs exactly once per call.
-  // With `templateId` and `teacherId`, because `classStartInstant`'s own
-  // `CLASS_START_UNREADABLE` line names which half was unreadable and no row:
-  // an operator seeing it could tell that A template was unreadable and not
-  // WHICH. That is the gap this closes, and the only reason to log at all for
-  // a case nothing can currently reach. A plain warn, not a second code: the
-  // incident is already recorded (`docs/degradation-sites.md`).
+  // What this line adds is `templateId` and `teacherId`, so an operator can
+  // tell WHICH template's window came back empty — the only reason to log at
+  // all for a case nothing can currently reach. A plain warn, not a second
+  // code: the incident is already recorded (`docs/degradation-sites.md`).
   const windowStart = dates[0];
   const windowEnd = dates[dates.length - 1];
   if (windowStart === undefined || windowEnd === undefined) {

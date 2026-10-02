@@ -77,9 +77,9 @@ function timeZoneOffsetMs(instant: Date, timeZone: string): number {
  * #86's archive boundary, where one spares a class and the other deletes it.
  *
  * Unknown timezones fall back to the UTC calendar date rather than throwing,
- * matching `classStartInstant`, and record it as `TIMEZONE_INVALID_FALLBACK_UTC`,
- * which reaches the operator by email (`docs/degradation-sites.md`) — the
- * fallback is a wrong-but-bounded answer that nothing else would report (#145).
+ * matching `classStartInstant`, and record it as `TIMEZONE_INVALID_FALLBACK_UTC`
+ * (`docs/degradation-sites.md`) — the fallback is a wrong-but-bounded answer
+ * that nothing else would report (#145).
  * An unreadable instant is a different fault and says so.
  */
 export function startOfLocalDay(instant: Date, timeZone: string): Date {
@@ -192,10 +192,9 @@ export function mondayOf(date: Date): WeekKey {
  *
  * Falls back to UTC on an unreadable timezone rather than throwing, the same
  * fallback `classStartInstant` and `startOfLocalDay` use (#145), and records it
- * as `TIMEZONE_INVALID_FALLBACK_UTC`, which reaches the operator by email
- * (`docs/degradation-sites.md`): a wrong-but-bounded answer beats a crashed
- * notification. The fallback is suffixed " (UTC)", so a student reading it
- * can see which clock it is on.
+ * as `TIMEZONE_INVALID_FALLBACK_UTC` (`docs/degradation-sites.md`): a
+ * wrong-but-bounded answer beats a crashed notification. The fallback is
+ * suffixed " (UTC)", so a student reading it can see which clock it is on.
  */
 export function formatInstantInZone(instant: Date, timeZone: string): string {
   if (Number.isNaN(instant.getTime())) {
@@ -262,9 +261,8 @@ export function formatInstantInZone(instant: Date, timeZone: string): string {
  *
  * Unknown timezones fall back to UTC interpretation rather than throwing —
  * a wrong-but-bounded answer beats a crashed cron run — and record it as
- * `TIMEZONE_INVALID_FALLBACK_UTC`, which reaches the operator by email
- * (`docs/degradation-sites.md`), because nothing else reports that the answer
- * is the wrong one (#145).
+ * `TIMEZONE_INVALID_FALLBACK_UTC` (`docs/degradation-sites.md`), because
+ * nothing else reports that the answer is the wrong one (#145).
  *
  * An unreadable date or start time answers an Invalid Date instead, recorded
  * as `CLASS_START_UNREADABLE` (`docs/degradation-sites.md`).
@@ -296,13 +294,13 @@ export function classStartInstant(
   // instead of removing it: measured, `classStartInstant(new Date('nonsense'),
   // …)` logged the date's own `startTime` value under "unparseable startTime".
   //
-  // Returning early keeps the same Invalid Date this has always returned —
-  // callers that compare it are unchanged — while naming the cause, and
-  // letting `startsInPast` fail closed on these and not on a bad timezone.
+  // Returning early answers an Invalid Date, the value callers compare
+  // against, while naming the cause, and lets `startsInPast` fail closed on
+  // these and not on a bad timezone.
   //
-  // Both are recorded as `CLASS_START_UNREADABLE`, which reaches the operator
-  // by email (`docs/degradation-sites.md`): the Invalid Date is a substitute
-  // every caller acts on silently. `site` is the point of splitting the
+  // Both are recorded as `CLASS_START_UNREADABLE`
+  // (`docs/degradation-sites.md`): the Invalid Date is a substitute every
+  // caller acts on silently. `site` is the point of splitting the
   // branches — it says which half broke.
   if (Number.isNaN(d.getTime())) {
     logDegraded(

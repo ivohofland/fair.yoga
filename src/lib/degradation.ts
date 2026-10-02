@@ -61,6 +61,9 @@ const coalescer = createCoalescer({
  * the page that tripped the fallback, so there is no promise to await. If the
  * write fails, the failure is logged and the log line above is all that
  * remains.
+ *
+ * The types check object literals only (a variable or a spread is not checked
+ * for extra keys), so the runtime allowlist is the guarantee.
  */
 export function logDegraded<C extends DegradationCode>(
   code: C,
@@ -68,8 +71,8 @@ export function logDegraded<C extends DegradationCode>(
   message: string,
   err?: unknown,
 ): FireAndForget {
-  // `?? {}`: the types forbid a null context, but a cast does not, and this
-  // must not throw into the page it is reporting on.
+  // `?? {}`: the types forbid a null context, but a cast does not; a null one
+  // is read as empty rather than throwing here.
   const safe = allowlisted(code, context ?? {});
   log[DEGRADATION_CODES[code].level](
     { ...safe, code, ...(err === undefined ? {} : { err }) },

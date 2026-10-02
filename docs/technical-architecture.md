@@ -1016,7 +1016,10 @@ the rest do not, and one runbook section per code.
   first occurrence after a quiet window writes at once; later ones are held as
   a count plus the latest sample and written when the window ends, so the last
   occurrence before silence is never left unwritten while the process lives.
-  The count is approximate by construction: what is held when the process
+  The digest needs that trailing write: it tells the operator again only when
+  `lastSeenAt` has moved past `lastNotifiedAt`, so an occurrence that never
+  reached the row would never count as having fired again since they were
+  told. The count is approximate by construction: what is held when the process
   exits is lost.
 - **Digest.** A code is due when `lastNotifiedAt` is null or older than
   `lastSeenAt`. The `daily-cleanup` job (`notifyOperatorOfDegradations`,

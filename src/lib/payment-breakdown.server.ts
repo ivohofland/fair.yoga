@@ -11,9 +11,6 @@ import {
  * was found on. Completion writes the snapshot in the same transaction that
  * marks the class completed, so a completed class without one means that write
  * was bypassed; the row renders without its breakdown either way.
- *
- * Separate from `payment-breakdown.ts` so that module stays free of the logger
- * and the database.
  */
 export function resolveReportedPaymentBreakdown(
   input: ResolvePaymentBreakdownInput,
