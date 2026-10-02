@@ -11,6 +11,8 @@ import {
   currentPushSubscription,
   disablePush,
   enablePush,
+  subscriptionUsesKey,
+  syncPushSubscription,
   type PushDeviceEnv,
   type PushDeviceState,
 } from '@/lib/push-client';
@@ -55,7 +57,31 @@ export function PushDeviceControl({
         permission: hasNotification ? Notification.permission : null,
         subscribed: subscription !== null,
       };
-      setState(classifyPushDevice(env));
+      let resolved = classifyPushDevice(env);
+      let syncFailed = false;
+      // The browser's subscription says nothing about which account the
+      // server delivers it to, or whether the server still holds it — the
+      // previous account on a shared phone, or a row deleted since. 'on'
+      // is shown only once the server has it for the account signed in now.
+      if (resolved === 'on' && subscription && vapidPublicKey) {
+        if (!subscriptionUsesKey(subscription, vapidPublicKey)) {
+          // Made with a key the server no longer signs with: it can receive
+          // nothing, and a new one needs the user's tap.
+          try {
+            await subscription.unsubscribe();
+          } catch (err) {
+            logRequestFailure('push-device-control', { step: 'unsubscribe-stale-key' }, err);
+          }
+          resolved = 'off';
+        } else if (!(await syncPushSubscription(subscription))) {
+          // Kept in the browser: the next "Turn on" re-posts it.
+          resolved = 'off';
+          syncFailed = true;
+        }
+        if (cancelled) return;
+      }
+      setFailed(syncFailed);
+      setState(resolved);
     }
     void resolve();
     return () => {

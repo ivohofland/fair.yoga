@@ -5,7 +5,9 @@ import { checkRateLimit, rateLimitKey, respondRateLimited } from '@/lib/rate-lim
 import { pushSubscriptionSchema, pushUnsubscribeSchema } from '@/lib/schemas';
 import { formatIssues } from '@/lib/validation-message';
 import { isP256PublicKey } from '@/lib/push/encrypt';
-import { removePushSubscription, savePushSubscription } from '@/services/push-subscriptions';
+import { removePushSubscription, savePushSubscription, type SavePushSubscriptionResult } from '@/services/push-subscriptions';
+
+type SubscriptionSaved = { status: SavePushSubscriptionResult };
 
 const WRITES_PER_WINDOW = 20;
 const WINDOW_MS = 10 * 60 * 1000;
@@ -30,7 +32,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   const status = await savePushSubscription(prisma, session.accountId, { endpoint, p256dh: keys.p256dh, auth: keys.auth });
-  return respondTyped<{ status: typeof status }>({ status });
+  // Same shape either way; `outcome: 'unchanged'` beside it says nothing was written.
+  return status === 'unchanged'
+    ? respondUnchanged<SubscriptionSaved>({ status })
+    : respondTyped<SubscriptionSaved>({ status });
 });
 
 export const DELETE = withErrorHandler(async (request: NextRequest) => {

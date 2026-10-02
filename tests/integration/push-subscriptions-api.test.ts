@@ -33,6 +33,16 @@ ua.generateKeys();
 const keys = { p256dh: ua.getPublicKey().toString('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') };
 const endpoint = (tag: string) => `https://fcm.googleapis.com/fcm/send/${suffix}-${tag}`;
 
+/**
+ * The row's `xmin`: Postgres gives every UPDATE a new one, even an update
+ * that writes the values already stored, so an equal `xmin` means no write.
+ */
+async function rowVersion(ep: string): Promise<string> {
+  const rows = await prisma.$queryRaw<Array<{ xmin: string }>>`SELECT xmin::text AS xmin FROM "PushSubscription" WHERE endpoint = ${ep}`;
+  expect(rows).toHaveLength(1);
+  return rows[0]!.xmin;
+}
+
 describe('POST/DELETE /api/push/subscriptions', () => {
   beforeAll(async () => {
     await prisma.$connect();
@@ -94,14 +104,34 @@ describe('POST/DELETE /api/push/subscriptions', () => {
     expect(row.accountId).toBe(accountIdA);
   });
 
-  it('A resubscribes the same endpoint, still one row', async () => {
+  it('A re-posting the identical subscription answers unchanged and writes nothing', async () => {
+    const before = await rowVersion(endpoint('a'));
     const res = await post(tokenA, { endpoint: endpoint('a'), keys });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data.status).toBe('updated');
+    expect(body.outcome).toBe('unchanged');
+    expect(body.data.status).toBe('unchanged');
+    expect(await rowVersion(endpoint('a'))).toBe(before);
     const rows = await prisma.pushSubscription.findMany({ where: { endpoint: endpoint('a') } });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.accountId).toBe(accountIdA);
+  });
+
+  it('A re-posting the same endpoint with new keys updates the row', async () => {
+    const rotated = crypto.createECDH('prime256v1');
+    rotated.generateKeys();
+    const newKeys = { p256dh: rotated.getPublicKey().toString('base64url'), auth: Buffer.alloc(16, 2).toString('base64url') };
+    const res = await post(tokenA, { endpoint: endpoint('a'), keys: newKeys });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.outcome).toBeUndefined();
+    expect(body.data.status).toBe('updated');
+    const row = await prisma.pushSubscription.findUniqueOrThrow({ where: { endpoint: endpoint('a') } });
+    expect(row).toMatchObject({ accountId: accountIdA, p256dh: newKeys.p256dh, auth: newKeys.auth });
+
+    // Back to the shared keys, so the cases below post the stored subscription.
+    const restore = await post(tokenA, { endpoint: endpoint('a'), keys });
+    expect((await restore.json()).data.status).toBe('updated');
   });
 
   it('rejects an http: endpoint', async () => {
