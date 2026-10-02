@@ -14,7 +14,8 @@ const OPEN_WINDOW_MS = 24 * 60 * 60 * 1000;
  * and how many degradation events fired in the last day, as a bare number. Which
  * ones, and what they carried, appear only in the operator's digest email and
  * the server log (`docs/technical-architecture.md`, Cron Jobs → Degradation
- * events). Nothing else.
+ * events). Nothing else. When that number cannot be read, the `degradations`
+ * key is omitted and the database still reports up.
  */
 export async function GET() {
   const jobs = Object.fromEntries(
@@ -30,15 +31,6 @@ export async function GET() {
   const jobsUnhealthy = Object.values(jobs).some((j) => !j.healthy);
   try {
     await prisma.$queryRaw`SELECT 1`;
-    const open = await prisma.degradationEvent.count({
-      where: { lastSeenAt: { gte: new Date(Date.now() - OPEN_WINDOW_MS) } },
-    });
-    return Response.json({
-      status: jobsUnhealthy ? 'degraded' : 'ok',
-      db: 'up',
-      jobs,
-      degradations: { open },
-    });
   } catch (err) {
     // `db: 'down'` is the whole of what the RESPONSE may say — this endpoint
     // is public. WHY it is down must still reach the log: auth rejection,
@@ -47,5 +39,18 @@ export async function GET() {
     // destroys the distinction on the one endpoint an uptime monitor polls.
     log.error({ err }, 'health check: database probe failed');
     return Response.json({ status: 'degraded', db: 'down', jobs }, { status: 503 });
+  }
+  const status = jobsUnhealthy ? 'degraded' : 'ok';
+  try {
+    const open = await prisma.degradationEvent.count({
+      where: { lastSeenAt: { gte: new Date(Date.now() - OPEN_WINDOW_MS) } },
+    });
+    return Response.json({ status, db: 'up', jobs, degradations: { open } });
+  } catch (err) {
+    // The database answered the probe, so this is not an outage: a missing
+    // table, a permission or a timeout on the count alone. Report what is
+    // known and leave the count out rather than invent one.
+    log.error({ err }, 'health check: degradation count failed');
+    return Response.json({ status, db: 'up', jobs });
   }
 }
