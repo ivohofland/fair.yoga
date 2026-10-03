@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { HandoffCodeEntry } from './handoff-code-entry';
+import { HandoffCodeEntry, RECORD_WAIT_MS } from './handoff-code-entry';
+
+const recordPushDevice = vi.fn(async () => {});
+vi.mock('@/lib/push-client', () => ({
+  recordPushDeviceForSignIn: () => recordPushDevice(),
+}));
 
 /**
  * The success path leaves via `window.location.assign` (a full navigation —
@@ -21,6 +26,9 @@ function enterCode(code = '482913') {
 
 describe('HandoffCodeEntry', () => {
   afterEach(() => {
+    vi.useRealTimers();
+    recordPushDevice.mockReset();
+    recordPushDevice.mockImplementation(async () => {});
     vi.unstubAllGlobals();
     Object.defineProperty(window, 'location', { value: realLocation, writable: true });
   });
@@ -71,6 +79,70 @@ describe('HandoffCodeEntry', () => {
     enterCode('482913');
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/bookings'));
+  });
+
+  // #745. The navigation is a full page load, which would abort a request
+  // still in flight, so this path waits for the re-record where the others
+  // fire and forget.
+  it('re-records the push device before it navigates away', async () => {
+    const order: string[] = [];
+    recordPushDevice.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('recorded');
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { accountId: 'acc-1', redirectTo: '/schedule' } }),
+      }),
+    );
+    const assign = stubLocation();
+    assign.mockImplementation(() => order.push('navigated'));
+    render(<HandoffCodeEntry />);
+
+    enterCode();
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
+    expect(order).toEqual(['recorded', 'navigated']);
+  });
+
+  it('navigates anyway when the re-record does not settle within its bound', async () => {
+    vi.useFakeTimers();
+    recordPushDevice.mockImplementation(() => new Promise<void>(() => {}));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { accountId: 'acc-1', redirectTo: '/schedule' } }),
+      }),
+    );
+    const assign = stubLocation();
+    render(<HandoffCodeEntry />);
+
+    enterCode();
+    await vi.advanceTimersByTimeAsync(RECORD_WAIT_MS - 1);
+    expect(assign).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(assign).toHaveBeenCalledWith('/schedule');
+  });
+
+  it('does not re-record the push device for a signup ticket, which is not a session', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { redirectTo: '/signup/teacher' } }),
+      }),
+    );
+    const assign = stubLocation();
+    render(<HandoffCodeEntry />);
+
+    enterCode();
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/signup/teacher'));
+    expect(recordPushDevice).not.toHaveBeenCalled();
   });
 
   it('shows the server message on a 400 without clearing the typed code', async () => {

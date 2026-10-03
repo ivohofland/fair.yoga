@@ -8,6 +8,11 @@ vi.mock('@simplewebauthn/browser', () => ({
   startAuthentication: (...args: unknown[]) => startAuthentication(...args),
 }));
 
+const recordPushDevice = vi.fn(async () => {});
+vi.mock('@/lib/push-client', () => ({
+  recordPushDeviceForSignIn: () => recordPushDevice(),
+}));
+
 /**
  * #40. Sign-in is the gate to the whole app, and this button froze at
  * "Follow your device…" on a URL that did not change — so nothing on screen
@@ -20,6 +25,7 @@ describe('PasskeySignIn', () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
+    recordPushDevice.mockClear();
     startAuthentication.mockReset();
     startAuthentication.mockResolvedValue({ id: 'cred-1' });
   });
@@ -54,6 +60,33 @@ describe('PasskeySignIn', () => {
       });
     vi.stubGlobal('fetch', fetchMock);
   }
+
+  // #745
+  it('re-records the push device once the passkey is verified', async () => {
+    stubHappyPath();
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(recordPushDevice).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not re-record the push device when verification is refused', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { options: { challenge: 'c' }, challengeId: 'ch-1' } }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 400 });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await screen.findByRole('alert');
+    expect(recordPushDevice).not.toHaveBeenCalled();
+  });
 
   it('pushes the returned redirect and refreshes', async () => {
     stubHappyPath();
