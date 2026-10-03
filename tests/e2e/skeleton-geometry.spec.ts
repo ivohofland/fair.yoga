@@ -206,4 +206,45 @@ test.describe('Skeleton geometry', () => {
       }
     });
   }
+
+  // A route's own skeleton paints only when nothing it renders waits for JS;
+  // otherwise its fallback suspends and the neutral fallback above it paints
+  // first, header and all (docs/design-brief.md, Loading states). Unheld, so
+  // this sees the navigation a teacher sees: every frame that shows a loading
+  // state shows the route's own, never the header-only neutral one.
+  for (const route of ROUTES) {
+    test(`${route.path} never paints the neutral fallback on a tab click`, async ({ page, context }) => {
+      await context.addCookies([sessionCookie(teacherToken)]);
+      await page.addInitScript(() => {
+        const w = window as unknown as { __loadingFrames: string[] };
+        w.__loadingFrames = [];
+        const tick = () => {
+          const busy = document.querySelector('[aria-busy="true"]');
+          const state = busy === null ? 'none' : busy.querySelector('[data-layout-anchor="first-item"]') ? 'own' : 'neutral';
+          if (w.__loadingFrames[w.__loadingFrames.length - 1] !== state) w.__loadingFrames.push(state);
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      const prefetched = prefetchSettled(page, route.path);
+      const hydrated = hydrationSignal(page);
+      await page.goto(route.from);
+      await hydrated;
+      if (await isDevServer(page)) {
+        await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+      } else {
+        await prefetched;
+      }
+      // Only the navigation's frames: the document load before it streams in
+      // through its own boundaries.
+      await page.evaluate(() => { (window as unknown as { __loadingFrames: string[] }).__loadingFrames = []; });
+
+      await page.locator('nav').getByRole('link', { name: route.tab, exact: true }).click();
+      await page.waitForURL(route.path);
+      await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+      const frames = await page.evaluate(() => (window as unknown as { __loadingFrames: string[] }).__loadingFrames);
+      test.info().annotations.push({ type: 'frames', description: frames.join(' → ') });
+      expect(frames, `${route.path} frames: ${frames.join(' → ')}`).not.toContain('neutral');
+    });
+  }
 });
