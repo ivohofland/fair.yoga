@@ -39,6 +39,7 @@ const SWEEP_NAMES = [
   'runWaitlistReconciliationTick',
   'reapClosedWaitlistEntries',
   'reapExpiredNotifications',
+  'reapStalePushSubscriptions',
   'notifyOperatorOfDegradations',
   'auditTeacherTimezones',
   'runPushDispatchTick',
@@ -198,6 +199,7 @@ describe('buildJobs', () => {
         'cleanupExpiredAuth',
         'reapClosedWaitlistEntries',
         'reapExpiredNotifications',
+        'reapStalePushSubscriptions',
         'notifyOperatorOfDegradations',
         // Last; what that buys, and what it does not, is in `scheduler.ts`.
         'auditTeacherTimezones',

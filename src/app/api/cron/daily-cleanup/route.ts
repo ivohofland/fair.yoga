@@ -7,6 +7,7 @@ import { log } from '@/lib/log';
 import { cleanupExpiredAuth } from '@/services/auth-cleanup';
 import { reapClosedWaitlistEntries } from '@/services/waitlist-retention';
 import { reapExpiredNotifications } from '@/services/notification-retention';
+import { reapStalePushSubscriptions } from '@/services/push-subscription-retention';
 import { notifyOperatorOfDegradations } from '@/services/degradation-digest';
 import { auditTeacherTimezones } from '@/services/timezone-audit';
 
@@ -68,7 +69,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // THE STATUS IS THE VERDICT, AND A 2xx FROM THIS ROUTE MEANS EVERY SWEEP RAN.
   // If any failed the answer is non-2xx and the body still carries every
   // outcome — read `data.auth.ok`, `data.waitlistRetention.ok`,
-  // `data.notificationRetention.ok`, `data.degradationDigest.ok`, and
+  // `data.notificationRetention.ok`, `data.pushSubscriptionRetention.ok`,
+  // `data.degradationDigest.ok`, and
   // `data.timezoneAudit.ok` to see which
   // one did not. Partial failure counts:
   // one sweep succeeding does not make the request as a whole a success,
@@ -77,6 +79,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const auth = await settle(() => cleanupExpiredAuth(prisma));
   const waitlistRetention = await settle(() => reapClosedWaitlistEntries(prisma));
   const notificationRetention = await settle(() => reapExpiredNotifications(prisma));
+  const pushSubscriptionRetention = await settle(() => reapStalePushSubscriptions(prisma));
   const degradationDigest = await settle(() => notifyOperatorOfDegradations(prisma));
   const timezoneAudit = await settle(() => auditTeacherTimezones(prisma));
 
@@ -85,8 +88,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // whose status is the verdict (it answers 503 with a full `degraded` body
   // rather than trading one for the other).
   return respondOk(
-    { auth, waitlistRetention, notificationRetention, degradationDigest, timezoneAudit },
-    worstStatus([auth, waitlistRetention, notificationRetention, degradationDigest, timezoneAudit]),
+    { auth, waitlistRetention, notificationRetention, pushSubscriptionRetention, degradationDigest, timezoneAudit },
+    worstStatus([
+      auth,
+      waitlistRetention,
+      notificationRetention,
+      pushSubscriptionRetention,
+      degradationDigest,
+      timezoneAudit,
+    ]),
   );
 });
 
