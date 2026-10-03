@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { dispatchPushes, PUSH_STALE_AFTER_MS, type PushDispatchResult } from './push-dispatch';
 
-/** Ticks that tried to send and delivered nothing, in a row, before the push job reports itself degraded. */
+/** Failed ticks, each within the quiet window of the last and with no delivery between, before the push job reports itself degraded. */
 export const PUSH_MAX_FAILED_TICKS = 3;
 
 /**
@@ -10,11 +10,11 @@ export const PUSH_MAX_FAILED_TICKS = 3;
  */
 export const PUSH_ALARM_QUIET_MS = PUSH_STALE_AFTER_MS;
 
-export interface PushHealthState {
-  /** Ticks since the last delivery that failed at least once or could not send. */
-  failedTicks: number;
-  lastFailedAt: number | null;
-}
+/** `lastFailedAt` is null exactly when no tick has failed. */
+export type PushHealthState = Readonly<
+  | { failedTicks: 0; lastFailedAt: null }
+  | { failedTicks: number; lastFailedAt: number }
+>;
 
 export function createPushHealthState(): PushHealthState {
   return { failedTicks: 0, lastFailedAt: null };
@@ -23,19 +23,23 @@ export function createPushHealthState(): PushHealthState {
 type TickEvidence = Pick<PushDispatchResult, 'sent' | 'failed' | 'unsendable'>;
 
 /**
- * A delivery resets the count; a tick that failed or could not send extends it;
- * anything else (idle, or only `gone` / `invalid` verdicts, which a push
- * service answers when it is working) leaves it alone.
+ * A delivery resets the count, even from a tick that also failed elsewhere:
+ * the alarm says push is delivering nothing, not that every send succeeded. A
+ * tick that failed or could not send extends it, or starts it over at one when
+ * the previous failed tick is a quiet window old. Anything else (idle, or only
+ * `gone` / `invalid` verdicts, which a push service answers when it is
+ * working) leaves it alone.
  */
 export function observePushTick(state: PushHealthState, result: TickEvidence, nowMs: number): PushHealthState {
   if (result.sent > 0) return createPushHealthState();
   if (result.failed > 0 || result.unsendable > 0) {
-    return { failedTicks: state.failedTicks + 1, lastFailedAt: nowMs };
+    const stale = state.lastFailedAt !== null && nowMs - state.lastFailedAt >= PUSH_ALARM_QUIET_MS;
+    return { failedTicks: stale ? 1 : state.failedTicks + 1, lastFailedAt: nowMs };
   }
   return state;
 }
 
-/** Raised at the threshold and cleared when its last failed tick ages out; the count itself survives the silence. */
+/** Raised at the threshold and cleared when its last failed tick ages out. */
 export function pushAlarm(state: PushHealthState, nowMs: number): boolean {
   return (
     state.lastFailedAt !== null &&
@@ -46,7 +50,7 @@ export function pushAlarm(state: PushHealthState, nowMs: number): boolean {
 
 export class PushDispatchDegradedError extends Error {
   constructor(public readonly failedTicks: number) {
-    super(`push delivered nothing in ${failedTicks} consecutive ticks that tried to send`);
+    super(`push delivered nothing in ${failedTicks} failing ticks`);
     this.name = 'PushDispatchDegradedError';
   }
 }
@@ -63,7 +67,15 @@ export function createPushDispatchTick(
 ): (db: PrismaClient) => Promise<PushDispatchResult> {
   let state = createPushHealthState();
   return async (db) => {
-    const result = await dispatch(db);
+    let result: PushDispatchResult;
+    try {
+      result = await dispatch(db);
+    } catch (fault) {
+      // A fault is a failed tick whatever else the tick delivered, and the
+      // fault itself, not the alarm, is what the caller sees.
+      state = observePushTick(state, { sent: 0, failed: 1, unsendable: 0 }, clock());
+      throw fault;
+    }
     const nowMs = clock();
     state = observePushTick(state, result, nowMs);
     if (pushAlarm(state, nowMs)) throw new PushDispatchDegradedError(state.failedTicks);

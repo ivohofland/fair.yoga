@@ -11,8 +11,8 @@ export const PUSH_BATCH = 50;
 export const PUSH_WORKERS = 4;
 /**
  * No notification is claimed once a tick has run this long. A tick therefore
- * ends within one send timeout of it, which is what keeps the job under the
- * scheduler's stall line (derivation in `docs/technical-architecture.md`,
+ * ends within one send timeout of it, plus the database calls after its last
+ * deadline check, which is what keeps the job under the scheduler's stall line (derivation in `docs/technical-architecture.md`,
  * Cron Jobs; pinned in `scheduler.test.ts`).
  */
 export const PUSH_CLAIM_DEADLINE_MS = 10_000;
@@ -80,7 +80,7 @@ export async function dispatchPushes(
   send: PushSender | null | undefined = undefined,
   now: Date = new Date(),
   clock: () => number = Date.now,
-): Promise<PushDispatchResult> {
+): Promise<Readonly<PushDispatchResult>> {
   const claimDeadline = clock() + PUSH_CLAIM_DEADLINE_MS;
   const { sender, misconfigured } = resolveSender(send);
   const cutoff = new Date(now.getTime() - PUSH_STALE_AFTER_MS);
@@ -104,7 +104,9 @@ export async function dispatchPushes(
 
   // Never rejects: a send's fault is carried as a RESOLVED `TaskFailure`
   // naming its notification and subscription, so nothing here can become a
-  // process-level `unhandledRejection` while another worker still awaits.
+  // process-level `unhandledRejection` while another worker still awaits. The
+  // subscription write after a verdict is inside the same `try`, so a database
+  // error there is reported as that send's fault.
   async function sendTo(
     notificationId: string,
     sub: PushSubscription,
