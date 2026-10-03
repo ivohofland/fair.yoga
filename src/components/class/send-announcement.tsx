@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { SkeletonText, type TypeStyle } from '@/components/ui/skeleton';
 import { AudiencePicker, type AudienceLoadStatus } from '@/components/class/audience-picker';
 import type { AnnouncementSendResponse } from '@/lib/api-types';
 
@@ -23,6 +24,9 @@ interface SentState {
   /** Ticked students neither told now nor already told; 0 unless a chosen list was sent. */
   unreached: number;
 }
+
+// The collapsed trigger's type style, shared by the button and its skeleton.
+const TRIGGER_TYPE: TypeStyle = 'type-label';
 
 // One-to-many only, by design: an announcement creates one notification
 // per recipient (plus email fallback). There is no chat.
@@ -146,7 +150,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       <button
         type="button"
         onClick={() => { setPickerStatus('loading'); setOpen(true); }}
-        className="type-label text-teal"
+        className={`${TRIGGER_TYPE} text-teal`}
       >
         Send announcement
       </button>
@@ -213,4 +217,9 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
+}
+
+// The collapsed state: one line in the trigger's type style.
+export function SendAnnouncementSkeleton() {
+  return <SkeletonText type={TRIGGER_TYPE} width="w-36" />;
 }

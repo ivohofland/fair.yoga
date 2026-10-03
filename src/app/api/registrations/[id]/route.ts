@@ -139,7 +139,7 @@ export const PUT = withErrorHandler(async (
   // costs nothing to allow — `late_cancel` and `attended` are both in
   // `CHARGED_STATUSES`, so the pricing divisor does not move and no price
   // changes for anyone. The check-in list renders those students deliberately
-  // (`activeRegistrations`, `class/[id]/page.tsx`); refusing the write would
+  // (`activeRegistrations`, `class/[id]/(overview)/page.tsx`); refusing the write would
   // only stop a teacher recording what happened in their own room.
   //
   // `completed` is DELIBERATELY absent from the class clause. A teacher learns

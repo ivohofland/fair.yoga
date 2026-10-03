@@ -1547,7 +1547,7 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
   /**
    * The other side of that boundary, and a REAL shipped flow rather than a
    * hypothetical: a student late-cancels, turns up anyway, and the teacher lets
-   * them in. `activeRegistrations` (`class/[id]/page.tsx`) keeps `late_cancel`
+   * them in. `activeRegistrations` (`class/[id]/(overview)/page.tsx`) keeps `late_cancel`
    * rows deliberately, so the check-in list renders them with a live checkbox.
    *
    * Once the class is `in_progress`, `autoCancelClasses` no longer looks at it

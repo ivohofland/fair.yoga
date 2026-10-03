@@ -94,14 +94,16 @@ export default async function SchedulePage() {
         <GettingStarted {...onboardingInput} pageSlug={teacher.pageSlug} />
       )}
 
-      <ClassList
-        classes={classes}
-        studioClasses={studioClasses}
-        timeZone={session.defaultTimezone}
-        emptyMessage="No classes this week"
-        showAddLink={false}
-        dimPast
-      />
+      <div data-layout-anchor="first-item">
+        <ClassList
+          classes={classes}
+          studioClasses={studioClasses}
+          timeZone={session.defaultTimezone}
+          emptyMessage="No classes this week"
+          showAddLink={false}
+          dimPast
+        />
+      </div>
 
       <div className="flex flex-col items-start gap-3 mt-8">
         <Link href="/studio-class/new" className="type-label text-teal no-underline">

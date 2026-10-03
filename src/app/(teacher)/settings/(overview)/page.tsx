@@ -21,7 +21,7 @@ export default async function SettingsPage() {
   return (
     <div>
       <PageHeader title="Settings" backHref={null} variant="display" />
-      <div>
+      <div data-layout-anchor="first-item">
         {SETTINGS_ITEMS.map((item) => (
           <ListRow key={item.href} href={item.href} className="flex items-center gap-3 no-underline">
             <span className="flex-1 text-base text-ink">{item.label}</span>

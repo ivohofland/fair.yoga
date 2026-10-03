@@ -462,7 +462,7 @@ describe('AddWalkIn', () => {
    * `error`-based message on its own and mask exactly the bug this test
    * exists to catch. Re-rendering with a fresh (but content-equal) array is
    * the realistic trigger — the real caller
-   * (`/app/(teacher)/class/[id]/page.tsx`) hands down a freshly-`.map()`d
+   * (`/app/(teacher)/class/[id]/(overview)/page.tsx`) hands down a freshly-`.map()`d
    * array on every render, and `LiveUpdates`' `router.refresh()` on any
    * inbound notification is what causes that render while the picker is
    * still open. Tying the message to `studentsFailed` (reset every effect

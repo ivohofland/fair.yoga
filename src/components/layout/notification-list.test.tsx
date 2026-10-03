@@ -4,7 +4,8 @@ import type { Notification } from '@prisma/client';
 import type { NotificationPage } from '@/services/notifications';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
-import { NotificationList } from './notification-list';
+import { listRowClass } from '@/components/ui/list-row';
+import { NotificationList, NotificationListSkeleton } from './notification-list';
 
 function notification(over: Partial<Notification>): Notification {
   return {
@@ -584,5 +585,39 @@ describe('NotificationList — a failed mark-read (#670)', () => {
       expect(screen.queryByRole('alert')).toBeNull();
       expect(screen.getByRole('button', { name: 'Mark "Old read" read' })).toHaveClass('invisible');
     });
+  });
+});
+
+describe('NotificationListSkeleton', () => {
+  const set = (s: string | null | undefined) => new Set((s ?? '').split(/\s+/).filter(Boolean));
+
+  it('keeps the real row\'s class set', () => {
+    const { container } = render(<NotificationList notifications={[notification({ isRead: true })]} />);
+    expect(set(container.firstElementChild?.firstElementChild?.className)).toEqual(
+      set('min-h-14 py-3 border-b border-border flex items-start justify-between gap-2 px-3 -mx-3'),
+    );
+  });
+
+  it('draws its rows through the list\'s root, the row frame and the row inset, hidden and inert', () => {
+    const realList = render(<NotificationList notifications={[notification({ isRead: true })]} />).container.firstElementChild;
+    const realRow = realList?.firstElementChild;
+    const { container } = render(<NotificationListSkeleton rows={3} />);
+    const skel = container.firstElementChild;
+    expect(skel?.getAttribute('aria-hidden')).toBe('true');
+    expect(set(skel?.className)).toEqual(set(realList?.className));
+
+    const rows = [...(skel?.children ?? [])];
+    expect(rows).toHaveLength(3);
+    const frame = set(listRowClass({ density: 'relaxed', divider: 'after-each' }));
+    for (const token of [...frame, 'px-3', '-mx-3']) {
+      expect(realRow?.classList.contains(token)).toBe(true);
+      for (const row of rows) expect(row.classList.contains(token)).toBe(true);
+    }
+    expect(container.querySelector('a, button, input, select, textarea, [tabindex]')).toBeNull();
+  });
+
+  it('draws six rows by default', () => {
+    const { container } = render(<NotificationListSkeleton />);
+    expect(container.firstElementChild?.children).toHaveLength(6);
   });
 });

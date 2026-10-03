@@ -1,5 +1,6 @@
 import type { CalendarEntry, Class, TeacherRoom, Room } from '@prisma/client';
-import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
+import { StatusBadge, StatusBadgeSkeleton, deriveBadgeVariant } from '@/components/ui/status-badge';
+import { SkeletonText } from '@/components/ui/skeleton';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
@@ -8,6 +9,11 @@ type ClassWithRoom = Class & {
   calendarEntry: CalendarEntry;
   teacherRoom: TeacherRoom & { room: Room };
 };
+
+// The block's frame, shared by ClassInfo and its skeleton.
+const FRAME = 'mb-6';
+const BADGE_ROW = 'mb-2';
+const COUNT_LINE_GAP = 'mt-1';
 
 interface ClassInfoProps {
   cls: ClassWithRoom;
@@ -60,8 +66,8 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
       : `${waitlistCount} on waitlist`;
 
   return (
-    <div className="mb-6">
-      <div className="mb-2">
+    <div className={FRAME}>
+      <div className={BADGE_ROW}>
         <StatusBadge variant={variant} />
       </div>
       <p className="type-body text-ink">
@@ -70,7 +76,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
       <p className="type-body">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
       </p>
-      <p className="type-caption mt-1">
+      <p className={`type-caption ${COUNT_LINE_GAP}`}>
         {registrationCount} registered &middot; needs {cls.minStudents} to go ahead
         {queueIsLive && waitlistCount > 0 && <> &middot; {waitlistLabel}</>}
       </p>
@@ -82,6 +88,21 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
           className="mt-5"
         />
       )}
+    </div>
+  );
+}
+
+// The badge, the when/where lines and the count line. The progress bar is
+// left out: it shows only while registrations still matter.
+export function ClassInfoSkeleton() {
+  return (
+    <div aria-hidden="true" className={FRAME}>
+      <div className={BADGE_ROW}>
+        <StatusBadgeSkeleton />
+      </div>
+      <SkeletonText type="type-body" width="w-3/5" />
+      <SkeletonText type="type-body" width="w-2/5" />
+      <SkeletonText type="type-caption" width="w-1/2" className={COUNT_LINE_GAP} />
     </div>
   );
 }

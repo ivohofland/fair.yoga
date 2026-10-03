@@ -22,12 +22,14 @@ export default async function InboxPage({
   return (
     <>
       <PageHeader title="Inbox" backHref={null} variant="display" />
-      <NotificationList
-        notifications={notifications}
-        hrefById={hrefById}
-        paging={{ audience: 'teacher', nextCursor }}
-        highlightId={typeof n === 'string' ? n : undefined}
-      />
+      <div data-layout-anchor="first-item">
+        <NotificationList
+          notifications={notifications}
+          hrefById={hrefById}
+          paging={{ audience: 'teacher', nextCursor }}
+          highlightId={typeof n === 'string' ? n : undefined}
+        />
+      </div>
     </>
   );
 }

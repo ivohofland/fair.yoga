@@ -17,7 +17,7 @@ export default function StudentsPage() {
         // then scanned the student list would conclude it had failed.
         action={<Link href="/students/new" className="type-label text-teal no-underline">+ Add contact</Link>}
       />
-      <div className="mb-5">
+      <div className="mb-5" data-layout-anchor="first-item">
         <SendAnnouncement recipientHint="your booked students" />
       </div>
       <StudentDirectory />

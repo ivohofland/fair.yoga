@@ -61,22 +61,22 @@ export const ROUTE_BASELINES: readonly RouteBaseline[] = [
   },
   {
     name: 'schedule',
-    sourceFiles: ['src/app/(teacher)/schedule/page.tsx'],
+    sourceFiles: ['src/app/(teacher)/schedule/(overview)/page.tsx'],
     baselineFiles: baselineFiles('schedule'),
   },
   {
     name: 'class-detail-open',
-    sourceFiles: ['src/app/(teacher)/class/[id]/page.tsx'],
+    sourceFiles: ['src/app/(teacher)/class/[id]/(overview)/page.tsx'],
     baselineFiles: baselineFiles('class-detail-open'),
   },
   {
     name: 'inbox',
-    sourceFiles: ['src/app/(teacher)/inbox/page.tsx'],
+    sourceFiles: ['src/app/(teacher)/inbox/(overview)/page.tsx'],
     baselineFiles: baselineFiles('inbox'),
   },
   {
     name: 'settings',
-    sourceFiles: ['src/app/(teacher)/settings/page.tsx'],
+    sourceFiles: ['src/app/(teacher)/settings/(overview)/page.tsx'],
     baselineFiles: baselineFiles('settings'),
   },
   {

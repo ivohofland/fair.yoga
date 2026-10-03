@@ -11,7 +11,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
  * the teacher lets them in — a routine venue scenario, and the reason this file
  * exists.
  *
- * `activeRegistrations` (`(teacher)/class/[id]/page.tsx`) keeps those rows
+ * `activeRegistrations` (`(teacher)/class/[id]/(overview)/page.tsx`) keeps those rows
  * deliberately, so they render here with a control. Two things about that row
  * are easy to get wrong and are held below.
  *
