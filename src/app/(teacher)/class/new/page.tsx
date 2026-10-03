@@ -385,8 +385,8 @@ export default function CreateClassPage() {
   // Render helpers
   // -------------------------------------------------------------------------
 
-  // Shared by the wizard and every state below, so the header the route's
-  // loading.tsx skeleton drew stays on screen whatever the rooms fetch returns.
+  // The page's header, rendered by the wizard and by every state below, so it
+  // is on screen whatever the rooms fetch returns.
   const header = (
     <div className="mb-6">
       <button

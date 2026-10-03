@@ -12,7 +12,8 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
  * and the first block below it in the same place. Each geometry test holds a
  * tab-bar navigation in its loading state (`skeleton-hold.ts`), measures the
  * skeleton, releases, and measures the page; the unheld tests below them
- * check that the skeleton measured is the one a natural click paints.
+ * check that a natural click never paints the neutral fallback in place of
+ * the route's own skeleton.
  *
  * What it does not cover: only the header and the first block below it are
  * compared (plus, for `/students`, that block's height). Blocks a page
@@ -208,11 +209,14 @@ test.describe('Skeleton geometry', () => {
     });
   }
 
-  // A route's own skeleton paints only when nothing it renders waits for JS;
-  // otherwise its fallback suspends and the neutral fallback above it paints
-  // first, header and all (docs/design-brief.md, Loading states). Unheld, so
-  // this sees the navigation a teacher sees: every frame that shows a loading
-  // state shows the route's own, never the header-only neutral one.
+  // Two ways the neutral fallback can paint in place of a route's own
+  // skeleton (docs/design-brief.md, Loading states): under `next dev`, the
+  // route's fallback renders a client component and suspends on its JS chunk,
+  // so the neutral boundary above it shows instead; in a production build, the
+  // prefetch stops at a neutral loading.tsx shallower than the route's own, so
+  // that is what paints until the response arrives. Unheld, so this sees the
+  // navigation a teacher sees: every frame that shows a loading state shows
+  // the route's own, never the header-only neutral one.
   for (const route of ROUTES) {
     test(`${route.path} never paints the neutral fallback on a tab click`, async ({ page, context }) => {
       await context.addCookies([sessionCookie(teacherToken)]);

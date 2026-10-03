@@ -1,12 +1,10 @@
 import { InputSkeleton } from '@/components/ui/input';
 import { ListRowSkeleton } from '@/components/ui/list-row';
 
-// The search field's wrapper, shared by `StudentDirectory` and its skeleton.
+// The directory's search-field wrapper and its skeleton row count, exported
+// so the directory and this skeleton draw them from one place (the
+// sibling-module pattern: docs/design-brief.md, Loading states).
 export const SEARCH_WRAP = 'mb-4';
-
-// Row count for both `StudentDirectory`'s own initial-load state and
-// `StudentDirectorySkeleton`'s default, so the two agree without either
-// retyping the other's number.
 export const SKELETON_ROWS = 6;
 
 // The search field, then directory rows: a name line and an email line each.
