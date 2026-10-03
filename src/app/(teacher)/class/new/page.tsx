@@ -385,9 +385,48 @@ export default function CreateClassPage() {
   // Render helpers
   // -------------------------------------------------------------------------
 
+  // Shared by the wizard and its loading and failed states, so the header the
+  // route's loading.tsx skeleton drew stays on screen while the rooms load.
+  const header = (
+    <div className="mb-6">
+      <button
+        type="button"
+        onClick={() => router.push('/schedule')}
+        className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
+      >
+        <Icon name="arrow-left" size={18} />
+        Schedule
+      </button>
+      <h1 className="type-display">New class</h1>
+      <p className="type-caption mt-1">Step {step} of 4</p>
+      <p className="type-caption mt-2">
+        Looking for something else?{' '}
+        <button
+          type="button"
+          onClick={() => router.push('/settings/recurring/new')}
+          className="type-caption text-teal no-underline"
+        >
+          Set up a recurring class
+        </button>{' '}
+        or{' '}
+        <button
+          type="button"
+          onClick={() => router.push('/studio-class/new')}
+          className="type-caption text-teal no-underline"
+        >
+          log a studio class
+        </button>
+        .
+      </p>
+    </div>
+  );
+
   if (loading) {
     return (
-      <div className="py-12 text-center type-caption">Loading rooms...</div>
+      <>
+        {header}
+        <div className="py-12 text-center type-caption">Loading rooms...</div>
+      </>
     );
   }
 
@@ -398,10 +437,13 @@ export default function CreateClassPage() {
     // failed. That is the message this branch's `allRoomsCount` work exists to
     // prevent, reached down the path nobody looked at.
     return (
-      <EmptyState
-        title="Couldn't load your rooms"
-        body="Check your connection and reload the page."
-      />
+      <>
+        {header}
+        <EmptyState
+          title="Couldn't load your rooms"
+          body="Check your connection and reload the page."
+        />
+      </>
     );
   }
 
@@ -428,38 +470,7 @@ export default function CreateClassPage() {
 
   return (
     <>
-      {/* Header */}
-      <div className="mb-6">
-        <button
-          type="button"
-          onClick={() => router.push('/schedule')}
-          className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
-        >
-          <Icon name="arrow-left" size={18} />
-          Schedule
-        </button>
-        <h1 className="type-display">New class</h1>
-        <p className="type-caption mt-1">Step {step} of 4</p>
-        <p className="type-caption mt-2">
-          Looking for something else?{' '}
-          <button
-            type="button"
-            onClick={() => router.push('/settings/recurring/new')}
-            className="type-caption text-teal no-underline"
-          >
-            Set up a recurring class
-          </button>{' '}
-          or{' '}
-          <button
-            type="button"
-            onClick={() => router.push('/studio-class/new')}
-            className="type-caption text-teal no-underline"
-          >
-            log a studio class
-          </button>
-          .
-        </p>
-      </div>
+      {header}
 
       {/* Step 1: Basics */}
       {step === 1 && (
@@ -508,10 +519,10 @@ export default function CreateClassPage() {
             // Through the hook for the same reason the edit form uses it, even
             // though THIS page would survive without it and it is worth saying
             // why the belt is worn anyway. The `if (loading)` early return
-            // above means the server render of this wizard is the string
-            // "Loading rooms..." — the date field does not exist in it, so no
-            // server-computed bound has ever reached a browser here. That is an
-            // accident of an unrelated fetch gate, not a property of this
+            // above means the server render of this wizard is its header and
+            // the "Loading rooms..." line — the date field does not exist in
+            // it, so no server-computed bound reaches a browser here. That is
+            // an accident of an unrelated fetch gate, not a property of this
             // field: delete the gate, or server-render the room list, and the
             // UTC bound arrives silently. The hook makes the guarantee local to
             // the control that needs it.
