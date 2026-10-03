@@ -2,19 +2,28 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Icon } from '@/components/ui/icon';
 
+// Surface card: sand on cream + 1px border, radius 16, padding 20. Shared by
+// the plain `Card` and `CardLink` so the two never drift apart.
+const CARD_SURFACE = 'bg-sand-soft border border-border rounded-card p-5';
+
 interface CardProps {
   children: ReactNode;
   className?: string;
+  href?: string;
 }
 
-// Surface card: sand on cream + 1px border, radius 16, padding 20.
-// Depth comes from the surface + border — never a shadow.
-export function Card({ children, className = '' }: CardProps) {
-  return (
-    <div className={`bg-sand-soft border border-border rounded-card p-5 ${className}`.trim()}>
-      {children}
-    </div>
-  );
+// Surface card. Depth comes from the surface + border — never a shadow.
+// With `href` it becomes a tappable link with the sand-hover step; without
+// one it's a plain div, which is also what a card's own skeleton renders.
+export function Card({ children, className = '', href }: CardProps) {
+  if (href !== undefined) {
+    return (
+      <Link href={href} className={`block ${CARD_SURFACE} no-underline hover:bg-sand ${className}`.trim()}>
+        {children}
+      </Link>
+    );
+  }
+  return <div className={`${CARD_SURFACE} ${className}`.trim()}>{children}</div>;
 }
 
 interface CardLinkProps {
@@ -28,7 +37,7 @@ export function CardLink({ href, children, className = '' }: CardLinkProps) {
   return (
     <Link
       href={href}
-      className={`flex items-center gap-3 bg-sand-soft border border-border rounded-card p-5 no-underline hover:bg-sand ${className}`.trim()}
+      className={`flex items-center gap-3 ${CARD_SURFACE} no-underline hover:bg-sand ${className}`.trim()}
     >
       <div className="flex-1 min-w-0">{children}</div>
       <Icon name="chevron-right" size={20} className="text-brown-light" />

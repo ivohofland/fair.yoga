@@ -1,4 +1,5 @@
 import type { ClassStatus } from '@prisma/client';
+import type { SkeletonSurface } from '@/components/ui/skeleton';
 
 export type BadgeVariant =
   | 'draft'
@@ -23,6 +24,13 @@ const VARIANTS: Record<BadgeVariant, { classes: string; label: string }> = {
   cancelled: { classes: 'border-transparent bg-brown text-cream', label: 'Cancelled' },
 };
 
+// The badge's frame, shared by the real badge and its skeleton so neither
+// can drift from the other's size.
+const BADGE_FRAME = 'inline-block border rounded-field px-2.5 py-[3px] text-[13px] font-medium leading-[1.4] whitespace-nowrap';
+
+// A bar on a card takes the next sand step, same as `Skeleton`'s own surfaces.
+const SKELETON_FILL: Record<SkeletonSurface, string> = { page: 'bg-sand-soft', card: 'bg-sand' };
+
 interface StatusBadgeProps {
   variant: BadgeVariant;
   children?: string;
@@ -32,10 +40,19 @@ interface StatusBadgeProps {
 export function StatusBadge({ variant, children }: StatusBadgeProps) {
   const v = VARIANTS[variant];
   return (
-    <span
-      className={`inline-block border rounded-field px-2.5 py-[3px] text-[13px] font-medium leading-[1.4] whitespace-nowrap ${v.classes}`}
-    >
+    <span className={`${BADGE_FRAME} ${v.classes}`}>
       {children ?? v.label}
+    </span>
+  );
+}
+
+// A placeholder the size of a real badge: the word "Upcoming" sets the
+// width and height, but its text and border are invisible and the surface
+// fill stands in for color.
+export function StatusBadgeSkeleton({ surface = 'page' }: { surface?: SkeletonSurface }) {
+  return (
+    <span aria-hidden="true" className={`${BADGE_FRAME} text-transparent border-transparent ${SKELETON_FILL[surface]}`}>
+      Upcoming
     </span>
   );
 }

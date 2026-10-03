@@ -4,7 +4,7 @@ import { render, screen } from '@testing-library/react';
 import type { PaymentStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { ClassList } from './class-list';
+import { ClassList, ClassListSkeleton } from './class-list';
 
 /**
  * #58 review. `PaymentRollup` (class-list.tsx) had no coverage anywhere — unit,
@@ -31,11 +31,11 @@ import { ClassList } from './class-list';
  * decimal implementation, not from `@prisma/client` itself: no engine, no
  * database, nothing for jsdom to choke on.
  */
-type ClassRow = ComponentProps<typeof ClassList>['classes'][number];
+export type ClassRow = ComponentProps<typeof ClassList>['classes'][number];
 
-const AT = new Date('2026-06-01T00:00:00.000Z');
+export const AT = new Date('2026-06-01T00:00:00.000Z');
 
-const room = {
+export const room = {
   id: 'room-1',
   venueName: 'Studio Zen',
   address: 'Prinsengracht 1',
@@ -52,7 +52,7 @@ const room = {
   updatedAt: AT,
 };
 
-const teacherRoom = {
+export const teacherRoom = {
   id: 'tr-1',
   teacherId: 'teacher-1',
   roomId: 'room-1',
@@ -71,7 +71,7 @@ const teacherRoom = {
  * returns (`(teacher)/page.tsx`, `schedule/past/page.tsx`). Pass `undefined` for
  * a caller that did not include registrations at all; the prop is optional.
  */
-function classRow(
+export function classRow(
   id: string,
   status: ClassRow['status'],
   payments: (PaymentStatus | null)[] | undefined,
@@ -282,5 +282,27 @@ describe('ClassList timezone handling', () => {
       />,
     );
     expect(screen.getByText('This week')).toBeInTheDocument();
+  });
+});
+
+describe('ClassListSkeleton', () => {
+  it('renders one section with a heading placeholder and (default 3) card skeletons', () => {
+    const { container } = render(<ClassListSkeleton />);
+    const section = container.querySelector('section');
+    expect(section).not.toBeNull();
+    const heading = section!.firstElementChild;
+    expect(heading?.classList.contains('type-subtitle')).toBe(true);
+    expect(heading?.classList.contains('mb-3')).toBe(true);
+    const items = section!.lastElementChild;
+    expect(items?.classList.contains('flex')).toBe(true);
+    expect(items?.classList.contains('flex-col')).toBe(true);
+    expect(items?.classList.contains('gap-3')).toBe(true);
+    expect(items?.children.length).toBe(3);
+  });
+
+  it('draws `cards` card skeletons when given', () => {
+    const { container } = render(<ClassListSkeleton cards={5} />);
+    const items = container.querySelector('section')?.lastElementChild;
+    expect(items?.children.length).toBe(5);
   });
 });
