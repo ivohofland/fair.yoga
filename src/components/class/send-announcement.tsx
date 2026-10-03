@@ -219,7 +219,9 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   );
 }
 
-// The collapsed state: one line in the trigger's type style.
+// The collapsed state: one line in the trigger's type style. A button is
+// inline-block, so it sits in its wrapper's line box; the placeholder does
+// the same, or the wrapper renders a strut shorter than the page's.
 export function SendAnnouncementSkeleton() {
-  return <SkeletonText type={TRIGGER_TYPE} width="w-36" />;
+  return <SkeletonText type={TRIGGER_TYPE} width="w-36" className="inline-block" />;
 }
