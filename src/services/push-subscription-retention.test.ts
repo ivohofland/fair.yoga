@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
@@ -61,15 +61,22 @@ afterAll(async () => {
 describe('reapStalePushSubscriptions', () => {
   const WINDOW = PUSH_SUBSCRIPTION_RETENTION_DAYS;
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('keeps the window the data model states', () => {
+    expect(WINDOW).toBe(180);
+  });
+
   it('deletes a row whose last activity is older than the window and keeps one inside it', async () => {
     const stale = await seed(daysAgo(WINDOW + 400), daysAgo(WINDOW + 1));
     const fresh = await seed(daysAgo(WINDOW + 400), daysAgo(WINDOW - 1));
-    const { db, rowsRead } = scoped();
+    const { db } = scoped();
 
     const summary = await reapStalePushSubscriptions(db, { now: NOW });
 
-    expect(rowsRead('PushSubscription')).toBeGreaterThan(0);
-    expect(summary.deleted).toBeGreaterThanOrEqual(1);
+    expect(summary.deleted).toBe(1);
     expect(await exists(stale)).toBe(false);
     expect(await exists(fresh)).toBe(true);
   });
@@ -94,13 +101,30 @@ describe('reapStalePushSubscriptions', () => {
     expect(await exists(oldButRecentlyUsed)).toBe(true);
   });
 
-  it('keeps a row exactly on the cutoff', async () => {
-    const onCutoff = await seed(daysAgo(WINDOW), null);
+  it('keeps a row exactly on the cutoff, whichever column measures it', async () => {
+    const neverSent = await seed(daysAgo(WINDOW), null);
+    const sent = await seed(daysAgo(WINDOW + 400), daysAgo(WINDOW));
     const { db } = scoped();
 
-    await reapStalePushSubscriptions(db, { now: NOW });
+    const summary = await reapStalePushSubscriptions(db, { now: NOW });
 
-    expect(await exists(onCutoff)).toBe(true);
+    expect(summary.deleted).toBe(0);
+    expect(await exists(neverSent)).toBe(true);
+    expect(await exists(sent)).toBe(true);
+  });
+
+  it('lets a failed delete reach the caller', async () => {
+    const failing = prisma.$extends({
+      query: {
+        pushSubscription: {
+          async deleteMany() {
+            throw new Error('delete refused');
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await expect(reapStalePushSubscriptions(failing, { now: NOW })).rejects.toThrow('delete refused');
   });
 
   it('reports the cutoff it used and logs the run', async () => {
@@ -110,7 +134,6 @@ describe('reapStalePushSubscriptions', () => {
     const summary = await reapStalePushSubscriptions(db, { now: NOW });
 
     expect(summary.cutoff).toBe(daysAgo(WINDOW).toISOString());
-    expect(info).toHaveBeenCalledWith(expect.objectContaining({ cutoff: summary.cutoff }), expect.any(String));
-    info.mockRestore();
+    expect(info).toHaveBeenCalledWith({ deleted: summary.deleted, cutoff: summary.cutoff }, 'push subscription retention swept');
   });
 });

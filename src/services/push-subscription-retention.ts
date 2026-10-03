@@ -26,12 +26,9 @@ export interface PushSubscriptionReapSummary {
  *
  * Prisma cannot spell `coalesce`, so the predicate is its two cases: a row
  * that has been sent to is measured from `lastUsedAt`, one that never was from
- * `createdAt`. Candidates are read with a top-level `findMany` and deleted by
- * id, so `tests/scoped-sweep.ts` can narrow both statements in a test.
- *
- * One pass, unbatched: the table holds at most
- * `MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT` rows per account, so the read is
- * bounded by the account count. A failure propagates to the caller.
+ * `createdAt`. One DELETE: a row a send refreshes while it runs is re-checked
+ * by Postgres once the delete has the row lock, and kept. A failure propagates
+ * to the caller.
  */
 export async function reapStalePushSubscriptions(
   db: PrismaClient,
@@ -40,16 +37,11 @@ export async function reapStalePushSubscriptions(
   const now = opts.now ?? new Date();
   const cutoff = new Date(now.getTime() - PUSH_SUBSCRIPTION_RETENTION_DAYS * DAY_MS);
 
-  const rows = await db.pushSubscription.findMany({
+  const { count } = await db.pushSubscription.deleteMany({
     where: {
       OR: [{ lastUsedAt: { lt: cutoff } }, { lastUsedAt: null, createdAt: { lt: cutoff } }],
     },
-    select: { id: true },
   });
-  const { count } =
-    rows.length === 0
-      ? { count: 0 }
-      : await db.pushSubscription.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
 
   const summary: PushSubscriptionReapSummary = { deleted: count, cutoff: cutoff.toISOString() };
   log.info(summary, 'push subscription retention swept');
