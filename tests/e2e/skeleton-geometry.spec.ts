@@ -21,12 +21,24 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
  * checked.
  */
 
-const ROUTES = [
-  { path: '/students', tab: 'Students', from: '/schedule' },
+interface RouteSpec {
+  path: string;
+  tab: string;
+  from: string;
+  /** Also compare the first item's height, not just its top. */
+  compareFirstItemHeight?: boolean;
+}
+
+const ROUTES: readonly RouteSpec[] = [
+  // Only /students' first item is a flagged target for height comparison:
+  // its skeleton stacks SendAnnouncementSkeleton above StudentDirectorySkeleton
+  // inside the same `mb-5` wrapper, and the top-only deltas below can't tell
+  // a missing stacked piece from one that's merely misaligned.
+  { path: '/students', tab: 'Students', from: '/schedule', compareFirstItemHeight: true },
   { path: '/inbox', tab: 'Inbox', from: '/schedule' },
   { path: '/settings', tab: 'Settings', from: '/schedule' },
   { path: '/schedule', tab: 'Schedule', from: '/inbox' },
-] as const;
+];
 const TOLERANCE_PX = 2;
 
 const prisma = new PrismaClient();
@@ -37,7 +49,7 @@ let teacherId: string | undefined;
 let roomId: string | undefined;
 let teacherToken: string;
 
-interface Geometry { headerY: number; headerHeight: number; firstItemY: number }
+interface Geometry { headerY: number; headerHeight: number; firstItemY: number; firstItemHeight: number }
 
 async function boxOf(locator: Locator, what: string): Promise<{ y: number; height: number }> {
   const box = await locator.boundingBox();
@@ -48,7 +60,7 @@ async function boxOf(locator: Locator, what: string): Promise<{ y: number; heigh
 async function geometry(page: Page, scope: string, what: string): Promise<Geometry> {
   const header = await boxOf(page.locator(`${scope}[data-layout-anchor="header"]`), `${what} header`);
   const firstItem = await boxOf(page.locator(`${scope}[data-layout-anchor="first-item"]`), `${what} first-item`);
-  return { headerY: header.y, headerHeight: header.height, firstItemY: firstItem.y };
+  return { headerY: header.y, headerHeight: header.height, firstItemY: firstItem.y, firstItemHeight: firstItem.height };
 }
 
 test.describe('Skeleton geometry', () => {
@@ -176,11 +188,14 @@ test.describe('Skeleton geometry', () => {
       await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
       const loaded = await geometry(page, '', 'page');
 
-      const deltas = {
+      const deltas: Record<string, readonly [number, number]> = {
         'header top': [skeleton.headerY, loaded.headerY],
         'header height': [skeleton.headerHeight, loaded.headerHeight],
         'first-item top': [skeleton.firstItemY, loaded.firstItemY],
-      } as const;
+      };
+      if (route.compareFirstItemHeight) {
+        deltas['first-item height'] = [skeleton.firstItemHeight, loaded.firstItemHeight];
+      }
       test.info().annotations.push({ type: 'geometry', description: JSON.stringify({ skeleton, page: loaded }) });
       // Soft, so one failing run names every anchor that moved.
       for (const [what, [fromSkeleton, fromPage]] of Object.entries(deltas)) {
