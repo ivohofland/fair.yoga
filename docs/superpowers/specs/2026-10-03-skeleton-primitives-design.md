@@ -121,8 +121,12 @@ the visual suite then confirms five of the routes at 100% on macOS.
   defaults (title variant, back link) and nothing below. A route that forgets
   its own shows a quiet header, never another page's body.
 - **Own `loading.tsx`, composed only from primitive skeletons:** the four tab
-  roots (`schedule`, `students`, `inbox`, `settings`), `class/[id]` and
-  `students/[id]`.
+  roots (`schedule`, `students`, `inbox`, `settings`) and `class/[id]`
+  (header plus the `ClassInfo` card, from a `ClassInfoSkeleton` in that
+  component's file). `students/[id]` was a candidate too; below its header it
+  is a column of `h2` sections written inline in the page, with no primitive
+  to draw a skeleton from, so it takes the neutral fallback — which already
+  ends the schedule flash the issue's acceptance names.
 - **A page's own boundary must not cover its children (gate).** A
   `loading.tsx` wraps every nested segment without a closer one, so
   `settings/loading.tsx` would put the settings list in front of
@@ -135,13 +139,12 @@ the visual suite then confirms five of the routes at 100% on macOS.
   page alone. Taking (b): it is Next's documented idiom for exactly this, the
   URL is unchanged, and a page added under `settings/` later falls through to
   the neutral fallback instead of needing boilerplate. It moves five pages —
-  `schedule`, `students`, `inbox`, `settings`, `class/[id]` — and
-  `students/[id]`, which has no children, keeps its `loading.tsx` beside it.
+  `schedule`, `students`, `inbox`, `settings`, `class/[id]`.
   Every reference to the moved paths moves with them, the visual-baseline
   map (`ROUTE_BASELINES`) included.
 - **Everything else** under `(teacher)` — forms, edit pages, `schedule/past`,
   the settings sub-pages and list pages, `studio-class/*`, `students/*` other
-  than the directory and a student's detail, `inbox/invitations` — uses the
+  than the directory (a student's detail included), `inbox/invitations` — uses the
   neutral fallback, recorded in the coverage test's allowlist (D4). The
   settings list pages (`recurring`, `rooms`, `studio-classes`) were candidates
   for their own skeleton; they are set-up-once screens, and each would cost an
