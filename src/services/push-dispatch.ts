@@ -23,6 +23,9 @@ export type PushSender = (
   urgency: PushUrgency,
 ) => Promise<PushSendResult>;
 
+/** A `VAPID_*` problem that is a fault, not a choice: everything but an unset environment. */
+export type MisconfiguredVapid = Exclude<VapidConfigProblem, 'unset'>;
+
 export interface PushDispatchResult {
   retired: number;
   claimed: number;
@@ -32,25 +35,27 @@ export interface PushDispatchResult {
   failed: number;
   /** Rows claimed while push was misconfigured (not merely unset): nobody could be told. */
   unsendable: number;
+  /** Why `VAPID_*` is unusable, read on every tick whether or not it claimed a row; null when it is usable, unset, or a sender was injected. */
+  misconfigured: MisconfiguredVapid | null;
 }
 
 let reportedUnconfigured = false;
 
 interface ResolvedSender {
   sender: PushSender | null;
-  /** True when `VAPID_*` is set but unusable; an unset environment is a choice, not a fault. */
-  misconfigured: boolean;
+  /** Set when `VAPID_*` is set but unusable; an unset environment is a choice, not a fault. */
+  misconfigured: MisconfiguredVapid | null;
 }
 
 function resolveSender(send: PushSender | null | undefined): ResolvedSender {
-  if (send !== undefined) return { sender: send, misconfigured: false };
+  if (send !== undefined) return { sender: send, misconfigured: null };
   const diagnosis = diagnoseVapidConfig();
   if (!diagnosis.ok) {
     reportUnconfigured(diagnosis.reason);
-    return { sender: null, misconfigured: diagnosis.reason !== 'unset' };
+    return { sender: null, misconfigured: diagnosis.reason === 'unset' ? null : diagnosis.reason };
   }
   const { keys } = diagnosis;
-  return { sender: (target, payload, urgency) => sendPush(target, payload, keys, { urgency }), misconfigured: false };
+  return { sender: (target, payload, urgency) => sendPush(target, payload, keys, { urgency }), misconfigured: null };
 }
 
 /**
@@ -81,10 +86,33 @@ export async function dispatchPushes(
   now: Date = new Date(),
   clock: () => number = Date.now,
 ): Promise<Readonly<PushDispatchResult>> {
+  const result: PushDispatchResult = { retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0, unsendable: 0, misconfigured: null };
+  try {
+    await runPushDispatch(db, send, now, clock, result);
+  } catch (err: unknown) {
+    // A tick that throws has still retired rows and may have sent some; its
+    // counts are the only record of that.
+    log.info({ ...result, faulted: true }, 'push dispatch tick');
+    throw err;
+  }
+  if (result.failed + result.gone + result.invalid + result.retired + result.unsendable > 0) {
+    log.info({ ...result }, 'push dispatch tick');
+  }
+  return result;
+}
+
+/** The tick's work, counting into `result` as it goes so a throw leaves the counts of what already happened. */
+async function runPushDispatch(
+  db: PrismaClient,
+  send: PushSender | null | undefined,
+  now: Date,
+  clock: () => number,
+  result: PushDispatchResult,
+): Promise<void> {
   const claimDeadline = clock() + PUSH_CLAIM_DEADLINE_MS;
   const { sender, misconfigured } = resolveSender(send);
+  result.misconfigured = misconfigured;
   const cutoff = new Date(now.getTime() - PUSH_STALE_AFTER_MS);
-  const result: PushDispatchResult = { retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0, unsendable: 0 };
 
   const retired = await db.notification.updateMany({
     where: { pushHandledAt: null, createdAt: { lte: cutoff } },
@@ -162,7 +190,7 @@ export async function dispatchPushes(
       if (claim.count !== 1) continue;
       result.claimed += 1;
       if (!sender) {
-        if (misconfigured) result.unsendable += 1;
+        if (misconfigured !== null) result.unsendable += 1;
         continue;
       }
 
@@ -197,11 +225,6 @@ export async function dispatchPushes(
     logTaskFailures(otherFailures);
     throw new PushSendFault(firstFailure.notificationId, firstFailure.subscriptionId, firstFailure.err);
   }
-
-  if (result.failed + result.gone + result.invalid + result.retired + result.unsendable > 0) {
-    log.info({ ...result }, 'push dispatch tick');
-  }
-  return result;
 }
 
 interface TaskFailure {

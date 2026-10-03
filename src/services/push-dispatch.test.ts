@@ -558,6 +558,60 @@ describe('dispatchPushes', () => {
     await expect(pending).rejects.toBe(claimError);
   });
 
+  it('logs the counts of a tick that throws a send fault, and still throws the fault', async () => {
+    const stale = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(Date.now() - PUSH_STALE_AFTER_MS - 60_000) });
+    await subscribe(studentAccountId, 'fault-counts');
+    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const send: PushSender = vi.fn(async () => {
+      throw new Error('sender bug');
+    });
+
+    const rejection: unknown = await dispatchPushes(scoped([stale.id, n.id]).db, send).catch((err: unknown) => err);
+
+    expect(rejection).toBeInstanceOf(PushSendFault);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ retired: 1, claimed: 1, sent: 0, faulted: true }),
+      'push dispatch tick',
+    );
+  });
+
+  it('logs the counts of a tick whose worker crashes, and still throws the crash', async () => {
+    await subscribe(studentAccountId, 'crash-counts');
+    const stale = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(Date.now() - PUSH_STALE_AFTER_MS - 60_000) });
+    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const crashError = new Error('claim failed');
+    const hooked = prisma.$extends({
+      query: {
+        notification: {
+          async updateMany({ args, query }) {
+            const where = args.where as { id?: string } | undefined;
+            if (where?.id === n.id) throw crashError;
+            return query(args);
+          },
+        },
+      },
+    });
+    const s = scopeSweep(hooked as unknown as PrismaClient, { Notification: { id: { in: [stale.id, n.id] } } });
+    const { send } = recordingSender();
+
+    await expect(dispatchPushes(s.db, send)).rejects.toBe(crashError);
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ retired: 1, claimed: 0, faulted: true }),
+      'push dispatch tick',
+    );
+  });
+
+  it('does not mark a clean tick\'s summary as faulted', async () => {
+    const stale = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(Date.now() - PUSH_STALE_AFTER_MS - 60_000) });
+
+    await dispatchPushes(scoped([stale.id]).db, recordingSender().send);
+
+    const [fields] = vi.mocked(log.info).mock.calls.find(([, msg]) => msg === 'push dispatch tick') ?? [];
+    expect(fields).toMatchObject({ retired: 1 });
+    expect(fields).not.toHaveProperty('faulted');
+  });
+
   it('logs a send fault when a claim failure is the error that propagates', async () => {
     const sub1 = await subscribe(studentAccountId, 'fault-under-claim');
     const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
@@ -709,6 +763,28 @@ describe('dispatchPushes', () => {
       const result = await freshDispatch(scoped([n.id]).db);
 
       expect(result).toMatchObject({ claimed: 1, unsendable: 1, sent: 0 });
+    });
+
+    it.each(Object.entries(misconfigurations))('reports the %s misconfiguration on a tick that claims nothing', async (reason, configure) => {
+      configure();
+      const { freshDispatch } = await freshModule();
+
+      const result = await freshDispatch(scoped([]).db);
+
+      expect(result).toMatchObject({ claimed: 0, unsendable: 0, misconfigured: reason });
+    });
+
+    it('reports no misconfiguration for an unset environment or an injected sender', async () => {
+      vi.stubEnv('VAPID_PUBLIC_KEY', undefined);
+      vi.stubEnv('VAPID_PRIVATE_KEY', undefined);
+      vi.stubEnv('VAPID_SUBJECT', undefined);
+      const unset = await freshModule();
+      expect(await unset.freshDispatch(scoped([]).db)).toMatchObject({ misconfigured: null });
+
+      misconfigurations.partial();
+      const injected = await freshModule();
+      const { send } = recordingSender();
+      expect(await injected.freshDispatch(scoped([]).db, send)).toMatchObject({ misconfigured: null });
     });
 
     it('counts the rows it claimed as unsendable for a misconfiguration, never for an unset environment', async () => {
