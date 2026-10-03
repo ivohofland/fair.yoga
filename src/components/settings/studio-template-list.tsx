@@ -15,12 +15,8 @@ const ROW_BASE = 'flex items-start justify-between gap-3 no-underline';
 
 interface StudioTemplateRowProps {
   template: StudioTemplateListItem;
-  /**
-   * The row's opacity modifier only — the active row carries none, paused and
-   * archived carry `opacity-60`/`opacity-40`. The shared frame comes from
-   * `ListRow` itself.
-   */
-  opacityClass?: string;
+  /** The row's opacity modifier; the active row carries none. */
+  opacityClass?: 'opacity-60' | 'opacity-40';
   status: string;
   /**
    * Active is `text-[13px] text-teal`, paused and archived are
