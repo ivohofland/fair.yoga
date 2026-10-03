@@ -474,7 +474,7 @@ describe('SendAnnouncementSkeleton', () => {
     const typeStyle = trigger.className.split(/\s+/).find((t) => t.startsWith('type-'));
     expect(typeStyle).toBe('type-label');
     expect(line?.classList.contains(typeStyle ?? '')).toBe(true);
-    // Inline like the button, so its wrapper's line box is the page's height.
+    // Inline like the button, so its wrapper's line box matches the real page's.
     expect(line?.classList.contains('inline-block')).toBe(true);
     expect(container.querySelector('a, button, input, select, textarea, [tabindex]')).toBeNull();
   });

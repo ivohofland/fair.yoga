@@ -579,12 +579,13 @@ describe('StudentDirectory', () => {
   });
 
   /**
-   * A reload that starts with a roster already on screen (an `archived`
-   * toggle, not the initial mount) dims the existing rows instead of
-   * swapping them for skeleton rows — `initialLoad` in
-   * `student-directory.tsx` is keyed on `students.length === 0`, not on
-   * `loading` alone, so a reload never regresses to the first-load
-   * treatment.
+   * A reload that starts with rows already on screen dims them instead of
+   * swapping them for skeleton rows — `initialLoad` in `student-directory.tsx`
+   * is keyed on `students.length === 0`, not on `loading` alone, so a reload
+   * that starts from an empty roster still gets skeleton rows. The test
+   * drives the reload with `rerender` and a changed `archived` prop; the app
+   * itself never toggles `archived` on a mounted instance — `/students` and
+   * `/students/archived` are separate routes.
    */
   it('dims the existing roster rather than reverting to skeleton rows on a reload', async () => {
     let resolveSecond!: (value: unknown) => void;

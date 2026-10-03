@@ -32,7 +32,7 @@ describe('Card', () => {
 });
 
 describe('CardLink', () => {
-  it("keeps today's class set", () => {
+  it('keeps its class set', () => {
     render(<CardLink href="/room/1">hello</CardLink>);
     const link = screen.getByRole('link', { name: /hello/ });
     expect(set(link.className)).toEqual(

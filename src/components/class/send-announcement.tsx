@@ -220,10 +220,11 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
 }
 
 // The collapsed state: one line in the trigger's type style, `inline-block`
-// so it forms a line box inside its wrapper the way the button it stands for
-// does. A block placeholder instead would give the wrapper no line box at
-// all, collapsing its height to the label's line-height alone, without the
-// button's line box strut and baseline offset.
+// so it joins its wrapper's line box the way the button it stands for does —
+// both are inline-level. The wrapper's own strut (its inherited line-height,
+// from the page body, taller than type-label's own) sets the floor height.
+// A block placeholder would drop out of that line box and render at
+// type-label's own, shorter line-height instead.
 export function SendAnnouncementSkeleton() {
   return <SkeletonText type={TRIGGER_TYPE} width="w-36" className="inline-block" />;
 }

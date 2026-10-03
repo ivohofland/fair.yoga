@@ -119,7 +119,7 @@ describe('every route\'s loading state is chosen', () => {
     expect({ stale, redundant }).toEqual({ stale: [], redundant: [] });
   });
 
-  it('no loading.tsx draws a shape by hand from the raw Skeleton', () => {
+  it('no loading.tsx imports from @/components/ui/skeleton at all', () => {
     const raw = loadings
       .filter((file) => readFileSync(file, 'utf8').includes('@/components/ui/skeleton'))
       .map((file) => toKey(path.dirname(file)));

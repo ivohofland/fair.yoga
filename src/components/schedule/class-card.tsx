@@ -10,7 +10,7 @@ import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 
 export type ClassWithDetails = Class & {
-  /** The calendar identity both card kinds render from since #327. */
+  /** The calendar identity both card kinds render from. */
   calendarEntry: CalendarEntry;
   _count: { registrations: number };
   teacherRoom: TeacherRoom & { room: Room };
@@ -31,8 +31,7 @@ type RowState = {
 
 function deriveClassRowState(cls: ClassWithDetails, isPast: boolean): RowState {
   const reg = cls._count.registrations;
-  // Read from the entry since #327, where both card kinds now read it — the
-  // studio card below already did, one table over.
+  // Both card kinds read cancellation from the entry.
   const cancelled = cls.calendarEntry.cancelledAt !== null;
   const variant = deriveBadgeVariant(cls.status, cancelled, reg, cls.minStudents, cls.maxStudents);
   const past = !cancelled && (cls.status === 'completed' || isPast);
@@ -160,8 +159,8 @@ function StudioClassCardBody({ when, badge, caption }: { when: ReactNode; badge:
   );
 }
 
-// Their "done" state is text, not a badge (like payment states): a teal
-// ✓ once the student count is logged, a quiet nudge while it's missing.
+// A studio class's "done" state is text, not a badge (like payment states):
+// a teal ✓ once the student count is logged, a quiet nudge while it's missing.
 export function StudioClassCard({ sc, isPast }: { sc: StudioClassWithEntry; isPast: boolean }) {
   const cancelled = sc.calendarEntry.cancelledAt !== null;
   const past = !cancelled && isPast;
@@ -199,7 +198,7 @@ export function StudioClassCard({ sc, isPast }: { sc: StudioClassWithEntry; isPa
   );
 }
 
-// Loading state for a studio class: the dashed frame, no link, bars on the
+// The studio card's skeleton shape: the dashed frame, no link, bars on the
 // page surface since the dashed card sits directly on cream.
 export function StudioClassCardSkeleton() {
   return (

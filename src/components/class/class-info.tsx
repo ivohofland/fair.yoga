@@ -93,7 +93,8 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
 }
 
 // The badge, the when/where lines and the count line. The progress bar is
-// left out: it shows only while registrations still matter.
+// left out: whether it shows depends on the class's status, which the
+// skeleton cannot know.
 export function ClassInfoSkeleton() {
   return (
     <div aria-hidden="true" className={FRAME}>
