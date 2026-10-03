@@ -3,16 +3,19 @@
  * captures it; grep/jq-able on the VPS), pretty-printed in development.
  *
  * Usage: `log.error({ err, classId }, 'completion failed')` — put the
- * error under the `err` key so pino serializes stack traces properly.
+ * error under the `err` key: it is serialized whatever its value, and it is
+ * the key pino reads `msg` from when a call passes no message string.
  *
- * `serializeErr` (`log-serializers.ts`) runs on every `Error` at the top
- * level of a log call's first argument (any key, not just `err`), on an
- * `Error` passed as the first argument, on the `err` key whether or not its
- * value is an `Error` instance, and on the `msg` pino falls back to when a
- * call passes no message string. `logMethod` runs before that fallback,
- * which is why the rewrite lives here rather than only in `serializers`.
- * What this does not cover is listed in `docs/technical-architecture.md`
- * (What's Intentionally Left Out).
+ * `serializeErr` (`log-serializers.ts`) runs, through the `logMethod` hook,
+ * on an `Error` passed as the first argument, on every `Error` at the top
+ * level of the first argument (any key), and on an error-like value — an
+ * object with a string `message` — under `err`. pino copies `err.message`
+ * into `msg` after `logMethod` and before any serializer, so rewriting
+ * there is what keeps the `msg` fallback redacted. A value that cannot be
+ * serialized, or a key that throws when read, is replaced by
+ * `UNSERIALIZABLE`; a log call does not throw. What this does not cover is
+ * listed in `docs/technical-architecture.md` (What's Intentionally Left
+ * Out).
  *
  * This module imports `server-only`, so `next build` fails when any
  * `'use client'` module value-imports it, directly or through any chain
@@ -28,24 +31,41 @@
 
 import 'server-only';
 import pino, { type DestinationStream, type Logger, type LoggerOptions } from 'pino';
-import { serializeErr } from './log-serializers';
+import { serializeErr, UNSERIALIZABLE } from './log-serializers';
 
 /**
- * The log call's arguments with every top-level `Error` in the first one
- * serialized. A shallow copy, because callers keep using what they logged.
+ * The log call's arguments with every top-level `Error` in the first one,
+ * and an error-like value under `err`, serialized. A shallow copy, because
+ * callers keep using what they logged. Each key is read and checked in its
+ * own `try`: `instanceof` itself throws on a revoked Proxy.
  */
 function redactLogArgs(args: readonly unknown[]): unknown[] {
   const [first, ...rest] = args;
-  if (first instanceof Error) return [{ err: serializeErr(first) }, ...rest];
-  if (typeof first !== 'object' || first === null) return [...args];
-  let copy: Record<string, unknown> | null = null;
-  for (const [key, value] of Object.entries(first)) {
-    if (value instanceof Error) {
-      copy ??= { ...first };
-      copy[key] = serializeErr(value);
+  let keys: string[];
+  try {
+    if (first instanceof Error) return [{ err: serializeErr(first) }, ...rest];
+    if (typeof first !== 'object' || first === null) return [...args];
+    keys = Object.keys(first);
+  } catch {
+    return [{ err: UNSERIALIZABLE }, ...rest];
+  }
+  const source = first as Record<string, unknown>;
+  const copy: Record<string, unknown> = {};
+  let changed = false;
+  for (const key of keys) {
+    try {
+      const value = source[key];
+      // `serializeErr` returns a value that is not error-like unchanged, so
+      // under `err` only an error-like value is rewritten.
+      const redacted = key === 'err' || value instanceof Error ? serializeErr(value) : value;
+      copy[key] = redacted;
+      if (redacted !== value) changed = true;
+    } catch {
+      copy[key] = UNSERIALIZABLE;
+      changed = true;
     }
   }
-  return copy === null ? [...args] : [copy, ...rest];
+  return changed ? [copy, ...rest] : [...args];
 }
 
 const options: LoggerOptions = {
