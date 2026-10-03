@@ -136,7 +136,11 @@ export function ClassCardSkeleton() {
         when={<SkeletonText type="type-label" width="w-32" surface="card" />}
         badge={<StatusBadgeSkeleton surface="card" />}
         title={<SkeletonText type="type-subtitle" width="w-1/2" surface="card" className="flex-1 min-w-0" />}
-        chevron={<Skeleton surface="card" className="w-5 h-5" />}
+        chevron={
+          <span className="shrink-0" style={{ width: CHEVRON_SIZE, height: CHEVRON_SIZE }}>
+            <Skeleton surface="card" className="w-full h-full" />
+          </span>
+        }
         caption={<SkeletonText type="type-caption" width="w-1/3" surface="card" className="mt-0.5" />}
         progress={<RegistrationProgressSkeleton className="mt-3" surface="card" />}
       />
@@ -147,6 +151,18 @@ export function ClassCardSkeleton() {
 // Studio classes are visually lighter: dashed border on cream, no bar.
 // Their frame — shared by `StudioClassCard` and `StudioClassCardSkeleton`.
 const STUDIO_CARD_FRAME = 'border border-dashed border-border rounded-card px-5 py-3';
+
+// The studio card's inner layout: when + badge, then a caption line. Shared
+// by `StudioClassCard` and `StudioClassCardSkeleton` so their frames never
+// drift, the same way `ClassCardBody` does for the regular card.
+function StudioClassCardBody({ when, badge, caption }: { when: ReactNode; badge: ReactNode; caption: ReactNode }) {
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">{when}{badge}</div>
+      {caption}
+    </>
+  );
+}
 
 // Their "done" state is text, not a badge (like payment states): a teal
 // ✓ once the student count is logged, a quiet nudge while it's missing.
@@ -160,27 +176,29 @@ export function StudioClassCard({ sc, isPast }: { sc: StudioClassWithEntry; isPa
       href={`/studio-class/${sc.id}`}
       className={`block ${STUDIO_CARD_FRAME} no-underline hover:bg-sand-soft${past || cancelled ? ' opacity-70' : ''}`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span
-          className={`type-label text-ink${cancelled ? ' line-through decoration-brown' : ''}`}
-        >
-          {formatDayHeader(sc.calendarEntry.date)} · {timeToHHmm(sc.calendarEntry.startTime)}
-        </span>
-        {cancelled && <StatusBadge variant="cancelled" />}
-      </div>
-      <p className="type-caption mt-0.5">
-        {sc.calendarEntry.classType
-          ? `${sc.calendarEntry.classType} · ${sc.location}`
-          : sc.location} · Studio class
-        {logged && (
-          <span className="text-teal">
-            {' '}· ✓ {sc.studentCount} {sc.studentCount === 1 ? 'student' : 'students'}
+      <StudioClassCardBody
+        when={
+          <span className={`type-label text-ink${cancelled ? ' line-through decoration-brown' : ''}`}>
+            {formatDayHeader(sc.calendarEntry.date)} · {timeToHHmm(sc.calendarEntry.startTime)}
           </span>
-        )}
-        {!logged && past && !cancelled && (
-          <span className="text-brown"> · ○ add student count</span>
-        )}
-      </p>
+        }
+        badge={cancelled && <StatusBadge variant="cancelled" />}
+        caption={
+          <p className="type-caption mt-0.5">
+            {sc.calendarEntry.classType
+              ? `${sc.calendarEntry.classType} · ${sc.location}`
+              : sc.location} · Studio class
+            {logged && (
+              <span className="text-teal">
+                {' '}· ✓ {sc.studentCount} {sc.studentCount === 1 ? 'student' : 'students'}
+              </span>
+            )}
+            {!logged && past && !cancelled && (
+              <span className="text-brown"> · ○ add student count</span>
+            )}
+          </p>
+        }
+      />
     </Link>
   );
 }
@@ -190,10 +208,11 @@ export function StudioClassCard({ sc, isPast }: { sc: StudioClassWithEntry; isPa
 export function StudioClassCardSkeleton() {
   return (
     <div className={STUDIO_CARD_FRAME}>
-      <div className="flex items-center justify-between gap-2">
-        <SkeletonText type="type-label" width="w-32" surface="page" />
-      </div>
-      <SkeletonText type="type-caption" width="w-1/3" surface="page" className="mt-0.5" />
+      <StudioClassCardBody
+        when={<SkeletonText type="type-label" width="w-32" surface="page" />}
+        badge={null}
+        caption={<SkeletonText type="type-caption" width="w-1/3" surface="page" className="mt-0.5" />}
+      />
     </div>
   );
 }

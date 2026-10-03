@@ -8,7 +8,7 @@ import {
   StudioClassCardSkeleton,
   type StudioClassWithEntry,
 } from './class-card';
-import { AT, classRow } from './class-list.test';
+import { AT, classRow } from './class-list-fixtures';
 import { Card } from '@/components/ui/card';
 
 const set = (s: string | null | undefined) => new Set((s ?? '').split(/\s+/).filter(Boolean));
@@ -108,12 +108,26 @@ describe('StudioClassCard', () => {
 });
 
 describe('StudioClassCardSkeleton', () => {
-  it('carries the dashed frame with no link', () => {
+  it('carries the dashed frame on a plain div, with no link', () => {
     const { container } = render(<StudioClassCardSkeleton />);
     const root = container.firstElementChild;
+    expect(root?.tagName).toBe('DIV');
     expect(container.querySelector('a')).toBeNull();
     for (const token of ['border', 'border-dashed', 'border-border', 'rounded-card', 'px-5', 'py-3']) {
       expect(root?.classList.contains(token)).toBe(true);
+    }
+  });
+
+  it('draws its bars on the page surface (bg-sand-soft), since the dashed card sits on cream', () => {
+    const { container } = render(<StudioClassCardSkeleton />);
+    const root = container.firstElementChild!;
+    const bars = Array.from(root.querySelectorAll('*')).filter(
+      (el) => el.classList.contains('bg-sand') || el.classList.contains('bg-sand-soft'),
+    );
+    expect(bars.length).toBeGreaterThan(0);
+    for (const bar of bars) {
+      expect(bar.classList.contains('bg-sand-soft')).toBe(true);
+      expect(bar.classList.contains('bg-sand')).toBe(false);
     }
   });
 });

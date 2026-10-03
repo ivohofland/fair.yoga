@@ -2,8 +2,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Icon } from '@/components/ui/icon';
 
-// Surface card: sand on cream + 1px border, radius 16, padding 20. Shared by
-// the plain `Card` and `CardLink` so the two never drift apart.
+// Surface card: sand on cream + 1px border, radius 16, padding 20.
 const CARD_SURFACE = 'bg-sand-soft border border-border rounded-card p-5';
 
 interface CardProps {
@@ -14,7 +13,7 @@ interface CardProps {
 
 // Surface card. Depth comes from the surface + border — never a shadow.
 // With `href` it becomes a tappable link with the sand-hover step; without
-// one it's a plain div, which is also what a card's own skeleton renders.
+// one it's a plain div.
 export function Card({ children, className = '', href }: CardProps) {
   if (href !== undefined) {
     return (

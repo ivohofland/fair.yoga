@@ -1,15 +1,13 @@
-import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { PaymentStatus } from '@prisma/client';
-import { Decimal } from '@prisma/client/runtime/library';
-import { hhmmToTime } from '@/lib/time-of-day';
 import { ClassList, ClassListSkeleton } from './class-list';
+import { type ClassRow, classRow } from './class-list-fixtures';
 
 /**
- * #58 review. `PaymentRollup` (class-list.tsx) had no coverage anywhere — unit,
- * component or e2e — while carrying the branching this branch is named after:
- * a priority order (overdue beats unpaid beats all-paid) and a
+ * #58 review. `PaymentRollup` (class-card.tsx) had no coverage anywhere —
+ * unit, component or e2e — while carrying the branching this branch is named
+ * after: a priority order (overdue beats unpaid beats all-paid) and a
  * `payments.length === 0` guard. Tightening `{ status: string }` to
  * `PaymentStatus` protects the *type* flowing in; it cannot protect the order
  * of two `if`s. Swap them and a class with one overdue payment reports
@@ -23,111 +21,7 @@ import { ClassList, ClassListSkeleton } from './class-list';
  * two guards that live in the *caller's* data shape: `registrations` is
  * optional on `ClassWithDetails`, and only the completed lifecycle stage rolls
  * anything up at all.
- *
- * The fixture is a full Prisma `Class` because that is what the prop type is —
- * typed as `ClassList`'s own prop element (`ClassRow`) so no assertion is
- * needed and so a schema change breaks this file rather than silently drifting
- * from it. `Decimal` comes from `@prisma/client/runtime/library`, the pure-JS
- * decimal implementation, not from `@prisma/client` itself: no engine, no
- * database, nothing for jsdom to choke on.
  */
-export type ClassRow = ComponentProps<typeof ClassList>['classes'][number];
-
-export const AT = new Date('2026-06-01T00:00:00.000Z');
-
-export const room = {
-  id: 'room-1',
-  venueName: 'Studio Zen',
-  address: 'Prinsengracht 1',
-  city: 'Amsterdam',
-  postcode: '1015 DK',
-  floor: '',
-  roomName: 'Big Room',
-  maxCapacity: 20,
-  equipment: [],
-  notes: null,
-  isPublic: true,
-  createdById: 'teacher-1',
-  createdAt: AT,
-  updatedAt: AT,
-};
-
-export const teacherRoom = {
-  id: 'tr-1',
-  teacherId: 'teacher-1',
-  roomId: 'room-1',
-  capacityOverride: 12,
-  rentalRate: new Decimal(20),
-  equipmentNotes: null,
-  isArchived: false,
-  createdAt: AT,
-  updatedAt: AT,
-  room,
-};
-
-/**
- * `payments` is the charged registrations' payment states, `null` for a
- * registration with no payment row — which is what the pages' `select` actually
- * returns (`(teacher)/page.tsx`, `schedule/past/page.tsx`). Pass `undefined` for
- * a caller that did not include registrations at all; the prop is optional.
- */
-export function classRow(
-  id: string,
-  status: ClassRow['status'],
-  payments: (PaymentStatus | null)[] | undefined,
-  overrides?: { date?: Date; startTime?: string; cancelled?: boolean },
-): ClassRow {
-  return {
-    id,
-    calendarEntryId: `entry-${id}`,
-    kind: 'regular' as const,
-    // The calendar identity is a row of its own since #327, and the card reads
-    // every one of these fields through it.
-    calendarEntry: {
-      id: `entry-${id}`,
-      teacherId: 'teacher-1',
-      kind: 'regular' as const,
-      classType: 'Vinyasa',
-      date: overrides?.date ?? new Date('2026-06-12T00:00:00.000Z'),
-      startTime: hhmmToTime(overrides?.startTime ?? '09:30'),
-      durationMinutes: 60,
-      cancelledAt: overrides?.cancelled === true ? AT : null,
-      // GENERATED in the database as `cancelledAt IS NULL` (issue 339) — a
-      // fixture has to state what Postgres would compute.
-      live: overrides?.cancelled !== true,
-      classCompletedAt: null,
-      scheduleRuleId: null,
-      createdAt: AT,
-      updatedAt: AT,
-    },
-    teacherRoomId: 'tr-1',
-    // MIRRORS (issue 339): `entryLive` copies the entry's generated `live`
-    // above, `roomArchived` copies `teacherRoom.isArchived` (always `false`
-    // in this fixture).
-    entryLive: overrides?.cancelled !== true,
-    roomArchived: false,
-    description: null,
-    roomCost: new Decimal(20),
-    minRate: new Decimal(40),
-    targetRate: new Decimal(80),
-    minStudents: 4,
-    maxStudents: 12,
-    cancelDeadline: 'HOURS_24',
-    autoCancelCheck: 'HOURS_2',
-    status,
-    settingsLocked: true,
-    effectiveTeacherRate: null,
-    totalStudents: null,
-    totalRevenue: null,
-    spotBroadcastAt: null,
-    teacherReminderSentAt: null,
-    createdAt: AT,
-    updatedAt: AT,
-    _count: { registrations: payments?.length ?? 0 },
-    teacherRoom,
-    registrations: payments?.map((p) => ({ payment: p === null ? null : { status: p } })),
-  };
-}
 
 function renderOne(status: ClassRow['status'], payments: (PaymentStatus | null)[] | undefined) {
   render(<ClassList classes={[classRow('cls-1', status, payments)]} timeZone="America/Los_Angeles" />);
@@ -288,12 +182,13 @@ describe('ClassList timezone handling', () => {
 describe('ClassListSkeleton', () => {
   it('renders one section with a heading placeholder and (default 3) card skeletons', () => {
     const { container } = render(<ClassListSkeleton />);
-    const section = container.querySelector('section');
-    expect(section).not.toBeNull();
-    const heading = section!.firstElementChild;
+    const sections = container.querySelectorAll('section');
+    expect(sections.length).toBe(1);
+    const section = sections[0]!;
+    const heading = section.firstElementChild;
     expect(heading?.classList.contains('type-subtitle')).toBe(true);
     expect(heading?.classList.contains('mb-3')).toBe(true);
-    const items = section!.lastElementChild;
+    const items = section.lastElementChild;
     expect(items?.classList.contains('flex')).toBe(true);
     expect(items?.classList.contains('flex-col')).toBe(true);
     expect(items?.classList.contains('gap-3')).toBe(true);
