@@ -91,9 +91,11 @@ test.describe('Skeleton geometry', () => {
       data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 12, rentalRate: 30 },
     });
 
-    // An hour from now, on the UTC teacher's wall clock: inside the schedule's
-    // window on any run day, and not yet started.
-    const slot = wallSlotAt(new Date(Date.now() + 60 * 60 * 1000), 'UTC');
+    // Three days out, on the UTC teacher's wall clock: inside the schedule's
+    // window on any run day, and beyond every auto-cancel check and the
+    // morning-of reminder, either of which would leave an unread notification
+    // that renames the Inbox tab mid-run.
+    const slot = wallSlotAt(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), 'UTC');
     const cls = await createClassFixture(prisma, {
       teacherId: teacher.id,
       teacherRoomId: teacherRoom.id,
