@@ -498,10 +498,12 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
   (`services/push-subscriptions.ts`) keeps each account to
   `MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT` rows, evicting the least recently
   active (`lastUsedAt ?? createdAt`) in the same transaction as the upsert.
-- `services/push-dispatch.ts`'s `dispatchPushes` is the sweep wired into the
-  scheduler (Cron Jobs, below): it claims each committed `Notification` row
-  with a compare-and-swap on `pushHandledAt` so concurrent runs send once,
-  sends to every subscription on the resolved recipient's account, deletes a
+- `services/push-health.ts`'s `runPushDispatchTick` is wired into the
+  scheduler (Cron Jobs, below) and wraps `services/push-dispatch.ts`'s
+  `dispatchPushes`, the sweep: a worker claims each committed `Notification`
+  row just before its sends, with a compare-and-swap on `pushHandledAt` so
+  concurrent runs send once, and rows it never reached are left unclaimed.
+  It sends to every subscription on the resolved recipient's account, deletes a
   subscription whose outcome is `gone` or `invalid`, and never retries a
   `failed` one. A sender throw is a fault, not a verdict on the row: it
   rejects the tick, which the scheduler logs and records as `lastError`, and
@@ -1003,7 +1005,7 @@ Every job skips a tick while its own previous run is still in flight, and from t
 | Class reminders | Every 5 minutes | Reminds registered students and the teacher of an open class at each one's chosen moment (`reminderMoment`, `src/lib/reminder-moment.ts`), in the inbox and/or by direct email — once, and never at or after the class's start |
 | Daily cleanup | Daily | Purges expired sessions and auth tokens, reaps closed waitlist entries past retention, deletes notifications past their type's retention period (`NOTIFICATION_RETENTION_DAYS`, `src/lib/notification-retention.ts`), emails the operator the degradation events that are new or have fired again, and audits stored teacher timezones — failing the job if any teacher's zone is unresolvable or an offset identifier (`isValidTimeZone`) |
 | Waitlist reconciliation | Every minute | Re-checks waitlists against freed seats — auto-promotes the next in queue, or broadcasts a first-come claim in the final hour before class start |
-| Push dispatch | Every 10 seconds | Reads committed `Notification` rows with `pushHandledAt: null`, sends to the recipient's subscribed devices where preference allows, and retires (stamps `pushHandledAt` without sending) any row already older than `PUSH_STALE_AFTER_MS` (15 minutes) when this sweep reads it (`src/services/push-dispatch.ts`); a tick that retired a row or had a send come back `failed`, `gone` or `invalid` logs one `info` line with the tick's counts when it completes |
+| Push dispatch | Every 10 seconds | Reads committed `Notification` rows with `pushHandledAt: null`, sends to the recipient's subscribed devices where preference allows, and retires (stamps `pushHandledAt` without sending) any row already older than `PUSH_STALE_AFTER_MS` (15 minutes) when this sweep reads it (`src/services/push-dispatch.ts`); a tick that retired a row, had a send come back `failed`, `gone` or `invalid`, or claimed rows it could not send (`unsendable`: `VAPID_*` is set but unusable) logs one `info` line with the tick's counts. **Tick bound:** four workers each claim a notification just before sending it, in parallel across its devices, and stop claiming `PUSH_CLAIM_DEADLINE_MS` (10 s) into the tick, so a tick ends within one send timeout (`DEFAULT_TIMEOUT_MS`, 5 s) of that: at most 10 s + 5 s = 15 s, under the 20 s that `STALLED_AFTER_SKIPPED_TICKS` (2) × the 10 s interval allows. A timeout burst of any size therefore stays healthy; the rows it did not reach are unclaimed and wait for the next tick (or are retired as stale after 15 minutes). `scheduler.test.ts` ("keeps a push tick shorter than the scheduler's stall line") re-derives the inequality from the constants. **Degraded:** a tick that tried to send and delivered nothing (`sent === 0` with `failed > 0`, or rows claimed while `VAPID_*` is set but unusable) extends a streak; a delivery resets it; idle ticks and `gone` / `invalid` verdicts leave it alone. A tick whose dispatch throws (a send fault, `PushSendFault`) is not observed by the streak: the fault itself makes the job unhealthy for that tick, and the streak neither extends nor resets. At 3 such ticks the job throws `PushDispatchDegradedError` and `/api/health` reports it degraded, on every tick until its last failed tick is 15 minutes old (`PUSH_ALARM_QUIET_MS`), then clears; the count survives that, so one failed send later re-raises it at once. Bound: about 30 s of continuous fast failures (the 3rd failed tick), at most 55 s when every send times out (ticks start 20 s apart because a 15 s tick refuses the next one); under sparse traffic it is the 3rd failed tick however far apart, since nothing can be observed without sends. While it stands the job logs one `error` per 10 s tick. A restart resets the streak. |
 
 ### Overlapping triggers
 
