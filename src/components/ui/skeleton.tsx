@@ -16,6 +16,11 @@ const SURFACE_BG: Record<SkeletonSurface, string> = {
   card: 'bg-sand',
 };
 
+/** The surface's own fill class, for a placeholder that isn't a `Skeleton` rectangle (e.g. a real element's frame with invisible text/border standing in for color). */
+export function surfaceFill(surface: SkeletonSurface): string {
+  return SURFACE_BG[surface];
+}
+
 interface SkeletonProps {
   className?: string;
   surface?: SkeletonSurface;

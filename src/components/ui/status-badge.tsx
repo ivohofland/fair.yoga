@@ -1,5 +1,5 @@
 import type { ClassStatus } from '@prisma/client';
-import type { SkeletonSurface } from '@/components/ui/skeleton';
+import { surfaceFill, type SkeletonSurface } from '@/components/ui/skeleton';
 
 export type BadgeVariant =
   | 'draft'
@@ -28,9 +28,6 @@ const VARIANTS: Record<BadgeVariant, { classes: string; label: string }> = {
 // can drift from the other's size.
 const BADGE_FRAME = 'inline-block border rounded-field px-2.5 py-[3px] text-[13px] font-medium leading-[1.4] whitespace-nowrap';
 
-// A bar on a card takes the next sand step, same as `Skeleton`'s own surfaces.
-const SKELETON_FILL: Record<SkeletonSurface, string> = { page: 'bg-sand-soft', card: 'bg-sand' };
-
 interface StatusBadgeProps {
   variant: BadgeVariant;
   children?: string;
@@ -51,7 +48,7 @@ export function StatusBadge({ variant, children }: StatusBadgeProps) {
 // fill stands in for color.
 export function StatusBadgeSkeleton({ surface = 'page' }: { surface?: SkeletonSurface }) {
   return (
-    <span aria-hidden="true" className={`${BADGE_FRAME} text-transparent border-transparent ${SKELETON_FILL[surface]}`}>
+    <span aria-hidden="true" className={`${BADGE_FRAME} text-transparent border-transparent ${surfaceFill(surface)}`}>
       Upcoming
     </span>
   );
