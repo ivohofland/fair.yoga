@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { SendAnnouncement } from './send-announcement';
+import { SendAnnouncement, SendAnnouncementSkeleton } from './send-announcement';
 
 /**
  * #196. `POST /api/announcements` answers 200 with `duplicateSuppressed: true`
@@ -461,5 +461,19 @@ describe('SendAnnouncement audience choice', () => {
     const caption = await screen.findByText(/Not sent again/);
     expect(caption).toHaveTextContent('Not sent again — the same message reached 2 students moments ago.');
     expect(caption.textContent).not.toMatch(/already had it/);
+  });
+});
+
+describe('SendAnnouncementSkeleton', () => {
+  it('draws the collapsed trigger\'s line in its type style, hidden and inert', () => {
+    render(<SendAnnouncement recipientHint="your booked students" />);
+    const trigger = screen.getByRole('button', { name: 'Send announcement' });
+    const { container } = render(<SendAnnouncementSkeleton />);
+    const line = container.firstElementChild;
+    expect(line?.getAttribute('aria-hidden')).toBe('true');
+    const typeStyle = trigger.className.split(/\s+/).find((t) => t.startsWith('type-'));
+    expect(typeStyle).toBe('type-label');
+    expect(line?.classList.contains(typeStyle ?? '')).toBe(true);
+    expect(container.querySelector('a, button, input, select, textarea, [tabindex]')).toBeNull();
   });
 });

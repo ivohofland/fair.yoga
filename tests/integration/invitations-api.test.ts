@@ -3576,7 +3576,7 @@ describe('unlinking silences the teacher and freezes the shares (#166 whole-bran
     // they are not linked to. Whatever it says now is permanent from their
     // side, so it has to say the most private thing. The share flags carry
     // no announcement consequence — they are what the teacher's own roster
-    // keeps reading (`(teacher)/class/[id]/page.tsx`), with no link check,
+    // keeps reading (`(teacher)/class/[id]/(overview)/page.tsx`), with no link check,
     // so each needs asserting on its own.
     const privacy = await prisma.studentPrivacy.findUniqueOrThrow({
       where: { studentId_teacherId: { studentId: c1StudentId, teacherId: c1TeacherId } },

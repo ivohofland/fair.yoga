@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { logRequestFailure } from '@/lib/client-errors';
-import { Input } from '@/components/ui/input';
+import { Input, InputSkeleton } from '@/components/ui/input';
 import { Icon } from '@/components/ui/icon';
-import { ListRow } from '@/components/ui/list-row';
+import { ListRow, ListRowSkeleton } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Pagination } from '@/components/students/pagination';
 
@@ -26,6 +26,8 @@ interface StudentListResponse {
 
 const PAGE_SIZE = 20;
 
+// The search field's wrapper, shared by the directory and its skeleton.
+const SEARCH_WRAP = 'mb-4';
 
 interface StudentDirectoryProps {
   archived?: boolean;
@@ -89,7 +91,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
 
   return (
     <div>
-      <div className="mb-4">
+      <div className={SEARCH_WRAP}>
         <Input
           placeholder="Search by name or email"
           value={search}
@@ -159,6 +161,22 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
         totalPages={totalPages}
         onPageChange={setPage}
       />
+    </div>
+  );
+}
+
+// The search field, then directory rows: a name line and an email line each.
+export function StudentDirectorySkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div aria-hidden="true">
+      <div className={SEARCH_WRAP}>
+        <InputSkeleton />
+      </div>
+      <div>
+        {Array.from({ length: rows }, (_, i) => (
+          <ListRowSkeleton key={i} />
+        ))}
+      </div>
     </div>
   );
 }

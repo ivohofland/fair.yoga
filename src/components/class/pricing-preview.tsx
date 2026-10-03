@@ -7,7 +7,7 @@ import { toIncomeTier } from '@/lib/tiers.server';
 /**
  * Only the three registration columns this component reads. It used to ask for
  * `Registration & { student: Student }`, which forced its one caller
- * (`(teacher)/class/[id]/page.tsx`) to load every `Student` column for a
+ * (`(teacher)/class/[id]/(overview)/page.tsx`) to load every `Student` column for a
  * component that touches no student field at all — #167 narrowed that query to
  * the name projection, so this type now states what is actually consumed.
  *

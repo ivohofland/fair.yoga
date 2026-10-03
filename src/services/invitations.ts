@@ -1655,7 +1655,7 @@ export async function unlinkTeacher(
     // switch vanishes at the exact moment it is wanted. Meanwhile the
     // teacher's own roster reads this row's `shareFullName` scoped by
     // teacher and registration with no link check at all
-    // (`(teacher)/class/[id]/page.tsx`), so a share left switched on keeps
+    // (`(teacher)/class/[id]/(overview)/page.tsx`), so a share left switched on keeps
     // disclosing after the student has gone.
     //
     // So the student's last instruction is recorded here, and it outlives

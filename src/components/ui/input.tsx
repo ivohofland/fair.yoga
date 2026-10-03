@@ -6,6 +6,10 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   hint?: string;
 }
 
+// The field's frame, shared by the input and its skeleton.
+const FIELD_FRAME = 'border rounded-field px-4 min-h-12';
+const RESTING_COLORS = 'border-border bg-sand-soft';
+
 // 48px field on sand, radius 12, label above with 8px gap.
 // Hint = caption between label and field. Error = danger border + danger-tint
 // background + 13px message below.
@@ -25,7 +29,7 @@ export function Input({
   const describedBy = [ownDescribedBy, hintId, errorId].filter(Boolean).join(' ') || undefined;
   const fieldColors = error
     ? 'border-danger bg-danger-tint'
-    : 'border-border bg-sand-soft';
+    : RESTING_COLORS;
 
   return (
     <div className="flex flex-col gap-2">
@@ -43,7 +47,7 @@ export function Input({
         id={inputId}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
-        className={`border rounded-field px-4 min-h-12 text-ink text-base ${fieldColors} focus:outline-none focus:shadow-focus ${className}`.trim()}
+        className={`${FIELD_FRAME} text-ink text-base ${fieldColors} focus:outline-none focus:shadow-focus ${className}`.trim()}
         {...props}
       />
       {error && (
@@ -57,4 +61,9 @@ export function Input({
       )}
     </div>
   );
+}
+
+// An empty resting field: no label, no hint, nothing to focus.
+export function InputSkeleton({ className = '' }: { className?: string }) {
+  return <div aria-hidden="true" className={`${FIELD_FRAME} ${RESTING_COLORS} ${className}`.trim()} />;
 }

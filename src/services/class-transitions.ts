@@ -445,7 +445,7 @@ export async function autoCancelClasses(
         // `attended <-> no_show`. That was wrong, and worth recording because
         // it is a tempting mistake: the toggle's TARGET is always
         // attended/no_show, but its SOURCE is whatever the row already is, and
-        // `activeRegistrations` (`class/[id]/page.tsx`) deliberately keeps
+        // `activeRegistrations` (`class/[id]/(overview)/page.tsx`) deliberately keeps
         // `late_cancel` rows in the check-in list. A student who cancelled late
         // and turned up anyway is one tap away, every class. The guard is
         // server-side precisely so it does not depend on what the UI happens

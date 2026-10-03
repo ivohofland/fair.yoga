@@ -1,19 +1,13 @@
-import { Skeleton } from '@/components/ui/skeleton';
+import { PageHeaderSkeleton } from '@/components/layout/page-header';
 
-// Schedule-shaped skeleton: heading + three card blocks. Static sand,
-// no shimmer — also the fallback for teacher segments without their own.
+// The fallback for every teacher route without a loading.tsx of its own: a
+// quiet header and nothing below, so an unchosen route shows something vague
+// rather than another page's shape. Which routes rely on it is recorded in
+// src/lib/loading-coverage.test.ts.
 export default function TeacherLoading() {
   return (
     <div aria-busy="true">
-      <div className="mb-6">
-        <Skeleton className="h-8 w-36" />
-        <Skeleton className="h-4 w-28 mt-2" />
-      </div>
-      <div className="flex flex-col gap-3">
-        <Skeleton className="h-32 rounded-card" />
-        <Skeleton className="h-32 rounded-card" />
-        <Skeleton className="h-32 rounded-card" />
-      </div>
+      <PageHeaderSkeleton />
     </div>
   );
 }

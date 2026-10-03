@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Notification, RecipientType } from '@prisma/client';
 import { EmptyState } from '@/components/ui/empty-state';
-import { listRowClass } from '@/components/ui/list-row';
+import { ListRowSkeleton, listRowClass, type ListRowFrameOptions } from '@/components/ui/list-row';
 import { RetentionNote } from './retention-note';
 import { logRequestFailure } from '@/lib/client-errors';
 import { timeAgo } from '@/lib/format';
@@ -50,6 +50,14 @@ function reviveNotification(n: Serialized<Notification>): Notification {
 }
 
 const rowButtonId = (id: string) => `notification-row-${id}`;
+
+// The list and its rows' frame, shared by the list and its skeleton. The
+// inset is the row's horizontal geometry; the rest of the row's layout is
+// its content's, which the skeleton's lines do not have.
+const LIST_ROOT = 'flex flex-col';
+const ROW_FRAME: ListRowFrameOptions = { density: 'relaxed', divider: 'after-each' };
+const ROW_INSET = 'px-3 -mx-3';
+const ROW_LAYOUT = `flex items-start justify-between gap-2 ${ROW_INSET}`;
 
 export function NotificationList({ notifications, hrefById, paging, highlightId }: NotificationListProps) {
   const router = useRouter();
@@ -154,7 +162,7 @@ export function NotificationList({ notifications, hrefById, paging, highlightId 
   }
 
   return (
-    <div className="flex flex-col">
+    <div className={LIST_ROOT}>
       {rows.map((notification) => {
         const isRead = readState[notification.id] ?? notification.isRead;
         const href = resolveHref(notification);
@@ -171,9 +179,8 @@ export function NotificationList({ notifications, hrefById, paging, highlightId 
             // highlighted row differs only in tint: teal-tint, in place of
             // the unread tint, so the two never compete.
             className={listRowClass({
-              density: 'relaxed',
-              divider: 'after-each',
-              className: `flex items-start justify-between gap-2 px-3 -mx-3 ${
+              ...ROW_FRAME,
+              className: `${ROW_LAYOUT} ${
                 isHighlighted ? 'bg-teal-tint' : isRead ? '' : 'bg-sand-soft'
               }`,
             })}
@@ -241,6 +248,16 @@ export function NotificationList({ notifications, hrefById, paging, highlightId 
       <div className="pt-4">
         <RetentionNote />
       </div>
+    </div>
+  );
+}
+
+export function NotificationListSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div aria-hidden="true" className={LIST_ROOT}>
+      {Array.from({ length: rows }, (_, i) => (
+        <ListRowSkeleton key={i} {...ROW_FRAME} className={ROW_INSET} />
+      ))}
     </div>
   );
 }

@@ -1620,7 +1620,7 @@ describe('POST /api/classes', () => {
   // to `if (!teacherRoom)` every other test in this file still passed, while a
   // teacher could bind a class to another teacher's TeacherRoom, whose
   // `rentalRate` is never shared between teachers and which
-  // `class/[id]/page.tsx` renders via `teacherRoom → room`.
+  // `class/[id]/(overview)/page.tsx` renders via `teacherRoom → room`.
   it("refuses another teacher's teacherRoomId", async () => {
     await expectRefusal(
       await post(ownerToken, { ...baseBody(), teacherRoomId: victimRoomId }),
