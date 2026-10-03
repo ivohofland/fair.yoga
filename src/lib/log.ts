@@ -5,6 +5,13 @@
  * Usage: `log.error({ err, classId }, 'completion failed')` — put the
  * error under the `err` key so pino serializes stack traces properly.
  *
+ * Every error reaching a log line is allowlisted by `serializeErr`
+ * (`log-serializers.ts`), on every channel pino has: the `err` key, any
+ * other top-level key, an error passed as the first argument, and the `msg`
+ * pino falls back to when a call passes no message string. `logMethod` runs
+ * before that fallback, which is why the rewrite lives there and not only
+ * in `serializers`.
+ *
  * This module imports `server-only`, so `next build` fails when any
  * `'use client'` module value-imports it, directly or through any chain
  * of imports. Client code logs with console.*. A client component that
@@ -18,12 +25,52 @@
  */
 
 import 'server-only';
-import pino from 'pino';
+import pino, { type DestinationStream, type Logger, type LoggerOptions } from 'pino';
+import { serializeErr } from './log-serializers';
 
-export const log = pino({
+/**
+ * The log call's arguments with every top-level `Error` in the first one
+ * serialized. A shallow copy, because callers keep using what they logged.
+ */
+export function redactLogArgs(args: readonly unknown[]): unknown[] {
+  const [first, ...rest] = args;
+  if (first instanceof Error) return [{ err: serializeErr(first) }, ...rest];
+  if (typeof first !== 'object' || first === null) return [...args];
+  let copy: Record<string, unknown> | null = null;
+  for (const [key, value] of Object.entries(first)) {
+    if (value instanceof Error) {
+      copy ??= { ...first };
+      copy[key] = serializeErr(value);
+    }
+  }
+  return copy === null ? [...args] : [copy, ...rest];
+}
+
+const options: LoggerOptions = {
   level: process.env.LOG_LEVEL ?? 'info',
   base: undefined, // drop pid/hostname noise — single process, single host
-  ...(process.env.NODE_ENV === 'development'
-    ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
-    : {}),
-});
+  serializers: { err: serializeErr },
+  hooks: {
+    logMethod(args, method) {
+      // pino types the hook's args as one overload's parameters; the
+      // rewritten list keeps their shape.
+      method.apply(this, redactLogArgs(args) as Parameters<typeof method>);
+    },
+  },
+};
+
+/**
+ * A destination replaces the transport: pino refuses both at once. Tests pass
+ * one to read what the real configuration writes.
+ */
+export function createLogger(destination?: DestinationStream): Logger {
+  if (destination) return pino(options, destination);
+  return pino({
+    ...options,
+    ...(process.env.NODE_ENV === 'development'
+      ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
+      : {}),
+  });
+}
+
+export const log = createLogger();
