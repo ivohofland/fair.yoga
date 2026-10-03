@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { serializeErr, type SerializedErr } from './log-serializers';
+import { serializeErr, type SerializedErr, type SerializedPrismaMeta } from './log-serializers';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
 
 const PII = ['Alicepii', 'Surnamepii', 'pii.test@example.com'];
 const V = { clientVersion: '6.19.3' };
+/** Strips `readonly` so a test can probe that a nested container is frozen at runtime. */
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 // Every value passed here is a serializer output, so it must be a plain
 // object: a raw Error returned unchanged would fail this before the tokens.
@@ -328,6 +330,8 @@ const known = (message: string, code: string, meta: Record<string, unknown>) =>
 const QUERY_HEADER = '\nInvalid `prisma.class.update()` invocation:\n\n\n';
 const pgError = (code: string, message: string) =>
   `${QUERY_HEADER}Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "${message}", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`;
+const pgErrorWithDetail = (code: string, message: string, detail: string) =>
+  `${QUERY_HEADER}Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "${message}", severity: "ERROR", detail: Some("${detail}"), column: None, hint: None }), transient: false })`;
 
 /** Every position in `out`, a repeated node counted wherever it appears. */
 function entries(out: SerializedErr): number {
@@ -395,6 +399,34 @@ describe('serializeErr: fails closed on odd errors', () => {
     }).toThrow(TypeError);
     expectNoPii(serializeErr(o));
   });
+
+  it('meta.target, aggregateErrors, and rowIds are frozen at every level, not just the top', () => {
+    const id = '824c3362-c21f-466e-a741-7301d469730f';
+    const err = new Prisma.PrismaClientUnknownRequestError(pgError('23514', `Row ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii`), V);
+    (err as unknown as { meta?: unknown }).meta = { target: ['email', 'phone'] };
+    (err as unknown as { errors?: unknown }).errors = [new Error('member')];
+
+    const o = serializeErr(err);
+    expectNoPii(o);
+    expect(o.rowIds).toEqual([id]);
+    expect(o.meta).toEqual({ target: ['email', 'phone'] });
+    expect(o.aggregateErrors).toHaveLength(1);
+
+    const meta = o.meta as Mutable<SerializedPrismaMeta>;
+    expect(() => {
+      meta.target = 'z';
+    }).toThrow(TypeError);
+    expect(() => {
+      (meta.target as string[]).push('z');
+    }).toThrow(TypeError);
+    expect(() => {
+      (o.aggregateErrors as SerializedErr[]).push(o);
+    }).toThrow(TypeError);
+    expect(() => {
+      (o.rowIds as string[]).push('z');
+    }).toThrow(TypeError);
+    expectNoPii(serializeErr(o));
+  });
 });
 
 describe('serializeErr: what a withheld error still says', () => {
@@ -417,12 +449,37 @@ describe('serializeErr: what a withheld error still says', () => {
     expect(out.constraint).toBeUndefined();
   });
 
+  it.each([
+    ['23505', 'duplicate key value violates unique constraint "X_key"', 'X_key'],
+    ['23503', 'insert or update on table "t" violates foreign key constraint "X_fkey"', 'X_fkey'],
+    ['23P01', 'conflicting key value violates exclusion constraint "X_excl"', 'X_excl'],
+  ] as const)('lifts the constraint name for %s', (sqlState, message, name) => {
+    const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(pgError(sqlState, message), V));
+    expect(out.sqlState).toBe(sqlState);
+    expect(out.constraint).toBe(name);
+  });
+
   it('names a connector-level failure by its kind', () => {
     const out = serializeErr(
       new Prisma.PrismaClientUnknownRequestError(`${QUERY_HEADER}Error in PostgreSQL connection: Error { kind: Closed, cause: None }`, V),
     );
     expect(out.connectorKind).toBe('Closed');
     expect(out.sqlState).toBeUndefined();
+  });
+
+  it('a kind outside the closed set is not emitted', () => {
+    const out = serializeErr(
+      new Prisma.PrismaClientUnknownRequestError(`${QUERY_HEADER}Error in PostgreSQL connection: Error { kind: Alicepii, cause: None }`, V),
+    );
+    expectNoPii(out);
+    expect(out.connectorKind).toBeUndefined();
+  });
+
+  it('a connector kind is read only from an Unknown request error', () => {
+    const out = serializeErr(
+      new Prisma.PrismaClientValidationError(`${QUERY_HEADER}Error { kind: Closed, cause: None }`, V),
+    );
+    expect(out.connectorKind).toBeUndefined();
   });
 
   it.each([
@@ -469,6 +526,21 @@ describe('serializeErr: what a withheld error still says', () => {
       expect(out.trigger).toBeUndefined();
       expect(out.rowIds).toBeUndefined();
     }
+  });
+
+  it('a CHECK violation whose DETAIL carries a real trigger tail and row ids lifts neither', () => {
+    const id = '824c3362-c21f-466e-a741-7301d469730f';
+    const other = '12345678-1234-1234-1234-123456789abc';
+    const msg = pgErrorWithDetail(
+      '23514',
+      'new row for relation \\"Student\\" violates check constraint \\"Student_income_tier_check\\"',
+      `Failing row ${id} of ${other}, ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii.`,
+    );
+    const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(msg, V));
+    expectNoPii(out);
+    expect(out.constraint).toBe('Student_income_tier_check');
+    expect(out.trigger).toBeUndefined();
+    expect(out.rowIds).toBeUndefined();
   });
 });
 

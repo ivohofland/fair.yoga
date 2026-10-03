@@ -123,7 +123,32 @@ const CONSTRAINT = /violates (?:check|exclusion|foreign key|unique) constraint \
 const CONSTRAINT_SQLSTATES: ReadonlySet<string> = new Set(['23505', '23503', '23514', '23P01']);
 // A connector failure with no Postgres error in it, e.g. `Error { kind: Closed, cause: None }`.
 const CONNECTOR_KIND = /Error \{ kind: ([A-Za-z]+)/;
+// tokio-postgres's error kind enum. Not found as literal text in the vendored
+// query-engine binary (release builds strip it), so this is the fallback
+// roster from the #739 last-fix brief rather than one read off the engine.
+const CONNECTOR_KINDS: ReadonlySet<string> = new Set([
+  'Io',
+  'Closed',
+  'Db',
+  'Tls',
+  'Authentication',
+  'Connect',
+  'Timeout',
+  'Parse',
+  'Encode',
+  'Config',
+  'RowCount',
+  'UnexpectedMessage',
+  'ToSql',
+  'FromSql',
+  'Column',
+]);
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+// The PostgresError struct's own `message` field: an escaped `\"` does not
+// close the capture, so only the real closing quote — immediately followed
+// by `, severity:` or `, detail:`, whichever field the engine places right
+// after it — ends it. Nothing past that point, including DETAIL, is in it.
+const PG_MESSAGE = /message: "((?:\\.|[^"\\])*)", (?:severity|detail):/;
 
 /**
  * Outputs of this module, keyed by themselves, so a second pass returns them
@@ -265,21 +290,25 @@ function withheld(cls: string, err: object, type: string, original: string): Mut
       const constraint = CONSTRAINT.exec(original)?.[1];
       if (constraint !== undefined) out.constraint = constraint;
     }
-    // A terminality trigger raises 23514 with one of these tails; the trigger
-    // key and the row UUIDs in its message say which guard fired on what. The
-    // UUIDs are taken only when a tail matched, so a CHECK violation's failing
-    // row is never read for them.
-    if (sqlState === '23514') {
-      const trigger = TERMINAL_TRIGGERS.find((key) => original.includes(TERMINAL_TRIGGER_TAILS[key]));
-      if (trigger !== undefined) {
-        out.trigger = trigger;
-        const ids = [...new Set(original.match(UUID) ?? [])].slice(0, MAX_ROW_IDS);
-        if (ids.length > 0) out.rowIds = Object.freeze(ids);
+    // A terminality trigger raises 23514 with one of these tails in the
+    // PostgresError's own `message` field, never in DETAIL — so a message
+    // already named by `constraint` above is a genuine CHECK violation, not
+    // a trigger raise, and nothing past the message field is read for a
+    // trigger tail or a row id.
+    if (sqlState === '23514' && out.constraint === undefined) {
+      const pgMessage = PG_MESSAGE.exec(original)?.[1];
+      if (pgMessage !== undefined) {
+        const trigger = TERMINAL_TRIGGERS.find((key) => pgMessage.includes(TERMINAL_TRIGGER_TAILS[key]));
+        if (trigger !== undefined) {
+          out.trigger = trigger;
+          const ids = [...new Set(pgMessage.match(UUID) ?? [])].slice(0, MAX_ROW_IDS);
+          if (ids.length > 0) out.rowIds = Object.freeze(ids);
+        }
       }
     }
   } else if (cls === 'PrismaClientUnknownRequestError') {
     const kind = CONNECTOR_KIND.exec(original)?.[1];
-    if (kind !== undefined) out.connectorKind = kind;
+    if (kind !== undefined && CONNECTOR_KINDS.has(kind)) out.connectorKind = kind;
   }
   const meta = allowedMeta(field(err, 'meta'));
   if (meta !== undefined) out.meta = meta;
