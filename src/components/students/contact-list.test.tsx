@@ -173,6 +173,35 @@ describe('ContactList', () => {
     consoleError.mockRestore();
   });
 
+  /**
+   * Same shape as `student-directory.test.tsx`'s equivalent case: before the
+   * first response arrives there is no roster to dim, so this gets skeleton
+   * rows (`ListRow`'s own frame, `aria-hidden`) rather than an opacity-50
+   * empty `<div>`.
+   */
+  it('shows skeleton rows during the initial fetch, before any contacts have loaded', () => {
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<ContactList />);
+
+    const skeletonRows = container.querySelectorAll('[aria-hidden="true"].min-h-14');
+    expect(skeletonRows.length).toBe(6);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('replaces the initial skeleton rows with the real contacts once they arrive', async () => {
+    stubInvitations([
+      { id: 'inv-1', firstName: 'Lena', lastName: 'Visser', email: 'lena@example.com', status: 'pending' },
+    ]);
+    const { container } = render(<ContactList />);
+    expect(container.querySelectorAll('[aria-hidden="true"].min-h-14').length).toBe(6);
+
+    await screen.findByText('Lena Visser');
+
+    expect(container.querySelectorAll('[aria-hidden="true"].min-h-14').length).toBe(0);
+  });
+
   it('refetches when Try again is clicked, and clears the error on success', async () => {
     fetchMock
       .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
