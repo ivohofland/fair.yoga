@@ -490,11 +490,11 @@ describe('dispatchPushes', () => {
 
       // The first task's DB write rejects here, deliberately while the
       // claim loop is still parked on `gate` for n2 — a task that settles
-      // before anything awaits it. No handler but the push-time `.then`
-      // wrap exists yet.
+      // before anything awaits it. `sendTo` resolves a `TaskFailure` rather
+      // than rejecting, so nothing is left unhandled.
       await rejected.promise;
-      // Flush a couple of microtask ticks so that wrap actually settles
-      // (converts the rejection into a resolved value) before we let n2's
+      // Flush a couple of microtask ticks so that `sendTo` has settled
+      // (converted the rejection into a resolved value) before we let n2's
       // claim through — a flush, not a sleep.
       await Promise.resolve();
       await Promise.resolve();
@@ -547,8 +547,9 @@ describe('dispatchPushes', () => {
 
     await vi.waitFor(() => expect(send).toHaveBeenCalled());
     // n2's claim has already thrown by now (it needs no real I/O to do
-    // so), but the tick cannot settle: `dispatchPushes`'s `finally` is
-    // still awaiting sub1's send, which only this test can release.
+    // so), but the tick cannot settle: `Promise.allSettled` over the
+    // workers is still waiting on sub1's send, which only this test can
+    // release.
     expect(settled).toBe(false);
 
     sendGate.resolve({ outcome: 'delivered', status: 201 });
@@ -863,6 +864,9 @@ describe('dispatchPushes', () => {
       // worker finishing after the clock has run one deadline's worth of
       // sends claims no more.
       expect(result.claimed).toBeGreaterThanOrEqual(PUSH_WORKERS);
+      // The upper bound is the parallel-clock ceiling; this test's sequential
+      // fake clock reaches a lower maximum, so it catches a missing deadline
+      // but not a slightly lax one. The exact-boundary tests are the pin.
       expect(result.claimed).toBeLessThanOrEqual(PUSH_WORKERS * Math.ceil(PUSH_CLAIM_DEADLINE_MS / DEFAULT_TIMEOUT_MS));
       expect(result.failed).toBe(result.claimed);
       const rows = await prisma.notification.findMany({ where: { id: { in: ids } }, select: { pushHandledAt: true } });

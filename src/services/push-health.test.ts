@@ -25,10 +25,10 @@ function after(state: PushHealthState, results: Array<Partial<typeof NONE>>, sta
 
 describe('observePushTick', () => {
   it.each([
-    ['a tick that only failed', { failed: 2 }, 1],
-    ['a tick that only could not send', { unsendable: 3 }, 1],
-    ['a tick where nothing was attempted', {}, 0],
-  ])('%s moves the count to %i', (_label, result, expected) => {
+    ['a tick that only failed', 1, { failed: 2 }],
+    ['a tick that only could not send', 1, { unsendable: 3 }],
+    ['a tick where nothing was attempted', 0, {}],
+  ])('%s moves the count to %i', (_label, expected, result) => {
     expect(observePushTick(createPushHealthState(), { ...NONE, ...result }, T0).failedTicks).toBe(expected);
   });
 
@@ -139,10 +139,19 @@ describe('createPushDispatchTick', () => {
     expect((err as PushDispatchDegradedError).failedTicks).toBe(PUSH_MAX_FAILED_TICKS);
   });
 
-  it('does not observe a tick that threw, and passes the throw through', async () => {
+  it('a tick whose dispatch throws leaves the streak where it was, and the throw reaches the caller', async () => {
     const fault = new Error('send fault');
-    const tick = createPushDispatchTick(async () => { throw fault; }, () => T0);
+    const outcomes: Array<PushDispatchResult | Error> = [result({ failed: 1 }), fault, result({ failed: 1 })];
+    const tick = createPushDispatchTick(async () => {
+      const next = outcomes.shift();
+      if (!next) throw new Error('harness: out of results');
+      if (next instanceof Error) throw next;
+      return next;
+    }, () => T0);
+    await tick(db);
     await expect(tick(db)).rejects.toBe(fault);
+    // Counted, the thrown tick would make this the 3rd failed tick.
+    await expect(tick(db)).resolves.toBeDefined();
   });
 
   it('keeps each tick function\'s streak to itself', async () => {
