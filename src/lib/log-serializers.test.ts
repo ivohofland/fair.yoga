@@ -542,6 +542,25 @@ describe('serializeErr: what a withheld error still says', () => {
     expect(out.trigger).toBeUndefined();
     expect(out.rowIds).toBeUndefined();
   });
+
+  it('a 23514 whose message field names no constraint and no trigger still lifts neither from DETAIL', () => {
+    // Unlike the test above, this message field never matches the `violates
+    // … constraint` sentence, so `constraint` stays undefined here too — the
+    // only thing standing between DETAIL's trigger tail and row ids and the
+    // output is the PostgresError `message` field restriction on its own.
+    const id = '824c3362-c21f-466e-a741-7301d469730f';
+    const other = '12345678-1234-1234-1234-123456789abc';
+    const msg = pgErrorWithDetail(
+      '23514',
+      'row check failed',
+      `Row ${id} of ${other}, ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii.`,
+    );
+    const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(msg, V));
+    expectNoPii(out);
+    expect(out.constraint).toBeUndefined();
+    expect(out.trigger).toBeUndefined();
+    expect(out.rowIds).toBeUndefined();
+  });
 });
 
 /**

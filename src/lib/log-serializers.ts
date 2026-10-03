@@ -123,9 +123,8 @@ const CONSTRAINT = /violates (?:check|exclusion|foreign key|unique) constraint \
 const CONSTRAINT_SQLSTATES: ReadonlySet<string> = new Set(['23505', '23503', '23514', '23P01']);
 // A connector failure with no Postgres error in it, e.g. `Error { kind: Closed, cause: None }`.
 const CONNECTOR_KIND = /Error \{ kind: ([A-Za-z]+)/;
-// tokio-postgres's error kind enum. Not found as literal text in the vendored
-// query-engine binary (release builds strip it), so this is the fallback
-// roster from the #739 last-fix brief rather than one read off the engine.
+// The connector error kinds `connectorKind` may report. A kind outside this
+// set is not emitted, so engine text cannot feed the field a value.
 const CONNECTOR_KINDS: ReadonlySet<string> = new Set([
   'Io',
   'Closed',
