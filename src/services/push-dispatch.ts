@@ -90,8 +90,8 @@ export async function dispatchPushes(
   try {
     await runPushDispatch(db, send, now, clock, result);
   } catch (err: unknown) {
-    // A tick that throws has still retired rows and may have sent some; its
-    // counts are the only record of that.
+    // A tick that throws may have retired rows and sent some; its counts are
+    // the only record of that.
     log.info({ ...result, faulted: true }, 'push dispatch tick');
     throw err;
   }
