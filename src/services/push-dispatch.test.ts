@@ -607,6 +607,36 @@ describe('dispatchPushes', () => {
     );
   });
 
+  it('logs the misconfiguration of a tick that throws before it retires anything', async () => {
+    vi.stubEnv('VAPID_PUBLIC_KEY', generateVapidKeyPair().publicKey);
+    vi.stubEnv('VAPID_PRIVATE_KEY', undefined);
+    vi.stubEnv('VAPID_SUBJECT', undefined);
+    try {
+      vi.resetModules();
+      const { dispatchPushes: freshDispatch } = await import('./push-dispatch');
+      const { log: freshLog } = await import('@/lib/log');
+      const retireError = new Error('retire failed');
+      const hooked = prisma.$extends({
+        query: {
+          notification: {
+            async updateMany() {
+              throw retireError;
+            },
+          },
+        },
+      });
+
+      await expect(freshDispatch(hooked as unknown as PrismaClient)).rejects.toBe(retireError);
+
+      expect(freshLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ retired: 0, misconfigured: 'partial', faulted: true }),
+        'push dispatch tick',
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('does not mark a clean tick\'s summary as faulted', async () => {
     const stale = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(Date.now() - PUSH_STALE_AFTER_MS - 60_000) });
 

@@ -10,7 +10,7 @@ export const PUSH_MAX_FAILED_TICKS = 3;
  */
 export const PUSH_ALARM_QUIET_MS = PUSH_STALE_AFTER_MS;
 
-/** Why the last failing tick failed: the one thing an operator reading the alarm needs first. */
+/** Why the last failing tick failed. */
 export type PushFailureCause =
   | { kind: 'misconfigured'; reason: MisconfiguredVapid }
   | { kind: 'send-failed' }
@@ -26,15 +26,14 @@ export function createPushHealthState(): PushHealthState {
   return { failedTicks: 0, lastFailedAt: null, lastCause: null };
 }
 
-/** What a tick did: it returned a result, or it threw (a fault, whose class is all the health state keeps of it). */
+/** What a tick did: it returned a result, or it threw (a fault, whose `name` is all the health state keeps of it). */
 export type PushTickObservation =
   | { kind: 'completed'; result: Pick<PushDispatchResult, 'sent' | 'failed' | 'misconfigured'> }
   | { kind: 'threw'; faultName: string };
 
 function failureCause(observation: PushTickObservation): PushFailureCause | null {
   if (observation.kind === 'threw') return { kind: 'fault', name: observation.faultName };
-  const { misconfigured, sent, failed } = observation.result;
-  if (sent > 0) return null;
+  const { misconfigured, failed } = observation.result;
   if (misconfigured !== null) return { kind: 'misconfigured', reason: misconfigured };
   return failed > 0 ? { kind: 'send-failed' } : null;
 }
