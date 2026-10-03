@@ -181,8 +181,9 @@ test.describe('Skeleton geometry', () => {
         'first-item top': [skeleton.firstItemY, loaded.firstItemY],
       } as const;
       test.info().annotations.push({ type: 'geometry', description: JSON.stringify({ skeleton, page: loaded }) });
+      // Soft, so one failing run names every anchor that moved.
       for (const [what, [fromSkeleton, fromPage]] of Object.entries(deltas)) {
-        expect(
+        expect.soft(
           Math.abs(fromSkeleton - fromPage),
           `${route.path} ${what}: skeleton ${fromSkeleton}px, page ${fromPage}px`,
         ).toBeLessThanOrEqual(TOLERANCE_PX);
