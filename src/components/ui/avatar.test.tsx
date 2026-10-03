@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import { Avatar, initialsOf } from './avatar';
+import { Avatar, AvatarSkeleton, initialsOf } from './avatar';
 
 describe('initialsOf', () => {
   it('takes the first character of each name, uppercased', () => {
@@ -26,5 +26,18 @@ describe('Avatar', () => {
     expect(img?.getAttribute('src')).toBe('/api/teacher-photos/abc');
     expect(img?.getAttribute('alt')).toBe('');
     expect(img?.getAttribute('width')).toBe('40');
+  });
+});
+
+describe('AvatarSkeleton', () => {
+  it('renders a hidden placeholder frame sized like the real avatar', () => {
+    const { container } = render(<AvatarSkeleton size={40} />);
+    const el = container.firstElementChild;
+    expect(el?.getAttribute('aria-hidden')).toBe('true');
+    expect(el?.classList.contains('rounded-pill')).toBe(true);
+    expect(el?.classList.contains('shrink-0')).toBe(true);
+    expect(el?.classList.contains('bg-sand-soft')).toBe(true);
+    expect((el as HTMLElement)?.style.width).toBe('40px');
+    expect((el as HTMLElement)?.style.height).toBe('40px');
   });
 });

@@ -11,6 +11,11 @@ interface AvatarProps {
   className?: string;
 }
 
+// The frame tokens every avatar shape shares — photo, initials, and the
+// skeleton placeholder — so the three never drift apart in roundness or flex
+// behaviour.
+const AVATAR_FRAME = 'shrink-0 rounded-pill';
+
 /** First character of each name, uppercased. `Array.from` splits by code point, so an astral character stays whole. */
 export function initialsOf(firstName: string, lastName: string): string {
   const first = Array.from(firstName.trim())[0] ?? '';
@@ -31,7 +36,7 @@ export function Avatar({ firstName, lastName, photoId, size, className = '' }: A
         width={size}
         height={size}
         unoptimized
-        className={`rounded-pill object-cover shrink-0 ${className}`}
+        className={`${AVATAR_FRAME} object-cover ${className}`}
       />
     );
   }
@@ -39,11 +44,15 @@ export function Avatar({ firstName, lastName, photoId, size, className = '' }: A
     <span
       aria-hidden="true"
       style={{ width: size, height: size }}
-      className={`inline-flex items-center justify-center shrink-0 rounded-pill bg-teal-tint text-teal ${
+      className={`inline-flex items-center justify-center ${AVATAR_FRAME} bg-teal-tint text-teal ${
         size === 72 ? 'type-title' : 'type-subtitle'
       } ${className}`}
     >
       {initialsOf(firstName, lastName)}
     </span>
   );
+}
+
+export function AvatarSkeleton({ size }: { size: number }) {
+  return <span aria-hidden="true" style={{ width: size, height: size }} className={`inline-block ${AVATAR_FRAME} bg-sand-soft`} />;
 }
