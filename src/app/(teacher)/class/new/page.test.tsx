@@ -505,9 +505,9 @@ describe('NewClassPage', () => {
   });
 
   /**
-   * #740. The route's loading.tsx draws a back link above a display title;
-   * the wizard keeps that header on screen in every state its rooms fetch can
-   * leave it in, rather than dropping it for a bare status line or empty state.
+   * #740. The page's header — back link, display title, step caption —
+   * renders in every state the rooms fetch can leave it in, not only in the
+   * wizard.
    */
   describe('header whatever the rooms fetch returns (#740)', () => {
     function expectHeader() {

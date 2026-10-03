@@ -1,8 +1,10 @@
 import { ListRowSkeleton, type ListRowFrameOptions } from '@/components/ui/list-row';
 
-// The list and its rows' frame, shared by `NotificationList` and its
-// skeleton. The inset is the row's horizontal geometry; the rest of the row's
-// layout is its content's, which the skeleton's lines do not have.
+// The notification list's root and its rows' frame, exported so the list
+// and this skeleton draw them from one place (the sibling-module pattern:
+// docs/design-brief.md, Loading states). The inset is the row's horizontal
+// geometry; the rest of the row's layout is its content's, which the
+// skeleton's lines do not have.
 export const LIST_ROOT = 'flex flex-col';
 export const ROW_FRAME: ListRowFrameOptions = { density: 'relaxed', divider: 'after-each' };
 export const ROW_INSET = 'px-3 -mx-3';

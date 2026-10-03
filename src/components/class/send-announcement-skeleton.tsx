@@ -1,7 +1,8 @@
 import { SkeletonText, type TypeStyle } from '@/components/ui/skeleton';
 
-// The collapsed trigger's type style, shared by `SendAnnouncement`'s button
-// and its skeleton.
+// The collapsed announcement trigger's type style, exported so the trigger
+// and this skeleton draw it from one place (the sibling-module pattern:
+// docs/design-brief.md, Loading states).
 export const TRIGGER_TYPE: TypeStyle = 'type-label';
 
 // The collapsed state: one line in the trigger's type style, `inline-block`
