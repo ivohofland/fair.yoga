@@ -40,3 +40,27 @@ describe('PageHeaderSkeleton', () => {
     expect(row(true)?.children.length).toBe(2);
   });
 });
+
+describe('PageHeader', () => {
+  // Literal, not derived from PageHeaderFrame or any shared constant: the
+  // skeleton tests above compare the skeleton to this component at test
+  // time, so an edit to the shared frame moves both together and neither
+  // test above would notice. These strings pin what a reader actually sees
+  // today, so that same edit shows up as a diff here.
+  it('pins its real rendered class sets as literal strings', () => {
+    const { container } = render(
+      <PageHeader title="Rooms" backHref="/settings" backLabel="Settings" />,
+    );
+    const root = container.firstElementChild;
+    const backLink = screen.getByRole('link', { name: 'Settings' });
+    const titleRow = root?.children[1];
+    const h1 = screen.getByRole('heading', { name: 'Rooms' });
+    expect(set(root?.className)).toEqual(set('mb-6'));
+    expect(set(backLink.className)).toEqual(
+      set('inline-flex items-center gap-1.5 type-label mb-2 text-teal no-underline'),
+    );
+    expect(set(titleRow?.className)).toEqual(set('flex items-center justify-between gap-3'));
+    expect(h1.tagName).toBe('H1');
+    expect(set(h1.className)).toEqual(set('type-title'));
+  });
+});

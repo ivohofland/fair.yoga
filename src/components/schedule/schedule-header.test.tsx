@@ -17,6 +17,23 @@ describe('ScheduleHeader', () => {
   });
 });
 
+describe('ScheduleHeader (literal class-set pin)', () => {
+  // Literal, not derived from ScheduleHeaderFrame: the skeleton test below
+  // compares the skeleton to this component at test time, so an edit to the
+  // shared frame moves both together and that test would not notice. These
+  // strings pin what a reader actually sees today, so that same edit shows
+  // up as a diff here.
+  it('pins the root and inner-wrapper class sets as literal strings', () => {
+    const { container } = render(
+      <ScheduleHeader firstName="Visual" lastName="Teacher" photoId={null} today="Friday, 3 October" />,
+    );
+    const root = container.firstElementChild;
+    const inner = root?.firstElementChild;
+    expect(set(root?.className)).toEqual(set('flex items-center justify-between gap-3 mb-6'));
+    expect(set(inner?.className)).toEqual(set('flex items-center gap-3 min-w-0'));
+  });
+});
+
 describe('ScheduleHeaderSkeleton', () => {
   it('shares the real header\'s frame, with no link, no heading, and a same-sized avatar placeholder', () => {
     const real = render(
