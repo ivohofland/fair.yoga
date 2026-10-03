@@ -131,24 +131,60 @@ describe('every route\'s loading state is chosen', () => {
       .map((file) => toKey(path.dirname(file)));
     expect(raw).toEqual([]);
   });
+});
 
-  // A loading boundary shows only when the segment it wraps changes, so a
-  // navigation between two pages below the same segment shows the closest
-  // boundary below that segment — none, unless the segment has its own.
-  it('every segment with pages below it has a loading.tsx of its own, outside the route groups that use none', () => {
-    const groupsWithLoading = new Set(
-      pages.filter((key) => FALLBACK_ROUTES[key] !== 'none').map(routeGroup),
-    );
-    const segments = new Set(
-      pages.flatMap((key) => {
-        const parts = key.split('/');
-        return parts.slice(0, -1).map((_, n) => parts.slice(0, n + 1).join('/'));
-      }),
-    );
-    const missing = [...segments]
-      .filter((key) => groupsWithLoading.has(routeGroup(key)) && !ownLoading(key))
-      .sort();
-    expect(missing).toEqual([]);
+const prefixes = (key: string) => {
+  const parts = key === '' ? [] : key.split('/');
+  return parts.map((_, n) => parts.slice(0, n + 1).join('/'));
+};
+const isBelow = (key: string, segment: string) => key.startsWith(`${segment}/`);
+const usesLoading = (key: string) => FALLBACK_ROUTES[key] !== 'none';
+
+// What a navigation paints, as Next 16 (without PPR) draws it: a loading.tsx
+// wraps each child of its own segment, so a navigation shows the closest
+// loading.tsx to the new page that sits at or below the deepest segment the
+// two pages share. A prefetch stops at the first loading.tsx below that shared
+// segment, so that one paints first on a slow response
+// (docs/design-brief.md, Loading states).
+describe('every navigation between two pages paints the new page\'s loading state', () => {
+  it('reaches a loading.tsx at or below the deepest segment the page shares with another', () => {
+    const uncovered = pages.filter(usesLoading).flatMap((key) => {
+      const others = pages.filter((other) => other !== key);
+      // The deepest segment on this page's path under which some other page
+      // branches off: a navigation from that page re-renders everything below it.
+      const branching = [...prefixes(key)].reverse().find((segment) => {
+        const child = key === segment ? null : key.slice(segment.length + 1).split('/')[0];
+        const underSegment = (other: string) => other === segment || isBelow(other, segment);
+        const underChild = (other: string) => child !== null && (other === `${segment}/${child}` || isBelow(other, `${segment}/${child}`));
+        return others.some((other) => underSegment(other) && !underChild(other));
+      });
+      const covering = closestLoading(key);
+      if (branching === undefined) return [];
+      return covering !== null && (covering === branching || isBelow(covering, branching))
+        ? []
+        : [`${key}: closest loading.tsx is ${covering ?? 'none'}, above ${branching}`];
+    });
+    expect(uncovered).toEqual([]);
+  });
+
+  // The route group's own loading.tsx is exempt: every navigation inside the
+  // group shares the group's segment, so no prefetch inside it stops there.
+  it('a neutral loading.tsx below its route group has no page with its own skeleton below it', () => {
+    const shadowing = loadings
+      .map((file) => toKey(path.dirname(file)))
+      .filter((segment) => segment !== routeGroup(segment) && isNeutral(segment))
+      .flatMap((segment) =>
+        pages.filter((key) => isBelow(key, segment) && ownSkeleton(key)).map((key) => `${segment} → ${key}`),
+      );
+    expect(shadowing).toEqual([]);
+  });
+
+  it('a route\'s own skeleton covers its own page alone', () => {
+    const covered = loadings
+      .map((file) => toKey(path.dirname(file)))
+      .filter((segment) => !isNeutral(segment))
+      .flatMap((segment) => pages.filter((key) => isBelow(key, segment)).map((key) => `${segment} → ${key}`));
+    expect(covered).toEqual([]);
   });
 });
 
