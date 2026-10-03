@@ -5,12 +5,14 @@
  * Usage: `log.error({ err, classId }, 'completion failed')` — put the
  * error under the `err` key so pino serializes stack traces properly.
  *
- * Every error reaching a log line is allowlisted by `serializeErr`
- * (`log-serializers.ts`), on every channel pino has: the `err` key, any
- * other top-level key, an error passed as the first argument, and the `msg`
- * pino falls back to when a call passes no message string. `logMethod` runs
- * before that fallback, which is why the rewrite lives there and not only
- * in `serializers`.
+ * `serializeErr` (`log-serializers.ts`) runs on every `Error` at the top
+ * level of a log call's first argument (any key, not just `err`), on an
+ * `Error` passed as the first argument, on the `err` key whether or not its
+ * value is an `Error` instance, and on the `msg` pino falls back to when a
+ * call passes no message string. `logMethod` runs before that fallback,
+ * which is why the rewrite lives here rather than only in `serializers`.
+ * What this does not cover is listed in `docs/technical-architecture.md`
+ * (What's Intentionally Left Out).
  *
  * This module imports `server-only`, so `next build` fails when any
  * `'use client'` module value-imports it, directly or through any chain
@@ -32,7 +34,7 @@ import { serializeErr } from './log-serializers';
  * The log call's arguments with every top-level `Error` in the first one
  * serialized. A shallow copy, because callers keep using what they logged.
  */
-export function redactLogArgs(args: readonly unknown[]): unknown[] {
+function redactLogArgs(args: readonly unknown[]): unknown[] {
   const [first, ...rest] = args;
   if (first instanceof Error) return [{ err: serializeErr(first) }, ...rest];
   if (typeof first !== 'object' || first === null) return [...args];

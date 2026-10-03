@@ -55,6 +55,15 @@ describe('serializeErr: Prisma query errors withhold their message', () => {
     expect(out.stack).not.toContain('evil3');
   });
 
+  it('forged frame: text appended on the header line itself is not a frame either', () => {
+    const e = new Prisma.PrismaClientValidationError('\nInvalid `prisma.student.create()` invocation: firstName "Alicepii"', V);
+    void e.stack; // force V8 to format and cache the stack before the message changes
+    e.message = '\nInvalid `prisma.student.create()` invocation:';
+    const out = serializeErr(e);
+    expectNoPii(out);
+    expect(out.stack).not.toContain('Alicepii');
+  });
+
   it('class-23 gate: a non-integrity error quoting the constraint sentence lifts no constraint', () => {
     const out = serializeErr(rawCast('x violates check constraint "Alicepii"'));
     expectNoPii(out);
@@ -72,6 +81,36 @@ describe('serializeErr: Prisma query errors withhold their message', () => {
     expectNoPii(out);
     expect(out.code).toBe('P2002');
     expect(out.meta).toEqual({ modelName: 'Student', target: ['email'] });
+  });
+
+  it('meta.target shaped like a raw SQL expression is not an identifier', () => {
+    const out = serializeErr(
+      new Prisma.PrismaClientKnownRequestError('\nInvalid `prisma.student.create()` invocation:\n\n\nUnique constraint failed', {
+        ...V,
+        code: 'P2002',
+        meta: { target: 'lower(TRIM(BOTH FROM Alicepii))' },
+      }),
+    );
+    expectNoPii(out);
+    expect(out.meta).toBeUndefined();
+  });
+
+  it('meta.code shaped like a name, not a SQLSTATE, lifts no sqlState', () => {
+    const out = serializeErr(
+      new Prisma.PrismaClientKnownRequestError('\nInvalid `prisma.$queryRawUnsafe()` invocation:', {
+        ...V,
+        code: 'P2010',
+        meta: { code: 'Alicepii' },
+      }),
+    );
+    expectNoPii(out);
+    expect(out.sqlState).toBeUndefined();
+  });
+
+  it('a Prisma error class whose own name was left as "Error" is still withheld, by constructor name', () => {
+    class PrismaClientUnknownRequestError extends Error {}
+    const out = serializeErr(new PrismaClientUnknownRequestError(CHECK_MSG));
+    expectNoPii(out);
   });
 
   it('a pool timeout keeps its numeric meta', () => {
@@ -111,6 +150,27 @@ describe('serializeErr: Prisma query errors withhold their message', () => {
     }
     const out = serializeErr(new Lookalike(VALIDATION_MSG));
     expectNoPii(out);
+  });
+
+  it('a code that is not shaped like a Prisma error code is withheld', () => {
+    const out = serializeErr(
+      new Prisma.PrismaClientKnownRequestError('\nInvalid `prisma.student.create()` invocation:\n\n\nUnique constraint failed', {
+        ...V,
+        code: 'Alicepii',
+        meta: {},
+      }),
+    );
+    expectNoPii(out);
+    expect(out.code).toBeUndefined();
+  });
+
+  it('withholds stack entirely when the original error had none', () => {
+    const e = new Prisma.PrismaClientValidationError(VALIDATION_MSG, V);
+    Object.defineProperty(e, 'stack', { value: undefined });
+    const out = serializeErr(e);
+    expectNoPii(out);
+    expect(out.stack).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(out, 'stack')).toBe(false);
   });
 
   it('an initialization error keeps its message: it is about the connection', () => {
@@ -167,6 +227,8 @@ describe('serializeErr: the shape', () => {
   });
 
   it('stops at a depth bound on a long chain', () => {
+    // The exact hop count, not an inequality a loosened or tightened bound
+    // could still satisfy.
     let e = new Error('0');
     for (let i = 1; i < 50; i++) e = new Error(String(i), { cause: e });
     let depth = 0;
@@ -175,7 +237,7 @@ describe('serializeErr: the shape', () => {
       depth++;
       node = node.cause as { cause?: unknown };
     }
-    expect(depth).toBeLessThan(49);
+    expect(depth).toBe(8);
   });
 
   it('serializes an AggregateError through the same allowlist', () => {
@@ -183,6 +245,22 @@ describe('serializeErr: the shape', () => {
     const out = serializeErr(agg);
     expectNoPii(out);
     expect(out.aggregateErrors?.[0]?.type).toBe('PrismaClientValidationError');
+  });
+
+  it('a repeated non-cyclic error is serialized at each position it occurs', () => {
+    const x = new Error('x');
+    const agg = new AggregateError([x, x], 'two failed', { cause: x });
+    const out = serializeErr(agg);
+    expect(out.cause?.message).toBe('x');
+    expect(out.aggregateErrors).toHaveLength(2);
+    expect(out.aggregateErrors?.[0]?.message).toBe('x');
+    expect(out.aggregateErrors?.[1]?.message).toBe('x');
+  });
+
+  it('omits aggregateErrors when no element survives', () => {
+    const out = serializeErr(new AggregateError([], 'empty'));
+    expect(out.aggregateErrors).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(out, 'aggregateErrors')).toBe(false);
   });
 
   it('is idempotent on its own output', () => {
