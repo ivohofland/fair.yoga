@@ -43,9 +43,10 @@ export function StatusBadge({ variant, children }: StatusBadgeProps) {
   );
 }
 
-// A placeholder the size of a real badge: the word "Upcoming" sets the
-// width and height, but its text and border are invisible and the surface
-// fill stands in for color.
+// A placeholder the size of a real badge: `BADGE_FRAME`'s own padding and
+// line-height set the height; the text and border are invisible, and the
+// surface fill stands in for color. Not a real label — "Upcoming" is picked
+// only for a typical width.
 export function StatusBadgeSkeleton({ surface = 'page' }: { surface?: SkeletonSurface }) {
   return (
     <span aria-hidden="true" className={`${BADGE_FRAME} text-transparent border-transparent ${surfaceFill(surface)}`}>

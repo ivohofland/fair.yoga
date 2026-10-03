@@ -56,10 +56,9 @@ export const teacherRoom = {
 
 /**
  * `payments` is the charged registrations' payment states, `null` for a
- * registration with no payment row — which is what the pages' `select` actually
- * returns (`schedule/(overview)/page.tsx`, `schedule/past/page.tsx`). Pass
- * `undefined` for a caller that did not include registrations at all; the
- * prop is optional.
+ * registration with no payment row — what a `registrations.payment` select
+ * returns. Pass `undefined` for a caller that did not include registrations
+ * at all; the prop is optional.
  */
 export function classRow(
   id: string,
@@ -71,8 +70,8 @@ export function classRow(
     id,
     calendarEntryId: `entry-${id}`,
     kind: 'regular' as const,
-    // The calendar identity is a row of its own since #327, and the card reads
-    // every one of these fields through it.
+    // The calendar identity is a row of its own, and the card reads every
+    // one of these fields through it.
     calendarEntry: {
       id: `entry-${id}`,
       teacherId: 'teacher-1',

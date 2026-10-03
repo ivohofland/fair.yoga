@@ -5,15 +5,13 @@ import { ClassList, ClassListSkeleton } from './class-list';
 import { type ClassRow, classRow } from './class-list-fixtures';
 
 /**
- * #58 review. `PaymentRollup` (class-card.tsx) had no coverage anywhere —
- * unit, component or e2e — while carrying the branching this branch is named
- * after: a priority order (overdue beats unpaid beats all-paid) and a
- * `payments.length === 0` guard. Tightening `{ status: string }` to
- * `PaymentStatus` protects the *type* flowing in; it cannot protect the order
- * of two `if`s. Swap them and a class with one overdue payment reports
- * "○ N unpaid"; drop the length guard and a completed class with no payments
- * yet reports "✓ all paid" — the exact false all-clear this branch exists to
- * remove — both with a green build.
+ * Pins `PaymentRollup`'s (class-card.tsx) branching: a priority order
+ * (overdue beats unpaid beats all-paid) and a `payments.length === 0` guard.
+ * Tightening `{ status: string }` to `PaymentStatus` protects the *type*
+ * flowing in; it cannot protect the order of two `if`s. Swap them and a class
+ * with one overdue payment reports "○ N unpaid"; drop the length guard and a
+ * completed class with no payments yet reports "✓ all paid" — the exact false
+ * all-clear this branch exists to remove — both with a green build.
  *
  * Rendered through `ClassList` rather than `PaymentRollup` directly, because
  * the rollup is not exported and should not become exported for a test (the

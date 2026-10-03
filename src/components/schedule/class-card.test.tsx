@@ -72,8 +72,8 @@ describe('ClassCard', () => {
 describe('ClassCardSkeleton', () => {
   it("matches Card's plain class set, with no link and no visible text", () => {
     // Derived from a real plain `<Card>`, not a hardcoded string: both sit on
-    // the same `CARD_SURFACE` constant, so this equality survives that
-    // constant changing and only catches the skeleton diverging from it.
+    // the same surface frame, so this equality survives that frame changing
+    // and only catches the skeleton diverging from it.
     const cardRoot = render(<Card>x</Card>).container.firstElementChild;
     const { container } = render(<ClassCardSkeleton />);
     const root = container.firstElementChild;

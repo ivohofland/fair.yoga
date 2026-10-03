@@ -14,10 +14,11 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
  * releases, and measures the page.
  *
  * What it does not cover: only the header and the first block below it are
- * compared. Blocks a page renders conditionally above its first item — the
- * schedule's `GettingStarted` and `InstallCard` — are absent in this fixture by
- * construction, so a teacher who still sees one gets a first item the skeleton
- * does not predict. Heights of later rows are cosmetic and not checked.
+ * compared (plus, for `/students`, that block's height). Blocks a page
+ * renders conditionally above its first item are kept absent by the fixture
+ * (see `beforeAll`), so a teacher who still sees one gets a first item the
+ * skeleton does not predict. Heights of later rows are cosmetic and not
+ * checked.
  */
 
 const ROUTES = [

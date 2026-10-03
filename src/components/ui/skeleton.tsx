@@ -26,9 +26,9 @@ interface SkeletonProps {
   surface?: SkeletonSurface;
 }
 
-// A content placeholder — a number, an icon slot — inside a primitive's
-// frame. Never a stand-in for a whole card or row: those come from the
-// primitive's own *Skeleton (docs/design-brief.md, Loading states).
+// A content placeholder — a progress track, an icon slot — inside a
+// primitive's frame. Never a stand-in for a whole card or row: those come
+// from the primitive's own *Skeleton (docs/design-brief.md, Loading states).
 // Static sand: no shimmer, no spinner.
 export function Skeleton({ className = '', surface = 'page' }: SkeletonProps) {
   return <div aria-hidden="true" className={`${SURFACE_BG[surface]} rounded-[4px] ${className}`.trim()} />;

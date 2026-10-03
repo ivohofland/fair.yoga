@@ -6,7 +6,7 @@ export type ListRowDensity = 'regular' | 'relaxed';
 export type ListRowDivider = 'between' | 'after-each';
 
 export interface ListRowFrameOptions {
-  /** 'relaxed' for rows carrying a title and a body line. */
+  /** 'relaxed' for a message-style row (a title plus a body line); directory rows stay 'regular'. */
   density?: ListRowDensity;
   /** 'after-each' keeps the last row's border, for a list followed by more content. */
   divider?: ListRowDivider;
@@ -21,7 +21,8 @@ const DIVIDER: Record<ListRowDivider, string> = {
 };
 
 // The ≥56px directory row (docs/design-brief.md). The one place its frame is
-// written; a row element that is neither a div nor a link calls this directly.
+// written; a row ListRow cannot render — another element, or one needing
+// attributes ListRow does not forward — calls this directly.
 export function listRowClass({ density = 'regular', divider = 'between', className = '' }: ListRowFrameOptions = {}): string {
   return `min-h-14 ${DENSITY[density]} ${DIVIDER[divider]} ${className}`.trim();
 }

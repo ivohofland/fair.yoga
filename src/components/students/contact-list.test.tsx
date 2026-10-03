@@ -174,10 +174,9 @@ describe('ContactList', () => {
   });
 
   /**
-   * Same shape as `student-directory.test.tsx`'s equivalent case: before the
-   * first response arrives there is no roster to dim, so this gets skeleton
-   * rows (`ListRow`'s own frame, `aria-hidden`) rather than an opacity-50
-   * empty `<div>`.
+   * Before the first response arrives there is no roster to dim, so this
+   * gets skeleton rows (`ListRow`'s own frame, `aria-hidden`) rather than an
+   * opacity-50 empty `<div>`.
    */
   it('shows skeleton rows during the initial fetch, before any contacts have loaded', () => {
     fetchMock.mockImplementation(() => new Promise(() => {}));

@@ -10,8 +10,11 @@ type HoldWindow = Window & { __skeletonHold: Hold };
  * under `next dev` the line holding the page's own row (its boundary then
  * suspends and loading.tsx renders); in a production build, where that dev-only
  * marker is absent, the whole body (the prefetched boundary renders). If Next
- * changes either shape, no skeleton appears and the spec fails at its
- * visibility assertion — it cannot pass by comparing the page with itself.
+ * changes either shape, the route's own skeleton never appears — but under
+ * `next dev` an ancestor's fallback can still paint with `aria-busy`, so the
+ * assertion that catches a broken hold is the first-item anchor's
+ * visibility, not the generic `aria-busy` one; the spec cannot pass by
+ * comparing the page with itself.
  */
 export function installFetchHold(): void {
   const w = window as unknown as HoldWindow;
