@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 
 const push = vi.fn();
 
@@ -29,12 +29,24 @@ vi.mock('next/navigation', () => ({
   useRouter: () => router,
 }));
 
+const recordPushDevice = vi.fn(async () => {});
+vi.mock('@/lib/push-client', () => ({
+  recordPushDeviceForSignIn: () => recordPushDevice(),
+}));
+
 import VerifyPage, {
   RAIL_APPEARS_AFTER_MS,
   RAIL_STAYS_FOR_MS,
   RAIL_HEADING,
   VERIFY_CEILING_MS,
 } from './page';
+
+/** One macrotask: every `.then` in the verify chain has run when it resolves. */
+async function settleResponse(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
 
 describe('VerifyPage', () => {
   afterEach(() => {
@@ -45,6 +57,7 @@ describe('VerifyPage', () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     push.mockReset();
+    recordPushDevice.mockClear();
     searchParams = new URLSearchParams(WITH_TOKEN);
     suspendSearchParams = false;
   });
@@ -292,6 +305,44 @@ describe('VerifyPage', () => {
     expect(push).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(3100);
     expect(push).toHaveBeenCalledWith('/schedule');
+  });
+
+  /**
+   * #745. A magic link for another address, opened on a device that still
+   * holds the previous account's push subscription, is a sign-in the
+   * settings page never sees; the verify page is where the new account can
+   * claim the device.
+   */
+  it('re-records the push device once a session exists', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { accountId: 'acct-1', redirectTo: '/schedule' } }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    await waitFor(() => expect(recordPushDevice).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    ['a signup ticket, which is not a session', { redirectTo: '/signup/teacher' }],
+    ['a handoff code, which consumed nothing', { handoffCode: '123456' }],
+  ])('does not re-record the push device for %s', async (_label, data) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data }) }));
+    render(<VerifyPage />);
+
+    await settleResponse();
+    expect(recordPushDevice).not.toHaveBeenCalled();
+  });
+
+  it('does not re-record the push device when the link is refused', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400 }));
+    render(<VerifyPage />);
+
+    await settleResponse();
+    expect(recordPushDevice).not.toHaveBeenCalled();
   });
 
   it('redirects on the ordinary beat when there is nothing to read', async () => {

@@ -84,6 +84,25 @@ export async function syncPushSubscription(subscription: PushSubscription): Prom
   }
 }
 
+/**
+ * Re-records this device for the account that has just signed in, so a phone
+ * the previous account left subscribed stops delivering that account's
+ * notifications. Acts only on a subscription the browser already holds under
+ * a granted permission: it never asks for permission, never subscribes, and
+ * makes no request when push is not on. Never throws.
+ */
+export async function recordPushDeviceForSignIn(): Promise<void> {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  let subscription: PushSubscription | null;
+  try {
+    subscription = await currentPushSubscription();
+  } catch (err) {
+    logRequestFailure('push-client', { step: 'read' }, err);
+    return;
+  }
+  if (subscription) await syncPushSubscription(subscription);
+}
+
 const SERVICE_WORKER_READY_TIMEOUT_MS = 10_000;
 
 /** Resolves true once the service worker is active, false if that takes longer than the timeout. */

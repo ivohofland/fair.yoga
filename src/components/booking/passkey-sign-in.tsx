@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { recordPushDeviceForSignIn } from '@/lib/push-client';
 import { Button } from '@/components/ui/button';
 
 const DEFAULT_ERROR_MESSAGE = "Passkey sign-in didn't work here — use the email link instead.";
@@ -54,6 +55,7 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       }
 
       const verified = (await verifyRes.json()) as { data: { redirectTo: string } };
+      void recordPushDeviceForSignIn();
       router.push(verified.data.redirectTo);
       router.refresh();
       // #40. Explicitly NOT a `finally`: `state` carries the error too, so a

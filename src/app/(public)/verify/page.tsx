@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
+import { recordPushDeviceForSignIn } from '@/lib/push-client';
 import { MAGIC_LINK_REFUSED_STATUS, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff' | 'timeout';
@@ -650,6 +651,9 @@ function VerifyContent() {
         // — so its absence is the signal this reader was never signed in at
         // all.
         const isNew = !json.data.accountId;
+        // Outside `settle`: the session exists whether or not this screen
+        // still wants the outcome, and the device should follow it.
+        if (!isNew) void recordPushDeviceForSignIn();
         const cancelled = Boolean(json.data.signupCancelled);
         const endedSession = Boolean(json.data.sessionEnded);
         settle(() => {

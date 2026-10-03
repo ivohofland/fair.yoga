@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { classifyPushDevice, disablePush, enablePush, subscriptionUsesKey, syncPushSubscription, type PushDeviceEnv } from './push-client';
+import { classifyPushDevice, disablePush, enablePush, recordPushDeviceForSignIn, subscriptionUsesKey, syncPushSubscription, type PushDeviceEnv } from './push-client';
 
 const capable: PushDeviceEnv = {
   vapidConfigured: true, install: 'installed', hasServiceWorker: true, hasPushManager: true,
@@ -351,5 +351,104 @@ describe('subscriptionUsesKey', () => {
 
   it('is unknown for a subscription that reports no key', () => {
     expect(subscriptionUsesKey(fakeSubscription(null), key)).toBe('unknown');
+  });
+});
+
+describe('recordPushDeviceForSignIn', () => {
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    consoleError.mockRestore();
+  });
+
+  /** A browser with push: `permission` is what `Notification` reports, `subscription` what the registration holds. */
+  function stubBrowser(permission: NotificationPermission, subscription: PushSubscription | null) {
+    const getRegistration = vi.fn(async () => ({ pushManager: { getSubscription: vi.fn(async () => subscription) } }));
+    vi.stubGlobal('navigator', { serviceWorker: { getRegistration } });
+    vi.stubGlobal('Notification', { permission });
+    return getRegistration;
+  }
+
+  it('POSTs the existing subscription for the account that just signed in', async () => {
+    stubBrowser('granted', fakeSubscription(null, 'https://push.example/abc'));
+    const fetchMock = vi.fn<(url: string, init: { method: string; body: string }) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await recordPushDeviceForSignIn();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/push/subscriptions');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } });
+  });
+
+  it.each<NotificationPermission>(['default', 'denied'])('makes no request and reads no registration when permission is %s', async (permission) => {
+    const getRegistration = stubBrowser(permission, fakeSubscription(null));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await recordPushDeviceForSignIn();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(getRegistration).not.toHaveBeenCalled();
+  });
+
+  it('makes no request when permission is granted but there is no subscription', async () => {
+    stubBrowser('granted', null);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await recordPushDeviceForSignIn();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('makes no request, and does not throw, in a browser without Notification', async () => {
+    vi.stubGlobal('navigator', { serviceWorker: { getRegistration: vi.fn() } });
+    vi.stubGlobal('Notification', undefined);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(recordPushDeviceForSignIn()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('never prompts for permission and never subscribes', async () => {
+    const subscribe = vi.fn();
+    const requestPermission = vi.fn();
+    vi.stubGlobal('navigator', {
+      serviceWorker: { getRegistration: vi.fn(async () => ({ pushManager: { getSubscription: vi.fn(async () => null), subscribe } })) },
+    });
+    vi.stubGlobal('Notification', { permission: 'granted', requestPermission });
+    vi.stubGlobal('fetch', vi.fn());
+
+    await recordPushDeviceForSignIn();
+
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+
+  it('resolves, logging it, when reading the registration throws', async () => {
+    vi.stubGlobal('navigator', { serviceWorker: { getRegistration: vi.fn(async () => { throw new Error('no registration'); }) } });
+    vi.stubGlobal('Notification', { permission: 'granted' });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(recordPushDeviceForSignIn()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'read' }));
+  });
+
+  it('resolves when the server refuses the subscription', async () => {
+    stubBrowser('granted', fakeSubscription(null));
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401 })));
+
+    await expect(recordPushDeviceForSignIn()).resolves.toBeUndefined();
   });
 });
