@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { HandoffCodeEntry, RECORD_WAIT_MS } from './handoff-code-entry';
+import { HandoffCodeEntry } from './handoff-code-entry';
 
 const recordPushDevice = vi.fn(async () => {});
 vi.mock('@/lib/push-client', () => ({
-  recordPushDeviceForSignIn: () => recordPushDevice(),
+  recordPushDeviceBeforeNavigation: () => recordPushDevice(),
 }));
 
 /**
@@ -105,27 +105,6 @@ describe('HandoffCodeEntry', () => {
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
     expect(order).toEqual(['recorded', 'navigated']);
-  });
-
-  it('navigates anyway when the re-record does not settle within its bound', async () => {
-    vi.useFakeTimers();
-    recordPushDevice.mockImplementation(() => new Promise<void>(() => {}));
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ data: { accountId: 'acc-1', redirectTo: '/schedule' } }),
-      }),
-    );
-    const assign = stubLocation();
-    render(<HandoffCodeEntry />);
-
-    enterCode();
-    await vi.advanceTimersByTimeAsync(RECORD_WAIT_MS - 1);
-    expect(assign).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-
-    expect(assign).toHaveBeenCalledWith('/schedule');
   });
 
   it('does not re-record the push device for a signup ticket, which is not a session', async () => {

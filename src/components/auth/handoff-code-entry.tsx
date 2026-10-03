@@ -4,22 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
-import { recordPushDeviceForSignIn } from '@/lib/push-client';
-
-/** How long the claim waits on re-recording the device before it navigates anyway. */
-export const RECORD_WAIT_MS = 3000;
-
-async function recordWithin(ms: number): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const elapsed = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, ms);
-  });
-  try {
-    await Promise.race([recordPushDeviceForSignIn(), elapsed]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+import { recordPushDeviceBeforeNavigation } from '@/lib/push-client';
 
 interface HandoffCodeEntryProps {
   className?: string;
@@ -54,12 +39,9 @@ export function HandoffCodeEntry({ className = '', autoFocus }: HandoffCodeEntry
       });
       if (res.ok) {
         const json = (await res.json()) as { data: { redirectTo: string; accountId?: string } };
-        // Awaited, unlike the other sign-in paths, because the navigation
-        // below unloads the page and would abort a request still in flight.
-        // A signup ticket carries no `accountId`: there is no session to
-        // record the device for. Bounded, so a stalled request cannot hold
-        // a signed-in reader on this screen.
-        if (json.data.accountId) await recordWithin(RECORD_WAIT_MS);
+        // Awaited because the navigation below unloads the page. A response
+        // without `accountId` set a signup ticket, not a session.
+        if (json.data.accountId) await recordPushDeviceBeforeNavigation();
         // A full navigation, not `router.push`: this response just set a
         // cookie — a session, or a signup ticket — and server components
         // must re-render against it.

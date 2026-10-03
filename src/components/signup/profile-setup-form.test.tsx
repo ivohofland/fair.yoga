@@ -6,6 +6,13 @@ import { isLoginRedirectTarget } from '@/lib/schemas';
 
 const DRAFT_KEY = 'fair_yoga_profile_draft';
 
+const recordPushDevice = vi.fn(async () => {});
+// Partial: the sign-out button this form renders needs the real `disablePush`.
+vi.mock('@/lib/push-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/push-client')>()),
+  recordPushDeviceBeforeNavigation: () => recordPushDevice(),
+}));
+
 /**
  * The success and session-mode-401 paths leave via `window.location.assign`
  * (a hard navigation, not the router — the response set a session cookie).
@@ -47,8 +54,54 @@ function fillForm() {
 describe('ProfileSetupForm', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    recordPushDevice.mockReset();
+    recordPushDevice.mockImplementation(async () => {});
     window.localStorage.clear();
     Object.defineProperty(window, 'location', { value: realLocation, writable: true });
+  });
+
+  // #745. Ticket mode is where this POST mints the session, so it is where a
+  // device left subscribed by the previous account is claimed.
+  it('re-records the push device before it hard-navigates, in ticket mode', async () => {
+    const order: string[] = [];
+    recordPushDevice.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('recorded');
+    });
+    const assign = stubLocation();
+    assign.mockImplementation(() => order.push('navigated'));
+    stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
+    expect(order).toEqual(['recorded', 'navigated']);
+  });
+
+  it('does not re-record the push device in session mode, which minted no session', async () => {
+    const assign = stubLocation();
+    stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
+    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
+    expect(recordPushDevice).not.toHaveBeenCalled();
+  });
+
+  it('does not re-record the push device when the profile is refused', async () => {
+    stubLocation();
+    stubFetch(() => ({ ok: false, status: 400, json: async () => ({ error: { message: 'Nope' } }) }));
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
+
+    await screen.findByRole('alert');
+    expect(recordPushDevice).not.toHaveBeenCalled();
   });
 
   it('names the address it will create in ticket mode', () => {

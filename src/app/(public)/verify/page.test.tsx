@@ -876,6 +876,23 @@ describe('VerifyPage', () => {
       expect(push).not.toHaveBeenCalled();
     });
 
+    // #745. The screen refused the outcome above, but the server had already
+    // minted the session — so the device still has to follow it.
+    it('still re-records the push device for a session that lands after the screen gave up', async () => {
+      vi.useFakeTimers();
+      silenceErrors();
+      const deferred = deferredFetch(signedInBody);
+      render(<VerifyPage />);
+
+      await advance(VERIFY_CEILING_MS);
+      expect(recordPushDevice).not.toHaveBeenCalled();
+
+      deferred.resolve();
+      await advance(RAIL_STAYS_FOR_MS + 900);
+
+      expect(recordPushDevice).toHaveBeenCalledTimes(1);
+    });
+
     /**
      * A different guard than the success case above, and worth naming as
      * such: by the time a late verify-POST rejection reaches the outer

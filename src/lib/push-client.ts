@@ -89,18 +89,41 @@ export async function syncPushSubscription(subscription: PushSubscription): Prom
  * the previous account left subscribed stops delivering that account's
  * notifications. Acts only on a subscription the browser already holds under
  * a granted permission: it never asks for permission, never subscribes, and
- * makes no request when push is not on. Never throws.
+ * makes no request unless both hold. Best effort: a failure is logged and
+ * leaves the device recorded for whichever account held it until the next
+ * re-record, so a caller must not depend on the outcome. Never throws.
  */
 export async function recordPushDeviceForSignIn(): Promise<void> {
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   let subscription: PushSubscription | null;
   try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     subscription = await currentPushSubscription();
   } catch (err) {
     logRequestFailure('push-client', { step: 'read' }, err);
     return;
   }
   if (subscription) await syncPushSubscription(subscription);
+}
+
+/** How long a caller about to unload the page waits on the re-record. */
+export const RECORD_BEFORE_NAVIGATION_MS = 3000;
+
+/**
+ * For a caller whose next step is a full page load, which aborts a request
+ * still in flight: waits for `recordPushDeviceForSignIn`, but no longer than
+ * `RECORD_BEFORE_NAVIGATION_MS`, so a stalled request cannot hold a signed-in
+ * reader on the screen. Never throws.
+ */
+export async function recordPushDeviceBeforeNavigation(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const elapsed = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, RECORD_BEFORE_NAVIGATION_MS);
+  });
+  try {
+    await Promise.race([recordPushDeviceForSignIn(), elapsed]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const SERVICE_WORKER_READY_TIMEOUT_MS = 10_000;

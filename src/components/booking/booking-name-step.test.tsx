@@ -3,6 +3,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
 import { BookingNameStep } from './booking-name-step';
 
+const recordPushDevice = vi.fn(async () => {});
+vi.mock('@/lib/push-client', () => ({
+  recordPushDeviceForSignIn: () => recordPushDevice(),
+}));
+
 function fillAndSubmit() {
   fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Anna' } });
   fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'Smith' } });
@@ -10,7 +15,34 @@ function fillAndSubmit() {
 }
 
 describe('BookingNameStep', () => {
-  afterEach(() => { vi.unstubAllGlobals(); });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    recordPushDevice.mockClear();
+  });
+
+  // #745. This POST mints the session for a new student, so it is where a
+  // device left subscribed by the previous account is claimed.
+  it('re-records the push device once the profile is created', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }));
+    render(<BookingNameStep email="anna@example.com" redirect="/t/book/c1" />);
+
+    fillAndSubmit();
+
+    await vi.waitFor(() => expect(recordPushDevice).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not re-record the push device when the ticket has expired', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) }),
+    );
+    render(<BookingNameStep email="anna@example.com" redirect="/t/book/c1" />);
+
+    fillAndSubmit();
+
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(recordPushDevice).not.toHaveBeenCalled();
+  });
 
   it('posts the two names and nothing else', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201 });

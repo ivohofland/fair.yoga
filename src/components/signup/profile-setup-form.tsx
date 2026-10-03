@@ -10,6 +10,7 @@ import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { AlreadyTeachingPanel } from './already-teaching-panel';
 import { logRequestFailure, readError } from '@/lib/client-errors';
+import { recordPushDeviceBeforeNavigation } from '@/lib/push-client';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 const BIO_MAX = 250;
@@ -265,6 +266,9 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
       // in any payload the client router cached while signed out. `status`
       // stays 'submitting' so the button does not go idle under a navigation
       // that is already in flight.
+      // Ticket mode is where this response minted the session; session mode
+      // already had one. Awaited because the navigation below unloads the page.
+      if (mode === 'ticket') await recordPushDeviceBeforeNavigation();
       window.location.assign('/schedule');
       return;
     }
