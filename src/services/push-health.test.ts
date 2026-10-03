@@ -202,12 +202,12 @@ describe('createPushDispatchTick', () => {
 
 describe('runPushDispatchTick', () => {
   it('is the health-wrapped dispatchPushes: it hands dispatchPushes the db and alarms on a failing streak', async () => {
-    const db = {} as PrismaClient;
+    const db = { identity: 'the singleton run' } as unknown as PrismaClient;
     dispatchPushes.mockResolvedValue({ retired: 0, claimed: 1, sent: 0, gone: 0, invalid: 0, failed: 1, unsendable: 0 });
     await runPushDispatchTick(db);
     await runPushDispatchTick(db);
     await expect(runPushDispatchTick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
     expect(dispatchPushes).toHaveBeenCalledTimes(PUSH_MAX_FAILED_TICKS);
-    expect(dispatchPushes).toHaveBeenCalledWith(db);
+    for (const call of dispatchPushes.mock.calls) expect(call[0]).toBe(db);
   });
 });
