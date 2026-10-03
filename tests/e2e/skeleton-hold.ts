@@ -87,24 +87,41 @@ export async function isDevServer(page: Page): Promise<boolean> {
   return (await page.locator('nextjs-portal').count()) > 0;
 }
 
+// Below Playwright's 30s default test timeout, so a genuine miss fails the
+// test with a named cause instead of the test timeout's generic message.
+const PREFETCH_TIMEOUT_MS = 10_000;
+
 /**
  * Resolves when the loading-boundary prefetch for `pathname` has settled.
  * Must be called before `page.goto`, since the prefetch may fire during the
  * first load. Settling counts on failure too: that prefetch usually ends
- * `net::ERR_ABORTED` even when its boundary arrived. A production build only:
- * `next dev` never prefetches, so there this never resolves.
+ * `net::ERR_ABORTED` even when its boundary arrived. A production build
+ * only: `next dev` never prefetches, so there it rejects on the timeout
+ * below instead of hanging. The lone caller only awaits this in its
+ * production-build branch, so the rejection is pre-handled here — attached
+ * to this same promise, not a derived one — to keep the dev branch's
+ * unawaited call from surfacing as an unhandled rejection once the timer
+ * fires.
  */
 export function prefetchSettled(page: Page, pathname: string): Promise<void> {
-  return new Promise((resolve) => {
+  const settled = new Promise<void>((resolve, reject) => {
     const onSettled = (request: Request): void => {
       if (new URL(request.url()).pathname !== pathname) return;
       const headers = request.headers();
       if (headers['next-router-prefetch'] !== '1' || 'next-router-segment-prefetch' in headers) return;
+      clearTimeout(timer);
       page.off('requestfinished', onSettled);
       page.off('requestfailed', onSettled);
       resolve();
     };
+    const timer = setTimeout(() => {
+      page.off('requestfinished', onSettled);
+      page.off('requestfailed', onSettled);
+      reject(new Error(`no loading-boundary prefetch for ${pathname} within ${PREFETCH_TIMEOUT_MS}ms`));
+    }, PREFETCH_TIMEOUT_MS);
     page.on('requestfinished', onSettled);
     page.on('requestfailed', onSettled);
   });
+  settled.catch(() => {});
+  return settled;
 }
