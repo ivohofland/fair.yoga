@@ -385,8 +385,8 @@ export default function CreateClassPage() {
   // Render helpers
   // -------------------------------------------------------------------------
 
-  // Shared by the wizard and its loading and failed states, so the header the
-  // route's loading.tsx skeleton drew stays on screen while the rooms load.
+  // Shared by the wizard and every state below, so the header the route's
+  // loading.tsx skeleton drew stays on screen whatever the rooms fetch returns.
   const header = (
     <div className="mb-6">
       <button
@@ -454,17 +454,23 @@ export default function CreateClassPage() {
     // would be wrong; the way out is un-archiving one.
     if (allRoomsCount > 0) {
       return (
-        <EmptyState
-          title="All your rooms are archived"
-          body="Unarchive one in Settings to schedule here."
-        />
+        <>
+          {header}
+          <EmptyState
+            title="All your rooms are archived"
+            body="Unarchive one in Settings to schedule here."
+          />
+        </>
       );
     }
     return (
-      <EmptyState
-        title="No rooms configured"
-        body="Add a room in Settings before creating a class."
-      />
+      <>
+        {header}
+        <EmptyState
+          title="No rooms configured"
+          body="Add a room in Settings before creating a class."
+        />
+      </>
     );
   }
 

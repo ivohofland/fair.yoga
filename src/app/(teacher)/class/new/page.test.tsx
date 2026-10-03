@@ -506,10 +506,10 @@ describe('NewClassPage', () => {
 
   /**
    * #740. The route's loading.tsx draws a back link above a display title;
-   * the wizard keeps that header on screen while its rooms load and when they
-   * fail to, rather than dropping it for a bare status line.
+   * the wizard keeps that header on screen in every state its rooms fetch can
+   * leave it in, rather than dropping it for a bare status line or empty state.
    */
-  describe('header while the rooms are not loaded (#740)', () => {
+  describe('header whatever the rooms fetch returns (#740)', () => {
     function expectHeader() {
       expect(screen.getByRole('heading', { level: 1, name: 'New class' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Schedule' })).toBeInTheDocument();
@@ -531,6 +531,24 @@ describe('NewClassPage', () => {
       render(<CreateClassPage />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
+      expectHeader();
+    });
+
+    it('shows the wizard header when the teacher has no rooms', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText('No rooms configured')).toBeInTheDocument();
+      expectHeader();
+    });
+
+    it('shows the wizard header when every room is archived', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ ...ROOM, isArchived: true }] }) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText('All your rooms are archived')).toBeInTheDocument();
       expectHeader();
     });
   });
