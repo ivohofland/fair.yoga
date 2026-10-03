@@ -97,11 +97,10 @@ const PREFETCH_TIMEOUT_MS = 10_000;
  * first load. Settling counts on failure too: that prefetch usually ends
  * `net::ERR_ABORTED` even when its boundary arrived. A production build
  * only: `next dev` never prefetches, so there it rejects on the timeout
- * below instead of hanging. The lone caller only awaits this in its
- * production-build branch, so the rejection is pre-handled here — attached
- * to this same promise, not a derived one — to keep the dev branch's
- * unawaited call from surfacing as an unhandled rejection once the timer
- * fires.
+ * below instead of hanging. A caller may leave this unawaited under
+ * `next dev`, so the rejection is pre-handled here — attached to this same
+ * promise, not a derived one — to keep that unawaited call from surfacing as
+ * an unhandled rejection once the timer fires.
  */
 export function prefetchSettled(page: Page, pathname: string): Promise<void> {
   const settled = new Promise<void>((resolve, reject) => {
