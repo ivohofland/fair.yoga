@@ -9,9 +9,10 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
 
 /**
  * A tab root's loading skeleton and the page that replaces it put the header
- * and the first block below it in the same place. Each test holds a tab-bar
- * navigation in its loading state (`skeleton-hold.ts`), measures the skeleton,
- * releases, and measures the page.
+ * and the first block below it in the same place. Each geometry test holds a
+ * tab-bar navigation in its loading state (`skeleton-hold.ts`), measures the
+ * skeleton, releases, and measures the page; the unheld tests below them
+ * check that the skeleton measured is the one a natural click paints.
  *
  * What it does not cover: only the header and the first block below it are
  * compared (plus, for `/students`, that block's height). Blocks a page
