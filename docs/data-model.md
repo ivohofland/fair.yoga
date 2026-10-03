@@ -46,7 +46,26 @@ explicitly, by each of these:
   VAPID key the server no longer signs with, which runs the same
   `disablePush`;
 - sign-out, which runs the same `disablePush` before ending the session;
+- the retention sweep (`reapStalePushSubscriptions`,
+  `push-subscription-retention.ts`, run by the daily `daily-cleanup` job): a
+  row whose `coalesce(last_used_at, created_at)` is older than
+  `PUSH_SUBSCRIPTION_RETENTION_DAYS` goes (#744);
 - GDPR erasure.
+
+**The retention window** is `PUSH_SUBSCRIPTION_RETENTION_DAYS`
+(`push-subscription-retention.ts`). A device whose owner uninstalled the app
+and is never sent a push again — every group off, or nothing ever sent — would
+otherwise keep a device-identifying URL for no purpose (GDPR Art. 5(1)(e)).
+The window is long enough that someone who still has the device but has every
+group off is not silently unsubscribed within a season. A row reaped while its
+browser still holds the subscription is re-recorded by the device control the
+next time that person opens the notification settings, which re-syncs a
+subscription it finds on load (`PushDeviceControl`). That re-sync writes
+nothing while the row exists unchanged (`savePushSubscription` answers
+`'unchanged'`), so a visit does not postpone the reaper: only a successful
+send moves `last_used_at`. Between a reap and that next visit the device
+receives no push; email and the inbox are unaffected. A row exactly on the
+cutoff is kept.
 
 An erasure
 (`deleteStudentAccount`/`deleteTeacherAccount`, `gdpr.ts`) deletes every
