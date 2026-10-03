@@ -1,23 +1,9 @@
 import Link from 'next/link';
-import type { CalendarEntry, Class, TeacherRoom, Room, StudioClass, PaymentStatus } from '@prisma/client';
-import { StatusBadge, deriveBadgeVariant, type BadgeVariant } from '@/components/ui/status-badge';
-import { RegistrationProgress } from '@/components/ui/registration-progress';
-import { Icon } from '@/components/ui/icon';
+import { ClassCard, ClassCardSkeleton, StudioClassCard, type ClassWithDetails, type StudioClassWithEntry } from '@/components/schedule/class-card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatRoomLocation, formatDayHeader, FULL_MONTHS } from '@/lib/format';
+import { SkeletonText } from '@/components/ui/skeleton';
+import { FULL_MONTHS } from '@/lib/format';
 import { classStartInstant, startOfLocalWeek, mondayOf } from '@/lib/timezone';
-import { timeToHHmm } from '@/lib/time-of-day';
-
-type ClassWithDetails = Class & {
-  /** The calendar identity both card kinds render from since #327. */
-  calendarEntry: CalendarEntry;
-  _count: { registrations: number };
-  teacherRoom: TeacherRoom & { room: Room };
-  /** Charged registrations' payment states — powers the completed-card rollup. */
-  registrations?: { payment: { status: PaymentStatus } | null }[];
-};
-
-type StudioClassWithEntry = StudioClass & { calendarEntry: CalendarEntry };
 
 interface ClassListProps {
   classes: ClassWithDetails[];
@@ -41,133 +27,14 @@ function weekLabel(itemDate: Date, thisMonday: number): string {
   return `Week of ${d.getUTCDate()} ${FULL_MONTHS[d.getUTCMonth()]}`;
 }
 
-type RowState = {
-  variant: BadgeVariant;
-  cancelled: boolean;
-  past: boolean;
-  showProgress: boolean;
-};
-
-function deriveClassRowState(cls: ClassWithDetails, isPast: boolean): RowState {
-  const reg = cls._count.registrations;
-  // Read from the entry since #327, where both card kinds now read it — the
-  // studio card below already did, one table over.
-  const cancelled = cls.calendarEntry.cancelledAt !== null;
-  const variant = deriveBadgeVariant(cls.status, cancelled, reg, cls.minStudents, cls.maxStudents);
-  const past = !cancelled && (cls.status === 'completed' || isPast);
-  // The signature bar appears while registrations still matter.
-  const showProgress = !cancelled && !past && cls.status !== 'draft';
-  return { variant, cancelled, past, showProgress };
-}
-
-// Completed classes roll payment state up inline — text, never a badge
-// (see the status explorations, turn 2): ✓ all paid · ○ N unpaid ·
-// ! N overdue · ⊘ N not charged. Silent until the class completes and
-// payments exist.
-function PaymentRollup({ cls }: { cls: ClassWithDetails }) {
-  if (cls.status !== 'completed' || !cls.registrations) return null;
-  const payments = cls.registrations
-    .map((r) => r.payment)
-    .filter((p): p is { status: PaymentStatus } => p !== null);
-  if (payments.length === 0) return null;
-
-  const overdue = payments.filter((p) => p.status === 'overdue').length;
-  const unpaid = payments.filter((p) => p.status === 'pending').length;
-  const notCharged = payments.filter((p) => p.status === 'not_charged').length;
-  if (overdue > 0) {
-    return <span className="text-danger font-medium"> · ! {overdue} overdue</span>;
-  }
-  if (unpaid > 0) {
-    return <span className="text-brown"> · ○ {unpaid} unpaid</span>;
-  }
-  if (notCharged > 0) {
-    return <span className="text-brown-light"> · ⊘ {notCharged} not charged</span>;
-  }
-  return <span className="text-teal font-medium"> · ✓ all paid</span>;
-}
-
-// Class card: day/time + status badge, class type, room, and the
-// registration progress bar. Sand surface, radius 16, chevron.
-function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) {
-  const { variant, cancelled, past, showProgress } = deriveClassRowState(cls, isPast);
-  const reg = cls._count.registrations;
-
-  return (
-    <Link
-      href={`/class/${cls.id}`}
-      className={`block bg-sand-soft border border-border rounded-card p-5 no-underline hover:bg-sand${past || cancelled ? ' opacity-70' : ''}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="type-label text-ink">
-          {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)}
-        </span>
-        <StatusBadge variant={variant} />
-      </div>
-      <div className="flex items-center gap-3 mt-1">
-        <span
-          className={`type-subtitle flex-1 min-w-0${cancelled ? ' line-through decoration-brown decoration-[1.5px]' : ''}`}
-        >
-          {cls.calendarEntry.classType}
-        </span>
-        <Icon name="chevron-right" size={20} className="text-brown-light" />
-      </div>
-      <p className="type-caption mt-0.5">
-        {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
-        <PaymentRollup cls={cls} />
-      </p>
-      {showProgress && (
-        <RegistrationProgress
-          registered={reg}
-          min={cls.minStudents}
-          max={cls.maxStudents}
-          className="mt-3"
-        />
-      )}
-    </Link>
-  );
-}
-
-// Studio classes are visually lighter: dashed border on cream, no bar.
-// Their "done" state is text, not a badge (like payment states): a teal
-// ✓ once the student count is logged, a quiet nudge while it's missing.
-function StudioClassCard({ sc, isPast }: { sc: StudioClassWithEntry; isPast: boolean }) {
-  const cancelled = sc.calendarEntry.cancelledAt !== null;
-  const past = !cancelled && isPast;
-  const logged = sc.studentCount !== null;
-
-  return (
-    <Link
-      href={`/studio-class/${sc.id}`}
-      className={`block border border-dashed border-border rounded-card px-5 py-3 no-underline hover:bg-sand-soft${past || cancelled ? ' opacity-70' : ''}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span
-          className={`type-label text-ink${cancelled ? ' line-through decoration-brown' : ''}`}
-        >
-          {formatDayHeader(sc.calendarEntry.date)} · {timeToHHmm(sc.calendarEntry.startTime)}
-        </span>
-        {cancelled && <StatusBadge variant="cancelled" />}
-      </div>
-      <p className="type-caption mt-0.5">
-        {sc.calendarEntry.classType
-          ? `${sc.calendarEntry.classType} · ${sc.location}`
-          : sc.location} · Studio class
-        {logged && (
-          <span className="text-teal">
-            {' '}· ✓ {sc.studentCount} {sc.studentCount === 1 ? 'student' : 'students'}
-          </span>
-        )}
-        {!logged && past && !cancelled && (
-          <span className="text-brown"> · ○ add student count</span>
-        )}
-      </p>
-    </Link>
-  );
-}
-
 type ScheduleItem =
   | { type: 'class'; data: ClassWithDetails; dateTime: Date }
   | { type: 'studio'; data: StudioClassWithEntry; dateTime: Date };
+
+// The week section's heading gap and item stack, shared by the real list
+// and `ClassListSkeleton` so neither can drift from the other's spacing.
+const WEEK_HEADING_GAP = 'mb-3';
+const WEEK_ITEMS = 'flex flex-col gap-3';
 
 export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage = 'No classes yet', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
   const now = new Date();
@@ -216,8 +83,8 @@ export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage 
           }
           return groups.map((group, gi) => (
             <section key={group.label}>
-              <h2 className={`type-subtitle mb-3 ${gi === 0 ? '' : 'mt-8'}`}>{group.label}</h2>
-              <div className="flex flex-col gap-3">
+              <h2 className={`type-subtitle ${WEEK_HEADING_GAP} ${gi === 0 ? '' : 'mt-8'}`}>{group.label}</h2>
+              <div className={WEEK_ITEMS}>
                 {group.items.map((item) => {
                   const isPast = dimPast && item.dateTime < now;
                   return item.type === 'class'
@@ -229,6 +96,21 @@ export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage 
           ));
         })()
       )}
+    </div>
+  );
+}
+
+// Loading state for one week section: a heading placeholder above `cards`
+// `ClassCardSkeleton`s, in the same frame the real list's section uses.
+export function ClassListSkeleton({ cards = 3 }: { cards?: number }) {
+  return (
+    <div aria-hidden="true">
+      <section>
+        <SkeletonText type="type-subtitle" width="w-1/4" className={WEEK_HEADING_GAP} />
+        <div className={WEEK_ITEMS}>
+          {Array.from({ length: cards }, (_, i) => <ClassCardSkeleton key={i} />)}
+        </div>
+      </section>
     </div>
   );
 }
