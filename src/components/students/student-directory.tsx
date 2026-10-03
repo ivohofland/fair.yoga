@@ -29,6 +29,11 @@ const PAGE_SIZE = 20;
 // The search field's wrapper, shared by the directory and its skeleton.
 const SEARCH_WRAP = 'mb-4';
 
+// Row count for both the directory's own initial-load state and
+// `StudentDirectorySkeleton`'s default, so the two agree without either
+// retyping the other's number.
+const SKELETON_ROWS = 6;
+
 interface StudentDirectoryProps {
   archived?: boolean;
 }
@@ -88,6 +93,11 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
     : students;
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // The very first fetch, before any roster has ever rendered: there is
+  // nothing yet to dim, so this gets the directory's own skeleton rows
+  // instead of the opacity-50 treatment a reload with rows already on
+  // screen gets below.
+  const initialLoad = loading && students.length === 0 && !loadFailed;
 
   return (
     <div>
@@ -103,8 +113,14 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
         />
       </div>
 
-      <div className={loading ? 'opacity-50' : ''}>
-        {loadFailed && !loading ? (
+      <div className={loading && !initialLoad ? 'opacity-50' : ''}>
+        {initialLoad ? (
+          <div>
+            {Array.from({ length: SKELETON_ROWS }, (_, i) => (
+              <ListRowSkeleton key={i} />
+            ))}
+          </div>
+        ) : loadFailed && !loading ? (
           <p role="alert" className="text-danger text-sm">
             Could not load your students.
           </p>
@@ -166,7 +182,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
 }
 
 // The search field, then directory rows: a name line and an email line each.
-export function StudentDirectorySkeleton({ rows = 6 }: { rows?: number }) {
+export function StudentDirectorySkeleton({ rows = SKELETON_ROWS }: { rows?: number }) {
   return (
     <div aria-hidden="true">
       <div className={SEARCH_WRAP}>

@@ -544,6 +544,93 @@ describe('StudentDirectory', () => {
 
     expect(screen.getByText('Student 01')).toBeInTheDocument();
   });
+
+  /**
+   * Before the roster has ever arrived, there is nothing to dim — the
+   * directory's own skeleton rows (`ListRowSkeleton`, the same shape
+   * `StudentDirectorySkeleton` draws) stand in for the list instead of an
+   * opacity-50 empty `<div>`. The fetch is left unresolved so this observes
+   * the synchronous first render.
+   */
+  it('shows its own skeleton rows during the initial fetch, before any roster has loaded', () => {
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<StudentDirectory />);
+
+    // Skeleton rows share `ListRow`'s own frame (`min-h-14`) and are
+    // `aria-hidden`, same as `StudentDirectorySkeleton`'s rows.
+    const skeletonRows = container.querySelectorAll('[aria-hidden="true"].min-h-14');
+    expect(skeletonRows.length).toBe(6);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(container.querySelector('a, button, [tabindex]')).toBeNull();
+    // The search field stays real and interactive throughout.
+    expect(screen.getByLabelText('Search students')).toBeEnabled();
+  });
+
+  it('replaces the initial skeleton rows with the real roster once it arrives', async () => {
+    stubStudents([student({ id: 'student-1', displayName: 'Anna Bakker' })]);
+    const { container } = render(<StudentDirectory />);
+    expect(container.querySelectorAll('[aria-hidden="true"].min-h-14').length).toBe(6);
+
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    expect(container.querySelectorAll('[aria-hidden="true"].min-h-14').length).toBe(0);
+  });
+
+  /**
+   * A reload that starts with a roster already on screen (an `archived`
+   * toggle, not the initial mount) dims the existing rows instead of
+   * swapping them for skeleton rows — `initialLoad` in
+   * `student-directory.tsx` is keyed on `students.length === 0`, not on
+   * `loading` alone, so a reload never regresses to the first-load
+   * treatment.
+   */
+  it('dims the existing roster rather than reverting to skeleton rows on a reload', async () => {
+    let resolveSecond!: (value: unknown) => void;
+    let call = 0;
+    fetchMock.mockImplementation(() => {
+      call += 1;
+      if (call === 1) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              students: [
+                student({ id: 'student-1', displayName: 'Anna Bakker' }),
+                student({ id: 'student-2', displayName: 'Bram k.' }),
+              ],
+            },
+          }),
+        });
+      }
+      return new Promise((resolve) => { resolveSecond = resolve; });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerender } = render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    rerender(<StudentDirectory archived />);
+
+    const dimmedWrap = screen.getByRole('link', { name: /Anna Bakker/ }).parentElement?.parentElement;
+    expect(dimmedWrap?.className).toContain('opacity-50');
+    expect(screen.getByText('Bram k.')).toBeInTheDocument();
+
+    // A search typed while that reload is still in flight narrows the same
+    // still-dimmed, previously-loaded roster — not a skeleton, not a fresh
+    // empty state.
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'anna' } });
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Anna Bakker/ }).parentElement?.parentElement?.className,
+    ).toContain('opacity-50');
+
+    resolveSecond({ ok: true, status: 200, json: async () => ({ data: { students: [] } }) });
+    await waitFor(() => expect(screen.getByText(`No students matching 'anna'.`)).toBeInTheDocument());
+  });
 });
 
 describe('StudentDirectorySkeleton', () => {

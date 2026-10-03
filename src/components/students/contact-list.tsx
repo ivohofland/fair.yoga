@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui/icon';
-import { ListRow } from '@/components/ui/list-row';
+import { ListRow, ListRowSkeleton } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import { logRequestFailure } from '@/lib/client-errors';
 import { formatStudentName } from '@/lib/format';
@@ -61,6 +61,10 @@ const STATUS_LABEL: Record<ContactRow['status'], string> = {
   declined: 'Declined',
 };
 
+// Row count for the initial-load skeleton below — this list has no
+// separate `*Skeleton` export of its own to share it with.
+const SKELETON_ROWS = 6;
+
 interface ContactListProps {
   archived?: boolean;
 }
@@ -117,9 +121,21 @@ export function ContactList({ archived = false }: ContactListProps) {
     };
   }, [archived, reloadKey]);
 
+  // The very first fetch, before any contacts have ever rendered: there is
+  // nothing yet to dim, so this gets skeleton rows instead of the
+  // opacity-50 treatment a reload with contacts already on screen gets
+  // below.
+  const initialLoad = loading && contacts.length === 0 && !failed;
+
   return (
-    <div className={loading ? 'opacity-50' : ''}>
-      {failed ? (
+    <div className={loading && !initialLoad ? 'opacity-50' : ''}>
+      {initialLoad ? (
+        <div>
+          {Array.from({ length: SKELETON_ROWS }, (_, i) => (
+            <ListRowSkeleton key={i} />
+          ))}
+        </div>
+      ) : failed ? (
         <EmptyState
           title="Could not load your contacts."
           action={
