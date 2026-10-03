@@ -24,6 +24,7 @@ import { DEGRADATION_CODES, isDegradationCode } from '@/lib/degradation-codes';
 import { sendHtmlEmail } from '@/lib/email';
 import { renderDegradationDigestEmail, type DegradationDigestEntry } from '@/lib/email-templates';
 import { log } from '@/lib/log';
+import { serializeErr } from '@/lib/log-serializers';
 
 export interface DegradationDigestSummary {
   /** Events included in the email this run sent. */
@@ -114,7 +115,7 @@ export async function notifyOperatorOfDegradations(
       );
     }
   }
-  const reason = failure instanceof Error ? failure.message : String(failure);
+  const reason = failure instanceof Error ? serializeErr(failure).message : String(failure);
   const outcome =
     stranded > 0
       ? `${stranded} claim(s) could not be released, so those events are marked told without an email`

@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import type { SessionUser } from '@/lib/types';
 import { log } from '@/lib/log';
+import { ErasureLockSetError } from '@/services/gdpr';
 import { expectUnchanged } from '../../../../tests/api-assertions';
 
 /**
@@ -212,6 +213,26 @@ describe('DELETE /api/account — a transient failure logs at its kind\'s level'
     } finally {
       error.mockRestore();
       warn.mockRestore();
+    }
+  });
+
+  it('logs the stray waitlist entries alongside the error for an ErasureLockSetError', async () => {
+    session = STUDENT_SESSION;
+    const strays = [{ classId: 'class-1', status: 'waiting' as const, createdAt: new Date('2026-10-01T00:00:00Z') }];
+    const failure = new ErasureLockSetError(STUDENT_SESSION.studentId!, strays);
+    deleteStudentAccount.mockRejectedValueOnce(failure);
+
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const res = await del();
+
+      expect(res.status).toBe(503);
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ err: failure, accountId: STUDENT_SESSION.accountId, strays }),
+        'account erasure: waitlist entry written past the erasure gate',
+      );
+    } finally {
+      error.mockRestore();
     }
   });
 });

@@ -137,9 +137,9 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
         // Its own message, so the line can be found without filtering on
         // `err.type`, and at `error` although `erasureFailure` answers it as
         // busy: `ErasureLockSetError`'s docblock (`gdpr.ts`) says why nothing
-        // should reach it. `err` carries the entries it found.
+        // should reach it. `strays` carries the entries it found.
         log.error(
-          { err, accountId: session.accountId },
+          { err, accountId: session.accountId, strays: err.strays },
           'account erasure: waitlist entry written past the erasure gate',
         );
         return erasureFailure(err, { half: 'student', partial: false });
