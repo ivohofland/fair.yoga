@@ -99,11 +99,13 @@ export const DELETE = withErrorHandler(async (
       // `teacher-rooms/[id]`: reaching here means the pre-check did not stop
       // this delete, and a drifted pre-check is otherwise silent because this
       // branch answers identically.
-      // `err` under that key deliberately: `log.ts` asks for it so pino
-      // serializes the stack, the sibling catch at `invitations/[id]:88` does
-      // the same, and WHICH constraint fired is what separates the two causes
-      // this message names — ClassTemplate_ means a template appeared in the
-      // gap, Class_ means a class did. Without it the line poses the question
+      // `err` under that key deliberately: `log.ts` asks for it, since a value
+      // there is serialized whatever it is and is the key pino reads `msg`
+      // from when a call passes no message string. The sibling catch on the
+      // invitation CAS re-read in `invitations/[id]` does the same. WHICH
+      // constraint fired is what separates the two causes this message
+      // names — ClassTemplate_ means a template appeared in the gap, Class_
+      // means a class did. Without it the line poses the question
       // and drops the answer.
       log.warn(
         { err, roomId: id, teacherId: session.teacherId },
