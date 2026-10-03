@@ -179,7 +179,15 @@ error until it is filed. `shouldPush` is the lookup plus the column.
   validates an `https:` endpoint and key lengths; upserts by `endpoint`. An
   endpoint held by another account moves to the caller — whoever holds the
   browser that minted the secret endpoint owns that device now, and refusing
-  would keep the previous account's notifications flowing to it.
+  would keep the previous account's notifications flowing to it. The device
+  reaches that POST by two paths: the push settings page's mount effect
+  (`PushDeviceControl`), and `recordPushDeviceForSignIn` (`push-client.ts`),
+  which every client-side sign-in completion calls — the magic-link verify
+  page, the handoff-code claim and the passkey button — so the new account
+  claims the device without visiting settings (#745). It acts only on a
+  subscription the browser already holds under a granted permission: no
+  prompt, no subscribe, no request otherwise. The claim path awaits it (bounded)
+  because its navigation is a full page load; the others fire and forget.
 - **`DELETE /api/push/subscriptions`** (`requireSession`): deletes only the
   caller's row; a missing or foreign row answers `respondUnchanged`. The
   endpoint is an unguessable capability, so the uniform answer discloses
