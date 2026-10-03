@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
-import type { PushDispatchResult } from './push-dispatch';
+import type { MisconfiguredVapid, PushDispatchResult } from './push-dispatch';
 import {
   createPushDispatchTick,
   createPushHealthState,
@@ -23,38 +23,76 @@ vi.mock('./push-dispatch', async (importOriginal) => ({
   dispatchPushes,
 }));
 
-const NONE = { sent: 0, failed: 0, unsendable: 0 };
+const NONE: { sent: number; failed: number; misconfigured: MisconfiguredVapid | null } = { sent: 0, failed: 0, misconfigured: null };
 const T0 = 1_000_000;
 
+function completed(r: Partial<typeof NONE>) {
+  return { kind: 'completed', result: { ...NONE, ...r } } as const;
+}
+
 function after(state: PushHealthState, results: Array<Partial<typeof NONE>>, startMs = T0): PushHealthState {
-  return results.reduce((s, r, i) => observePushTick(s, { ...NONE, ...r }, startMs + i * 10_000), state);
+  return results.reduce((s, r, i) => observePushTick(s, completed(r), startMs + i * 10_000), state);
 }
 
 describe('observePushTick', () => {
   it.each([
     ['a tick that only failed', 1, { failed: 2 }],
-    ['a tick that only could not send', 1, { unsendable: 3 }],
+    ['a tick under a misconfiguration, claimed rows or not', 1, { misconfigured: 'partial' as const }],
     ['a tick where nothing was attempted', 0, {}],
   ])('%s moves the count to %i', (_label, expected, result) => {
-    expect(observePushTick(createPushHealthState(), { ...NONE, ...result }, T0).failedTicks).toBe(expected);
+    expect(observePushTick(createPushHealthState(), completed(result), T0).failedTicks).toBe(expected);
   });
 
   it('is not a total failure when some devices delivered, so the count resets', () => {
     const failing = after(createPushHealthState(), [{ failed: 1 }, { failed: 1 }]);
     expect(failing.failedTicks).toBe(2);
-    expect(observePushTick(failing, { sent: 1, failed: 4, unsendable: 0 }, T0 + 30_000).failedTicks).toBe(0);
+    expect(observePushTick(failing, completed({ sent: 1, failed: 4 }), T0 + 30_000).failedTicks).toBe(0);
   });
 
   it('leaves the count alone for an idle tick', () => {
     const failing = after(createPushHealthState(), [{ failed: 1 }, { failed: 1 }]);
-    expect(observePushTick(failing, NONE, T0 + 60_000)).toBe(failing);
+    expect(observePushTick(failing, completed({}), T0 + 60_000)).toBe(failing);
   });
 
   it('restarts the count from one when the last failed tick is a quiet window old, not before', () => {
     const failing = after(createPushHealthState(), [{ failed: 1 }, { failed: 1 }]);
     const last = failing.lastFailedAt as number;
-    expect(observePushTick(failing, { ...NONE, failed: 1 }, last + PUSH_ALARM_QUIET_MS - 1).failedTicks).toBe(3);
-    expect(observePushTick(failing, { ...NONE, failed: 1 }, last + PUSH_ALARM_QUIET_MS).failedTicks).toBe(1);
+    expect(observePushTick(failing, completed({ failed: 1 }), last + PUSH_ALARM_QUIET_MS - 1).failedTicks).toBe(3);
+    expect(observePushTick(failing, completed({ failed: 1 }), last + PUSH_ALARM_QUIET_MS).failedTicks).toBe(1);
+  });
+
+  describe('lastCause', () => {
+    it('is null while nothing has failed', () => {
+      expect(createPushHealthState().lastCause).toBeNull();
+      expect(after(createPushHealthState(), [{}, { sent: 1 }]).lastCause).toBeNull();
+    });
+
+    it.each([
+      ['failed sends', { failed: 1 }, { kind: 'send-failed' }],
+      ['a misconfiguration, with its reason', { misconfigured: 'pair-mismatch' as const }, { kind: 'misconfigured', reason: 'pair-mismatch' }],
+    ])('names %s', (_label, result, cause) => {
+      expect(after(createPushHealthState(), [result]).lastCause).toEqual(cause);
+    });
+
+    it('names the fault of a tick that threw', () => {
+      const state = observePushTick(createPushHealthState(), { kind: 'threw', faultName: 'PushSendFault' }, T0);
+      expect(state).toMatchObject({ failedTicks: 1, lastFailedAt: T0, lastCause: { kind: 'fault', name: 'PushSendFault' } });
+    });
+
+    it('prefers the misconfiguration when a tick both failed and was misconfigured', () => {
+      expect(after(createPushHealthState(), [{ failed: 1, misconfigured: 'subject' }]).lastCause).toEqual({ kind: 'misconfigured', reason: 'subject' });
+    });
+
+    it('is replaced by the next failing tick and kept through quiet ones', () => {
+      const faulted = observePushTick(createPushHealthState(), { kind: 'threw', faultName: 'PushSendFault' }, T0);
+      expect(observePushTick(faulted, completed({}), T0 + 10_000).lastCause).toEqual({ kind: 'fault', name: 'PushSendFault' });
+      expect(observePushTick(faulted, completed({ failed: 1 }), T0 + 10_000).lastCause).toEqual({ kind: 'send-failed' });
+    });
+
+    it('is dropped with the count when a delivery resets it', () => {
+      const failing = after(createPushHealthState(), [{ failed: 1 }]);
+      expect(observePushTick(failing, completed({ sent: 1 }), T0 + 10_000).lastCause).toBeNull();
+    });
   });
 
   it('records when the last failed tick was', () => {
@@ -87,7 +125,7 @@ describe('pushAlarm', () => {
 describe('createPushDispatchTick', () => {
   const db = {} as PrismaClient;
   const result = (r: Partial<PushDispatchResult>): PushDispatchResult => ({
-    retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0, unsendable: 0, ...r,
+    retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0, unsendable: 0, misconfigured: null, ...r,
   });
 
   function harness(...results: Array<Partial<PushDispatchResult>>) {
@@ -140,11 +178,58 @@ describe('createPushDispatchTick', () => {
     await expect(tick(db)).resolves.toBeDefined();
   });
 
-  it('counts rows claimed under a misconfiguration the same as failed sends', async () => {
-    const { tick } = harness({ unsendable: 1 }, { unsendable: 1 }, { unsendable: 1 });
+  it('raises the alarm for a misconfiguration on ticks that claim nothing', async () => {
+    const { tick } = harness({ misconfigured: 'partial' }, { misconfigured: 'partial' }, { misconfigured: 'partial' });
     await tick(db);
     await tick(db);
     await expect(tick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
+  });
+
+  it('says why in the error: the misconfiguration and its reason', async () => {
+    const { tick } = harness(...Array.from({ length: PUSH_MAX_FAILED_TICKS }, () => ({ misconfigured: 'pair-mismatch' as const })));
+    let err: unknown;
+    for (let i = 0; i < PUSH_MAX_FAILED_TICKS; i++) err = await tick(db).catch((e: unknown) => e);
+    expect((err as PushDispatchDegradedError).lastCause).toEqual({ kind: 'misconfigured', reason: 'pair-mismatch' });
+    expect((err as PushDispatchDegradedError).message).toContain('VAPID_* misconfigured (pair-mismatch)');
+  });
+
+  it('says why in the error: failed sends', async () => {
+    const { tick } = harness(...Array.from({ length: PUSH_MAX_FAILED_TICKS }, () => ({ failed: 1 })));
+    let err: unknown;
+    for (let i = 0; i < PUSH_MAX_FAILED_TICKS; i++) err = await tick(db).catch((e: unknown) => e);
+    expect((err as PushDispatchDegradedError).message).toContain('(last: sends failed)');
+  });
+
+  it('keeps naming the fault on the quiet ticks after it, where the fault itself has stopped', async () => {
+    class SomeFault extends Error {
+      constructor() {
+        super('boom');
+        this.name = 'SomeFault';
+      }
+    }
+    let n = 0;
+    const tick = createPushDispatchTick(async () => {
+      n += 1;
+      if (n <= PUSH_MAX_FAILED_TICKS) throw new SomeFault();
+      return result({});
+    }, () => T0);
+    for (let i = 0; i < PUSH_MAX_FAILED_TICKS; i++) await tick(db).catch(() => undefined);
+    const err: unknown = await tick(db).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PushDispatchDegradedError);
+    expect((err as PushDispatchDegradedError).message).toContain('(last: tick threw SomeFault)');
+  });
+
+  it('names a non-Error throw without leaking its value', async () => {
+    let n = 0;
+    const tick = createPushDispatchTick(async () => {
+      n += 1;
+      if (n <= PUSH_MAX_FAILED_TICKS) throw 'a secret string';
+      return result({});
+    }, () => T0);
+    for (let i = 0; i < PUSH_MAX_FAILED_TICKS; i++) await tick(db).catch(() => undefined);
+    const err: unknown = await tick(db).catch((e: unknown) => e);
+    expect((err as PushDispatchDegradedError).message).toContain('(last: tick threw a non-Error)');
+    expect((err as PushDispatchDegradedError).message).not.toContain('secret');
   });
 
   it('names how many ticks it has seen fail', async () => {
@@ -203,7 +288,7 @@ describe('createPushDispatchTick', () => {
 describe('runPushDispatchTick', () => {
   it('is the health-wrapped dispatchPushes: it hands dispatchPushes the db and alarms on a failing streak', async () => {
     const db = { identity: 'the singleton run' } as unknown as PrismaClient;
-    dispatchPushes.mockResolvedValue({ retired: 0, claimed: 1, sent: 0, gone: 0, invalid: 0, failed: 1, unsendable: 0 });
+    dispatchPushes.mockResolvedValue({ retired: 0, claimed: 1, sent: 0, gone: 0, invalid: 0, failed: 1, unsendable: 0, misconfigured: null });
     await runPushDispatchTick(db);
     await runPushDispatchTick(db);
     await expect(runPushDispatchTick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
