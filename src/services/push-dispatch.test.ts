@@ -316,7 +316,7 @@ describe('dispatchPushes', () => {
     const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
     const { send, calls } = recordingSender();
     const s = scoped([n.id]);
-    await dispatchPushes(s.db, send);
+    await dispatchPushes(s.db, { send });
     expect(s.rowsRead('Notification')).toBeGreaterThan(0);
     expect(calls.map((c) => c.endpoint).sort()).toEqual([a.endpoint, b.endpoint].sort());
     expect(calls[0]).toMatchObject({ url: `/updates?n=${n.id}`, urgency: 'high' });
@@ -336,7 +336,7 @@ describe('dispatchPushes', () => {
       const n = await tx.notification.create({ data: { recipientType: 'student', recipientId: studentId, type: 'spot_available', title: 'T', body: 'B' } });
       rolledBackId = n.id;
       const { send, calls } = recordingSender();
-      await dispatchPushes(scoped([n.id]).db, send); // a concurrent tick while the writer is uncommitted
+      await dispatchPushes(scoped([n.id]).db, { send }); // a concurrent tick while the writer is uncommitted
       expect(calls).toHaveLength(0);
       throw new Error('roll back');
     })).rejects.toThrow('roll back');
@@ -347,7 +347,7 @@ describe('dispatchPushes', () => {
     await subscribe(studentAccountId, 'stale');
     const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(Date.now() - PUSH_STALE_AFTER_MS - 1000) });
     const { send, calls } = recordingSender();
-    await dispatchPushes(scoped([n.id]).db, send);
+    await dispatchPushes(scoped([n.id]).db, { send });
     expect(calls).toHaveLength(0);
     expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).not.toBeNull();
   });
@@ -357,7 +357,7 @@ describe('dispatchPushes', () => {
     const optional = await notify({ recipientType: 'student', recipientId: studentId, type: 'announcement' });
     const own = await notify({ recipientType: 'student', recipientId: studentId, type: 'booking_confirmed' });
     const { send, calls } = recordingSender();
-    await dispatchPushes(scoped([optional.id, own.id]).db, send);
+    await dispatchPushes(scoped([optional.id, own.id]).db, { send });
     expect(calls).toHaveLength(0);
     for (const id of [optional.id, own.id]) {
       expect((await prisma.notification.findUniqueOrThrow({ where: { id } })).pushHandledAt).not.toBeNull();
@@ -370,7 +370,7 @@ describe('dispatchPushes', () => {
       await subscribe(studentAccountId, 'money');
       const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'payment_request', body: 'Your price is €14.20.' });
       const { send, calls } = recordingSender();
-      await dispatchPushes(scoped([n.id]).db, send);
+      await dispatchPushes(scoped([n.id]).db, { send });
       expect(calls[0]!.body).toBe('Open fair.yoga to see the details.');
     } finally {
       await prisma.student.update({ where: { id: studentId }, data: { pushPayments: false } });
@@ -380,14 +380,14 @@ describe('dispatchPushes', () => {
   it('deletes a subscription the push service reports gone, and does not retry a failure', async () => {
     const gone = await subscribe(teacherAccountId, 'gone');
     const n = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
-    await dispatchPushes(scoped([n.id]).db, recordingSender('gone').send);
+    await dispatchPushes(scoped([n.id]).db, { send: recordingSender('gone').send });
     expect(await prisma.pushSubscription.findUnique({ where: { id: gone.id } })).toBeNull();
 
     const kept = await subscribe(teacherAccountId, 'fail');
     const m = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
     const failing = recordingSender('failed');
-    await dispatchPushes(scoped([m.id]).db, failing.send);
-    await dispatchPushes(scoped([m.id]).db, failing.send);
+    await dispatchPushes(scoped([m.id]).db, { send: failing.send });
+    await dispatchPushes(scoped([m.id]).db, { send: failing.send });
     expect(failing.calls).toHaveLength(1);
     expect(await prisma.pushSubscription.findUnique({ where: { id: kept.id } })).not.toBeNull();
   });
@@ -415,7 +415,7 @@ describe('dispatchPushes', () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 201 }));
     const send: PushSender = (target, payload, urgency) => sendPush(target, payload, vapidKeys, { urgency, fetchImpl });
 
-    const result = await dispatchPushes(scoped([n.id]).db, send);
+    const result = await dispatchPushes(scoped([n.id]).db, { send });
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([good.endpoint]);
     expect(result).toMatchObject({ sent: 1, invalid: 1, failed: 0 });
@@ -432,7 +432,7 @@ describe('dispatchPushes', () => {
       throw fault;
     });
 
-    const rejection: unknown = await dispatchPushes(scoped([n.id]).db, send).catch((err: unknown) => err);
+    const rejection: unknown = await dispatchPushes(scoped([n.id]).db, { send }).catch((err: unknown) => err);
 
     expect(rejection).toBeInstanceOf(PushSendFault);
     const sendFault = rejection as PushSendFault;
@@ -455,7 +455,7 @@ describe('dispatchPushes', () => {
     const n = await notify({ recipientType: 'teacher', recipientId: teacherId, type: 'class_cancelled' });
     const send: PushSender = vi.fn(async () => ({ outcome: 'failed' as const, status: 403, reason: 'invalid JWT' }));
 
-    const result = await dispatchPushes(scoped([n.id]).db, send);
+    const result = await dispatchPushes(scoped([n.id]).db, { send });
 
     expect(result).toMatchObject({ claimed: 1, failed: 1 });
     expect(log.warn).toHaveBeenCalledWith(
@@ -492,7 +492,7 @@ describe('dispatchPushes', () => {
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
     try {
-      const pending = dispatchPushes(s.db, send);
+      const pending = dispatchPushes(s.db, { send });
 
       // The first task's DB write rejects here, deliberately while the
       // claim loop is still parked on `gate` for n2 — a task that settles
@@ -540,7 +540,7 @@ describe('dispatchPushes', () => {
       return { outcome: 'delivered' as const, status: 201 };
     });
 
-    const pending = dispatchPushes(s.db, send);
+    const pending = dispatchPushes(s.db, { send });
     let settled = false;
     pending.then(
       () => {
@@ -571,7 +571,7 @@ describe('dispatchPushes', () => {
       throw new Error('sender bug');
     });
 
-    const rejection: unknown = await dispatchPushes(scoped([stale.id, n.id]).db, send).catch((err: unknown) => err);
+    const rejection: unknown = await dispatchPushes(scoped([stale.id, n.id]).db, { send }).catch((err: unknown) => err);
 
     expect(rejection).toBeInstanceOf(PushSendFault);
     expect(log.info).toHaveBeenCalledWith(
@@ -599,7 +599,7 @@ describe('dispatchPushes', () => {
     const s = scopeSweep(hooked as unknown as PrismaClient, { Notification: { id: { in: [stale.id, n.id] } } });
     const { send } = recordingSender();
 
-    await expect(dispatchPushes(s.db, send)).rejects.toBe(crashError);
+    await expect(dispatchPushes(s.db, { send })).rejects.toBe(crashError);
 
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({ retired: 1, claimed: 0, faulted: true }),
@@ -640,7 +640,7 @@ describe('dispatchPushes', () => {
   it('does not mark a clean tick\'s summary as faulted', async () => {
     const stale = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(Date.now() - PUSH_STALE_AFTER_MS - 60_000) });
 
-    await dispatchPushes(scoped([stale.id]).db, recordingSender().send);
+    await dispatchPushes(scoped([stale.id]).db, { send: recordingSender().send });
 
     const summaries = vi.mocked(log.info).mock.calls.filter(([, msg]) => msg === 'push dispatch tick');
     expect(summaries).toHaveLength(1);
@@ -659,7 +659,7 @@ describe('dispatchPushes', () => {
       throw fault;
     });
 
-    await expect(dispatchPushes(s.db, send)).rejects.toBe(claimError);
+    await expect(dispatchPushes(s.db, { send })).rejects.toBe(claimError);
 
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({ err: fault, notificationId: n1.id, subscriptionId: sub1.id }),
@@ -676,7 +676,7 @@ describe('dispatchPushes', () => {
     // also read it, which is what makes both ticks reach the claim with the
     // row still unclaimed — the exact race the CAS exists for.
     const s = scopedRacing([n.id]);
-    await Promise.all([dispatchPushes(s.db, send), dispatchPushes(s.db, send)]);
+    await Promise.all([dispatchPushes(s.db, { send }), dispatchPushes(s.db, { send })]);
     expect(calls.map((c) => c.endpoint)).toEqual([sub.endpoint]);
   });
 
@@ -690,7 +690,7 @@ describe('dispatchPushes', () => {
       const asStudent = await notify({ recipientType: 'student', recipientId: dualStudentId, type: 'spot_available' });
       const asTeacher = await notify({ recipientType: 'teacher', recipientId: dualTeacherId, type: 'class_cancelled' });
       const { send, calls } = recordingSender();
-      await dispatchPushes(scoped([asStudent.id, asTeacher.id]).db, send);
+      await dispatchPushes(scoped([asStudent.id, asTeacher.id]).db, { send });
       expect(calls.map((c) => c.url)).toEqual([`/updates?n=${asStudent.id}`]);
       expect(new Set(calls.map((c) => c.endpoint))).toEqual(new Set([device.endpoint]));
     } finally {
@@ -704,7 +704,7 @@ describe('dispatchPushes', () => {
     await subscribe(erasedAccountId, 'erased');
     const erased = await notify({ recipientType: 'student', recipientId: erasedStudentId, type: 'spot_available' });
     const { send, calls } = recordingSender();
-    await expect(dispatchPushes(scoped([unclaimed.id, missing.id, erased.id]).db, send)).resolves.toBeDefined();
+    await expect(dispatchPushes(scoped([unclaimed.id, missing.id, erased.id]).db, { send })).resolves.toBeDefined();
     expect(calls).toHaveLength(0);
     for (const id of [unclaimed.id, missing.id, erased.id]) {
       expect((await prisma.notification.findUniqueOrThrow({ where: { id } })).pushHandledAt).not.toBeNull();
@@ -820,7 +820,7 @@ describe('dispatchPushes', () => {
       misconfigurations.partial();
       const injected = await freshModule();
       const { send } = recordingSender();
-      expect(await injected.freshDispatch(scoped([]).db, send)).toMatchObject({ misconfigured: null });
+      expect(await injected.freshDispatch(scoped([]).db, { send })).toMatchObject({ misconfigured: null });
     });
 
     it('counts the rows it claimed as unsendable for a misconfiguration, never for an unset environment', async () => {
@@ -939,7 +939,7 @@ describe('dispatchPushes', () => {
         },
       });
       const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
-      const result = await dispatchPushes(scoped([n.id]).db, null);
+      const result = await dispatchPushes(scoped([n.id]).db, { send: null });
       expect(result).toMatchObject({ claimed: 1, sent: 0, unsendable: 0 });
       expect(fetchSpy).not.toHaveBeenCalled();
       expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).not.toBeNull();
@@ -961,12 +961,24 @@ describe('dispatchPushes', () => {
     const fresh = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(now.getTime() - 14 * 60_000) });
     const { send, calls } = recordingSender();
 
-    const result = await dispatchPushes(scoped([stale.id, fresh.id]).db, send, now);
+    const result = await dispatchPushes(scoped([stale.id, fresh.id]).db, { send, clock: () => now.getTime() });
 
     expect(result).toMatchObject({ retired: 1, claimed: 1, sent: 1 });
     expect(calls.map((c) => c.url)).toEqual([`/updates?n=${fresh.id}`]);
     expect(calls.map((c) => c.endpoint)).toEqual([sub.endpoint]);
     expect((await prisma.notification.findUniqueOrThrow({ where: { id: stale.id } })).pushHandledAt).not.toBeNull();
+  });
+
+  it('stamps the claim and the subscription with the clock it was given', async () => {
+    const sub = await subscribe(studentAccountId, 'one-time-source');
+    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const at = new Date(Date.now() + 60_000);
+    const { send } = recordingSender();
+
+    await dispatchPushes(scoped([n.id]).db, { send, clock: () => at.getTime() });
+
+    expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).toEqual(at);
+    expect((await prisma.pushSubscription.findUniqueOrThrow({ where: { id: sub.id } })).lastUsedAt).toEqual(at);
   });
 
   it('claims the oldest candidates first when there are more than one batch', async () => {
@@ -980,7 +992,7 @@ describe('dispatchPushes', () => {
       ids.unshift(n.id);
     }
 
-    const result = await dispatchPushes(scoped(ids).db, null, now);
+    const result = await dispatchPushes(scoped(ids).db, { send: null, clock: () => now.getTime() });
 
     expect(result.claimed).toBe(PUSH_BATCH);
     const rows = await prisma.notification.findMany({ where: { id: { in: ids } }, select: { id: true, pushHandledAt: true } });
@@ -1010,13 +1022,13 @@ describe('dispatchPushes', () => {
       const ids = await seedBatch(20);
       // Each send "takes" one send timeout on a clock the test owns, the way
       // a push service that never answers does.
-      let fakeNow = 1_000_000;
+      let fakeNow = Date.now();
       const send: PushSender = vi.fn(async () => {
         fakeNow += DEFAULT_TIMEOUT_MS;
         return { outcome: 'failed' as const, status: null };
       });
 
-      const result = await dispatchPushes(scoped(ids).db, send, new Date(), () => fakeNow);
+      const result = await dispatchPushes(scoped(ids).db, { send, clock: () => fakeNow });
 
       // Every worker claims once before any send can move the clock, and a
       // worker finishing after the clock has run one deadline's worth of
@@ -1033,16 +1045,16 @@ describe('dispatchPushes', () => {
 
     it('serves the deferred rows on the next tick', async () => {
       const ids = await seedBatch(12);
-      let fakeNow = 1_000_000;
+      let fakeNow = Date.now();
       const slow: PushSender = vi.fn(async () => {
         fakeNow += DEFAULT_TIMEOUT_MS;
         return { outcome: 'failed' as const, status: null };
       });
-      const first = await dispatchPushes(scoped(ids).db, slow, new Date(), () => fakeNow);
+      const first = await dispatchPushes(scoped(ids).db, { send: slow, clock: () => fakeNow });
       expect(first.claimed).toBeLessThan(12);
 
       const { send, calls } = recordingSender();
-      const second = await dispatchPushes(scoped(ids).db, send);
+      const second = await dispatchPushes(scoped(ids).db, { send });
 
       expect(second.claimed).toBe(12 - first.claimed);
       expect(calls).toHaveLength(12 - first.claimed);
@@ -1051,10 +1063,11 @@ describe('dispatchPushes', () => {
     it('claims nothing when the clock is exactly at the deadline', async () => {
       const ids = await seedBatch(3);
       let reads = 0;
-      const clock = () => (reads++ === 0 ? 0 : PUSH_CLAIM_DEADLINE_MS);
+      const start = Date.now();
+      const clock = () => (reads++ === 0 ? start : start + PUSH_CLAIM_DEADLINE_MS);
       const { send } = recordingSender();
 
-      const result = await dispatchPushes(scoped(ids).db, send, new Date(), clock);
+      const result = await dispatchPushes(scoped(ids).db, { send, clock });
 
       expect(result.claimed).toBe(0);
     });
@@ -1062,10 +1075,11 @@ describe('dispatchPushes', () => {
     it('claims while the clock is one millisecond short of the deadline', async () => {
       const ids = await seedBatch(3);
       let reads = 0;
-      const clock = () => (reads++ === 0 ? 0 : PUSH_CLAIM_DEADLINE_MS - 1);
+      const start = Date.now();
+      const clock = () => (reads++ === 0 ? start : start + PUSH_CLAIM_DEADLINE_MS - 1);
       const { send } = recordingSender();
 
-      const result = await dispatchPushes(scoped(ids).db, send, new Date(), clock);
+      const result = await dispatchPushes(scoped(ids).db, { send, clock });
 
       expect(result.claimed).toBe(3);
     });
@@ -1093,7 +1107,7 @@ describe('dispatchPushes', () => {
       return { outcome: 'delivered' as const, status: 201 };
     });
 
-    const pending = dispatchPushes(scoped(ids).db, send);
+    const pending = dispatchPushes(scoped(ids).db, { send });
     await four.promise;
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(send).toHaveBeenCalledTimes(4);
@@ -1133,7 +1147,7 @@ describe('dispatchPushes', () => {
     const s = scopeSweep(hooked as unknown as PrismaClient, { Notification: { id: { in: ids } } });
     const { send } = recordingSender();
 
-    await expect(dispatchPushes(s.db, send)).rejects.toBe(crashError);
+    await expect(dispatchPushes(s.db, { send })).rejects.toBe(crashError);
 
     // Two of the six never reached a send; the four others were all sent,
     // including those a crashed worker would otherwise have left to its turn.
@@ -1157,7 +1171,7 @@ describe('dispatchPushes', () => {
       return { outcome: 'delivered' as const, status: 201 };
     });
 
-    const result = await dispatchPushes(scoped([n.id]).db, send);
+    const result = await dispatchPushes(scoped([n.id]).db, { send });
 
     expect(result.sent).toBe(3);
   });
@@ -1181,7 +1195,7 @@ describe('dispatchPushes', () => {
     const n = await notify({ recipientType: 'teacher', recipientId: teacher.id, type: 'class_cancelled' });
     const { send, calls } = recordingSender();
 
-    const result = await dispatchPushes(scoped([n.id]).db, send);
+    const result = await dispatchPushes(scoped([n.id]).db, { send });
 
     expect(result.claimed).toBe(1);
     expect(calls).toHaveLength(0);

@@ -73,6 +73,13 @@ function reportUnconfigured(reason: VapidConfigProblem): void {
   }
 }
 
+export interface PushDispatchOptions {
+  /** Omitted: the sender `VAPID_*` configures. `null`: no sender, so every claimed row is retired unsent. */
+  send?: PushSender | null;
+  /** Epoch milliseconds. The tick's one time source: the claim deadline, the staleness cutoff and every timestamp it writes derive from its first read. */
+  clock?: () => number;
+}
+
 /**
  * The push layer's sweep. Reads only committed rows — a notification written
  * inside a transaction that rolls back is never seen — and claims each with a
@@ -82,13 +89,11 @@ function reportUnconfigured(reason: VapidConfigProblem): void {
  */
 export async function dispatchPushes(
   db: PrismaClient,
-  send: PushSender | null | undefined = undefined,
-  now: Date = new Date(),
-  clock: () => number = Date.now,
+  { send, clock = Date.now }: PushDispatchOptions = {},
 ): Promise<Readonly<PushDispatchResult>> {
   const result: PushDispatchResult = { retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0, unsendable: 0, misconfigured: null };
   try {
-    await runPushDispatch(db, send, now, clock, result);
+    await runPushDispatch(db, send, new Date(clock()), clock, result);
   } catch (err: unknown) {
     // A tick that throws may have retired rows and sent some; its counts are
     // the only tick-level record of that.
@@ -109,7 +114,7 @@ async function runPushDispatch(
   clock: () => number,
   result: PushDispatchResult,
 ): Promise<void> {
-  const claimDeadline = clock() + PUSH_CLAIM_DEADLINE_MS;
+  const claimDeadline = now.getTime() + PUSH_CLAIM_DEADLINE_MS;
   const { sender, misconfigured } = resolveSender(send);
   result.misconfigured = misconfigured;
   const cutoff = new Date(now.getTime() - PUSH_STALE_AFTER_MS);
