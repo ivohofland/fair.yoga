@@ -11,11 +11,13 @@
  * level of the first argument (any key), and on an error-like value — an
  * object with a string `message` — under `err`. pino copies `err.message`
  * into `msg` after `logMethod` and before any serializer, so rewriting
- * there is what keeps the `msg` fallback redacted. A value that cannot be
- * serialized, or a key that throws when read, is replaced by
- * `UNSERIALIZABLE`; a log call does not throw. What this does not cover is
- * listed in `docs/technical-architecture.md` (What's Intentionally Left
- * Out).
+ * there is what keeps the `msg` fallback redacted. The hook itself never
+ * throws: a top-level value that cannot be serialized, or a key that throws
+ * when read, is replaced by `UNSERIALIZABLE`. A value nested deeper, or a
+ * printf-style format argument (`%s`/`%d`/`%o`), is outside the hook's reach
+ * and handled by pino itself, which can still write its own "unable to
+ * serialize" marker or throw. What this does not cover is listed in
+ * `docs/technical-architecture.md` (What's Intentionally Left Out).
  *
  * This module imports `server-only`, so `next build` fails when any
  * `'use client'` module value-imports it, directly or through any chain
