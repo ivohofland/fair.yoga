@@ -110,17 +110,20 @@ its streaks): `{ failedTicks: number; lastFailedAt: number | null }`.
   if `pushAlarm`, throw `PushDispatchDegradedError`. It runs on **every** tick, idle
   ones included, which is what makes the alarm clear on its own: 15 minutes after the
   last failed send the next idle tick returns normally and `makeTick` nulls the error.
-  The **count** survives that silence, so one failed send an hour later re-raises the
-  alarm at once instead of starting from 1. Only a delivery resets the count. A restart
-  resets everything (in-memory, like the reconciliation streaks).
+  The count restarts at one once its last failed tick is a quiet window old, so one
+  failed send an hour later starts a new streak instead of re-raising the alarm. A
+  delivery resets the count, even from a tick that also failed elsewhere: the alarm says
+  push delivers nothing. A tick whose dispatch throws counts as a failed tick and
+  rethrows its own fault. A restart resets everything (in-memory, like the
+  reconciliation streaks).
 
 **The bound, stated:**
 
 | Traffic | `/api/health` degraded after |
 |---|---|
-| continuous, sends fail fast (401/403, misconfiguration) | the 3rd failed tick ≈ 30 s |
+| continuous, sends fail fast (401/403, misconfiguration) | the 3rd failed tick ≈ 20 s after the first begins |
 | continuous, every send times out | the 3rd failed tick: a 15 s tick refuses the next 10 s tick, so ticks start 20 s apart and the 3rd ends ≤ 2 × 20 s + 15 s = 55 s after the first begins |
-| sparse | the 3rd failed tick however far apart: with no traffic nothing can be observed, and the only alternative is an active probe, which this issue does not build |
+| sparse | the 3rd failed tick, each within a quiet window of the last: with no traffic nothing can be observed, and the only alternative is an active probe, which this issue does not build |
 
 and it clears 15 minutes after the last failed send, or at the next delivery.
 
@@ -134,8 +137,8 @@ this issue does not do.
 
 - `observePushTick` / `pushAlarm`: table over `sent`, `failed`, `gone`, `invalid`,
   `unsendable` combinations; the N−1 → N edge; the exact quiet-window edge
-  (`< PUSH_ALARM_QUIET_MS` vs `<=`); idle neutral; a delivery resets; the count survives
-  expiry and re-raises.
+  (`< PUSH_ALARM_QUIET_MS` vs `<=`); idle neutral; a delivery resets; the count restarts
+  at one after expiry; a thrown dispatch counts as a failed tick.
 - `dispatchPushes`: with a stub sender that never settles within the deadline (fake
   clock) and 20 notifications × 10 devices, a tick claims only what the workers reached
   and leaves the rest `pushHandledAt: null`; the next tick picks them up; no claimed row

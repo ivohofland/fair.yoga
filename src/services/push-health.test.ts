@@ -9,11 +9,18 @@ import {
   PushDispatchDegradedError,
   PUSH_ALARM_QUIET_MS,
   PUSH_MAX_FAILED_TICKS,
+  runPushDispatchTick,
   type PushHealthState,
 } from './push-health';
 
 vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+const dispatchPushes = vi.hoisted(() => vi.fn());
+vi.mock('./push-dispatch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./push-dispatch')>()),
+  dispatchPushes,
 }));
 
 const NONE = { sent: 0, failed: 0, unsendable: 0 };
@@ -41,6 +48,13 @@ describe('observePushTick', () => {
   it('leaves the count alone for an idle tick', () => {
     const failing = after(createPushHealthState(), [{ failed: 1 }, { failed: 1 }]);
     expect(observePushTick(failing, NONE, T0 + 60_000)).toBe(failing);
+  });
+
+  it('restarts the count from one when the last failed tick is a quiet window old, not before', () => {
+    const failing = after(createPushHealthState(), [{ failed: 1 }, { failed: 1 }]);
+    const last = failing.lastFailedAt as number;
+    expect(observePushTick(failing, { ...NONE, failed: 1 }, last + PUSH_ALARM_QUIET_MS - 1).failedTicks).toBe(3);
+    expect(observePushTick(failing, { ...NONE, failed: 1 }, last + PUSH_ALARM_QUIET_MS).failedTicks).toBe(1);
   });
 
   it('records when the last failed tick was', () => {
@@ -105,12 +119,14 @@ describe('createPushDispatchTick', () => {
     await expect(tick(db)).resolves.toBeDefined();
   });
 
-  it('re-raises on the very next failed tick after expiry, not from one', async () => {
-    const { tick, advance } = harness({ failed: 1 }, { failed: 1 }, { failed: 1 }, {}, { failed: 1 });
+  it('starts a new streak from one after the alarm has expired', async () => {
+    const { tick, advance } = harness({ failed: 1 }, { failed: 1 }, { failed: 1 }, {}, { failed: 1 }, { failed: 1 }, { failed: 1 });
     await tick(db);
     await tick(db);
     await expect(tick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
     advance(PUSH_ALARM_QUIET_MS);
+    await expect(tick(db)).resolves.toBeDefined();
+    await expect(tick(db)).resolves.toBeDefined();
     await expect(tick(db)).resolves.toBeDefined();
     await expect(tick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
   });
@@ -139,7 +155,15 @@ describe('createPushDispatchTick', () => {
     expect((err as PushDispatchDegradedError).failedTicks).toBe(PUSH_MAX_FAILED_TICKS);
   });
 
-  it('a tick whose dispatch throws leaves the streak where it was, and the throw reaches the caller', async () => {
+  it('names the whole streak, not just the threshold', async () => {
+    const { tick } = harness(...Array.from({ length: PUSH_MAX_FAILED_TICKS + 2 }, () => ({ failed: 1 })));
+    let err: unknown;
+    for (let i = 0; i < PUSH_MAX_FAILED_TICKS + 2; i++) err = await tick(db).catch((e: unknown) => e);
+    expect((err as PushDispatchDegradedError).failedTicks).toBe(PUSH_MAX_FAILED_TICKS + 2);
+    expect((err as PushDispatchDegradedError).message).not.toMatch(/consecutive/);
+  });
+
+  it('counts a tick whose dispatch throws as a failed tick, and the fault itself reaches the caller', async () => {
     const fault = new Error('send fault');
     const outcomes: Array<PushDispatchResult | Error> = [result({ failed: 1 }), fault, result({ failed: 1 })];
     const tick = createPushDispatchTick(async () => {
@@ -149,9 +173,22 @@ describe('createPushDispatchTick', () => {
       return next;
     }, () => T0);
     await tick(db);
+    // The second failed tick is the fault; the caller still sees the fault.
     await expect(tick(db)).rejects.toBe(fault);
-    // Counted, the thrown tick would make this the 3rd failed tick.
-    await expect(tick(db)).resolves.toBeDefined();
+    // Uncounted, this would be only the second failed tick.
+    await expect(tick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
+  });
+
+  it('keeps the alarm standing on the quiet ticks after repeated faults, where the fault itself stops', async () => {
+    const fault = new Error('send fault');
+    let n = 0;
+    const tick = createPushDispatchTick(async () => {
+      n += 1;
+      if (n <= PUSH_MAX_FAILED_TICKS) throw fault;
+      return result({});
+    }, () => T0);
+    for (let i = 0; i < PUSH_MAX_FAILED_TICKS; i++) await expect(tick(db)).rejects.toBe(fault);
+    await expect(tick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
   });
 
   it('keeps each tick function\'s streak to itself', async () => {
@@ -160,5 +197,17 @@ describe('createPushDispatchTick', () => {
     await a.tick(db);
     await a.tick(db);
     await expect(b.tick(db)).resolves.toBeDefined();
+  });
+});
+
+describe('runPushDispatchTick', () => {
+  it('is the health-wrapped dispatchPushes: it hands dispatchPushes the db and alarms on a failing streak', async () => {
+    const db = {} as PrismaClient;
+    dispatchPushes.mockResolvedValue({ retired: 0, claimed: 1, sent: 0, gone: 0, invalid: 0, failed: 1, unsendable: 0 });
+    await runPushDispatchTick(db);
+    await runPushDispatchTick(db);
+    await expect(runPushDispatchTick(db)).rejects.toBeInstanceOf(PushDispatchDegradedError);
+    expect(dispatchPushes).toHaveBeenCalledTimes(PUSH_MAX_FAILED_TICKS);
+    expect(dispatchPushes).toHaveBeenCalledWith(db);
   });
 });

@@ -146,8 +146,8 @@ describe('buildJobs', () => {
    * The push job is not given a stall budget of its own: its tick is bounded
    * instead. A tick ends within one send timeout of the claim deadline, so
    * the longest it can run must leave the next tick refused at most once.
-   * Retuning the deadline, the timeout or the interval past this line would
-   * bring back the false stall (#743) with nothing else failing.
+   * A tick longer than the stall line reads as stalled, so retuning the
+   * deadline, the timeout or the interval past it must fail here.
    */
   it('keeps a push tick shorter than the scheduler\'s stall line', () => {
     const job = buildJobs(buildStubs(() => async () => {})).find((j) => j.name === 'push-dispatch');
@@ -419,7 +419,7 @@ describe('scheduleJobs', () => {
     return { jobs, ran, dbs };
   }
 
-  it("registers each job's first run 15 seconds after registration and its repeat at its own interval", async () => {
+  it("registers a 15 second boot run for each job whose interval exceeds it, and every job's repeat at its own interval", async () => {
     const { jobs, ran, dbs } = tracedJobs();
     const { timers, registrations } = recordingTimers();
 
@@ -557,16 +557,11 @@ describe('scheduleJobs', () => {
     expect(health['test-job']?.skippedTicks).toBe(0);
   });
 
-  /**
-   * The default argument is the one line of wiring the recording tests above
-   * cannot see; run it against faked globals so `setTimeout` and `setInterval`
-   * cannot be swapped or dropped unnoticed.
-   */
   it.each([
     { intervalMs: 10 * 1000, oneOff: false },
     { intervalMs: 15 * 1000, oneOff: false },
     { intervalMs: 15 * 1000 + 1, oneOff: true },
-  ])('registers a boot run for a $intervalMs ms job: $oneOff', ({ intervalMs, oneOff }) => {
+  ])('registers a boot run only past the boot delay: $intervalMs ms job, boot run = $oneOff', ({ intervalMs, oneOff }) => {
     const { timers, registrations } = recordingTimers();
     const job: Job = { name: 'boundary', intervalMs, run: async () => {} };
 
@@ -578,6 +573,11 @@ describe('scheduleJobs', () => {
     ]);
   });
 
+  /**
+   * The default argument is the one line of wiring the recording tests above
+   * cannot see; run it against faked globals so `setTimeout` and `setInterval`
+   * cannot be swapped or dropped unnoticed.
+   */
   it('defaults to the global timers: once after 15 seconds, then every interval', async () => {
     vi.useFakeTimers();
     onTestFinished(() => {

@@ -6,6 +6,7 @@ import { DEFAULT_TIMEOUT_MS, PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send'
 import { generateVapidKeyPair } from '@/lib/push/test-support';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 import { log } from '@/lib/log';
+import type { VapidConfigProblem } from '@/lib/push/config';
 
 vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -669,6 +670,47 @@ describe('dispatchPushes', () => {
       expect(freshLog.error).not.toHaveBeenCalled();
     });
 
+    // `invalid-scalar` needs a key the curve library rejects, which no plain
+    // string builds; every other reason is a misconfiguration with a cheap recipe.
+    const misconfigurations = {
+      partial: () => {
+        vi.stubEnv('VAPID_PUBLIC_KEY', generateVapidKeyPair().publicKey);
+        vi.stubEnv('VAPID_PRIVATE_KEY', undefined);
+        vi.stubEnv('VAPID_SUBJECT', undefined);
+      },
+      'public-length': () => {
+        vi.stubEnv('VAPID_PUBLIC_KEY', Buffer.alloc(10, 1).toString('base64url'));
+        vi.stubEnv('VAPID_PRIVATE_KEY', generateVapidKeyPair().privateKey);
+        vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+      },
+      'private-length': () => {
+        vi.stubEnv('VAPID_PUBLIC_KEY', generateVapidKeyPair().publicKey);
+        vi.stubEnv('VAPID_PRIVATE_KEY', Buffer.alloc(33, 1).toString('base64url'));
+        vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+      },
+      subject: () => {
+        const pair = generateVapidKeyPair();
+        vi.stubEnv('VAPID_PUBLIC_KEY', pair.publicKey);
+        vi.stubEnv('VAPID_PRIVATE_KEY', pair.privateKey);
+        vi.stubEnv('VAPID_SUBJECT', 'ops@fair.yoga');
+      },
+      'pair-mismatch': () => {
+        vi.stubEnv('VAPID_PUBLIC_KEY', generateVapidKeyPair().publicKey);
+        vi.stubEnv('VAPID_PRIVATE_KEY', generateVapidKeyPair().privateKey);
+        vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+      },
+    } satisfies Record<Exclude<VapidConfigProblem, 'unset' | 'invalid-scalar'>, () => void>;
+
+    it.each(Object.entries(misconfigurations))('counts a row as unsendable for the %s misconfiguration', async (_reason, configure) => {
+      const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+      configure();
+      const { freshDispatch } = await freshModule();
+
+      const result = await freshDispatch(scoped([n.id]).db);
+
+      expect(result).toMatchObject({ claimed: 1, unsendable: 1, sent: 0 });
+    });
+
     it('counts the rows it claimed as unsendable for a misconfiguration, never for an unset environment', async () => {
       const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
       const n2 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
@@ -680,6 +722,10 @@ describe('dispatchPushes', () => {
       const bad = await misconfigured.freshDispatch(scoped([n1.id, n2.id]).db);
 
       expect(bad).toMatchObject({ claimed: 2, unsendable: 2, sent: 0 });
+      expect(misconfigured.freshLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ unsendable: 2 }),
+        expect.any(String),
+      );
 
       const n3 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
       vi.stubEnv('VAPID_PUBLIC_KEY', undefined);
@@ -911,6 +957,76 @@ describe('dispatchPushes', () => {
 
       expect(result.claimed).toBe(3);
     });
+  });
+
+  it('works four notifications at once and no more', async () => {
+    await subscribe(studentAccountId, 'workers');
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      ids.push((await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' })).id);
+    }
+    // Four sends park here. A fifth worker would have claimed and started the
+    // fifth notification by the time the fourth is in flight, so the count is
+    // read once the claim queries have had a moment to land.
+    const four = deferred<void>();
+    const release = deferred<void>();
+    let inFlight = 0;
+    let peak = 0;
+    const send: PushSender = vi.fn(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      if (inFlight === 4) four.resolve();
+      await release.promise;
+      inFlight -= 1;
+      return { outcome: 'delivered' as const, status: 201 };
+    });
+
+    const pending = dispatchPushes(scoped(ids).db, send);
+    await four.promise;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(send).toHaveBeenCalledTimes(4);
+    release.resolve();
+    const result = await pending;
+
+    expect(result.sent).toBe(5);
+    expect(peak).toBe(4);
+  });
+
+  it('keeps the other workers claiming after one worker crashes, and logs the crashes after the first', async () => {
+    await subscribe(studentAccountId, 'survivors');
+    const ids: string[] = [];
+    const base = Date.now() - 60_000;
+    for (let i = 0; i < 6; i++) {
+      const n = await notify({
+        recipientType: 'student',
+        recipientId: studentId,
+        type: 'spot_available',
+        createdAt: new Date(base + i * 1000),
+      });
+      ids.push(n.id);
+    }
+    const crashError = new Error('claim failed');
+    const crashing = new Set([ids[1]!, ids[2]!]);
+    const hooked = prisma.$extends({
+      query: {
+        notification: {
+          async updateMany({ args, query }) {
+            const where = args.where as { id?: string } | undefined;
+            if (where?.id !== undefined && crashing.has(where.id)) throw crashError;
+            return query(args);
+          },
+        },
+      },
+    });
+    const s = scopeSweep(hooked as unknown as PrismaClient, { Notification: { id: { in: ids } } });
+    const { send } = recordingSender();
+
+    await expect(dispatchPushes(s.db, send)).rejects.toBe(crashError);
+
+    // Two of the six never reached a send; the four others were all sent,
+    // including those a crashed worker would otherwise have left to its turn.
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(log.error).toHaveBeenCalledWith({ err: crashError }, 'push dispatch worker failed');
   });
 
   it('sends to a recipient\'s devices in parallel, so one slow device does not hold the others', async () => {
