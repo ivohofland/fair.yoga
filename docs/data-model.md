@@ -63,7 +63,10 @@ next time that person opens the notification settings, which re-syncs a
 subscription it finds on load (`PushDeviceControl`). That re-sync writes
 nothing while the row exists unchanged (`savePushSubscription` answers
 `'unchanged'`), so a visit does not postpone the reaper: only a successful
-send moves `last_used_at`. Between a reap and that next visit the device
+send moves `last_used_at`. Nor does a save that moves the endpoint to another
+account or replaces its keys: it keeps both timestamps, so a long-idle row
+re-recorded that way can be reaped by the next daily run and recorded again on
+the visit after. Between a reap and that next visit the device
 receives no push; email and the inbox are unaffected. A row exactly on the
 cutoff is kept.
 

@@ -109,8 +109,8 @@ runs several sweeps and its **status is the verdict**: 200 only when every sweep
 ran, 503 when every failure was a lost lock race (retry, and back off), 500
 otherwise (a permanent fault — retrying will not clear it). The body carries
 every outcome either way, so `data.auth.ok`, `data.waitlistRetention.ok`,
-`data.notificationRetention.ok`, `data.timezoneAudit.ok`, and
-`data.degradationDigest.ok` say which one failed. Without `--fail`, `curl`
+`data.notificationRetention.ok`, `data.pushSubscriptionRetention.ok`,
+`data.timezoneAudit.ok`, and `data.degradationDigest.ok` say which one failed. Without `--fail`, `curl`
 exits 0 on all of those, so a script or a manual call that skips the flag
 reports success for a run in which a sweep did not run.
 
