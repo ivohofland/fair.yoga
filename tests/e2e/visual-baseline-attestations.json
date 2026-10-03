@@ -12,11 +12,13 @@
   "schedule": {
     "sourceSha256": "fcc83773eaaaa04d9ec2442c18bc0dc1e1a45d33ad1f44e9784402d3bec84f84",
     "baselineSha256": "89c0bb9171896fb2bd9911bbc7ba27ae90e412c35738711448550de0c9631da6",
-    "verifiedAt": "2026-10-03"
+    "verifiedAt": "2026-10-03",
+    "note": "the install card renders only on the client, for a browser that can install"
   },
   "settings": {
     "sourceSha256": "8148c26282f4c4038b67935abc2ad524888a81041e4324a7c72d29f81590f33d",
     "baselineSha256": "981b53c74746867fea5f1459a0e697100a93a23cdd3b7eb717712f39b65f9f0c",
-    "verifiedAt": "2026-10-03"
+    "verifiedAt": "2026-10-03",
+    "note": "the install row renders only on the client, for a browser that can install"
   }
 }
