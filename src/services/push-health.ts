@@ -52,10 +52,10 @@ export class PushDispatchDegradedError extends Error {
 }
 
 /**
- * The job's `run`. The alarm check happens on every tick, idle ones included,
- * because `makeTick` clears the job's error on any tick that does not throw:
- * throwing while the alarm stands is what keeps health red, and not throwing
- * once it has aged out is what clears it.
+ * The job's `run`. The scheduler reads a job's health from whether its run
+ * throws (docs/technical-architecture.md, Cron Jobs), so the alarm is checked
+ * on every tick, idle ones included: a standing alarm throws, an expired one
+ * returns normally.
  */
 export function createPushDispatchTick(
   dispatch: (db: PrismaClient) => Promise<PushDispatchResult>,

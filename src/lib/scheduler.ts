@@ -424,11 +424,9 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       run: (db) => runWaitlistReconciliationTick(db),
     },
     {
-      // Push is a best-effort layer ahead of email; this interval is its
-      // latency. The tick is bounded below the stall line by its claim
-      // deadline rather than by a threshold of its own, and an all-failed
-      // streak surfaces as a thrown `PushDispatchDegradedError`
-      // (`docs/technical-architecture.md`, Cron Jobs).
+      // This interval is the push tick's latency. The stall line its claim
+      // deadline is pinned under is asserted in `scheduler.test.ts` and
+      // derived in `docs/technical-architecture.md` (Cron Jobs).
       name: 'push-dispatch',
       intervalMs: 10 * 1000,
       run: (db) => runPushDispatchTick(db),

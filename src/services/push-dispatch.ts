@@ -81,6 +81,7 @@ export async function dispatchPushes(
   now: Date = new Date(),
   clock: () => number = Date.now,
 ): Promise<PushDispatchResult> {
+  const claimDeadline = clock() + PUSH_CLAIM_DEADLINE_MS;
   const { sender, misconfigured } = resolveSender(send);
   const cutoff = new Date(now.getTime() - PUSH_STALE_AFTER_MS);
   const result: PushDispatchResult = { retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0, unsendable: 0 };
@@ -98,7 +99,6 @@ export async function dispatchPushes(
     select: { id: true, recipientType: true, recipientId: true, type: true, title: true, body: true },
   });
 
-  const claimDeadline = clock() + PUSH_CLAIM_DEADLINE_MS;
   const failures: TaskFailure[] = [];
   let next = 0;
 
@@ -145,8 +145,8 @@ export async function dispatchPushes(
 
   // A worker claims a notification only when it is about to send it, so a
   // row nobody reached before the deadline is still unclaimed and the next
-  // tick takes it. A claimed row is never given back: its sends always run
-  // to an outcome.
+  // tick takes it. A claimed row is never given back; it stays stamped whether
+  // its sends run or a read after the claim throws and rejects the tick.
   async function worker(): Promise<void> {
     for (;;) {
       if (clock() >= claimDeadline) return;
@@ -176,7 +176,8 @@ export async function dispatchPushes(
   }
 
   // Every worker is awaited whether another threw or not — a send must never
-  // outlive its tick on either path.
+  // outlive its tick on either path. After one worker's own failure the others
+  // keep claiming until the deadline or the end of the batch.
   const settled = await Promise.allSettled(Array.from({ length: PUSH_WORKERS }, () => worker()));
   const crashed = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
   const [firstCrash, ...otherCrashes] = crashed;
