@@ -1,18 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-const APP = path.resolve(__dirname, '../app');
+const SRC = path.resolve(__dirname, '..');
+const APP = path.join(SRC, 'app');
 
 /**
- * 'group': the route deliberately shows its route group's neutral fallback.
+ * 'neutral': the closest loading.tsx is the neutral `RouteLoading` re-export.
  * 'none': no loading.tsx covers it; the previous page stays until it is ready.
  */
-type FallbackKind = 'group' | 'none';
+type FallbackKind = 'neutral' | 'none';
 
-// Every page.tsx without a loading.tsx in its own segment, and the fallback
-// it relies on. A new page fails the first test below until it gets its own
-// loading.tsx or an entry here (docs/design-brief.md, Loading states).
+// Every page.tsx without a skeleton of its own in its own segment, and the
+// fallback it relies on. A new page fails the first test below until it gets
+// its own loading.tsx or an entry here (docs/design-brief.md, Loading states).
 const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '(public)': 'none',
   '(public)/[slug]': 'none',
@@ -29,34 +30,33 @@ const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '(student)/account/tier': 'none',
   '(student)/bookings': 'none',
   '(student)/updates': 'none',
-  '(teacher)/class/[id]/edit': 'group',
-  '(teacher)/class/new': 'group',
-  '(teacher)/inbox/invitations': 'group',
-  '(teacher)/schedule/past': 'group',
-  '(teacher)/settings/notifications': 'group',
-  '(teacher)/settings/payments': 'group',
-  '(teacher)/settings/profile': 'group',
-  '(teacher)/settings/recurring': 'group',
-  '(teacher)/settings/recurring/[id]': 'group',
-  '(teacher)/settings/recurring/archived': 'group',
-  '(teacher)/settings/recurring/new': 'group',
-  '(teacher)/settings/reporting': 'group',
-  '(teacher)/settings/rooms': 'group',
-  '(teacher)/settings/rooms/[id]': 'group',
-  '(teacher)/settings/rooms/archived': 'group',
-  '(teacher)/settings/rooms/new': 'group',
-  '(teacher)/settings/studio-classes': 'group',
-  '(teacher)/settings/studio-classes/[id]': 'group',
-  '(teacher)/settings/studio-classes/archived': 'group',
-  '(teacher)/settings/studio-classes/new': 'group',
-  '(teacher)/students/[id]': 'group',
-  '(teacher)/students/archived': 'group',
-  '(teacher)/students/contacts/[id]': 'group',
-  '(teacher)/students/contacts/archived': 'group',
-  '(teacher)/students/new': 'group',
-  '(teacher)/studio-class/[id]': 'group',
-  '(teacher)/studio-class/[id]/edit': 'group',
-  '(teacher)/studio-class/new': 'group',
+  '(teacher)/class/[id]/edit': 'neutral',
+  '(teacher)/inbox/invitations': 'neutral',
+  '(teacher)/schedule/past': 'neutral',
+  '(teacher)/settings/notifications': 'neutral',
+  '(teacher)/settings/payments': 'neutral',
+  '(teacher)/settings/profile': 'neutral',
+  '(teacher)/settings/recurring': 'neutral',
+  '(teacher)/settings/recurring/[id]': 'neutral',
+  '(teacher)/settings/recurring/archived': 'neutral',
+  '(teacher)/settings/recurring/new': 'neutral',
+  '(teacher)/settings/reporting': 'neutral',
+  '(teacher)/settings/rooms': 'neutral',
+  '(teacher)/settings/rooms/[id]': 'neutral',
+  '(teacher)/settings/rooms/archived': 'neutral',
+  '(teacher)/settings/rooms/new': 'neutral',
+  '(teacher)/settings/studio-classes': 'neutral',
+  '(teacher)/settings/studio-classes/[id]': 'neutral',
+  '(teacher)/settings/studio-classes/archived': 'neutral',
+  '(teacher)/settings/studio-classes/new': 'neutral',
+  '(teacher)/students/[id]': 'neutral',
+  '(teacher)/students/archived': 'neutral',
+  '(teacher)/students/contacts/[id]': 'neutral',
+  '(teacher)/students/contacts/archived': 'neutral',
+  '(teacher)/students/new': 'neutral',
+  '(teacher)/studio-class/[id]': 'neutral',
+  '(teacher)/studio-class/[id]/edit': 'neutral',
+  '(teacher)/studio-class/new': 'neutral',
 };
 
 const toKey = (dir: string) => path.relative(APP, dir).split(path.sep).join('/');
@@ -74,6 +74,13 @@ const loadings = all.filter((f) => path.basename(f) === 'loading.tsx');
 
 const ownLoading = (key: string) => existsSync(path.join(APP, key, 'loading.tsx'));
 
+// The whole source of a segment loading.tsx that shows the neutral fallback.
+const NEUTRAL_SOURCE = "export { RouteLoading as default } from '@/components/layout/route-loading';";
+const isNeutral = (key: string) =>
+  readFileSync(path.join(APP, key, 'loading.tsx'), 'utf8').trim() === NEUTRAL_SOURCE;
+/** A loading.tsx in the page's own segment that draws this route's own skeleton. */
+const ownSkeleton = (key: string) => ownLoading(key) && !isNeutral(key);
+
 /** The segment whose loading.tsx would wrap this page, or null: closest first, as Next resolves it. */
 function closestLoading(key: string): string | null {
   const segments = key === '' ? [] : key.split('/');
@@ -87,18 +94,17 @@ function closestLoading(key: string): string | null {
 const routeGroup = (key: string) => (/^\(.+\)$/.test(key.split('/')[0] ?? '') ? key.split('/')[0] ?? null : null);
 
 describe('every route\'s loading state is chosen', () => {
-  it('each page has its own loading.tsx or a FALLBACK_ROUTES entry', () => {
-    const unchosen = pages.filter((key) => !ownLoading(key) && !(key in FALLBACK_ROUTES));
+  it('each page has its own skeleton or a FALLBACK_ROUTES entry', () => {
+    const unchosen = pages.filter((key) => !ownSkeleton(key) && !(key in FALLBACK_ROUTES));
     expect(unchosen).toEqual([]);
   });
 
-  it('a group entry is actually covered by its route group\'s fallback, not a sibling\'s skeleton', () => {
+  it('a neutral entry is actually covered by the neutral fallback, not a sibling\'s skeleton', () => {
     const wrong = Object.entries(FALLBACK_ROUTES)
-      .filter(([, kind]) => kind === 'group')
+      .filter(([, kind]) => kind === 'neutral')
       .flatMap(([key]) => {
         const covering = closestLoading(key);
-        const group = routeGroup(key);
-        return covering !== null && covering === group ? [] : [`${key} is covered by ${covering ?? 'nothing'}`];
+        return covering !== null && isNeutral(covering) ? [] : [`${key} is covered by ${covering ?? 'nothing'}`];
       });
     expect(wrong).toEqual([]);
   });
@@ -113,9 +119,9 @@ describe('every route\'s loading state is chosen', () => {
     expect(covered).toEqual([]);
   });
 
-  it('names no page that does not exist, and none that has its own loading.tsx', () => {
+  it('names no page that does not exist, and none that has its own skeleton', () => {
     const stale = Object.keys(FALLBACK_ROUTES).filter((key) => !pages.includes(key));
-    const redundant = Object.keys(FALLBACK_ROUTES).filter((key) => pages.includes(key) && ownLoading(key));
+    const redundant = Object.keys(FALLBACK_ROUTES).filter((key) => pages.includes(key) && ownSkeleton(key));
     expect({ stale, redundant }).toEqual({ stale: [], redundant: [] });
   });
 
@@ -124,5 +130,57 @@ describe('every route\'s loading state is chosen', () => {
       .filter((file) => readFileSync(file, 'utf8').includes('@/components/ui/skeleton'))
       .map((file) => toKey(path.dirname(file)));
     expect(raw).toEqual([]);
+  });
+
+  // A loading boundary shows only when the segment it wraps changes, so a
+  // navigation between two pages below the same segment shows the closest
+  // boundary below that segment — none, unless the segment has its own.
+  it('every segment with pages below it has a loading.tsx of its own, outside the route groups that use none', () => {
+    const groupsWithLoading = new Set(
+      pages.filter((key) => FALLBACK_ROUTES[key] !== 'none').map(routeGroup),
+    );
+    const segments = new Set(
+      pages.flatMap((key) => {
+        const parts = key.split('/');
+        return parts.slice(0, -1).map((_, n) => parts.slice(0, n + 1).join('/'));
+      }),
+    );
+    const missing = [...segments]
+      .filter((key) => groupsWithLoading.has(routeGroup(key)) && !ownLoading(key))
+      .sort();
+    expect(missing).toEqual([]);
+  });
+});
+
+const CLIENT_DIRECTIVE = /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*['"]use client['"]/;
+
+function resolveImport(from: string, specifier: string): string | null {
+  const base = specifier.startsWith('@/')
+    ? path.join(SRC, specifier.slice(2))
+    : specifier.startsWith('.')
+    ? path.resolve(path.dirname(from), specifier)
+    : null;
+  if (base === null) return null;
+  const candidates = [base, `${base}.tsx`, `${base}.ts`, path.join(base, 'index.tsx'), path.join(base, 'index.ts')];
+  return candidates.find((c) => existsSync(c) && !statSync(c).isDirectory()) ?? null;
+}
+
+// A loading.tsx's fallback that renders a client component cannot paint until
+// that component's JS has loaded; until then it suspends and the boundary
+// above shows its own fallback instead (docs/design-brief.md, Loading states).
+describe('every loading.tsx paints without waiting for JS', () => {
+  it('imports nothing from a \'use client\' module', () => {
+    const offending = loadings.flatMap((file) =>
+      [...readFileSync(file, 'utf8').matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].flatMap(([, specifier]) => {
+        if (specifier === undefined) return [];
+        if (!specifier.startsWith('@/') && !specifier.startsWith('.')) return [];
+        const target = resolveImport(file, specifier);
+        if (target === null) return [`${toKey(path.dirname(file))}/loading.tsx → ${specifier} (unresolved)`];
+        return CLIENT_DIRECTIVE.test(readFileSync(target, 'utf8'))
+          ? [`${toKey(path.dirname(file))}/loading.tsx → ${path.relative(SRC, target)}`]
+          : [];
+      }),
+    );
+    expect(offending).toEqual([]);
   });
 });
