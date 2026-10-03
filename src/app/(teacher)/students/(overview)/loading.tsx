@@ -1,6 +1,6 @@
 import { PageHeaderSkeleton } from '@/components/layout/page-header';
-import { SendAnnouncementSkeleton } from '@/components/class/send-announcement';
-import { StudentDirectorySkeleton } from '@/components/students/student-directory';
+import { SendAnnouncementSkeleton } from '@/components/class/send-announcement-skeleton';
+import { StudentDirectorySkeleton } from '@/components/students/student-directory-skeleton';
 
 export default function StudentsLoading() {
   return (

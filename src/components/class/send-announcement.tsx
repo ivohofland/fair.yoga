@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { SkeletonText, type TypeStyle } from '@/components/ui/skeleton';
 import { AudiencePicker, type AudienceLoadStatus } from '@/components/class/audience-picker';
 import type { AnnouncementSendResponse } from '@/lib/api-types';
+import { TRIGGER_TYPE } from '@/components/class/send-announcement-skeleton';
 
 interface SendAnnouncementProps {
   /** Scope to one class; omit to let the teacher pick all their students or a chosen subset. */
@@ -24,9 +24,6 @@ interface SentState {
   /** Ticked students neither told now nor already told; 0 unless a chosen list was sent. */
   unreached: number;
 }
-
-// The collapsed trigger's type style, shared by the button and its skeleton.
-const TRIGGER_TYPE: TypeStyle = 'type-label';
 
 // One-to-many only, by design: an announcement creates one notification
 // per recipient (plus email fallback). There is no chat.
@@ -217,14 +214,4 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
-}
-
-// The collapsed state: one line in the trigger's type style, `inline-block`
-// so it joins its wrapper's line box the way the button it stands for does —
-// both are inline-level. The wrapper's own strut (its inherited line-height,
-// from the page body, taller than type-label's own) sets the floor height.
-// A block placeholder would drop out of that line box and render at
-// type-label's own, shorter line-height instead.
-export function SendAnnouncementSkeleton() {
-  return <SkeletonText type={TRIGGER_TYPE} width="w-36" className="inline-block" />;
 }
