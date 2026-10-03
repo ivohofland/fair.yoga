@@ -5,9 +5,8 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { ClassList } from './class-list';
 
 /**
- * Shared Prisma-shaped fixtures for `ClassList`'s cards, used by both
- * `class-list.test.tsx` and `class-card.test.tsx` so the two files render
- * the same `Class` shape rather than each hand-rolling their own.
+ * Shared Prisma-shaped `Class` fixtures for `ClassList`'s cards, so component
+ * tests render the same shape rather than each hand-rolling their own.
  *
  * `ClassRow` is typed as `ClassList`'s own prop element (not a hand-written
  * interface) so no assertion is needed and so a schema change breaks this
@@ -58,8 +57,9 @@ export const teacherRoom = {
 /**
  * `payments` is the charged registrations' payment states, `null` for a
  * registration with no payment row — which is what the pages' `select` actually
- * returns (`(teacher)/page.tsx`, `schedule/past/page.tsx`). Pass `undefined` for
- * a caller that did not include registrations at all; the prop is optional.
+ * returns (`schedule/(overview)/page.tsx`, `schedule/past/page.tsx`). Pass
+ * `undefined` for a caller that did not include registrations at all; the
+ * prop is optional.
  */
 export function classRow(
   id: string,
