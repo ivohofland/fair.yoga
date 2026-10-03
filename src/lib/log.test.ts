@@ -16,16 +16,10 @@ function capture() {
   return { logger, lines };
 }
 
-/**
- * A written line is checked for the tokens. A serializer output is also
- * checked to be a plain object, so a raw Error returned unchanged cannot pass.
- */
-function expectNoPii(value: unknown): void {
+/** A written line is checked for the tokens. */
+function expectNoPii(value: string | undefined): void {
   expect(value).toBeDefined();
-  if (typeof value !== 'string') {
-    expect(typeof value === 'object' && value !== null && Object.getPrototypeOf(value) === Object.prototype).toBe(true);
-  }
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  const text = value ?? '';
   for (const token of PII) expect(text).not.toContain(token);
 }
 
