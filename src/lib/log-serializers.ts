@@ -48,6 +48,8 @@ const WITHHELD = '(detail withheld from the log)';
 const PRISMA_ERROR_NAME = /^PrismaClient\w+Error$/;
 const IDENTIFIER = /^[\w.]+$/;
 const SQLSTATE = /^[0-9A-Z]{5}$/;
+const PRISMA_CODE = /^P\d{4}$/;
+const FRAME_LINE = /^\s+at /;
 // Anchored at the start: a value inside the message cannot be taken for it.
 const HEADER = /^\s*Invalid `([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(\))` invocation/;
 const PG_CODE = /PostgresError \{ code: "([0-9A-Z]{5})"/;
@@ -112,6 +114,16 @@ function allowedMeta(meta: unknown): SerializedPrismaMeta | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+// A P2010 can carry a raw-query value with an embedded newline, so a shape
+// check on the text after the header is not enough: the value itself can
+// start with `\n` and go on to spell a line that reads like a frame. What
+// makes a remainder frames is that it holds nothing else — every line after
+// the leading newline is a frame line, with no exceptions to carve out.
+function isFrameShape(remainder: string): boolean {
+  if (!remainder.startsWith('\n')) return false;
+  return remainder.slice(1).split('\n').every((line) => FRAME_LINE.test(line));
+}
+
 function liftSqlState(cls: string, err: object, original: string): string | undefined {
   if (cls === 'PrismaClientUnknownRequestError') return PG_CODE.exec(original)?.[1];
   if (field(err, 'code') === 'P2010') {
@@ -127,20 +139,29 @@ function withheld(cls: string, err: ErrorLike, type: string): SerializedErr {
   const header = HEADER.exec(original);
   const message = header ? `Invalid \`${header[1]}\` invocation ${WITHHELD}` : `Prisma error ${WITHHELD}`;
 
-  // Frames are what follows the exact original header. Never filter lines by
-  // shape: a raw-query value can hold a newline and a line that looks like a
-  // frame. When the prefix does not match, no frame is kept.
+  // Frames are what follows the exact original header, and only when that
+  // remainder has no shape but a stack trace's: empty, or a leading newline
+  // with every further line reading as a frame. A prefix match alone is not
+  // enough — text appended on the header's own line (same rendering a
+  // raw-query value can produce) would otherwise ride along as "frames".
   const stack = field(err, 'stack');
   const name = field(err, 'name');
   const prefix = `${String(name)}: ${original}`;
-  const frames = typeof stack === 'string' && stack.startsWith(prefix) ? stack.slice(prefix.length) : '';
+  let frames = '';
+  if (typeof stack === 'string' && stack.startsWith(prefix)) {
+    const remainder = stack.slice(prefix.length);
+    if (remainder === '' || isFrameShape(remainder)) frames = remainder;
+  }
 
-  const out: SerializedErr = { type, message, stack: `${type}: ${message}${frames}` };
+  const out: SerializedErr = { type, message };
+  if (typeof stack === 'string') out.stack = `${type}: ${message}${frames}`;
   const sqlState = liftSqlState(cls, err, original);
   if (sqlState !== undefined) {
     out.sqlState = sqlState;
-    // Class 23 only: its message is Postgres's own template, so the first
-    // match is the constraint's name and never a quoted value.
+    // Class 23 (integrity constraint violation) only: this keeps a
+    // non-integrity error — e.g. a 22P02 that quotes a value — from reaching
+    // the pattern below. What the pattern can return is the first
+    // `violates … constraint "<name>"` match, limited to `[A-Za-z0-9_]`.
     if (sqlState.startsWith('23')) {
       const constraint = CONSTRAINT.exec(original)?.[1];
       if (constraint !== undefined) out.constraint = constraint;
@@ -151,13 +172,13 @@ function withheld(cls: string, err: ErrorLike, type: string): SerializedErr {
   return out;
 }
 
-function serialize(err: ErrorLike, seen: Set<object>, depth: number): SerializedErr {
-  seen.add(err);
+function serialize(err: ErrorLike, ancestors: Set<object>, depth: number): SerializedErr {
   const type = typeOf(err);
   const cls = prismaClass(err);
+  const withheldPath = cls !== null && cls !== 'PrismaClientInitializationError';
 
   let out: SerializedErr;
-  if (cls !== null && cls !== 'PrismaClientInitializationError') {
+  if (withheldPath) {
     out = withheld(cls, err, type);
   } else {
     out = { type, message: err.message };
@@ -170,25 +191,36 @@ function serialize(err: ErrorLike, seen: Set<object>, depth: number): Serialized
     if (typeof name === 'string') out.name = name;
   }
   const code = cls === 'PrismaClientInitializationError' ? field(err, 'errorCode') : field(err, 'code');
-  if (typeof code === 'string' || (typeof code === 'number' && Number.isFinite(code))) out.code = code;
+  if (withheldPath) {
+    if (typeof code === 'string' && PRISMA_CODE.test(code)) out.code = code;
+  } else if (typeof code === 'string' || (typeof code === 'number' && Number.isFinite(code))) {
+    out.code = code;
+  }
 
+  // Ancestor path, not whole-traversal: held only while this node's own
+  // subtree is being serialized, so a repeated non-cyclic error (the same
+  // object reachable at two sibling positions) is serialized at each one,
+  // while a true cycle — this error reachable from itself — still ends.
+  ancestors.add(err);
   if (depth < MAX_DEPTH) {
     const cause = field(err, 'cause');
-    if (isErrorLike(cause) && !seen.has(cause)) out.cause = toSerialized(cause, seen, depth + 1);
+    if (isErrorLike(cause) && !ancestors.has(cause)) out.cause = toSerialized(cause, ancestors, depth + 1);
     const errors = field(err, 'errors');
     if (Array.isArray(errors)) {
-      out.aggregateErrors = errors
-        .filter((e): e is ErrorLike => isErrorLike(e) && !seen.has(e))
-        .map((e) => toSerialized(e, seen, depth + 1));
+      const aggregated = errors
+        .filter((e): e is ErrorLike => isErrorLike(e) && !ancestors.has(e))
+        .map((e) => toSerialized(e, ancestors, depth + 1));
+      if (aggregated.length > 0) out.aggregateErrors = aggregated;
     }
   }
+  ancestors.delete(err);
 
   produced.add(out);
   return out;
 }
 
-function toSerialized(err: ErrorLike, seen: Set<object>, depth: number): SerializedErr {
-  return produced.has(err) ? (err as SerializedErr) : serialize(err, seen, depth);
+function toSerialized(err: ErrorLike, ancestors: Set<object>, depth: number): SerializedErr {
+  return produced.has(err) ? (err as SerializedErr) : serialize(err, ancestors, depth);
 }
 
 export function serializeErr(value: Error): SerializedErr;
