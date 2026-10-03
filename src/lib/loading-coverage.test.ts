@@ -13,7 +13,7 @@ type FallbackKind = 'neutral' | 'none';
 
 // Every page.tsx without a skeleton of its own in its own segment, and the
 // fallback it relies on. A new page fails the first test below until it gets
-// its own loading.tsx or an entry here (docs/design-brief.md, Loading states).
+// its own skeleton or an entry here (docs/design-brief.md, Loading states).
 const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '(public)': 'none',
   '(public)/[slug]': 'none',
@@ -201,22 +201,40 @@ function resolveImport(from: string, specifier: string): string | null {
   return candidates.find((c) => existsSync(c) && !statSync(c).isDirectory()) ?? null;
 }
 
+// Every value import and re-export (`import type` / `export type` is erased,
+// so it is skipped), with its specifier.
+const IMPORT = /(?:^|\n)\s*(?:import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/g;
+
 // A loading.tsx's fallback that renders a client component cannot paint until
 // that component's JS has loaded; until then it suspends and the boundary
 // above shows its own fallback instead (docs/design-brief.md, Loading states).
 describe('every loading.tsx paints without waiting for JS', () => {
-  it('imports nothing from a \'use client\' module', () => {
-    const offending = loadings.flatMap((file) =>
-      [...readFileSync(file, 'utf8').matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].flatMap(([, specifier]) => {
-        if (specifier === undefined) return [];
-        if (!specifier.startsWith('@/') && !specifier.startsWith('.')) return [];
-        const target = resolveImport(file, specifier);
-        if (target === null) return [`${toKey(path.dirname(file))}/loading.tsx → ${specifier} (unresolved)`];
-        return CLIENT_DIRECTIVE.test(readFileSync(target, 'utf8'))
-          ? [`${toKey(path.dirname(file))}/loading.tsx → ${path.relative(SRC, target)}`]
-          : [];
-      }),
-    );
+  it('reaches no \'use client\' module through its imports, however indirectly', () => {
+    const offending = loadings.flatMap((loading) => {
+      const found: string[] = [];
+      const visited = new Set<string>([loading]);
+      const queue: string[][] = [[loading]];
+      for (let chain = queue.shift(); chain !== undefined; chain = queue.shift()) {
+        const file = chain[chain.length - 1] ?? loading;
+        for (const [, typeOnly, specifier] of readFileSync(file, 'utf8').matchAll(IMPORT)) {
+          // Bare package imports (`next/link`, `next/image`) are not followed:
+          // skeletons render no framework components.
+          if (typeOnly !== undefined || specifier === undefined) continue;
+          if (!specifier.startsWith('@/') && !specifier.startsWith('.')) continue;
+          const show = (tail: string) => [...chain.map((f) => path.relative(SRC, f)), tail].join(' → ');
+          const target = resolveImport(file, specifier);
+          if (target === null) {
+            found.push(show(`${specifier} (unresolved)`));
+            continue;
+          }
+          if (visited.has(target)) continue;
+          visited.add(target);
+          if (CLIENT_DIRECTIVE.test(readFileSync(target, 'utf8'))) found.push(show(path.relative(SRC, target)));
+          else queue.push([...chain, target]);
+        }
+      }
+      return found;
+    });
     expect(offending).toEqual([]);
   });
 });
