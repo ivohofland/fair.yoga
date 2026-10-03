@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
 import { dispatchPushes, PUSH_BATCH, PUSH_CLAIM_DEADLINE_MS, PUSH_STALE_AFTER_MS, PUSH_WORKERS, PushSendFault, type PushSender } from './push-dispatch';
@@ -280,6 +280,11 @@ describe('dispatchPushes', () => {
   // `dispatchPushes` reads ALL PushSubscription rows for an account — so a
   // subscription left behind by one test would be delivered to by the next
   // one's send. Each test creates exactly the subscriptions it asserts on.
+  // A summary asserted on is this test's own, not an earlier test's.
+  beforeEach(() => {
+    vi.mocked(log.info).mockClear();
+  });
+
   afterEach(async () => {
     if (accountIds.length > 0) {
       await prisma.pushSubscription.deleteMany({ where: { accountId: { in: accountIds } } });
@@ -607,9 +612,10 @@ describe('dispatchPushes', () => {
 
     await dispatchPushes(scoped([stale.id]).db, recordingSender().send);
 
-    const [fields] = vi.mocked(log.info).mock.calls.find(([, msg]) => msg === 'push dispatch tick') ?? [];
-    expect(fields).toMatchObject({ retired: 1 });
-    expect(fields).not.toHaveProperty('faulted');
+    const summaries = vi.mocked(log.info).mock.calls.filter(([, msg]) => msg === 'push dispatch tick');
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]![0]).toMatchObject({ retired: 1 });
+    expect(summaries[0]![0]).not.toHaveProperty('faulted');
   });
 
   it('logs a send fault when a claim failure is the error that propagates', async () => {
