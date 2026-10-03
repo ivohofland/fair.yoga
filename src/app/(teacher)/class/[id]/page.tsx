@@ -4,6 +4,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
+import { ListRow } from '@/components/ui/list-row';
 import { ClassInfo } from '@/components/class/class-info';
 import { PricingPreview } from '@/components/class/pricing-preview';
 import { AttendanceList } from '@/components/class/attendance-list';
@@ -207,13 +208,13 @@ export default async function ClassDetailPage({
           <h2 className="type-subtitle mb-1">Registered students</h2>
           <div>
             {activeRegistrations.map((r) => (
-              <Link
+              <ListRow
                 key={r.id}
                 href={`/students/${r.studentId}`}
-                className="flex items-center min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
+                className="flex items-center no-underline"
               >
                 <span className="text-base text-ink">{teacherVisibleName(r.student, session.teacherId)}</span>
-              </Link>
+              </ListRow>
             ))}
           </div>
         </div>

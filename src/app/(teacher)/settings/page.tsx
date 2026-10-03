@@ -1,6 +1,6 @@
-import Link from 'next/link';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icon } from '@/components/ui/icon';
+import { ListRow } from '@/components/ui/list-row';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { InstallAppRow } from '@/components/account/install-app-row';
 import { getSession } from '@/lib/session';
@@ -23,23 +23,16 @@ export default async function SettingsPage() {
       <PageHeader title="Settings" backHref={null} variant="display" />
       <div>
         {SETTINGS_ITEMS.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
-          >
+          <ListRow key={item.href} href={item.href} className="flex items-center gap-3 no-underline">
             <span className="flex-1 text-base text-ink">{item.label}</span>
             <Icon name="chevron-right" size={20} className="text-brown-light" />
-          </Link>
+          </ListRow>
         ))}
         {session?.studentId && (
-          <Link
-            href="/bookings"
-            className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
-          >
+          <ListRow href="/bookings" className="flex items-center gap-3 no-underline">
             <span className="flex-1 text-base text-ink">Your bookings as a student</span>
             <Icon name="chevron-right" size={20} className="text-brown-light" />
-          </Link>
+          </ListRow>
         )}
         <InstallAppRow />
       </div>

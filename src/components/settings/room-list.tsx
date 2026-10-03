@@ -1,6 +1,6 @@
-import Link from 'next/link';
 import type { TeacherRoom, Room } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
+import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatRoomLocation } from '@/lib/format';
 
@@ -19,10 +19,10 @@ export function RoomList({ teacherRooms, emptyMessage = 'No rooms yet. Add your 
   return (
     <div>
       {teacherRooms.map((tr) => (
-        <Link
+        <ListRow
           key={tr.id}
           href={`/settings/rooms/${tr.id}`}
-          className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
+          className="flex items-center gap-3 no-underline"
         >
           <div className="flex-1 min-w-0 flex flex-col gap-0.5">
             <span className="text-base text-ink">
@@ -41,7 +41,7 @@ export function RoomList({ teacherRooms, emptyMessage = 'No rooms yet. Add your 
             </span>
           </div>
           <Icon name="chevron-right" size={20} className="text-brown-light" />
-        </Link>
+        </ListRow>
       ))}
     </div>
   );

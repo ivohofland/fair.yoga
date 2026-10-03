@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
+import { ListRow } from '@/components/ui/list-row';
 import { StudentCountEditor } from '@/components/studio-class/student-count-editor';
 import { CancelStudioClassButton } from '@/components/studio-class/cancel-studio-class-button';
 import { DeleteStudioClassButton } from '@/components/studio-class/delete-studio-class-button';
@@ -103,28 +104,28 @@ export default async function StudioClassDetailPage({
       />
 
       <div className="mb-6">
-        <div className="min-h-14 py-2 border-b border-border">
+        <ListRow divider="after-each">
           <span className="type-label">Date</span>
           <p className="text-base text-ink">{formatDateWithYear(entry.date)}</p>
-        </div>
+        </ListRow>
 
-        <div className="min-h-14 py-2 border-b border-border">
+        <ListRow divider="after-each">
           <span className="type-label">Time</span>
           <p className="text-base text-ink">{timeToHHmm(entry.startTime)} &middot; {entry.durationMinutes} min</p>
-        </div>
+        </ListRow>
 
-        <div className="min-h-14 py-2 border-b border-border">
+        <ListRow divider="after-each">
           <span className="type-label">Location</span>
           <p className="text-base text-ink">{studioClass.location}</p>
-        </div>
+        </ListRow>
 
-        <div className="min-h-14 py-2 border-b border-border">
+        <ListRow divider="after-each">
           <span className="type-label">Hourly rate</span>
           <p className="text-base text-ink">&euro;{Number(studioClass.hourlyRate).toFixed(2)}</p>
-        </div>
+        </ListRow>
 
         {template && (
-          <div className="min-h-14 py-2 border-b border-border">
+          <ListRow divider="after-each">
             <span className="type-label">Template</span>
             <p>
               <Link href={`/settings/studio-classes/${template.id}`} className="text-teal text-sm">
@@ -132,7 +133,7 @@ export default async function StudioClassDetailPage({
                 <span className="inline-block ml-1.5">&rarr;</span>
               </Link>
             </p>
-          </div>
+          </ListRow>
         )}
       </div>
 

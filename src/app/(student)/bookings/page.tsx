@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ListRow } from '@/components/ui/list-row';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
@@ -223,7 +224,7 @@ export default async function StudentBookingsPage() {
               getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone) ===
                 'first_come_first_claimed';
             return (
-              <div key={entry.id} className="min-h-14 py-2 border-b border-border last:border-b-0">
+              <ListRow key={entry.id}>
                 <p className="text-base text-ink">{cls.calendarEntry.classType}</p>
                 <p className="type-caption">
                   {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)} · position {entry.position} ·{' '}
@@ -254,7 +255,7 @@ export default async function StudentBookingsPage() {
                   View class &rarr;
                 </Link>
                 <WaitlistEntryActions entryId={entry.id} classId={cls.id} canClaim={canClaim} />
-              </div>
+              </ListRow>
             );
           })}
         </section>
@@ -368,7 +369,7 @@ export default async function StudentBookingsPage() {
               { classId: cls.id, registrationId: reg.id },
             );
             return (
-              <div key={reg.id} className="min-h-14 py-3 border-b border-border last:border-b-0">
+              <ListRow key={reg.id} density="relaxed">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-base text-ink">{cls.calendarEntry.classType}</p>
@@ -445,7 +446,7 @@ export default async function StudentBookingsPage() {
                     date={cls.calendarEntry.date}
                   />
                 )}
-              </div>
+              </ListRow>
             );
           })}
         </section>

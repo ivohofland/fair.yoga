@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
+import { ListRow } from '@/components/ui/list-row';
 import { AddPasskey } from '@/components/account/add-passkey';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { InstallAppRow } from '@/components/account/install-app-row';
@@ -69,27 +70,20 @@ export default async function StudentSettingsPage() {
 
       <div>
         {SETTINGS_ITEMS.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
-          >
+          <ListRow key={item.href} href={item.href} className="flex items-center gap-3 no-underline">
             <span className="flex-1 text-base text-ink">{item.label}</span>
             <Icon name="chevron-right" size={20} className="text-brown-light" />
-          </Link>
+          </ListRow>
         ))}
         <InstallAppRow />
       </div>
 
       {session.teacherId && (
         <section className="mt-10 pt-6 border-t border-border">
-          <Link
-            href="/schedule"
-            className="flex items-center gap-3 min-h-14 py-2 no-underline"
-          >
+          <ListRow href="/schedule" className="flex items-center gap-3 no-underline">
             <span className="flex-1 text-base text-ink">Your teaching side</span>
             <Icon name="chevron-right" size={20} className="text-brown-light" />
-          </Link>
+          </ListRow>
         </section>
       )}
 
