@@ -93,9 +93,9 @@ export async function isDevServer(page: Page): Promise<boolean> {
  */
 export function prefetchSettled(page: Page, pathname: string): Promise<void> {
   return new Promise((resolve) => {
-    const onSettled = async (request: Request): Promise<void> => {
+    const onSettled = (request: Request): void => {
       if (new URL(request.url()).pathname !== pathname) return;
-      const headers = await request.allHeaders();
+      const headers = request.headers();
       if (headers['next-router-prefetch'] !== '1' || 'next-router-segment-prefetch' in headers) return;
       page.off('requestfinished', onSettled);
       page.off('requestfailed', onSettled);

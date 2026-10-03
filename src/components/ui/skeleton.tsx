@@ -1,6 +1,6 @@
 export type SkeletonSurface = 'page' | 'card';
 
-/** The six type utilities, so a placeholder line borrows a real line's height. */
+/** The type utilities a placeholder line can borrow its height from. */
 export type TypeStyle =
   | 'type-display'
   | 'type-title'

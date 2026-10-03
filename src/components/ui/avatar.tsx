@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import { teacherPhotoPath } from '@/lib/teacher-photo-limits';
+import { surfaceFill } from '@/components/ui/skeleton';
 
 export type AvatarSize = 40 | 72;
 
@@ -11,9 +12,8 @@ interface AvatarProps {
   className?: string;
 }
 
-// The frame tokens every avatar shape shares — photo, initials, and the
-// skeleton placeholder — so the three never drift apart in roundness or flex
-// behaviour.
+// The frame tokens shared by every avatar shape and its skeleton, so none
+// drifts apart from the others in roundness or flex behaviour.
 const AVATAR_FRAME = 'shrink-0 rounded-pill';
 
 /** First character of each name, uppercased. `Array.from` splits by code point, so an astral character stays whole. */
@@ -53,6 +53,6 @@ export function Avatar({ firstName, lastName, photoId, size, className = '' }: A
   );
 }
 
-export function AvatarSkeleton({ size }: { size: number }) {
-  return <span aria-hidden="true" style={{ width: size, height: size }} className={`inline-block ${AVATAR_FRAME} bg-sand-soft`} />;
+export function AvatarSkeleton({ size }: { size: AvatarSize }) {
+  return <span aria-hidden="true" style={{ width: size, height: size }} className={`inline-block ${AVATAR_FRAME} ${surfaceFill('page')}`} />;
 }

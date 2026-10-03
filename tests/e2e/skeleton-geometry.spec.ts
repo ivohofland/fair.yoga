@@ -55,9 +55,9 @@ test.describe('Skeleton geometry', () => {
 
   test.beforeAll(async () => {
     await prisma.$connect();
-    // Bio, IBAN, a room, a class and both dismissals settle onboarding and
-    // retire the install card (`isOnboardingComplete`, `InstallCard`), so the
-    // schedule's first item sits directly under its header.
+    // The fixture settles onboarding (`isOnboardingComplete`) and dismisses
+    // the install card, so the schedule's first item sits directly under its
+    // header.
     const teacher = await prisma.teacher.create({
       data: {
         firstName: 'Skeleton',
@@ -92,9 +92,9 @@ test.describe('Skeleton geometry', () => {
     });
 
     // Three days out, on the UTC teacher's wall clock: inside the schedule's
-    // window on any run day, and beyond every auto-cancel check and the
-    // morning-of reminder, either of which would leave an unread notification
-    // that renames the Inbox tab mid-run.
+    // window on any run day, and beyond this class's auto-cancel check and
+    // the morning-of reminder, either of which would leave an unread
+    // notification that renames the Inbox tab mid-run.
     const slot = wallSlotAt(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), 'UTC');
     const cls = await createClassFixture(prisma, {
       teacherId: teacher.id,
