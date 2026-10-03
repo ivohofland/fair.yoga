@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
 import { PrismaClient, type NotificationType } from '@prisma/client';
-import { dispatchPushes, PUSH_BATCH, PUSH_STALE_AFTER_MS, PushSendFault, type PushSender } from './push-dispatch';
-import { PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send';
+import { dispatchPushes, PUSH_BATCH, PUSH_CLAIM_DEADLINE_MS, PUSH_STALE_AFTER_MS, PUSH_WORKERS, PushSendFault, type PushSender } from './push-dispatch';
+import { DEFAULT_TIMEOUT_MS, PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send';
 import { generateVapidKeyPair } from '@/lib/push/test-support';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 import { log } from '@/lib/log';
@@ -667,6 +667,29 @@ describe('dispatchPushes', () => {
       expect(freshLog.warn).toHaveBeenCalledTimes(1);
       expect(freshLog.error).not.toHaveBeenCalled();
     });
+
+    it('counts the rows it claimed as unsendable for a misconfiguration, never for an unset environment', async () => {
+      const n1 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+      const n2 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+      vi.stubEnv('VAPID_PUBLIC_KEY', generateVapidKeyPair().publicKey);
+      vi.stubEnv('VAPID_PRIVATE_KEY', generateVapidKeyPair().privateKey);
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:ops@fair.yoga');
+      const misconfigured = await freshModule();
+
+      const bad = await misconfigured.freshDispatch(scoped([n1.id, n2.id]).db);
+
+      expect(bad).toMatchObject({ claimed: 2, unsendable: 2, sent: 0 });
+
+      const n3 = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+      vi.stubEnv('VAPID_PUBLIC_KEY', undefined);
+      vi.stubEnv('VAPID_PRIVATE_KEY', undefined);
+      vi.stubEnv('VAPID_SUBJECT', undefined);
+      const unset = await freshModule();
+
+      const none = await unset.freshDispatch(scoped([n3.id]).db);
+
+      expect(none).toMatchObject({ claimed: 1, unsendable: 0 });
+    });
   });
 
   describe('with VAPID_* set', () => {
@@ -758,7 +781,7 @@ describe('dispatchPushes', () => {
       });
       const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
       const result = await dispatchPushes(scoped([n.id]).db, null);
-      expect(result).toMatchObject({ claimed: 1, sent: 0 });
+      expect(result).toMatchObject({ claimed: 1, sent: 0, unsendable: 0 });
       expect(fetchSpy).not.toHaveBeenCalled();
       expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).not.toBeNull();
     } finally {
@@ -804,6 +827,107 @@ describe('dispatchPushes', () => {
     const rows = await prisma.notification.findMany({ where: { id: { in: ids } }, select: { id: true, pushHandledAt: true } });
     const unhandled = rows.filter((r) => r.pushHandledAt === null).map((r) => r.id);
     expect(unhandled).toEqual([ids[PUSH_BATCH]]);
+  });
+
+  describe('the claim deadline', () => {
+    /** One notification per candidate, all for the one-device student account. */
+    async function seedBatch(total: number): Promise<string[]> {
+      await subscribe(studentAccountId, 'deadline');
+      const now = Date.now();
+      const ids: string[] = [];
+      for (let i = 0; i < total; i++) {
+        const n = await notify({
+          recipientType: 'student',
+          recipientId: studentId,
+          type: 'spot_available',
+          createdAt: new Date(now - 60_000 + i * 1000),
+        });
+        ids.push(n.id);
+      }
+      return ids;
+    }
+
+    it('stops claiming once the deadline passes, leaving the rest unclaimed and every claimed row with an outcome', async () => {
+      const ids = await seedBatch(20);
+      // Each send "takes" one send timeout on a clock the test owns, the way
+      // a push service that never answers does.
+      let fakeNow = 1_000_000;
+      const send: PushSender = vi.fn(async () => {
+        fakeNow += DEFAULT_TIMEOUT_MS;
+        return { outcome: 'failed' as const, status: null };
+      });
+
+      const result = await dispatchPushes(scoped(ids).db, send, new Date(), () => fakeNow);
+
+      // Every worker claims once before any send can move the clock, and a
+      // worker finishing after the clock has run one deadline's worth of
+      // sends claims no more.
+      expect(result.claimed).toBeGreaterThanOrEqual(PUSH_WORKERS);
+      expect(result.claimed).toBeLessThanOrEqual(PUSH_WORKERS * Math.ceil(PUSH_CLAIM_DEADLINE_MS / DEFAULT_TIMEOUT_MS));
+      expect(result.failed).toBe(result.claimed);
+      const rows = await prisma.notification.findMany({ where: { id: { in: ids } }, select: { pushHandledAt: true } });
+      expect(rows.filter((r) => r.pushHandledAt !== null)).toHaveLength(result.claimed);
+    });
+
+    it('serves the deferred rows on the next tick', async () => {
+      const ids = await seedBatch(12);
+      let fakeNow = 1_000_000;
+      const slow: PushSender = vi.fn(async () => {
+        fakeNow += DEFAULT_TIMEOUT_MS;
+        return { outcome: 'failed' as const, status: null };
+      });
+      const first = await dispatchPushes(scoped(ids).db, slow, new Date(), () => fakeNow);
+      expect(first.claimed).toBeLessThan(12);
+
+      const { send, calls } = recordingSender();
+      const second = await dispatchPushes(scoped(ids).db, send);
+
+      expect(second.claimed).toBe(12 - first.claimed);
+      expect(calls).toHaveLength(12 - first.claimed);
+    });
+
+    it('claims nothing when the clock is exactly at the deadline', async () => {
+      const ids = await seedBatch(3);
+      let reads = 0;
+      const clock = () => (reads++ === 0 ? 0 : PUSH_CLAIM_DEADLINE_MS);
+      const { send } = recordingSender();
+
+      const result = await dispatchPushes(scoped(ids).db, send, new Date(), clock);
+
+      expect(result.claimed).toBe(0);
+    });
+
+    it('claims while the clock is one millisecond short of the deadline', async () => {
+      const ids = await seedBatch(3);
+      let reads = 0;
+      const clock = () => (reads++ === 0 ? 0 : PUSH_CLAIM_DEADLINE_MS - 1);
+      const { send } = recordingSender();
+
+      const result = await dispatchPushes(scoped(ids).db, send, new Date(), clock);
+
+      expect(result.claimed).toBe(3);
+    });
+  });
+
+  it('sends to a recipient\'s devices in parallel, so one slow device does not hold the others', async () => {
+    await subscribe(studentAccountId, 'par-1');
+    await subscribe(studentAccountId, 'par-2');
+    await subscribe(studentAccountId, 'par-3');
+    const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    // Each send waits for all three to be in flight; a sender that ran them
+    // one after another would wait on the first forever.
+    const allArrived = deferred<void>();
+    let inFlight = 0;
+    const send: PushSender = vi.fn(async () => {
+      inFlight += 1;
+      if (inFlight === 3) allArrived.resolve();
+      await allArrived.promise;
+      return { outcome: 'delivered' as const, status: 201 };
+    });
+
+    const result = await dispatchPushes(scoped([n.id]).db, send);
+
+    expect(result.sent).toBe(3);
   });
 
   it('retires without sending for an erased teacher profile', async () => {

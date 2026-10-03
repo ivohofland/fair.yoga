@@ -30,7 +30,7 @@ export interface SendOptions {
 
 /** How long the push service may hold this message for an offline device before giving up on delivery. */
 export const PUSH_TTL_SECONDS = 600;
-const DEFAULT_TIMEOUT_MS = 5_000;
+export const DEFAULT_TIMEOUT_MS = 5_000;
 const REASON_MAX_CHARS = 200;
 
 /**

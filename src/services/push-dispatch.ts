@@ -1,6 +1,5 @@
-import type { PrismaClient, RecipientType } from '@prisma/client';
+import type { PrismaClient, PushSubscription, RecipientType } from '@prisma/client';
 import { log } from '@/lib/log';
-import { createConcurrencyLimit } from '@/lib/concurrency-limit';
 import { diagnoseVapidConfig, type VapidConfigProblem } from '@/lib/push/config';
 import { sendPush, type PushSendResult, type PushTarget } from '@/lib/push/send';
 import { buildPushPayload, pushUrgency, shouldPush, type PushPayload, type PushRecipient, type PushUrgency } from '@/lib/push-policy';
@@ -8,7 +7,15 @@ import { buildPushPayload, pushUrgency, shouldPush, type PushPayload, type PushR
 /** A push older than this would describe a moment that has passed (a seat already claimed). */
 export const PUSH_STALE_AFTER_MS = 15 * 60 * 1000;
 export const PUSH_BATCH = 50;
-const SEND_CONCURRENCY = 4;
+/** Notifications in flight at once; each fans out to its recipient's devices in parallel. */
+export const PUSH_WORKERS = 4;
+/**
+ * No notification is claimed once a tick has run this long. A tick therefore
+ * ends within one send timeout of it, which is what keeps the job under the
+ * scheduler's stall line (derivation in `docs/technical-architecture.md`,
+ * Cron Jobs; pinned in `scheduler.test.ts`).
+ */
+export const PUSH_CLAIM_DEADLINE_MS = 10_000;
 
 export type PushSender = (
   target: PushTarget,
@@ -23,18 +30,27 @@ export interface PushDispatchResult {
   gone: number;
   invalid: number;
   failed: number;
+  /** Rows claimed while push was misconfigured (not merely unset): nobody could be told. */
+  unsendable: number;
 }
 
 let reportedUnconfigured = false;
 
-function defaultSender(): PushSender | null {
+interface ResolvedSender {
+  sender: PushSender | null;
+  /** True when `VAPID_*` is set but unusable; an unset environment is a choice, not a fault. */
+  misconfigured: boolean;
+}
+
+function resolveSender(send: PushSender | null | undefined): ResolvedSender {
+  if (send !== undefined) return { sender: send, misconfigured: false };
   const diagnosis = diagnoseVapidConfig();
   if (!diagnosis.ok) {
     reportUnconfigured(diagnosis.reason);
-    return null;
+    return { sender: null, misconfigured: diagnosis.reason !== 'unset' };
   }
   const { keys } = diagnosis;
-  return (target, payload, urgency) => sendPush(target, payload, keys, { urgency });
+  return { sender: (target, payload, urgency) => sendPush(target, payload, keys, { urgency }), misconfigured: false };
 }
 
 /**
@@ -55,18 +71,19 @@ function reportUnconfigured(reason: VapidConfigProblem): void {
 /**
  * The push layer's sweep. Reads only committed rows — a notification written
  * inside a transaction that rolls back is never seen — and claims each with a
- * compare-and-swap on `pushHandledAt`, so concurrent runs send once. Never
- * writes `isRead` or `emailSent` (docs/technical-architecture.md, Notification
- * Dispatcher).
+ * compare-and-swap on `pushHandledAt` just before sending it, so concurrent
+ * runs send once. Never writes `isRead` or `emailSent`
+ * (docs/technical-architecture.md, Notification Dispatcher).
  */
 export async function dispatchPushes(
   db: PrismaClient,
   send: PushSender | null | undefined = undefined,
   now: Date = new Date(),
+  clock: () => number = Date.now,
 ): Promise<PushDispatchResult> {
-  const sender = send === undefined ? defaultSender() : send;
+  const { sender, misconfigured } = resolveSender(send);
   const cutoff = new Date(now.getTime() - PUSH_STALE_AFTER_MS);
-  const result: PushDispatchResult = { retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0 };
+  const result: PushDispatchResult = { retired: 0, claimed: 0, sent: 0, gone: 0, invalid: 0, failed: 0, unsendable: 0 };
 
   const retired = await db.notification.updateMany({
     where: { pushHandledAt: null, createdAt: { lte: cutoff } },
@@ -81,36 +98,71 @@ export async function dispatchPushes(
     select: { id: true, recipientType: true, recipientId: true, type: true, title: true, body: true },
   });
 
-  const limit = createConcurrencyLimit(SEND_CONCURRENCY);
-  // Every subscription's send, across every notification in this batch,
-  // through the one shared `limit` — collected here and awaited once in
-  // the `finally` below, rather than per notification, so a tick's sends
-  // share concurrency instead of running one notification at a time.
-  //
-  // Each task is wrapped with `.then(() => undefined, (err) => …)` at the
-  // moment it is pushed, before the loop does anything else — a plain
-  // rejected promise gets its first handler only when something later
-  // awaits it, and the claim loop below keeps awaiting the DB (the next
-  // notification's claim, `resolveRecipient`, `pushSubscription.findMany`)
-  // in the meantime, so an early task rejecting there would have no
-  // handler attached yet: a process-level `unhandledRejection`. Wrapping
-  // immediately means a task's outcome is always carried as its RESOLVED
-  // value instead — `undefined` on success, a `TaskFailure` naming the
-  // notification and subscription on failure — so the wrapped promise
-  // itself never rejects at all.
-  const tasks: Array<Promise<TaskFailure | undefined>> = [];
-  let taskResults: Array<TaskFailure | undefined> = [];
-  let loopCompleted = false;
+  const claimDeadline = clock() + PUSH_CLAIM_DEADLINE_MS;
+  const failures: TaskFailure[] = [];
+  let next = 0;
 
-  try {
-    for (const n of candidates) {
+  // Never rejects: a send's fault is carried as a RESOLVED `TaskFailure`
+  // naming its notification and subscription, so nothing here can become a
+  // process-level `unhandledRejection` while another worker still awaits.
+  async function sendTo(
+    notificationId: string,
+    sub: PushSubscription,
+    deliver: PushSender,
+    payload: PushPayload,
+    urgency: PushUrgency,
+  ): Promise<TaskFailure | undefined> {
+    try {
+      // A throw here is a fault, not a verdict on the subscription: it
+      // fails this tick and the row stays.
+      const { outcome, status, cause, reason } = await deliver(sub, payload, urgency);
+      switch (outcome) {
+        case 'delivered':
+          result.sent += 1;
+          await db.pushSubscription.updateMany({ where: { id: sub.id }, data: { lastUsedAt: now } });
+          return undefined;
+        case 'gone':
+          result.gone += 1;
+          await db.pushSubscription.deleteMany({ where: { id: sub.id } });
+          return undefined;
+        case 'invalid':
+          result.invalid += 1;
+          await db.pushSubscription.deleteMany({ where: { id: sub.id } });
+          return undefined;
+        case 'failed':
+          result.failed += 1;
+          log.warn({ notificationId, subscriptionId: sub.id, status, cause, reason }, 'push send failed; not retried');
+          return undefined;
+        default: {
+          const _exhaustive: never = outcome;
+          throw new Error(`unhandled push outcome ${String(_exhaustive)}`);
+        }
+      }
+    } catch (err: unknown) {
+      return { err, notificationId, subscriptionId: sub.id };
+    }
+  }
+
+  // A worker claims a notification only when it is about to send it, so a
+  // row nobody reached before the deadline is still unclaimed and the next
+  // tick takes it. A claimed row is never given back: its sends always run
+  // to an outcome.
+  async function worker(): Promise<void> {
+    for (;;) {
+      if (clock() >= claimDeadline) return;
+      const n = candidates[next];
+      next += 1;
+      if (n === undefined) return;
       const claim = await db.notification.updateMany({
         where: { id: n.id, pushHandledAt: null },
         data: { pushHandledAt: now },
       });
       if (claim.count !== 1) continue;
       result.claimed += 1;
-      if (!sender) continue;
+      if (!sender) {
+        if (misconfigured) result.unsendable += 1;
+        continue;
+      }
 
       const resolved = await resolveRecipient(db, n.recipientType, n.recipientId);
       if (!resolved || !shouldPush(resolved.recipient, n.type)) continue;
@@ -118,58 +170,32 @@ export async function dispatchPushes(
       const subscriptions = await db.pushSubscription.findMany({ where: { accountId: resolved.accountId } });
       const payload = buildPushPayload(n);
       const urgency = pushUrgency(n.recipientType, n.type);
-      for (const sub of subscriptions) {
-        tasks.push(
-          limit(async () => {
-            // A throw here is a fault, not a verdict on the subscription:
-            // it rejects this task and the tick, and the row stays.
-            const { outcome, status, cause, reason } = await sender(sub, payload, urgency);
-            switch (outcome) {
-              case 'delivered':
-                result.sent += 1;
-                await db.pushSubscription.updateMany({ where: { id: sub.id }, data: { lastUsedAt: now } });
-                return;
-              case 'gone':
-                result.gone += 1;
-                await db.pushSubscription.deleteMany({ where: { id: sub.id } });
-                return;
-              case 'invalid':
-                result.invalid += 1;
-                await db.pushSubscription.deleteMany({ where: { id: sub.id } });
-                return;
-              case 'failed':
-                result.failed += 1;
-                log.warn({ notificationId: n.id, subscriptionId: sub.id, status, cause, reason }, 'push send failed; not retried');
-                return;
-              default: {
-                const _exhaustive: never = outcome;
-                throw new Error(`unhandled push outcome ${String(_exhaustive)}`);
-              }
-            }
-          }).then(
-            () => undefined,
-            (err: unknown): TaskFailure => ({ err, notificationId: n.id, subscriptionId: sub.id }),
-          ),
-        );
-      }
+      const outcomes = await Promise.all(subscriptions.map((sub) => sendTo(n.id, sub, sender, payload, urgency)));
+      failures.push(...outcomes.filter(isTaskFailure));
     }
-    loopCompleted = true;
-  } finally {
-    // Awaited whether the loop above threw or returned — a send must never
-    // outlive this tick on either path. If the loop threw, its error is the
-    // one that propagates once this `finally` completes, so every task
-    // failure is logged here instead; execution never reaches the lines below.
-    taskResults = await Promise.all(tasks);
-    if (!loopCompleted) logTaskFailures(taskResults.filter(isTaskFailure));
   }
 
-  const [firstFailure, ...otherFailures] = taskResults.filter(isTaskFailure);
+  // Every worker is awaited whether another threw or not — a send must never
+  // outlive its tick on either path.
+  const settled = await Promise.allSettled(Array.from({ length: PUSH_WORKERS }, () => worker()));
+  const crashed = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
+  const [firstCrash, ...otherCrashes] = crashed;
+  if (firstCrash) {
+    // A worker's own failure (a claim or a read) is the error that
+    // propagates; every send fault is still logged.
+    logTaskFailures(failures);
+    for (const other of otherCrashes) log.error({ err: other.reason as unknown }, 'push dispatch worker failed');
+    const reason: unknown = firstCrash.reason;
+    throw reason;
+  }
+
+  const [firstFailure, ...otherFailures] = failures;
   if (firstFailure) {
     logTaskFailures(otherFailures);
     throw new PushSendFault(firstFailure.notificationId, firstFailure.subscriptionId, firstFailure.err);
   }
 
-  if (result.failed + result.gone + result.invalid + result.retired > 0) {
+  if (result.failed + result.gone + result.invalid + result.retired + result.unsendable > 0) {
     log.info({ ...result }, 'push dispatch tick');
   }
   return result;
