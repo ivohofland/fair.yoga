@@ -7,6 +7,7 @@ import { paymentStateText, timeAgo } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
+import { ListRow } from '@/components/ui/list-row';
 
 export interface PaymentItem {
   paymentId: string;
@@ -69,9 +70,9 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
           const stateText = paymentStateText(status);
 
           return (
-            <div
+            <ListRow
               key={item.paymentId}
-              className="flex items-center justify-between gap-3 min-h-14 py-2 border-b border-border last:border-b-0"
+              className="flex items-center justify-between gap-3"
             >
               <div className="flex flex-col min-w-0">
                 <Link href={`/students/${item.studentId}`} className="text-base text-ink no-underline">
@@ -126,7 +127,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                   </button>
                 )}
               </div>
-            </div>
+            </ListRow>
           );
         })}
       </div>

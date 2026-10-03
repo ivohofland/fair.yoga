@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { Icon } from '@/components/ui/icon';
+import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import { logRequestFailure } from '@/lib/client-errors';
 import { formatStudentName } from '@/lib/format';
@@ -142,10 +142,10 @@ export function ContactList({ archived = false }: ContactListProps) {
       ) : (
         <div>
           {contacts.map((contact) => (
-            <Link
+            <ListRow
               key={contact.id}
               href={`/students/contacts/${contact.id}`}
-              className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
+              className="flex items-center gap-3 no-underline"
             >
               <div className="flex-1 min-w-0 flex flex-col gap-1">
                 <span className="text-base text-ink font-medium">
@@ -155,7 +155,7 @@ export function ContactList({ archived = false }: ContactListProps) {
               </div>
               <span className="type-caption">{STATUS_LABEL[contact.status]}</span>
               <Icon name="chevron-right" size={20} className="text-brown-light" />
-            </Link>
+            </ListRow>
           ))}
         </div>
       )}

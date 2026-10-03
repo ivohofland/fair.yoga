@@ -1,6 +1,7 @@
 'use client';
 
 import type { PaymentStatus } from '@prisma/client';
+import { ListRow } from '@/components/ui/list-row';
 import { paymentStateText } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
@@ -45,7 +46,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
           const isUpdating = updating === item.paymentId;
 
           return (
-            <div key={item.paymentId} className="flex justify-between items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0">
+            <ListRow key={item.paymentId} className="flex justify-between items-center gap-3">
               <div className="min-w-0">
                 <p className="text-base text-ink">{item.classType}</p>
                 {/* Payment state is text, never a badge */}
@@ -80,7 +81,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
                   </button>
                 )}
               </div>
-            </div>
+            </ListRow>
           );
         })}
       </div>

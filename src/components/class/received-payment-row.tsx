@@ -1,6 +1,7 @@
 import { formatClassContext, formatDateShort } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
+import { ListRow } from '@/components/ui/list-row';
 
 interface ReceivedPaymentRowProps {
   paymentId: string;
@@ -41,7 +42,7 @@ export function ReceivedPaymentRow({
 }: ReceivedPaymentRowProps) {
   const classContext = formatClassContext(classType, classDate, startTime);
   return (
-    <div className="flex items-center justify-between gap-3 min-h-14 py-2 border-b border-border last:border-b-0">
+    <ListRow className="flex items-center justify-between gap-3">
       <div className="min-w-0">
         <p className="text-base text-ink">{studentName}</p>
         <p className="type-caption">
@@ -72,6 +73,6 @@ export function ReceivedPaymentRow({
           classContext={classContext}
         />
       </div>
-    </div>
+    </ListRow>
   );
 }

@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
 import { recordPushDeviceForSignIn } from '@/lib/push-client';
+import { listRowClass } from '@/components/ui/list-row';
 import { MAGIC_LINK_REFUSED_STATUS, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff' | 'timeout';
@@ -46,9 +47,12 @@ function Rail({ steps }: { steps: RailStep[] }) {
         return (
           <li
             key={s.num}
-            className={`grid grid-cols-[24px_1fr_auto] gap-x-3 items-center min-h-14 py-2 border-b border-border ${
-              isNow ? '-mx-2 px-2 bg-teal-tint rounded-field border-b-transparent' : ''
-            }`}
+            className={listRowClass({
+              divider: 'after-each',
+              className: `grid grid-cols-[24px_1fr_auto] gap-x-3 items-center ${
+                isNow ? '-mx-2 px-2 bg-teal-tint rounded-field border-b-transparent' : ''
+              }`,
+            })}
           >
             <span className="flex items-center justify-center">
               {isDone ? (

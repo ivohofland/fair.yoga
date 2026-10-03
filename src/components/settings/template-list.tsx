@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import type { TeacherRoom, Room } from '@prisma/client';
 import type { ClassTemplateWithSlot } from '@/services/class-template-lifecycle';
@@ -27,10 +27,11 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
   return (
     <div>
       {active.map((t) => (
-        <Link
+        <ListRow
           key={t.id}
           href={`/settings/recurring/${t.id}`}
-          className="flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline"
+          divider="after-each"
+          className="flex items-start justify-between gap-3 no-underline"
         >
           <div className="flex flex-col gap-1">
             <span className="text-base text-ink">{t.classType}</span>
@@ -42,17 +43,18 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
             </span>
           </div>
           <span className="text-[13px] text-teal pt-1">active</span>
-        </Link>
+        </ListRow>
       ))}
 
       {paused.length > 0 && (
         <>
           {active.length > 0 && <div className="py-3" />}
           {paused.map((t) => (
-            <Link
+            <ListRow
               key={t.id}
               href={`/settings/recurring/${t.id}`}
-              className="flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline opacity-60"
+              divider="after-each"
+              className="flex items-start justify-between gap-3 no-underline opacity-60"
             >
               <div className="flex flex-col gap-1">
                 <span className="text-base text-ink">{t.classType}</span>
@@ -64,7 +66,7 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
                 </span>
               </div>
               <span className="type-caption pt-1">paused</span>
-            </Link>
+            </ListRow>
           ))}
         </>
       )}
@@ -73,10 +75,11 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
         <>
           {(active.length > 0 || paused.length > 0) && <div className="py-3" />}
           {archived.map((t) => (
-            <Link
+            <ListRow
               key={t.id}
               href={`/settings/recurring/${t.id}`}
-              className="flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline opacity-40"
+              divider="after-each"
+              className="flex items-start justify-between gap-3 no-underline opacity-40"
             >
               <div className="flex flex-col gap-1">
                 <span className="text-base text-ink">{t.classType}</span>
@@ -88,7 +91,7 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
                 </span>
               </div>
               <span className="type-caption pt-1">archived</span>
-            </Link>
+            </ListRow>
           ))}
         </>
       )}

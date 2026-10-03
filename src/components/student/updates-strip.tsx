@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ListRow } from '@/components/ui/list-row';
 import { timeAgo } from '@/lib/format';
 import { postMarkRead } from '@/lib/mark-notification-read';
 
@@ -57,13 +58,14 @@ export function UpdatesStrip({ updates, hasHistory }: UpdatesStripProps) {
       </div>
       <div className="flex flex-col">
         {updates.map((update) => (
-          <div
+          <ListRow
             key={update.id}
+            density="relaxed"
             // The page's own row idiom (waitlist/past sections): column-
             // aligned, untinted — the gold dot already says "unread" in an
             // all-unread strip. The tinted inbox idiom lives on /updates,
             // where read and unread coexist.
-            className="flex items-start justify-between gap-2 min-h-14 py-3 border-b border-border last:border-b-0"
+            className="flex items-start justify-between gap-2"
           >
             <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[15px] text-ink font-medium">
@@ -99,7 +101,7 @@ export function UpdatesStrip({ updates, hasHistory }: UpdatesStripProps) {
               </button>
               <span className="inline-block w-2 h-2 shrink-0 rounded-full bg-gold" />
             </div>
-          </div>
+          </ListRow>
         ))}
       </div>
     </section>

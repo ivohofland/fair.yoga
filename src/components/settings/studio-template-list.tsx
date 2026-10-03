@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import type { StudioClassTemplateWithSlot } from '@/services/studio-class-template-lifecycle';
 
@@ -11,17 +11,16 @@ interface StudioTemplateListProps {
 
 const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-const ROW_BASE =
-  'flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline';
+const ROW_BASE = 'flex items-start justify-between gap-3 no-underline';
 
 interface StudioTemplateRowProps {
   template: StudioTemplateListItem;
   /**
-   * The whole `<Link>` class string, passed per section rather than composed
-   * from a modifier: the active row carries no opacity class at all, and
-   * composing would leave it a trailing space.
+   * The row's opacity modifier only — the active row carries none, paused and
+   * archived carry `opacity-60`/`opacity-40`. The shared frame comes from
+   * `ListRow` itself.
    */
-  linkClass: string;
+  opacityClass?: string;
   status: string;
   /**
    * Active is `text-[13px] text-teal`, paused and archived are
@@ -41,9 +40,13 @@ interface StudioTemplateRowProps {
  * three people remembering; `studio-template-list.test.tsx` renders every
  * state through it and asserts they still do.
  */
-function StudioTemplateRow({ template, linkClass, status, statusClass }: StudioTemplateRowProps) {
+function StudioTemplateRow({ template, opacityClass, status, statusClass }: StudioTemplateRowProps) {
   return (
-    <Link href={`/settings/studio-classes/${template.id}`} className={linkClass}>
+    <ListRow
+      href={`/settings/studio-classes/${template.id}`}
+      divider="after-each"
+      className={`${ROW_BASE}${opacityClass ? ` ${opacityClass}` : ''}`}
+    >
       <div className="flex flex-col gap-1">
         <span className="text-base text-ink">{template.classType || template.location}</span>
         <span className="type-caption">
@@ -54,7 +57,7 @@ function StudioTemplateRow({ template, linkClass, status, statusClass }: StudioT
         </span>
       </div>
       <span className={`${statusClass} pt-1`}>{status}</span>
-    </Link>
+    </ListRow>
   );
 }
 
@@ -73,7 +76,6 @@ export function StudioTemplateList({ templates, emptyMessage = 'No studio classe
         <StudioTemplateRow
           key={t.id}
           template={t}
-          linkClass={ROW_BASE}
           status="active"
           statusClass="text-[13px] text-teal"
         />
@@ -86,7 +88,7 @@ export function StudioTemplateList({ templates, emptyMessage = 'No studio classe
             <StudioTemplateRow
               key={t.id}
               template={t}
-              linkClass={`${ROW_BASE} opacity-60`}
+              opacityClass="opacity-60"
               status="paused"
               statusClass="type-caption"
             />
@@ -101,7 +103,7 @@ export function StudioTemplateList({ templates, emptyMessage = 'No studio classe
             <StudioTemplateRow
               key={t.id}
               template={t}
-              linkClass={`${ROW_BASE} opacity-40`}
+              opacityClass="opacity-40"
               status="archived"
               statusClass="type-caption"
             />

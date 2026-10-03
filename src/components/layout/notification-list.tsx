@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Notification, RecipientType } from '@prisma/client';
 import { EmptyState } from '@/components/ui/empty-state';
+import { listRowClass } from '@/components/ui/list-row';
 import { RetentionNote } from './retention-note';
 import { logRequestFailure } from '@/lib/client-errors';
 import { timeAgo } from '@/lib/format';
@@ -169,9 +170,13 @@ export function NotificationList({ notifications, hrefById, paging, highlightId 
             // and Mark-read visibility — nothing moves on state change. The
             // highlighted row differs only in tint: teal-tint, in place of
             // the unread tint, so the two never compete.
-            className={`flex items-start justify-between gap-2 min-h-14 px-3 py-3 -mx-3 border-b border-border ${
-              isHighlighted ? 'bg-teal-tint' : isRead ? '' : 'bg-sand-soft'
-            }`}
+            className={listRowClass({
+              density: 'relaxed',
+              divider: 'after-each',
+              className: `flex items-start justify-between gap-2 px-3 -mx-3 ${
+                isHighlighted ? 'bg-teal-tint' : isRead ? '' : 'bg-sand-soft'
+              }`,
+            })}
           >
             <div className="flex flex-col min-w-0 flex-1">
               <button
