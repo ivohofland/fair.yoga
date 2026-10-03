@@ -57,7 +57,7 @@ export interface SchedulerSweeps {
   reapExpiredNotifications: (db: PrismaClient) => Promise<unknown>;
   notifyOperatorOfDegradations: (db: PrismaClient) => Promise<unknown>;
   auditTeacherTimezones: (db: PrismaClient) => Promise<unknown>;
-  dispatchPushes: (db: PrismaClient) => Promise<unknown>;
+  runPushDispatchTick: (db: PrismaClient) => Promise<unknown>;
 }
 
 const MINUTE = 60 * 1000;
@@ -165,7 +165,7 @@ export async function startScheduler(): Promise<void> {
   const { reapExpiredNotifications } = await import('@/services/notification-retention');
   const { notifyOperatorOfDegradations } = await import('@/services/degradation-digest');
   const { auditTeacherTimezones } = await import('@/services/timezone-audit');
-  const { dispatchPushes } = await import('@/services/push-dispatch');
+  const { runPushDispatchTick } = await import('@/services/push-health');
 
   const jobs = buildJobs({
     autoTransitionToInProgress,
@@ -182,7 +182,7 @@ export async function startScheduler(): Promise<void> {
     reapExpiredNotifications,
     notifyOperatorOfDegradations,
     auditTeacherTimezones,
-    dispatchPushes,
+    runPushDispatchTick,
   });
 
   scheduleJobs(jobs, prisma, (globalThis.__fairYogaJobHealth ??= {}));
@@ -295,7 +295,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     reapExpiredNotifications,
     notifyOperatorOfDegradations,
     auditTeacherTimezones,
-    dispatchPushes,
+    runPushDispatchTick,
   } = sweeps;
 
   return [
@@ -425,10 +425,13 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     },
     {
       // Push is a best-effort layer ahead of email; this interval is its
-      // latency (`docs/technical-architecture.md`, Cron Jobs).
+      // latency. The tick is bounded below the stall line by its claim
+      // deadline rather than by a threshold of its own, and an all-failed
+      // streak surfaces as a thrown `PushDispatchDegradedError`
+      // (`docs/technical-architecture.md`, Cron Jobs).
       name: 'push-dispatch',
       intervalMs: 10 * 1000,
-      run: (db) => dispatchPushes(db),
+      run: (db) => runPushDispatchTick(db),
     },
   ];
 }

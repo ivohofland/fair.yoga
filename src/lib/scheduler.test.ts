@@ -16,6 +16,8 @@ import {
   type SchedulerSweeps,
   type SchedulerTimers,
 } from './scheduler';
+import { PUSH_CLAIM_DEADLINE_MS } from '@/services/push-dispatch';
+import { DEFAULT_TIMEOUT_MS } from '@/lib/push/send';
 
 const MINUTE = 60 * 1000;
 const db = {} as unknown as PrismaClient;
@@ -39,7 +41,7 @@ const SWEEP_NAMES = [
   'reapExpiredNotifications',
   'notifyOperatorOfDegradations',
   'auditTeacherTimezones',
-  'dispatchPushes',
+  'runPushDispatchTick',
 ] as const;
 
 type StubbedName = (typeof SWEEP_NAMES)[number];
@@ -141,6 +143,19 @@ describe('buildJobs', () => {
   });
 
   /**
+   * The push job is not given a stall budget of its own: its tick is bounded
+   * instead. A tick ends within one send timeout of the claim deadline, so
+   * the longest it can run must leave the next tick refused at most once.
+   * Retuning the deadline, the timeout or the interval past this line would
+   * bring back the false stall (#743) with nothing else failing.
+   */
+  it('keeps a push tick shorter than the scheduler\'s stall line', () => {
+    const job = buildJobs(buildStubs(() => async () => {})).find((j) => j.name === 'push-dispatch');
+    if (!job) throw new Error('push-dispatch is not in the job table');
+    expect(PUSH_CLAIM_DEADLINE_MS + DEFAULT_TIMEOUT_MS).toBeLessThan(STALLED_AFTER_SKIPPED_TICKS * job.intervalMs);
+  });
+
+  /**
    * Which sweeps each job runs, keyed BY JOB rather than as one flat call
    * order. The flat form coupled this test to the order of the job table as
    * well as to each job's contents, so swapping two behaviourally independent
@@ -188,7 +203,7 @@ describe('buildJobs', () => {
         'auditTeacherTimezones',
       ],
       'waitlist-reconciliation': ['runWaitlistReconciliationTick'],
-      'push-dispatch': ['dispatchPushes'],
+      'push-dispatch': ['runPushDispatchTick'],
     });
   });
 });
