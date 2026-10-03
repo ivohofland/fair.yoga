@@ -79,6 +79,12 @@ describe('observePushTick', () => {
       expect(state).toMatchObject({ failedTicks: 1, lastFailedAt: T0, lastCause: { kind: 'fault', name: 'PushSendFault' } });
     });
 
+    it('is reset by a delivery even when the same tick was misconfigured', () => {
+      const failing = after(createPushHealthState(), [{ failed: 1 }]);
+      const next = observePushTick(failing, completed({ sent: 1, misconfigured: 'partial' }), T0 + 10_000);
+      expect(next).toEqual(createPushHealthState());
+    });
+
     it('is replaced by the next failing tick and kept through quiet ones', () => {
       const faulted = observePushTick(createPushHealthState(), { kind: 'threw', faultName: 'PushSendFault' }, T0);
       expect(observePushTick(faulted, completed({}), T0 + 10_000).lastCause).toEqual({ kind: 'fault', name: 'PushSendFault' });
