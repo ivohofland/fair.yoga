@@ -574,11 +574,11 @@ export function classifyApiError(error: unknown): ApiFailure {
       message: 'That class can no longer be changed',
       logMessage: 'terminal class write reached a DB trigger',
       level: trigger === 'status' || trigger === 'liveness' ? 'warn' : 'error',
-      // `withErrorHandler` always logs `err: error`, so the trigger's own
-      // message is already in the line. What it is not is GROUPABLE: it lives
-      // inside a several-hundred-character driver string that no log filter
-      // can facet on. One field turns "did the unfireable trigger fire" into
-      // a query.
+      // The logged `err` withholds a Prisma error's message, so this facet —
+      // with the `trigger` and `rowIds` the `err` serializer lifts from that
+      // message — is what identifies which guard fired. It is also GROUPABLE,
+      // which the driver string never was: one field turns "did the
+      // unfireable trigger fire" into a query.
       detail: { trigger },
     };
   }

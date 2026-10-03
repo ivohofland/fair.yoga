@@ -191,11 +191,13 @@ export const DELETE = withErrorHandler(async (
       // — and the second is otherwise silent to the teacher, because this
       // branch answers with the same status and message the pre-check does.
       // It is also the branch that reopens the deadlock edge above.
-      // `err` under that key deliberately: `log.ts` asks for it so pino
-      // serializes the stack, the sibling catch at `invitations/[id]:88` does
-      // the same, and WHICH constraint fired is what separates the two causes
-      // this message names — ClassTemplate_ means a template appeared in the
-      // gap, Class_ means a class did. Without it the line poses the question
+      // `err` under that key deliberately: `log.ts` asks for it, since a value
+      // there is serialized whatever it is and is the key pino reads `msg`
+      // from when a call passes no message string. The sibling catch on the
+      // invitation CAS re-read in `invitations/[id]` does the same. WHICH
+      // constraint fired is what separates the two causes this message
+      // names — ClassTemplate_ means a template appeared in the gap, Class_
+      // means a class did. Without it the line poses the question
       // and drops the answer.
       log.warn(
         { err, teacherRoomId: id, teacherId: session.teacherId },
