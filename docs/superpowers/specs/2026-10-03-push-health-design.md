@@ -63,14 +63,19 @@ the queue does. Change the order:
   `MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT` of them); record each outcome; repeat.
 - A candidate nobody reached before the deadline keeps `pushHandledAt: null` and is read
   next tick. `PUSH_STALE_AFTER_MS` (15 minutes) still bounds how long one can wait, and
-  a row is only ever abandoned *unclaimed*: a claimed row is never retried, so a claimed
-  send is always run to its outcome.
+  a row is only ever deferred *unclaimed*: a claimed row is never retried, so the deadline
+  never drops a claimed send. (A read that throws after the claim, such as the recipient
+  or subscription lookup, still leaves the row stamped and unsent and rejects the tick;
+  the claim has always come first.)
 - `PUSH_CLAIM_DEADLINE_MS = 10 s` (one tick interval). A worker that claims at the last
   moment finishes within one send timeout, so the **worst tick is
   10 s + 5 s = 15 s plus DB time**, under the 20 s stall line with 5 s to spare. At
-  most one tick interval is refused (`skippedTicks <= 1 < 2`), so a timeout burst of any
-  size stays healthy by construction, with `STALLED_AFTER_SKIPPED_TICKS` unchanged and
-  hang detection still ~20 s.
+  most one tick interval is refused (`skippedTicks <= 1 < 2`), so on the steady 10 s
+  grid a timeout burst of any size stays healthy, with `STALLED_AFTER_SKIPPED_TICKS`
+  unchanged and hang detection still ~20 s. The one exception is the first tick after
+  boot: `scheduleJobs` also registers a one-off at 15 s, so the first two ticks sit 5 s
+  apart, and a first tick longer than 10 s can read stalled for the few seconds until it
+  settles. That is a scheduler quirk this issue documents and does not change.
 - Both figures come from exported constants (`PUSH_CLAIM_DEADLINE_MS`, the send timeout
   newly exported from `lib/push/send.ts`, the job's `intervalMs`); a test asserts
   `deadline + timeout < STALLED_AFTER_SKIPPED_TICKS × intervalMs`, so retuning one of
