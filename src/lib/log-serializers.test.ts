@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { serializeErr } from './log-serializers';
+import { serializeErr, type SerializedErr } from './log-serializers';
+import { TERMINAL_TRIGGER_TAILS } from './api-errors';
 
 const PII = ['Alicepii', 'Surnamepii', 'pii.test@example.com'];
 const V = { clientVersion: '6.19.3' };
 
+// Every value passed here is a serializer output, so it must be a plain
+// object: a raw Error returned unchanged would fail this before the tokens.
 function expectNoPii(value: unknown): void {
+  expect(typeof value === 'object' && value !== null && Object.getPrototypeOf(value) === Object.prototype).toBe(true);
   const json = JSON.stringify(value);
   for (const token of PII) expect(json).not.toContain(token);
 }
@@ -49,13 +53,13 @@ describe('serializeErr: Prisma query errors withhold their message', () => {
     expect(out.message).toBe('Invalid `prisma.$queryRawUnsafe()` invocation (detail withheld from the log)');
   });
 
-  it('forged frame: a newline in a raw-query value cannot pass as a stack frame', () => {
+  it('a raw-query value spelling a frame stays inside the withheld message', () => {
     const out = serializeErr(rawCast('Alicepii\n    at evil3 (x)'));
     expectNoPii(out);
     expect(out.stack).not.toContain('evil3');
   });
 
-  it('forged frame: text appended on the header line itself is not a frame either', () => {
+  it('frame shape: a remainder that does not start on a new line is not frames', () => {
     const e = new Prisma.PrismaClientValidationError('\nInvalid `prisma.student.create()` invocation: firstName "Alicepii"', V);
     void e.stack; // force V8 to format and cache the stack before the message changes
     e.message = '\nInvalid `prisma.student.create()` invocation:';
@@ -217,13 +221,23 @@ describe('serializeErr: the shape', () => {
     expect(out.cause?.cause?.type).toBe('PrismaClientValidationError');
   });
 
-  it('terminates on a cause cycle', () => {
+  it('terminates on a cause cycle, and flags where it cut', () => {
     const a = new Error('a');
     const b = new Error('b', { cause: a });
     Object.defineProperty(a, 'cause', { value: b });
     const out = serializeErr(a);
     expect(out.cause?.message).toBe('b');
     expect(out.cause?.cause).toBeUndefined();
+    expect(out.cause?.causeCycle).toBe(true);
+    expect(out.causeCycle).toBeUndefined();
+  });
+
+  it('flags an aggregate member omitted as a cycle', () => {
+    const agg = new AggregateError([], 'self');
+    agg.errors.push(agg);
+    const out = serializeErr(agg);
+    expect(out.aggregateErrors).toBeUndefined();
+    expect(out.causeCycle).toBe(true);
   });
 
   it('stops at a depth bound on a long chain', () => {
@@ -232,12 +246,35 @@ describe('serializeErr: the shape', () => {
     let e = new Error('0');
     for (let i = 1; i < 50; i++) e = new Error(String(i), { cause: e });
     let depth = 0;
-    let node: { cause?: unknown } | undefined = serializeErr(e);
-    while (node?.cause) {
+    let node: SerializedErr = serializeErr(e);
+    while (node.cause) {
       depth++;
-      node = node.cause as { cause?: unknown };
+      node = node.cause;
     }
     expect(depth).toBe(8);
+    expect(node.causeTruncated).toBe(true);
+  });
+
+  it('does not flag truncation when the chain ends inside the budget', () => {
+    let e = new Error('0');
+    for (let i = 1; i <= 8; i++) e = new Error(String(i), { cause: e });
+    let node: SerializedErr = serializeErr(e);
+    while (node.cause) node = node.cause;
+    expect(node.message).toBe('0');
+    expect(node.causeTruncated).toBeUndefined();
+  });
+
+  it('stops at the same depth bound through nested aggregates', () => {
+    let e: Error = new Error('0');
+    for (let i = 1; i < 50; i++) e = new AggregateError([e], String(i));
+    let hops = 0;
+    let node: SerializedErr = serializeErr(e);
+    while (node.aggregateErrors?.[0]) {
+      hops++;
+      node = node.aggregateErrors[0];
+    }
+    expect(hops).toBe(8);
+    expect(node.causeTruncated).toBe(true);
   });
 
   it('serializes an AggregateError through the same allowlist', () => {
@@ -255,6 +292,9 @@ describe('serializeErr: the shape', () => {
     expect(out.aggregateErrors).toHaveLength(2);
     expect(out.aggregateErrors?.[0]?.message).toBe('x');
     expect(out.aggregateErrors?.[1]?.message).toBe('x');
+    // Serialized once: every position holds the same frozen object.
+    expect(out.aggregateErrors?.[0]).toBe(out.cause);
+    expect(out.aggregateErrors?.[1]).toBe(out.cause);
   });
 
   it('omits aggregateErrors when no element survives', () => {
@@ -280,5 +320,218 @@ describe('serializeErr: the shape', () => {
     expect(serializeErr(obj)).toBe(obj);
     expect(serializeErr('text')).toBe('text');
     expect(serializeErr(undefined)).toBeUndefined();
+  });
+});
+
+const known = (message: string, code: string, meta: Record<string, unknown>) =>
+  new Prisma.PrismaClientKnownRequestError(message, { ...V, code, meta });
+const QUERY_HEADER = '\nInvalid `prisma.class.update()` invocation:\n\n\n';
+const pgError = (code: string, message: string) =>
+  `${QUERY_HEADER}Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "${message}", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`;
+
+/** Every position in `out`, a repeated node counted wherever it appears. */
+function entries(out: SerializedErr): number {
+  return 1 + (out.cause ? entries(out.cause) : 0) + (out.aggregateErrors ?? []).reduce((n, e) => n + entries(e), 0);
+}
+
+describe('serializeErr: repeated and oversized graphs', () => {
+  it('a node reachable many times is serialized once, and the line stays bounded', () => {
+    let e: Error = new Error('leaf');
+    for (let level = 0; level < 9; level++) {
+      const below = e;
+      e = new AggregateError(Array.from({ length: 8 }, () => below), `level ${level}`);
+    }
+    const started = performance.now();
+    const out = serializeErr(e);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(() => JSON.stringify(out)).not.toThrow();
+    // The exact budget is pinned by the wide-aggregate test below; here the
+    // greedy packing of whole repeated subtrees can leave it part unspent.
+    expect(entries(out)).toBeLessThanOrEqual(64);
+    expect(out.causeTruncated).toBe(true);
+  });
+
+  it('a wide aggregate stops at the entry budget, and says so', () => {
+    const out = serializeErr(new AggregateError(Array.from({ length: 100 }, (_, i) => new Error(String(i))), 'wide'));
+    expect(out.aggregateErrors).toHaveLength(63);
+    expect(out.causeTruncated).toBe(true);
+  });
+});
+
+describe('serializeErr: fails closed on odd errors', () => {
+  it('an Error whose message is not a string is still serialized, never returned raw', () => {
+    const e = rawCast('Alicepii pii.test@example.com');
+    Object.defineProperty(e, 'message', { value: undefined });
+    const out = serializeErr(e);
+    expectNoPii(out);
+    expect(out.type).toBe('PrismaClientKnownRequestError');
+  });
+
+  it('an Error whose cause getter throws becomes the placeholder, not a throw', () => {
+    const e = new Error('m');
+    Object.defineProperty(e, 'cause', {
+      get() {
+        throw new Error('Alicepii');
+      },
+    });
+    const out = serializeErr(e);
+    expectNoPii(out);
+    expect(out).toEqual({ type: 'Unserializable', message: '(error could not be serialized for the log)' });
+  });
+
+  it('a withheld error keeps its own name only when it is a Prisma class name', () => {
+    class PrismaClientUnknownRequestError extends Error {}
+    const e = new PrismaClientUnknownRequestError(CHECK_MSG);
+    e.name = 'Alicepii';
+    const out = serializeErr(e);
+    expectNoPii(out);
+    expect(out.name).toBeUndefined();
+  });
+
+  it('outputs are frozen, so a mutated output cannot be replayed', () => {
+    const o = serializeErr(new Prisma.PrismaClientValidationError(VALIDATION_MSG, V));
+    expect(() => {
+      (o as { message: string }).message = 'Alicepii';
+    }).toThrow(TypeError);
+    expectNoPii(serializeErr(o));
+  });
+});
+
+describe('serializeErr: what a withheld error still says', () => {
+  it('keeps column and field-name identifiers', () => {
+    const p2022 = serializeErr(known(QUERY_HEADER, 'P2022', { modelName: 'Class', column: 'Class.newCol' }));
+    expect(p2022.meta).toEqual({ modelName: 'Class', column: 'Class.newCol' });
+    const p2003 = serializeErr(known(QUERY_HEADER, 'P2003', { modelName: 'Class', field_name: 'Class_roomId_fkey' }));
+    expect(p2003.meta).toEqual({ modelName: 'Class', field_name: 'Class_roomId_fkey' });
+  });
+
+  it('lifts a constraint only for the SQLSTATEs whose message is the constraint sentence', () => {
+    const out = serializeErr(
+      new Prisma.PrismaClientUnknownRequestError(
+        pgError('23502', 'null value in column \\"x\\" violates not-null constraint; DETAIL violates check constraint \\"Alicepii\\"'),
+        V,
+      ),
+    );
+    expectNoPii(out);
+    expect(out.sqlState).toBe('23502');
+    expect(out.constraint).toBeUndefined();
+  });
+
+  it('names a connector-level failure by its kind', () => {
+    const out = serializeErr(
+      new Prisma.PrismaClientUnknownRequestError(`${QUERY_HEADER}Error in PostgreSQL connection: Error { kind: Closed, cause: None }`, V),
+    );
+    expect(out.connectorKind).toBe('Closed');
+    expect(out.sqlState).toBeUndefined();
+  });
+
+  it.each([
+    [
+      'Transaction already closed: A query cannot be executed on an expired transaction. The timeout for this transaction was 5000 ms, however 5012 ms passed since the start of the transaction. Alicepii',
+      'expired',
+    ],
+    ['Transaction already closed: Alicepii, 5012 ms passed', 'expired'],
+    ['Unable to start a transaction in the given time. Alicepii', 'start_timeout'],
+    ["Transaction not found. Transaction ID is invalid, refers to an old closed transaction Prisma doesn't have information about anymore. Alicepii", 'not_found'],
+    ['Transaction already closed: A commit cannot be executed on a committed transaction. Alicepii', 'closed'],
+    ['Something else entirely. Alicepii', 'other'],
+  ])('maps a P2028 meta.error to its kind, never its text: %s', (error, kind) => {
+    const out = serializeErr(known('Transaction API error: Alicepii', 'P2028', { error }));
+    expectNoPii(out);
+    expect(out.txError).toBe(kind);
+  });
+
+  it.each(Object.entries(TERMINAL_TRIGGER_TAILS))('a terminal trigger fire names its trigger and rows: %s', (trigger, tail) => {
+    const id = '824c3362-c21f-466e-a741-7301d469730f';
+    const other = '12345678-1234-1234-1234-123456789abc';
+    const out = serializeErr(
+      new Prisma.PrismaClientUnknownRequestError(pgError('23514', `Row ${id} of ${other}, ${id} is terminal; ${tail} Alicepii`), V),
+    );
+    expectNoPii(out);
+    expect(out.trigger).toBe(trigger);
+    expect(out.rowIds).toEqual([id, other]);
+  });
+
+  it('a terminal trigger fire keeps at most three row ids', () => {
+    const ids = ['a', 'b', 'c', 'd'].map((c) => `${c.repeat(8)}-0000-4000-8000-000000000000`);
+    const out = serializeErr(
+      new Prisma.PrismaClientUnknownRequestError(pgError('23514', `${ids.join(' ')} ${TERMINAL_TRIGGER_TAILS.status} open`), V),
+    );
+    expect(out.rowIds).toEqual(ids.slice(0, 3));
+  });
+
+  it('a CHECK violation is not a trigger fire, and its failing row lends no ids', () => {
+    // The second message gives the failing row a full UUID, so dropping the
+    // trigger condition on `rowIds` has an id to find.
+    for (const msg of [CHECK_MSG, CHECK_MSG.replace('4ad7b519', '4ad7b519-0000-4000-8000-000000000001')]) {
+      const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(msg, V));
+      expectNoPii(out);
+      expect(out.trigger).toBeUndefined();
+      expect(out.rowIds).toBeUndefined();
+    }
+  });
+});
+
+/**
+ * A P2010 whose stack was formatted from `header + rest`, then whose message
+ * was cut back to the header alone: the stack's remainder after the
+ * `${name}: ${message}` prefix starts with `rest`.
+ */
+function rawCastHeaderOnly(rest: string): Prisma.PrismaClientKnownRequestError {
+  const header = '\nInvalid `prisma.$queryRawUnsafe()` invocation:';
+  const e = known(`${header}${rest}`, 'P2010', { code: '22P02' });
+  void e.stack; // force V8 to format and cache the stack before the message changes
+  e.message = header;
+  return e;
+}
+
+describe('serializeErr: anchors and guards', () => {
+  it('the header is anchored at the start of the message', () => {
+    const out = serializeErr(new Prisma.PrismaClientRustPanicError('panicked: Invalid `Alicepii()` invocation', '6.19.3'));
+    expect(out.message).toBe('Prisma error (detail withheld from the log)');
+  });
+
+  it('frame shape: a remainder with a non-frame line is not frames', () => {
+    expectNoPii(serializeErr(rawCastHeaderOnly('\n\n\nRaw query failed. Message: `"Alicepii"`')));
+  });
+
+  it('frame shape: a line is a frame only when it starts with the frame indent', () => {
+    expectNoPii(serializeErr(rawCastHeaderOnly('\nAlicepii    at evil (x)')));
+  });
+
+  it('every element of an identifier array must be an identifier', () => {
+    const out = serializeErr(known(QUERY_HEADER, 'P2002', { target: ['email', 'lower(Alicepii)'] }));
+    expectNoPii(out);
+    expect(out.meta).toBeUndefined();
+  });
+
+  it('a non-Prisma code that is neither a string nor a number is dropped', () => {
+    const out = serializeErr(Object.assign(new Error('m'), { code: { to: 'Alicepii' } }));
+    expectNoPii(out);
+    expect(out.code).toBeUndefined();
+  });
+
+  it('numeric meta must be a number', () => {
+    const out = serializeErr(known(QUERY_HEADER, 'P2024', { timeout: 'Alicepii' }));
+    expectNoPii(out);
+    expect(out.meta?.timeout).toBeUndefined();
+  });
+
+  it('a SQLSTATE is the whole of meta.code, not a part of it', () => {
+    const out = serializeErr(known(QUERY_HEADER, 'P2010', { code: 'ALICE pii' }));
+    expect(out.sqlState).toBeUndefined();
+  });
+
+  it('a Prisma code is the whole of code, not a prefix', () => {
+    const out = serializeErr(known(QUERY_HEADER, 'P2002 Alicepii', {}));
+    expectNoPii(out);
+    expect(out.code).toBeUndefined();
+  });
+
+  it('an initialization error reads its code from errorCode, not an own code', () => {
+    const e = Object.assign(new Prisma.PrismaClientInitializationError("Can't reach database server", '6.19.3', 'P1001'), {
+      code: 'Alicepii',
+    });
+    expect(serializeErr(e).code).toBe('P1001');
   });
 });

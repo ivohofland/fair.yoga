@@ -3,46 +3,108 @@
  * measurements behind them, are in
  * `docs/superpowers/specs/2026-10-03-err-serializer-allowlist-design.md`.
  *
- * `serializeErr` builds a plain object from named fields only, so a property
- * nobody listed here never reaches a log. A Prisma query error's message is
- * withheld outright: Prisma renders the call's arguments and Postgres's
- * `DETAIL` into it, and both carry row values. What survives of it is the
- * operation and the identifiers lifted below.
+ * `serializeErr` builds a plain, frozen object from named fields only, so a
+ * property nobody listed here never reaches its output. A Prisma query error's
+ * message is withheld outright: Prisma renders the call's arguments and
+ * Postgres's `DETAIL` into it, and both carry row values. What survives of it
+ * is the operation and the identifiers lifted below. An error that throws
+ * while being read becomes `UNSERIALIZABLE`; it is never returned raw.
  */
 import { Prisma } from '@prisma/client';
+import { TERMINAL_TRIGGER_TAILS } from './api-errors';
+
+type Identifiers = string | readonly string[];
 
 export interface SerializedPrismaMeta {
-  target?: string | string[];
-  constraint?: string | string[];
-  modelName?: string | string[];
-  connection_limit?: number;
-  timeout?: number;
+  readonly target?: Identifiers;
+  readonly constraint?: Identifiers;
+  readonly modelName?: Identifiers;
+  readonly column?: Identifiers;
+  readonly table?: Identifiers;
+  readonly column_name?: Identifiers;
+  readonly field_name?: Identifiers;
+  readonly relation_name?: Identifiers;
+  readonly model_a_name?: Identifiers;
+  readonly model_b_name?: Identifiers;
+  readonly connection_limit?: number;
+  readonly timeout?: number;
 }
 
+/** What a P2028's `meta.error` says, as a closed set; its text is never kept. */
+export type TxErrorKind = 'expired' | 'start_timeout' | 'not_found' | 'closed' | 'other';
+
+export type TerminalTrigger = keyof typeof TERMINAL_TRIGGER_TAILS;
+
 export interface SerializedErr {
-  type: string;
-  name?: string;
-  message: string;
-  stack?: string;
-  code?: string | number;
-  meta?: SerializedPrismaMeta;
-  sqlState?: string;
-  constraint?: string;
-  cause?: SerializedErr;
-  aggregateErrors?: SerializedErr[];
+  readonly type: string;
+  readonly name?: string;
+  readonly message: string;
+  readonly stack?: string;
+  readonly code?: string | number;
+  readonly meta?: SerializedPrismaMeta;
+  readonly sqlState?: string;
+  readonly constraint?: string;
+  readonly connectorKind?: string;
+  readonly txError?: TxErrorKind;
+  readonly trigger?: TerminalTrigger;
+  readonly rowIds?: readonly string[];
+  readonly cause?: SerializedErr;
+  readonly aggregateErrors?: readonly SerializedErr[];
+  /** A cause or aggregate member was omitted because the depth or entry budget ran out. */
+  readonly causeTruncated?: true;
+  /** A cause or aggregate member was omitted because it is this error or one it is nested in. */
+  readonly causeCycle?: true;
 }
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 /** Which `meta` keys survive, and as what. */
 const META_KEYS = {
   target: 'identifiers',
   constraint: 'identifiers',
   modelName: 'identifiers',
+  column: 'identifiers',
+  table: 'identifiers',
+  column_name: 'identifiers',
+  field_name: 'identifiers',
+  relation_name: 'identifiers',
+  model_a_name: 'identifiers',
+  model_b_name: 'identifiers',
   connection_limit: 'number',
   timeout: 'number',
 } as const satisfies Record<keyof SerializedPrismaMeta, 'identifiers' | 'number'>;
 
+type MetaKey = keyof typeof META_KEYS;
+type MetaKeyOf<Kind> = { [K in MetaKey]: (typeof META_KEYS)[K] extends Kind ? K : never }[MetaKey];
+
+function isMetaKey(key: string): key is MetaKey {
+  return Object.prototype.hasOwnProperty.call(META_KEYS, key);
+}
+
+// Each list holds the keys of one tag, so the assignment in `allowedMeta` is
+// checked against that tag's field type: a key tagged `identifiers` whose
+// field is not `Identifiers` does not compile.
+const IDENTIFIER_META_KEYS = Object.keys(META_KEYS)
+  .filter(isMetaKey)
+  .filter((key): key is MetaKeyOf<'identifiers'> => META_KEYS[key] === 'identifiers');
+const NUMBER_META_KEYS = Object.keys(META_KEYS)
+  .filter(isMetaKey)
+  .filter((key): key is MetaKeyOf<'number'> => META_KEYS[key] === 'number');
+
+/** Read in `TERMINAL_TRIGGER_TAILS`'s own key order, which is the match order. */
+const TERMINAL_TRIGGERS = Object.keys(TERMINAL_TRIGGER_TAILS).filter((key): key is TerminalTrigger =>
+  Object.prototype.hasOwnProperty.call(TERMINAL_TRIGGER_TAILS, key),
+);
+
 /** Cause and aggregate nesting share this budget. */
 const MAX_DEPTH = 8;
+/**
+ * Errors one top-level call puts in its output, counting a repeated error at
+ * every position it appears, so a graph that reuses nodes cannot grow the
+ * line past this.
+ */
+const MAX_ENTRIES = 64;
+const MAX_ROW_IDS = 3;
 
 const WITHHELD = '(detail withheld from the log)';
 const PRISMA_ERROR_NAME = /^PrismaClient\w+Error$/;
@@ -56,14 +118,41 @@ const PG_CODE = /PostgresError \{ code: "([0-9A-Z]{5})"/;
 // Postgres writes this sentence before its DETAIL; on the Unknown path its
 // quotes arrive backslash-escaped.
 const CONSTRAINT = /violates (?:check|exclusion|foreign key|unique) constraint \\?"([A-Za-z0-9_]+)\\?"/;
+// The SQLSTATEs whose primary message is that sentence: unique, foreign key,
+// check, exclusion.
+const CONSTRAINT_SQLSTATES: ReadonlySet<string> = new Set(['23505', '23503', '23514', '23P01']);
+// A connector failure with no Postgres error in it, e.g. `Error { kind: Closed, cause: None }`.
+const CONNECTOR_KIND = /Error \{ kind: ([A-Za-z]+)/;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
-/** Outputs of this module, so a second pass returns them unchanged. */
-const produced = new WeakSet<object>();
+/**
+ * Outputs of this module, keyed by themselves, so a second pass returns them
+ * unchanged. Every value is frozen before it is added, so what a second pass
+ * returns is what the first one built.
+ */
+const produced = new WeakMap<object, SerializedErr>();
+/** How many entries each output spans, itself and everything nested in it. */
+const entryCounts = new WeakMap<SerializedErr, number>();
 
-type ErrorLike = object & { message: string };
+function markProduced<T extends SerializedErr>(out: T, entries: number): T {
+  produced.set(out, out);
+  entryCounts.set(out, entries);
+  return out;
+}
 
-function isErrorLike(value: unknown): value is ErrorLike {
+/** What replaces an error, or a log value, that throws while being read. */
+export const UNSERIALIZABLE: SerializedErr = markProduced(
+  Object.freeze({ type: 'Unserializable', message: '(error could not be serialized for the log)' }),
+  1,
+);
+
+function isErrorLike(value: unknown): value is object {
   return typeof value === 'object' && value !== null && typeof (value as { message?: unknown }).message === 'string';
+}
+
+/** An `Error` instance whatever its `message`, or an error-like object. */
+function isSerializable(value: unknown): value is object {
+  return value instanceof Error || isErrorLike(value);
 }
 
 function field(source: object, key: string): unknown {
@@ -91,34 +180,37 @@ function prismaClass(err: object): string | null {
   return PRISMA_ERROR_NAME.test(type) ? type : null;
 }
 
-function identifiers(value: unknown): string | string[] | undefined {
+function identifiers(value: unknown): Identifiers | undefined {
   if (typeof value === 'string') return IDENTIFIER.test(value) ? value : undefined;
-  if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string' && IDENTIFIER.test(v))) {
-    return value as string[];
+  if (Array.isArray(value)) {
+    const items: unknown[] = value;
+    if (items.length > 0 && items.every((v) => typeof v === 'string' && IDENTIFIER.test(v))) {
+      return Object.freeze(items.map(String));
+    }
   }
   return undefined;
 }
 
 function allowedMeta(meta: unknown): SerializedPrismaMeta | undefined {
   if (typeof meta !== 'object' || meta === null) return undefined;
-  const out: SerializedPrismaMeta = {};
-  for (const key of Object.keys(META_KEYS) as (keyof SerializedPrismaMeta)[]) {
-    const value = field(meta, key);
-    if (META_KEYS[key] === 'number') {
-      if (typeof value === 'number' && Number.isFinite(value)) Object.assign(out, { [key]: value });
-    } else {
-      const kept = identifiers(value);
-      if (kept !== undefined) Object.assign(out, { [key]: kept });
-    }
+  const out: Mutable<SerializedPrismaMeta> = {};
+  for (const key of IDENTIFIER_META_KEYS) {
+    const kept = identifiers(field(meta, key));
+    if (kept !== undefined) out[key] = kept;
   }
-  return Object.keys(out).length > 0 ? out : undefined;
+  for (const key of NUMBER_META_KEYS) {
+    const value = field(meta, key);
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? Object.freeze(out) : undefined;
 }
 
-// A P2010 can carry a raw-query value with an embedded newline, so a shape
-// check on the text after the header is not enough: the value itself can
-// start with `\n` and go on to spell a line that reads like a frame. What
-// makes a remainder frames is that it holds nothing else — every line after
-// the leading newline is a frame line, with no exceptions to carve out.
+// True when `remainder` is a leading newline followed only by lines matching
+// `FRAME_LINE`. Shape only: it cannot tell a real frame from text that reads
+// `    at …`. It is asked about what follows the stack's `${name}: ${message}`
+// prefix, which holds more than frames only when the stack was formatted from
+// a longer message than the error now carries — and then the rest of that
+// longer message is in it, a raw-query value among it.
 function isFrameShape(remainder: string): boolean {
   if (!remainder.startsWith('\n')) return false;
   return remainder.slice(1).split('\n').every((line) => FRAME_LINE.test(line));
@@ -134,99 +226,167 @@ function liftSqlState(cls: string, err: object, original: string): string | unde
   return undefined;
 }
 
-function withheld(cls: string, err: ErrorLike, type: string): SerializedErr {
-  const original = err.message;
+function txErrorKind(meta: unknown): TxErrorKind {
+  const text = typeof meta === 'object' && meta !== null ? field(meta, 'error') : undefined;
+  if (typeof text !== 'string') return 'other';
+  const closed = text.includes('Transaction already closed');
+  if (closed && (text.includes('timeout') || text.includes('ms passed'))) return 'expired';
+  if (text.includes('Unable to start a transaction in the given time')) return 'start_timeout';
+  if (text.includes('Transaction not found')) return 'not_found';
+  return closed ? 'closed' : 'other';
+}
+
+function withheld(cls: string, err: object, type: string, original: string): Mutable<SerializedErr> {
   const header = HEADER.exec(original);
   const message = header ? `Invalid \`${header[1]}\` invocation ${WITHHELD}` : `Prisma error ${WITHHELD}`;
 
-  // Frames are what follows the exact original header, and only when that
-  // remainder has no shape but a stack trace's: empty, or a leading newline
-  // with every further line reading as a frame. A prefix match alone is not
-  // enough — text appended on the header's own line (same rendering a
-  // raw-query value can produce) would otherwise ride along as "frames".
+  // Frames are what follows the stack's exact `${name}: ${message}` prefix,
+  // kept only when that remainder is empty or passes `isFrameShape`. A prefix
+  // match alone is not enough: text appended on the message's own last line
+  // would otherwise ride along as "frames".
   const stack = field(err, 'stack');
-  const name = field(err, 'name');
-  const prefix = `${String(name)}: ${original}`;
+  const prefix = `${String(field(err, 'name'))}: ${original}`;
   let frames = '';
   if (typeof stack === 'string' && stack.startsWith(prefix)) {
     const remainder = stack.slice(prefix.length);
     if (remainder === '' || isFrameShape(remainder)) frames = remainder;
   }
 
-  const out: SerializedErr = { type, message };
+  const out: Mutable<SerializedErr> = { type, message };
   if (typeof stack === 'string') out.stack = `${type}: ${message}${frames}`;
   const sqlState = liftSqlState(cls, err, original);
   if (sqlState !== undefined) {
     out.sqlState = sqlState;
-    // Class 23 (integrity constraint violation) only: this keeps a
-    // non-integrity error — e.g. a 22P02 that quotes a value — from reaching
-    // the pattern below. What the pattern can return is the first
-    // `violates … constraint "<name>"` match, limited to `[A-Za-z0-9_]`.
-    if (sqlState.startsWith('23')) {
+    // Only where the primary message is the `violates … constraint` sentence:
+    // any other SQLSTATE — a 22P02 quoting a value, a 23502 whose DETAIL
+    // carries a row — never reaches the pattern. What it can return is the
+    // first match, limited to `[A-Za-z0-9_]`.
+    if (CONSTRAINT_SQLSTATES.has(sqlState)) {
       const constraint = CONSTRAINT.exec(original)?.[1];
       if (constraint !== undefined) out.constraint = constraint;
     }
+    // A terminality trigger raises 23514 with one of these tails; the trigger
+    // key and the row UUIDs in its message say which guard fired on what. The
+    // UUIDs are taken only when a tail matched, so a CHECK violation's failing
+    // row is never read for them.
+    if (sqlState === '23514') {
+      const trigger = TERMINAL_TRIGGERS.find((key) => original.includes(TERMINAL_TRIGGER_TAILS[key]));
+      if (trigger !== undefined) {
+        out.trigger = trigger;
+        const ids = [...new Set(original.match(UUID) ?? [])].slice(0, MAX_ROW_IDS);
+        if (ids.length > 0) out.rowIds = Object.freeze(ids);
+      }
+    }
+  } else if (cls === 'PrismaClientUnknownRequestError') {
+    const kind = CONNECTOR_KIND.exec(original)?.[1];
+    if (kind !== undefined) out.connectorKind = kind;
   }
   const meta = allowedMeta(field(err, 'meta'));
   if (meta !== undefined) out.meta = meta;
   return out;
 }
 
-function serialize(err: ErrorLike, ancestors: Set<object>, depth: number): SerializedErr {
+/** One top-level call's walk: finished nodes, nodes still being built, entries placed. */
+interface Walk {
+  readonly memo: Map<object, SerializedErr>;
+  readonly inProgress: Set<object>;
+  entries: number;
+}
+
+function serialize(err: object, walk: Walk, depth: number): SerializedErr {
+  const entriesBefore = walk.entries;
+  walk.entries += 1;
   const type = typeOf(err);
   const cls = prismaClass(err);
   const withheldPath = cls !== null && cls !== 'PrismaClientInitializationError';
+  const rawMessage = field(err, 'message');
+  const original = typeof rawMessage === 'string' ? rawMessage : '';
 
-  let out: SerializedErr;
+  let out: Mutable<SerializedErr>;
   if (withheldPath) {
-    out = withheld(cls, err, type);
+    out = withheld(cls, err, type, original);
   } else {
-    out = { type, message: err.message };
+    out = { type, message: original };
     const stack = field(err, 'stack');
     if (typeof stack === 'string') out.stack = stack;
   }
 
   if (Object.prototype.hasOwnProperty.call(err, 'name')) {
     const name = field(err, 'name');
-    if (typeof name === 'string') out.name = name;
+    // A withheld error's own name could be any text; only a Prisma class name is kept.
+    if (typeof name === 'string' && (!withheldPath || PRISMA_ERROR_NAME.test(name))) out.name = name;
   }
   const code = cls === 'PrismaClientInitializationError' ? field(err, 'errorCode') : field(err, 'code');
   if (withheldPath) {
     if (typeof code === 'string' && PRISMA_CODE.test(code)) out.code = code;
+    if (code === 'P2028') out.txError = txErrorKind(field(err, 'meta'));
   } else if (typeof code === 'string' || (typeof code === 'number' && Number.isFinite(code))) {
     out.code = code;
   }
 
-  // Ancestor path, not whole-traversal: held only while this node's own
-  // subtree is being serialized, so a repeated non-cyclic error (the same
-  // object reachable at two sibling positions) is serialized at each one,
-  // while a true cycle — this error reachable from itself — still ends.
-  ancestors.add(err);
+  // A node met while still in progress is reachable from itself: omitted,
+  // and flagged. One the depth or entry budget has no room for is omitted
+  // and flagged too.
+  const cause = field(err, 'cause');
+  const errors = field(err, 'errors');
+  const members: unknown[] = Array.isArray(errors) ? errors : [];
+  walk.inProgress.add(err);
   if (depth < MAX_DEPTH) {
-    const cause = field(err, 'cause');
-    if (isErrorLike(cause) && !ancestors.has(cause)) out.cause = toSerialized(cause, ancestors, depth + 1);
-    const errors = field(err, 'errors');
-    if (Array.isArray(errors)) {
-      const aggregated = errors
-        .filter((e): e is ErrorLike => isErrorLike(e) && !ancestors.has(e))
-        .map((e) => toSerialized(e, ancestors, depth + 1));
-      if (aggregated.length > 0) out.aggregateErrors = aggregated;
+    if (isSerializable(cause)) {
+      if (walk.inProgress.has(cause)) out.causeCycle = true;
+      else {
+        const placed = place(cause, walk, depth + 1);
+        if (placed === undefined) out.causeTruncated = true;
+        else out.cause = placed;
+      }
     }
+    const aggregated: SerializedErr[] = [];
+    for (const member of members) {
+      if (!isSerializable(member)) continue;
+      if (walk.inProgress.has(member)) {
+        out.causeCycle = true;
+        continue;
+      }
+      const placed = place(member, walk, depth + 1);
+      if (placed === undefined) out.causeTruncated = true;
+      else aggregated.push(placed);
+    }
+    if (aggregated.length > 0) out.aggregateErrors = Object.freeze(aggregated);
+  } else if (isSerializable(cause) || members.some(isSerializable)) {
+    out.causeTruncated = true;
   }
-  ancestors.delete(err);
+  walk.inProgress.delete(err);
 
-  produced.add(out);
-  return out;
+  const done = markProduced(Object.freeze(out), walk.entries - entriesBefore);
+  walk.memo.set(err, done);
+  return done;
 }
 
-function toSerialized(err: ErrorLike, ancestors: Set<object>, depth: number): SerializedErr {
-  return produced.has(err) ? (err as SerializedErr) : serialize(err, ancestors, depth);
+/**
+ * `value`'s output at this position, or `undefined` when the entry budget
+ * has no room for it. A node already finished in this call — or an output of
+ * this module — is reused rather than serialized again, so an error reachable
+ * many times is serialized once; each position still spends its entries.
+ */
+function place(value: object, walk: Walk, depth: number): SerializedErr | undefined {
+  const done = produced.get(value) ?? walk.memo.get(value);
+  const cost = done === undefined ? 1 : (entryCounts.get(done) ?? 1);
+  if (walk.entries + cost > MAX_ENTRIES) return undefined;
+  if (done === undefined) return serialize(value, walk, depth);
+  walk.entries += cost;
+  return done;
 }
 
 export function serializeErr(value: Error): SerializedErr;
 export function serializeErr(value: unknown): unknown;
 export function serializeErr(value: unknown): unknown {
-  if (typeof value === 'object' && value !== null && produced.has(value)) return value;
-  if (!isErrorLike(value)) return value;
-  return serialize(value, new Set(), 0);
+  try {
+    if (typeof value !== 'object' || value === null) return value;
+    const own = produced.get(value);
+    if (own !== undefined) return own;
+    if (!isSerializable(value)) return value;
+    return serialize(value, { memo: new Map(), inProgress: new Set(), entries: 0 }, 0);
+  } catch {
+    return UNSERIALIZABLE;
+  }
 }
