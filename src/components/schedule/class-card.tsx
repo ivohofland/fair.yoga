@@ -4,8 +4,8 @@ import type { CalendarEntry, Class, TeacherRoom, Room, StudioClass, PaymentStatu
 import { Card } from '@/components/ui/card';
 import { StatusBadge, StatusBadgeSkeleton, deriveBadgeVariant, type BadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress, RegistrationProgressSkeleton } from '@/components/ui/registration-progress';
-import { Skeleton, SkeletonText } from '@/components/ui/skeleton';
-import { Icon } from '@/components/ui/icon';
+import { SkeletonText } from '@/components/ui/skeleton';
+import { Icon, IconSkeleton } from '@/components/ui/icon';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 
@@ -136,11 +136,7 @@ export function ClassCardSkeleton() {
         when={<SkeletonText type="type-label" width="w-32" surface="card" />}
         badge={<StatusBadgeSkeleton surface="card" />}
         title={<SkeletonText type="type-subtitle" width="w-1/2" surface="card" className="flex-1 min-w-0" />}
-        chevron={
-          <span className="shrink-0" style={{ width: CHEVRON_SIZE, height: CHEVRON_SIZE }}>
-            <Skeleton surface="card" className="w-full h-full" />
-          </span>
-        }
+        chevron={<IconSkeleton size={CHEVRON_SIZE} surface="card" />}
         caption={<SkeletonText type="type-caption" width="w-1/3" surface="card" className="mt-0.5" />}
         progress={<RegistrationProgressSkeleton className="mt-3" surface="card" />}
       />

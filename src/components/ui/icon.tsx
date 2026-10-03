@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Skeleton, type SkeletonSurface } from '@/components/ui/skeleton';
 
 export type IconName =
   | 'calendar'
@@ -82,5 +83,20 @@ export function Icon({ name, size = 24, className }: IconProps) {
     >
       {PATHS[name]}
     </svg>
+  );
+}
+
+interface IconSkeletonProps {
+  size: number;
+  surface?: SkeletonSurface;
+}
+
+// An icon's loading placeholder: a fixed-size slot the same shape as `Icon`'s
+// box, so a line sized against it does not shift when the real icon arrives.
+export function IconSkeleton({ size, surface }: IconSkeletonProps) {
+  return (
+    <span aria-hidden="true" className="shrink-0" style={{ width: size, height: size }}>
+      <Skeleton surface={surface} className="w-full h-full" />
+    </span>
   );
 }
