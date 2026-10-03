@@ -24,7 +24,7 @@ import { DEGRADATION_CODES, isDegradationCode } from '@/lib/degradation-codes';
 import { sendHtmlEmail } from '@/lib/email';
 import { renderDegradationDigestEmail, type DegradationDigestEntry } from '@/lib/email-templates';
 import { log } from '@/lib/log';
-import { serializeErr } from '@/lib/log-serializers';
+import { serializeErr, type SerializedErr } from '@/lib/log-serializers';
 
 export interface DegradationDigestSummary {
   /** Events included in the email this run sent. */
@@ -115,7 +115,9 @@ export async function notifyOperatorOfDegradations(
       );
     }
   }
-  const reason = failure instanceof Error ? serializeErr(failure).message : String(failure);
+  // Redacted, because the copy becomes this error's own message, which is
+  // logged as written.
+  const reason = failure instanceof Error ? describeFailure(serializeErr(failure)) : String(failure);
   const outcome =
     stranded > 0
       ? `${stranded} claim(s) could not be released, so those events are marked told without an email`
@@ -123,4 +125,10 @@ export async function notifyOperatorOfDegradations(
   throw new DegradationDigestError(`degradation digest not delivered: ${reason}; ${outcome}`, {
     cause: failure,
   });
+}
+
+/** A serialized failure's message, with its code and SQLSTATE when it has them. */
+function describeFailure(failure: SerializedErr): string {
+  const ids = [failure.code, failure.sqlState].filter((id) => id !== undefined);
+  return ids.length > 0 ? `${failure.message} [${ids.join('/')}]` : failure.message;
 }
