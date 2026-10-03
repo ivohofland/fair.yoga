@@ -505,6 +505,37 @@ describe('NewClassPage', () => {
   });
 
   /**
+   * #740. The route's loading.tsx draws a back link above a display title;
+   * the wizard keeps that header on screen while its rooms load and when they
+   * fail to, rather than dropping it for a bare status line.
+   */
+  describe('header while the rooms are not loaded (#740)', () => {
+    function expectHeader() {
+      expect(screen.getByRole('heading', { level: 1, name: 'New class' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Schedule' })).toBeInTheDocument();
+      expect(screen.getByText('Step 1 of 4')).toBeInTheDocument();
+    }
+
+    it('shows the wizard header while the rooms are loading', () => {
+      fetchMock.mockImplementation(() => new Promise(() => {}));
+      vi.stubGlobal('fetch', fetchMock);
+      render(<CreateClassPage />);
+
+      expect(screen.getByText('Loading rooms...')).toBeInTheDocument();
+      expectHeader();
+    });
+
+    it('shows the wizard header when the rooms fail to load', async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
+      expectHeader();
+    });
+  });
+
+  /**
    * #436. The single studio create page already links up to its recurring
    * template flow; this wizard had no equivalent, only the sideways link to
    * the studio flow. Both links now render together, so this pins the studio
