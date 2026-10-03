@@ -55,6 +55,7 @@ export interface SchedulerSweeps {
   runWaitlistReconciliationTick: (db: PrismaClient) => Promise<unknown>;
   reapClosedWaitlistEntries: (db: PrismaClient) => Promise<unknown>;
   reapExpiredNotifications: (db: PrismaClient) => Promise<unknown>;
+  reapStalePushSubscriptions: (db: PrismaClient) => Promise<unknown>;
   notifyOperatorOfDegradations: (db: PrismaClient) => Promise<unknown>;
   auditTeacherTimezones: (db: PrismaClient) => Promise<unknown>;
   runPushDispatchTick: (db: PrismaClient) => Promise<unknown>;
@@ -163,6 +164,7 @@ export async function startScheduler(): Promise<void> {
   const { runWaitlistReconciliationTick } = await import('@/services/waitlist-reconciliation');
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
   const { reapExpiredNotifications } = await import('@/services/notification-retention');
+  const { reapStalePushSubscriptions } = await import('@/services/push-subscription-retention');
   const { notifyOperatorOfDegradations } = await import('@/services/degradation-digest');
   const { auditTeacherTimezones } = await import('@/services/timezone-audit');
   const { runPushDispatchTick } = await import('@/services/push-health');
@@ -180,6 +182,7 @@ export async function startScheduler(): Promise<void> {
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
+    reapStalePushSubscriptions,
     notifyOperatorOfDegradations,
     auditTeacherTimezones,
     runPushDispatchTick,
@@ -302,6 +305,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
+    reapStalePushSubscriptions,
     notifyOperatorOfDegradations,
     auditTeacherTimezones,
     runPushDispatchTick,
@@ -364,6 +368,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         cleanupExpiredAuth,
         reapClosedWaitlistEntries,
         reapExpiredNotifications,
+        reapStalePushSubscriptions,
         // Just before the audit, which stays last (see below). A standing
         // digest failure (an unset address, a refusing provider) is rethrown
         // ahead of the audit's; a failure in a sweep above it still comes first.
