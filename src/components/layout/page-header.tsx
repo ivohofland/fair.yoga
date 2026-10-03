@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { Icon } from '@/components/ui/icon';
-import { Skeleton, SkeletonText } from '@/components/ui/skeleton';
+import { Icon, IconSkeleton } from '@/components/ui/icon';
+import { SkeletonText } from '@/components/ui/skeleton';
 
 type HeaderVariant = 'display' | 'title';
 
@@ -62,9 +62,7 @@ export function PageHeaderSkeleton({ backHref = '/schedule', variant = 'title', 
     <PageHeaderFrame
       back={backHref !== null && (
         <span aria-hidden="true" className={BACK_SLOT}>
-          <span className="shrink-0" style={{ width: BACK_ICON_SIZE, height: BACK_ICON_SIZE }}>
-            <Skeleton className="w-full h-full" />
-          </span>
+          <IconSkeleton size={BACK_ICON_SIZE} />
           <SkeletonText type="type-label" width="w-20" />
         </span>
       )}
