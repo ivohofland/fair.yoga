@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { recordPushDeviceForSignIn } from '@/lib/push-client';
 
 interface BookingNameStepProps {
   /** The verified address, from the signup ticket. Display only: the route
@@ -70,6 +71,8 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
       // moves this branch to BookingFlow. `status` stays 'submitting' under
       // a navigation already in flight; the timer is the same guard
       // JoinAsStudent uses so a failed round-trip leaves no dead button.
+      // Not awaited: `router.refresh()` does not unload the page.
+      void recordPushDeviceForSignIn();
       router.refresh();
       setTimeout(() => setStatus('idle'), 4000);
       return;

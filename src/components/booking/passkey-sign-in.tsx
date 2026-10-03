@@ -55,6 +55,8 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       }
 
       const verified = (await verifyRes.json()) as { data: { redirectTo: string } };
+      // Not awaited: `router.push` below is a client navigation, so the
+      // request is not aborted by it.
       void recordPushDeviceForSignIn();
       router.push(verified.data.redirectTo);
       router.refresh();

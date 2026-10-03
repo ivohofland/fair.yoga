@@ -182,12 +182,19 @@ error until it is filed. `shouldPush` is the lookup plus the column.
   would keep the previous account's notifications flowing to it. The device
   reaches that POST by two paths: the push settings page's mount effect
   (`PushDeviceControl`), and `recordPushDeviceForSignIn` (`push-client.ts`),
-  which every client-side sign-in completion calls — the magic-link verify
-  page, the handoff-code claim and the passkey button — so the new account
-  claims the device without visiting settings (#745). It acts only on a
-  subscription the browser already holds under a granted permission: no
-  prompt, no subscribe, no request otherwise. The claim path awaits it (bounded)
-  because its navigation is a full page load; the others fire and forget.
+  which the client calls wherever a response has just minted a session, so the
+  new account claims the device without visiting settings (#745). The server
+  side of that set is every route that calls `createSession` — a signup's
+  session is minted by its profile POST, not by the magic link, so the two
+  profile routes count (on their ticket path only). Re-derive both sides with
+  `grep -rln createSession src/app/api --exclude='*.test.ts'` and
+  `grep -rn "recordPushDevice" src --include='*.tsx'`; each route's client
+  caller should appear in the second. It acts only on a subscription the
+  browser already holds under a granted permission: no prompt, no subscribe,
+  no request otherwise. It is best effort — a failure is logged and leaves the
+  device recorded for the previous account until the next re-record. A caller
+  whose next step is a full page load awaits it through
+  `recordPushDeviceBeforeNavigation` (bounded); the others fire and forget.
 - **`DELETE /api/push/subscriptions`** (`requireSession`): deletes only the
   caller's row; a missing or foreign row answers `respondUnchanged`. The
   endpoint is an unguessable capability, so the uniform answer discloses

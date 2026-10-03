@@ -60,7 +60,8 @@ The window is long enough that someone who still has the device but has every
 group off is not silently unsubscribed within a season. A row reaped while its
 browser still holds the subscription is re-recorded by the device control the
 next time that person opens the notification settings, which re-syncs a
-subscription it finds on load (`PushDeviceControl`). That re-sync writes
+subscription it finds on load (`PushDeviceControl`), or on their next sign-in
+(`recordPushDeviceForSignIn`). That re-sync writes
 nothing while the row exists unchanged (`savePushSubscription` answers
 `'unchanged'`), so a visit does not postpone the reaper: only a successful
 send moves `last_used_at`. Nor does a save that moves the endpoint to another

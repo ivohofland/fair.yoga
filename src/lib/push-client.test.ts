@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { classifyPushDevice, disablePush, enablePush, recordPushDeviceForSignIn, subscriptionUsesKey, syncPushSubscription, type PushDeviceEnv } from './push-client';
+import { classifyPushDevice, disablePush, enablePush, recordPushDeviceBeforeNavigation, recordPushDeviceForSignIn, RECORD_BEFORE_NAVIGATION_MS, subscriptionUsesKey, syncPushSubscription, type PushDeviceEnv } from './push-client';
 
 const capable: PushDeviceEnv = {
   vapidConfigured: true, install: 'installed', hasServiceWorker: true, hasPushManager: true,
@@ -445,10 +445,79 @@ describe('recordPushDeviceForSignIn', () => {
     expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'read' }));
   });
 
+  it('resolves, logging it, when reading the permission throws', async () => {
+    vi.stubGlobal('navigator', { serviceWorker: { getRegistration: vi.fn() } });
+    vi.stubGlobal('Notification', {
+      get permission(): NotificationPermission {
+        throw new Error('sandboxed');
+      },
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(recordPushDeviceForSignIn()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith('[push-client] request failed', expect.objectContaining({ step: 'read' }));
+  });
+
   it('resolves when the server refuses the subscription', async () => {
     stubBrowser('granted', fakeSubscription(null));
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401 })));
 
     await expect(recordPushDeviceForSignIn()).resolves.toBeUndefined();
+  });
+});
+
+describe('recordPushDeviceBeforeNavigation', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** A registration whose subscription read never settles, so the re-record hangs. */
+  function stubHungRead() {
+    vi.stubGlobal('navigator', { serviceWorker: { getRegistration: vi.fn(() => new Promise(() => {})) } });
+    vi.stubGlobal('Notification', { permission: 'granted' });
+  }
+
+  it('waits for the re-record, so the request is on the wire before the page unloads', async () => {
+    vi.stubGlobal('navigator', {
+      serviceWorker: { getRegistration: vi.fn(async () => ({ pushManager: { getSubscription: vi.fn(async () => fakeSubscription(null)) } })) },
+    });
+    vi.stubGlobal('Notification', { permission: 'granted' });
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await recordPushDeviceBeforeNavigation();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up on a re-record that does not settle, exactly at the bound', async () => {
+    vi.useFakeTimers();
+    stubHungRead();
+    let settled = false;
+    void recordPushDeviceBeforeNavigation().then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(RECORD_BEFORE_NAVIGATION_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+  });
+
+  it('leaves no timer behind once the re-record settles first', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Notification', { permission: 'default' });
+
+    await recordPushDeviceBeforeNavigation();
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
