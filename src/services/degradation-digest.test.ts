@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
 
 const sendHtmlEmail = vi.fn();
@@ -166,6 +166,23 @@ describe('notifyOperatorOfDegradations', () => {
 
     const row = await prisma.degradationEvent.findUniqueOrThrow({ where: { code: A } });
     expect(row.lastNotifiedAt).toBeNull();
+  });
+
+  it('redacts a Prisma failure from the send before copying its message into the thrown error', async () => {
+    await seed(A, T2);
+    sendHtmlEmail.mockRejectedValue(
+      new Prisma.PrismaClientValidationError(
+        '\nInvalid `prisma.degradationEvent.updateMany()` invocation:\n\n{ where: { code: "Alicepii" } }',
+        { clientVersion: '6.19.3' },
+      ),
+    );
+
+    const result = notifyOperatorOfDegradations(scoped(), OPERATOR);
+
+    await expect(result).rejects.toBeInstanceOf(DegradationDigestError);
+    const rejection = (await result.catch((e: unknown) => e)) as InstanceType<typeof DegradationDigestError>;
+    expect(rejection.message).not.toContain('Alicepii');
+    expect(rejection.message).toContain('Invalid `prisma.degradationEvent.updateMany()` invocation');
   });
 
   it('does not claim an event that fires between the read and the claim, and tells it next run', async () => {
