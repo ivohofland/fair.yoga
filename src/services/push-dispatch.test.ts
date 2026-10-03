@@ -969,14 +969,16 @@ describe('dispatchPushes', () => {
     expect((await prisma.notification.findUniqueOrThrow({ where: { id: stale.id } })).pushHandledAt).not.toBeNull();
   });
 
-  it('stamps the claim and the subscription with the clock it was given', async () => {
+  it('stamps the retire, the claim and the subscription with the clock it was given', async () => {
     const sub = await subscribe(studentAccountId, 'one-time-source');
     const n = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available' });
+    const stale = await notify({ recipientType: 'student', recipientId: studentId, type: 'spot_available', createdAt: new Date(Date.now() - PUSH_STALE_AFTER_MS - 60_000) });
     const at = new Date(Date.now() + 60_000);
     const { send } = recordingSender();
 
-    await dispatchPushes(scoped([n.id]).db, { send, clock: () => at.getTime() });
+    await dispatchPushes(scoped([n.id, stale.id]).db, { send, clock: () => at.getTime() });
 
+    expect((await prisma.notification.findUniqueOrThrow({ where: { id: stale.id } })).pushHandledAt).toEqual(at);
     expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).pushHandledAt).toEqual(at);
     expect((await prisma.pushSubscription.findUniqueOrThrow({ where: { id: sub.id } })).lastUsedAt).toEqual(at);
   });

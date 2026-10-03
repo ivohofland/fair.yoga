@@ -74,9 +74,9 @@ function reportUnconfigured(reason: VapidConfigProblem): void {
 }
 
 export interface PushDispatchOptions {
-  /** Omitted: the sender `VAPID_*` configures. `null`: no sender, so every claimed row is retired unsent. */
+  /** Omitted: the sender `VAPID_*` configures. `null`: no sender; claimed rows are stamped handled and nothing is sent. */
   send?: PushSender | null;
-  /** Epoch milliseconds. The tick's one time source: the claim deadline, the staleness cutoff and every timestamp it writes derive from its first read. */
+  /** Epoch milliseconds; defaults to `Date.now`. Its first read fixes the tick's `now` (staleness cutoff, claim deadline start, every timestamp written); later reads only test the claim deadline. */
   clock?: () => number;
 }
 
