@@ -72,10 +72,9 @@ the queue does. Change the order:
   10 s + 5 s = 15 s plus DB time**, under the 20 s stall line with 5 s to spare. At
   most one tick interval is refused (`skippedTicks <= 1 < 2`), so on the steady 10 s
   grid a timeout burst of any size stays healthy, with `STALLED_AFTER_SKIPPED_TICKS`
-  unchanged and hang detection still ~20 s. The one exception is the first tick after
-  boot: `scheduleJobs` also registers a one-off at 15 s, so the first two ticks sit 5 s
-  apart, and a first tick longer than 10 s can read stalled for the few seconds until it
-  settles. That is a scheduler quirk this issue documents and does not change.
+  unchanged and hang detection still ~20 s. `scheduleJobs` registers no 15 s boot
+  one-off for a job whose interval is no longer than that, so the push job has no
+  off-cadence first tick either.
 - Both figures come from exported constants (`PUSH_CLAIM_DEADLINE_MS`, the send timeout
   newly exported from `lib/push/send.ts`, the job's `intervalMs`); a test asserts
   `deadline + timeout < STALLED_AFTER_SKIPPED_TICKS × intervalMs`, so retuning one of
