@@ -442,7 +442,9 @@ describe('scheduleJobs', () => {
     }
 
     const expected = jobs.flatMap((job): Array<[string, string, number]> => [
-      ['timeout', job.name, 15 * 1000],
+      ...(job.intervalMs > 15 * 1000
+        ? [['timeout', job.name, 15 * 1000] as [string, string, number]]
+        : []),
       ['interval', job.name, job.intervalMs],
     ]);
     const byKey = (a: [string, string, number], b: [string, string, number]): number =>
@@ -460,7 +462,9 @@ describe('scheduleJobs', () => {
 
     scheduleJobs(jobs, db, {}, timers);
 
-    expect(registrations).toHaveLength(jobs.length * 2);
+    expect(registrations).toHaveLength(
+      jobs.length + jobs.filter((job) => job.intervalMs > 15 * 1000).length,
+    );
     for (const r of registrations) expect(r.unref).toHaveBeenCalledTimes(1);
   });
 
@@ -558,6 +562,22 @@ describe('scheduleJobs', () => {
    * cannot see; run it against faked globals so `setTimeout` and `setInterval`
    * cannot be swapped or dropped unnoticed.
    */
+  it.each([
+    { intervalMs: 10 * 1000, oneOff: false },
+    { intervalMs: 15 * 1000, oneOff: false },
+    { intervalMs: 15 * 1000 + 1, oneOff: true },
+  ])('registers a boot run for a $intervalMs ms job: $oneOff', ({ intervalMs, oneOff }) => {
+    const { timers, registrations } = recordingTimers();
+    const job: Job = { name: 'boundary', intervalMs, run: async () => {} };
+
+    scheduleJobs([job], db, {}, timers);
+
+    expect(registrations.map((r) => [r.kind, r.ms])).toEqual([
+      ...(oneOff ? [['timeout', 15 * 1000]] : []),
+      ['interval', intervalMs],
+    ]);
+  });
+
   it('defaults to the global timers: once after 15 seconds, then every interval', async () => {
     vi.useFakeTimers();
     onTestFinished(() => {

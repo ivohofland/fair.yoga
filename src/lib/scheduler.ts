@@ -196,10 +196,14 @@ export interface SchedulerTimers {
   setInterval: (fn: () => Promise<void>, ms: number) => { unref: () => unknown };
 }
 
+const BOOT_RUN_DELAY_MS = 15 * 1000;
+
 /**
  * Registers each job's tick: once 15 seconds after registration, then every
  * `intervalMs` from that same registration (not from the first run), with
- * its health entry under the job's name. Separated from `startScheduler`
+ * its health entry under the job's name. A job whose interval is no longer
+ * than those 15 seconds gets only the interval: its first repeat is already
+ * its first run, and a one-off beside it would add an off-cadence tick. Separated from `startScheduler`
  * because this is where the table's intervals are used rather than merely
  * stated, and a test can record what was registered without starting a
  * clock.
@@ -221,7 +225,9 @@ export function scheduleJobs(
     const tick = makeTick(job, jobHealth, db);
 
     // unref() so the timers never keep a shutting-down process alive.
-    timers.setTimeout(tick, 15 * 1000).unref();
+    if (job.intervalMs > BOOT_RUN_DELAY_MS) {
+      timers.setTimeout(tick, BOOT_RUN_DELAY_MS).unref();
+    }
     timers.setInterval(tick, job.intervalMs).unref();
   }
 }
