@@ -38,8 +38,8 @@ describe('AlreadyTeachingPanel', () => {
     expect(routerPush).not.toHaveBeenCalledWith('/login');
   });
 
-  // The panel is shown only to an account with a teacher page, so its queue
-  // may hold check-ins taken offline.
+  // The panel's account has a teacher page, so its queue may hold check-ins
+  // taken offline.
   it("tries to sync the account's queued attendance, and says what would be lost before signing out", async () => {
     enqueueAttendance('acc-1', {
       registrationId: 'reg-1',

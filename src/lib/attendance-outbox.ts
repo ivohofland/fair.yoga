@@ -2,8 +2,8 @@ import { readError, logRequestFailure } from './client-errors';
 
 /**
  * Attendance marks queued on the device and replayed to
- * `PUT /api/registrations/[id]` (#726). One `localStorage` key per
- * registration, owned by an account. How it behaves — the outcome per
+ * `PUT /api/registrations/[id]` (#726). One `localStorage` key per item,
+ * owned by an account. The key scheme and how it behaves — the outcome per
  * response, confirmations and the cross-tab rules included — is in
  * docs/technical-architecture.md (Offline (service worker) → The attendance outbox).
  */
@@ -64,7 +64,7 @@ const REFUSED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** The stored pages' retention (docs/superpowers/specs/2026-10-04-offline-schedule-design.md, D7). */
 const CONFIRMED_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_NAME = 'fy-outbox';
-/** Far above one pass; a holder that keeps the lock longer is treated as gone, and this flush ends. */
+/** Far above one pass; a holder that keeps the lock longer is treated as gone, and this pass ends with its entries queued. */
 const LOCK_WAIT_MS = 60_000;
 const REFUSED_FALLBACK = "This change couldn't be saved.";
 /** A refusal after `MAX_ATTEMPTS`: the server's own words there ask for a refresh, which does nothing for a queued mark. */
@@ -275,9 +275,8 @@ function notify(): void {
 }
 
 /**
- * Another tab changed storage. Everything it did is in storage — a flush there
- * writes its confirmation before it removes the queued key — so a read is all
- * this tab needs. A `null` key is a `clear()` of the whole store.
+ * Another tab changed storage. Everything it did is in storage, so a read is
+ * all this tab needs. A `null` key is a `clear()` of the whole store.
  */
 function onStorage(event: StorageEvent): void {
   const { key } = event;
@@ -522,11 +521,14 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
     const queuedKey = keyFor(QUEUED_PREFIX, owner, entry.registrationId);
     const stored = readStoredEntry(owner, entry.registrationId);
     const superseded = stored !== null && stored.nonce !== entry.nonce;
-    // Nothing stored: a clear ran meanwhile, and nothing of this owner is to be kept.
+    // Nothing stored: the entry was removed meanwhile (a clear, a direct-write
+    // fallback, another tab's flush), and none of those wants a confirmation
+    // from this answer.
     if (stored !== null) {
-      // The confirmation is written before the queued key goes, so no read — in
-      // any tab — finds the row with neither. A newer queued mark still shows
-      // over it; should that one be refused, this is what the server holds.
+      // Written before the queued key goes, so a read in any tab finds one or
+      // the other; only a store too full for it even after the queued key goes
+      // leaves neither. A newer queued mark still shows over it; should that
+      // one be refused, this is what the server holds.
       const confirmedKey = keyFor(CONFIRMED_PREFIX, owner, entry.registrationId);
       const confirmation: Confirmation = { target: entry.target, confirmedAt: answeredAt(res) };
       const written = write(confirmedKey, confirmation);

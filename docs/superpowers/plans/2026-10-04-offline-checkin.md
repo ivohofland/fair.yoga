@@ -1,5 +1,7 @@
 # Queued Offline Check-in Implementation Plan (#726)
 
+> **Build-time record.** The final design is in the spec (`docs/superpowers/specs/2026-10-04-offline-checkin-design.md`) and `docs/technical-architecture.md` (Offline (service worker) → The attendance outbox); where this plan differs, they win.
+
 > **For agentic workers:** implement task by task with a review after each
 > (subagent-driven development). Steps use checkbox (`- [ ]`) syntax.
 

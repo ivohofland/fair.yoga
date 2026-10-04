@@ -158,9 +158,9 @@ describe('AttendanceList', () => {
   });
 
   /**
-   * Spec §3: the page was rendered before the sync, so `items` still says
-   * `registered`. A row whose entry cleared keeps the status the sync
-   * confirmed, never falls back to that stale render.
+   * Offline-checkin spec §3: the page was rendered before the sync, so
+   * `items` still says `registered`. A row whose entry cleared keeps the
+   * status the sync confirmed, never falls back to that stale render.
    */
   it('keeps a mark queued on another page once a sync confirms it, although items still says registered', async () => {
     enqueueAttendance(OWNER, {
@@ -245,7 +245,7 @@ describe('AttendanceList', () => {
     await screen.findByText('Present');
   });
 
-  /** Spec §3: a queued mark shows over a confirmation, so the toggle follows the tap, not the older sync. */
+  /** Offline-checkin spec §3: a queued mark shows over a confirmation, so the toggle follows the tap, not the older sync. */
   it('lets a queued mark win over a fresh confirmation', async () => {
     const renderedAt = renderedAMinuteAgo();
     storeConfirmation('reg-1', 'attended', renderedAt + 2_000);

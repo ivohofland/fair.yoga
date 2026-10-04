@@ -32,8 +32,7 @@ describe('StudentSettingsPage', () => {
     resetOutboxForTests();
   });
 
-  // A dual-hat account reaches this page from its teacher settings; its queue
-  // may hold check-ins taken offline.
+  // A dual-hat account's queue may hold check-ins taken offline.
   it("signs out through the account's attendance queue: a mark that cannot sync is named first", async () => {
     getSession.mockResolvedValue({ accountId: 'acc-1', studentId: STUDENT_ID, teacherId: 'teacher-1' });
     findUnique.mockResolvedValue({ id: STUDENT_ID, firstName: 'Anna', lastName: 'Smith' });

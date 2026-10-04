@@ -51,7 +51,7 @@ interface AttendanceListProps {
  * A row's label, tethered to the compiler against `AttendanceStatus` so a
  * future member fails here rather than falling through to a wrong label.
  * `registered` reads "Not marked" rather than "No-show" — an untouched row is
- * not a recorded absence, and must not read as one (spec D5; #234).
+ * not a recorded absence, and must not read as one (docs/superpowers/specs/2026-09-24-attendance-finish-window-design.md D5; #234).
  */
 function statusLabel(status: AttendanceStatus): string {
   switch (status) {
@@ -90,15 +90,12 @@ function statusLabel(status: AttendanceStatus): string {
  * becomes a hard reload mid check-in.
  *
  * Every tap is queued in the attendance outbox (`@/lib/attendance-outbox`) and
- * a sync replays it; a row shows, in order, its queued mark, else a status a
- * sync confirmed no earlier than this render's second (`confirmedAt` is the
- * server's `Date` header, whole seconds, so a tie goes to the confirmation),
- * else the status the direct-write fallback saved, else `items` (spec §3 of
- * docs/superpowers/specs/2026-10-04-offline-checkin-design.md).
- *
- * The fallback sits below the confirmation: a tap that falls back drops the
- * row's confirmation, so one present beside a fallback status was written
- * after it, by another tab's sync, and is the newer of the two.
+ * a sync replays it. A row shows, in order: its queued mark; else a
+ * confirmation no earlier than this render's second (a tie goes to the
+ * confirmation); else the status the direct-write fallback saved; else
+ * `items`. Why that order, and what `confirmedAt` holds:
+ * docs/technical-architecture.md (Offline (service worker) → The attendance
+ * outbox → *Confirmations*).
  */
 export function AttendanceList({
   items,
@@ -199,7 +196,8 @@ export function AttendanceList({
         }
       } else {
         // The server's own words, not a generic retry prompt: resending the
-        // same request rarely helps (spec §1).
+        // same request rarely helps
+        // (docs/superpowers/specs/2026-10-04-offline-checkin-design.md §1).
         setError(await readErrorMessage(response, 'Could not update attendance.'));
       }
     } catch (err) {

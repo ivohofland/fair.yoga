@@ -69,13 +69,16 @@ state — flips back to the stale view on reconnect.
 component in the teacher layout (beside `OfflineWorker`) flushes on mount
 (full loads, including launch), on the `online` event, on `visibilitychange`
 to visible, when the `offline-status` store goes from offline to online (its
-15 s ping retry covers a reconnect with no event), and after every tap. The
-layout does not remount on soft navigation; the tap and visibility triggers
-cover that.
+15 s ping retry covers a reconnect with no event), and every 30 s while the
+store says online and the account has a mark queued (a flush that stopped on a
+timeout or a 503 has no transition to retry it). `AttendanceList` flushes
+after every tap itself. The layout does not remount on soft navigation; the
+tap and visibility triggers cover that.
 
 **D5. Flushing, and the outcome per response.** One flush at a time per tab
 (a module-level promise; a trigger during a flush schedules one more pass),
-and across tabs under `navigator.locks` where present. Without locks, two
+and across tabs under `navigator.locks` where present, waiting at most 60 s
+for it before giving up that pass with its entries still queued. Without locks, two
 tabs could each send a different target for one row; the in-flight nonce
 check below keeps the newer local entry, which then sends last, so the newest
 tap on the device wins either way. Entries go oldest first; the PUT uses
@@ -83,7 +86,7 @@ tap on the device wins either way. Entries go oldest first; the PUT uses
 
 | Response | Entry |
 |---|---|
-| 200 whose JSON body is `{data: {id, status}}` matching the entry, applied or `unchanged` | a confirmation is stored (§3), then the entry is removed, unless its nonce changed while in flight (a newer tap); the newer entry is sent next |
+| 200 whose JSON body is `{data: {id, status}}` matching the entry, applied or `unchanged` | a confirmation is stored (§3), then the entry is removed, unless a newer tap replaced it while in flight (its nonce changed); the newer one is sent again before the pass ends |
 | 200 without that body (a captive portal, a proxy page) | kept; treated as a network failure, and logged while the device says online |
 | 409 `CONCURRENT_MODIFICATION`, 500 whatever its body, or a 4xx other than 401 and 429 that is not JSON | kept and retried on the next flush; after 3 attempts, refused with "This change couldn't be saved after several tries." |
 | any other 4xx except 401 and 429 | moved to *refused*, with the server's message |
@@ -120,7 +123,7 @@ asked; the deliberate correction on a completed class already has its caption.
 
 **D8. Sign-out: flush, then warn** (decided at the gate), on every sign-out a
 teacher can reach with a session: the teacher settings page, the student
-account page (a dual-hat account's other side, linked from its settings) and
+account page (a dual-hat account's other side) and
 the signup "Already teaching" panel. `SignOutButton` takes an optional
 `outboxOwner`; with it, the order is flush (bounded at 5 s) → if anything is
 still queued or refused, an inline confirm in the button's own place ("N
@@ -128,11 +131,11 @@ attendance changes haven't synced and will be lost." with "Sign out anyway"
 and "Cancel"; focus moves to Cancel, and both buttons are described by the copy) → push
 teardown → session DELETE → clears (D6). A student-only account's queue is
 empty, so on the account page the flush sends nothing. Without an owner (the
-profile setup form: no account yet in ticket mode, no teacher profile in
-session mode) only the clear is added. The
-scope widened from the settings page alone after review: one login serves
-both hats, and the account page's sign-out cleared a dual-hat teacher's
-queue without a word.
+profile setup form's sign-out, shown only in session mode, where the account
+has no teacher profile) only the clear is added. One login serves both hats,
+so the account page's sign-out reaches a dual-hat teacher's queue as surely as
+the settings page's does. The bounded flush is `flushWithinBound`
+(`src/lib/flush-within-bound.ts`), shared with D10.
 
 **D9. The attendance list escapes the fieldset by structure, tethered by a
 test.** `OfflineSnapshot` gains a `segmented` mode in which it renders no
@@ -148,12 +151,26 @@ carry the attribute — a control added later outside a fieldset fails it.
 keyboard handling for a native control; *rejected:* `useOffline()` per
 control — #725 D6's reason stands.
 
+**D10. Finish class syncs first, and asks before going on without it.**
+Completion sends the payment requests, and their wording depends on each
+row's status at that moment (D7), so a mark still queued for this class when
+the teacher finishes would be billed as the server holds it. `CompleteClassButton`
+takes an optional `outboxOwner` (the class page passes the session's
+account); with it, the charge confirm's Finish runs the same bounded flush as
+sign-out (D8, at most 5 s), then counts this class's marks still queued —
+refused ones are not counted, the server already answered them, and another
+class's marks hold nothing up. None left: the class finishes. Otherwise an
+inline confirm takes the button's place: "N attendance changes for this class
+haven't synced." with "Cancel" (focused; it returns to "Finish class" and
+focus follows) and "Finish anyway", both described by the copy. Offline the
+header sits in a fieldset (D9), so Finish is disabled and none of this arises.
+
 ## 3. Visible state
 
 - **Row status is derived, not initialised.** Each row shows, in order: its
   queued entry's target; else a stored confirmation (`fy-outbox-confirmed:`,
-  written by a sync in any tab or document, kept 24 h) whose `confirmedAt` —
-  the server's `Date` header — is no earlier than the page's render, floored
+  written by a sync in any tab or document, kept 24 h) whose `confirmedAt` (the
+  server's `Date` header, else the device clock) is no earlier than the page's render, floored
   to the second; else the status the direct-write fallback saved on this page;
   else the `items` prop. A row never falls back to a server render older than
   its confirmation, a stored page hard-loaded offline included, and a render
@@ -189,13 +206,16 @@ control — #725 D6's reason stands.
   no older than the render → fallback → prop, across a remount), queued and refused rows; `OutboxSync` triggers; the check-in switch
   before, at and after the instant, and never switching back; the sync block
   online; the completion note; `SignOutButton` with and without
-  `outboxOwner`.
+  `outboxOwner`; `CompleteClassButton` with a mark for its class still
+  queued; the pages that pass `outboxOwner` (settings, account, class).
 - **End to end (Playwright, offline spec opted into the worker, `page.clock`
   for the class instant):** load the schedule; go offline; open a warmed class
   whose check-in window opened after the warm; mark three students; see "3
-  changes waiting to sync"; go online; reload; the counter clears, **each row
-  reads Present**, and the server holds the three statuses. D9's tether in both
-  states.
+  changes waiting to sync"; go online; on the same page, with no reload, the
+  counter clears and **each row reads Present** — this document's own taps
+  trigger no refresh, so only the confirmations can show it; reload, and the
+  rows still read Present and the server holds the three statuses. D9's tether on the check-in view the device clock opened, in
+  the finish window and once completed.
 - **Every guard bites:** the plan carries a mutation per guard — toggle stored
   instead of target, 401 treated as refusal, portal 200 accepted, owner purge
   removed, in-flight replacement deleted, row state initialised from props,

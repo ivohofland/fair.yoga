@@ -11,13 +11,15 @@ import {
 } from '@/lib/attendance-outbox';
 import { isOfflineNow, useConnectionStatus } from '@/lib/offline-status';
 
+const RETRY_INTERVAL_MS = 30_000;
+
 /**
  * Replays the account's queued attendance marks from every teacher page
- * (#726, spec D4): on mount, on the `online` event, when the page becomes
- * visible, when the connection store goes from offline to online, and every
- * 30 s while online with a mark still queued. Renders nothing.
+ * (#726, docs/superpowers/specs/2026-10-04-offline-checkin-design.md D4): on
+ * mount, on the `online` event, when the page becomes visible, when the
+ * connection store goes from offline to online, and every 30 s while online
+ * with a mark still queued. Renders nothing.
  */
-const RETRY_INTERVAL_MS = 30_000;
 
 export function OutboxSync({ owner }: { owner: string }) {
   const router = useRouter();
