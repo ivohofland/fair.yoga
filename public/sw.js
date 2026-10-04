@@ -171,10 +171,18 @@ async function purgeExpired() {
 
 async function clearPages() {
   for (const controller of warmControllers) controller.abort();
-  const next = (await generation()) + 1;
-  await (await caches.open(META)).put(key(GENERATION_KEY), new Response(String(next)));
+  // The pages go whether or not the generation could be written (a full
+  // quota fails the put); the first failure is raised once they have.
+  let failure = null;
+  try {
+    const next = (await generation()) + 1;
+    await (await caches.open(META)).put(key(GENERATION_KEY), new Response(String(next)));
+  } catch (err) {
+    failure = err;
+  }
   await caches.delete(PAGES);
   await pruneStatic();
+  if (failure !== null) throw failure;
 }
 
 /**
@@ -187,6 +195,9 @@ async function storePage(pathname, res, startedAt) {
   if (res.status !== 200 || !(res.headers.get('content-type') || '').includes('text/html')) return;
   const body = await res.text();
   const owners = Array.from(body.matchAll(OWNER_PATTERN), (m) => m[1]);
+  // No marker is ordinary (a class page that is not the teacher's has none);
+  // two means the page is not one this worker can attribute to an owner.
+  if (owners.length > 1) console.warn('[sw] page carries more than one owner marker, not stored', pathname);
   if (owners.length !== 1) return;
   const owner = owners[0];
   // Before the wipe below as well as before the put: a stale store must not

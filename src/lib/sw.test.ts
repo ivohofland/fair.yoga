@@ -397,7 +397,6 @@ describe('offline', () => {
 
   it.each([
     ['a body with no marker', () => html('<p>hi</p>')],
-    ['a body with two markers', () => html(`<div data-offline-owner="${OWNER}"></div><div data-offline-owner="${OTHER_OWNER}"></div>`)],
     ['a 500', () => html(`<div data-offline-owner="${OWNER}"></div>`, 500)],
     ['a non-HTML 200', () => new Response(`<div data-offline-owner="${OWNER}"></div>`, { status: 200, headers: { 'Content-Type': 'application/json' } })],
     ['a marker value that is not an id', () => html('<div data-offline-owner="x&quot;y"></div>')],
@@ -405,6 +404,30 @@ describe('offline', () => {
     const { listeners, caches } = loadWorker([], { fetch: networkFetch(answer) });
     await navigate(listeners, '/class/c1');
     expect(pageKeys(caches)).toEqual([]);
+  });
+
+  it('does not store a body with two markers, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const two = html(`<div data-offline-owner="${OWNER}"></div><div data-offline-owner="${OTHER_OWNER}"></div>`);
+      const { listeners, caches } = loadWorker([], { fetch: networkFetch(() => two) });
+      await navigate(listeners, '/class/c1');
+      expect(pageKeys(caches)).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[sw\] .*owner marker/), '/class/c1');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('stays silent about a body with no marker', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { listeners } = loadWorker([], { fetch: networkFetch(() => html('<p>hi</p>')) });
+      await navigate(listeners, '/class/c1');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('serves the stored copy when the network fails', async () => {
@@ -520,6 +543,110 @@ describe('offline', () => {
     answer.resolve(page(OWNER));
     await warming.done();
     expect(pageKeys(caches)).toEqual([`${ORIGIN}/schedule`]);
+  });
+
+  /** Wraps one cache's methods; `wrap` gets the real method to call through. */
+  function wrapCache(c: ReturnType<typeof fakeCaches>, name: string, wrap: (real: Awaited<ReturnType<typeof c.api.open>>) => object) {
+    const open = c.api.open;
+    c.api.open = async (n: string) => {
+      const real = await open(n);
+      return n === name ? { ...real, ...wrap(real) } : real;
+    };
+  }
+  const clearMessage = (listeners: Listeners) => {
+    const e = extendable();
+    listeners.message!({ data: { type: 'clear' }, waitUntil: e.waitUntil });
+    return e.done();
+  };
+
+  it('issues no navigation request before the generation has been read', async () => {
+    const fetch = networkFetch(() => page());
+    const { listeners, caches } = loadWorker([], { fetch });
+    const gate = deferred<void>();
+    wrapCache(caches, META, (real) => ({
+      match: async (r: string | { url: string }) => {
+        await gate.promise;
+        return real.match(r);
+      },
+    }));
+    const ev = fetchEvent(navigation('/class/c1'));
+    listeners.fetch!(ev);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetch).not.toHaveBeenCalled();
+    gate.resolve();
+    await ev.response()!;
+    await ev.settled();
+    expect(fetch).toHaveBeenCalled();
+  });
+
+  it('does not store a navigation whose response arrives after a clear', async () => {
+    const answer = deferred<Response>();
+    const fetch = networkFetch(() => answer.promise);
+    const { listeners, caches } = loadWorker([], { fetch });
+    const ev = fetchEvent(navigation('/class/c1'));
+    listeners.fetch!(ev);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    await clearMessage(listeners);
+    answer.resolve(page());
+    await ev.response()!;
+    await ev.settled();
+    expect(pageKeys(caches)).toEqual([]);
+  });
+
+  it('stores a navigation and a warm again once a clear has raised the generation', async () => {
+    const { listeners, caches } = loadWorker([], { fetch: networkFetch(() => page()) });
+    await clearMessage(listeners);
+    expect(await generationOf(caches)).toBe(1);
+    await navigate(listeners, '/class/c1');
+    const warming = extendable();
+    listeners.message!({ data: { type: 'warm', paths: ['/class/c2'] }, waitUntil: warming.waitUntil });
+    await warming.done();
+    expect(pageKeys(caches).sort()).toEqual([`${ORIGIN}/class/c1`, `${ORIGIN}/class/c2`]);
+  });
+
+  it('wipes every stored page when a warm is answered with a redirect', async () => {
+    const { listeners, caches } = loadWorker([], { fetch: networkFetch(() => new Response(null, { status: 307, headers: { Location: '/login' } })) });
+    seedPage(caches, '/schedule');
+    const warming = extendable();
+    listeners.message!({ data: { type: 'warm', paths: ['/class/c1'] }, waitUntil: warming.waitUntil });
+    await warming.done();
+    expect(pageKeys(caches)).toEqual([]);
+  });
+
+  it('drops the stored pages even when the generation cannot be written, and raises that failure', async () => {
+    const { listeners, caches } = loadWorker([]);
+    seedPage(caches, '/schedule');
+    wrapCache(caches, META, () => ({
+      put: async () => {
+        throw new Error('quota exceeded');
+      },
+    }));
+    await expect(clearMessage(listeners)).rejects.toThrow('quota exceeded');
+    expect(caches.stores.has(PAGES)).toBe(false);
+  });
+
+  it('adds no static file for a store that a whole clear overtook while it listed the stored pages', async () => {
+    const fetch = networkFetch(() => page());
+    const { listeners, caches } = loadWorker([], { fetch });
+    const gate = deferred<void>();
+    let listing = false;
+    wrapCache(caches, PAGES, (real) => ({
+      keys: async () => {
+        if (!listing) {
+          listing = true;
+          await gate.promise;
+        }
+        return real.keys();
+      },
+    }));
+    const ev = fetchEvent(navigation('/class/c1'));
+    listeners.fetch!(ev);
+    await vi.waitFor(() => expect(listing).toBe(true));
+    await clearMessage(listeners);
+    gate.resolve();
+    await ev.response()!;
+    await ev.settled();
+    expect(staticKeys(caches)).toEqual([]);
   });
 
   it('keeps a static file a page being stored now references when a prune is already running', async () => {
