@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { isOfflineNow } from '@/lib/offline-status';
 
 /**
  * Layer 1 of the communication model: subscribes to the notification
@@ -35,7 +36,9 @@ export function LiveUpdates() {
       source.onmessage = () => {
         // Debounce bursts (bulk notifications) into one refresh.
         if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => router.refresh(), 500);
+        timer.current = setTimeout(() => {
+          if (!isOfflineNow()) router.refresh();
+        }, 500);
       };
 
       source.onerror = () => {

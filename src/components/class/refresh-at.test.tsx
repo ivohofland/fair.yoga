@@ -12,6 +12,9 @@ const { routerRefresh, router } = vi.hoisted(() => {
 });
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
 
+const { isOfflineNow } = vi.hoisted(() => ({ isOfflineNow: vi.fn(() => false) }));
+vi.mock('@/lib/offline-status', () => ({ isOfflineNow }));
+
 /**
  * #234. The class page decides the finish button and the auto-finish from
  * `Date.now()` at render, so a page opened before `finishOpensAt` would never
@@ -24,6 +27,7 @@ describe('RefreshAt', () => {
 
   beforeEach(() => {
     routerRefresh.mockClear();
+    isOfflineNow.mockReturnValue(false);
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     resetSeenServerNows();
@@ -45,6 +49,23 @@ describe('RefreshAt', () => {
 
     vi.advanceTimersByTime(1);
     expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refresh when an instant arrives while offline', () => {
+    isOfflineNow.mockReturnValue(true);
+    render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW} />);
+
+    vi.advanceTimersByTime(10 * MINUTE);
+    expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh on a remount with a seen serverNow while offline', () => {
+    const first = render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW} />);
+    first.unmount();
+    isOfflineNow.mockReturnValue(true);
+    render(<RefreshAt instants={[at(10)]} serverNow={SERVER_NOW} />);
+
+    expect(routerRefresh).not.toHaveBeenCalled();
   });
 
   it('refreshes once per future instant', () => {

@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { isOfflineNow } from '@/lib/offline-status';
 
 /** The longest delay `setTimeout` holds; beyond it the timer fires at once. */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
@@ -41,6 +42,11 @@ export function resetSeenServerNows(): void {
  * cached, so mounting with a `serverNow` already seen refreshes immediately
  * instead; the resulting fresh render brings a new `serverNow` and arms
  * normally.
+ *
+ * It does not refresh while offline, because offline `router.refresh()` is a
+ * hard reload of a stored snapshot (Next's failed-RSC fallback). What recovers
+ * a skipped refresh is in `docs/technical-architecture.md`, Offline (service
+ * worker).
  */
 export function RefreshAt({ instants, serverNow }: { instants: readonly string[]; serverNow: number }) {
   const router = useRouter();
@@ -48,8 +54,11 @@ export function RefreshAt({ instants, serverNow }: { instants: readonly string[]
   const key = instants.join('|');
 
   useEffect(() => {
+    const refreshUnlessOffline = () => {
+      if (!isOfflineNow()) router.refresh();
+    };
     if (seenServerNows.has(serverNow)) {
-      router.refresh();
+      refreshUnlessOffline();
       return;
     }
     seenServerNows.add(serverNow);
@@ -62,7 +71,7 @@ export function RefreshAt({ instants, serverNow }: { instants: readonly string[]
       .split('|')
       .map((iso) => new Date(iso).getTime() - serverNow)
       .filter((delay) => delay > 0 && delay <= MAX_TIMEOUT_MS)
-      .map((delay) => setTimeout(() => router.refresh(), delay));
+      .map((delay) => setTimeout(refreshUnlessOffline, delay));
     return () => timers.forEach(clearTimeout);
   }, [key, serverNow, router]);
 
