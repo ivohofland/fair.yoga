@@ -1,0 +1,248 @@
+import { useSyncExternalStore } from 'react';
+import {
+  getOutbox,
+  settleEntry,
+  withLock,
+  type PendingEntry,
+  type Settlement,
+} from '@/lib/attendance-outbox';
+import { readError, logRequestFailure } from '@/lib/client-errors';
+import { getConnectionStatus, subscribeConnectionStatus } from '@/lib/offline-status';
+
+export type ReplayOutcome = Settlement | { kind: 'retry' } | { kind: 'signed_out' };
+
+export interface SyncState {
+  needsSignIn: boolean;
+}
+
+const FLUSH_LOCK = 'fy-outbox-flush';
+const REQUEST_TIMEOUT_MS = 10_000;
+/** The last delay repeats for as long as retryable entries remain. */
+const BACKOFF_MS = [5_000, 15_000, 60_000] as const;
+const SERVER_SYNC_STATE: SyncState = { needsSignIn: false };
+
+let syncState: SyncState = SERVER_SYNC_STATE;
+const syncListeners = new Set<() => void>();
+
+/** The flush running in this tab, if any. */
+let running: Promise<void> | null = null;
+/** Scope a trigger asked for while a flush ran; `undefined` when none did. */
+let rerunScope: string | null | undefined;
+let backoffStep = 0;
+let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+/** Bumped by `resetSyncForTests`, so a flush still in flight from before it changes nothing after it. */
+let generation = 0;
+
+function setNeedsSignIn(needsSignIn: boolean): void {
+  if (syncState.needsSignIn === needsSignIn) return;
+  syncState = { needsSignIn };
+  syncListeners.forEach((listener) => listener());
+}
+
+function subscribeSyncState(listener: () => void): () => void {
+  syncListeners.add(listener);
+  return () => {
+    syncListeners.delete(listener);
+  };
+}
+
+function getSyncState(): SyncState {
+  return syncState;
+}
+
+export function useSyncState(): SyncState {
+  return useSyncExternalStore(subscribeSyncState, getSyncState, () => SERVER_SYNC_STATE);
+}
+
+function timeoutSignal(ms: number): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('attendance write timed out', 'TimeoutError')),
+    ms,
+  );
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** The server's clock from the `Date` header, or this device's when the header is missing or unreadable. */
+function serverTime(res: Response): number {
+  const header = res.headers.get('date');
+  const parsed = header === null ? Number.NaN : Date.parse(header);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutcome> {
+  if (res.ok) {
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      return { kind: 'retry' };
+    }
+    const data = isRecord(body) ? body.data : undefined;
+    if (isRecord(data) && data.id === entry.registrationId && data.status === entry.status) {
+      return { kind: 'confirmed', at: serverTime(res) };
+    }
+    return { kind: 'retry' };
+  }
+  if (res.status === 401) return { kind: 'signed_out' };
+  if (res.status === 403) return { kind: 'dropped' };
+  if (res.status === 429 || res.status >= 500) return { kind: 'retry' };
+  const { code, message } = await readError(res, 'Could not record attendance.');
+  if (code === 'CONCURRENT_MODIFICATION') return { kind: 'retry' };
+  return { kind: 'refused', message };
+}
+
+/** One replay, and whether the server answered it with a 2xx. Never throws. */
+async function send(entry: PendingEntry): Promise<{ outcome: ReplayOutcome; succeeded: boolean }> {
+  const timeout = timeoutSignal(REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/api/registrations/${entry.registrationId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: entry.status }),
+      signal: timeout.signal,
+    });
+    return { outcome: await classify(res, entry), succeeded: res.ok };
+  } catch (err) {
+    if (!timeout.signal.aborted) {
+      logRequestFailure(
+        'attendance-sync',
+        { registrationId: entry.registrationId, status: entry.status },
+        err,
+      );
+    }
+    return { outcome: { kind: 'retry' }, succeeded: false };
+  } finally {
+    timeout.clear();
+  }
+}
+
+export async function sendAttendance(entry: PendingEntry): Promise<ReplayOutcome> {
+  return (await send(entry)).outcome;
+}
+
+/** `null` is wider than any owner id, and two different owner ids widen to `null`. */
+function widen(requested: string | null | undefined, scope: string | null): string | null {
+  if (requested === undefined) return scope;
+  return requested === scope ? scope : null;
+}
+
+/** One pass over the outbox; answers whether any entry is left to retry. */
+async function pass(scope: string | null, gen: number): Promise<boolean> {
+  return withLock(FLUSH_LOCK, async () => {
+    let retried = false;
+    let succeeded = false;
+    const entries = Object.values(getOutbox().pending).sort((a, b) => a.recordedAt - b.recordedAt);
+    for (const entry of entries) {
+      if (gen !== generation) break;
+      if (scope !== null && entry.ownerId !== scope) {
+        await settleEntry(entry, { kind: 'dropped' });
+        continue;
+      }
+      const sent = await send(entry);
+      if (gen !== generation) break;
+      succeeded ||= sent.succeeded;
+      const outcome = sent.outcome;
+      if (outcome.kind === 'retry') {
+        retried = true;
+      } else if (outcome.kind === 'signed_out') {
+        setNeedsSignIn(true);
+        return retried;
+      } else {
+        await settleEntry(entry, outcome);
+      }
+    }
+    if (succeeded && gen === generation) setNeedsSignIn(false);
+    return retried;
+  });
+}
+
+function clearBackoff(): void {
+  if (backoffTimer !== null) clearTimeout(backoffTimer);
+  backoffTimer = null;
+}
+
+function scheduleBackoff(retried: boolean, scope: string | null): void {
+  clearBackoff();
+  if (!retried) {
+    backoffStep = 0;
+    return;
+  }
+  if (document.visibilityState !== 'visible') return;
+  const delay = BACKOFF_MS[Math.min(backoffStep, BACKOFF_MS.length - 1)];
+  backoffStep++;
+  backoffTimer = setTimeout(() => {
+    backoffTimer = null;
+    void flushAttendance(scope);
+  }, delay);
+}
+
+async function run(first: string | null, gen: number): Promise<void> {
+  try {
+    let scope = first;
+    let retried: boolean;
+    let rerun: boolean;
+    do {
+      rerunScope = undefined;
+      retried = await pass(scope, gen);
+      if (gen !== generation) return;
+      const next = rerunScope;
+      rerun = next !== undefined;
+      if (next !== undefined) scope = next;
+    } while (rerun);
+    scheduleBackoff(retried, scope);
+  } finally {
+    // Synchronous with the last `rerun` check, so no trigger can slip between them unseen.
+    if (gen === generation) running = null;
+  }
+}
+
+/** `null` sends every pending entry whoever owns it (sign-out); an owner id sends that owner's and drops the rest unsent. */
+export function flushAttendance(ownerId: string | null): Promise<void> {
+  if (running !== null) {
+    rerunScope = widen(rerunScope, ownerId);
+    return running;
+  }
+  running = run(ownerId, generation);
+  return running;
+}
+
+export function startAttendanceSync(ownerId: string): () => void {
+  const flush = (): void => {
+    void flushAttendance(ownerId);
+  };
+  const onVisibilityChange = (): void => {
+    if (document.visibilityState === 'visible') flush();
+  };
+  let wasOffline = false;
+  const unsubscribe = subscribeConnectionStatus(() => {
+    const { offline } = getConnectionStatus();
+    if (wasOffline && !offline) flush();
+    wasOffline = offline;
+  });
+  // Read after subscribing: the first subscribe can itself change the answer.
+  wasOffline = getConnectionStatus().offline;
+  window.addEventListener('online', flush);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  flush();
+  return () => {
+    window.removeEventListener('online', flush);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    unsubscribe();
+    clearBackoff();
+  };
+}
+
+export function resetSyncForTests(): void {
+  generation++;
+  clearBackoff();
+  backoffStep = 0;
+  running = null;
+  rerunScope = undefined;
+  syncState = SERVER_SYNC_STATE;
+  syncListeners.clear();
+}
