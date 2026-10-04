@@ -14,8 +14,8 @@ import {
   type TeacherVisibleStudent,
 } from '@/lib/student-visibility';
 import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
-import { formatDayHeader } from '@/lib/format';
-import { timeToHHmm } from '@/lib/time-of-day';
+import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
+import { paymentMethodsFor } from '@/lib/payment-methods';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
@@ -433,7 +433,14 @@ export async function sendPaymentReminder(
             class: {
               select: {
                 id: true,
-                calendarEntry: { select: { classType: true, date: true, startTime: true } },
+                calendarEntry: {
+                  select: {
+                    classType: true,
+                    date: true,
+                    startTime: true,
+                    teacher: { select: { bankIban: true, bankAccountName: true } },
+                  },
+                },
               },
             },
           },
@@ -447,7 +454,11 @@ export async function sendPaymentReminder(
         recipientId: registration.studentId,
         type: 'reminder',
         title: 'Payment outstanding',
-        body: `€${Number(payment.amount).toFixed(2)} for ${registration.class.calendarEntry.classType} class on ${formatDayHeader(registration.class.calendarEntry.date)} at ${timeToHHmm(registration.class.calendarEntry.startTime)} is still open. Pay your teacher directly.`,
+        body: studentPaymentReminderBody(
+          registration.class.calendarEntry,
+          Number(payment.amount),
+          paymentMethodsFor(registration.class.calendarEntry.teacher).length > 0,
+        ),
         relatedClassId: registration.class.id,
       },
     ]);

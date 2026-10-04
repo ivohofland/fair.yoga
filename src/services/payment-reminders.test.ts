@@ -199,6 +199,32 @@ describe('payment reminders (DB)', () => {
     expect(note.body).not.toContain('!');
   });
 
+  it('leaves out "Pay your teacher directly" when the teacher has a payment method', async () => {
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Rem' },
+    });
+    try {
+      const payment = await makePayment(new Date(now.getTime() - 9 * DAY), 'overdue');
+      const scoped = scopeSweep(prisma, { Payment: { id: { in: [payment.id] } } });
+      expect(await sendPaymentReminders(scoped.db, now)).toBe(1);
+
+      const reg = await prisma.registration.findUniqueOrThrow({
+        where: { id: payment.registrationId },
+        select: { studentId: true },
+      });
+      const note = await prisma.notification.findFirstOrThrow({
+        where: { recipientId: reg.studentId, type: 'reminder', relatedClassId: classId },
+      });
+      expect(note.body).toMatch(/^€12\.50 for PayRem Hatha class on .* at 09:00 is still open\.$/);
+    } finally {
+      await prisma.teacher.update({
+        where: { id: teacherId },
+        data: { bankIban: null, bankAccountName: null },
+      });
+    }
+  });
+
   it('processPaymentReminders runs both phases', async () => {
     const payment = await makePayment(new Date(now.getTime() - 8 * DAY));
     const scoped = scopeSweep(prisma, { Payment: { id: { in: [payment.id] } } });

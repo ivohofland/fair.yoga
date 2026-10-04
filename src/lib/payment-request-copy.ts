@@ -10,6 +10,11 @@ export interface PaymentRequestClass {
 
 const SHARED_COST = 'Booked spots share the class cost, so your price is';
 const PAY_OR_ASK = "Pay your teacher directly — if this isn't right, talk to your teacher.";
+const ASK = "If this isn't right, talk to your teacher.";
+
+function classPhrase(cls: PaymentRequestClass): string {
+  return `${cls.classType} class on ${formatDayHeader(cls.date)} at ${timeToHHmm(cls.startTime)}`;
+}
 
 /**
  * The student's `payment_request` body. A student marked absent, or who
@@ -19,22 +24,29 @@ const PAY_OR_ASK = "Pay your teacher directly — if this isn't right, talk to y
  * callers pass only charged registrations. Exhaustive over
  * `RegistrationStatus`, so a new status does not compile until its wording is
  * decided.
+ *
+ * Says "Pay your teacher directly" only when the teacher has no payment
+ * method (`paymentMethodsFor`).
  */
 export function studentPaymentRequestBody(
   status: RegistrationStatus,
   cls: PaymentRequestClass,
   price: number,
+  teacherHasPaymentMethods: boolean,
 ): string {
-  const when = `${cls.classType} class on ${formatDayHeader(cls.date)} at ${timeToHHmm(cls.startTime)}`;
+  const when = classPhrase(cls);
   const amount = formatEuro(price);
+  const tail = teacherHasPaymentMethods ? ASK : PAY_OR_ASK;
   switch (status) {
     case 'registered':
     case 'attended':
-      return `Your price for ${when} is ${amount}. Pay your teacher directly.`;
+      return teacherHasPaymentMethods
+        ? `Your price for ${when} is ${amount}.`
+        : `Your price for ${when} is ${amount}. Pay your teacher directly.`;
     case 'no_show':
-      return `We missed you at ${when}. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
+      return `We missed you at ${when}. ${SHARED_COST} ${amount}. ${tail}`;
     case 'late_cancel':
-      return `You cancelled your booking for ${when} after the cancellation deadline. ${SHARED_COST} ${amount}. ${PAY_OR_ASK}`;
+      return `You cancelled your booking for ${when} after the cancellation deadline. ${SHARED_COST} ${amount}. ${tail}`;
     case 'cancelled':
       throw new Error('A cancelled registration is not charged and gets no payment request.');
     default: {
@@ -42,4 +54,17 @@ export function studentPaymentRequestBody(
       throw new Error(`unhandled registration status: ${String(unreachable)}`);
     }
   }
+}
+
+/**
+ * The student's overdue-payment `reminder` body. Says "Pay your teacher
+ * directly" only when the teacher has no payment method (`paymentMethodsFor`).
+ */
+export function studentPaymentReminderBody(
+  cls: PaymentRequestClass,
+  amount: number,
+  teacherHasPaymentMethods: boolean,
+): string {
+  const open = `€${amount.toFixed(2)} for ${classPhrase(cls)} is still open.`;
+  return teacherHasPaymentMethods ? open : `${open} Pay your teacher directly.`;
 }
