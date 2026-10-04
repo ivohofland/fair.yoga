@@ -167,6 +167,7 @@ describe('OfflineSnapshot', () => {
             classId="c1"
             classLabel="Hatha on Tue 6 Oct 18:00"
             completed={false}
+            renderedAt={0}
           />
         </>,
       ),

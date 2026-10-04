@@ -158,7 +158,7 @@ describe('SyncStatus', () => {
   });
 
   it('says nothing for confirmed statuses alone', () => {
-    snapshot.current = snap({ confirmed: { r1: 'attended' } });
+    snapshot.current = snap({ confirmed: { r1: { target: 'attended', confirmedAt: 1 } } });
     const { container } = render(<SyncStatus owner="account-1" />);
     expect(container).toBeEmptyDOMElement();
   });

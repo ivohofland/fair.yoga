@@ -165,7 +165,7 @@ export default async function ClassDetailPage({
 
   const stamp = offlineSnapshotStamp(session, new Date(now));
 
-  const attendanceOutbox = attendanceOutboxProps(session, cls, start, tz);
+  const attendanceOutbox = attendanceOutboxProps(session, cls, start, tz, stamp.renderedAt);
 
   // Check-in: the attendance list sits outside every fieldset so its taps
   // queue offline; walk-in and the estimate stay inside one.

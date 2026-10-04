@@ -17,26 +17,28 @@ function cls(status: ClassStatus) {
 
 // 16:00 UTC is 18:00 in Amsterdam on this date (CEST).
 const start = new Date('2026-10-06T16:00:00Z');
+const RENDERED_AT = Date.parse('2026-10-06T15:50:00.250Z');
 
 describe('attendanceOutboxProps', () => {
   it('files marks under the signed-in account and names the class in the teacher zone', () => {
-    expect(attendanceOutboxProps(session, cls('in_progress'), start, 'Europe/Amsterdam')).toEqual({
+    expect(attendanceOutboxProps(session, cls('in_progress'), start, 'Europe/Amsterdam', RENDERED_AT)).toEqual({
       owner: 'account-1',
       classId: 'class-1',
       classLabel: 'Hatha on Tue 6 Oct 18:00',
       completed: false,
+      renderedAt: RENDERED_AT,
     });
   });
 
   it('is completed only when the class rendered completed', () => {
-    expect(attendanceOutboxProps(session, cls('completed'), start, 'Europe/Amsterdam').completed).toBe(true);
+    expect(attendanceOutboxProps(session, cls('completed'), start, 'Europe/Amsterdam', RENDERED_AT).completed).toBe(true);
     for (const status of ['draft', 'open', 'in_progress'] as const) {
-      expect(attendanceOutboxProps(session, cls(status), start, 'Europe/Amsterdam').completed).toBe(false);
+      expect(attendanceOutboxProps(session, cls(status), start, 'Europe/Amsterdam', RENDERED_AT).completed).toBe(false);
     }
   });
 
   it('owns the queue by account, never by teacher or student profile', () => {
-    const { owner } = attendanceOutboxProps(session, cls('completed'), start, 'Europe/Amsterdam');
+    const { owner } = attendanceOutboxProps(session, cls('completed'), start, 'Europe/Amsterdam', RENDERED_AT);
     expect(owner).toBe(session.accountId);
     expect(owner).not.toBe(session.teacherId);
     expect(owner).not.toBe(session.studentId);

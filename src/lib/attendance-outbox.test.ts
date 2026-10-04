@@ -71,6 +71,11 @@ function applied(id: string, status: AttendanceTarget, classCompleted = false): 
   return json(200, { data: { id, status, classCompleted } });
 }
 
+/** A stored confirmation as the snapshot reports it; answers without a `Date` header take the device clock. */
+function confirmedAs(target: AttendanceTarget, confirmedAt = NOW) {
+  return { target, confirmedAt };
+}
+
 function unchanged(id: string, status: AttendanceTarget): Response {
   return json(200, { data: { id, status }, outcome: 'unchanged' });
 }
@@ -171,6 +176,21 @@ describe('attendance outbox', () => {
       expect(getOutboxSnapshot(OWNER).queued).toEqual([]);
     });
 
+    it("drops the row's confirmation when a newer mark answers 'unavailable'", async () => {
+      const store = new MemoryStorage();
+      vi.stubGlobal('localStorage', store);
+      enqueueAttendance(OWNER, entry('r1', 'attended'));
+      enqueueAttendance(OWNER, entry('r2', 'attended'));
+      fetchMock.mockImplementation(echoServer());
+      await flushOutbox(OWNER);
+      expect(Object.keys(getOutboxSnapshot(OWNER).confirmed)).toEqual(['r1', 'r2']);
+      vi.spyOn(store, 'setItem').mockImplementation(() => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      });
+      expect(enqueueAttendance(OWNER, entry('r1', 'no_show'))).toBe('unavailable');
+      expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r2: confirmedAs('attended') });
+    });
+
     it("answers 'unavailable' when storage itself cannot be reached", () => {
       Object.defineProperty(globalThis, 'localStorage', {
         configurable: true,
@@ -203,9 +223,16 @@ describe('attendance outbox', () => {
       storage.setItem('fy-outbox-refused:acc2:r3', '{}');
       storage.setItem('fy-outbox-note:acc2:c1', '{}');
       storage.setItem('fy-outbox-note:acc1:c1', JSON.stringify({ v: 1, classId: 'c1', classLabel: 'Hatha' }));
+      storage.setItem('fy-outbox-confirmed:acc2:r4', JSON.stringify({ v: 1, target: 'attended', confirmedAt: NOW }));
+      storage.setItem('fy-outbox-confirmed:acc1:r5', JSON.stringify({ v: 1, target: 'no_show', confirmedAt: NOW }));
       storage.setItem('fy-theme', 'dark');
       purgeOtherOwners(OWNER);
-      expect(storage.keys()).toEqual(['fy-outbox-note:acc1:c1', 'fy-outbox:acc1:r1', 'fy-theme']);
+      expect(storage.keys()).toEqual([
+        'fy-outbox-confirmed:acc1:r5',
+        'fy-outbox-note:acc1:c1',
+        'fy-outbox:acc1:r1',
+        'fy-theme',
+      ]);
     });
 
     it('clearing removes every outbox key for every owner, and nothing else', () => {
@@ -213,6 +240,8 @@ describe('attendance outbox', () => {
       enqueueAttendance('acc2', entry('r2'));
       storage.setItem('fy-outbox-refused:acc2:r3', '{}');
       storage.setItem('fy-outbox-note:acc1:c1', '{}');
+      storage.setItem('fy-outbox-confirmed:acc1:r4', JSON.stringify({ v: 1, target: 'attended', confirmedAt: NOW }));
+      storage.setItem('fy-outbox-confirmed:acc2:r5', '{}');
       storage.setItem('fy-theme', 'dark');
       storage.setItem('fy-offline-page:x', '1');
       clearAllOutboxes();
@@ -291,47 +320,32 @@ describe('attendance outbox', () => {
       return Object.assign(new Event('storage'), { key, oldValue, newValue });
     }
 
-    it('confirms an entry another tab flushed, from the value it removed', () => {
+    it('shows a confirmation another tab wrote, and tells listeners', () => {
       enqueueAttendance(OWNER, entry('r1', 'no_show'));
       const old = storage.getItem('fy-outbox:acc1:r1');
       const listener = vi.fn();
       subscribeOutbox(listener);
-      // The other tab's flush removed the key from the shared storage.
+      // The other tab's flush, in the order it writes the shared storage.
+      const value = JSON.stringify({ v: 1, target: 'no_show', confirmedAt: NOW });
+      storage.setItem('fy-outbox-confirmed:acc1:r1', value);
+      window.dispatchEvent(storageEvent('fy-outbox-confirmed:acc1:r1', null, value));
       storage.removeItem('fy-outbox:acc1:r1');
       window.dispatchEvent(storageEvent('fy-outbox:acc1:r1', old, null));
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: 'no_show' } });
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: confirmedAs('no_show') } });
     });
 
-    it('does not confirm an entry another tab refused', () => {
+    it('confirms nothing for a queued key another tab removed without confirming it', () => {
       enqueueAttendance(OWNER, entry('r1', 'no_show'));
-      const old = storage.getItem('fy-outbox:acc1:r1') ?? '';
+      const old = storage.getItem('fy-outbox:acc1:r1');
       subscribeOutbox(() => {});
-      storage.setItem(
-        'fy-outbox-refused:acc1:r1',
-        JSON.stringify({ ...(JSON.parse(old) as object), message: 'Gone', refusedAt: NOW }),
-      );
       storage.removeItem('fy-outbox:acc1:r1');
       window.dispatchEvent(storageEvent('fy-outbox:acc1:r1', old, null));
-      expect(getOutboxSnapshot(OWNER).confirmed).toEqual({});
-    });
-
-    it('does not confirm entries another tab cleared at sign-out, or a replaced or unreadable one', () => {
-      enqueueAttendance(OWNER, entry('r1', 'no_show'));
-      enqueueAttendance(OWNER, entry('r2', 'attended'));
-      const old1 = storage.getItem('fy-outbox:acc1:r1');
-      const old2 = storage.getItem('fy-outbox:acc1:r2');
-      subscribeOutbox(() => {});
-      window.dispatchEvent(storageEvent('fy-outbox-clearing', null, '1'));
-      window.dispatchEvent(storageEvent('fy-outbox:acc1:r1', old1, null));
-      window.dispatchEvent(storageEvent('fy-outbox-clearing', '1', null));
-      window.dispatchEvent(storageEvent('fy-outbox:acc1:r2', old2, old2));
-      window.dispatchEvent(storageEvent('fy-outbox:acc1:r3', '{not json', null));
       window.dispatchEvent(storageEvent(null, null, null));
       expect(getOutboxSnapshot(OWNER).confirmed).toEqual({});
     });
 
-    it('clearing marks itself for other tabs around the removals', () => {
+    it('a flush writes the confirmation before it removes the queued key, so no read finds neither', async () => {
       enqueueAttendance(OWNER, entry('r1'));
       const seen: string[] = [];
       const setItem = storage.setItem.bind(storage);
@@ -344,9 +358,9 @@ describe('attendance outbox', () => {
         seen.push(`remove ${key}`);
         removeItem(key);
       });
-      clearAllOutboxes();
-      expect(seen).toEqual(['set fy-outbox-clearing', 'remove fy-outbox:acc1:r1', 'remove fy-outbox-clearing']);
-      expect(storage.keys()).toEqual([]);
+      fetchMock.mockImplementation(echoServer());
+      await flushOutbox(OWNER);
+      expect(seen).toEqual(['set fy-outbox-confirmed:acc1:r1', 'remove fy-outbox:acc1:r1']);
     });
 
     it('dismissing removes a refused entry and a note', async () => {
@@ -387,7 +401,7 @@ describe('attendance outbox', () => {
       const second = await flushOutbox(OWNER);
       expect(sentBodies(fetchMock).map((b) => b.status)).toEqual(['no_show', 'no_show']);
       expect(second.applied).toBe(0);
-      expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r1: 'no_show' });
+      expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r1: confirmedAs('no_show') });
     });
 
     it('the same mark queued twice is sent as that mark, not flipped', async () => {
@@ -457,7 +471,73 @@ describe('attendance outbox', () => {
         fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
         const result = await flushOutbox(OWNER);
         expect(result).toEqual({ applied: 1, replayed: 0 });
-        expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: 'attended' }, notes: [] });
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: confirmedAs('attended') }, notes: [] });
+        expect(storage.keys()).toEqual(['fy-outbox-confirmed:acc1:r1']);
+        expect(JSON.parse(storage.getItem('fy-outbox-confirmed:acc1:r1') ?? 'null')).toEqual({
+          v: 1,
+          target: 'attended',
+          confirmedAt: NOW,
+        });
+      });
+
+      it("200: the confirmation carries the server's Date header, to the second", async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        const response = applied('r1', 'attended');
+        response.headers.set('Date', 'Sun, 04 Oct 2026 08:15:42 GMT');
+        fetchMock.mockResolvedValueOnce(response);
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).confirmed).toEqual({
+          r1: confirmedAs('attended', Date.parse('2026-10-04T08:15:42Z')),
+        });
+      });
+
+      it('200: an unreadable Date header falls back to the device clock', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        const response = applied('r1', 'attended');
+        response.headers.set('Date', 'not a date');
+        fetchMock.mockResolvedValueOnce(response);
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r1: confirmedAs('attended', NOW) });
+      });
+
+      it('200 after the outbox was cleared meanwhile: keeps no confirmation', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        let release: (res: Response) => void = () => {};
+        fetchMock.mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              release = resolve;
+            }),
+        );
+        const flushing = flushOutbox(OWNER);
+        await vi.advanceTimersByTimeAsync(0);
+        clearAllOutboxes();
+        release(applied('r1', 'attended'));
+        await flushing;
+        expect(storage.keys()).toEqual([]);
+      });
+
+      it('200 into a full store: the confirmation is written once the queued key frees room', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        const setItem = storage.setItem.bind(storage);
+        vi.spyOn(storage, 'setItem')
+          .mockImplementationOnce(() => {
+            throw new DOMException('quota', 'QuotaExceededError');
+          })
+          .mockImplementation(setItem);
+        fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
+        await flushOutbox(OWNER);
+        expect(storage.keys()).toEqual(['fy-outbox-confirmed:acc1:r1']);
+      });
+
+      it('a confirmation is kept for a day, then dropped from storage on read', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
+        await flushOutbox(OWNER);
+        vi.setSystemTime(NOW + DAY_MS);
+        expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r1: confirmedAs('attended') });
+        vi.setSystemTime(NOW + DAY_MS + 1);
+        expect(getOutboxSnapshot(OWNER)).toBe(EMPTY_OUTBOX);
         expect(storage.keys()).toEqual([]);
       });
 
@@ -505,7 +585,8 @@ describe('attendance outbox', () => {
         );
         const result = await flushOutbox(OWNER);
         expect(result).toEqual({ applied: 0, replayed: 0 });
-        expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], notes: [], confirmed: { r1: 'attended' } });
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], notes: [], confirmed: { r1: confirmedAs('attended') } });
+        expect(storage.keys()).toEqual(['fy-outbox-confirmed:acc1:r1']);
       });
 
       it.each([
@@ -564,7 +645,7 @@ describe('attendance outbox', () => {
         );
         await flushOutbox(OWNER);
         expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([['r1', 1]]);
-        expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r2: 'attended' });
+        expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r2: confirmedAs('attended', NOW + 1) });
         await flushOutbox(OWNER);
         expect(getOutboxSnapshot(OWNER).queued.map((e) => e.attempts)).toEqual([2]);
         await flushOutbox(OWNER);
@@ -609,8 +690,8 @@ describe('attendance outbox', () => {
             refusedAt: NOW + 1,
           }),
         ]);
-        expect(snapshot.confirmed).toEqual({ r2: 'attended' });
-        expect(storage.keys()).toEqual(['fy-outbox-refused:acc1:r1']);
+        expect(snapshot.confirmed).toEqual({ r2: confirmedAs('attended', NOW + 1) });
+        expect(storage.keys()).toEqual(['fy-outbox-confirmed:acc1:r2', 'fy-outbox-refused:acc1:r1']);
       });
 
       it('401: sets needsSignIn, keeps everything and stops; a later answered flush clears it', async () => {
@@ -656,7 +737,7 @@ describe('attendance outbox', () => {
       release(applied('r1', 'attended'));
       await flushing;
       expect(sentBodies(fetchMock).map((b) => b.status)).toEqual(['attended', 'no_show']);
-      expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: 'no_show' } });
+      expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: confirmedAs('no_show') } });
     });
 
     it('a tap while a failing PUT is in flight keeps the new entry untouched', async () => {
@@ -779,7 +860,7 @@ describe('attendance outbox', () => {
       fetchMock.mockResolvedValueOnce(unchanged('r1', 'attended'));
       await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 0, replayed: 0 });
       expect(getOutboxSnapshot(OWNER).queued).toEqual([]);
-      expect(storage.keys()).toEqual([]);
+      expect(storage.keys()).toEqual(['fy-outbox-confirmed:acc1:r1']);
     });
   });
 });

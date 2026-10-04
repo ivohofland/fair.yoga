@@ -3,9 +3,8 @@ import { readError, logRequestFailure } from './client-errors';
 /**
  * Attendance marks queued on the device and replayed to
  * `PUT /api/registrations/[id]` (#726). One `localStorage` key per
- * registration, owned by an account; the design and the outcome per response
- * are in docs/superpowers/specs/2026-10-04-offline-checkin-design.md (D2, D5,
- * D6, D7); how it behaves now, across tabs included, is in
+ * registration, owned by an account. How it behaves — the outcome per
+ * response, confirmations and the cross-tab rules included — is in
  * docs/technical-architecture.md (Offline (service worker) → The attendance outbox).
  */
 
@@ -37,28 +36,36 @@ export interface CompletionNote {
   classLabel: string;
 }
 
+/** A status the server answered for a mark, kept so a page rendered before the answer can still show it. */
+export interface Confirmation {
+  target: AttendanceTarget;
+  /** Epoch ms of the server's answer, from its `Date` header (second resolution); the device clock without one. */
+  confirmedAt: number;
+}
+
 export interface OutboxSnapshot {
   queued: readonly OutboxEntry[];
   refused: readonly RefusedEntry[];
   notes: readonly CompletionNote[];
   needsSignIn: boolean;
-  /** Statuses a flush confirmed during this page's lifetime, by registration id. */
-  confirmed: Readonly<Record<string, AttendanceTarget>>;
+  /** Statuses a flush in any tab or document confirmed in the last day, by registration id. */
+  confirmed: Readonly<Record<string, Confirmation>>;
 }
 
 const QUEUED_PREFIX = 'fy-outbox:';
 const REFUSED_PREFIX = 'fy-outbox-refused:';
 const NOTE_PREFIX = 'fy-outbox-note:';
-const PREFIXES = [QUEUED_PREFIX, REFUSED_PREFIX, NOTE_PREFIX] as const;
+const CONFIRMED_PREFIX = 'fy-outbox-confirmed:';
+const PREFIXES = [QUEUED_PREFIX, REFUSED_PREFIX, NOTE_PREFIX, CONFIRMED_PREFIX] as const;
 const VERSION = 1;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 const REFUSED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** The stored pages' retention (docs/superpowers/specs/2026-10-04-offline-schedule-design.md, D7). */
+const CONFIRMED_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_NAME = 'fy-outbox';
 /** Far above one pass; a holder that keeps the lock longer is treated as gone, and this flush ends. */
 const LOCK_WAIT_MS = 60_000;
-/** Set while `removeKeys` runs, so another tab does not read its removals as flushed entries. */
-const CLEARING_KEY = 'fy-outbox-clearing';
 const REFUSED_FALLBACK = "This change couldn't be saved.";
 const TARGETS: ReadonlySet<string> = new Set<AttendanceTarget>(['attended', 'no_show', 'late_cancel']);
 
@@ -71,8 +78,6 @@ export const EMPTY_OUTBOX: OutboxSnapshot = Object.freeze({
 });
 
 const listeners = new Set<() => void>();
-/** Per owner. Each change replaces the record, never mutates it: a cached snapshot holds it. */
-const confirmedByOwner = new Map<string, Readonly<Record<string, AttendanceTarget>>>();
 const needsSignInByOwner = new Set<string>();
 /** The last snapshot handed out per owner, and its content, so an unchanged read returns the same object. */
 const snapshotCache = new Map<string, { content: string; snapshot: OutboxSnapshot }>();
@@ -80,9 +85,6 @@ const EMPTY_CONTENT = JSON.stringify(EMPTY_OUTBOX);
 
 /** Nonces queued by this document: an applied write of one is a tap whose row already shows it, not a replay. */
 const enqueuedHere = new Set<string>();
-
-/** Whether another tab is clearing, as its `CLEARING_KEY` events say. */
-let otherTabClearing = false;
 
 /** What a flush reports: writes the server applied, and how many of those were not queued by this document. */
 export interface FlushResult {
@@ -194,6 +196,16 @@ function asRefused(value: unknown, id: string): RefusedEntry | null {
   return { ...entry, message, refusedAt };
 }
 
+function asConfirmation(
+  value: unknown,
+  id: string,
+): { registrationId: string; confirmation: Confirmation } | null {
+  if (!isRecord(value) || value.v !== VERSION) return null;
+  const { target, confirmedAt } = value;
+  if (typeof target !== 'string' || !TARGETS.has(target) || typeof confirmedAt !== 'number') return null;
+  return { registrationId: id, confirmation: { target: target as AttendanceTarget, confirmedAt } };
+}
+
 function asNote(value: unknown, id: string): CompletionNote | null {
   if (!isRecord(value) || value.v !== VERSION) return null;
   const { classId, classLabel } = value;
@@ -238,51 +250,15 @@ function notify(): void {
   listeners.forEach((listener) => listener());
 }
 
-function stringField(event: Event, field: 'key' | 'oldValue' | 'newValue'): string | null | undefined {
-  if (!(field in event)) return undefined;
-  const value: unknown = (event as unknown as Record<string, unknown>)[field];
-  return typeof value === 'string' || value === null ? value : undefined;
-}
-
 /**
- * Another tab changed storage. A queued key it removed without refusing the
- * entry was flushed there, so its target is confirmed here too — otherwise the
- * row would fall back to this tab's stale server render.
+ * Another tab changed storage. Everything it did is in storage — a flush there
+ * writes its confirmation before it removes the queued key — so a read is all
+ * this tab needs. A `null` key is a `clear()` of the whole store.
  */
 function onStorage(event: Event): void {
-  const key = stringField(event, 'key');
-  if (key === CLEARING_KEY) {
-    otherTabClearing = stringField(event, 'newValue') !== null;
-    return;
-  }
+  const key: unknown = (event as unknown as Record<string, unknown>).key;
   if (key !== null && !(typeof key === 'string' && PREFIXES.some((prefix) => key.startsWith(prefix)))) return;
-  if (typeof key === 'string' && key.startsWith(QUEUED_PREFIX) && !otherTabClearing) {
-    confirmRemovedElsewhere(key, stringField(event, 'oldValue'), stringField(event, 'newValue'));
-  }
   notify();
-}
-
-function confirmRemovedElsewhere(
-  key: string,
-  oldValue: string | null | undefined,
-  newValue: string | null | undefined,
-): void {
-  if (newValue !== null || typeof oldValue !== 'string') return;
-  const rest = key.slice(QUEUED_PREFIX.length);
-  const colon = rest.indexOf(':');
-  if (colon < 0) return;
-  const owner = rest.slice(0, colon);
-  const id = rest.slice(colon + 1);
-  let old: OutboxEntry | null;
-  try {
-    old = asEntry(JSON.parse(oldValue) as unknown, id);
-  } catch {
-    return;
-  }
-  const store = storage();
-  if (old === null || store === null) return;
-  if (readJson(store, keyFor(REFUSED_PREFIX, owner, id)) !== null) return;
-  confirm(owner, id, old.target);
 }
 
 export function subscribeOutbox(listener: () => void): () => void {
@@ -306,12 +282,19 @@ export function getOutboxSnapshot(owner: string): OutboxSnapshot {
     remove(keyFor(REFUSED_PREFIX, owner, entry.registrationId));
     return false;
   });
+  const confirmed: Record<string, Confirmation> = {};
+  for (const { registrationId, confirmation } of readAll(owner, CONFIRMED_PREFIX, asConfirmation).sort((a, b) =>
+    a.registrationId.localeCompare(b.registrationId),
+  )) {
+    if (now - confirmation.confirmedAt <= CONFIRMED_TTL_MS) confirmed[registrationId] = confirmation;
+    else remove(keyFor(CONFIRMED_PREFIX, owner, registrationId));
+  }
   const next: OutboxSnapshot = {
     queued: readQueued(owner),
     refused: refused.sort((a, b) => a.refusedAt - b.refusedAt || a.registrationId.localeCompare(b.registrationId)),
     notes: readAll(owner, NOTE_PREFIX, asNote).sort((a, b) => a.classId.localeCompare(b.classId)),
     needsSignIn: needsSignInByOwner.has(owner),
-    confirmed: confirmedByOwner.get(owner) ?? EMPTY_OUTBOX.confirmed,
+    confirmed: Object.keys(confirmed).length === 0 ? EMPTY_OUTBOX.confirmed : confirmed,
   };
   const content = JSON.stringify(next);
   if (content === EMPTY_CONTENT) return EMPTY_OUTBOX;
@@ -329,27 +312,29 @@ export function pendingCount(owner: string): number {
 /**
  * Queue a mark, replacing any queued or refused one for that registration.
  * `'unavailable'` when storage cannot hold it — the caller then writes
- * directly instead of queueing silently.
+ * directly instead of queueing silently, and the row's older queued mark and
+ * confirmation are dropped: either would show in its place, and a queued one
+ * would later overwrite it.
  */
 export function enqueueAttendance(
   owner: string,
   entry: Omit<OutboxEntry, 'nonce' | 'recordedAt' | 'attempts'>,
 ): 'queued' | 'unavailable' {
+  const queuedKey = keyFor(QUEUED_PREFIX, owner, entry.registrationId);
+  const unavailable = (): 'unavailable' => {
+    remove(queuedKey);
+    remove(keyFor(CONFIRMED_PREFIX, owner, entry.registrationId));
+    notify();
+    return 'unavailable';
+  };
   let nonce: string;
   try {
     nonce = crypto.randomUUID();
   } catch {
-    return 'unavailable';
+    return unavailable();
   }
   const full: OutboxEntry = { ...entry, nonce, recordedAt: Date.now(), attempts: 0 };
-  const queuedKey = keyFor(QUEUED_PREFIX, owner, entry.registrationId);
-  if (!write(queuedKey, full)) {
-    // The caller writes this mark directly; an older queued mark left behind
-    // would show in its place and later overwrite it.
-    remove(queuedKey);
-    notify();
-    return 'unavailable';
-  }
+  if (!write(queuedKey, full)) return unavailable();
   enqueuedHere.add(nonce);
   remove(keyFor(REFUSED_PREFIX, owner, entry.registrationId));
   notify();
@@ -370,24 +355,17 @@ function removeKeys(keep: (owner: string) => boolean): void {
   const store = storage();
   if (store === null) return;
   try {
-    store.setItem(CLEARING_KEY, '1');
-  } catch {
-    // Another tab may then confirm what this one removes; the removals still happen.
-  }
-  try {
     for (const prefix of PREFIXES) {
       for (const { key, owner } of keysUnder(store, prefix)) if (!keep(owner)) remove(key);
     }
   } catch {
     // A store that throws on enumeration holds nothing this module can reach.
   }
-  remove(CLEARING_KEY);
 }
 
 /** Every outbox key of any other account goes; the owner's stay. */
 export function purgeOtherOwners(owner: string): void {
   removeKeys((keyOwner) => keyOwner === owner);
-  for (const other of confirmedByOwner.keys()) if (other !== owner) confirmedByOwner.delete(other);
   for (const other of needsSignInByOwner) if (other !== owner) needsSignInByOwner.delete(other);
   notify();
 }
@@ -395,7 +373,6 @@ export function purgeOtherOwners(owner: string): void {
 /** Every outbox key, whatever its owner — for sign-out and account deletion. */
 export function clearAllOutboxes(): void {
   removeKeys(() => false);
-  confirmedByOwner.clear();
   needsSignInByOwner.clear();
   notify();
 }
@@ -405,10 +382,6 @@ function setNeedsSignIn(owner: string, value: boolean): void {
   if (value) needsSignInByOwner.add(owner);
   else needsSignInByOwner.delete(owner);
   notify();
-}
-
-function confirm(owner: string, registrationId: string, target: AttendanceTarget): void {
-  confirmedByOwner.set(owner, { ...confirmedByOwner.get(owner), [registrationId]: target });
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +416,13 @@ function isAppliedBody(
   return value.data.id === entry.registrationId && value.data.status === entry.target;
 }
 
+/** When the server answered, by its `Date` header; the device clock when the header is missing or unreadable. */
+function answeredAt(res: Response): number {
+  const header = res.headers.get('Date');
+  const parsed = header === null ? Number.NaN : Date.parse(header);
+  return Number.isNaN(parsed) ? Date.now() : parsed;
+}
+
 async function readJsonBody(res: Response): Promise<{ ok: true; body: unknown } | { ok: false }> {
   try {
     return { ok: true, body: (await res.json()) as unknown };
@@ -472,8 +452,21 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
     if (!read.ok || !isAppliedBody(read.body, entry)) return 'stop';
     const { body } = read;
     setNeedsSignIn(owner, false);
-    const superseded = ifUnchanged(owner, entry, () => remove(keyFor(QUEUED_PREFIX, owner, entry.registrationId)));
-    confirm(owner, entry.registrationId, entry.target);
+    const queuedKey = keyFor(QUEUED_PREFIX, owner, entry.registrationId);
+    const stored = readStoredEntry(owner, entry.registrationId);
+    const superseded = stored !== null && stored.nonce !== entry.nonce;
+    // Nothing stored: a clear ran meanwhile, and nothing of this owner is to be kept.
+    if (stored !== null) {
+      // The confirmation is written before the queued key goes, so no read — in
+      // any tab — finds the row with neither. A newer queued mark still shows
+      // over it; should that one be refused, this is what the server holds.
+      const confirmedKey = keyFor(CONFIRMED_PREFIX, owner, entry.registrationId);
+      const confirmation: Confirmation = { target: entry.target, confirmedAt: answeredAt(res) };
+      const written = write(confirmedKey, confirmation);
+      if (!superseded) remove(queuedKey);
+      // A full store may have room once the queued key is gone.
+      if (!written) write(confirmedKey, confirmation);
+    }
     const applied = body.outcome === undefined;
     if (applied && body.data.classCompleted === true && !entry.knownCompleted) {
       write(keyFor(NOTE_PREFIX, owner, entry.classId), { classId: entry.classId, classLabel: entry.classLabel });
@@ -598,11 +591,9 @@ export function flushOutbox(owner: string): Promise<FlushResult> {
 export function resetOutboxForTests(): void {
   if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
   listeners.clear();
-  confirmedByOwner.clear();
   needsSignInByOwner.clear();
   snapshotCache.clear();
   rerun.clear();
   enqueuedHere.clear();
-  otherTabClearing = false;
   running = null;
 }

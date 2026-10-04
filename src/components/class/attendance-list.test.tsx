@@ -11,9 +11,23 @@ const OWNER = 'acct-1';
 const CLASS_ID = 'class-1';
 const CLASS_LABEL = 'Hatha on Tue 6 Oct 18:00';
 
-/** The outbox key for a queued mark on `registrationId` (Global Constraints). */
+/** The outbox key for a queued mark on `registrationId`: one per registration, under the account. */
 function queuedKey(registrationId: string): string {
   return `fy-outbox:${OWNER}:${registrationId}`;
+}
+
+function confirmedKey(registrationId: string): string {
+  return `fy-outbox-confirmed:${OWNER}:${registrationId}`;
+}
+
+/** What a sync in an earlier document or another tab left for `registrationId`. */
+function storeConfirmation(registrationId: string, target: string, confirmedAt: number): void {
+  localStorage.setItem(confirmedKey(registrationId), JSON.stringify({ v: 1, target, confirmedAt }));
+}
+
+/** A render instant a minute back, half a second into its second: well inside a confirmation's day. */
+function renderedAMinuteAgo(): number {
+  return Math.floor(Date.now() / 1000) * 1000 - 60_000 + 500;
 }
 
 function storedTarget(registrationId: string): unknown {
@@ -78,8 +92,18 @@ describe('AttendanceList', () => {
   };
   const untouched: AttendanceItem = { registrationId: 'reg-1', studentName: 'Grace Hopper', status: 'registered' };
 
-  function renderList(items: AttendanceItem[], extra: { locked?: boolean; completed?: boolean } = {}) {
-    const props = { owner: OWNER, classId: CLASS_ID, classLabel: CLASS_LABEL, completed: false, ...extra };
+  function renderList(
+    items: AttendanceItem[],
+    extra: { locked?: boolean; completed?: boolean; renderedAt?: number } = {},
+  ) {
+    const props = {
+      owner: OWNER,
+      classId: CLASS_ID,
+      classLabel: CLASS_LABEL,
+      completed: false,
+      renderedAt: Date.now(),
+      ...extra,
+    };
     return render(<AttendanceList items={items} {...props} />);
   }
 
@@ -134,9 +158,9 @@ describe('AttendanceList', () => {
   });
 
   /**
-   * The review's blocker (spec §3): the page was rendered before the sync, so
-   * `items` still says `registered`. A row whose entry cleared must keep the
-   * status the sync confirmed, never fall back to that stale render.
+   * Spec §3: the page was rendered before the sync, so `items` still says
+   * `registered`. A row whose entry cleared keeps the status the sync
+   * confirmed, never falls back to that stale render.
    */
   it('keeps a mark queued on another page once a sync confirms it, although items still says registered', async () => {
     enqueueAttendance(OWNER, {
@@ -170,10 +194,65 @@ describe('AttendanceList', () => {
     await screen.findByText('Present');
 
     rerender(
-      <AttendanceList items={[{ ...untouched }]} owner={OWNER} classId={CLASS_ID} classLabel={CLASS_LABEL} completed={false} />,
+      <AttendanceList
+        items={[{ ...untouched }]}
+        owner={OWNER}
+        classId={CLASS_ID}
+        classLabel={CLASS_LABEL}
+        completed={false}
+        renderedAt={0}
+      />,
     );
     screen.getByText('Present');
     expect(screen.queryByText('Not marked')).toBeNull();
+  });
+
+  /**
+   * A stored page hard-loaded offline is a new document: it holds nothing of
+   * the old one's memory and renders `items` from before the taps. The
+   * confirmation the old document's sync stored is what keeps the row marked.
+   */
+  it('keeps a confirmed mark in a new document that renders the page stored before the tap', async () => {
+    const storedPageRenderedAt = Date.now() - 60_000;
+    fetchMock.mockImplementation(applyRequested);
+    vi.stubGlobal('fetch', fetchMock);
+    const { unmount } = renderList([untouched], { renderedAt: storedPageRenderedAt });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+    await waitFor(() => expect(localStorage.getItem(queuedKey('reg-1'))).toBeNull());
+    await screen.findByText('Present');
+
+    unmount();
+    resetOutboxForTests();
+    renderList([untouched], { renderedAt: storedPageRenderedAt });
+
+    await screen.findByText('Present');
+    expect(screen.queryByText('Not marked')).toBeNull();
+  });
+
+  it('prefers a confirmation from after the render over items', async () => {
+    const renderedAt = renderedAMinuteAgo();
+    storeConfirmation('reg-1', 'attended', renderedAt + 2_000);
+    vi.stubGlobal('fetch', fetchMock);
+    renderList([untouched], { renderedAt });
+    await screen.findByText('Present');
+  });
+
+  it('prefers a confirmation from the render’s own second, which the Date header cannot split', async () => {
+    const renderedAt = renderedAMinuteAgo();
+    storeConfirmation('reg-1', 'attended', Math.floor(renderedAt / 1000) * 1000);
+    vi.stubGlobal('fetch', fetchMock);
+    renderList([untouched], { renderedAt });
+    await screen.findByText('Present');
+  });
+
+  /** Another device corrected the row after this device's sync; the newer render shows that. */
+  it('lets items win over a confirmation from before the render', () => {
+    const renderedAt = renderedAMinuteAgo();
+    storeConfirmation('reg-1', 'attended', Math.floor(renderedAt / 1000) * 1000 - 1_000);
+    vi.stubGlobal('fetch', fetchMock);
+    renderList([{ ...untouched, status: 'no_show' }], { renderedAt });
+    screen.getByText('No-show');
+    expect(screen.queryByText('Present')).toBeNull();
   });
 
   /**
@@ -310,7 +389,14 @@ describe('AttendanceList', () => {
     expect(storedTarget('reg-1')).toBe('attended');
 
     const html = renderToString(
-      <AttendanceList items={[untouched]} owner={OWNER} classId={CLASS_ID} classLabel={CLASS_LABEL} completed={false} />,
+      <AttendanceList
+        items={[untouched]}
+        owner={OWNER}
+        classId={CLASS_ID}
+        classLabel={CLASS_LABEL}
+        completed={false}
+        renderedAt={0}
+      />,
     );
     expect(html).toContain('Not marked');
     expect(html).not.toContain('Waiting to sync');

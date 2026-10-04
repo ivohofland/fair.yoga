@@ -39,6 +39,9 @@ interface AttendanceListProps {
    *  mark, so a sync can tell a correction from a mark that landed after the
    *  class finished. */
   completed: boolean;
+  /** Server epoch ms at which `items` was read: a confirmation older than this
+   *  is already in `items`, or was overtaken by a later write. */
+  renderedAt: number;
 }
 
 /**
@@ -84,9 +87,15 @@ function statusLabel(status: AttendanceStatus): string {
  * becomes a hard reload mid check-in.
  *
  * Every tap is queued in the attendance outbox (`@/lib/attendance-outbox`) and
- * a sync replays it; a row shows, in order, its queued mark, else the status
- * the direct-write fallback or a sync confirmed on this page, else `items`
- * (spec §3 of docs/superpowers/specs/2026-10-04-offline-checkin-design.md).
+ * a sync replays it; a row shows, in order, its queued mark, else a status a
+ * sync confirmed no earlier than this render's second (`confirmedAt` is the
+ * server's `Date` header, whole seconds, so a tie goes to the confirmation),
+ * else the status the direct-write fallback saved, else `items` (spec §3 of
+ * docs/superpowers/specs/2026-10-04-offline-checkin-design.md).
+ *
+ * The fallback sits below the confirmation: a tap that falls back drops the
+ * row's confirmation, so one present beside a fallback status was written
+ * after it, by another tab's sync, and is the newer of the two.
  */
 export function AttendanceList({
   items,
@@ -95,6 +104,7 @@ export function AttendanceList({
   classId,
   classLabel,
   completed,
+  renderedAt,
 }: AttendanceListProps) {
   // The server snapshot is empty, so the first render — the hydrating one
   // included — never reads storage.
@@ -116,11 +126,14 @@ export function AttendanceList({
   // attendance" tap unlocks the row controls.
   const [editing, setEditing] = useState(!locked);
 
+  const renderedSecond = Math.floor(renderedAt / 1000) * 1000;
+
   function displayedStatus(item: AttendanceItem): AttendanceStatus {
+    const confirmation = outbox.confirmed[item.registrationId];
     return (
       queued.get(item.registrationId) ??
+      (confirmation !== undefined && confirmation.confirmedAt >= renderedSecond ? confirmation.target : undefined) ??
       direct[item.registrationId] ??
-      outbox.confirmed[item.registrationId] ??
       item.status
     );
   }

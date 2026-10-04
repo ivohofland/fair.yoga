@@ -11,6 +11,8 @@ export interface AttendanceOutboxProps {
   classLabel: string;
   /** True when this render shows the class `completed`. */
   completed: boolean;
+  /** Server epoch ms of this render. */
+  renderedAt: number;
 }
 
 interface OutboxClass {
@@ -19,20 +21,19 @@ interface OutboxClass {
   calendarEntry: { classType: string };
 }
 
-/**
- * Formatted here, on the server, because the zone formatters log through the
- * server logger and must stay out of the client bundle.
- */
+/** Built on the server; `renderedAt` is the page's own render instant. */
 export function attendanceOutboxProps(
   session: TeacherSession,
   cls: OutboxClass,
   start: Date,
   timeZone: string,
+  renderedAt: number,
 ): AttendanceOutboxProps {
   return {
     owner: session.accountId,
     classId: cls.id,
     classLabel: `${cls.calendarEntry.classType} on ${formatInstantInZone(start, timeZone)}`,
     completed: cls.status === 'completed',
+    renderedAt,
   };
 }
