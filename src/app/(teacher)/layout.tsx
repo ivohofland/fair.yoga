@@ -6,6 +6,10 @@ import { isSafeRelativePath } from '@/lib/schemas';
 import { TabBar } from '@/components/layout/tab-bar';
 import { LiveUpdates } from '@/components/layout/live-updates';
 import { OfflineWorker } from '@/components/layout/offline-worker';
+import {
+  AttendanceSyncProvider,
+  AttendanceSyncStatus,
+} from '@/components/layout/attendance-sync-status';
 
 export default async function TeacherLayout({
   children,
@@ -41,7 +45,10 @@ export default async function TeacherLayout({
     <>
       <LiveUpdates />
       <OfflineWorker />
-      {children}
+      <AttendanceSyncProvider ownerId={session.accountId}>
+        {children}
+        <AttendanceSyncStatus />
+      </AttendanceSyncProvider>
       <TabBar unreadCount={unreadCount} />
     </>
   );
