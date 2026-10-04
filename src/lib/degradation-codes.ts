@@ -60,6 +60,18 @@ export const DEGRADATION_CODES = {
       'A payment notification for a student had no related class although every writer of one sets it. Its email went out without the Pay now button.',
     contextKeys: ['notificationId', 'type'],
   },
+  PAYMENT_PAID_WITHOUT_TIMESTAMP: {
+    level: 'warn',
+    description:
+      'A paid payment had no paidAt although marking a payment paid writes both. The student pay page said it was marked paid without saying when.',
+    contextKeys: ['paymentId'],
+  },
+  CHARGED_REGISTRATION_WITHOUT_PAYMENT: {
+    level: 'warn',
+    description:
+      'A charged registration on a completed class had no payment although completion creates one for each. The student pay page answered not found.',
+    contextKeys: ['classId', 'registrationId'],
+  },
 } as const satisfies Record<
   string,
   { level: 'warn' | 'error'; description: string; contextKeys: readonly string[] }

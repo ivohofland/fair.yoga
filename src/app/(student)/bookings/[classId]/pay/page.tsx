@@ -10,7 +10,9 @@ import { PaymentQr } from '@/components/student/payment-qr';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 import { formatDayHeader, paymentStateText } from '@/lib/format';
-import { formatInstantInZone } from '@/lib/timezone';
+import { log } from '@/lib/log';
+import { chargeNoteFor } from '@/lib/charge-note';
+import { markedPaidLine, reportMissingPayment } from '@/lib/pay-page.server';
 import { PAYMENT_METHOD_COPY, paymentMethodsFor, type PaymentMethod } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
 
@@ -43,7 +45,8 @@ function MethodPanel({
     default: {
       // A kind added to `PaymentMethod` without a panel fails the build here.
       const unhandled: never = method;
-      return unhandled;
+      log.error({ kind: String((unhandled as { kind?: unknown }).kind) }, 'pay page: unhandled payment method kind');
+      return null;
     }
   }
 }
@@ -80,8 +83,17 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
       },
     },
   });
-  const payment = registration?.payment;
-  if (!registration || !payment) notFound();
+  if (!registration) notFound();
+  const payment = registration.payment;
+  if (!payment) {
+    reportMissingPayment({
+      classId: registration.class.id,
+      registrationId: registration.id,
+      registrationStatus: registration.status,
+      classStatus: registration.class.status,
+    });
+    notFound();
+  }
 
   const cls = registration.class;
   const entry = cls.calendarEntry;
@@ -90,6 +102,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
   const methods = paymentMethodsFor(teacher);
   const state = paymentStateText(payment.status);
+  const chargeNote = chargeNoteFor(registration.status);
   const breakdown = resolveReportedPaymentBreakdown(
     {
       classStatus: cls.status,
@@ -114,9 +127,12 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
       <p className="type-caption mb-4">
         {`${formatDayHeader(entry.date)} · with ${teacher.firstName} ${teacher.lastName}`}
       </p>
-      <div className="flex items-baseline justify-between gap-3 mb-6">
-        <p className={`type-number ${isOutstanding(payment.status) ? 'text-brown' : ''}`}>€{amount.toFixed(2)}</p>
-        <p className={`type-caption ${state.className}`}>{state.label}</p>
+      <div className="mb-6">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className={`type-number ${isOutstanding(payment.status) ? 'text-brown' : ''}`}>€{amount.toFixed(2)}</p>
+          <p className={`type-caption ${state.className}`}>{state.label}</p>
+        </div>
+        {chargeNote !== null && <p className="type-caption mt-1">{chargeNote}</p>}
       </div>
       <PayBody
         status={payment.status}
@@ -124,6 +140,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         amount={amount}
         reference={reference}
         teacherFirstName={teacher.firstName}
+        paymentId={payment.id}
         paidAt={payment.paidAt}
         timeZone={teacher.defaultTimezone}
       />
@@ -140,6 +157,7 @@ function PayBody({
   amount,
   reference,
   teacherFirstName,
+  paymentId,
   paidAt,
   timeZone,
 }: {
@@ -148,16 +166,13 @@ function PayBody({
   amount: number;
   reference: string;
   teacherFirstName: string;
+  paymentId: string;
   paidAt: Date | null;
   timeZone: string;
 }) {
   switch (status) {
     case 'paid':
-      return (
-        <p className="type-body mb-6">
-          {paidAt ? `Marked paid ${formatInstantInZone(paidAt, timeZone)}.` : 'Marked paid.'}
-        </p>
-      );
+      return <p className="type-body mb-6">{markedPaidLine(paidAt, timeZone, paymentId)}</p>;
     case 'not_charged':
       return <p className="type-body mb-6">{`${teacherFirstName} isn’t charging for this class.`}</p>;
     case 'pending':
@@ -191,7 +206,8 @@ function PayBody({
     default: {
       // A status added to `PaymentStatus` without a body fails the build here.
       const unhandled: never = status;
-      return unhandled;
+      log.error({ status: String(unhandled) }, 'pay page: unhandled payment status');
+      return null;
     }
   }
 }

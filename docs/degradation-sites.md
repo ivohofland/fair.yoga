@@ -67,17 +67,17 @@ Measured when the tables below were last brought up to date:
 
 | command | count |
 |---|---|
-| `log.warn(` lines | 79 |
-| `log.error(` lines | 68 |
-| surface (`log.warn(` or `log.error(`) | **79 + 68 = 147** |
+| `log.warn(` lines | 81 |
+| `log.error(` lines | 73 |
+| surface (`log.warn(` or `log.error(`) | **81 + 73 = 154** |
 | split `.warn(` / `.error(` continuation lines | 0 |
 | `log[…](` lines | 17 |
-| `logDegraded(` call lines | 11 |
+| `logDegraded(` call lines | 14 |
 
-One of the 147 is not a call: `src/lib/log.ts:5` is a usage example inside
+One of the 154 is not a call: `src/lib/log.ts:5` is a usage example inside
 that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:78`
-is the line `logDegraded` itself emits. So 146 static calls and 16
-computed-level calls were classified, beside the 11 `logDegraded` calls.
+is the line `logDegraded` itself emits. So 153 static calls and 16
+computed-level calls were classified, beside the 14 `logDegraded` calls.
 
 Line numbers below are as of that update and drift with every edit; the
 commands are the source of truth. A new `log.warn(` or `log.error(` raises the
@@ -159,8 +159,11 @@ Every `logDegraded` call. The level is the code's, from the registry.
 
 | site (file:line) | level | verdict | code or reason |
 |---|---|---|---|
+| `src/lib/email-templates.ts:159` | warn | degradation | `PAYMENT_NOTIFICATION_WITHOUT_CLASS` |
 | `src/lib/entry-conflict.ts:282` | error | degradation | `ENTRY_CONFLICT_KIND_UNKNOWN` |
 | `src/lib/finish-window.ts:61` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/pay-page.server.ts:14` | warn | degradation | `PAYMENT_PAID_WITHOUT_TIMESTAMP` |
+| `src/lib/pay-page.server.ts:36` | warn | degradation | `CHARGED_REGISTRATION_WITHOUT_PAYMENT` |
 | `src/lib/payment-breakdown.server.ts:21` | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
 | `src/lib/rule-slot-holder.ts:137` | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
 | `src/lib/tiers.server.ts:43` | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
@@ -169,14 +172,16 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/timezone.ts:306` | warn | degradation | `CLASS_START_UNREADABLE` |
 | `src/lib/timezone.ts:314` | warn | degradation | `CLASS_START_UNREADABLE` |
 | `src/lib/timezone.ts:328` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/services/email-fallback.ts:221` | error | degradation | `TEACHER_NOTIFICATION_TYPE_UNKNOWN` |
+| `src/services/email-fallback.ts:241` | error | degradation | `TEACHER_NOTIFICATION_TYPE_UNKNOWN` |
 
 ### The `log.warn(` / `log.error(` surface
 
 | site (file:line) | level | verdict | code or reason |
 |---|---|---|---|
 | `src/app/(public)/[slug]/page.tsx:101` | warn | routine | documented race (hard delete vs session); the page falls back to its signed-out view |
-| `src/app/(student)/bookings/page.tsx:165` | warn | routine | documented race (hard delete vs session); redirects |
+| `src/app/(student)/bookings/[classId]/pay/page.tsx:48` | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/app/(student)/bookings/[classId]/pay/page.tsx:209` | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/app/(student)/bookings/page.tsx:167` | warn | routine | documented race (hard delete vs session); redirects |
 | `src/app/api/account/route.ts:141` | error | routine | failure, surfaced as an error (answered busy) |
 | `src/app/api/account/student-profile/route.ts:172` | error | routine | failure, surfaced as an error (throws, 500) |
 | `src/app/api/account/student-profile/route.ts:184` | warn | routine | documented race; the loser is refused or retried (409) |
@@ -254,8 +259,8 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/timezone.ts:410` | warn | routine | refusal (4xx); nothing substituted (`startsInPast` fails closed, 409) |
 | `src/services/class-generator.ts:259` | warn | routine | lock contention (`isLockTimeout`) |
 | `src/services/class-generator.ts:265` | error | routine | operational state, reported through job health |
-| `src/services/class-lifecycle.ts:582` | warn | routine | documented race; the loser is refused or retried (room archived mid-request) |
-| `src/services/class-lifecycle.ts:782` | error | routine | echo of `CLASS_START_UNREADABLE`; completion is refused |
+| `src/services/class-lifecycle.ts:583` | warn | routine | documented race; the loser is refused or retried (room archived mid-request) |
+| `src/services/class-lifecycle.ts:783` | error | routine | echo of `CLASS_START_UNREADABLE`; completion is refused |
 | `src/services/class-reminders.ts:109` | error | routine | failure (an exception or outage), not impossible data (send refused) |
 | `src/services/class-reminders.ts:113` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/class-reminders.ts:131` | error | routine | operational state, reported through job health |
@@ -269,13 +274,13 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/class-transitions.ts:750` | error | routine | operational state, reported through job health |
 | `src/services/degradation-digest.ts:61` | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
 | `src/services/degradation-digest.ts:111` | error | routine | failure (an exception or outage), not impossible data; the job throws |
-| `src/services/email-fallback.ts:80` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/email-fallback.ts:99` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/email-fallback.ts:134` | error | routine | documented race; the loser is refused or retried (claim no longer ours) |
-| `src/services/email-fallback.ts:141` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/email-fallback.ts:303` | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
-| `src/services/email-fallback.ts:327` | error | routine | failure (an exception or outage), not impossible data (send refused) |
-| `src/services/email-fallback.ts:334` | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/email-fallback.ts:100` | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/email-fallback.ts:119` | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/email-fallback.ts:154` | error | routine | documented race; the loser is refused or retried (claim no longer ours) |
+| `src/services/email-fallback.ts:161` | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/email-fallback.ts:323` | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/services/email-fallback.ts:350` | error | routine | failure (an exception or outage), not impossible data (send refused) |
+| `src/services/email-fallback.ts:357` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/entry-generation.ts:453` | warn | routine | documented race; the loser is refused or retried (EvalPlanQual re-check) |
 | `src/services/entry-generation.ts:589` | warn | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
 | `src/services/entry-generation.ts:925` | warn | routine | skipped dates; the teacher is told why |
@@ -295,6 +300,11 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/notification-retention.ts:120` | error | routine | operational state, reported through job health |
 | `src/services/notification-retention.ts:122` | warn | routine | operational state, reported through job health (per-run cap) |
 | `src/services/notifications.ts:83` | error | routine | failure (an exception or outage), not impossible data (event bus) |
+| `src/services/push-dispatch.ts:70` | warn | routine | configuration (`VAPID_*` unset), logged once per process |
+| `src/services/push-dispatch.ts:72` | error | routine | configuration (`VAPID_*` misconfigured), logged once per process |
+| `src/services/push-dispatch.ts:169` | warn | routine | failure (an exception or outage), not impossible data (push service refused the send; not retried) |
+| `src/services/push-dispatch.ts:223` | error | routine | failure (an exception or outage), not impossible data (a worker crashed; the first crash is rethrown) |
+| `src/services/push-dispatch.ts:259` | error | routine | failure (an exception or outage), not impossible data (a send task threw) |
 | `src/services/room-archive.ts:277` | warn | routine | documented race; the loser is refused or retried (room back in use, 409) |
 | `src/services/rule-lifecycle.ts:518` | error | routine | failure, surfaced as an error (404); see close calls |
 | `src/services/rule-lifecycle.ts:623` | error | routine | failure, surfaced as an error (404); see close calls |
@@ -452,10 +462,12 @@ it then is a deliberate migration-level repair, not an `UPDATE`.
 **What happened.** A completed class had a null `totalRevenue` or
 `totalStudents`. `completeClass` writes both in the same statement that marks
 the class completed, so the class reached `completed` some other way. The
-student's past-classes row rendered without its payment breakdown.
+student's past-classes row or the class's pay page rendered without its
+payment breakdown.
 
 **Where the bad value lives.** `Class.totalRevenue` / `Class.totalStudents`
-for the sample's `classId` (`registrationId` is the row whose page showed it).
+for the sample's `classId` (`registrationId` is the registration whose
+past-classes row or pay page showed it).
 
 **Confirm.**
 
@@ -571,3 +583,57 @@ among the student's registrations. If it still exists, set `relatedClassId`
 to its id. If it is gone, what deleted it is the bug — no code path deletes a
 class with payments — and the student needs telling that the request no
 longer stands.
+
+### `PAYMENT_PAID_WITHOUT_TIMESTAMP`
+
+**What happened.** The student pay page met a `paid` payment whose `paidAt` is
+null. `markPaymentPaid` writes the status and the timestamp in one statement,
+so the row reached `paid` some other way. The page said "Marked paid." without
+saying when.
+
+**Where the bad value lives.** `Payment.paidAt` on the sample's `paymentId`.
+
+**Confirm.**
+
+```sql
+SELECT id, "registrationId", status, method, "paidAt", "updatedAt"
+  FROM "Payment" WHERE status = 'paid' AND "paidAt" IS NULL;
+```
+
+**Correct.** Find what marked the payment paid outside `markPaymentPaid` (a
+manual `UPDATE`, a data migration) — that is the bug. Then ask the teacher when
+they received it and set `paidAt`; `updatedAt` is an upper bound if they do not
+know.
+
+### `CHARGED_REGISTRATION_WITHOUT_PAYMENT`
+
+**What happened.** The student pay page met a registration in a charged status
+(`CHARGED_STATUSES`, `src/services/class-lifecycle.ts`) on a completed class,
+with no `Payment` row. `completeClass` creates one for every charged
+registration in the transaction that completes the class, so either the
+payment was deleted or the registration became charged after completion. The
+page answered not found, as it does for a registration with nothing to pay.
+
+**Where the bad value lives.** The `Payment` that should exist for the
+sample's `registrationId`, on the class `classId`.
+
+**Confirm.**
+
+```sql
+SELECT r.id, r.status, r."updatedAt", c.status AS class_status, c."totalStudents"
+  FROM "Registration" r JOIN "Class" c ON c.id = r."classId"
+ WHERE c.status = 'completed'
+   AND r.status IN ('registered', 'attended', 'no_show', 'late_cancel')
+   AND NOT EXISTS (SELECT 1 FROM "Payment" p WHERE p."registrationId" = r.id);
+SELECT r.id, r.status, p.amount FROM "Registration" r
+  LEFT JOIN "Payment" p ON p."registrationId" = r.id
+ WHERE r."classId" = '<classId>';
+```
+
+**Correct.** Find what removed the payment or changed the registration after
+completion — that is the bug. Restore the payment from the registration's
+`price`, which completion wrote alongside it; if `price` is null too, the
+registration was not charged at completion, so set its status back to what
+the teacher recorded and leave it unpaid. Compare the class's `totalStudents`
+with its charged registrations: a mismatch means the snapshot no longer
+matches the room.
