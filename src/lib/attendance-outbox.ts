@@ -54,6 +54,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 const REFUSED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOCK_NAME = 'fy-outbox';
+/** Far above one pass; a holder that keeps the lock longer is treated as gone, and this flush ends. */
+const LOCK_WAIT_MS = 60_000;
+/** Set while `removeKeys` runs, so another tab does not read its removals as flushed entries. */
+const CLEARING_KEY = 'fy-outbox-clearing';
 const REFUSED_FALLBACK = "This change couldn't be saved.";
 const TARGETS: ReadonlySet<string> = new Set<AttendanceTarget>(['attended', 'no_show', 'late_cancel']);
 
@@ -72,6 +76,9 @@ const needsSignInByOwner = new Set<string>();
 /** The last snapshot handed out per owner, and its content, so an unchanged read returns the same object. */
 const snapshotCache = new Map<string, { content: string; snapshot: OutboxSnapshot }>();
 const EMPTY_CONTENT = JSON.stringify(EMPTY_OUTBOX);
+
+/** Whether another tab is clearing, as its `CLEARING_KEY` events say. */
+let otherTabClearing = false;
 
 let running: Promise<{ applied: number }> | null = null;
 /** Owners whose flush was asked for while one was running: each gets one more pass. */
@@ -221,9 +228,51 @@ function notify(): void {
   listeners.forEach((listener) => listener());
 }
 
+function stringField(event: Event, field: 'key' | 'oldValue' | 'newValue'): string | null | undefined {
+  if (!(field in event)) return undefined;
+  const value: unknown = (event as unknown as Record<string, unknown>)[field];
+  return typeof value === 'string' || value === null ? value : undefined;
+}
+
+/**
+ * Another tab changed storage. A queued key it removed without refusing the
+ * entry was flushed there, so its target is confirmed here too — otherwise the
+ * row would fall back to this tab's stale server render.
+ */
 function onStorage(event: Event): void {
-  const key = 'key' in event ? event.key : undefined;
-  if (key === null || (typeof key === 'string' && PREFIXES.some((prefix) => key.startsWith(prefix)))) notify();
+  const key = stringField(event, 'key');
+  if (key === CLEARING_KEY) {
+    otherTabClearing = stringField(event, 'newValue') !== null;
+    return;
+  }
+  if (key !== null && !(typeof key === 'string' && PREFIXES.some((prefix) => key.startsWith(prefix)))) return;
+  if (typeof key === 'string' && key.startsWith(QUEUED_PREFIX) && !otherTabClearing) {
+    confirmRemovedElsewhere(key, stringField(event, 'oldValue'), stringField(event, 'newValue'));
+  }
+  notify();
+}
+
+function confirmRemovedElsewhere(
+  key: string,
+  oldValue: string | null | undefined,
+  newValue: string | null | undefined,
+): void {
+  if (newValue !== null || typeof oldValue !== 'string') return;
+  const rest = key.slice(QUEUED_PREFIX.length);
+  const colon = rest.indexOf(':');
+  if (colon < 0) return;
+  const owner = rest.slice(0, colon);
+  const id = rest.slice(colon + 1);
+  let old: OutboxEntry | null;
+  try {
+    old = asEntry(JSON.parse(oldValue) as unknown, id);
+  } catch {
+    return;
+  }
+  const store = storage();
+  if (old === null || store === null) return;
+  if (readJson(store, keyFor(REFUSED_PREFIX, owner, id)) !== null) return;
+  confirm(owner, id, old.target);
 }
 
 export function subscribeOutbox(listener: () => void): () => void {
@@ -263,7 +312,8 @@ export function getOutboxSnapshot(owner: string): OutboxSnapshot {
 }
 
 export function pendingCount(owner: string): number {
-  return readQueued(owner).length + readAll(owner, REFUSED_PREFIX, asRefused).length;
+  const { queued, refused } = getOutboxSnapshot(owner);
+  return queued.length + refused.length;
 }
 
 /**
@@ -302,12 +352,18 @@ function removeKeys(keep: (owner: string) => boolean): void {
   const store = storage();
   if (store === null) return;
   try {
+    store.setItem(CLEARING_KEY, '1');
+  } catch {
+    // Another tab may then confirm what this one removes; the removals still happen.
+  }
+  try {
     for (const prefix of PREFIXES) {
       for (const { key, owner } of keysUnder(store, prefix)) if (!keep(owner)) remove(key);
     }
   } catch {
     // A store that throws on enumeration holds nothing this module can reach.
   }
+  remove(CLEARING_KEY);
 }
 
 /** Every outbox key of any other account goes; the owner's stay. */
@@ -464,12 +520,28 @@ async function pass(owner: string): Promise<number> {
   }
 }
 
-/** A pass under the cross-tab lock where the browser has one. Never throws. */
+/**
+ * A pass under the cross-tab lock where the browser has one. Never throws. A
+ * lock not granted within `LOCK_WAIT_MS` ends this pass with the entries still
+ * queued, so a holder that never lets go cannot stall this tab's flushes.
+ */
 async function lockedPass(owner: string): Promise<number> {
   try {
     const locks: LockManager | undefined = typeof navigator === 'undefined' ? undefined : navigator.locks;
-    if (locks) return await locks.request(LOCK_NAME, () => pass(owner));
-    return await pass(owner);
+    if (!locks) return await pass(owner);
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new DOMException('The outbox lock was not granted in time.', 'TimeoutError')),
+      LOCK_WAIT_MS,
+    );
+    try {
+      return await locks.request(LOCK_NAME, { signal: controller.signal }, () => {
+        clearTimeout(timer);
+        return pass(owner);
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (err) {
     logRequestFailure('attendance-outbox', { stage: 'flush' }, err);
     return 0;
@@ -509,5 +581,6 @@ export function resetOutboxForTests(): void {
   needsSignInByOwner.clear();
   snapshotCache.clear();
   rerun.clear();
+  otherTabClearing = false;
   running = null;
 }
