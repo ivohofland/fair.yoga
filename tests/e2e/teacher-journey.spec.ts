@@ -409,11 +409,18 @@ test.describe('Teacher journey', () => {
     // (`completeWalkIn`) — the full typed name renders, not a truncation.
     await expect(page.getByText('Nadia Newcomer')).toBeVisible({ timeout: 10_000 });
 
-    // Tick off the booked student as present.
+    // Tick off the booked student as present. A tap is queued before it is
+    // sent, so wait for the server's answer: the next test reads this mark
+    // from the database in a fresh context.
+    const saved = page.waitForResponse(
+      (res) => res.request().method() === 'PUT' && res.url().includes('/api/registrations/') && res.ok(),
+    );
     await page.getByRole('button', { name: 'Mark Journey s. as present' }).click();
+    await saved;
     await expect(
       page.getByRole('button', { name: 'Mark Journey s. as no-show' }),
     ).toBeVisible();
+    await expect(page.getByText('Waiting to sync')).toHaveCount(0);
   });
 
   test('completing runs pricing and payments can be marked paid', async ({ page, context }) => {
