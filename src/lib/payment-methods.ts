@@ -1,9 +1,6 @@
 /**
- * How a student can pay a teacher, derived from what the teacher has set up.
- *
- * Each member of `PaymentMethod` is one row in the pay page's chooser. A new
- * kind fails the build at `PAYMENT_METHOD_COPY` and at the pay page's
- * exhaustive renderer until both handle it.
+ * One way a student can pay a teacher. A new kind fails the build at
+ * `PAYMENT_METHOD_COPY` until it has a label and hint.
  */
 export type PaymentMethod =
   | { kind: 'bank_transfer'; iban: string; beneficiary: string }

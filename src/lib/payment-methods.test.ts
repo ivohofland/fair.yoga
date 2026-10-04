@@ -38,7 +38,7 @@ describe('paymentMethodsFor', () => {
     expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '  ' })).toEqual([]);
   });
 
-  // Review Focus 5: the padded name is the one a bank would compare.
+  // The padded name is the one a bank would compare.
   it('trims the IBAN and the holder name it hands out', () => {
     const [transfer] = paymentMethodsFor({ bankIban: ` ${IBAN} `, bankAccountName: '  I. Hofland  ' });
     expect(transfer).toEqual({ kind: 'bank_transfer', iban: IBAN, beneficiary: 'I. Hofland' });
