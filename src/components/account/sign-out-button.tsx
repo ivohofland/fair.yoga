@@ -3,8 +3,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { clearAllOutboxes, flushOutbox, pendingCount } from '@/lib/attendance-outbox';
+import { clearAllOutboxes, pendingCount } from '@/lib/attendance-outbox';
 import { logRequestFailure } from '@/lib/client-errors';
+import { flushWithinBound } from '@/lib/flush-within-bound';
 import { clearOfflinePages } from '@/lib/offline-client';
 import { disablePush } from '@/lib/push-client';
 
@@ -24,29 +25,10 @@ interface SignOutButtonProps {
   outboxOwner?: string;
 }
 
-const FLUSH_BOUND_MS = 5_000;
-
 function unsyncedCopy(count: number): string {
   return count === 1
     ? "1 attendance change hasn't synced and will be lost."
     : `${count} attendance changes haven't synced and will be lost.`;
-}
-
-/** Waits for the owner's flush, but never longer than `FLUSH_BOUND_MS`. */
-async function flushWithinBound(owner: string): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, FLUSH_BOUND_MS);
-  });
-  const flushed = flushOutbox(owner).then(
-    () => undefined,
-    (err: unknown) => logRequestFailure('sign-out-button', { step: 'flush' }, err),
-  );
-  try {
-    await Promise.race([flushed, timedOut]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** Ends the session and sends the browser to `redirectTo` either way —
@@ -75,7 +57,7 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
   async function handleSignOut() {
     setBusy(true);
     if (outboxOwner !== undefined) {
-      await flushWithinBound(outboxOwner);
+      await flushWithinBound(outboxOwner, 'sign-out-button');
       const left = pendingCount(outboxOwner);
       if (left > 0) {
         setUnsynced(left);
