@@ -11,10 +11,10 @@
     "verifiedAt": "2026-10-03"
   },
   "schedule": {
-    "sourceSha256": "b7a3cfee8c2da15293dddf293e1be47f2f63351ac1633ebed9f7aa207441cd35",
+    "sourceSha256": "7f6eb772947aab55dbc1c96a6ae12c69d287fc9062865e4709cd7cd613b28644",
     "baselineSha256": "89c0bb9171896fb2bd9911bbc7ba27ae90e412c35738711448550de0c9631da6",
     "verifiedAt": "2026-10-04",
-    "note": "the install card renders only on the client, for a browser that can install"
+    "note": "the select adds bankAccountName and the install card renders only on the client; the visual teacher has no IBAN, so the bank step is todo before and after"
   },
   "settings": {
     "sourceSha256": "8148c26282f4c4038b67935abc2ad524888a81041e4324a7c72d29f81590f33d",
