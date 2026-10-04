@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher } from './account-helpers';
-import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
 
 /**
@@ -36,9 +36,15 @@ function classStart(): Date {
 
 test.describe('Offline schedule', () => {
   test.describe.configure({ mode: 'serial' });
-  test.skip(({ isMobile }) => isMobile, 'Chromium desktop project only');
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({}, testInfo) => {
+    test.skip(testInfo.project.name !== 'chromium', 'Chromium project only');
+    // `next dev` names its HMR client chunk in every page; a production build never does.
+    const html = await (await fetch(`${BASE_URL}/login`)).text();
+    test.skip(
+      html.includes('hmr-client'),
+      'Needs a production build: next dev lazily loads chunks the worker never stores (docs/technical-architecture.md, "Offline (service worker)").',
+    );
     await prisma.$connect();
     const email = `e2e-offline-teacher-${suffix}@test.local`;
     const teacher = await prisma.teacher.create({
@@ -107,25 +113,28 @@ test.describe('Offline schedule', () => {
   });
 
   test.afterAll(async () => {
-    if (classId) await prisma.registration.deleteMany({ where: { classId } });
-    if (teacherId) {
-      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-      const accountId = await accountIdOfTeacher(prisma, teacherId);
-      await prisma.session.deleteMany({ where: { accountId } });
+    try {
+      if (classId) await prisma.registration.deleteMany({ where: { classId } });
+      if (teacherId) {
+        await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+        await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+        const accountId = await accountIdOfTeacher(prisma, teacherId);
+        await prisma.session.deleteMany({ where: { accountId } });
+      }
+      if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+      if (studentId) {
+        const student = await prisma.student.findUnique({ where: { id: studentId }, select: { accountId: true } });
+        await prisma.student.deleteMany({ where: { id: studentId } });
+        if (student?.accountId) await prisma.account.deleteMany({ where: { id: student.accountId } });
+      }
+      if (teacherId) {
+        const teacher = await prisma.teacher.findUnique({ where: { id: teacherId }, select: { accountId: true } });
+        await prisma.teacher.deleteMany({ where: { id: teacherId } });
+        if (teacher?.accountId) await prisma.account.deleteMany({ where: { id: teacher.accountId } });
+      }
+    } finally {
+      await prisma.$disconnect();
     }
-    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
-    if (studentId) {
-      const student = await prisma.student.findUnique({ where: { id: studentId }, select: { accountId: true } });
-      await prisma.student.deleteMany({ where: { id: studentId } });
-      if (student?.accountId) await prisma.account.deleteMany({ where: { id: student.accountId } });
-    }
-    if (teacherId) {
-      const teacher = await prisma.teacher.findUnique({ where: { id: teacherId }, select: { accountId: true } });
-      await prisma.teacher.deleteMany({ where: { id: teacherId } });
-      if (teacher?.accountId) await prisma.account.deleteMany({ where: { id: teacher.accountId } });
-    }
-    await prisma.$disconnect();
   });
 
   test('a class never opened is stored, read offline, and wiped on sign-out', async ({ page, context }) => {
