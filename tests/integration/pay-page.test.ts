@@ -4,6 +4,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
+import { formatInstantInZone } from '@/lib/timezone';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -14,8 +15,9 @@ const HOLDER = 'P. Paypage';
  * `/bookings/[classId]/pay` — one class's payment, for the signed-in student.
  *
  * The page is keyed by the class and the session's own student, so every
- * class that is not this student's — someone else's, one with no payment, one
- * that does not exist — answers the same 404.
+ * class that is not this student's — someone else's, one that does not exist
+ * — answers the same 404, and so does this student's own class with no
+ * payment.
  */
 describe('GET /bookings/[classId]/pay', () => {
   const accountIds: string[] = [];
@@ -203,6 +205,7 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).toContain(IBAN);
     expect(html).toContain(HOLDER);
     expect(html).toContain('href="/bookings"');
+    expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
 
   it('shows why the amount is what it is', async () => {
@@ -233,6 +236,7 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('✓ Paid');
+    expect(html).toContain(`Marked paid ${formatInstantInZone(new Date('2026-06-05T10:00:00.000Z'), 'UTC')}.`);
     expect(html).not.toContain('How would you like to pay?');
     expect(html).not.toContain(IBAN);
   });

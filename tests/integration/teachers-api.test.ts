@@ -305,6 +305,13 @@ describe('PUT /api/teachers/[id] — an IBAN needs its holder name', () => {
     expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
   });
 
+  it('accepts a holder name with no IBAN', async () => {
+    await setBank({ bankIban: null, bankAccountName: null });
+    const res = await putTeacher(holderTeacherId, { bankIban: null, bankAccountName: 'H. Teacher' }, holderToken);
+    expect(res.status).toBe(200);
+    expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: 'H. Teacher' });
+  });
+
   // A row from before this rule must not lock its teacher out
   // of saving anything else.
   it('saves an unrelated field for a teacher whose stored IBAN has no holder name', async () => {
