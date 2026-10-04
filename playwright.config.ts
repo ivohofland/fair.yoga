@@ -56,6 +56,12 @@ export default defineConfig({
     // trace of the healthy run and none of the failing one — the artifact
     // said least about exactly the flake worth diagnosing.
     trace: 'retain-on-failure',
+    // The offline worker (#725) would answer navigations and static files in
+    // every spec; only `offline.spec.ts` opts back in, so the rest of the
+    // suite behaves as it did before the worker existed. Why, and what
+    // `setOffline` needs: docs/technical-architecture.md (Offline (service
+    // worker)).
+    serviceWorkers: 'block',
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
