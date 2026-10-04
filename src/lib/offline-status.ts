@@ -82,7 +82,9 @@ function detach(): void {
   if (retryTimer !== null) clearTimeout(retryTimer);
   retryTimer = null;
   // With no subscriber nothing keeps this answer current, and isOfflineNow
-  // would go on reporting it.
+  // would go on reporting it. A ping still in flight is dropped too, so its
+  // answer cannot set it again.
+  latestPing++;
   pingFailed = false;
   refreshSnapshot();
 }

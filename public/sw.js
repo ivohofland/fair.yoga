@@ -215,7 +215,9 @@ async function storePage(pathname, res, startedAt) {
   const headers = storedHeaders(res, owner);
   await exclusive(async () => {
     // clearPages bumps the generation before it deletes PAGES, so a put that
-    // passes this check lands in a cache that clear then removes.
+    // passes this check lands in a cache that clear then removes. A clear that
+    // finished while this store waited its turn has already pruned, so
+    // without this check the pull below would leave its files behind.
     if ((await generation()) !== startedAt) return;
     await pages.put(key(pathname), new Response(body, { status: 200, headers }));
     await pullStatic(body);
