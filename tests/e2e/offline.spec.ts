@@ -38,7 +38,7 @@ test.describe('Offline schedule', () => {
 
   test.beforeAll(async ({}, testInfo) => {
     test.skip(testInfo.project.name !== 'chromium', 'Chromium project only');
-    // From 23:00 UTC the class below has started, and a running scheduler moves it to in_progress, which has no "Cancel class" button. CI runs no scheduler.
+    // From 23:00 UTC the class below has started, and a running scheduler moves it to in_progress, which has no "Cancel class" button. The CI half of this skip rests on CI's `CRON_SCHEDULER` being 'off'.
     test.skip(
       !process.env.CI && new Date().getUTCHours() === 23,
       'The class started at 23:00 UTC would be moved to in_progress by a local scheduler; run again after midnight UTC.',
@@ -151,11 +151,19 @@ test.describe('Offline schedule', () => {
     await page.goto('/schedule');
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
 
-    // Warmed from the schedule, never visited.
+    // Warmed from the schedule, never visited. Every static file the stored
+    // page names must be stored too, or the offline page hydrates against a gap.
     await expect
       .poll(
         () =>
-          page.evaluate(async (path) => Boolean(await (await caches.open('fy-pages-v1')).match(path)), `/class/${classId}`),
+          page.evaluate(async (path) => {
+            const stored = await (await caches.open('fy-pages-v1')).match(path);
+            if (!stored) return false;
+            const named = new Set((await stored.text()).match(/\/_next\/static\/[^"'\\\s)<>]+/g) ?? []);
+            const files = await caches.open('fy-static-v1');
+            for (const file of named) if (!(await files.match(file))) return false;
+            return named.size > 0;
+          }, `/class/${classId}`),
         { timeout: 20_000 },
       )
       .toBe(true);
@@ -175,6 +183,7 @@ test.describe('Offline schedule', () => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/schedule$/);
     await expect(page.getByRole('status').filter({ hasText: 'Offline' })).toBeVisible();
+    await expect(page.getByText('Offline Vinyasa').first()).toBeVisible();
 
     await page.goto('/students');
     await expect(page.getByText("You're offline")).toBeVisible();
@@ -191,5 +200,10 @@ test.describe('Offline schedule', () => {
         ),
       )
       .toBe(0);
+
+    await context.setOffline(true);
+    await page.goto(`/class/${classId}`);
+    await expect(page.getByText("You're offline")).toBeVisible();
+    await expect(page.getByText(FIRST_NAME)).toHaveCount(0);
   });
 });
