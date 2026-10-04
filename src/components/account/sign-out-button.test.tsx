@@ -16,6 +16,15 @@ vi.mock('@/lib/offline-client', () => ({
   clearOfflinePages: () => clearOfflinePages(),
 }));
 
+const flushOutbox = vi.fn<(owner: string) => Promise<{ applied: number }>>(async () => ({ applied: 0 }));
+const pendingCount = vi.fn<(owner: string) => number>(() => 0);
+const clearAllOutboxes = vi.fn<() => void>();
+vi.mock('@/lib/attendance-outbox', () => ({
+  flushOutbox: (owner: string) => flushOutbox(owner),
+  pendingCount: (owner: string) => pendingCount(owner),
+  clearAllOutboxes: () => clearAllOutboxes(),
+}));
+
 import { SignOutButton } from './sign-out-button';
 
 /**
@@ -39,6 +48,11 @@ describe('SignOutButton', () => {
     fetchMock.mockReset();
     disablePushMock.mockReset();
     clearOfflinePages.mockClear();
+    flushOutbox.mockReset();
+    flushOutbox.mockImplementation(async () => ({ applied: 0 }));
+    pendingCount.mockReset();
+    pendingCount.mockImplementation(() => 0);
+    clearAllOutboxes.mockReset();
     vi.unstubAllGlobals();
   });
 
@@ -236,5 +250,180 @@ describe('SignOutButton', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(routerPush).toHaveBeenCalledWith('/login');
     expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #726, spec D6 and D8. Queued attendance belongs to the account that leaves;
+// on the teacher settings page the button first tries to sync it and, failing
+// that, says what will be lost before anything is sent.
+describe('SignOutButton and the attendance outbox', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    disablePushMock.mockResolvedValue('off');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    fetchMock.mockReset();
+    disablePushMock.mockReset();
+    clearOfflinePages.mockClear();
+    flushOutbox.mockReset();
+    flushOutbox.mockImplementation(async () => ({ applied: 0 }));
+    pendingCount.mockReset();
+    pendingCount.mockImplementation(() => 0);
+    clearAllOutboxes.mockReset();
+    routerPush.mockReset();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['without an owner, DELETE ok', undefined, () => Promise.resolve({ ok: true })],
+    ['without an owner, DELETE not-ok', undefined, () => Promise.resolve({ ok: false })],
+    ['without an owner, DELETE rejects', undefined, () => Promise.reject(new Error('offline'))],
+    ['with an owner, DELETE ok', 'acc-1', () => Promise.resolve({ ok: true })],
+    ['with an owner, DELETE rejects', 'acc-1', () => Promise.reject(new Error('offline'))],
+  ])('clears every outbox before it navigates (%s)', async (_label, owner, answer) => {
+    const order: string[] = [];
+    fetchMock.mockImplementation(async () => {
+      order.push('fetch');
+      return answer();
+    });
+    clearAllOutboxes.mockImplementation(() => order.push('outboxes'));
+    routerPush.mockImplementation(() => order.push('push'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton outboxOwner={owner} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(order).toEqual(['fetch', 'outboxes', 'push']);
+  });
+
+  it('never flushes without an owner', async () => {
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(flushOutbox).not.toHaveBeenCalled();
+    expect(pendingCount).not.toHaveBeenCalled();
+  });
+
+  it("flushes the owner's queue before the push teardown and the DELETE, and asks nothing once it empties", async () => {
+    const order: string[] = [];
+    let flushed = false;
+    pendingCount.mockImplementation(() => (flushed ? 0 : 1));
+    flushOutbox.mockImplementation(async (owner) => {
+      order.push(`flush:${owner}`);
+      flushed = true;
+      return { applied: 1 };
+    });
+    disablePushMock.mockImplementation(async () => {
+      order.push('disablePush');
+      return 'off';
+    });
+    fetchMock.mockImplementation(async () => {
+      order.push('fetch');
+      return { ok: true };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton outboxOwner="acc-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(order).toEqual(['flush:acc-1', 'disablePush', 'fetch']);
+    expect(screen.queryByText(/will be lost/)).not.toBeInTheDocument();
+  });
+
+  it('stops waiting for the flush after 5 s', async () => {
+    vi.useFakeTimers();
+    flushOutbox.mockReturnValue(new Promise<{ applied: number }>(() => {}));
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(<SignOutButton outboxOwner="acc-1" />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(pendingCount).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(pendingCount).toHaveBeenCalledWith('acc-1');
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    [1, '1 attendance change hasn\'t synced and will be lost.'],
+    [3, '3 attendance changes haven\'t synced and will be lost.'],
+  ])('with %i queued change(s) left after the flush, confirms in the button\'s place and sends nothing', async (count, copy) => {
+    pendingCount.mockReturnValue(count);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton outboxOwner="acc-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign out anyway' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(disablePushMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(clearAllOutboxes).not.toHaveBeenCalled();
+    expect(clearOfflinePages).not.toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it('"Sign out anyway" tears push down, DELETEs and clears', async () => {
+    const order: string[] = [];
+    pendingCount.mockReturnValue(2);
+    disablePushMock.mockImplementation(async () => {
+      order.push('disablePush');
+      return 'off';
+    });
+    fetchMock.mockImplementation(async () => {
+      order.push('fetch');
+      return { ok: true };
+    });
+    clearAllOutboxes.mockImplementation(() => order.push('outboxes'));
+    clearOfflinePages.mockImplementation(async () => {
+      order.push('pages');
+    });
+    routerPush.mockImplementation(() => order.push('push'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton outboxOwner="acc-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out anyway' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(flushOutbox).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['disablePush', 'fetch', 'pages', 'outboxes', 'push']);
+    clearOfflinePages.mockImplementation(async () => {});
+  });
+
+  it('"Cancel" restores the button and sends nothing', async () => {
+    pendingCount.mockReturnValue(1);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton outboxOwner="acc-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled();
+    expect(screen.queryByText(/will be lost/)).not.toBeInTheDocument();
+    expect(disablePushMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(clearAllOutboxes).not.toHaveBeenCalled();
+    expect(clearOfflinePages).not.toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
   });
 });

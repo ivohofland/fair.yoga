@@ -8,6 +8,11 @@ vi.mock('@/lib/offline-client', () => ({
   clearOfflinePages: () => clearOfflinePages(),
 }));
 
+const clearAllOutboxes = vi.fn<() => void>();
+vi.mock('@/lib/attendance-outbox', () => ({
+  clearAllOutboxes: () => clearAllOutboxes(),
+}));
+
 /**
  * #171: the student delete confirmation discloses that the address behind a
  * refusal is kept. What is kept and why: `docs/data-model.md` (TeacherBlock).
@@ -135,6 +140,7 @@ describe('DataAndDeletion, deleting the account', () => {
     vi.unstubAllGlobals();
     clearOfflinePages.mockReset();
     clearOfflinePages.mockImplementation(async () => {});
+    clearAllOutboxes.mockReset();
   });
 
   function confirmDelete() {
@@ -159,6 +165,21 @@ describe('DataAndDeletion, deleting the account', () => {
     routerPush.mockReset();
   });
 
+  // #726. Queued attendance belongs to the account just deleted.
+  it('clears every outbox after the DELETE succeeds, before it navigates', async () => {
+    const order: string[] = [];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    clearAllOutboxes.mockImplementation(() => order.push('outboxes'));
+    routerPush.mockImplementation(() => order.push('push'));
+    render(<DataAndDeletion role="teacher" />);
+
+    confirmDelete();
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(order).toEqual(['outboxes', 'push']);
+    routerPush.mockReset();
+  });
+
   it('keeps the stored pages when the DELETE is refused', async () => {
     vi.stubGlobal(
       'fetch',
@@ -170,5 +191,6 @@ describe('DataAndDeletion, deleting the account', () => {
 
     await screen.findByRole('alert');
     expect(clearOfflinePages).not.toHaveBeenCalled();
+    expect(clearAllOutboxes).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { clearAllOutboxes } from '@/lib/attendance-outbox';
 import { clearOfflinePages } from '@/lib/offline-client';
 
 interface DataAndDeletionProps {
@@ -61,8 +62,10 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
     try {
       const res = await fetch('/api/account', { method: 'DELETE' });
       if (res.ok) {
-        // The device's stored teacher pages belong to the account just deleted.
+        // The device's stored teacher pages and queued attendance belong to
+        // the account just deleted.
         await clearOfflinePages();
+        clearAllOutboxes();
         router.push('/login');
         router.refresh();
       } else {
