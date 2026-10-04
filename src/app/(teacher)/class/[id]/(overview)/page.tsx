@@ -15,7 +15,7 @@ import { CompleteClassButton } from '@/components/class/complete-class-button';
 import { RefreshAt } from '@/components/class/refresh-at';
 import type { AttendanceItem, AttendanceStatus } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
-import { classStartInstant } from '@/lib/timezone';
+import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
 import { classEndInstant, classPageClock, formatClockInZone } from '@/lib/finish-window';
 import { CancelClassButton } from '@/components/class/cancel-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
@@ -152,15 +152,25 @@ export default async function ClassDetailPage({
   // Check-in, the finish button, its caption and the instants at which any of
   // them can change, all read from this render's `now`.
   const tz = cls.calendarEntry.teacher.defaultTimezone;
+  const start = classStartInstant(cls.calendarEntry, tz);
   const { live, showCheckin, canFinish, autoFinishing, autoAt, refreshInstants } = classPageClock({
     now: new Date(now),
-    start: classStartInstant(cls.calendarEntry, tz),
+    start,
     end: classEndInstant(cls.calendarEntry, tz),
     status: cls.status,
     cancelled,
   });
 
   const stamp = offlineSnapshotStamp(session, new Date(now));
+
+  // What a queued attendance mark is filed under, and how the sync block names
+  // the class: formatted here, because the zone formatters log on the server.
+  const attendanceOutbox = {
+    owner: session.accountId,
+    classId: cls.id,
+    classLabel: `${cls.calendarEntry.classType} on ${formatInstantInZone(start, tz)}`,
+    completed: cls.status === 'completed',
+  };
 
   return (
     <OfflineSnapshot {...stamp}>
@@ -195,7 +205,7 @@ export default async function ClassDetailPage({
       {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}
       {showCheckin && (
         <>
-          <AttendanceList items={attendanceItems} />
+          <AttendanceList items={attendanceItems} {...attendanceOutbox} />
           <div className="py-2">
             <AddWalkIn
               classId={cls.id}
@@ -237,7 +247,7 @@ export default async function ClassDetailPage({
       {/* Completed: attendance (read-only; Edit attendance to correct), pricing breakdown, payment checklist */}
       {!cancelled && cls.status === 'completed' && (
         <>
-          <AttendanceList items={attendanceItems} locked />
+          <AttendanceList items={attendanceItems} locked {...attendanceOutbox} />
           <PricingBreakdown cls={cls} tierPrices={tierPrices} />
           <PaymentChecklist items={paymentItems} />
         </>

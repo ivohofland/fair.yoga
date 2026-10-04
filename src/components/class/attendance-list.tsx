@@ -1,10 +1,18 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useSyncExternalStore } from 'react';
 import type { RegistrationStatus } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import {
+  EMPTY_OUTBOX,
+  dismissRefused,
+  enqueueAttendance,
+  flushOutbox,
+  getOutboxSnapshot,
+  subscribeOutbox,
+  type AttendanceTarget,
+} from '@/lib/attendance-outbox';
 
 /** A registration this list can show: every status but `cancelled`. */
 export type AttendanceStatus = Exclude<RegistrationStatus, 'cancelled'>;
@@ -21,6 +29,15 @@ interface AttendanceListProps {
    *  into "Edit attendance". Defaults to `false` (check-in behaviour, always
    *  editable). */
   locked?: boolean;
+  /** The signed-in account: whose outbox a tap is queued in. */
+  owner: string;
+  classId: string;
+  /** The class as the sync block names it, formatted by the server. */
+  classLabel: string;
+  /** True when the class's status is `completed` — recorded on each queued
+   *  mark, so a sync can tell a correction from a mark that landed after the
+   *  class finished. */
+  completed: boolean;
 }
 
 /**
@@ -46,6 +63,7 @@ function statusLabel(status: AttendanceStatus): string {
   }
 }
 
+
 /**
  * No `classIsOpen` prop, deliberately — an earlier version had one and it could
  * not work.
@@ -60,16 +78,36 @@ function statusLabel(status: AttendanceStatus): string {
  * tooltip saying "once the class has started", for the whole class. That trades
  * a visible refusal for a silent one, which is worse.
  *
- * The server is the only thing that knows, so it decides and says why, and a
- * refusal refreshes the page so the next tap is judged against what is now true.
+ * The server is the only thing that knows, so it judges each write when it
+ * arrives and a refusal shows its reason on the row. A tap never refreshes the
+ * page: offline, a failed refresh becomes a hard reload mid check-in.
+ *
+ * Every tap is queued in the attendance outbox (`@/lib/attendance-outbox`) and
+ * a sync replays it; a row shows, in order, its queued mark, else the status
+ * the direct-write fallback or a sync confirmed on this page, else `items`
+ * (spec §3 of docs/superpowers/specs/2026-10-04-offline-checkin-design.md).
  */
-export function AttendanceList({ items, locked = false }: AttendanceListProps) {
-  const router = useRouter();
-  const [attendanceState, setAttendanceState] = useState<
-    Record<string, AttendanceStatus>
-  >(() =>
-    Object.fromEntries(items.map((item) => [item.registrationId, item.status])),
+export function AttendanceList({
+  items,
+  locked = false,
+  owner,
+  classId,
+  classLabel,
+  completed,
+}: AttendanceListProps) {
+  // The server snapshot is empty, so the first render — the hydrating one
+  // included — never reads storage.
+  const outbox = useSyncExternalStore(
+    subscribeOutbox,
+    () => getOutboxSnapshot(owner),
+    () => EMPTY_OUTBOX,
   );
+  const queued = new Map(outbox.queued.map((entry) => [entry.registrationId, entry.target]));
+  const refused = new Map(outbox.refused.map((entry) => [entry.registrationId, entry.message]));
+  // Statuses the direct-write fallback saved, for when storage cannot queue.
+  // A later queued mark for the row clears its entry here.
+  const [direct, setDirect] = useState<Readonly<Record<string, AttendanceTarget>>>({});
+  // Set only while a direct write is in flight.
   const [updating, setUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // `locked` only sets where this starts — check-in opens editable, a
@@ -77,8 +115,18 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
   // attendance" tap unlocks the row controls.
   const [editing, setEditing] = useState(!locked);
 
-  async function toggleAttendance(registrationId: string, originalStatus: AttendanceStatus) {
-    const currentStatus = attendanceState[registrationId] ?? 'registered';
+  function displayedStatus(item: AttendanceItem): AttendanceStatus {
+    return (
+      queued.get(item.registrationId) ??
+      direct[item.registrationId] ??
+      outbox.confirmed[item.registrationId] ??
+      item.status
+    );
+  }
+
+  async function toggleAttendance(item: AttendanceItem) {
+    const { registrationId, studentName, status: originalStatus } = item;
+    const currentStatus = displayedStatus(item);
     // A student who cancelled late is not a no-show — they told the teacher they
     // were not coming, and were charged for saying so. The only correction that
     // means anything for them is "they came after all", and it has to be
@@ -87,7 +135,7 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
     // `/bookings` page shows them ("Cancelled after the deadline — this class is
     // still charged"). `updateRegistrationSchema` accepts `late_cancel`, so the
     // round trip is expressible.
-    const newStatus: AttendanceStatus =
+    const newStatus: AttendanceTarget =
       originalStatus === 'late_cancel'
         ? currentStatus === 'attended'
           ? 'late_cancel'
@@ -96,8 +144,23 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
           ? 'no_show'
           : 'attended';
 
-    setUpdating(registrationId);
     setError(null);
+    const queuedAnswer = enqueueAttendance(owner, {
+      registrationId,
+      classId,
+      classLabel,
+      studentName,
+      target: newStatus,
+      knownCompleted: completed,
+    });
+    if (queuedAnswer === 'queued') {
+      setDirect(({ [registrationId]: _dropped, ...rest }) => rest);
+      void flushOutbox(owner);
+      return;
+    }
+
+    // Storage cannot hold the mark, so write it now rather than queue it silently.
+    setUpdating(registrationId);
     try {
       const response = await fetch(`/api/registrations/${registrationId}`, {
         method: 'PUT',
@@ -106,20 +169,12 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
       });
 
       if (response.ok) {
-        setAttendanceState((prev) => ({
-          ...prev,
-          [registrationId]: newStatus,
-        }));
+        setDirect((prev) => ({ ...prev, [registrationId]: newStatus }));
       } else {
         // The server's own words, not a generic retry prompt: every refusal this
         // endpoint issues is permanent for the request as sent, so "try again"
         // is advice that cannot work.
         setError(await readErrorMessage(response, 'Could not update attendance.'));
-        // The refusal may be about state this page no longer reflects — it is
-        // server-rendered with no revalidation, so a class that started after
-        // the render still reads `open` here. Re-render so the next tap is
-        // judged against what is actually true.
-        router.refresh();
       }
     } catch (err) {
       logRequestFailure('attendance-list', { registrationId, newStatus }, err);
@@ -143,7 +198,12 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
       <h2 className="type-subtitle mb-3">Attendance</h2>
 
       {!editing && (
-        <button type="button" onClick={() => setEditing(true)} className="type-label text-teal mb-3">
+        <button
+          type="button"
+          data-offline-writable
+          onClick={() => setEditing(true)}
+          className="type-label text-teal mb-3"
+        >
           Edit attendance
         </button>
       )}
@@ -162,44 +222,61 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
 
       <div>
         {items.map((item) => {
-          const status = attendanceState[item.registrationId] ?? 'registered';
+          const status = displayedStatus(item);
           const isAttended = status === 'attended';
           const isUpdating = updating === item.registrationId;
-          const label = statusLabel(status);
+          const isQueued = queued.has(item.registrationId);
+          const refusal = refused.get(item.registrationId);
+          // A queued mark is never shown as saved.
+          const label = isQueued ? 'Waiting to sync' : statusLabel(status);
 
           return (
-            <div
-              key={item.registrationId}
-              className="flex items-center justify-between gap-4 min-h-16 py-2 border-b border-border last:border-b-0"
-            >
-              {/* Large names + big checkboxes: one-handed use at the venue */}
-              <span className="text-[17px] text-ink">{item.studentName}</span>
+            <div key={item.registrationId} className="py-2 border-b border-border last:border-b-0">
+              <div className="flex items-center justify-between gap-4 min-h-12">
+                {/* Large names + big checkboxes: one-handed use at the venue */}
+                <span className="text-[17px] text-ink">{item.studentName}</span>
 
-              <div className="flex items-center gap-3">
-                <span className="type-caption">{label}</span>
-                {editing && (
+                <div className="flex items-center gap-3">
+                  <span className="type-caption">{label}</span>
+                  {editing && (
+                    <button
+                      type="button"
+                      data-offline-writable
+                      onClick={() => toggleAttendance(item)}
+                      disabled={isUpdating}
+                      className={`
+                        w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
+                        ${isAttended
+                          ? 'bg-teal border-teal text-cream'
+                          : 'bg-sand-soft border-border text-transparent'}
+                        disabled:opacity-50 disabled:cursor-not-allowed
+                        ${isUpdating ? 'opacity-50' : ''}
+                      `}
+                      aria-label={
+                        item.status === 'late_cancel'
+                          ? `${item.studentName} cancelled late — mark them ${isAttended ? 'cancelled again' : 'present'}`
+                          : `Mark ${item.studentName} as ${isAttended ? 'no-show' : 'present'}`
+                      }
+                    >
+                      {isAttended && <Icon name="check" size={22} />}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {refusal !== undefined && (
+                <div className="flex items-start justify-between gap-4 pb-1">
+                  <p className="text-danger text-sm">{refusal}</p>
                   <button
                     type="button"
-                    onClick={() => toggleAttendance(item.registrationId, item.status)}
-                    disabled={isUpdating}
-                    className={`
-                      w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
-                      ${isAttended
-                        ? 'bg-teal border-teal text-cream'
-                        : 'bg-sand-soft border-border text-transparent'}
-                      disabled:opacity-50 disabled:cursor-not-allowed
-                      ${isUpdating ? 'opacity-50' : ''}
-                    `}
-                    aria-label={
-                      item.status === 'late_cancel'
-                        ? `${item.studentName} cancelled late — mark them ${isAttended ? 'cancelled again' : 'present'}`
-                        : `Mark ${item.studentName} as ${isAttended ? 'no-show' : 'present'}`
-                    }
+                    data-offline-writable
+                    onClick={() => dismissRefused(owner, item.registrationId)}
+                    className="type-label text-teal shrink-0"
                   >
-                    {isAttended && <Icon name="check" size={22} />}
+                    Dismiss
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           );
         })}

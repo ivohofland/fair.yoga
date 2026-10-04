@@ -161,7 +161,13 @@ describe('OfflineSnapshot', () => {
         {},
         <>
           <Button>Publish</Button>
-          <AttendanceList items={[{ registrationId: 'r1', studentName: 'Ada', status: 'registered' }]} />
+          <AttendanceList
+            items={[{ registrationId: 'r1', studentName: 'Ada', status: 'registered' }]}
+            owner="acct-1"
+            classId="c1"
+            classLabel="Hatha on Tue 6 Oct 18:00"
+            completed={false}
+          />
         </>,
       ),
     );
