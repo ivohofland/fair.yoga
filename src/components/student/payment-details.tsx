@@ -27,6 +27,7 @@ export function PaymentDetails({ iban, beneficiary, reference }: PaymentDetailsP
 
   function copy(field: Field): void {
     if (!navigator.clipboard?.writeText) {
+      console.warn('[payment-details] no clipboard API; the copy was not attempted');
       setState({ field, outcome: 'failed' });
       return;
     }

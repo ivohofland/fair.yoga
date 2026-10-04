@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PaymentDetails } from './payment-details';
 
@@ -72,14 +72,17 @@ describe('PaymentDetails', () => {
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
   });
 
-  it('handles a missing clipboard API without throwing', async () => {
+  it('handles a missing clipboard API without throwing, and says why in the console', async () => {
     vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
     renderDetails();
     fireEvent.click(screen.getByRole('button', { name: 'Copy IBAN' }));
     expect(await screen.findByRole('status')).toHaveTextContent(
       'Couldn’t copy the IBAN — press and hold it to select',
     );
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
+    expect(warn).toHaveBeenCalledWith('[payment-details] no clipboard API; the copy was not attempted');
   });
 
   it('has valid dl structure with only dt/dd elements in each row div', () => {
