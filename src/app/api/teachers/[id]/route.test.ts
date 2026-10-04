@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
+import { log } from '@/lib/log';
 import { NextRequest } from 'next/server';
 import { BANK_HOLDER_NAME_REQUIRED_MESSAGE } from '@/lib/schemas';
 
@@ -76,11 +77,15 @@ describe('PUT /api/teachers/[id] — bank fields', () => {
   });
 
   it('does not relabel a different check violation as the holder-name refusal', async () => {
+    // The unhandled error is logged by `withErrorHandler`; kept out of the test output.
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
     findUniqueTeacher.mockResolvedValueOnce({ bankIban: null, bankAccountName: 'H. Teacher' });
     updateTeacher.mockRejectedValueOnce(checkViolation('Some_other_check'));
 
     const res = await put({ bankIban: IBAN });
 
     expect(res.status).toBe(500);
+    expect(error).toHaveBeenCalled();
   });
 });

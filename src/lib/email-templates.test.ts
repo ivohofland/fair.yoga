@@ -43,6 +43,7 @@ describe('email templates', () => {
       type: 'payment_request',
       title: 'Payment requested',
       body: 'Your price for Vinyasa is €12.50.',
+      relatedClassId: 'class-1',
     });
     expect(subject).toBe('Payment requested');
     expect(html).toContain('here is your share');
@@ -98,6 +99,7 @@ describe('email templates', () => {
       type: 'reminder',
       title: 'Reminder',
       body: 'Class tomorrow.',
+      relatedClassId: 'class-1',
     });
     expect(html).toContain('fair');
     expect(html).toContain('#1A5653'); // teal

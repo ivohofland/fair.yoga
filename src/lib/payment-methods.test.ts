@@ -38,6 +38,15 @@ describe('paymentMethodsFor', () => {
     expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '  ' })).toEqual([]);
   });
 
+  // Any all-whitespace value is absent here, which is stricter than the
+  // database's bank CHECKs (`docs/data-model.md`, Teacher).
+  it('offers nothing for a tab-only or newline-only holder name or IBAN', () => {
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\t' })).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\n' })).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: '\t', bankAccountName: 'I. Hofland' })).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: '\n', bankAccountName: 'I. Hofland' })).toEqual([]);
+  });
+
   // The trimmed name is the one a bank compares; a stray space must not become part of it.
   it('trims the IBAN and the holder name it hands out', () => {
     const [transfer] = paymentMethodsFor({ bankIban: ` ${IBAN} `, bankAccountName: '  I. Hofland  ' });

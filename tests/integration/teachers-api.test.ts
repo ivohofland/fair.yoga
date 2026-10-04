@@ -333,6 +333,7 @@ describe('PUT /api/teachers/[id] — an IBAN needs its holder name', () => {
     it('refuses an IBAN whose holder name is only spaces', async () => {
       const err = await refusalOf({ bankIban: IBAN, bankAccountName: '   ' });
       expect(isCheckViolationOn(err, 'Teacher_bank_holder_name_check')).toBe(true);
+      expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
     });
 
     it('refuses a blank IBAN', async () => {

@@ -137,7 +137,7 @@ export interface NotificationEmailInput {
   body: string;
   /** Defaults to the student framing when absent. */
   recipientType?: 'teacher' | 'student';
-  /** The class a notification is about; gives a payment notification its pay link. */
+  /** The class a notification is about; with `teacherHasPaymentMethods`, gives a payment notification its pay link. */
   relatedClassId?: string | null;
   /**
    * Whether the class's teacher has a payment method (`paymentMethodsFor`).
@@ -148,8 +148,9 @@ export interface NotificationEmailInput {
 }
 
 /**
- * A student email's action: a payment notification's own pay page, given a
- * teacher with a payment method, else the type's fixed one.
+ * A student email's action. A payment notification gets its class's pay page
+ * when both the class and a teacher payment method are known, and otherwise no
+ * link; any other type gets its fixed one.
  */
 function studentAction(
   notification: NotificationEmailInput,

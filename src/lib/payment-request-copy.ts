@@ -25,8 +25,9 @@ function classPhrase(cls: PaymentRequestClass): string {
  * `RegistrationStatus`, so a new status does not compile until its wording is
  * decided.
  *
- * Says "Pay your teacher directly" only when the teacher has no payment
- * method (`paymentMethodsFor`).
+ * When the teacher has a payment method (`paymentMethodsFor`), only "Pay your
+ * teacher directly" is dropped: a no-show or late cancel still ends "If this
+ * isn't right, talk to your teacher."
  */
 export function studentPaymentRequestBody(
   status: RegistrationStatus,
