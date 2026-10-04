@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 
 const push = vi.fn();
@@ -10,8 +11,9 @@ let searchParams = new URLSearchParams(WITH_TOKEN);
 
 /** One object for the life of the file. A fresh one per call would change
  *  identity on every render and re-run every effect that depends on the
- *  router — including the verification itself, which would then be sent more
- *  than once with a single-use token. */
+ *  router — the verification among them, whose once-guard would then be
+ *  exercised by every case here instead of only by the Strict Mode ones
+ *  that pin it. */
 const router = { push, refresh: vi.fn() };
 
 /** Makes `useSearchParams` suspend, so the page's `<Suspense>` boundary
@@ -496,10 +498,9 @@ describe('VerifyPage', () => {
       await railUpWithOutcomeHeld(deferred);
       expect(screen.queryByText("You're signed in.")).not.toBeInTheDocument();
 
-      // The rail re-rendered the page mid-flight when it appeared. If `settle`
-      // ever loses its stable identity the verification effect re-runs here
-      // and re-posts a single-use token, which nothing else in this file would
-      // notice.
+      // The rail re-rendered the page mid-flight when it appeared. The once-guard
+      // prevents re-posting even if dependencies re-run, and exactly one
+      // request was dispatched.
       expect(deferred.calls()).toBe(1);
 
       await advance(RAIL_STAYS_FOR_MS - 1);
@@ -1320,6 +1321,82 @@ describe('VerifyPage', () => {
         expect.any(TypeError),
       );
       expect(errors).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  /**
+   * Every other case in this file renders outside `<StrictMode>`, and so
+   * runs the verification effect exactly once whether or not anything stops
+   * it running twice. `next dev` renders inside Strict Mode — on by default
+   * for the App Router — and its simulated unmount/remount re-runs every
+   * effect. These cases put the page back where `pnpm dev` puts it (#760).
+   */
+  describe('under React Strict Mode', () => {
+    const VERIFY_URL = '/api/auth/magic-link/verify';
+
+    /**
+     * A second POST would lose the race the first one won: the server spends
+     * the token once, answers the other with a 400, and that request's
+     * session probe is refused before the winner's cookie lands. Answering
+     * that way here means a second POST would also put the wrong screen up
+     * and log, not only show in the count.
+     *
+     * The mock answers a turn later and honours its signal, as a real fetch
+     * does. A fix that stops the second POST by aborting the first in the
+     * effect's cleanup instead would abort the only request, and the sign-in
+     * screen below would never come.
+     */
+    it('sends a single-use token once', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      let verifyCalls = 0;
+      const fetchMock = vi.fn(async (url: string, init?: { signal?: AbortSignal }) => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (init?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (url !== VERIFY_URL) return { ok: false, status: 401 };
+        verifyCalls += 1;
+        if (verifyCalls > 1) return { ok: false, status: 400 };
+        return {
+          ok: true,
+          json: async () => ({ data: { accountId: 'acct-1', redirectTo: '/schedule' } }),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <StrictMode>
+          <VerifyPage />
+        </StrictMode>,
+      );
+
+      expect(await screen.findByText("You're signed in.")).toBeInTheDocument();
+      await settleResponse();
+      expect(fetchMock.mock.calls.filter(([url]) => url === VERIFY_URL)).toHaveLength(1);
+      expect(screen.queryByText('Verification failed')).not.toBeInTheDocument();
+      expect(errors).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The ceiling aborts whatever `inFlight` holds. With one request per
+     * token that is the request actually running; a second effect run would
+     * have overwritten it with its own, leaving the first one open behind a
+     * screen that says the page stopped waiting.
+     */
+    it('lets the ceiling abort the request it is waiting on', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const fetchMock = vi.fn().mockReturnValue(new Promise(() => {}));
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <StrictMode>
+          <VerifyPage />
+        </StrictMode>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(VERIFY_CEILING_MS);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const { signal } = fetchMock.mock.calls[0]![1]! as { signal: AbortSignal };
+      expect(signal.aborted).toBe(true);
     });
   });
 });

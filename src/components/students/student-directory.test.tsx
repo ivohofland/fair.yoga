@@ -371,10 +371,9 @@ describe('StudentDirectory', () => {
   /**
    * The cleanup-then-rerun cycle this whole group of tests forces through an
    * `archived` prop change (rather than React StrictMode itself, which #415
-   * names as one trigger but which nothing in this codebase's test setup
-   * enables — `grep -rn StrictMode src/` is empty): the `cancelled` guard
-   * this pins defends against any two overlapping runs of the effect, not
-   * one specific trigger.
+   * names as one trigger but which nothing in this file's renders enables):
+   * the `cancelled` guard this pins defends against any two overlapping runs
+   * of the effect, not one specific trigger.
    *
    * The first fetch is left unresolved across the rerender, so it is still
    * the *stale* request when it finally settles — after the second has
