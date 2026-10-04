@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { clearAllOutboxes, flushOutbox, pendingCount } from '@/lib/attendance-outbox';
@@ -58,6 +58,18 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
   const [busy, setBusy] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const [unsynced, setUnsynced] = useState<number | null>(null);
+  const confirming = unsynced !== null;
+  const signOutRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
+
+  // The control that had focus unmounts as the confirm replaces it, and back:
+  // focus follows onto Cancel, and back onto Sign out.
+  useEffect(() => {
+    if (confirming) cancelRef.current?.focus();
+    else if (wasConfirming.current) signOutRef.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
 
   async function handleSignOut() {
     setBusy(true);
@@ -120,15 +132,15 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
     }
   }
 
-  if (unsynced !== null) {
+  if (confirming) {
     return (
       <div className="flex flex-col gap-3">
-        <p className="type-body max-w-[420px]">{unsyncedCopy(unsynced)}</p>
+        <p role="status" className="type-body max-w-[420px]">{unsyncedCopy(unsynced)}</p>
         <div className="flex gap-3">
           <Button variant="destructive" onClick={handleSignOutAnyway}>
             Sign out anyway
           </Button>
-          <Button variant="secondary" onClick={() => setUnsynced(null)}>
+          <Button ref={cancelRef} variant="secondary" onClick={() => setUnsynced(null)}>
             Cancel
           </Button>
         </div>
@@ -139,6 +151,7 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
   return (
     <>
       <button
+        ref={signOutRef}
         type="button"
         onClick={handleSignOut}
         disabled={busy}

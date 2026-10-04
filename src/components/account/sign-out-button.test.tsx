@@ -254,8 +254,8 @@ describe('SignOutButton', () => {
 });
 
 // #726, spec D6 and D8. Queued attendance belongs to the account that leaves;
-// on the teacher settings page the button first tries to sync it and, failing
-// that, says what will be lost before anything is sent.
+// given that account as `outboxOwner`, the button first tries to sync it and,
+// failing that, says what will be lost before anything is sent.
 describe('SignOutButton and the attendance outbox', () => {
   const fetchMock = vi.fn();
 
@@ -408,6 +408,21 @@ describe('SignOutButton and the attendance outbox', () => {
     expect(flushOutbox).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['disablePush', 'fetch', 'pages', 'outboxes', 'push']);
     clearOfflinePages.mockImplementation(async () => {});
+  });
+
+  it('moves focus to Cancel when the confirm appears, announces it politely, and returns focus on Cancel', async () => {
+    pendingCount.mockReturnValue(1);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton outboxOwner="acc-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    const cancel = await screen.findByRole('button', { name: 'Cancel' });
+    expect(cancel).toHaveFocus();
+    expect(screen.getByRole('status')).toHaveTextContent("1 attendance change hasn't synced and will be lost.");
+
+    fireEvent.click(cancel);
+    expect(screen.getByRole('button', { name: 'Sign out' })).toHaveFocus();
   });
 
   it('"Cancel" restores the button and sends nothing', async () => {
