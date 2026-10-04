@@ -77,10 +77,19 @@ const needsSignInByOwner = new Set<string>();
 const snapshotCache = new Map<string, { content: string; snapshot: OutboxSnapshot }>();
 const EMPTY_CONTENT = JSON.stringify(EMPTY_OUTBOX);
 
+/** Nonces queued by this document: an applied write of one is a tap whose row already shows it, not a replay. */
+const enqueuedHere = new Set<string>();
+
 /** Whether another tab is clearing, as its `CLEARING_KEY` events say. */
 let otherTabClearing = false;
 
-let running: Promise<{ applied: number }> | null = null;
+/** What a flush reports: writes the server applied, and how many of those were not queued by this document. */
+export interface FlushResult {
+  applied: number;
+  replayed: number;
+}
+
+let running: Promise<FlushResult> | null = null;
 /** Owners whose flush was asked for while one was running: each gets one more pass. */
 const rerun = new Set<string>();
 
@@ -333,6 +342,7 @@ export function enqueueAttendance(
   }
   const full: OutboxEntry = { ...entry, nonce, recordedAt: Date.now(), attempts: 0 };
   if (!write(keyFor(QUEUED_PREFIX, owner, entry.registrationId), full)) return 'unavailable';
+  enqueuedHere.add(nonce);
   remove(keyFor(REFUSED_PREFIX, owner, entry.registrationId));
   notify();
   return 'queued';
@@ -397,7 +407,7 @@ function confirm(owner: string, registrationId: string, target: AttendanceTarget
 // Flushing.
 
 /** What one PUT did to the flush: stop it, or carry on — and whether a newer tap replaced the entry meanwhile. */
-type SendResult = 'stop' | { applied: boolean; superseded: boolean };
+type SendResult = 'stop' | { applied: boolean; replayed: boolean; superseded: boolean };
 
 /** Apply `change` to the stored entry only if it is still the one that was sent. Reports a newer one as superseded. */
 function ifUnchanged(owner: string, sent: OutboxEntry, change: () => void): boolean {
@@ -461,7 +471,7 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
       write(keyFor(NOTE_PREFIX, owner, entry.classId), { classId: entry.classId, classLabel: entry.classLabel });
     }
     notify();
-    return { applied, superseded };
+    return { applied, replayed: applied && !enqueuedHere.has(entry.nonce), superseded };
   }
 
   if (res.status === 401) {
@@ -492,30 +502,31 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
     superseded = refuse(owner, entry, message, entry.attempts);
   }
   notify();
-  return { applied: false, superseded };
+  return { applied: false, replayed: false, superseded };
 }
 
 /**
  * One pass over the owner's queue, oldest first. An entry a newer tap replaced
  * while its PUT was in flight is sent again before the pass ends.
  */
-async function pass(owner: string): Promise<number> {
-  let applied = 0;
+async function pass(owner: string): Promise<FlushResult> {
+  const counts: FlushResult = { applied: 0, replayed: 0 };
   let only: Set<string> | null = null;
   for (;;) {
     const entries = readQueued(owner).filter((entry) => only === null || only.has(entry.registrationId));
     if (entries.length === 0) {
       if (only === null) setNeedsSignIn(owner, false);
-      return applied;
+      return counts;
     }
     const superseded = new Set<string>();
     for (const entry of entries) {
       const result = await send(owner, entry);
-      if (result === 'stop') return applied;
-      if (result.applied) applied++;
+      if (result === 'stop') return counts;
+      if (result.applied) counts.applied++;
+      if (result.replayed) counts.replayed++;
       if (result.superseded) superseded.add(entry.registrationId);
     }
-    if (superseded.size === 0) return applied;
+    if (superseded.size === 0) return counts;
     only = superseded;
   }
 }
@@ -525,7 +536,7 @@ async function pass(owner: string): Promise<number> {
  * lock not granted within `LOCK_WAIT_MS` ends this pass with the entries still
  * queued, so a holder that never lets go cannot stall this tab's flushes.
  */
-async function lockedPass(owner: string): Promise<number> {
+async function lockedPass(owner: string): Promise<FlushResult> {
   try {
     const locks: LockManager | undefined = typeof navigator === 'undefined' ? undefined : navigator.locks;
     if (!locks) return await pass(owner);
@@ -544,7 +555,7 @@ async function lockedPass(owner: string): Promise<number> {
     }
   } catch (err) {
     logRequestFailure('attendance-outbox', { stage: 'flush' }, err);
-    return 0;
+    return { applied: 0, replayed: 0 };
   }
 }
 
@@ -552,19 +563,21 @@ async function lockedPass(owner: string): Promise<number> {
  * Replay the owner's queue. One flush per tab at a time: a call during one
  * returns the running promise and adds one more pass to it. Never rejects.
  */
-export function flushOutbox(owner: string): Promise<{ applied: number }> {
+export function flushOutbox(owner: string): Promise<FlushResult> {
   if (running !== null) {
     rerun.add(owner);
     return running;
   }
   const run = (async () => {
     try {
-      let applied = await lockedPass(owner);
+      const total = await lockedPass(owner);
       for (let next = rerun.values().next(); !next.done; next = rerun.values().next()) {
         rerun.delete(next.value);
-        applied += await lockedPass(next.value);
+        const more = await lockedPass(next.value);
+        total.applied += more.applied;
+        total.replayed += more.replayed;
       }
-      return { applied };
+      return total;
     } finally {
       running = null;
     }
@@ -581,6 +594,7 @@ export function resetOutboxForTests(): void {
   needsSignInByOwner.clear();
   snapshotCache.clear();
   rerun.clear();
+  enqueuedHere.clear();
   otherTabClearing = false;
   running = null;
 }

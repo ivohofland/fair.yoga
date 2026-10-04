@@ -12,6 +12,7 @@ import {
   resetOutboxForTests,
   subscribeOutbox,
   type AttendanceTarget,
+  type FlushResult,
 } from './attendance-outbox';
 
 const OWNER = 'acc1';
@@ -396,7 +397,7 @@ describe('attendance outbox', () => {
     });
 
     it('uses the cross-tab lock when the browser has one', async () => {
-      const request = vi.fn((_name: string, _options: LockOptions, callback: () => Promise<number>) => callback());
+      const request = vi.fn((_name: string, _options: LockOptions, callback: () => Promise<FlushResult>) => callback());
       vi.stubGlobal('navigator', { onLine: true, locks: { request } });
       enqueueAttendance(OWNER, entry('r1'));
       fetchMock.mockImplementation(echoServer());
@@ -413,7 +414,7 @@ describe('attendance outbox', () => {
       // A holder suspended mid-pass: the request settles only when its signal aborts.
       const request = vi.fn(
         (_name: string, options: LockOptions) =>
-          new Promise<number>((_resolve, reject) => {
+          new Promise<FlushResult>((_resolve, reject) => {
             options.signal?.addEventListener('abort', () => reject(options.signal?.reason));
           }),
       );
@@ -428,14 +429,14 @@ describe('attendance outbox', () => {
       await vi.advanceTimersByTimeAsync(59_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
-      await expect(flushing).resolves.toEqual({ applied: 0 });
+      await expect(flushing).resolves.toEqual({ applied: 0, replayed: 0 });
       expect(fetchMock).not.toHaveBeenCalled();
       expect(getOutboxSnapshot(OWNER).queued.map((e) => e.registrationId)).toEqual(['r1']);
       // The tab is not wedged: the next flush runs.
-      request.mockImplementation((_name: string, _options: LockOptions, callback?: () => Promise<number>) =>
-        callback === undefined ? Promise.resolve(0) : callback(),
+      request.mockImplementation((_name: string, _options: LockOptions, callback?: () => Promise<FlushResult>) =>
+        callback === undefined ? Promise.resolve({ applied: 0, replayed: 0 }) : callback(),
       );
-      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1 });
+      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1, replayed: 0 });
       expect(getOutboxSnapshot(OWNER).queued).toEqual([]);
     });
 
@@ -444,9 +445,31 @@ describe('attendance outbox', () => {
         enqueueAttendance(OWNER, entry('r1', 'attended'));
         fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
         const result = await flushOutbox(OWNER);
-        expect(result).toEqual({ applied: 1 });
+        expect(result).toEqual({ applied: 1, replayed: 0 });
         expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: 'attended' }, notes: [] });
         expect(storage.keys()).toEqual([]);
+      });
+
+      it('200 on a mark this document queued: applied, not a replay', async () => {
+        enqueueAttendance(OWNER, entry('r1', 'attended'));
+        fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
+        await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1, replayed: 0 });
+      });
+
+      it('200 on a mark an earlier document queued: applied and replayed', async () => {
+        storage.setItem(
+          'fy-outbox:acc1:r1',
+          JSON.stringify({
+            v: 1,
+            ...entry('r1', 'attended'),
+            nonce: 'earlier-document',
+            recordedAt: NOW - 1,
+            attempts: 0,
+          }),
+        );
+        fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
+        await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1, replayed: 1 });
+        expect(getOutboxSnapshot(OWNER).queued).toEqual([]);
       });
 
       it('200 with the matching body on a class that had completed: writes one note for its class', async () => {
@@ -470,7 +493,7 @@ describe('attendance outbox', () => {
           json(200, { data: { id: 'r1', status: 'attended', classCompleted: true }, outcome: 'unchanged' }),
         );
         const result = await flushOutbox(OWNER);
-        expect(result).toEqual({ applied: 0 });
+        expect(result).toEqual({ applied: 0, replayed: 0 });
         expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], notes: [], confirmed: { r1: 'attended' } });
       });
 
@@ -486,7 +509,7 @@ describe('attendance outbox', () => {
         enqueueAttendance(OWNER, entry('r2'));
         fetchMock.mockResolvedValueOnce(answer());
         const result = await flushOutbox(OWNER);
-        expect(result).toEqual({ applied: 0 });
+        expect(result).toEqual({ applied: 0, replayed: 0 });
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([
           ['r1', 0],
@@ -509,7 +532,7 @@ describe('attendance outbox', () => {
         vi.setSystemTime(NOW + 1);
         enqueueAttendance(OWNER, entry('r2'));
         fetchMock.mockImplementationOnce(answer);
-        await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 0 });
+        await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 0, replayed: 0 });
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(getOutboxSnapshot(OWNER)).toMatchObject({ refused: [], needsSignIn: false });
         expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([
@@ -705,7 +728,7 @@ describe('attendance outbox', () => {
       enqueueAttendance(OWNER, entry('r2'));
       void flushOutbox(OWNER);
       release(applied('r1', 'attended'));
-      await expect(first).resolves.toEqual({ applied: 2 });
+      await expect(first).resolves.toEqual({ applied: 2, replayed: 0 });
       expect(sentBodies(fetchMock).map((b) => b.url)).toEqual(['/api/registrations/r1', '/api/registrations/r2']);
     });
 
@@ -723,7 +746,7 @@ describe('attendance outbox', () => {
         });
         return url.endsWith('/r1') ? Promise.resolve(refusal(500, undefined, 'boom')) : echoServer()(url, init);
       });
-      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1 });
+      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1, replayed: 0 });
       expect(sentBodies(fetchMock).map((b) => b.url)).toEqual(['/api/registrations/r1', '/api/registrations/r2']);
       expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([['r1', 0]]);
       expect(outboxErrors()).toEqual([]);
@@ -738,12 +761,12 @@ describe('attendance outbox', () => {
         });
         return echoServer()(url, init);
       });
-      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1 });
+      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1, replayed: 0 });
       expect(outboxErrors()).toEqual([]);
       expect(getOutboxSnapshot(OWNER).queued.map((e) => e.registrationId)).toEqual(['r1']);
       removeSpy.mockRestore();
       fetchMock.mockResolvedValueOnce(unchanged('r1', 'attended'));
-      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 0 });
+      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 0, replayed: 0 });
       expect(getOutboxSnapshot(OWNER).queued).toEqual([]);
       expect(storage.keys()).toEqual([]);
     });

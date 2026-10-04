@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { flushOutbox, purgeOtherOwners } from '@/lib/attendance-outbox';
+import { flushOutbox, purgeOtherOwners, type FlushResult } from '@/lib/attendance-outbox';
 import { isOfflineNow, useConnectionStatus } from '@/lib/offline-status';
 
 /**
@@ -21,16 +21,17 @@ export function OutboxSync({ owner }: { owner: string }) {
   const { offline } = useConnectionStatus();
   const wasOffline = useRef(offline);
   /** The flush a refresh is already waiting on: triggers that join it add no second refresh. */
-  const awaited = useRef<Promise<{ applied: number }> | null>(null);
+  const awaited = useRef<Promise<FlushResult> | null>(null);
 
   const sync = useCallback(() => {
     const flush = flushOutbox(owner);
     if (flush === awaited.current) return;
     awaited.current = flush;
-    void flush.then(({ applied }) => {
+    void flush.then(({ replayed }) => {
       if (awaited.current === flush) awaited.current = null;
+      // A mark this page queued already shows in its row, so only a replay refreshes.
       // Offline, a refresh that fails becomes a hard reload of the cached page.
-      if (applied > 0 && !isOfflineNow()) routerRef.current.refresh();
+      if (replayed > 0 && !isOfflineNow()) routerRef.current.refresh();
     });
   }, [owner]);
 

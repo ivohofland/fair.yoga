@@ -7,7 +7,7 @@ import type { ConnectionStatus } from '@/lib/offline-status';
 const { status, isOfflineNow, flushOutbox, purgeOtherOwners } = vi.hoisted(() => ({
   status: { current: { offline: false, serverNow: null } as ConnectionStatus },
   isOfflineNow: vi.fn(() => false),
-  flushOutbox: vi.fn(async (_owner: string) => ({ applied: 0 })),
+  flushOutbox: vi.fn(async (_owner: string) => ({ applied: 0, replayed: 0 })),
   purgeOtherOwners: vi.fn((_owner: string) => {}),
 }));
 
@@ -31,7 +31,7 @@ async function settle(): Promise<void> {
 beforeEach(() => {
   status.current = { offline: false, serverNow: null };
   isOfflineNow.mockReset().mockReturnValue(false);
-  flushOutbox.mockReset().mockResolvedValue({ applied: 0 });
+  flushOutbox.mockReset().mockResolvedValue({ applied: 0, replayed: 0 });
   purgeOtherOwners.mockReset();
   setVisibility('visible');
 });
@@ -108,22 +108,29 @@ describe('OutboxSync', () => {
     expect(flushOutbox).not.toHaveBeenCalled();
   });
 
-  it('refreshes once after a flush that applied something while online', async () => {
-    flushOutbox.mockResolvedValue({ applied: 2 });
+  it('refreshes once after a flush that replayed something while online', async () => {
+    flushOutbox.mockResolvedValue({ applied: 2, replayed: 1 });
     render(<OutboxSync owner="account-1" />);
     await settle();
     expect(routerRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('does not refresh after a flush that applied nothing', async () => {
-    flushOutbox.mockResolvedValue({ applied: 0 });
+    flushOutbox.mockResolvedValue({ applied: 0, replayed: 0 });
     render(<OutboxSync owner="account-1" />);
     await settle();
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 
-  it('does not refresh after an applied flush when the connection store says offline', async () => {
-    flushOutbox.mockResolvedValue({ applied: 1 });
+  it("does not refresh after a flush whose applied marks were all this page's own taps", async () => {
+    flushOutbox.mockResolvedValue({ applied: 1, replayed: 0 });
+    render(<OutboxSync owner="account-1" />);
+    await settle();
+    expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh after a replaying flush when the connection store says offline', async () => {
+    flushOutbox.mockResolvedValue({ applied: 1, replayed: 1 });
     isOfflineNow.mockReturnValue(true);
     render(<OutboxSync owner="account-1" />);
     await settle();
@@ -131,8 +138,8 @@ describe('OutboxSync', () => {
   });
 
   it('refreshes once when two triggers join the same running flush', async () => {
-    let finish: (value: { applied: number }) => void = () => {};
-    const running = new Promise<{ applied: number }>((resolve) => {
+    let finish: (value: { applied: number; replayed: number }) => void = () => {};
+    const running = new Promise<{ applied: number; replayed: number }>((resolve) => {
       finish = resolve;
     });
     flushOutbox.mockReturnValue(running);
@@ -141,7 +148,7 @@ describe('OutboxSync', () => {
       window.dispatchEvent(new Event('online'));
     });
     expect(flushOutbox).toHaveBeenCalledTimes(2);
-    finish({ applied: 1 });
+    finish({ applied: 1, replayed: 1 });
     await settle();
     expect(routerRefresh).toHaveBeenCalledTimes(1);
   });
