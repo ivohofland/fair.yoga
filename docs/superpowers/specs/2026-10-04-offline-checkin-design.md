@@ -99,10 +99,11 @@ it from the layout's session and, on mount, deletes every entry for any other
 account. Every sign-out (teacher, student, signup) and account deletion clear
 every `fy-outbox:` key whatever its owner, beside `clearOfflinePages()`.
 Sign-in does not clear the outbox: a teacher whose session expired offline
-signs in to sync (D5's 401 row). A refused entry stores the student's display
-name and the class label so its message is legible on the schedule — data the
-cached pages already hold — and expires after 7 days; a queued entry holds
-only ids and statuses and stays until it syncs or a clear runs.
+signs in to sync (D5's 401 row). Every entry stores the student's display
+name and the class label, because a refusal is usually discovered by a flush
+running on the schedule, where neither is known — data the cached pages
+already hold. A queued entry stays until it syncs or a clear runs; a refused
+one expires after 7 days.
 
 **D7. Payment wording: accept, and tell the teacher** (issue options 1 + 3,
 decided at the gate). No new student message. The PUT's applied answer gains
