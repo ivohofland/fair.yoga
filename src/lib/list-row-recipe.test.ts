@@ -15,6 +15,8 @@ const SPLIT_RECIPE_SITES: Readonly<Record<string, string>> = {
     'the wrapper holds the border so the row can expand to show install steps under its button',
   'components/class/audience-picker.tsx':
     'a checklist label inside a bordered box: px-4, no vertical padding, the border on its li',
+  'app/(student)/bookings/[classId]/pay/page.tsx':
+    'a disclosure: the border sits on <details> so an open panel stays above it; min-h-14 and py-3 sit on <summary> so the tap target alone is 56px',
 };
 
 function sourceFiles(dir: string): string[] {

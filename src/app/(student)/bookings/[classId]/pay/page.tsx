@@ -12,6 +12,7 @@ import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server'
 import { formatDayHeader, paymentStateText } from '@/lib/format';
 import { formatInstantInZone } from '@/lib/timezone';
 import { PAYMENT_METHOD_COPY, paymentMethodsFor, type PaymentMethod } from '@/lib/payment-methods';
+import { isOutstanding } from '@/lib/payment-status';
 
 export const dynamic = 'force-dynamic';
 
@@ -114,7 +115,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         {`${formatDayHeader(entry.date)} · with ${teacher.firstName} ${teacher.lastName}`}
       </p>
       <div className="flex items-baseline justify-between gap-3 mb-6">
-        <p className="type-number">€{amount.toFixed(2)}</p>
+        <p className={`type-number ${isOutstanding(payment.status) ? 'text-brown' : ''}`}>€{amount.toFixed(2)}</p>
         <p className={`type-caption ${state.className}`}>{state.label}</p>
       </div>
       <PayBody
