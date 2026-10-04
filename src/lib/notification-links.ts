@@ -38,6 +38,19 @@ export const STUDENT_BOOKINGS_PATH = '/bookings';
 /** The email button's label for that action. */
 export const STUDENT_BOOKINGS_LABEL = 'Go to your bookings';
 
+/** The page where a student pays for one class. */
+export function payPagePath(classId: string): string {
+  return `/bookings/${classId}/pay`;
+}
+
+/** The label for that action, in the app and on the email's button. */
+export const PAY_NOW_LABEL = 'Pay now';
+
+/** Whether a student notification is about paying for its class. */
+export function isPaymentNotification(type: NotificationType): boolean {
+  return type === 'payment_request' || type === 'reminder';
+}
+
 /**
  * Where a teacher-inbox `teacher_invitation` sends an account with no student
  * side yet: the page that offers one (#172).
@@ -75,9 +88,15 @@ export interface StudentNotificationTarget {
  * live status it had — so `status === 'open'` alone would start linking to the
  * booking page of a class that is off, which is the one destination that page
  * refuses to render.
+ *
+ * A payment notification goes to its class's pay page whatever the payment's
+ * state; the link does not depend on the payment's status.
  */
 export function studentNotificationHref(notification: StudentNotificationTarget): string | null {
   if (notification.type === 'teacher_invitation') return STUDENT_INVITATION_PATH;
+  if (isPaymentNotification(notification.type)) {
+    return notification.relatedClass ? payPagePath(notification.relatedClass.id) : null;
+  }
   const cls = notification.relatedClass;
   if (cls && cls.status === 'open' && cls.calendarEntry.cancelledAt === null) {
     return `/${cls.calendarEntry.teacher.pageSlug}/book/${cls.id}`;

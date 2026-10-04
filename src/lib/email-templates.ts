@@ -14,6 +14,9 @@ import {
   STUDENT_BOOKINGS_PATH,
   TEACHER_INVITATION_LABEL,
   TEACHER_INVITATION_PATH,
+  PAY_NOW_LABEL,
+  isPaymentNotification,
+  payPagePath,
 } from './notification-links';
 
 export function escapeHtml(text: string): string {
@@ -92,14 +95,15 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
  * Types whose email needs somewhere to go, keyed by the reader — a fallback
  * email, or a class reminder's own.
  *
- * Most notifications are about a class, and the class routes they would
- * point at are teacher-only, so those stay linkless below. An invitation
- * exists to ask someone for a decision, and the mail that arrives when they
- * miss the in-app one has to reach the place that decision is made. A
- * waitlist promotion or a freed-spot broadcast (#236) is likewise meant to
- * be acted on quickly, and `/bookings` is a student route. A class reminder
- * points at `/bookings`, the student's own list of what they booked, because
- * the class route it is about is teacher-only.
+ * Most notifications about a class stay linkless below: the class routes
+ * they would point at are teacher-only. An invitation exists to ask someone
+ * for a decision, and the mail that arrives when they miss the in-app one
+ * has to reach the place that decision is made. A waitlist promotion or a
+ * freed-spot broadcast (#236) is likewise meant to be acted on quickly, and
+ * `/bookings` is a student route. A class reminder points at `/bookings`,
+ * the student's own list of what they booked, because the class route it is
+ * about is teacher-only. A payment notification is not in this map: its link
+ * names its own class, so `studentAction` builds it.
  *
  * Path only. The base URL is the caller's, so this stays renderable without
  * an environment.
@@ -130,6 +134,20 @@ export interface NotificationEmailInput {
   body: string;
   /** Defaults to the student framing when absent. */
   recipientType?: 'teacher' | 'student';
+  /** The class a notification is about; gives a payment notification its pay link. */
+  relatedClassId?: string | null;
+}
+
+/** A student email's action: a payment's own pay page, else the type's fixed one. */
+function studentAction(
+  notification: NotificationEmailInput,
+): { label: string; path: string } | undefined {
+  if (isPaymentNotification(notification.type)) {
+    return notification.relatedClassId
+      ? { label: PAY_NOW_LABEL, path: payPagePath(notification.relatedClassId) }
+      : undefined;
+  }
+  return STUDENT_ACTION_LINKS[notification.type];
 }
 
 /**
@@ -155,7 +173,7 @@ export function renderNotificationEmail(
   const action =
     notification.recipientType === 'teacher'
       ? TEACHER_ACTION_LINKS[notification.type]
-      : STUDENT_ACTION_LINKS[notification.type];
+      : studentAction(notification);
   const actionHtml = action
     ? `<p style="margin:16px 0 0;"><a href="${baseUrl}${action.path}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">${escapeHtml(action.label)}</a></p>`
     : '';
