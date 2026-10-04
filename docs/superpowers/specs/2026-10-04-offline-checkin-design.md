@@ -83,12 +83,12 @@ tap on the device wins either way. Entries go oldest first; the PUT uses
 
 | Response | Entry |
 |---|---|
-| 200 whose JSON body is `{data: {id, status}}` matching the entry | removed, unless its nonce changed while in flight (a newer tap); the newer entry is sent next |
+| 200 whose JSON body is `{data: {id, status}}` matching the entry, applied or `unchanged` | a confirmation is stored (§3), then the entry is removed, unless its nonce changed while in flight (a newer tap); the newer entry is sent next |
 | 200 without that body (a captive portal, a proxy page) | kept; treated as a network failure |
-| 409 `CONCURRENT_MODIFICATION`, or 500 | kept and retried on the next flush; after 3 attempts, refused |
+| 409 `CONCURRENT_MODIFICATION`, or 500 whatever its body | kept and retried on the next flush; after 3 attempts, refused |
 | any other 4xx except 401 and 429 | moved to *refused*, with the server's message |
 | 401 | flush stops, everything kept, "Sign in again to sync N changes" |
-| network failure, timeout, redirect, 429, 502/503/504, a non-JSON body | flush stops, everything kept |
+| network failure, timeout, redirect, 429, 502/503/504, a non-JSON 4xx | flush stops, everything kept |
 
 A 500 is per-entry, not flush-stopping, so one row the server keeps failing
 on cannot block every later tap.
@@ -97,7 +97,7 @@ on cannot block every later tap.
 owner #725's page cache uses (`offlineSnapshotStamp`). `OutboxSync` receives
 it from the layout's session and, on mount, deletes every entry for any other
 account. Every sign-out (teacher, student, signup) and account deletion clear
-every `fy-outbox:` key whatever its owner, beside `clearOfflinePages()`.
+every outbox key whatever its owner, beside `clearOfflinePages()`.
 Sign-in does not clear the outbox: a teacher whose session expired offline
 signs in to sync (D5's 401 row). Every entry stores the student's display
 name and the class label, because a refusal is usually discovered by a flush
@@ -118,21 +118,27 @@ requests already sent stay as they are." This covers the offline replay and
 the online tap that lands after auto-completion with one rule, as the issue
 asked; the deliberate correction on a completed class already has its caption.
 
-**D8. Sign-out: flush, then warn** (decided at the gate), on the teacher
-settings page only. `SignOutButton` takes an optional `outboxOwner`; with it,
-the order is flush (bounded at 5 s) → if anything is still queued or refused,
-an inline confirm in the button's own place ("N attendance changes haven't
-synced and will be lost." with "Sign out anyway" and "Cancel") → push teardown
-→ session DELETE → clears (D6). Without it (student account, signup) only the
-clear is added.
+**D8. Sign-out: flush, then warn** (decided at the gate), on every sign-out a
+teacher can reach with a session: the teacher settings page, the student
+account page (a dual-hat account's other side, linked from its settings) and
+the signup "Already teaching" panel. `SignOutButton` takes an optional
+`outboxOwner`; with it, the order is flush (bounded at 5 s) → if anything is
+still queued or refused, an inline confirm in the button's own place ("N
+attendance changes haven't synced and will be lost." with "Sign out anyway"
+and "Cancel"; focus moves to Cancel, and the copy is a polite status) → push
+teardown → session DELETE → clears (D6). A student-only account's queue is
+empty, so on the account page the flush sends nothing. Without an owner (the
+profile setup form, which has no account id) only the clear is added. The
+scope widened from the settings page alone after review: one login serves
+both hats, and the account page's sign-out cleared a dual-hat teacher's
+queue without a word.
 
 **D9. The attendance list escapes the fieldset by structure, tethered by a
 test.** `OfflineSnapshot` gains a `segmented` mode in which it renders no
 fieldset of its own; the class page wraps its regions (header included) in an
 exported `OfflineFieldset` (the same `<fieldset disabled={offline}>` and reset
 classes) and leaves the attendance list between them. The schedule and studio
-class pages are unchanged. Controls meant to work offline — the attendance
-toggles, "Edit attendance", the sync block's Dismiss — carry
+class pages are unchanged. Controls meant to work offline carry
 `data-offline-writable`. The tether is the offline e2e: on the cached class
 page offline, in both the check-in state (with Finish in the header) and the
 completed state, every enabled `button`, `input`, `select` and `textarea` must
@@ -144,9 +150,13 @@ control — #725 D6's reason stands.
 ## 3. Visible state
 
 - **Row status is derived, not initialised.** Each row shows, in order: its
-  queued entry's target; else the status a sync confirmed in this page's
-  lifetime; else the `items` prop. A row never falls back to the stale server
-  render after its entry clears.
+  queued entry's target; else a stored confirmation (`fy-outbox-confirmed:`,
+  written by a sync in any tab or document, kept 24 h) whose `confirmedAt` —
+  the server's `Date` header — is no earlier than the page's render, floored
+  to the second; else the status the direct-write fallback saved on this page;
+  else the `items` prop. A row never falls back to a server render older than
+  its confirmation, a stored page hard-loaded offline included, and a render
+  newer than the confirmation (another device's correction) wins.
 - **Row markers:** a queued row shows "Waiting to sync" in place of the status
   label; a refused row shows the server's message in danger text with
   Dismiss. A queued write is never shown as saved.
@@ -174,8 +184,8 @@ control — #725 D6's reason stands.
   `completeClass` are accepted, and every `Payment.amount` and
   `Class.totalRevenue` is identical before and after; replaying the same three
   again answers `unchanged` three times and changes nothing.
-- **Components:** `AttendanceList` derived row status (entry → confirmed →
-  prop), queued and refused rows; `OutboxSync` triggers; the check-in switch
+- **Components:** `AttendanceList` derived row status (entry → confirmation
+  no older than the render → fallback → prop, across a remount), queued and refused rows; `OutboxSync` triggers; the check-in switch
   before, at and after the instant, and never switching back; the sync block
   online; the completion note; `SignOutButton` with and without
   `outboxOwner`.
