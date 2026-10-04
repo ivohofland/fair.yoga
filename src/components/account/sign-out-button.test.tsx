@@ -410,7 +410,7 @@ describe('SignOutButton and the attendance outbox', () => {
     clearOfflinePages.mockImplementation(async () => {});
   });
 
-  it('moves focus to Cancel when the confirm appears, announces it politely, and returns focus on Cancel', async () => {
+  it('moves focus to Cancel when the confirm appears, describes both buttons by its reason, and returns focus on Cancel', async () => {
     pendingCount.mockReturnValue(1);
     vi.stubGlobal('fetch', fetchMock);
     render(<SignOutButton outboxOwner="acc-1" />);
@@ -419,7 +419,8 @@ describe('SignOutButton and the attendance outbox', () => {
 
     const cancel = await screen.findByRole('button', { name: 'Cancel' });
     expect(cancel).toHaveFocus();
-    expect(screen.getByRole('status')).toHaveTextContent("1 attendance change hasn't synced and will be lost.");
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveAccessibleDescription("1 attendance change hasn't synced and will be lost.");
+    expect(screen.getByRole('button', { name: 'Sign out anyway' })).toHaveAccessibleDescription("1 attendance change hasn't synced and will be lost.");
 
     fireEvent.click(cancel);
     expect(screen.getByRole('button', { name: 'Sign out' })).toHaveFocus();

@@ -125,10 +125,11 @@ the signup "Already teaching" panel. `SignOutButton` takes an optional
 `outboxOwner`; with it, the order is flush (bounded at 5 s) → if anything is
 still queued or refused, an inline confirm in the button's own place ("N
 attendance changes haven't synced and will be lost." with "Sign out anyway"
-and "Cancel"; focus moves to Cancel, and the copy is a polite status) → push
+and "Cancel"; focus moves to Cancel, and both buttons are described by the copy) → push
 teardown → session DELETE → clears (D6). A student-only account's queue is
 empty, so on the account page the flush sends nothing. Without an owner (the
-profile setup form, which has no account id) only the clear is added. The
+profile setup form: no account yet in ticket mode, no teacher profile in
+session mode) only the clear is added. The
 scope widened from the settings page alone after review: one login serves
 both hats, and the account page's sign-out cleared a dual-hat teacher's
 queue without a word.

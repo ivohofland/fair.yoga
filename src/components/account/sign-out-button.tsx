@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { clearAllOutboxes, flushOutbox, pendingCount } from '@/lib/attendance-outbox';
@@ -58,6 +58,7 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
   const [busy, setBusy] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const [unsynced, setUnsynced] = useState<number | null>(null);
+  const reasonId = useId();
   const confirming = unsynced !== null;
   const signOutRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -135,12 +136,12 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
   if (confirming) {
     return (
       <div className="flex flex-col gap-3">
-        <p role="status" className="type-body max-w-[420px]">{unsyncedCopy(unsynced)}</p>
+        <p id={reasonId} className="type-body max-w-[420px]">{unsyncedCopy(unsynced)}</p>
         <div className="flex gap-3">
-          <Button variant="destructive" onClick={handleSignOutAnyway}>
+          <Button variant="destructive" onClick={handleSignOutAnyway} aria-describedby={reasonId}>
             Sign out anyway
           </Button>
-          <Button ref={cancelRef} variant="secondary" onClick={() => setUnsynced(null)}>
+          <Button ref={cancelRef} variant="secondary" onClick={() => setUnsynced(null)} aria-describedby={reasonId}>
             Cancel
           </Button>
         </div>
