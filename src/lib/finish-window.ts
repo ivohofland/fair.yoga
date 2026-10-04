@@ -88,6 +88,8 @@ export interface ClassPageClock {
   autoFinishing: boolean;
   /** `autoFinishAt` of this class. */
   autoAt: Date;
+  /** `CHECKIN_OPENS_MINUTES` before the start: where an `open` class's `showCheckin` turns on. */
+  checkinAt: Date;
   /**
    * The instants at which what this function answers can change: the check-in
    * edge (`open` only), `finishOpensAt` and `autoFinishAt` — some possibly
@@ -135,5 +137,5 @@ export function classPageClock({
       ].filter((d) => !Number.isNaN(d.getTime()))
     : [];
 
-  return { live, showCheckin, canFinish, autoFinishing, autoAt, refreshInstants };
+  return { live, showCheckin, canFinish, autoFinishing, autoAt, checkinAt, refreshInstants };
 }

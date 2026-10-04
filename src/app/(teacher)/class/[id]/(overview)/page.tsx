@@ -25,7 +25,8 @@ import { toIncomeTier } from '@/lib/tiers.server';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
-import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
+import { OfflineFieldset, OfflineSnapshot } from '@/components/layout/offline-snapshot';
+import { CheckinSwitch } from '@/components/class/checkin-switch';
 import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
 import { attendanceOutboxProps } from '@/lib/attendance-outbox-props';
 
@@ -154,7 +155,7 @@ export default async function ClassDetailPage({
   // them can change, all read from this render's `now`.
   const tz = cls.calendarEntry.teacher.defaultTimezone;
   const start = classStartInstant(cls.calendarEntry, tz);
-  const { live, showCheckin, canFinish, autoFinishing, autoAt, refreshInstants } = classPageClock({
+  const { live, showCheckin, canFinish, autoFinishing, autoAt, checkinAt, refreshInstants } = classPageClock({
     now: new Date(now),
     start,
     end: classEndInstant(cls.calendarEntry, tz),
@@ -166,52 +167,29 @@ export default async function ClassDetailPage({
 
   const attendanceOutbox = attendanceOutboxProps(session, cls, start, tz);
 
-  return (
-    <OfflineSnapshot {...stamp}>
-      <PageHeader
-        title={cls.calendarEntry.classType}
-        backHref="/" backLabel="Schedule"
-        action={
-          !cancelled && cls.status === 'draft'
-            ? <PublishClassButton classId={cls.id} />
-            : canFinish
-              ? <CompleteClassButton classId={cls.id} chargedCount={chargedCount} />
-              : undefined
-        }
-      />
-      {live && <RefreshAt instants={refreshInstants.map((d) => d.toISOString())} serverNow={now} />}
-      <ClassInfo
-        cls={cls}
-        registrationCount={seatCount}
-        waitlistCount={waitlistCount}
-      />
+  const openLive = !cancelled && cls.status === 'open';
 
-      {canFinish && (
-        <p className="type-caption py-2">
-          {autoFinishing
-            ? 'This class is finishing automatically.'
-            : chargedCount > 0
-              ? `Payment requests go out automatically at ${formatClockInZone(autoAt, tz)}.`
-              : `This class finishes automatically at ${formatClockInZone(autoAt, tz)}.`}
-        </p>
-      )}
+  // Check-in: the attendance list sits outside every fieldset so its taps
+  // queue offline; walk-in and the estimate stay inside one.
+  const checkinBlock = (
+    <>
+      <AttendanceList items={attendanceItems} {...attendanceOutbox} />
+      <OfflineFieldset>
+        <div className="py-2">
+          <AddWalkIn
+            classId={cls.id}
+            registeredStudentIds={activeRegistrations.map((r) => r.studentId)}
+          />
+        </div>
+        <PricingPreview cls={cls} />
+      </OfflineFieldset>
+    </>
+  );
 
-      {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}
-      {showCheckin && (
-        <>
-          <AttendanceList items={attendanceItems} {...attendanceOutbox} />
-          <div className="py-2">
-            <AddWalkIn
-              classId={cls.id}
-              registeredStudentIds={activeRegistrations.map((r) => r.studentId)}
-            />
-          </div>
-          <PricingPreview cls={cls} />
-        </>
-      )}
-
-      {/* Open (not yet check-in): registered students + pricing preview */}
-      {!cancelled && cls.status === 'open' && !showCheckin && activeRegistrations.length > 0 && (
+  // Open, before check-in: registered students + pricing preview.
+  const beforeBlock = (
+    <OfflineFieldset>
+      {activeRegistrations.length > 0 && (
         <div className="py-6">
           <h2 className="type-subtitle mb-1">Registered students</h2>
           <div>
@@ -227,23 +205,72 @@ export default async function ClassDetailPage({
           </div>
         </div>
       )}
+      <PricingPreview cls={cls} />
+    </OfflineFieldset>
+  );
+
+  // Segmented: every region sits in an OfflineFieldset except the attendance
+  // lists, which work offline; see docs/technical-architecture.md (Offline
+  // (service worker)).
+  return (
+    <OfflineSnapshot {...stamp} segmented>
+      <OfflineFieldset>
+        <PageHeader
+          title={cls.calendarEntry.classType}
+          backHref="/" backLabel="Schedule"
+          action={
+            !cancelled && cls.status === 'draft'
+              ? <PublishClassButton classId={cls.id} />
+              : canFinish
+                ? <CompleteClassButton classId={cls.id} chargedCount={chargedCount} />
+                : undefined
+          }
+        />
+        {live && <RefreshAt instants={refreshInstants.map((d) => d.toISOString())} serverNow={now} />}
+        <ClassInfo
+          cls={cls}
+          registrationCount={seatCount}
+          waitlistCount={waitlistCount}
+        />
+
+        {canFinish && (
+          <p className="type-caption py-2">
+            {autoFinishing
+              ? 'This class is finishing automatically.'
+              : chargedCount > 0
+                ? `Payment requests go out automatically at ${formatClockInZone(autoAt, tz)}.`
+                : `This class finishes automatically at ${formatClockInZone(autoAt, tz)}.`}
+          </p>
+        )}
+      </OfflineFieldset>
+
+      {/* An open class rendered before check-in opens it on the device clock. */}
+      {openLive && !showCheckin ? (
+        <CheckinSwitch
+          checkinAt={checkinAt.toISOString()}
+          initial="before"
+          before={beforeBlock}
+          checkin={checkinBlock}
+        />
+      ) : (
+        showCheckin && checkinBlock
+      )}
 
       {/* Draft: pricing preview */}
       {!cancelled && cls.status === 'draft' && (
-        <PricingPreview cls={cls} />
-      )}
-
-      {/* Open (not check-in): pricing preview */}
-      {!cancelled && cls.status === 'open' && !showCheckin && (
-        <PricingPreview cls={cls} />
+        <OfflineFieldset>
+          <PricingPreview cls={cls} />
+        </OfflineFieldset>
       )}
 
       {/* Completed: attendance (read-only; Edit attendance to correct), pricing breakdown, payment checklist */}
       {!cancelled && cls.status === 'completed' && (
         <>
           <AttendanceList items={attendanceItems} locked {...attendanceOutbox} />
-          <PricingBreakdown cls={cls} tierPrices={tierPrices} />
-          <PaymentChecklist items={paymentItems} />
+          <OfflineFieldset>
+            <PricingBreakdown cls={cls} tierPrices={tierPrices} />
+            <PaymentChecklist items={paymentItems} />
+          </OfflineFieldset>
         </>
       )}
 
@@ -256,25 +283,27 @@ export default async function ClassDetailPage({
 
       {/* Actions: share while bookable, announce while it has students, cancel while upcoming */}
       {!cancelled && (
-        <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
-          {cls.status === 'open' && (
-            <ShareBookingLink pageSlug={cls.calendarEntry.teacher.pageSlug} />
-          )}
-          {activeRegistrations.length > 0 && (
-            <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
-          )}
-          {(cls.status === 'draft' || cls.status === 'open') && (
-            <>
-              <Link
-                href={`/class/${cls.id}/edit`}
-                className="type-label text-teal no-underline"
-              >
-                Edit class
-              </Link>
-              <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
-            </>
-          )}
-        </div>
+        <OfflineFieldset>
+          <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
+            {cls.status === 'open' && (
+              <ShareBookingLink pageSlug={cls.calendarEntry.teacher.pageSlug} />
+            )}
+            {activeRegistrations.length > 0 && (
+              <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
+            )}
+            {(cls.status === 'draft' || cls.status === 'open') && (
+              <>
+                <Link
+                  href={`/class/${cls.id}/edit`}
+                  className="type-label text-teal no-underline"
+                >
+                  Edit class
+                </Link>
+                <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
+              </>
+            )}
+          </div>
+        </OfflineFieldset>
       )}
     </OfflineSnapshot>
   );

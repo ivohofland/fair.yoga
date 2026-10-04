@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { useState } from 'react';
-import { OfflineSnapshot } from './offline-snapshot';
+import { OfflineFieldset, OfflineSnapshot } from './offline-snapshot';
 import { Button } from '@/components/ui/button';
 import { AttendanceList } from '@/components/class/attendance-list';
 import type { ConnectionStatus } from '@/lib/offline-status';
@@ -177,6 +177,44 @@ describe('OfflineSnapshot', () => {
     const checkIn = screen.getByRole('button', { name: /Ada/ });
     expect(checkIn).toBeDisabled();
     expect(checkIn).toHaveClass('disabled:opacity-50');
+  });
+
+  describe('segmented', () => {
+    it('renders no fieldset of its own, keeping the owner marker, the sync block and the offline marker', () => {
+      enqueueAttendance('account-1', queuedMark);
+      status.current = { offline: true, serverNow: null };
+      const { container } = render(ui({ segmented: true }, <button type="button">Loose</button>));
+      expect(container.querySelector('fieldset')).toBeNull();
+      expect(container.querySelector('[data-offline-owner="account-1"]')).not.toBeNull();
+      expect(container.querySelector('[data-sync-status]')).not.toBeNull();
+      expect(screen.getByText('Offline — showing what was loaded at 09:12')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Loose' })).not.toBeDisabled();
+    });
+
+    it('disables what sits in an OfflineFieldset offline, and leaves a control between fieldsets enabled', () => {
+      status.current = { offline: true, serverNow: null };
+      const { container } = render(
+        ui(
+          { segmented: true },
+          <>
+            <OfflineFieldset><Button>Finish</Button></OfflineFieldset>
+            <button type="button">Between</button>
+            <OfflineFieldset><Button>Add walk-in</Button></OfflineFieldset>
+          </>,
+        ),
+      );
+      expect(screen.getByRole('button', { name: 'Finish' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Add walk-in' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Between' })).not.toBeDisabled();
+      const fieldsets = container.querySelectorAll('fieldset');
+      expect(fieldsets).toHaveLength(2);
+      fieldsets.forEach((f) => expect(f).toHaveAttribute('data-offline-fieldset'));
+    });
+
+    it('leaves an OfflineFieldset enabled online', () => {
+      render(<OfflineFieldset><Button>Finish</Button></OfflineFieldset>);
+      expect(screen.getByRole('button', { name: 'Finish' })).not.toBeDisabled();
+    });
   });
 
   describe('staleness refresh', () => {

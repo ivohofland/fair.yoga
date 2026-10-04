@@ -20,11 +20,27 @@ function todayIn(timeZone: string): string | null {
 }
 
 /**
+ * Disables every control inside it while offline, through the native
+ * `<fieldset disabled>`. `data-offline-fieldset` is the stylesheet's hook for
+ * the dimmed look.
+ */
+export function OfflineFieldset({ children }: { children: ReactNode }) {
+  const { offline } = useConnectionStatus();
+  return (
+    <fieldset data-offline-fieldset disabled={offline} className="m-0 min-w-0 border-0 p-0">
+      {children}
+    </fieldset>
+  );
+}
+
+/**
  * Wraps a page the service worker may store. Offline, it says when the page
- * was loaded and disables every control inside it through the fieldset. Above
- * both sits the attendance outbox's sync block, outside the fieldset. The
- * `data-offline-owner` attribute is the owner marker the worker requires; see
- * docs/technical-architecture.md (Offline (service worker)).
+ * was loaded and disables every control inside it through an
+ * `OfflineFieldset`. Above both sits the attendance outbox's sync block,
+ * outside any fieldset. `segmented` drops the wrapping fieldset: the page
+ * places its own `OfflineFieldset`s and leaves between them what must work
+ * offline. The `data-offline-owner` attribute is the owner marker the worker
+ * requires; see docs/technical-architecture.md (Offline (service worker)).
  */
 export function OfflineSnapshot({
   ownerId,
@@ -34,8 +50,9 @@ export function OfflineSnapshot({
   loadedOn,
   timeZone,
   warmPaths = [],
+  segmented = false,
   children,
-}: OfflineSnapshotStamp & { warmPaths?: readonly string[]; children: ReactNode }) {
+}: OfflineSnapshotStamp & { warmPaths?: readonly string[]; segmented?: boolean; children: ReactNode }) {
   const { offline, serverNow } = useConnectionStatus();
   const router = useRouter();
   const pathname = usePathname();
@@ -63,9 +80,7 @@ export function OfflineSnapshot({
       <p role="status" className={offline ? 'type-label text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-4' : 'sr-only'}>
         {offline && `Offline — showing what was loaded ${loaded}`}
       </p>
-      <fieldset data-offline-fieldset disabled={offline} className="m-0 min-w-0 border-0 p-0">
-        {children}
-      </fieldset>
+      {segmented ? children : <OfflineFieldset>{children}</OfflineFieldset>}
     </div>
   );
 }
