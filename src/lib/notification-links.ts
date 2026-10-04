@@ -1,8 +1,8 @@
 /**
  * Where a notification points its reader.
  *
- * The default target for a notification is its related class, and every
- * class route in this app is teacher-only — so the student surfaces have
+ * The default target for a notification is its related class, and the
+ * teacher's class page is teacher-only — so the student surfaces have
  * always had to supply their own targets. That left anything with no
  * related class unclickable, which was fine until #166 introduced a
  * notification type whose whole purpose is to send someone somewhere.

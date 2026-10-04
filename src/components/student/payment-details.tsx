@@ -12,9 +12,7 @@ type Field = { key: string; label: string; shown: string; copied: string };
 type CopyState = { field: Field; outcome: 'copied' | 'failed' } | null;
 
 /**
- * The transfer details, each copyable on its own. A student paying from the
- * phone this page is open on cannot scan its QR, so the copy buttons are the
- * main path there and the QR the alternative.
+ * The transfer details, each copyable on its own.
  */
 export function PaymentDetails({ iban, beneficiary, reference }: PaymentDetailsProps) {
   const [state, setState] = useState<CopyState>(null);
@@ -59,7 +57,7 @@ export function PaymentDetails({ iban, beneficiary, reference }: PaymentDetailsP
                 type="button"
                 onClick={() => copy(field)}
                 aria-label={`Copy ${field.key}`}
-                className="shrink-0 h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint"
+                className="h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint"
               >
                 {state?.field.key === field.key && state.outcome === 'copied' ? 'Copied' : 'Copy'}
               </button>
@@ -74,7 +72,7 @@ export function PaymentDetails({ iban, beneficiary, reference }: PaymentDetailsP
           ? ''
           : state.outcome === 'copied'
             ? `${state.field.label} copied`
-            : `Couldn't copy the ${state.field.key} — press and hold it to select`}
+            : `Couldn’t copy the ${state.field.key} — press and hold it to select`}
       </p>
     </>
   );
