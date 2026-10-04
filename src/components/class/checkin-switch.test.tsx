@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { useState } from 'react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { renderToString } from 'react-dom/server';
 import { CheckinSwitch } from './checkin-switch';
 
@@ -83,6 +84,13 @@ describe('CheckinSwitch', () => {
     expect(screen.getByText('attendance list')).toBeInTheDocument();
   });
 
+  it('keeps one timer when returning to the tab before the instant', () => {
+    vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
+    render(ui());
+    act(() => setVisibility('visible'));
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
   it('does not switch on a hidden visibility change', () => {
     vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
     render(ui());
@@ -108,6 +116,7 @@ describe('CheckinSwitch', () => {
     vi.setSystemTime(new Date('2026-10-04T09:45:00Z'));
     const farAway = new Date(Date.now() + 2 ** 31 + 60_000).toISOString();
     render(ui('before', farAway));
+    expect(vi.getTimerCount()).toBe(0);
     act(() => vi.advanceTimersByTime(1_000));
     expect(screen.queryByText('attendance list')).toBeNull();
     vi.setSystemTime(new Date(Date.parse(farAway)));
@@ -115,10 +124,72 @@ describe('CheckinSwitch', () => {
     expect(screen.getByText('attendance list')).toBeInTheDocument();
   });
 
-  it('stays on the before view for an unreadable instant', () => {
+  it('stays on the before view for an unreadable instant, waiting on nothing', () => {
+    const add = vi.spyOn(document, 'addEventListener');
     vi.setSystemTime(new Date('2026-10-04T09:50:00Z'));
     render(ui('before', 'not-a-date'));
+    expect(vi.getTimerCount()).toBe(0);
+    expect(add.mock.calls.filter(([type]) => type === 'visibilitychange')).toEqual([]);
     act(() => setVisibility('visible'));
     expect(screen.getByText('registered students')).toBeInTheDocument();
+    add.mockRestore();
+  });
+
+  it('waits again when its timer fires a hair before the instant on the wall clock', () => {
+    // The timer runs on a monotonic clock; a coarsened or stepped-back
+    // `Date.now()` can still read just short of the instant when it fires.
+    vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
+    render(ui());
+    vi.setSystemTime(new Date(Date.now() - 1));
+    act(() => vi.advanceTimersByTime(5 * 60_000));
+    expect(screen.queryByText('attendance list')).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByText('attendance list')).toBeInTheDocument();
+  });
+
+  it('leaves no timer and no listener behind once unmounted', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
+    const { unmount } = render(ui());
+    const added = add.mock.calls.filter(([type]) => type === 'visibilitychange').map(([, fn]) => fn);
+    expect(added).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    const removed = remove.mock.calls.filter(([type]) => type === 'visibilitychange').map(([, fn]) => fn);
+    expect(removed).toContain(added[0]);
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
+  describe('when the server re-renders with check-in chosen', () => {
+    function Field() {
+      const [value, setValue] = useState('');
+      return <input aria-label="walk-in" value={value} onChange={(e) => setValue(e.target.value)} />;
+    }
+    const withField = (initial: 'before' | 'checkin') => (
+      <CheckinSwitch checkinAt={CHECKIN_AT} initial={initial} before={<p>registered students</p>} checkin={<Field />} />
+    );
+
+    it('keeps the check-in view the device already opened, state and all', () => {
+      vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
+      const { rerender } = render(withField('before'));
+      act(() => vi.advanceTimersByTime(5 * 60_000));
+      const input = screen.getByLabelText('walk-in');
+      fireEvent.change(input, { target: { value: 'Sam' } });
+      rerender(withField('checkin'));
+      expect(screen.getByLabelText('walk-in')).toBe(input);
+      expect(screen.getByLabelText('walk-in')).toHaveValue('Sam');
+    });
+
+    it('shows check-in on a device whose clock is behind the server', () => {
+      vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
+      const { rerender } = render(withField('before'));
+      rerender(withField('checkin'));
+      expect(screen.getByLabelText('walk-in')).toBeInTheDocument();
+      expect(screen.queryByText('registered students')).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });

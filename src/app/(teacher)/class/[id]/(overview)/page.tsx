@@ -167,8 +167,6 @@ export default async function ClassDetailPage({
 
   const attendanceOutbox = attendanceOutboxProps(session, cls, start, tz);
 
-  const openLive = !cancelled && cls.status === 'open';
-
   // Check-in: the attendance list sits outside every fieldset so its taps
   // queue offline; walk-in and the estimate stay inside one.
   const checkinBlock = (
@@ -244,17 +242,17 @@ export default async function ClassDetailPage({
         )}
       </OfflineFieldset>
 
-      {/* An open class rendered before check-in opens it on the device clock. */}
-      {openLive && !showCheckin ? (
+      {/* A live class opens check-in on the device clock; one element across
+          the edge, so the server's re-render there keeps the list mounted.
+          An unreadable start has no edge to wait for. */}
+      {live && (checkinAt ? (
         <CheckinSwitch
           checkinAt={checkinAt.toISOString()}
-          initial="before"
+          initial={showCheckin ? 'checkin' : 'before'}
           before={beforeBlock}
           checkin={checkinBlock}
         />
-      ) : (
-        showCheckin && checkinBlock
-      )}
+      ) : showCheckin ? checkinBlock : beforeBlock)}
 
       {/* Draft: pricing preview */}
       {!cancelled && cls.status === 'draft' && (

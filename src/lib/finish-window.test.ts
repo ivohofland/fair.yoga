@@ -128,7 +128,7 @@ describe('classPageClock', () => {
   });
 
   it('names the check-in instant, the edge showCheckin turns on', () => {
-    expect(clock(ms(checkinAt, -60 * MINUTE), 'open').checkinAt.toISOString()).toBe(checkinAt.toISOString());
+    expect(clock(ms(checkinAt, -60 * MINUTE), 'open').checkinAt?.toISOString()).toBe(checkinAt.toISOString());
   });
 
   it('shows check-in on an in_progress class whatever the time', () => {
@@ -207,6 +207,18 @@ describe('classPageClock', () => {
     });
     expect(c).toMatchObject({ showCheckin: false, canFinish: false, autoFinishing: false });
     expect(c.refreshInstants).toEqual([]);
+  });
+
+  /** Same reason as `refreshInstants`: the page serialises `checkinAt`. */
+  it('names no check-in instant when the schedule is unreadable', () => {
+    const c = classPageClock({
+      now: start,
+      start: new Date(NaN),
+      end: new Date(NaN),
+      status: 'open',
+      cancelled: false,
+    });
+    expect(c.checkinAt).toBeNull();
   });
 
   it.each(['open', 'in_progress'] as const)('is inert on a cancelled %s class', (status) => {

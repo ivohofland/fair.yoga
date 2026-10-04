@@ -88,8 +88,12 @@ export interface ClassPageClock {
   autoFinishing: boolean;
   /** `autoFinishAt` of this class. */
   autoAt: Date;
-  /** `CHECKIN_OPENS_MINUTES` before the start: where an `open` class's `showCheckin` turns on. */
-  checkinAt: Date;
+  /**
+   * `CHECKIN_OPENS_MINUTES` before the start: where an `open` class's
+   * `showCheckin` turns on. Null when unreadable, as `refreshInstants` leaves
+   * such an edge out: its `toISOString()` throws.
+   */
+  checkinAt: Date | null;
   /**
    * The instants at which what this function answers can change: the check-in
    * edge (`open` only), `finishOpensAt` and `autoFinishAt` — some possibly
@@ -118,19 +122,20 @@ export function classPageClock({
   cancelled: boolean;
 }): ClassPageClock {
   const t = now.getTime();
-  const checkinAt = new Date(start.getTime() - CHECKIN_OPENS_MINUTES * 60_000);
+  const checkinEdge = new Date(start.getTime() - CHECKIN_OPENS_MINUTES * 60_000);
+  const checkinAt = Number.isNaN(checkinEdge.getTime()) ? null : checkinEdge;
   const opensAt = finishOpensAt({ start, end });
   const autoAt = autoFinishAt(end);
 
   const open = !cancelled && status === 'open';
   const live = open || (!cancelled && status === 'in_progress');
-  const showCheckin = live && (status === 'in_progress' || t >= checkinAt.getTime());
+  const showCheckin = live && (status === 'in_progress' || (checkinAt !== null && t >= checkinAt.getTime()));
   const canFinish = live && t >= opensAt.getTime();
   const autoFinishing = live && t >= autoAt.getTime();
 
   const refreshInstants = live
     ? [
-        ...(open ? [checkinAt] : []),
+        ...(open && checkinAt ? [checkinAt] : []),
         opensAt,
         autoAt,
         ...(autoFinishing ? [new Date(t + SWEEP_RETRY_MS)] : []),
