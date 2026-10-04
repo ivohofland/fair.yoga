@@ -931,6 +931,7 @@ describe('POST /api/account/onboarding', () => {
           email: shareSettledEmail,
           bio: 'Yoga since 2009.',
           bankIban: 'NL00BANK0123456789',
+          bankAccountName: 'Settled Teacher',
           pageSlug: shareSettledSlug,
           account: { create: { email: shareSettledEmail } },
         },
