@@ -506,6 +506,54 @@ describe('offline', () => {
     expect(pageKeys(caches)).toEqual([]);
   });
 
+  it('does not wipe the next account\'s pages for a store begun before a clear', async () => {
+    const answer = deferred<Response>();
+    const fetch = networkFetch(() => answer.promise);
+    const { listeners, caches } = loadWorker([], { fetch });
+    const warming = extendable();
+    listeners.message!({ data: { type: 'warm', paths: ['/class/c1'] }, waitUntil: warming.waitUntil });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    const clearing = extendable();
+    listeners.message!({ data: { type: 'clear' }, waitUntil: clearing.waitUntil });
+    await clearing.done();
+    seedPage(caches, '/schedule', { owner: OTHER_OWNER });
+    answer.resolve(page(OWNER));
+    await warming.done();
+    expect(pageKeys(caches)).toEqual([`${ORIGIN}/schedule`]);
+  });
+
+  it('keeps a static file a page being stored now references when a prune is already running', async () => {
+    const { listeners, caches } = loadWorker([], { fetch: networkFetch(() => page()) });
+    seedPage(caches, '/class/old', { storedAt: String(Date.now() - 2 * DAY) });
+    seedStatic(caches, '/_next/static/chunks/app-abc.js');
+    const gate = deferred<void>();
+    let pruneReading = false;
+    const open = caches.api.open;
+    caches.api.open = async (name: string) => {
+      const c = await open(name);
+      if (name !== STATIC) return c;
+      return {
+        ...c,
+        keys: async () => {
+          pruneReading = true;
+          await gate.promise;
+          return c.keys();
+        },
+      };
+    };
+    const activating = extendable();
+    listeners.activate!(activating);
+    await vi.waitFor(() => expect(pruneReading).toBe(true));
+    const ev = fetchEvent(navigation('/class/c1'));
+    listeners.fetch!(ev);
+    await ev.response()!;
+    await new Promise((r) => setTimeout(r, 0));
+    gate.resolve();
+    await Promise.all([activating.done(), ev.settled()]);
+    expect(staticKeys(caches)).toEqual([`${ORIGIN}/_next/static/chunks/app-abc.js`]);
+    expect(pageKeys(caches)).toEqual([`${ORIGIN}/class/c1`]);
+  });
+
   describe('warm', () => {
     const warmMessage = (listeners: Listeners, paths: unknown[]) => {
       const e = extendable();

@@ -81,6 +81,10 @@ function detach(): void {
   document.removeEventListener('visibilitychange', onVisibilityChange);
   if (retryTimer !== null) clearTimeout(retryTimer);
   retryTimer = null;
+  // With no subscriber nothing keeps this answer current, and isOfflineNow
+  // would go on reporting it.
+  pingFailed = false;
+  refreshSnapshot();
 }
 
 export function subscribeConnectionStatus(listener: () => void): () => void {
