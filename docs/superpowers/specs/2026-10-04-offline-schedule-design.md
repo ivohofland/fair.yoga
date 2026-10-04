@@ -153,9 +153,9 @@ install, which push's `ready` wait then times out on.
 
 | Cache | Holds | Cleared |
 |---|---|---|
-| `fy-pages-v1` | the three page shapes, keyed by pathname alone, each a rebuilt `Response` carrying `x-fy-owner` and `x-fy-stored-at` headers | clear message, a redirect on a cacheable path, an owner change, 24 h age, a new worker version |
-| `fy-static-v1` | `/_next/static/*` responses | when no stored page references the file, a new worker version |
-| `fy-meta-v1` | the clear generation (§3.4) | a new worker version |
+| `fy-pages-v1` | the three page shapes, keyed by pathname alone, each a rebuilt `Response` carrying `x-fy-owner` and `x-fy-stored-at` headers | clear message, a redirect on a cacheable path, an owner change, 24 h age, a cache-name version bump (the `-v1` suffix) |
+| `fy-static-v1` | `/_next/static/*` responses | when no stored page references the file, a cache-name version bump (the `-v1` suffix) |
+| `fy-meta-v1` | the clear generation (§3.4) | a cache-name version bump (the `-v1` suffix) |
 
 An entry missing either header, or with one unparseable, is unservable and
 deleted. Entries are keyed by pathname alone and rebuilt without `Vary`, so
