@@ -542,3 +542,32 @@ writer that created a teacher notification of that type around the type
 system — find it by the `type` and `title` (`grep -rn "type: '<type>'" src`)
 and route it through the typed path. The row can stay in the teacher's inbox
 or be deleted.
+
+### `PAYMENT_NOTIFICATION_WITHOUT_CLASS`
+
+**What happened.** The email fallback rendered a student's `payment_request`
+or `reminder` notification whose `relatedClassId` is null. Every writer of a
+student payment notification sets it, and `Notification.relatedClassId` goes
+null only when its class row is deleted (`onDelete: SetNull`). The email went
+out without its Pay now button.
+
+**Where the bad value lives.** `Notification.relatedClassId` on the sample's
+`notificationId`. If the class was deleted, its registrations and payments
+went with it (both cascade), so the student was asked to pay for a payment
+that no longer exists.
+
+**Confirm.**
+
+```sql
+SELECT id, "recipientId", type, title, body, "createdAt"
+  FROM "Notification" WHERE id = '<notificationId>';
+SELECT id, type, "createdAt" FROM "Notification"
+ WHERE "recipientType" = 'student' AND type IN ('payment_request', 'reminder')
+   AND "relatedClassId" IS NULL;
+```
+
+**Correct.** The body names the class type, day and time; look for that class
+among the student's registrations. If it still exists, set `relatedClassId`
+to its id. If it is gone, what deleted it is the bug — no code path deletes a
+class with payments — and the student needs telling that the request no
+longer stands.

@@ -18,6 +18,7 @@ import {
   isPaymentNotification,
   payPagePath,
 } from './notification-links';
+import { logDegraded } from './degradation';
 
 export function escapeHtml(text: string): string {
   return text
@@ -129,6 +130,8 @@ const TEACHER_ACTION_LINKS: Partial<Record<NotificationType, { label: string; pa
 };
 
 export interface NotificationEmailInput {
+  /** The notification's row id, when it has one; names it in a degradation log line. */
+  id?: string;
   type: NotificationType;
   title: string;
   body: string;
@@ -136,14 +139,31 @@ export interface NotificationEmailInput {
   recipientType?: 'teacher' | 'student';
   /** The class a notification is about; gives a payment notification its pay link. */
   relatedClassId?: string | null;
+  /**
+   * Whether the class's teacher has a payment method (`paymentMethodsFor`).
+   * A student payment notification gets its Pay now button only when this is
+   * `true`.
+   */
+  teacherHasPaymentMethods?: boolean;
 }
 
-/** A student email's action: a payment's own pay page, else the type's fixed one. */
+/**
+ * A student email's action: a payment notification's own pay page, given a
+ * teacher with a payment method, else the type's fixed one.
+ */
 function studentAction(
   notification: NotificationEmailInput,
 ): { label: string; path: string } | undefined {
   if (isPaymentNotification(notification.type)) {
-    return notification.relatedClassId
+    if (!notification.relatedClassId) {
+      logDegraded(
+        'PAYMENT_NOTIFICATION_WITHOUT_CLASS',
+        { notificationId: notification.id, type: notification.type },
+        'payment notification has no related class; emailed without a Pay now button',
+      );
+      return undefined;
+    }
+    return notification.teacherHasPaymentMethods === true
       ? { label: PAY_NOW_LABEL, path: payPagePath(notification.relatedClassId) }
       : undefined;
   }
