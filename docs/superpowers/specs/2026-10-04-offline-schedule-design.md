@@ -71,12 +71,16 @@ which the issue rules out; and no timeout at all (the first draft), because
 client-side status store (`useSyncExternalStore`) is fed by
 `navigator.onLine`, the `online`/`offline` events, and a ping to a new
 `GET /api/ping` (no auth, no database, `no-store`, 5 s timeout) on mount, on
-the `online` event and on returning to the tab. A failed ping or
-`navigator.onLine === false` means offline. A successful ping returns server
-time; if the page's own render time is more than a minute behind it, the page
-is a stored snapshot shown while online, and it calls `router.refresh()` —
-at most once per render, so it cannot loop. Both times are the server's clock,
-so device clock skew cannot trigger it. `RefreshAt` and `LiveUpdates` read the
+the `online` event, on returning to the tab, and every 15 s while offline.
+A failed ping or `navigator.onLine === false` means offline; the latest ping
+sent decides, so a slow earlier one cannot overrule a newer answer. A
+successful ping returns server time; if the page's own render time is more
+than a minute behind it, the page calls `router.refresh()` — at most once per
+render, so it cannot loop. That is not a snapshot-only rule: pings fire only
+on mount, on `online`, on tab return and on the offline retry, so a page left
+open for more than a minute refreshes when the teacher returns to it, which is
+intended, and it is also what recovers a refresh skipped while offline. Both
+times are the server's clock, so device clock skew cannot trigger it. `RefreshAt` and `LiveUpdates` read the
 same store and do not refresh while offline: offline, `router.refresh()` is a
 hard reload (Next's failed-RSC fallback), so `RefreshAt` re-arming from a
 snapshot's render time would otherwise reload the page on a timer.
@@ -99,8 +103,8 @@ raw buttons on the three pages move their disabled styling to Tailwind's
 
 **D7. Retention: 24 hours, and static files by reference.** A stored page
 older than 24 hours is neither served nor kept, and expired pages are purged
-whenever the worker runs (activate, message, any handled fetch), not only when
-read. A static file is kept while any stored page references it and deleted
+whenever the worker runs (activate, message, a navigation to a cacheable path),
+not only when read. A static file is kept while any stored page references it and deleted
 when none does. Long enough for "loaded last night, teaching at 7"; short
 enough that rosters do not accumulate on the device. The marker names the day
 as well as the time when the snapshot is from an earlier day in the teacher's
@@ -154,9 +158,10 @@ install, which push's `ready` wait then times out on.
 | `fy-meta-v1` | the clear generation (§3.4) | a new worker version |
 
 An entry missing either header, or with one unparseable, is unservable and
-deleted. Lookups use `ignoreSearch` and `ignoreVary` (Next sends
-`Vary: rsc, next-router-state-tree, …`), so `/class/x?from=inbox` finds
-`/class/x`.
+deleted. Entries are keyed by pathname alone and rebuilt without `Vary`, so
+`/class/x?from=inbox` finds `/class/x`. A stored page keeps the response's
+security headers (CSP, framing and referrer policy) so it is served under the
+policy it was rendered with.
 
 **Storing a page pulls its static files.** When a page is stored, every
 `/_next/static/…` URL in its body — `<script src>`, `<link href>` and the
@@ -200,7 +205,7 @@ teacher's local date and timezone, and — on the schedule only — the warm lis
 
 - Renders the owner marker on its wrapper.
 - While offline (D5): shows **"Offline — showing what was loaded at HH:MM"**
-  (or "… loaded Sat 3 Oct, 21:40" when the load date is not today in the
+  (or "… loaded Sat 3 Oct 21:40" when the load date is not today in the
   teacher's timezone), and puts the content in `<fieldset disabled>`.
 - On mount, online: waits for `navigator.serviceWorker.ready` and posts
   `{type: 'warm', paths}` to the active worker — its own path plus the warm
