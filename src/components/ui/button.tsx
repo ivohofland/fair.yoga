@@ -25,12 +25,11 @@ export function Button({
   ...props
 }: ButtonProps) {
   const base =
-    'inline-flex items-center justify-center gap-2 rounded-pill px-6 min-h-12 text-base font-semibold w-full sm:w-auto focus:outline-none focus-visible:shadow-focus';
-  const disabledClass = disabled ? 'opacity-50 cursor-not-allowed' : '';
+    'inline-flex items-center justify-center gap-2 rounded-pill px-6 min-h-12 text-base font-semibold w-full sm:w-auto focus:outline-none focus-visible:shadow-focus disabled:opacity-50 disabled:cursor-not-allowed';
 
   return (
     <button
-      className={`${base} ${variantClasses[variant]} ${disabledClass} ${className}`.trim()}
+      className={`${base} ${variantClasses[variant]} ${className}`.trim()}
       disabled={disabled}
       {...props}
     />

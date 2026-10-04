@@ -187,6 +187,7 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
                       ${isAttended
                         ? 'bg-teal border-teal text-cream'
                         : 'bg-sand-soft border-border text-transparent'}
+                      disabled:opacity-50 disabled:cursor-not-allowed
                       ${isUpdating ? 'opacity-50' : ''}
                     `}
                     aria-label={

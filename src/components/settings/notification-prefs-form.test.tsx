@@ -169,9 +169,12 @@ describe('NotificationPrefsForm', () => {
     render(
       <NotificationPrefsForm teacherId="t1" initial={{ ...DEFAULTS, classReminder: 'morning_of' }} vapidPublicKey="KEY" />,
     );
-    expect(screen.getByLabelText('How')).not.toHaveClass('opacity-50');
+    // The look is the `disabled:` pseudo-class, carried always; what differs is the attribute.
+    expect(screen.getByLabelText('How')).toHaveClass('disabled:opacity-50', 'disabled:cursor-not-allowed');
+    expect(screen.getByLabelText('How')).toBeEnabled();
     fireEvent.change(screen.getByLabelText('When'), { target: { value: 'off' } });
-    expect(screen.getByLabelText('How')).toHaveClass('opacity-50', 'cursor-not-allowed');
+    expect(screen.getByLabelText('How')).toBeDisabled();
+    expect(screen.getByLabelText('How')).toHaveClass('disabled:opacity-50', 'disabled:cursor-not-allowed');
   });
 
   it('offers the channel options in order from REMINDER_CHANNEL_OPTIONS (#721)', () => {

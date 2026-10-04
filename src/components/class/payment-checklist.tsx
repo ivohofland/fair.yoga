@@ -106,6 +106,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                     className={`
                       h-9 px-4 rounded-pill text-[13px] font-medium
                       border-[1.5px] border-teal text-teal hover:bg-teal-tint
+                      disabled:opacity-50 disabled:cursor-not-allowed
                       ${isUpdating ? 'opacity-50' : ''}
                     `}
                     // Leads with the visible label for WCAG 2.5.3 (Label in Name)

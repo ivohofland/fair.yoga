@@ -685,3 +685,46 @@ describe('the studio class page: the restore action (issue 275)', () => {
   });
 });
 
+/**
+ * The owner marker the service worker requires (#725) is rendered by the page's
+ * own tree, after the ownership check. A class the signed-in teacher does not
+ * own answers 200 with an in-body redirect, so a marker in a shared layout
+ * would have the worker store that redirect body as the teacher's page.
+ */
+describe('the studio class page: the offline owner marker (#725)', () => {
+  const markers = (html: string) => html.match(/data-offline-owner="[^"]*"/g) ?? [];
+
+  it('carries exactly one marker, naming the signed-in account', async () => {
+    const { accountId } = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId }, select: { accountId: true } });
+    const sc = await makeClass({ date: new Date('2099-08-13T00:00:00.000Z'), startTime: '10:00' });
+    const html = await page(sc.id);
+    expect(markers(html)).toEqual([`data-offline-owner="${accountId}"`]);
+  });
+
+  it('carries no marker on the redirect a teacher gets for a class that is not theirs', async () => {
+    const sc = await makeClass({ date: new Date('2099-08-14T00:00:00.000Z'), startTime: '10:30' });
+    const email = `studiopage-other-${suffix}@test.local`;
+    const other = await prisma.teacher.create({
+      data: {
+        firstName: 'Other',
+        lastName: 'Teacher',
+        email,
+        account: { create: { email } },
+        bio: 'Not the owner',
+        pageSlug: `studiopage-other-${suffix}`,
+      },
+    });
+    try {
+      const otherToken = await seedSession(prisma, other.accountId);
+      const res = await fetch(`${BASE_URL}/studio-class/${sc.id}`, { headers: cookie(otherToken) });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // Anchored: the owner's own page for this class carries the venue, so its absence here is the redirect's.
+      expect(html).not.toContain('Community Studio');
+      expect(markers(html)).toEqual([]);
+    } finally {
+      await teardownTeacher(prisma, other.id);
+    }
+  });
+});
+
