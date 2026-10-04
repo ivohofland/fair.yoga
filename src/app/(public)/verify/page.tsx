@@ -577,7 +577,8 @@ function useVerifyingRail(
       return;
     }
     // Two outcomes for one verification means the token was redeemed twice —
-    // React's development double-mount is the way to see it. Last one wins,
+    // what the once-guard on the caller's verification effect exists to
+    // prevent, so this line is how a regression there shows. Last one wins,
     // as it did before this gate existed, but the loser is worth a line: it
     // takes its side effects (the success branch's redirect among them) with
     // it.
@@ -586,9 +587,11 @@ function useVerifyingRail(
     }
     waiting.current = apply;
     // `run` is the only non-ref here and is itself stable, so `settle` keeps
-    // one identity for the life of the mount. That matters: the caller's
-    // verification effect depends on it, and re-running that effect re-posts a
-    // single-use token — pinned by the call-count assertion in `page.test.tsx`.
+    // one identity for the life of the mount, and the caller's verification
+    // effect, which depends on it, is not re-run on its account. That effect
+    // re-posting a single-use token is stopped by its own once-guard, not by
+    // this; a stable `settle` just keeps the guard from being tested on every
+    // render.
   }, [run]);
 
   return { railVisible, settle };
@@ -605,13 +608,20 @@ function VerifyContent() {
   const [sessionEnded, setSessionEnded] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
   const [handoffCode, setHandoffCode] = useState<string>('');
-  // Holds only the LATEST controller: the verification effect below has no
-  // cleanup (abort-on-unmount is out of scope here), so React's development
-  // double-mount runs it twice and this ref is overwritten by the second run.
-  // If the ceiling fires, it aborts only that second fetch — the first's is
-  // left running unaborted, and its eventual `settle` call lands as a no-op
-  // behind `givenUp` rather than as a second, contradicting outcome.
+  // The request the ceiling aborts. There is one per token: the guard at the
+  // top of the verification effect stops a re-run from sending another and
+  // overwriting this.
   const inFlight = useRef<AbortController | null>(null);
+  // The token this mount has already sent. The verification effect re-runs
+  // whenever React re-runs effects — Strict Mode's development remount
+  // always does, and so would any dependency below changing identity — and
+  // two POSTs of a single-use token race: one spends it, the other gets the
+  // 400, and that loser's outcome can put "Verification failed" on screen for
+  // a sign-in that worked (#760). A ref, because it survives Strict Mode's
+  // simulated remount; a guard rather than abort-in-cleanup, because an abort
+  // can cancel a request the server has already spent the token on, leaving
+  // no session behind.
+  const sentFor = useRef<string | null>(null);
   // `Boolean(token)`, matching the status initializer above and the fetch
   // guard below: `?token=` yields '', which is not a verification worth
   // arming a timer for.
@@ -626,7 +636,8 @@ function VerifyContent() {
   );
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || sentFor.current === token) return;
+    sentFor.current = token;
     const controller = new AbortController();
     inFlight.current = controller;
     fetch('/api/auth/magic-link/verify', {
