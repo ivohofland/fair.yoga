@@ -109,8 +109,8 @@ first; one row per device is identity enough for dispatch and cleanup.
 | push_invitations | boolean, default false | Push for an invitation from another teacher |
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
-| bank_iban | string, nullable | Level 1 only |
-| bank_account_name | string, nullable | Level 1 only; required by `PUT /api/teachers/[id]` whenever an IBAN would be stored (Verification of Payee) — students are shown bank methods only when both are set |
+| bank_iban | string, nullable | Level 1 only; never blank (`Teacher_bank_iban_not_blank_check`) |
+| bank_account_name | string, nullable | Level 1 only; required whenever an IBAN is stored (Verification of Payee) — `Teacher_bank_holder_name_check` refuses an IBAN beside a null or blank name, and `PUT /api/teachers/[id]` answers that case with a 400 before it reaches the database. Students are shown bank methods only when both are set |
 | processor_type | enum: mollie, stripe | Level 2 only |
 | processor_account_id | string, nullable | Level 2 only |
 | **Timestamps** | | |

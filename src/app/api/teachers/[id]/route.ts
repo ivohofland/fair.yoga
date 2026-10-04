@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updateTeacherSchema, PAGE_SLUG_TAKEN_MESSAGE, BANK_HOLDER_NAME_REQUIRED_MESSAGE } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCheckViolationOn } from '@/lib/check-violation';
 import { nonBlank } from '@/lib/payment-methods';
 
 export const GET = withErrorHandler(async (
@@ -63,16 +64,16 @@ export const PUT = withErrorHandler(async (
   }
 
   // The body is partial, so the rule is checked on the row as it would be
-  // after this save. Only a save touching a bank field is checked: a row
-  // stored before the rule must not block its teacher's unrelated edits.
-  // Read and write are separate statements, so a teacher racing their own two
-  // saves could still land an IBAN alone; nothing reading the row may assume
-  // the pair.
+  // after this save, and answered with copy the teacher can act on. Read and
+  // write are separate statements, so a teacher racing their own two saves
+  // can get past this check; `Teacher_bank_holder_name_check` refuses the
+  // pair in the database, and the catch below answers that with the same 400.
   if (updateData.bankIban !== undefined || updateData.bankAccountName !== undefined) {
-    const stored = await prisma.teacher.findUniqueOrThrow({
+    const stored = await prisma.teacher.findUnique({
       where: { id },
       select: { bankIban: true, bankAccountName: true },
     });
+    if (!stored) return respondError('Teacher not found', 404);
     const iban = nonBlank(updateData.bankIban !== undefined ? updateData.bankIban : stored.bankIban);
     const holder = nonBlank(
       updateData.bankAccountName !== undefined ? updateData.bankAccountName : stored.bankAccountName,
@@ -91,6 +92,9 @@ export const PUT = withErrorHandler(async (
   } catch (err) {
     if (isUniqueConflictOn(err, ['pageSlug'])) {
       return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
+    }
+    if (isCheckViolationOn(err, 'Teacher_bank_holder_name_check')) {
+      return respondError(BANK_HOLDER_NAME_REQUIRED_MESSAGE, 400);
     }
     throw err;
   }
