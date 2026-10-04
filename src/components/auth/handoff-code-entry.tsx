@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceBeforeNavigation } from '@/lib/push-client';
 
 interface HandoffCodeEntryProps {
@@ -42,6 +43,7 @@ export function HandoffCodeEntry({ className = '', autoFocus }: HandoffCodeEntry
         // Awaited because the navigation below unloads the page. A response
         // without `accountId` set a signup ticket, not a session.
         if (json.data.accountId) await recordPushDeviceBeforeNavigation();
+        await clearOfflinePages();
         // A full navigation, not `router.push`: this response just set a
         // cookie — a session, or a signup ticket — and server components
         // must re-render against it.

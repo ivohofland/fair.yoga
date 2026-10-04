@@ -6,6 +6,11 @@ import { isLoginRedirectTarget } from '@/lib/schemas';
 
 const DRAFT_KEY = 'fair_yoga_profile_draft';
 
+const clearOfflinePages = vi.fn(async () => {});
+vi.mock('@/lib/offline-client', () => ({
+  clearOfflinePages: () => clearOfflinePages(),
+}));
+
 const recordPushDevice = vi.fn(async () => {});
 // Partial: the sign-out button this form renders needs the real `disablePush`.
 vi.mock('@/lib/push-client', async (importOriginal) => ({
@@ -54,6 +59,8 @@ function fillForm() {
 describe('ProfileSetupForm', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    clearOfflinePages.mockReset();
+    clearOfflinePages.mockImplementation(async () => {});
     recordPushDevice.mockReset();
     recordPushDevice.mockImplementation(async () => {});
     window.localStorage.clear();
@@ -78,6 +85,36 @@ describe('ProfileSetupForm', () => {
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
     expect(order).toEqual(['recorded', 'navigated']);
+  });
+
+  it('clears the stored pages before it hard-navigates, in ticket mode', async () => {
+    const order: string[] = [];
+    clearOfflinePages.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('cleared');
+    });
+    const assign = stubLocation();
+    assign.mockImplementation(() => order.push('navigated'));
+    stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
+    expect(order).toEqual(['cleared', 'navigated']);
+  });
+
+  it('keeps the stored pages in session mode, where the account did not change', async () => {
+    const assign = stubLocation();
+    stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
+    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
+    expect(clearOfflinePages).not.toHaveBeenCalled();
   });
 
   it('does not re-record the push device in session mode, which minted no session', async () => {

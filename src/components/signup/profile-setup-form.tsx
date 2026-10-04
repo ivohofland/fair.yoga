@@ -10,6 +10,7 @@ import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { AlreadyTeachingPanel } from './already-teaching-panel';
 import { logRequestFailure, readError } from '@/lib/client-errors';
+import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceBeforeNavigation } from '@/lib/push-client';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
@@ -268,7 +269,10 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
       // that is already in flight.
       // Ticket mode is where this response minted the session; session mode
       // already had one. Awaited because the navigation below unloads the page.
-      if (mode === 'ticket') await recordPushDeviceBeforeNavigation();
+      if (mode === 'ticket') {
+        await recordPushDeviceBeforeNavigation();
+        await clearOfflinePages();
+      }
       window.location.assign('/schedule');
       return;
     }

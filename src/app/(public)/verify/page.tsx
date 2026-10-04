@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
+import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceForSignIn } from '@/lib/push-client';
 import { listRowClass } from '@/components/ui/list-row';
 import { MAGIC_LINK_REFUSED_STATUS, TEACHER_PROFILE_PATH } from '@/lib/schemas';
@@ -657,6 +658,7 @@ function VerifyContent() {
         const isNew = !json.data.accountId;
         // Outside `settle`: the session exists whether or not this screen
         // still wants the outcome, and the device should follow it.
+        void clearOfflinePages();
         if (!isNew) void recordPushDeviceForSignIn();
         const cancelled = Boolean(json.data.signupCancelled);
         const endedSession = Boolean(json.data.sessionEnded);

@@ -8,6 +8,11 @@ vi.mock('@simplewebauthn/browser', () => ({
   startAuthentication: (...args: unknown[]) => startAuthentication(...args),
 }));
 
+const clearOfflinePages = vi.fn(async () => {});
+vi.mock('@/lib/offline-client', () => ({
+  clearOfflinePages: () => clearOfflinePages(),
+}));
+
 const recordPushDevice = vi.fn(async () => {});
 vi.mock('@/lib/push-client', () => ({
   recordPushDeviceForSignIn: () => recordPushDevice(),
@@ -26,6 +31,7 @@ describe('PasskeySignIn', () => {
 
   beforeEach(() => {
     recordPushDevice.mockClear();
+    clearOfflinePages.mockClear();
     startAuthentication.mockReset();
     startAuthentication.mockResolvedValue({ id: 'cred-1' });
   });
@@ -69,6 +75,32 @@ describe('PasskeySignIn', () => {
     fireEvent.click(screen.getByRole('button'));
 
     await waitFor(() => expect(recordPushDevice).toHaveBeenCalledTimes(1));
+  });
+
+  it('clears the stored pages once the passkey is verified', async () => {
+    stubHappyPath();
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(clearOfflinePages).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the stored pages when verification is refused', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { options: { challenge: 'c' }, challengeId: 'ch-1' } }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 400 });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await screen.findByRole('alert');
+    expect(clearOfflinePages).not.toHaveBeenCalled();
   });
 
   it('does not re-record the push device when verification is refused', async () => {
