@@ -1086,7 +1086,7 @@ describe('completeClass (DB)', () => {
         expect(notes[0]!.type).toBe('payment_request');
         expect(notes[0]!.title).toBe('Payment requested');
         expect(notes[0]!.body).toBe(
-          studentPaymentRequestBody(status, cls.calendarEntry, Number(reg.price)),
+          studentPaymentRequestBody(status, cls.calendarEntry, Number(reg.price), false),
         );
       }
 
@@ -1099,6 +1099,37 @@ describe('completeClass (DB)', () => {
       expect(await bodyFor(studentIds[2]!)).toMatch(/^We missed you at /);
       expect(await bodyFor(studentIds[3]!)).toMatch(/^You cancelled your booking for .* after the cancellation deadline\./);
     } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    }
+  });
+
+  it('leaves "Pay your teacher directly" out of the payment request when the teacher has a payment method', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'L. Teacher' },
+    });
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[0]!, status: 'attended', tierAtBooking: 3 },
+      });
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[1]!, status: 'no_show', tierAtBooking: 3 },
+      });
+
+      const result = await completeClass(prisma, cls.id, { finishedEarly: true });
+      expect(result.ok).toBe(true);
+
+      const bodyFor = async (studentId: string) =>
+        (await prisma.notification.findFirstOrThrow({
+          where: { relatedClassId: cls.id, recipientType: 'student', recipientId: studentId },
+        })).body;
+      expect(await bodyFor(studentIds[0]!)).toMatch(/^Your price for .* is €\d+\.\d{2}\.$/);
+      const noShow = await bodyFor(studentIds[1]!);
+      expect(noShow).toMatch(/^We missed you at .* If this isn't right, talk to your teacher\.$/);
+      expect(noShow).not.toContain('Pay your teacher directly');
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     }
   });

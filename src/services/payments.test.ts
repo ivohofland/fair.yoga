@@ -325,6 +325,28 @@ describe('Payment Service (DB)', () => {
     expect(notification.body).toContain('€24.59');
   });
 
+  it('sendPaymentReminder leaves out "Pay your teacher directly" when the teacher has a payment method', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'pending', method: null, paidAt: null, reminderSentAt: null },
+    });
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Teacher' },
+    });
+    onTestFinished(async () => {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+    });
+
+    paymentOf(await sendPaymentReminder(prisma, paymentId), 'applied');
+
+    const notification = await prisma.notification.findFirstOrThrow({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(notification.body).toMatch(/^€24\.59 for Hatha class on .* at 09:00 is still open\.$/);
+  });
+
   /**
    * `teacherId` does two jobs in both queries below — it scopes the `where`,
    * and it selects which `StudentPrivacy` row the projection reads (see

@@ -12,8 +12,8 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
-import { formatDayHeader } from '@/lib/format';
-import { timeToHHmm } from '@/lib/time-of-day';
+import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
+import { paymentMethodsFor } from '@/lib/payment-methods';
 import { readInPages } from '@/lib/read-in-pages';
 
 export const OVERDUE_AFTER_DAYS = 7;
@@ -62,7 +62,14 @@ function readDuePaymentPage(
           class: {
             select: {
               id: true,
-              calendarEntry: { select: { classType: true, date: true, startTime: true } },
+              calendarEntry: {
+                select: {
+                  classType: true,
+                  date: true,
+                  startTime: true,
+                  teacher: { select: { bankIban: true, bankAccountName: true } },
+                },
+              },
             },
           },
         },
@@ -121,7 +128,11 @@ export async function sendPaymentReminders(
           recipientId: payment.registration.studentId,
           type: 'reminder',
           title: 'Payment outstanding',
-          body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.calendarEntry.classType} class on ${formatDayHeader(payment.registration.class.calendarEntry.date)} at ${timeToHHmm(payment.registration.class.calendarEntry.startTime)} is still open. Pay your teacher directly.`,
+          body: studentPaymentReminderBody(
+            payment.registration.class.calendarEntry,
+            Number(payment.amount),
+            paymentMethodsFor(payment.registration.class.calendarEntry.teacher).length > 0,
+          ),
           relatedClassId: payment.registration.class.id,
         },
       ];
