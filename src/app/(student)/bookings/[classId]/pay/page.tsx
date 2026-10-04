@@ -102,7 +102,8 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
   const methods = paymentMethodsFor(teacher);
   const state = paymentStateText(payment.status);
-  const chargeNote = chargeNoteFor(registration.status);
+  // A waived payment is not charged, so it gets no line saying it still is.
+  const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);
   const breakdown = resolveReportedPaymentBreakdown(
     {
       classStatus: cls.status,

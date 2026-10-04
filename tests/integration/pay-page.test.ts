@@ -37,6 +37,7 @@ describe('GET /bookings/[classId]/pay', () => {
     dual: '',
     lateCancel: '',
     noShow: '',
+    lateCancelWaived: '',
     chargedWithoutPayment: '',
     paidWithoutTimestamp: '',
   };
@@ -187,6 +188,7 @@ describe('GET /bookings/[classId]/pay', () => {
     classIds.dual = await completedClass(noBankTeacher, { classType: `Pay Dual ${suffix}`, date: new Date('2026-06-02T00:00:00.000Z') }, dualStudent.id, 'attended', { amount: 4.5, status: 'pending' });
     classIds.lateCancel = await completedClass(bankTeacher, { classType: `Pay Late ${suffix}`, date: new Date('2026-06-06T00:00:00.000Z') }, student.id, 'late_cancel', { amount: 5.5, status: 'pending' });
     classIds.noShow = await completedClass(bankTeacher, { classType: `Pay Absent ${suffix}`, date: new Date('2026-06-07T00:00:00.000Z') }, student.id, 'no_show', { amount: 5.25, status: 'pending' });
+    classIds.lateCancelWaived = await completedClass(bankTeacher, { classType: `Pay LateWaived ${suffix}`, date: new Date('2026-06-10T00:00:00.000Z') }, student.id, 'late_cancel', { amount: 5.5, status: 'not_charged' });
     classIds.chargedWithoutPayment = await completedClass(bankTeacher, { classType: `Pay Missing ${suffix}`, date: new Date('2026-06-08T00:00:00.000Z') }, student.id, 'attended', null);
     classIds.paidWithoutTimestamp = await completedClass(bankTeacher, { classType: `Pay Undated ${suffix}`, date: new Date('2026-06-09T00:00:00.000Z') }, student.id, 'attended', { amount: 6.5, status: 'paid', paidAt: null });
 
@@ -254,6 +256,16 @@ describe('GET /bookings/[classId]/pay', () => {
     const html = await res.text();
     expect(html).toContain('Marked absent — this class is still charged.');
     expect(html).not.toContain('Cancelled after the deadline');
+  });
+
+  // A waived payment is not charged, so nothing may say it still is.
+  it('gives a waived late cancel no charge explanation', async () => {
+    const res = await payPage(classIds.lateCancelWaived, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('⊘ Not charged');
+    expect(html).toContain('Paybank isn’t charging for this class.');
+    expect(html).not.toContain('still charged');
   });
 
   it('gives an attended registration no charge explanation', async () => {
