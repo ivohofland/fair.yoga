@@ -8,9 +8,8 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
  * Read-only offline (#725), end to end. The design and what each cache holds:
  * docs/technical-architecture.md (Offline (service worker)).
  *
- * This is the one spec that lets the service worker run; `playwright.config.ts`
- * blocks it everywhere else, so no other spec's behaviour depends on it, and
- * `setOffline` only reaches worker fetches when the worker is allowed.
+ * The worker is allowed to run below (the config blocks it by default), and
+ * `setOffline` only reaches worker fetches when it is.
  */
 
 test.use({ serviceWorkers: 'allow' });
@@ -39,8 +38,17 @@ test.describe('Offline schedule', () => {
 
   test.beforeAll(async ({}, testInfo) => {
     test.skip(testInfo.project.name !== 'chromium', 'Chromium project only');
+    // From 23:00 UTC the class below has started, and a running scheduler moves it to in_progress, which has no "Cancel class" button. CI runs no scheduler.
+    test.skip(
+      !process.env.CI && new Date().getUTCHours() === 23,
+      'The class started at 23:00 UTC would be moved to in_progress by a local scheduler; run again after midnight UTC.',
+    );
     // `next dev` names its HMR client chunk in every page; a production build never does.
     const html = await (await fetch(`${BASE_URL}/login`)).text();
+    // On CI the browser proof must fail, never silently vanish.
+    if (process.env.CI && html.includes('hmr-client')) {
+      throw new Error('The offline spec needs a production build, but the server at BASE_URL is a dev server.');
+    }
     test.skip(
       html.includes('hmr-client'),
       'Needs a production build: next dev lazily loads chunks the worker never stores (docs/technical-architecture.md, "Offline (service worker)").',

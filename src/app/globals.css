@@ -148,7 +148,7 @@
     color: var(--color-teal);
   }
 
-  /* Controls the offline snapshot's fieldset disables look disabled, whatever classes they carry. */
+  /* Dims a control the offline snapshot's fieldset has disabled. This is in the base layer, so a control's own opacity or cursor utility takes precedence. */
   fieldset[data-offline-fieldset]:disabled :is(button, input, select, textarea):disabled {
     opacity: 0.5;
     cursor: not-allowed;
