@@ -205,7 +205,7 @@ describe('attendance outbox', () => {
     it('deletes a stored value that is not JSON or has the wrong shape', () => {
       storage.setItem('fy-outbox:acc1:r1', '{not json');
       storage.setItem('fy-outbox:acc1:r2', JSON.stringify({ v: 1, registrationId: 'r2', target: 'toggle' }));
-      storage.setItem('fy-outbox-refused:acc1:r3', JSON.stringify({ v: 2 }));
+      storage.setItem('fy-outbox-refused:acc1:r3', JSON.stringify({ v: 1 }));
       storage.setItem('fy-outbox-note:acc1:c1', JSON.stringify({ v: 1, classId: 7 }));
       enqueueAttendance(OWNER, entry('r4'));
       // Stored under the wrong registration's key.
@@ -215,6 +215,27 @@ describe('attendance outbox', () => {
       expect(snapshot.refused).toEqual([]);
       expect(snapshot.notes).toEqual([]);
       expect(storage.keys()).toEqual(['fy-outbox:acc1:r4']);
+    });
+
+    it('keeps, and skips, a value written in a newer format', () => {
+      const newer = JSON.stringify({ v: 2, ...entry('r1'), nonce: 'n', recordedAt: NOW, attempts: 0 });
+      storage.setItem('fy-outbox:acc1:r1', newer);
+      storage.setItem('fy-outbox-confirmed:acc1:r2', JSON.stringify({ v: 2, target: 'attended', confirmedAt: NOW }));
+      expect(getOutboxSnapshot(OWNER)).toBe(EMPTY_OUTBOX);
+      expect(pendingCount(OWNER)).toBe(0);
+      expect(storage.keys()).toEqual(['fy-outbox-confirmed:acc1:r2', 'fy-outbox:acc1:r1']);
+      expect(storage.getItem('fy-outbox:acc1:r1')).toBe(newer);
+    });
+
+    it('deletes nothing when reading a value throws', () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      vi.spyOn(storage, 'getItem').mockImplementation(() => {
+        throw new DOMException('denied', 'SecurityError');
+      });
+      expect(getOutboxSnapshot(OWNER).queued).toEqual([]);
+      vi.mocked(storage.getItem).mockRestore();
+      expect(storage.keys()).toEqual(['fy-outbox:acc1:r1']);
+      expect(getOutboxSnapshot(OWNER).queued.map((e) => e.registrationId)).toEqual(['r1']);
     });
 
     it('purging other owners leaves the current owner and unrelated keys', () => {
@@ -389,6 +410,40 @@ describe('attendance outbox', () => {
       expect(JSON.parse(String(init.body))).toEqual({ status: 'no_show' });
     });
 
+    it('times the request out after 10 s', async () => {
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+      enqueueAttendance(OWNER, entry('r1'));
+      fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
+      await flushOutbox(OWNER);
+      expect(timeout).toHaveBeenCalledWith(10_000);
+    });
+
+    it('without AbortSignal.timeout, still sends the request and aborts it after 10 s', async () => {
+      const original = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+      Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+      try {
+        enqueueAttendance(OWNER, entry('r1'));
+        let signal: AbortSignal | undefined;
+        fetchMock.mockImplementationOnce(
+          (_url: string, init: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              signal = init.signal ?? undefined;
+              signal?.addEventListener('abort', () => reject(signal?.reason));
+            }),
+        );
+        const flushing = flushOutbox(OWNER);
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(signal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(signal?.aborted).toBe(true);
+        await expect(flushing).resolves.toEqual({ applied: 0, replayed: 0 });
+        expect(getOutboxSnapshot(OWNER).queued.map((e) => e.registrationId)).toEqual(['r1']);
+      } finally {
+        if (original !== undefined) Object.defineProperty(AbortSignal, 'timeout', original);
+      }
+    });
+
     it('two taps on one row replay as the latest target, and a second flush answers unchanged', async () => {
       enqueueAttendance(OWNER, entry('r1', 'attended'));
       enqueueAttendance(OWNER, entry('r1', 'no_show'));
@@ -517,6 +572,23 @@ describe('attendance outbox', () => {
         expect(storage.keys()).toEqual([]);
       });
 
+      it('200 on a completed class after the outbox was cleared meanwhile: writes no note', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        let release: (res: Response) => void = () => {};
+        fetchMock.mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              release = resolve;
+            }),
+        );
+        const flushing = flushOutbox(OWNER);
+        await vi.advanceTimersByTimeAsync(0);
+        clearAllOutboxes();
+        release(applied('r1', 'attended', true));
+        await flushing;
+        expect(storage.keys()).toEqual([]);
+      });
+
       it('200 into a full store: the confirmation is written once the queued key frees room', async () => {
         enqueueAttendance(OWNER, entry('r1'));
         const setItem = storage.setItem.bind(storage);
@@ -618,7 +690,6 @@ describe('attendance outbox', () => {
         ['502', () => Promise.resolve(new Response('Bad gateway', { status: 502 }))],
         ['503', () => Promise.resolve(refusal(503, undefined, 'Down'))],
         ['504', () => Promise.resolve(new Response('', { status: 504 }))],
-        ['a 403 that is not JSON', () => Promise.resolve(new Response('<html>Forbidden</html>', { status: 403 }))],
       ])('%s: keeps everything and stops', async (_name, answer) => {
         enqueueAttendance(OWNER, entry('r1'));
         vi.setSystemTime(NOW + 1);
@@ -636,6 +707,8 @@ describe('attendance outbox', () => {
       it.each([
         ['409 CONCURRENT_MODIFICATION', () => refusal(409, 'CONCURRENT_MODIFICATION', 'Changed meanwhile')],
         ['500', () => new Response('<html>Internal error</html>', { status: 500 })],
+        ['a 403 that is not JSON', () => new Response('<html>Forbidden</html>', { status: 403 })],
+        ['a 409 that is not JSON', () => new Response('<html>Conflict</html>', { status: 409 })],
       ])('%s: counts an attempt, refuses on the third, and carries on to the next entry', async (_name, answer) => {
         enqueueAttendance(OWNER, entry('r1'));
         vi.setSystemTime(NOW + 1);
@@ -652,18 +725,21 @@ describe('attendance outbox', () => {
         const snapshot = getOutboxSnapshot(OWNER);
         expect(snapshot.queued).toEqual([]);
         expect(snapshot.refused.map((e) => [e.registrationId, e.attempts, e.refusedAt])).toEqual([['r1', 3, NOW + 1]]);
-        expect(snapshot.refused[0]?.message).not.toBe('');
+        expect(snapshot.refused[0]?.message).toBe("This change couldn't be saved after several tries.");
       });
 
-      it('409 CONCURRENT_MODIFICATION on the third attempt is refused with the server’s message', async () => {
+      it.each([
+        ['409 CONCURRENT_MODIFICATION', () => refusal(409, 'CONCURRENT_MODIFICATION', 'Refresh and try again.')],
+        ['500', () => refusal(500, undefined, 'Refresh and try again.')],
+      ])('%s on the third attempt is refused with the outbox’s own words, not the server’s', async (_name, answer) => {
         enqueueAttendance(OWNER, entry('r1'));
-        fetchMock.mockImplementation(() =>
-          Promise.resolve(refusal(409, 'CONCURRENT_MODIFICATION', 'Someone changed this booking.')),
-        );
+        fetchMock.mockImplementation(() => Promise.resolve(answer()));
         await flushOutbox(OWNER);
         await flushOutbox(OWNER);
         await flushOutbox(OWNER);
-        expect(getOutboxSnapshot(OWNER).refused[0]?.message).toBe('Someone changed this booking.');
+        expect(getOutboxSnapshot(OWNER).refused.map((e) => e.message)).toEqual([
+          "This change couldn't be saved after several tries.",
+        ]);
       });
 
       it.each([
@@ -692,6 +768,42 @@ describe('attendance outbox', () => {
         ]);
         expect(snapshot.confirmed).toEqual({ r2: confirmedAs('attended', NOW + 1) });
         expect(storage.keys()).toEqual(['fy-outbox-confirmed:acc1:r2', 'fy-outbox-refused:acc1:r1']);
+      });
+
+      describe('a flush that stops while the device says online leaves a trace', () => {
+        it.each([
+          ['a thrown fetch', () => Promise.reject(new TypeError('Failed to fetch')), { reason: 'thrown' }],
+          [
+            'a 200 without the matching body',
+            () => Promise.resolve(new Response('<html>Hotel wifi</html>', { status: 200 })),
+            { reason: 'non-matching-body', status: 200 },
+          ],
+          ['a 503', () => Promise.resolve(refusal(503, undefined, 'Down')), { reason: 'status', status: 503 }],
+          ['a 429', () => Promise.resolve(refusal(429, undefined, 'Slow down')), { reason: 'status', status: 429 }],
+          [
+            'a 401',
+            () => Promise.resolve(refusal(401, undefined, 'Session expired')),
+            { reason: 'status', status: 401 },
+          ],
+        ])('%s', async (_name, answer, context) => {
+          enqueueAttendance(OWNER, entry('r1'));
+          fetchMock.mockImplementationOnce(answer);
+          await flushOutbox(OWNER);
+          expect(outboxErrors()).toEqual([
+            [
+              '[attendance-outbox] request failed',
+              expect.objectContaining({ stage: 'send', registrationId: 'r1', ...context }),
+            ],
+          ]);
+        });
+
+        it('but not while the device says offline', async () => {
+          vi.stubGlobal('navigator', { onLine: false });
+          enqueueAttendance(OWNER, entry('r1'));
+          fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+          await flushOutbox(OWNER);
+          expect(outboxErrors()).toEqual([]);
+        });
       });
 
       it('401: sets needsSignIn, keeps everything and stops; a later answered flush clears it', async () => {

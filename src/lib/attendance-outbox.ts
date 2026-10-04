@@ -67,6 +67,8 @@ const LOCK_NAME = 'fy-outbox';
 /** Far above one pass; a holder that keeps the lock longer is treated as gone, and this flush ends. */
 const LOCK_WAIT_MS = 60_000;
 const REFUSED_FALLBACK = "This change couldn't be saved.";
+/** A refusal after `MAX_ATTEMPTS`: the server's own words there ask for a refresh, which does nothing for a queued mark. */
+const RETRIES_EXHAUSTED = "This change couldn't be saved after several tries.";
 const TARGETS: ReadonlySet<string> = new Set<AttendanceTarget>(['attended', 'no_show', 'late_cancel']);
 
 export const EMPTY_OUTBOX: OutboxSnapshot = Object.freeze({
@@ -144,13 +146,27 @@ function remove(key: string): void {
   }
 }
 
-function readJson(store: Storage, key: string): unknown {
+/** A stored value: gone, unreadable (the read threw), not JSON, or parsed. */
+type StoredValue = { kind: 'missing' } | { kind: 'unreadable' } | { kind: 'invalid' } | { kind: 'parsed'; value: unknown };
+
+function readJson(store: Storage, key: string): StoredValue {
+  let raw: string | null;
   try {
-    const raw = store.getItem(key);
-    return raw === null ? null : (JSON.parse(raw) as unknown);
+    raw = store.getItem(key);
   } catch {
-    return undefined;
+    return { kind: 'unreadable' };
   }
+  if (raw === null) return { kind: 'missing' };
+  try {
+    return { kind: 'parsed', value: JSON.parse(raw) as unknown };
+  } catch {
+    return { kind: 'invalid' };
+  }
+}
+
+/** Written by a later version of this module, which may still want it. */
+function isNewerFormat(value: unknown): boolean {
+  return isRecord(value) && typeof value.v === 'number' && value.v > VERSION;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -213,7 +229,11 @@ function asNote(value: unknown, id: string): CompletionNote | null {
   return { classId: id, classLabel };
 }
 
-/** The owner's valid values under `prefix`; a wrong-shaped one is deleted. */
+/**
+ * The owner's valid values under `prefix`. A value that is not JSON, or has the
+ * wrong shape, is deleted; one in a newer format, or one whose read threw, is
+ * skipped and kept.
+ */
 function readAll<T>(owner: string, prefix: string, parse: (value: unknown, id: string) => T | null): T[] {
   const store = storage();
   if (store === null) return [];
@@ -221,7 +241,10 @@ function readAll<T>(owner: string, prefix: string, parse: (value: unknown, id: s
   try {
     for (const { key, owner: keyOwner, id } of keysUnder(store, prefix)) {
       if (keyOwner !== owner) continue;
-      const parsed = parse(readJson(store, key), id);
+      const stored = readJson(store, key);
+      if (stored.kind === 'missing' || stored.kind === 'unreadable') continue;
+      if (stored.kind === 'parsed' && isNewerFormat(stored.value)) continue;
+      const parsed = stored.kind === 'parsed' ? parse(stored.value, id) : null;
       if (parsed === null) remove(key);
       else values.push(parsed);
     }
@@ -240,7 +263,8 @@ function readQueued(owner: string): OutboxEntry[] {
 function readStoredEntry(owner: string, registrationId: string): OutboxEntry | null {
   const store = storage();
   if (store === null) return null;
-  return asEntry(readJson(store, keyFor(QUEUED_PREFIX, owner, registrationId)), registrationId);
+  const stored = readJson(store, keyFor(QUEUED_PREFIX, owner, registrationId));
+  return stored.kind === 'parsed' ? asEntry(stored.value, registrationId) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,9 +279,9 @@ function notify(): void {
  * writes its confirmation before it removes the queued key — so a read is all
  * this tab needs. A `null` key is a `clear()` of the whole store.
  */
-function onStorage(event: Event): void {
-  const key: unknown = (event as unknown as Record<string, unknown>).key;
-  if (key !== null && !(typeof key === 'string' && PREFIXES.some((prefix) => key.startsWith(prefix)))) return;
+function onStorage(event: StorageEvent): void {
+  const { key } = event;
+  if (key !== null && !PREFIXES.some((prefix) => key.startsWith(prefix))) return;
   notify();
 }
 
@@ -408,12 +432,58 @@ function refuse(owner: string, entry: OutboxEntry, message: string, attempts: nu
   });
 }
 
-function isAppliedBody(
+/** A signal that aborts after `ms`; built by hand where the browser has no `AbortSignal.timeout`. */
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new DOMException('The request timed out.', 'TimeoutError')), ms);
+  return controller.signal;
+}
+
+/** The URL an attendance mark is written to. */
+export function attendanceUrl(registrationId: string): string {
+  return `/api/registrations/${encodeURIComponent(registrationId)}`;
+}
+
+/**
+ * The request that writes an attendance mark, queued or direct: no redirect
+ * followed (a portal's answer is not the app's), nothing cached, 10 s timeout.
+ */
+export function attendanceRequest(target: AttendanceTarget): RequestInit {
+  return {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: target }),
+    redirect: 'error',
+    cache: 'no-store',
+    signal: timeoutSignal(REQUEST_TIMEOUT_MS),
+  };
+}
+
+/** Whether `value` is the app's answer for this write: the registration, holding the target. */
+export function isAttendanceAnswer(
   value: unknown,
-  entry: OutboxEntry,
+  registrationId: string,
+  target: AttendanceTarget,
 ): value is { data: { id: string; status: string; classCompleted?: unknown }; outcome?: unknown } {
   if (!isRecord(value) || !isRecord(value.data)) return false;
-  return value.data.id === entry.registrationId && value.data.status === entry.target;
+  return value.data.id === registrationId && value.data.status === target;
+}
+
+/**
+ * Ends the pass with the entry kept. Logged when the device says it is online,
+ * so a stop that keeps recurring leaves a trace; offline it is the expected case.
+ */
+function stop(
+  entry: OutboxEntry,
+  reason: 'thrown' | 'non-matching-body' | 'status',
+  status: number | undefined,
+  err: unknown,
+): 'stop' {
+  if (typeof navigator !== 'undefined' && navigator.onLine === true) {
+    logRequestFailure('attendance-outbox', { stage: 'send', registrationId: entry.registrationId, reason, status }, err);
+  }
+  return 'stop';
 }
 
 /** When the server answered, by its `Date` header; the device clock when the header is missing or unreadable. */
@@ -432,24 +502,21 @@ async function readJsonBody(res: Response): Promise<{ ok: true; body: unknown } 
 }
 
 async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
+  // Outside the `try`: a failure to build the request is a bug, not "offline".
+  const init = attendanceRequest(entry.target);
   let res: Response;
   try {
-    res = await fetch(`/api/registrations/${encodeURIComponent(entry.registrationId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: entry.target }),
-      redirect: 'error',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch {
+    res = await fetch(attendanceUrl(entry.registrationId), init);
+  } catch (err) {
     // Offline, timed out or redirected (a portal): the entry waits for the next flush.
-    return 'stop';
+    return stop(entry, 'thrown', undefined, err);
   }
 
   if (res.status === 200) {
     const read = await readJsonBody(res);
-    if (!read.ok || !isAppliedBody(read.body, entry)) return 'stop';
+    if (!read.ok || !isAttendanceAnswer(read.body, entry.registrationId, entry.target)) {
+      return stop(entry, 'non-matching-body', res.status, new Error('200 without the matching body'));
+    }
     const { body } = read;
     setNeedsSignIn(owner, false);
     const queuedKey = keyFor(QUEUED_PREFIX, owner, entry.registrationId);
@@ -468,7 +535,7 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
       if (!written) write(confirmedKey, confirmation);
     }
     const applied = body.outcome === undefined;
-    if (applied && body.data.classCompleted === true && !entry.knownCompleted) {
+    if (stored !== null && applied && body.data.classCompleted === true && !entry.knownCompleted) {
       write(keyFor(NOTE_PREFIX, owner, entry.classId), { classId: entry.classId, classLabel: entry.classLabel });
     }
     notify();
@@ -477,25 +544,24 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
 
   if (res.status === 401) {
     setNeedsSignIn(owner, true);
-    return 'stop';
+    return stop(entry, 'status', res.status, new Error('401'));
   }
 
-  const retryable = res.status === 500 || res.status === 409;
-  const refusable = res.status >= 400 && res.status < 500 && res.status !== 429;
-  if (!retryable && !refusable) return 'stop';
+  const clientError = res.status >= 400 && res.status < 500 && res.status !== 429;
+  if (res.status !== 500 && !clientError) return stop(entry, 'status', res.status, new Error(`${res.status}`));
 
-  // A 4xx that is not JSON came from something other than the app (a proxy, a
-  // portal) and says nothing about the entry. A 500 is counted whatever its body.
-  if (res.status !== 500 && !(await readJsonBody(res.clone())).ok) return 'stop';
+  // Only a JSON 4xx is the app's verdict on the entry. A 500, or a 4xx that is
+  // not JSON (a proxy, a firewall), is counted as an attempt whatever its body.
+  const fromApp = res.status !== 500 && (await readJsonBody(res.clone())).ok;
   const { code, message } = await readError(res, REFUSED_FALLBACK);
-  if (res.status !== 500) setNeedsSignIn(owner, false);
+  if (fromApp) setNeedsSignIn(owner, false);
 
   let superseded: boolean;
-  if (res.status === 500 || code === 'CONCURRENT_MODIFICATION') {
+  if (!fromApp || code === 'CONCURRENT_MODIFICATION') {
     const attempts = entry.attempts + 1;
     superseded =
       attempts >= MAX_ATTEMPTS
-        ? refuse(owner, entry, message, attempts)
+        ? refuse(owner, entry, RETRIES_EXHAUSTED, attempts)
         : ifUnchanged(owner, entry, () =>
             write(keyFor(QUEUED_PREFIX, owner, entry.registrationId), { ...entry, attempts }),
           );

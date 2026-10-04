@@ -553,10 +553,12 @@ An entry missing either header, or with one unparseable, is never served. Retent
 |---|---|
 | 200 whose JSON body is `{data: {id, status}}` matching the entry, applied or `unchanged` | a confirmation is stored (*Confirmations* below), then the entry is removed, unless a newer tap replaced it while in flight (its nonce changed); the newer one is sent next |
 | 200 without that body (a captive portal, a proxy page) | kept; the flush stops |
-| 409 `CONCURRENT_MODIFICATION`, or 500 | kept and retried on a later flush; after 3 attempts, refused |
+| 409 `CONCURRENT_MODIFICATION`, 500, or a 4xx other than 401 and 429 that is not JSON (a proxy or firewall page) | kept and retried on a later flush; after 3 attempts, refused with "This change couldn't be saved after several tries." |
 | any other 4xx except 401 and 429 | moved to refused, with the server's message; refused entries expire after 7 days |
 | 401 | the flush stops, everything is kept, and the sync block offers "Sign in again" |
-| network failure, 10 s timeout, a redirect (`redirect: 'error'`), 429, 502/503/504, a non-JSON 4xx | the flush stops, everything is kept |
+| network failure, 10 s timeout, a redirect (`redirect: 'error'`), 429, 502/503/504 | the flush stops, everything is kept |
+
+Every response that stops the flush (the 200 without the body, 401 and the last row) is logged with its reason and status while `navigator.onLine` is true; offline it is the expected case and stays quiet.
 
 - *One flush at a time.* Per tab, a module-level promise (a trigger during a flush adds one more pass). Across tabs, under `navigator.locks` where the browser has it; a tab that waits 60 s for the lock gives up that pass with its entries still queued, so a holder that never lets go cannot stall it. Without locks, two tabs can each send; the nonce check keeps the newer local entry, which sends last.
 - *Other tabs.* A tab learns of another tab's changes from the `storage` event and re-reads storage; it infers nothing from what a key held. Everything a flush settles is in storage, and it writes the confirmation before it removes the queued key, so a read between the two finds the queued mark and a read after them the confirmation — never neither. The flush checks the entry's nonce and then makes those writes, and nothing makes the sequence atomic across tabs: a tap in another tab landing between the check and the remove is removed with the entry that was sent. That row then shows the confirmed, sent target — what the server holds — and the newer tap is lost, never shown as saved. The window is the gap between synchronous storage calls.

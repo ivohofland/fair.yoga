@@ -84,11 +84,11 @@ tap on the device wins either way. Entries go oldest first; the PUT uses
 | Response | Entry |
 |---|---|
 | 200 whose JSON body is `{data: {id, status}}` matching the entry, applied or `unchanged` | a confirmation is stored (§3), then the entry is removed, unless its nonce changed while in flight (a newer tap); the newer entry is sent next |
-| 200 without that body (a captive portal, a proxy page) | kept; treated as a network failure |
-| 409 `CONCURRENT_MODIFICATION`, or 500 whatever its body | kept and retried on the next flush; after 3 attempts, refused |
+| 200 without that body (a captive portal, a proxy page) | kept; treated as a network failure, and logged while the device says online |
+| 409 `CONCURRENT_MODIFICATION`, 500 whatever its body, or a 4xx other than 401 and 429 that is not JSON | kept and retried on the next flush; after 3 attempts, refused with "This change couldn't be saved after several tries." |
 | any other 4xx except 401 and 429 | moved to *refused*, with the server's message |
-| 401 | flush stops, everything kept, "Sign in again to sync N changes" |
-| network failure, timeout, redirect, 429, 502/503/504, a non-JSON 4xx | flush stops, everything kept |
+| 401 | flush stops, everything kept, "Sign in again to sync N changes"; logged while the device says online |
+| network failure, timeout, redirect, 429, 502/503/504 | flush stops, everything kept; logged with its reason while the device says online |
 
 A 500 is per-entry, not flush-stopping, so one row the server keeps failing
 on cannot block every later tap.
