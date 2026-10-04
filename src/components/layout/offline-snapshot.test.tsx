@@ -5,6 +5,7 @@ import { OfflineSnapshot } from './offline-snapshot';
 import { Button } from '@/components/ui/button';
 import { AttendanceList } from '@/components/class/attendance-list';
 import type { ConnectionStatus } from '@/lib/offline-status';
+import { enqueueAttendance, resetOutboxForTests } from '@/lib/attendance-outbox';
 
 const { status, isOfflineNow, warmOfflinePages, router, pathname } = vi.hoisted(() => ({
   status: { current: { offline: false, serverNow: null } as ConnectionStatus },
@@ -50,7 +51,36 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  localStorage.clear();
+  resetOutboxForTests();
 });
+
+const queuedMark = {
+  registrationId: 'r1',
+  classId: 'c1',
+  classLabel: 'Hatha · Sun 4 Oct 09:00',
+  studentName: 'Ada',
+  target: 'attended',
+  knownCompleted: false,
+} as const;
+
+/** A refused mark as the outbox stores one, for an owner. */
+function storeRefused(owner: string): void {
+  localStorage.setItem(
+    `fy-outbox-refused:${owner}:r2`,
+    JSON.stringify({
+      v: 1,
+      ...queuedMark,
+      registrationId: 'r2',
+      studentName: 'Grace',
+      nonce: 'n2',
+      recordedAt: Date.now(),
+      attempts: 0,
+      message: 'This class was cancelled.',
+      refusedAt: Date.now(),
+    }),
+  );
+}
 
 describe('OfflineSnapshot', () => {
   it('carries the owner marker, and online its status is empty and screen-reader-only', () => {
@@ -60,6 +90,42 @@ describe('OfflineSnapshot', () => {
     expect(notice).toBeEmptyDOMElement();
     expect(notice).toHaveClass('sr-only');
     expect(container.querySelector('fieldset')).not.toBeDisabled();
+  });
+
+  describe('sync block', () => {
+    it('is absent while the outbox holds nothing', () => {
+      const { container } = render(ui());
+      expect(container.querySelector('[data-sync-status]')).toBeNull();
+    });
+
+    it('shows the owner\'s queued marks online, visibly and above the offline marker, outside the fieldset', () => {
+      enqueueAttendance('account-1', queuedMark);
+      const { container } = render(ui());
+      const block = container.querySelector('[data-sync-status]');
+      expect(block).not.toBeNull();
+      expect(block).toHaveTextContent('1 change waiting to sync');
+      expect(block).not.toHaveClass('sr-only');
+      expect(block?.closest('fieldset')).toBeNull();
+      const marker = container.querySelector('p[role="status"].sr-only');
+      expect(marker).not.toBeNull();
+      expect(block?.compareDocumentPosition(marker as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
+    it('reads only this page\'s owner', () => {
+      enqueueAttendance('account-2', queuedMark);
+      const { container } = render(ui());
+      expect(container.querySelector('[data-sync-status]')).toBeNull();
+    });
+
+    it('keeps a refusal\'s Dismiss enabled offline', () => {
+      storeRefused('account-1');
+      status.current = { offline: true, serverNow: null };
+      render(ui());
+      const dismiss = screen.getByRole('button', { name: /^Dismiss: Grace/ });
+      expect(dismiss).not.toBeDisabled();
+      act(() => dismiss.click());
+      expect(screen.queryByRole('button', { name: /^Dismiss: Grace/ })).toBeNull();
+    });
   });
 
   it('marks its fieldset for the stylesheet rule that dims what it disables', () => {

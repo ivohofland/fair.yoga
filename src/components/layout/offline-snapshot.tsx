@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { isOfflineNow, useConnectionStatus } from '@/lib/offline-status';
 import { warmOfflinePages } from '@/lib/offline-client';
 import type { OfflineSnapshotStamp } from '@/lib/offline-snapshot-props';
+import { SyncStatus } from './sync-status';
 
 /** How far a page's render may trail the server's clock before a successful ping refreshes it. */
 const STALE_AFTER_MS = 60_000;
@@ -20,7 +21,8 @@ function todayIn(timeZone: string): string | null {
 
 /**
  * Wraps a page the service worker may store. Offline, it says when the page
- * was loaded and disables every control inside it through the fieldset. The
+ * was loaded and disables every control inside it through the fieldset. Above
+ * both sits the attendance outbox's sync block, outside the fieldset. The
  * `data-offline-owner` attribute is the owner marker the worker requires; see
  * docs/technical-architecture.md (Offline (service worker)).
  */
@@ -57,6 +59,7 @@ export function OfflineSnapshot({
 
   return (
     <div data-offline-owner={ownerId}>
+      <SyncStatus owner={ownerId} />
       <p role="status" className={offline ? 'type-label text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-4' : 'sr-only'}>
         {offline && `Offline — showing what was loaded ${loaded}`}
       </p>
