@@ -67,7 +67,7 @@ describe('PaymentDetails', () => {
     renderDetails();
     fireEvent.click(screen.getByRole('button', { name: 'Copy IBAN' }));
     expect(await screen.findByRole('status')).toHaveTextContent(
-      "Couldn't copy the IBAN — press and hold it to select",
+      'Couldn’t copy the IBAN — press and hold it to select',
     );
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
   });
@@ -77,7 +77,7 @@ describe('PaymentDetails', () => {
     renderDetails();
     fireEvent.click(screen.getByRole('button', { name: 'Copy IBAN' }));
     expect(await screen.findByRole('status')).toHaveTextContent(
-      "Couldn't copy the IBAN — press and hold it to select",
+      'Couldn’t copy the IBAN — press and hold it to select',
     );
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
   });
