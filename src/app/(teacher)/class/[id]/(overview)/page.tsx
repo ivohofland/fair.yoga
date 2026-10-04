@@ -15,7 +15,7 @@ import { CompleteClassButton } from '@/components/class/complete-class-button';
 import { RefreshAt } from '@/components/class/refresh-at';
 import type { AttendanceItem, AttendanceStatus } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
-import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
+import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, classPageClock, formatClockInZone } from '@/lib/finish-window';
 import { CancelClassButton } from '@/components/class/cancel-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
@@ -27,6 +27,7 @@ import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
 import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
+import { attendanceOutboxProps } from '@/lib/attendance-outbox-props';
 
 export default async function ClassDetailPage({
   params,
@@ -163,14 +164,7 @@ export default async function ClassDetailPage({
 
   const stamp = offlineSnapshotStamp(session, new Date(now));
 
-  // What a queued attendance mark is filed under, and how the sync block names
-  // the class: formatted here, because the zone formatters log on the server.
-  const attendanceOutbox = {
-    owner: session.accountId,
-    classId: cls.id,
-    classLabel: `${cls.calendarEntry.classType} on ${formatInstantInZone(start, tz)}`,
-    completed: cls.status === 'completed',
-  };
+  const attendanceOutbox = attendanceOutboxProps(session, cls, start, tz);
 
   return (
     <OfflineSnapshot {...stamp}>

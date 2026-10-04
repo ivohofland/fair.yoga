@@ -34,7 +34,8 @@ interface AttendanceListProps {
   classId: string;
   /** The class as the sync block names it, formatted by the server. */
   classLabel: string;
-  /** True when the class's status is `completed` — recorded on each queued
+  /** True when this page rendered the class `completed` — what the page
+   *  showed, frozen at render like every prop here. Recorded on each queued
    *  mark, so a sync can tell a correction from a mark that landed after the
    *  class finished. */
   completed: boolean;
@@ -63,24 +64,24 @@ function statusLabel(status: AttendanceStatus): string {
   }
 }
 
-
 /**
- * No `classIsOpen` prop, deliberately — an earlier version had one and it could
- * not work.
+ * The control is offered whatever the class status, and no prop gates it.
  *
  * The server refuses `late_cancel -> attended` while the class is still `open`
  * (see the WHERE in `api/registrations/[id]/route.ts`), and the obvious move is
  * to disable the control until then. But this page is a server component with
  * no `revalidate`, and check-in renders from T-15min, while
- * `autoTransitionToInProgress` flips the class up to 60s after the start. Any
- * class-status prop is therefore frozen at render: a teacher who opened the page
- * before the class began would hold a permanently disabled control, under a
- * tooltip saying "once the class has started", for the whole class. That trades
- * a visible refusal for a silent one, which is worse.
+ * `autoTransitionToInProgress` flips the class up to 60s after the start. Every
+ * prop is frozen at render: a control gated on the status would stay disabled,
+ * under a tooltip saying "once the class has started", for the whole class for
+ * a teacher who opened the page before it began. That trades a visible refusal
+ * for a silent one, which is worse. `completed` is frozen too, deliberately: it
+ * records what the page showed, and gates nothing.
  *
  * The server is the only thing that knows, so it judges each write when it
- * arrives and a refusal shows its reason on the row. A tap never refreshes the
- * page: offline, a failed refresh becomes a hard reload mid check-in.
+ * arrives and a refusal shows its reason on the row, or above the list for a
+ * direct write. A tap never refreshes the page: offline, a failed refresh
+ * becomes a hard reload mid check-in.
  *
  * Every tap is queued in the attendance outbox (`@/lib/attendance-outbox`) and
  * a sync replays it; a row shows, in order, its queued mark, else the status
@@ -171,9 +172,8 @@ export function AttendanceList({
       if (response.ok) {
         setDirect((prev) => ({ ...prev, [registrationId]: newStatus }));
       } else {
-        // The server's own words, not a generic retry prompt: every refusal this
-        // endpoint issues is permanent for the request as sent, so "try again"
-        // is advice that cannot work.
+        // The server's own words, not a generic retry prompt: resending the
+        // same request rarely helps (spec §1).
         setError(await readErrorMessage(response, 'Could not update attendance.'));
       }
     } catch (err) {
@@ -264,19 +264,23 @@ export function AttendanceList({
                 </div>
               </div>
 
-              {refusal !== undefined && (
-                <div className="flex items-start justify-between gap-4 pb-1">
-                  <p className="text-danger text-sm">{refusal}</p>
+              {/* A polite live region, mounted on every row so a screen reader
+                  announces the text when it arrives: a refusal usually comes
+                  from a background sync, not from the tap just made. */}
+              <div className={refusal === undefined ? undefined : 'flex items-start justify-between gap-4 pb-1'}>
+                <p role="status" className="text-danger text-sm">{refusal}</p>
+                {refusal !== undefined && (
                   <button
                     type="button"
                     data-offline-writable
                     onClick={() => dismissRefused(owner, item.registrationId)}
+                    aria-label={`Dismiss refused change for ${item.studentName}`}
                     className="type-label text-teal shrink-0"
                   >
                     Dismiss
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           );
         })}

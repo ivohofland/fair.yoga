@@ -9,7 +9,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 
 const OWNER = 'acct-1';
 const CLASS_ID = 'class-1';
-const CLASS_LABEL = 'Hatha, Tue 6 Oct 18:00';
+const CLASS_LABEL = 'Hatha on Tue 6 Oct 18:00';
 
 /** The outbox key for a queued mark on `registrationId` (Global Constraints). */
 function queuedKey(registrationId: string): string {
@@ -245,6 +245,9 @@ describe('AttendanceList', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
     renderList([lateCancel]);
+    // The live region is there, empty, before any refusal arrives — a region
+    // mounted together with its text is often not announced.
+    expect(screen.getByRole('status').textContent).toBe('');
 
     fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
 
@@ -255,10 +258,45 @@ describe('AttendanceList', () => {
     screen.getByText('Late cancel');
     expect(refresh).not.toHaveBeenCalled();
 
-    const dismiss = screen.getByRole('button', { name: 'Dismiss' });
+    // Announced, since it usually arrives from a background sync.
+    expect(reason).toHaveAttribute('role', 'status');
+
+    const dismiss = screen.getByRole('button', { name: 'Dismiss refused change for Ada Lovelace' });
+    expect(dismiss.textContent).toBe('Dismiss');
     expect(dismiss).toHaveAttribute('data-offline-writable');
     fireEvent.click(dismiss);
     expect(screen.queryByText(/once the class has started/)).toBeNull();
+  });
+
+  it('clears a refusal when the row is tapped again, sending the target its shown status implies', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        json(409, {
+          error: {
+            message: 'This student cancelled late. Attendance can be recorded once the class has started.',
+            code: 'CLASS_NOT_STARTED',
+          },
+        }),
+      )
+      .mockImplementation(applyRequested);
+    vi.stubGlobal('fetch', fetchMock);
+    renderList([lateCancel]);
+
+    fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
+    await screen.findByText(/once the class has started/);
+    screen.getByText('Late cancel');
+
+    // The refused entry left the queue, so the row still reads late_cancel and
+    // the re-tap asks for `attended` again — never `no_show`.
+    fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
+
+    await screen.findByText('Present');
+    expect(screen.queryByText(/once the class has started/)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(bodies(fetchMock)).toEqual([
+      JSON.stringify({ status: 'attended' }),
+      JSON.stringify({ status: 'attended' }),
+    ]);
   });
 
   it('ignores storage in its first render', () => {
