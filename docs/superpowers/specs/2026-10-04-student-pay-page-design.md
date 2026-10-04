@@ -173,8 +173,8 @@ yoga teacher. So the bank methods exist only when the exact holder name does.
 ### SEPA reach
 
 IBAN-only transfers, and the BIC-less EPC QR (version `002`), are guaranteed
-within the EU/EEA (SEPA Regulation, EU 260/2012). Two known gaps, recorded
-here rather than built:
+within the EU/EEA (SEPA Regulation, EU 260/2012). Two known gaps, tracked in
+#758 rather than built here:
 
 - **SEPA countries outside the EEA** (Switzerland, the UK, Monaco, San Marino,
   Andorra, Vatican City and others): the payer's bank may require the BIC and
@@ -244,6 +244,6 @@ Failing test first for each.
 - A student "I've paid" signal to the teacher — a new payment state; its own
   issue.
 - Opening a lone method by default — with an IBAN there are always two.
-- A BIC field and non-euro bank details (see *SEPA reach*).
+- A BIC field and non-euro bank details (#758, see *SEPA reach*).
 - IBAN checksum validation.
 - Teacher-side changes beyond the holder-name rule above.
