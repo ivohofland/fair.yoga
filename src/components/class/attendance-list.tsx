@@ -1,9 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
-import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import {
+  dismissRefused,
+  enqueueAttendance,
+  getOutbox,
+  shownStatus,
+  useOutbox,
+  type QueuedStatus,
+} from '@/lib/attendance-outbox';
+import { flushAttendance } from '@/lib/attendance-sync';
+import {
+  refusalLine,
+  useAttendanceOwner,
+  useInlineRefusals,
+} from '@/components/layout/attendance-sync-status';
 import type { AttendanceStatus } from '@/lib/registration-status';
 
 export type { AttendanceStatus };
@@ -14,8 +27,11 @@ export interface AttendanceItem {
   status: AttendanceStatus;
 }
 
-interface AttendanceListProps {
+export interface AttendanceListProps {
   items: AttendanceItem[];
+  classId: string;
+  /** The page's server clock at render, epoch ms; a confirmation older than this yields to `items`. */
+  renderedAt: number;
   /** True on a completed class: rows render read-only until the teacher opts
    *  into "Edit attendance". Defaults to `false` (check-in behaviour, always
    *  editable). */
@@ -46,38 +62,59 @@ function statusLabel(status: AttendanceStatus): string {
 }
 
 /**
- * No `classIsOpen` prop, deliberately — an earlier version had one and it could
- * not work.
+ * No class-status prop, deliberately. The server refuses
+ * `late_cancel -> attended` while the class is still `open` (see the WHERE in
+ * `api/registrations/[id]/route.ts`), and disabling the control until then
+ * looks like the obvious move. But this page is a server component with no
+ * `revalidate`, check-in renders from T-15min, and `autoTransitionToInProgress`
+ * flips the class up to 60s after the start, so any class-status prop is frozen
+ * at render: a teacher who opened the page before the class began would hold a
+ * permanently disabled control for the whole class — a silent refusal in place
+ * of a visible one.
  *
- * The server refuses `late_cancel -> attended` while the class is still `open`
- * (see the WHERE in `api/registrations/[id]/route.ts`), and the obvious move is
- * to disable the control until then. But this page is a server component with
- * no `revalidate`, and check-in renders from T-15min, while
- * `autoTransitionToInProgress` flips the class up to 60s after the start. Any
- * class-status prop is therefore frozen at render: a teacher who opened the page
- * before the class began would hold a permanently disabled control, under a
- * tooltip saying "once the class has started", for the whole class. That trades
- * a visible refusal for a silent one, which is worse.
- *
- * The server is the only thing that knows, so it decides and says why, and a
- * refusal refreshes the page so the next tap is judged against what is now true.
+ * The server is the only thing that knows, so it decides and says why. A tap is
+ * queued in the attendance outbox and a flush sends it, online or offline alike
+ * (spec D1); a row shows what is queued, else what a flush confirmed after this
+ * render, else `items`. A refusal for this class shows here in the server's
+ * words and refreshes the page, so the next tap is judged against what is now
+ * true. A success does not refresh.
  */
-export function AttendanceList({ items, locked = false }: AttendanceListProps) {
+export function AttendanceList({ items, classId, renderedAt, locked = false }: AttendanceListProps) {
   const router = useRouter();
-  const [attendanceState, setAttendanceState] = useState<
-    Record<string, AttendanceStatus>
-  >(() =>
-    Object.fromEntries(items.map((item) => [item.registrationId, item.status])),
-  );
-  const [updating, setUpdating] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const ownerId = useAttendanceOwner();
+  const outbox = useOutbox();
   // `locked` only sets where this starts — check-in opens editable, a
   // completed class opens read-only until the teacher's own "Edit
   // attendance" tap unlocks the row controls.
   const [editing, setEditing] = useState(!locked);
+  useInlineRefusals(classId);
 
-  async function toggleAttendance(registrationId: string, originalStatus: AttendanceStatus) {
-    const currentStatus = attendanceState[registrationId] ?? 'registered';
+  // Refusal ids already on the device at mount. Seeded from the live store, not
+  // `outbox`: while hydrating, `outbox` is the empty server snapshot, and every
+  // stored refusal would then look new and refresh on every reload.
+  const seenRefusals = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    seenRefusals.current = new Set(Object.values(getOutbox().refused).map((e) => e.id));
+  }, []);
+
+  useEffect(() => {
+    const seen = seenRefusals.current;
+    if (seen === null) return;
+    let arrived = false;
+    for (const e of Object.values(outbox.refused)) {
+      if (e.classId === classId && !seen.has(e.id)) {
+        seen.add(e.id);
+        arrived = true;
+      }
+    }
+    // The refusal may be about state this page no longer reflects — it is
+    // server-rendered with no revalidation, so a class that started after the
+    // render still reads `open` here. Re-render so the next tap is judged
+    // against what is actually true.
+    if (arrived) router.refresh();
+  }, [outbox, classId, router]);
+
+  async function toggleAttendance(owner: string, item: AttendanceItem, currentStatus: AttendanceStatus) {
     // A student who cancelled late is not a no-show — they told the teacher they
     // were not coming, and were charged for saying so. The only correction that
     // means anything for them is "they came after all", and it has to be
@@ -86,8 +123,8 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
     // `/bookings` page shows them ("Cancelled after the deadline — this class is
     // still charged"). `updateRegistrationSchema` accepts `late_cancel`, so the
     // round trip is expressible.
-    const newStatus: AttendanceStatus =
-      originalStatus === 'late_cancel'
+    const newStatus: QueuedStatus =
+      item.status === 'late_cancel'
         ? currentStatus === 'attended'
           ? 'late_cancel'
           : 'attended'
@@ -95,43 +132,50 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
           ? 'no_show'
           : 'attended';
 
-    setUpdating(registrationId);
-    setError(null);
-    try {
-      const response = await fetch(`/api/registrations/${registrationId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-
-      if (response.ok) {
-        setAttendanceState((prev) => ({
-          ...prev,
-          [registrationId]: newStatus,
-        }));
-      } else {
-        // The server's own words, not a generic retry prompt: every refusal this
-        // endpoint issues is permanent for the request as sent, so "try again"
-        // is advice that cannot work.
-        setError(await readErrorMessage(response, 'Could not update attendance.'));
-        // The refusal may be about state this page no longer reflects — it is
-        // server-rendered with no revalidation, so a class that started after
-        // the render still reads `open` here. Re-render so the next tap is
-        // judged against what is actually true.
-        router.refresh();
-      }
-    } catch (err) {
-      logRequestFailure('attendance-list', { registrationId, newStatus }, err);
-      setError('Network error. Please check your connection and try again.');
-    } finally {
-      setUpdating(null);
-    }
+    await enqueueAttendance({
+      ownerId: owner,
+      registrationId: item.registrationId,
+      classId,
+      studentName: item.studentName,
+      status: newStatus,
+    });
+    void flushAttendance(owner);
   }
+
+  const waiting = Object.values(outbox.pending).filter((e) => e.classId === classId).length;
+  const refused = Object.values(outbox.refused).filter((e) => e.classId === classId);
+
+  const heading = (
+    <div className="flex items-baseline justify-between gap-4 mb-3">
+      <h2 className="type-subtitle">Attendance</h2>
+      {waiting > 0 && <p className="type-caption">{waiting} waiting to sync</p>}
+    </div>
+  );
+
+  const refusals = refused.map((entry) => {
+    const line = refusalLine(entry);
+    return (
+      <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3 mb-3">
+        <p role="alert" className="type-caption text-danger">
+          {line}
+        </p>
+        <button
+          type="button"
+          aria-label={`Dismiss: ${line}`}
+          className="type-caption underline"
+          onClick={() => void dismissRefused(entry.registrationId)}
+        >
+          Dismiss
+        </button>
+      </div>
+    );
+  });
 
   if (items.length === 0) {
     return (
       <div className="py-6">
-        <h2 className="type-subtitle mb-3">Attendance</h2>
+        {heading}
+        {refusals}
         <p className="type-body">No registered students.</p>
       </div>
     );
@@ -139,7 +183,7 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
 
   return (
     <div className="py-6">
-      <h2 className="type-subtitle mb-3">Attendance</h2>
+      {heading}
 
       {!editing && (
         <button type="button" onClick={() => setEditing(true)} className="type-label text-teal mb-3">
@@ -153,18 +197,12 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
         </p>
       )}
 
-      {error && (
-        <p role="alert" className="text-danger text-sm mb-3">
-          {error}
-        </p>
-      )}
+      {refusals}
 
       <div>
         {items.map((item) => {
-          const status = attendanceState[item.registrationId] ?? 'registered';
-          const isAttended = status === 'attended';
-          const isUpdating = updating === item.registrationId;
-          const label = statusLabel(status);
+          const shown = shownStatus(outbox, item.registrationId, item.status, renderedAt);
+          const isAttended = shown.status === 'attended';
 
           return (
             <div
@@ -175,19 +213,20 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
               <span className="text-[17px] text-ink">{item.studentName}</span>
 
               <div className="flex items-center gap-3">
-                <span className="type-caption">{label}</span>
-                {editing && (
+                <span className="type-caption">
+                  {shown.pending ? 'Waiting to sync' : statusLabel(shown.status)}
+                </span>
+                {/* No owner means no teacher layout, and the teacher layout always provides one. */}
+                {editing && ownerId !== null && (
                   <button
                     type="button"
-                    onClick={() => toggleAttendance(item.registrationId, item.status)}
-                    disabled={isUpdating}
+                    onClick={() => void toggleAttendance(ownerId, item, shown.status)}
                     className={`
                       w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
                       ${isAttended
                         ? 'bg-teal border-teal text-cream'
                         : 'bg-sand-soft border-border text-transparent'}
                       disabled:opacity-50 disabled:cursor-not-allowed
-                      ${isUpdating ? 'opacity-50' : ''}
                     `}
                     aria-label={
                       item.status === 'late_cancel'
@@ -206,3 +245,4 @@ export function AttendanceList({ items, locked = false }: AttendanceListProps) {
     </div>
   );
 }
+

@@ -4,6 +4,9 @@ import { useState } from 'react';
 import { OfflineSnapshot } from './offline-snapshot';
 import { Button } from '@/components/ui/button';
 import { AttendanceList } from '@/components/class/attendance-list';
+import { AttendanceSyncProvider } from '@/components/layout/attendance-sync-status';
+import { resetOutboxForTests } from '@/lib/attendance-outbox';
+import { resetSyncForTests } from '@/lib/attendance-sync';
 import type { ConnectionStatus } from '@/lib/offline-status';
 
 const { status, isOfflineNow, warmOfflinePages, router, pathname } = vi.hoisted(() => ({
@@ -19,6 +22,10 @@ vi.mock('@/lib/offline-status', () => ({
   isOfflineNow,
 }));
 vi.mock('@/lib/offline-client', () => ({ warmOfflinePages }));
+vi.mock('@/lib/attendance-sync', async (orig) => ({
+  ...(await orig<typeof import('@/lib/attendance-sync')>()),
+  startAttendanceSync: () => () => {},
+}));
 vi.mock('next/navigation', () => ({ useRouter: () => router, usePathname: () => pathname.current }));
 
 const stamp = {
@@ -39,6 +46,9 @@ function ui(props: Partial<Parameters<typeof OfflineSnapshot>[0]> = {}, children
 }
 
 beforeEach(() => {
+  localStorage.clear();
+  resetOutboxForTests();
+  resetSyncForTests();
   status.current = { offline: false, serverNow: null };
   isOfflineNow.mockReturnValue(false);
   pathname.current = '/schedule';
@@ -95,7 +105,13 @@ describe('OfflineSnapshot', () => {
         {},
         <>
           <Button>Publish</Button>
-          <AttendanceList items={[{ registrationId: 'r1', studentName: 'Ada', status: 'registered' }]} />
+          <AttendanceSyncProvider ownerId="account-1">
+            <AttendanceList
+              items={[{ registrationId: 'r1', studentName: 'Ada', status: 'registered' }]}
+              classId="class-1"
+              renderedAt={stamp.renderedAt}
+            />
+          </AttendanceSyncProvider>
         </>,
       ),
     );

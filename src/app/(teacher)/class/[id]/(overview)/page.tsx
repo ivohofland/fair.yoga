@@ -195,7 +195,7 @@ export default async function ClassDetailPage({
       {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}
       {showCheckin && (
         <>
-          <AttendanceList items={attendanceItems} />
+          <AttendanceList items={attendanceItems} classId={cls.id} renderedAt={now} />
           <div className="py-2">
             <AddWalkIn
               classId={cls.id}
@@ -237,7 +237,7 @@ export default async function ClassDetailPage({
       {/* Completed: attendance (read-only; Edit attendance to correct), pricing breakdown, payment checklist */}
       {!cancelled && cls.status === 'completed' && (
         <>
-          <AttendanceList items={attendanceItems} locked />
+          <AttendanceList items={attendanceItems} classId={cls.id} renderedAt={now} locked />
           <PricingBreakdown cls={cls} tierPrices={tierPrices} />
           <PaymentChecklist items={paymentItems} />
         </>

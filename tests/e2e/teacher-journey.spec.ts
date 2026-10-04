@@ -409,8 +409,15 @@ test.describe('Teacher journey', () => {
     // (`completeWalkIn`) — the full typed name renders, not a truncation.
     await expect(page.getByText('Nadia Newcomer')).toBeVisible({ timeout: 10_000 });
 
-    // Tick off the booked student as present.
-    await page.getByRole('button', { name: 'Mark Journey s. as present' }).click();
+    // Tick off the booked student as present. The tap is queued and flushed in
+    // the background, so wait for its PUT: the next test finishes the class and
+    // must see this write.
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes('/api/registrations/') && r.request().method() === 'PUT',
+      ),
+      page.getByRole('button', { name: 'Mark Journey s. as present' }).click(),
+    ]);
     await expect(
       page.getByRole('button', { name: 'Mark Journey s. as no-show' }),
     ).toBeVisible();
