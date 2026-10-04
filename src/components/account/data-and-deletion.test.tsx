@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerPush } from '../../../tests/setup/components';
 import { DataAndDeletion } from './data-and-deletion';
+import { enqueueAttendance, getOutbox, resetOutboxForTests } from '@/lib/attendance-outbox';
 
 const clearOfflinePages = vi.fn<() => Promise<void>>(async () => {});
 vi.mock('@/lib/offline-client', () => ({
@@ -156,6 +157,26 @@ describe('DataAndDeletion, deleting the account', () => {
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
     expect(order).toEqual(['cleared', 'push']);
+    routerPush.mockReset();
+  });
+
+  it('clears the queued attendance once the account is deleted', async () => {
+    localStorage.clear();
+    resetOutboxForTests();
+    await enqueueAttendance({
+      ownerId: 'owner-1',
+      registrationId: 'reg-1',
+      classId: 'class-1',
+      studentName: 'Student',
+      status: 'attended',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    render(<DataAndDeletion role="teacher" />);
+
+    confirmDelete();
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(Object.keys(getOutbox().pending)).toEqual([]);
     routerPush.mockReset();
   });
 

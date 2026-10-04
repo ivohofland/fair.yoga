@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 
 const disablePushMock = vi.fn<() => Promise<'off' | 'failed'>>();
@@ -17,6 +17,8 @@ vi.mock('@/lib/offline-client', () => ({
 }));
 
 import { SignOutButton } from './sign-out-button';
+import { enqueueAttendance, getOutbox, resetOutboxForTests } from '@/lib/attendance-outbox';
+import { resetSyncForTests } from '@/lib/attendance-sync';
 
 /**
  * #40. This was the only component in the codebase that reset its pending flag
@@ -32,6 +34,9 @@ describe('SignOutButton', () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
+    localStorage.clear();
+    resetOutboxForTests();
+    resetSyncForTests();
     disablePushMock.mockResolvedValue('off');
   });
 
@@ -236,5 +241,144 @@ describe('SignOutButton', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(routerPush).toHaveBeenCalledWith('/login');
     expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  describe('queued attendance', () => {
+    function queue(n: number) {
+      return Promise.all(
+        Array.from({ length: n }, (_, i) =>
+          enqueueAttendance({
+            ownerId: 'owner-1',
+            registrationId: `reg-${i}`,
+            classId: 'class-1',
+            studentName: `Student ${i}`,
+            status: 'attended',
+          }),
+        ),
+      );
+    }
+
+    function stubFetch(attendance: (url: string) => Promise<unknown>) {
+      fetchMock.mockImplementation((url: string) =>
+        url === '/api/auth/session' ? Promise.resolve({ ok: true }) : attendance(url),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    const confirmed = (url: string) =>
+      Promise.resolve(
+        new Response(JSON.stringify({ data: { id: url.split('/').pop(), status: 'attended' } }), {
+          status: 200,
+          headers: { Date: new Date().toUTCString() },
+        }),
+      );
+
+    it('signs out at once when nothing is queued', async () => {
+      stubFetch(() => Promise.reject(new Error('unused')));
+      render(<SignOutButton />);
+
+      fireEvent.click(screen.getByRole('button'));
+
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('signs out without a warning when the flush confirms every entry', async () => {
+      await queue(2);
+      stubFetch(confirmed);
+      render(<SignOutButton />);
+
+      fireEvent.click(screen.getByRole('button'));
+
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+      expect(screen.queryByText(/haven't synced yet/)).not.toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
+    });
+
+    it('counts entries another tab wrote after this one cached the outbox', async () => {
+      getOutbox();
+      localStorage.setItem(
+        'fy-outbox-v1',
+        JSON.stringify({
+          pending: {
+            'reg-9': {
+              id: 'e9',
+              ownerId: 'owner-1',
+              registrationId: 'reg-9',
+              classId: 'class-1',
+              studentName: 'Student 9',
+              status: 'attended',
+              recordedAt: Date.now(),
+            },
+          },
+          confirmed: {},
+          refused: {},
+        }),
+      );
+      stubFetch(() => Promise.reject(new Error('offline')));
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<SignOutButton />);
+
+      fireEvent.click(screen.getByRole('button'));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "1 attendance change hasn't synced yet. Signing out discards them.",
+      );
+    });
+
+    it('warns with the count, and neither tears down push nor DELETEs, when entries remain', async () => {
+      await queue(2);
+      stubFetch(() => Promise.reject(new Error('offline')));
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<SignOutButton />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent("2 attendance changes haven't synced yet. Signing out discards them.");
+      expect(disablePushMock).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
+      expect(routerPush).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Sign out anyway' })).toBeInTheDocument();
+    });
+
+    it('does not wait on a flush that never settles', async () => {
+      vi.useFakeTimers();
+      await queue(1);
+      stubFetch(() => new Promise(() => {}));
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        render(<SignOutButton />);
+
+        fireEvent.click(screen.getByRole('button'));
+        await act(() => vi.advanceTimersByTimeAsync(2_999));
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        await act(() => vi.advanceTimersByTimeAsync(1));
+
+        expect(screen.getByRole('alert')).toHaveTextContent("1 attendance change hasn't synced yet.");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([
+      ['answers ok', () => Promise.resolve({ ok: true })],
+      ['rejects', () => Promise.reject(new Error('offline'))],
+    ])('sign out anyway clears whatever the DELETE %s', async (_label, answer) => {
+      await queue(1);
+      fetchMock.mockImplementation((url: string) =>
+        url === '/api/auth/session' ? answer() : Promise.reject(new Error('offline')),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<SignOutButton />);
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign out anyway' }));
+
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
+      expect(disablePushMock).toHaveBeenCalled();
+      expect(Object.keys(getOutbox().pending)).toEqual([]);
+    });
   });
 });
