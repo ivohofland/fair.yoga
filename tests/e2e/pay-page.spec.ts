@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
-import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { uniqueSuffix, seedSession, sessionCookie, cookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
@@ -34,7 +34,7 @@ test.describe('Pay page — the method chooser keeps one row open', () => {
   let classId = '';
   let studentToken = '';
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ request }) => {
     await prisma.$connect();
 
     const teacher = await prisma.teacher.create({
@@ -107,6 +107,16 @@ test.describe('Pay page — the method chooser keeps one row open', () => {
     await prisma.payment.create({
       data: { registrationId: registration.id, amount: 7.5, status: 'pending' },
     });
+
+    // Warm the route: `next dev` compiles a page lazily on its first request,
+    // which can outlast the test's first navigation. The answer is ignored.
+    await request
+      .get(`/bookings/${classId}/pay`, {
+        headers: cookie(studentToken),
+        maxRedirects: 0,
+        timeout: 60_000,
+      })
+      .catch(() => undefined);
   });
 
   test.afterAll(async () => {

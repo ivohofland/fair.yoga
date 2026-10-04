@@ -561,7 +561,7 @@ or be deleted.
 or `reminder` notification whose `relatedClassId` is null. Every writer of a
 student payment notification sets it, and `Notification.relatedClassId` goes
 null only when its class row is deleted (`onDelete: SetNull`). The email went
-out without its Pay now button.
+out without a Pay now button, whatever the teacher's payment methods.
 
 **Where the bad value lives.** `Notification.relatedClassId` on the sample's
 `notificationId`. If the class was deleted, its registrations and payments

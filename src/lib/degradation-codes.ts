@@ -57,7 +57,7 @@ export const DEGRADATION_CODES = {
   PAYMENT_NOTIFICATION_WITHOUT_CLASS: {
     level: 'warn',
     description:
-      'A payment notification for a student had no related class although every writer of one sets it. Its email went out without the Pay now button.',
+      "A payment notification for a student had no related class although every writer of one sets it. Its email went out without a Pay now button, whatever the teacher's payment methods.",
     contextKeys: ['notificationId', 'type'],
   },
   PAYMENT_PAID_WITHOUT_TIMESTAMP: {

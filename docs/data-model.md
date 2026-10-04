@@ -109,8 +109,8 @@ first; one row per device is identity enough for dispatch and cleanup.
 | push_invitations | boolean, default false | Push for an invitation from another teacher |
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
-| bank_iban | string, nullable | Level 1 only; never blank (`Teacher_bank_iban_not_blank_check`) |
-| bank_account_name | string, nullable | Level 1 only; required whenever an IBAN is stored (Verification of Payee) — `Teacher_bank_holder_name_check` refuses an IBAN beside a null or blank name, and `PUT /api/teachers/[id]` answers that case with a 400 before it reaches the database. Students are shown bank methods only when both are set |
+| bank_iban | string, nullable | Level 1 only; `Teacher_bank_iban_not_blank_check` refuses an empty or spaces-only value (`btrim`, which strips spaces only) |
+| bank_account_name | string, nullable | Level 1 only; required whenever an IBAN is stored (Verification of Payee) — `Teacher_bank_holder_name_check` refuses an IBAN beside a null or spaces-only name, and `PUT /api/teachers/[id]` answers that case with a 400 before it reaches the database. The app is stricter than both CHECKs: `paymentMethodsFor` treats any all-whitespace value (tabs and newlines included) as absent, and students are shown bank methods only when both fields hold something else |
 | processor_type | enum: mollie, stripe | Level 2 only |
 | processor_account_id | string, nullable | Level 2 only |
 | **Timestamps** | | |
