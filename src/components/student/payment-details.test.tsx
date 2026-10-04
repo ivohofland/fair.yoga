@@ -71,4 +71,28 @@ describe('PaymentDetails', () => {
     );
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
   });
+
+  it('handles a missing clipboard API without throwing', async () => {
+    vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+    renderDetails();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy IBAN' }));
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "Couldn't copy the IBAN — press and hold it to select",
+    );
+    expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
+  });
+
+  it('has valid dl structure with only dt/dd elements in each row div', () => {
+    renderDetails();
+    const dl = screen.getByText('Name').closest('dl');
+    if (!dl) throw new Error('dl not found');
+    const rowDivs = Array.from(dl.querySelectorAll(':scope > div'));
+    expect(rowDivs).toHaveLength(3);
+    rowDivs.forEach((rowDiv) => {
+      const children = Array.from(rowDiv.children);
+      children.forEach((child) => {
+        expect(['DT', 'DD'].includes(child.tagName)).toBe(true);
+      });
+    });
+  });
 });

@@ -28,6 +28,11 @@ export function PaymentDetails({ iban, beneficiary, reference }: PaymentDetailsP
   ];
 
   function copy(field: Field): void {
+    if (!navigator.clipboard?.writeText) {
+      setState({ field, outcome: 'failed' });
+      return;
+    }
+
     navigator.clipboard
       .writeText(field.copied)
       .then(() => {
@@ -46,19 +51,19 @@ export function PaymentDetails({ iban, beneficiary, reference }: PaymentDetailsP
     <>
       <dl className="mt-1">
         {fields.map((field) => (
-          <div key={field.key} className="flex items-center justify-between gap-3 py-1.5">
-            <div className="min-w-0">
-              <dt className="type-caption">{field.label}</dt>
-              <dd className="type-body text-ink tabular-nums break-words select-all">{field.shown}</dd>
-            </div>
-            <button
-              type="button"
-              onClick={() => copy(field)}
-              aria-label={`Copy ${field.key}`}
-              className="shrink-0 h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint"
-            >
-              {state?.field.key === field.key && state.outcome === 'copied' ? 'Copied' : 'Copy'}
-            </button>
+          <div key={field.key} className="grid grid-cols-[1fr_auto] items-center gap-x-3 py-1.5">
+            <dt className="type-caption col-start-1">{field.label}</dt>
+            <dd className="type-body text-ink tabular-nums break-words select-all col-start-1 min-w-0">{field.shown}</dd>
+            <dd className="col-start-2 row-start-1 row-span-2">
+              <button
+                type="button"
+                onClick={() => copy(field)}
+                aria-label={`Copy ${field.key}`}
+                className="shrink-0 h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint"
+              >
+                {state?.field.key === field.key && state.outcome === 'copied' ? 'Copied' : 'Copy'}
+              </button>
+            </dd>
           </div>
         ))}
       </dl>
