@@ -25,6 +25,8 @@ import { toIncomeTier } from '@/lib/tiers.server';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
+import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
+import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
 
 export default async function ClassDetailPage({
   params,
@@ -158,8 +160,10 @@ export default async function ClassDetailPage({
     cancelled,
   });
 
+  const stamp = offlineSnapshotStamp(session, new Date(now));
+
   return (
-    <>
+    <OfflineSnapshot {...stamp}>
       <PageHeader
         title={cls.calendarEntry.classType}
         backHref="/" backLabel="Schedule"
@@ -268,6 +272,6 @@ export default async function ClassDetailPage({
           )}
         </div>
       )}
-    </>
+    </OfflineSnapshot>
   );
 }

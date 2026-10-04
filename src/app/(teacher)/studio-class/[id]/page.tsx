@@ -13,6 +13,8 @@ import { studioClassEditability } from '@/services/studio-class-editability';
 import { startOfLocalDay } from '@/lib/timezone';
 import { formatDateWithYear } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
+import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
+import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
 
 export default async function StudioClassDetailPage({
   params,
@@ -95,8 +97,10 @@ export default async function StudioClassDetailPage({
     ? (Number(studioClass.hourlyRate) * entry.durationMinutes) / 60
     : null;
 
+  const stamp = offlineSnapshotStamp(session, now);
+
   return (
-    <>
+    <OfflineSnapshot {...stamp}>
       <PageHeader
         title={entry.classType || studioClass.location}
         backHref="/"
@@ -203,6 +207,6 @@ export default async function StudioClassDetailPage({
           </section>
         </>
       )}
-    </>
+    </OfflineSnapshot>
   );
 }

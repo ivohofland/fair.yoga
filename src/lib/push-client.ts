@@ -1,5 +1,6 @@
 import type { InstallSupport } from './install-support';
 import { logRequestFailure } from './client-errors';
+import { SW_SCOPE, SW_URL } from './service-worker';
 
 export type PushDeviceState = 'unsupported' | 'needs-install' | 'off' | 'on' | 'blocked' | 'unavailable';
 
@@ -24,11 +25,9 @@ export function classifyPushDevice(env: PushDeviceEnv): PushDeviceState {
   return env.permission === 'granted' && env.subscribed ? 'on' : 'off';
 }
 
-const SW_URL = '/sw.js';
-
 export async function currentPushSubscription(): Promise<PushSubscription | null> {
   if (!('serviceWorker' in navigator)) return null;
-  const registration = await navigator.serviceWorker.getRegistration('/');
+  const registration = await navigator.serviceWorker.getRegistration(SW_SCOPE);
   return registration ? registration.pushManager.getSubscription() : null;
 }
 
@@ -148,7 +147,7 @@ export async function enablePush(vapidPublicKey: string): Promise<'on' | 'blocke
     const permission = await Notification.requestPermission();
     if (permission === 'denied') return 'blocked';
     if (permission !== 'granted') return 'failed';
-    const registration = await navigator.serviceWorker.register(SW_URL, { scope: '/' });
+    const registration = await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE });
     if (!(await serviceWorkerReady())) {
       logRequestFailure('push-client', { step: 'ready' }, new Error('service worker not ready within 10s'));
       return 'failed';

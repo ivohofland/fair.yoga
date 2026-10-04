@@ -8,6 +8,8 @@ import { ScheduleHeader } from '@/components/schedule/schedule-header';
 import { isOnboardingComplete } from '@/lib/onboarding';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
+import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
+import { offlineSnapshotStamp, todaysOfflinePaths } from '@/lib/offline-snapshot-props';
 
 /**
  * The home window: the current week so far (completed classes stay in
@@ -79,7 +81,10 @@ export default async function SchedulePage() {
     skipped: teacher.skippedOnboarding,
   };
 
+  const stamp = offlineSnapshotStamp(session, now);
+
   return (
+    <OfflineSnapshot {...stamp} warmPaths={todaysOfflinePaths(classes, studioClasses, stamp.loadedOn)}>
     <div>
       <ScheduleHeader
         firstName={teacher.firstName}
@@ -114,5 +119,6 @@ export default async function SchedulePage() {
         </Link>
       </div>
     </div>
+    </OfflineSnapshot>
   );
 }

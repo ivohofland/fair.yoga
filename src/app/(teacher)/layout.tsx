@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { isSafeRelativePath } from '@/lib/schemas';
 import { TabBar } from '@/components/layout/tab-bar';
 import { LiveUpdates } from '@/components/layout/live-updates';
+import { OfflineWorker } from '@/components/layout/offline-worker';
 
 export default async function TeacherLayout({
   children,
@@ -39,6 +40,7 @@ export default async function TeacherLayout({
   return (
     <>
       <LiveUpdates />
+      <OfflineWorker />
       {children}
       <TabBar unreadCount={unreadCount} />
     </>
