@@ -154,4 +154,11 @@ describe('ProfileForm', () => {
     const options = timezoneSelect().querySelectorAll('option');
     expect([...options].map((o) => o.textContent)).toEqual(['Only option']);
   });
+
+  it('tells the teacher the holder name must match their bank', () => {
+    renderForm();
+    expect(
+      screen.getByText('Exactly as your bank shows it — your students’ banks check this name.'),
+    ).toBeInTheDocument();
+  });
 });

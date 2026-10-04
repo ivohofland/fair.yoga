@@ -216,6 +216,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
           label="Account holder name"
           value={form.bankAccountName ?? ''}
           onChange={(e) => update('bankAccountName', e.target.value || null)}
+          hint="Exactly as your bank shows it — your students’ banks check this name."
         />
       </section>
 
