@@ -21,8 +21,14 @@ import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
 
-/** A PUT's response body, applied or unchanged. */
+/** A PUT's unchanged response body. */
 type AttendanceBody = { id: string; status: RegistrationStatus };
+
+/**
+ * A PUT's applied response body: whether the class was `completed` when read
+ * just after the write, so a mark that lands after completion can say so.
+ */
+type AppliedAttendanceBody = AttendanceBody & { classCompleted: boolean };
 
 /** A DELETE's response body, applied or unchanged. */
 type CancelledBooking = { id: string; status: 'cancelled' | 'late_cancel' };
@@ -227,7 +233,19 @@ export const PUT = withErrorHandler(async (
     }
   }
 
-  return respondTyped<AttendanceBody>({ id, status: requested });
+  // Read after the write, and informational only: nothing above decides from
+  // it, so it opens no read-then-write. Completion is terminal, so the one
+  // error it can make is a write that landed just before a concurrent
+  // completion reported as after it.
+  const cls = await prisma.class.findUnique({
+    where: { id: registration.classId },
+    select: { status: true },
+  });
+  return respondTyped<AppliedAttendanceBody>({
+    id,
+    status: requested,
+    classCompleted: cls?.status === 'completed',
+  });
 });
 
 export const DELETE = withErrorHandler(async (

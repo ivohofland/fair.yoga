@@ -9,6 +9,7 @@ import { isEssential } from '@/services/notification-policy';
 import { cancelDeadlineInstant } from '@/services/waitlist';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { completeClass } from '@/services/class-lifecycle';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
@@ -1447,7 +1448,7 @@ describe('registration writes return no stored income tier', () => {
     expect(Object.keys(body.data).sort()).toEqual(['id', 'status']);
   });
 
-  it('PUT returns the id and status, and nothing else', async () => {
+  it('PUT returns the id, status and classCompleted, and nothing else', async () => {
     const classId = await makeClass(5);
     const created = await post(studentTokens[0]!, { classId });
     const { data } = (await created.json()) as { data: { id: string } };
@@ -1459,7 +1460,7 @@ describe('registration writes return no stored income tier', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> };
-    expect(Object.keys(body.data).sort()).toEqual(['id', 'status']);
+    expect(Object.keys(body.data).sort()).toEqual(['classCompleted', 'id', 'status']);
   });
 
   it('DELETE before the deadline returns the id and status, and nothing else', async () => {
@@ -1703,7 +1704,7 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
 
     const res = await putStatus(ownerToken, reg.id, 'no_show');
 
-    expect(await expectApplied(res)).toEqual({ id: reg.id, status: 'no_show' });
+    expect(await expectApplied(res)).toEqual({ id: reg.id, status: 'no_show', classCompleted: false });
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
     expect(after.status).toBe('no_show');
   });
@@ -1740,6 +1741,111 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
 
   it('answers a booking that does not exist with its code', async () => {
     await expectRefusal(await putStatus(ownerToken, randomUUID(), 'attended'), 'NOT_FOUND');
+  });
+
+  /**
+   * #726, spec D7. An applied write says whether its class had completed, so a
+   * queued mark replayed after completion can tell the teacher the payment
+   * requests already went out on the old status.
+   */
+  it('answers an applied mark on an in-progress class with classCompleted false', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    const res = await putStatus(ownerToken, reg.id, 'attended');
+
+    expect(await expectApplied(res)).toEqual({ id: reg.id, status: 'attended', classCompleted: false });
+  });
+
+  it('answers an applied mark on a completed class with classCompleted true', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'completed' } });
+
+    const res = await putStatus(ownerToken, reg.id, 'no_show');
+
+    expect(await expectApplied(res)).toEqual({ id: reg.id, status: 'no_show', classCompleted: true });
+  });
+
+  it('answers a repeated mark on a completed class as unchanged, with no classCompleted key', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'no_show', tierAtBooking: 3 },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'completed' } });
+
+    const data = await expectUnchanged(await putStatus(ownerToken, reg.id, 'no_show'));
+
+    expect(data).toEqual({ id: reg.id, status: 'no_show' });
+    expect(Object.keys(data as Record<string, unknown>).sort()).toEqual(['id', 'status']);
+  });
+
+  /**
+   * Acceptance for #726 (spec §4): attendance marks queued offline and
+   * replayed after the class completed are accepted and move no money — not a
+   * `Payment.amount`, not `Class.totalRevenue` — and replaying them a second
+   * time changes nothing. Completed through `completeClass`, the service that
+   * prices the class and writes the payments.
+   */
+  it('accepts attendance replayed after completion without changing any amount, and a second replay is unchanged', async () => {
+    const classId = await makeClass(4);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    const tiers = [1, 3, 5] as const;
+    const students = [studentIds[0]!, studentIds[1]!, unlinkedStudentId];
+    const regs = await Promise.all(
+      students.map((studentId, i) =>
+        prisma.registration.create({
+          data: { classId, studentId, status: 'registered', tierAtBooking: tiers[i]! },
+        }),
+      ),
+    );
+    const completed = await completeClass(prisma, classId, { finishedEarly: true });
+    expect(completed).toEqual({ ok: true, newStatus: 'completed' });
+
+    async function amounts(): Promise<{ payments: Record<string, string>; totalRevenue: string | null }> {
+      const payments = await prisma.payment.findMany({
+        where: { registration: { classId } },
+        select: { registrationId: true, amount: true },
+      });
+      const cls = await prisma.class.findUniqueOrThrow({
+        where: { id: classId },
+        select: { totalRevenue: true },
+      });
+      return {
+        payments: Object.fromEntries(payments.map((p) => [p.registrationId, p.amount.toString()])),
+        totalRevenue: cls.totalRevenue === null ? null : cls.totalRevenue.toString(),
+      };
+    }
+    const before = await amounts();
+    expect(Object.keys(before.payments).sort()).toEqual(regs.map((r) => r.id).sort());
+    expect(before.totalRevenue).not.toBeNull();
+
+    const targets = ['no_show', 'no_show', 'attended'] as const;
+    const first = await Promise.all(regs.map((r, i) => putStatus(ownerToken, r.id, targets[i]!)));
+    for (const [i, res] of first.entries()) {
+      expect(await expectApplied(res)).toEqual({ id: regs[i]!.id, status: targets[i], classCompleted: true });
+    }
+    expect(await amounts()).toEqual(before);
+
+    const second = await Promise.all(regs.map((r, i) => putStatus(ownerToken, r.id, targets[i]!)));
+    for (const [i, res] of second.entries()) {
+      expect(await expectUnchanged(res)).toEqual({ id: regs[i]!.id, status: targets[i] });
+    }
+    expect(await amounts()).toEqual(before);
+    const after = await prisma.registration.findMany({
+      where: { classId },
+      select: { id: true, status: true },
+    });
+    expect(Object.fromEntries(after.map((r) => [r.id, r.status]))).toEqual(
+      Object.fromEntries(regs.map((r, i) => [r.id, targets[i]])),
+    );
   });
 });
 
