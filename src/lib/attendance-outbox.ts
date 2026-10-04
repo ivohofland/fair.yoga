@@ -5,7 +5,8 @@ import { readError, logRequestFailure } from './client-errors';
  * `PUT /api/registrations/[id]` (#726). One `localStorage` key per
  * registration, owned by an account; the design and the outcome per response
  * are in docs/superpowers/specs/2026-10-04-offline-checkin-design.md (D2, D5,
- * D6, D7).
+ * D6, D7); how it behaves now, across tabs included, is in
+ * docs/technical-architecture.md (Offline (service worker) → The attendance outbox).
  */
 
 export type AttendanceTarget = 'attended' | 'no_show' | 'late_cancel';

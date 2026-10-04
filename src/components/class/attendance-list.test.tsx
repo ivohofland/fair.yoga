@@ -46,10 +46,9 @@ function bodies(fetchMock: ReturnType<typeof vi.fn>): string[] {
  * are easy to get wrong and are held below.
  *
  * FIRST: the server refuses `late_cancel -> attended` while the class is still
- * `open`, and an earlier version of this component took a `classIsOpen` prop to
- * avoid offering a doomed tap. That could not work. The page is server-rendered
- * with no revalidation and check-in opens from T-15min, so the prop froze at
- * render and the control never unlocked once the class actually started — a
+ * `open`, yet the control is offered regardless. The page is server-rendered
+ * with no revalidation and check-in opens from T-15min, so a prop gating it
+ * would freeze at render and never unlock once the class actually started — a
  * silent failure in place of a visible one. The server decides each write, and
  * a refusal shows its reason on the row.
  *
