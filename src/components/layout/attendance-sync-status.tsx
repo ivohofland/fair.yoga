@@ -111,7 +111,7 @@ export function AttendanceSyncStatus() {
   const outbox = useOutbox();
   const { needsSignIn } = useSyncState();
   const inline = useSyncExternalStore(
-    ctx?.registry.subscribe ?? NO_SUBSCRIBE,
+    ctx?.registry.subscribe ?? noSubscribe,
     ctx?.registry.getSnapshot ?? getNoClasses,
     getNoClasses,
   );
@@ -121,36 +121,43 @@ export function AttendanceSyncStatus() {
   const refused = Object.values(outbox.refused).filter(
     (e) => e.ownerId === ctx.ownerId && !inline.has(e.classId),
   );
-  if (pending === 0 && refused.length === 0) return null;
-
   return (
-    <div className="flex flex-col gap-2 py-2">
-      {pending > 0 && (
-        <p role="status" className="type-caption">
-          {pending} attendance {pending === 1 ? 'change' : 'changes'} waiting to sync
-          {needsSignIn ? ' — sign in to sync them' : ''}
-        </p>
-      )}
-      {refused.map((entry) => (
-        <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3">
-          <p className="type-caption text-danger">{refusalLine(entry)}</p>
-          <Link href={`/class/${entry.classId}`} className="type-caption underline">
-            Open class
-          </Link>
-          <button
-            type="button"
-            className="type-caption underline"
-            onClick={() => void dismissRefused(entry.registrationId)}
-          >
-            Dismiss
-          </button>
+    <div role="status">
+      {(pending > 0 || refused.length > 0) && (
+        <div className="flex flex-col gap-2 py-2">
+          {pending > 0 && (
+            <p className="type-caption">
+              {pending} attendance {pending === 1 ? 'change' : 'changes'} waiting to sync
+              {needsSignIn ? ' — sign in to sync them' : ''}
+            </p>
+          )}
+          {refused.map((entry) => (
+            <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3">
+              <p className="type-caption text-danger">{refusalLine(entry)}</p>
+              <Link
+                href={`/class/${entry.classId}`}
+                aria-label={`Open class for ${entry.studentName}`}
+                className="type-caption underline"
+              >
+                Open class
+              </Link>
+              <button
+                type="button"
+                aria-label={`Dismiss: ${refusalLine(entry)}`}
+                className="type-caption underline"
+                onClick={() => void dismissRefused(entry.registrationId)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
 
-function NO_SUBSCRIBE(): () => void {
+function noSubscribe(): () => void {
   return () => {};
 }
 
