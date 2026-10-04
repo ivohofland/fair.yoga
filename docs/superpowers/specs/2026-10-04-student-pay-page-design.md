@@ -100,8 +100,9 @@ a one-line hint; its panel holds the method's details.
   Name, IBAN and Reference rows, each with a compact Copy pill. The IBAN is
   copied without spaces. A clipboard refusal says so and leaves the value
   selectable by hand.
-- **QR code** — the existing `PaymentQr` EPC code, with "Scan with your
-  banking app on another device."
+- **QR code** — the existing `PaymentQr` EPC code and its own caption,
+  "Scan with your banking app". The row's hint, "For a banking app on another
+  device", says when to choose it, so the two lines do not repeat each other.
 
 No row is open on arrival.
 
