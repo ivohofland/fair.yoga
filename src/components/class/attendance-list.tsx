@@ -6,10 +6,13 @@ import { Icon } from '@/components/ui/icon';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
   EMPTY_OUTBOX,
+  attendanceRequest,
+  attendanceUrl,
   dismissRefused,
   enqueueAttendance,
   flushOutbox,
   getOutboxSnapshot,
+  isAttendanceAnswer,
   subscribeOutbox,
   type AttendanceTarget,
 } from '@/lib/attendance-outbox';
@@ -173,17 +176,25 @@ export function AttendanceList({
       return;
     }
 
-    // Storage cannot hold the mark, so write it now rather than queue it silently.
+    // Storage cannot hold the mark, so write it now rather than queue it silently,
+    // with the queued path's request and its test of the answer.
+    const init = attendanceRequest(newStatus);
     setUpdating(registrationId);
     try {
-      const response = await fetch(`/api/registrations/${registrationId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
+      const response = await fetch(attendanceUrl(registrationId), init);
 
       if (response.ok) {
-        setDirect((prev) => ({ ...prev, [registrationId]: newStatus }));
+        const body: unknown = await response.json().catch(() => undefined);
+        if (isAttendanceAnswer(body, registrationId, newStatus)) {
+          setDirect((prev) => ({ ...prev, [registrationId]: newStatus }));
+        } else {
+          logRequestFailure(
+            'attendance-list',
+            { registrationId, newStatus, status: response.status },
+            new Error('2xx without the matching body'),
+          );
+          setError("Couldn't confirm the change was saved. Check your connection and try again.");
+        }
       } else {
         // The server's own words, not a generic retry prompt: resending the
         // same request rarely helps (spec §1).

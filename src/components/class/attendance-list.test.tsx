@@ -245,6 +245,26 @@ describe('AttendanceList', () => {
     await screen.findByText('Present');
   });
 
+  /** Spec §3: a queued mark shows over a confirmation, so the toggle follows the tap, not the older sync. */
+  it('lets a queued mark win over a fresh confirmation', async () => {
+    const renderedAt = renderedAMinuteAgo();
+    storeConfirmation('reg-1', 'attended', renderedAt + 2_000);
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    renderList([untouched], { renderedAt });
+    await screen.findByText('Present');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as no-show' }));
+    await waitFor(() => expect(storedTarget('reg-1')).toBe('no_show'));
+    screen.getByText('Waiting to sync');
+    const toPresent = screen.getByRole('button', { name: 'Mark Grace Hopper as present' });
+
+    fireEvent.click(toPresent);
+    await waitFor(() => expect(storedTarget('reg-1')).toBe('attended'));
+    screen.getByText('Waiting to sync');
+    screen.getByRole('button', { name: 'Mark Grace Hopper as no-show' });
+  });
+
   /** Another device corrected the row after this device's sync; the newer render shows that. */
   it('lets items win over a confirmation from before the render', () => {
     const renderedAt = renderedAMinuteAgo();
@@ -440,9 +460,52 @@ describe('AttendanceList', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
         '/api/registrations/reg-1',
-        expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'attended' }) }),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ status: 'attended' }),
+          redirect: 'error',
+          cache: 'no-store',
+          signal: expect.any(AbortSignal) as unknown,
+        }),
       );
       expect(screen.queryByText('Waiting to sync')).toBeNull();
+    });
+
+    it('times the direct write out after 10 s', async () => {
+      breakStorage();
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+      fetchMock.mockResolvedValue(json(200, { data: { id: 'reg-1', status: 'attended' } }));
+      vi.stubGlobal('fetch', fetchMock);
+      renderList([untouched]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+      await screen.findByText('Present');
+      expect(timeout).toHaveBeenCalledWith(10_000);
+    });
+
+    it.each([
+      ['an HTML page (a captive portal)', () => new Response('<html>Hotel wifi</html>', { status: 200 })],
+      ['JSON naming another status', () => json(200, { data: { id: 'reg-1', status: 'no_show' } })],
+      ['JSON without data', () => json(200, { ok: true })],
+    ])('a 200 that is not the app confirming the write — %s — is not shown as saved', async (_name, answer) => {
+      breakStorage();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      fetchMock.mockResolvedValue(answer());
+      vi.stubGlobal('fetch', fetchMock);
+      renderList([untouched]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "Couldn't confirm the change was saved. Check your connection and try again.",
+      );
+      screen.getByText('Not marked');
+      expect(screen.queryByText('Present')).toBeNull();
+      expect(consoleError).toHaveBeenCalledWith(
+        '[attendance-list] request failed',
+        expect.objectContaining({ registrationId: 'reg-1', newStatus: 'attended', status: 200 }),
+      );
     });
 
     it("surfaces the server's reason for a direct refusal without refreshing", async () => {
