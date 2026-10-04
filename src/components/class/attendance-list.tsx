@@ -184,15 +184,17 @@ export function AttendanceList({
       const response = await fetch(attendanceUrl(registrationId), init);
 
       if (response.ok) {
-        const body: unknown = await response.json().catch(() => undefined);
+        let body: unknown;
+        let notTheAnswer: unknown = new Error('2xx without the matching body');
+        try {
+          body = await response.json();
+        } catch (err) {
+          notTheAnswer = err;
+        }
         if (isAttendanceAnswer(body, registrationId, newStatus)) {
           setDirect((prev) => ({ ...prev, [registrationId]: newStatus }));
         } else {
-          logRequestFailure(
-            'attendance-list',
-            { registrationId, newStatus, status: response.status },
-            new Error('2xx without the matching body'),
-          );
+          logRequestFailure('attendance-list', { registrationId, newStatus, status: response.status }, notTheAnswer);
           setError("Couldn't confirm the change was saved. Check your connection and try again.");
         }
       } else {
