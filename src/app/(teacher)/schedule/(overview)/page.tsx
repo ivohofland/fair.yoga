@@ -39,6 +39,7 @@ export default async function SchedulePage() {
       select: {
         bio: true,
         bankIban: true,
+        bankAccountName: true,
         skippedOnboarding: true,
         pageSlug: true,
         firstName: true,
@@ -76,6 +77,7 @@ export default async function SchedulePage() {
   const onboardingInput = {
     bio: teacher.bio,
     bankIban: teacher.bankIban,
+    bankAccountName: teacher.bankAccountName,
     roomCount,
     classCount,
     skipped: teacher.skippedOnboarding,

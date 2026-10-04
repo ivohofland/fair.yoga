@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveSteps, isOnboardingComplete } from './onboarding';
 
 const nothingDone = {
-  bio: '', bankIban: null, roomCount: 0, classCount: 0, skipped: [],
+  bio: '', bankIban: null, bankAccountName: null, roomCount: 0, classCount: 0, skipped: [],
 };
 
 describe('resolveSteps', () => {
@@ -30,6 +30,26 @@ describe('resolveSteps', () => {
     const steps = resolveSteps(nothingDone);
     expect(steps.filter((s) => s.skipAs !== null).map((s) => s.key)).toEqual(['profile', 'bank']);
   });
+
+  it('marks bank done once the IBAN and its holder name exist', () => {
+    const bank = resolveSteps({
+      ...nothingDone,
+      bankIban: 'NL91ABNA0417164300',
+      bankAccountName: 'I. Hofland',
+    }).find((s) => s.key === 'bank');
+    expect(bank?.state).toBe('done');
+  });
+
+  // Students are shown bank details only when both exist, so the checklist
+  // must not call the step done on the IBAN alone.
+  it('leaves bank to do with an IBAN but no holder name', () => {
+    const bank = resolveSteps({
+      ...nothingDone,
+      bankIban: 'NL91ABNA0417164300',
+      bankAccountName: null,
+    }).find((s) => s.key === 'bank');
+    expect(bank?.state).toBe('todo');
+  });
 });
 
 describe('isOnboardingComplete', () => {
@@ -39,7 +59,7 @@ describe('isOnboardingComplete', () => {
 
   it('is true when every step is done or skipped and share is dismissed', () => {
     expect(isOnboardingComplete({
-      bio: 'x', bankIban: null, roomCount: 1, classCount: 1, skipped: ['bank', 'share'],
+      bio: 'x', bankIban: null, bankAccountName: null, roomCount: 1, classCount: 1, skipped: ['bank', 'share'],
     })).toBe(true);
   });
 
@@ -47,7 +67,7 @@ describe('isOnboardingComplete', () => {
   // checklist has not retired.
   it('is false when every step is settled but share is not dismissed', () => {
     expect(isOnboardingComplete({
-      bio: 'x', bankIban: null, roomCount: 1, classCount: 1, skipped: ['bank'],
+      bio: 'x', bankIban: null, bankAccountName: null, roomCount: 1, classCount: 1, skipped: ['bank'],
     })).toBe(false);
   });
 });

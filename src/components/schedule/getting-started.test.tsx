@@ -35,6 +35,7 @@ describe('GettingStarted', () => {
   const nothingDone: Props = {
     bio: '',
     bankIban: null,
+    bankAccountName: null,
     roomCount: 0,
     classCount: 0,
     skipped: [],
@@ -135,6 +136,7 @@ describe('GettingStarted', () => {
     const settled: Props = {
       bio: 'Yoga since 2009.',
       bankIban: null,
+      bankAccountName: null,
       roomCount: 1,
       classCount: 1,
       skipped: ['bank'],
@@ -174,6 +176,7 @@ describe('GettingStarted', () => {
         <GettingStarted
           bio="Yoga since 2009."
           bankIban="NL00BANK0123456789"
+          bankAccountName="J. Doe"
           roomCount={1}
           classCount={1}
           skipped={['bank', 'share']}
@@ -195,6 +198,7 @@ describe('GettingStarted', () => {
         <GettingStarted
           bio=""
           bankIban={null}
+          bankAccountName={null}
           roomCount={0}
           classCount={0}
           skipped={['share']}

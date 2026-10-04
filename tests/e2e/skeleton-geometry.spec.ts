@@ -81,6 +81,7 @@ test.describe('Skeleton geometry', () => {
         account: { create: { email } },
         bio: 'Slow flow, measured twice.',
         bankIban: 'NL91ABNA0417164300',
+        bankAccountName: 'Skeleton Teacher',
         skippedOnboarding: ['share', 'install'],
         defaultTimezone: 'UTC',
         pageSlug: `e2e-skeleton-${suffix}`,
