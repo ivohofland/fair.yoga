@@ -38,7 +38,7 @@ test.describe('Offline schedule', () => {
 
   test.beforeAll(async ({}, testInfo) => {
     test.skip(testInfo.project.name !== 'chromium', 'Chromium project only');
-    // From 23:00 UTC the class below has started, and a running scheduler moves it to in_progress, which has no "Cancel class" button. The CI half of this skip rests on CI's `CRON_SCHEDULER` being 'off'.
+    // From 23:00 UTC the class below has started, and a running scheduler moves it to in_progress, which has no "Cancel class" button. Why CI is exempt: docs/technical-architecture.md, "Offline (service worker)" → End-to-end.
     test.skip(
       !process.env.CI && new Date().getUTCHours() === 23,
       'The class started at 23:00 UTC would be moved to in_progress by a local scheduler; run again after midnight UTC.',
