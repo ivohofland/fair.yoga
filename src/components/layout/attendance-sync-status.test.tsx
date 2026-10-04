@@ -97,7 +97,7 @@ describe('AttendanceSyncProvider', () => {
 describe('AttendanceSyncStatus', () => {
   it('renders nothing when there is nothing pending or refused', () => {
     renderRegion();
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 
   it('says one change is waiting, singular', async () => {
@@ -126,7 +126,7 @@ describe('AttendanceSyncStatus', () => {
     await enqueueAttendance(entry({ ownerId: 'acct-2' }));
     await refuse({ ownerId: 'acct-2', registrationId: 'reg-9' });
     renderRegion();
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     expect(screen.queryByText(/Couldn't record/)).toBeNull();
   });
 
@@ -134,9 +134,9 @@ describe('AttendanceSyncStatus', () => {
     await refuse({ status: 'late_cancel' }, 'Class is closed');
     renderRegion();
     expect(screen.getByText("Couldn't record Asha as cancelled late: Class is closed")).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open class' })).toHaveAttribute('href', '/class/class-1');
+    expect(screen.getByRole('link', { name: 'Open class for Asha' })).toHaveAttribute('href', '/class/class-1');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Dismiss: Couldn't record Asha/ }));
     });
     expect(screen.queryByText(/Couldn't record/)).toBeNull();
   });
@@ -151,6 +151,42 @@ describe('AttendanceSyncStatus', () => {
       </AttendanceSyncProvider>,
     );
     expect(screen.getByText(/Couldn't record Asha/)).toBeInTheDocument();
+  });
+
+  it('keeps a refusal hidden until every inline consumer of its class has unmounted', async () => {
+    await refuse();
+    const both = (
+      <AttendanceSyncProvider ownerId="acct-1">
+        <Consumer classId="class-1" />
+        <Consumer classId="class-1" />
+        <AttendanceSyncStatus />
+      </AttendanceSyncProvider>
+    );
+    const { rerender } = render(both);
+    expect(screen.queryByText(/Couldn't record/)).toBeNull();
+    rerender(
+      <AttendanceSyncProvider ownerId="acct-1">
+        <Consumer classId="class-1" />
+        <AttendanceSyncStatus />
+      </AttendanceSyncProvider>,
+    );
+    expect(screen.queryByText(/Couldn't record/)).toBeNull();
+    rerender(
+      <AttendanceSyncProvider ownerId="acct-1">
+        <AttendanceSyncStatus />
+      </AttendanceSyncProvider>,
+    );
+    expect(screen.getByText(/Couldn't record Asha/)).toBeInTheDocument();
+  });
+
+  it('gives each refusal its own accessible Dismiss and Open class names', async () => {
+    await refuse({ registrationId: 'reg-1', studentName: 'Asha' });
+    await refuse({ registrationId: 'reg-2', studentName: 'Ben' });
+    renderRegion();
+    expect(screen.getByRole('button', { name: /^Dismiss: Couldn't record Asha/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Dismiss: Couldn't record Ben/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open class for Asha' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open class for Ben' })).toBeInTheDocument();
   });
 
   it('shows a refusal for a class that has no inline consumer', async () => {
