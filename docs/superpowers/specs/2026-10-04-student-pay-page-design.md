@@ -3,7 +3,9 @@
 An outstanding past class gets its own page, `/bookings/[classId]/pay`, where
 the student chooses how to pay and gets that method's details. The inline
 "How to pay" panel on `/bookings` goes away; the row's **Pay now** pill links
-to the page instead. Payment notifications link there too.
+to the page instead. Payment notifications link there too. On the teacher
+side, an IBAN now requires the exact account holder name, because students'
+banks check it (*Verification of Payee*).
 
 The page is the foundation Level 2 (#386) extends: it is where iDEAL and card
 rows will start a processor checkout, and where that checkout's redirect will
@@ -28,9 +30,14 @@ land. Nothing processor-specific is built here.
   only creator (CLAUDE.md, Payment Model), and a cancelled class never has one
   (`CalendarEntry_not_cancelled_and_completed`, `docs/lock-order.md`).
   `Payment.registrationId` is unique, so a registration has at most one.
-- **A blank IBAN is storable.** `bankIban` is validated as
-  `z.string().nullable().optional()` (`src/lib/schemas.ts`), so `''` can reach
-  the row. "Has an IBAN" must mean non-blank, not non-null.
+- **A blank IBAN or holder name is storable.** `updateTeacherSchema`
+  validates both as `z.string().nullable().optional()` (`src/lib/schemas.ts`),
+  so `''` can reach the row through the API. The profile form already trims
+  blanks to `null` before sending; the API does not.
+- **An IBAN can be saved without a holder name.** `PUT /api/teachers/[id]`
+  writes the parsed partial body straight to the row; nothing relates the two
+  fields. The onboarding `bank` step counts as done on `bankIban !== null`
+  alone (`src/lib/onboarding.ts`).
 - **The student layout already guards the route.** `(student)/layout.tsx`
   sends a session without a student profile to `/schedule` (teacher) or to
   `/login?redirect=…` (signed out), reading the path from `x-pathname`, which
@@ -108,15 +115,16 @@ export type PaymentMethod =
 export function paymentMethodsFor(teacher: {
   bankIban: string | null;
   bankAccountName: string | null;
-  firstName: string;
-  lastName: string;
 }): PaymentMethod[];
 ```
 
-- Non-blank IBAN → `[bank_transfer, epc_qr]`, in that order. Otherwise `[]`.
-- `beneficiary` is `bankAccountName` when non-blank, else
-  `"{firstName} {lastName}"` — the one copy of a rule `/bookings` currently
-  writes twice.
+- Non-blank IBAN **and** non-blank holder name → `[bank_transfer, epc_qr]`,
+  in that order. Otherwise `[]`.
+- `beneficiary` is `bankAccountName`, always. There is no fallback to the
+  teacher's own name: see *Verification of Payee* below for why a name that
+  is not the account's is worse than no bank details at all. This replaces the
+  `bankAccountName ?? "{firstName} {lastName}"` rule `/bookings` writes twice
+  today.
 - Each kind's label and hint live in a table typed
   `satisfies Record<PaymentMethod['kind'], …>`, and the page renders a method
   through an exhaustive `switch` with a `never` default. A kind added by #386
@@ -138,6 +146,45 @@ An empty list is the single predicate for the "directly" copy, on both pages.
 
 The inline "How to pay" panel is removed.
 
+### Verification of Payee: the holder name is required
+
+Since 9 October 2025, euro-area banks check the payee name against the IBAN
+before a SEPA transfer (Instant Payments Regulation, EU 2024/886) and show the
+payer a match, close match or no match. A name that is not the account
+holder's — the teacher's own name standing in for a missing one — puts a
+"this may not be who you think" warning in front of a student paying their
+yoga teacher. So the bank methods exist only when the exact holder name does.
+
+- **API** — `updateTeacherSchema` trims both fields and turns a blank one
+  into `null`. `PUT /api/teachers/[id]`, when the body touches either field,
+  merges it with the stored row and refuses a result with an IBAN and no
+  holder name: 400, "Add the account holder name exactly as your bank shows
+  it." A validation refusal, not a 409 — no conflict, no registered code.
+- **Profile form** — helper text under "Account holder name": "Exactly as
+  your bank shows it — your students' banks check this name." The server's
+  message renders through the form's existing error line.
+- **Onboarding** — the `bank` step is done when `paymentMethodsFor` returns
+  methods, not on `bankIban !== null`, so "done" and "students can pay by
+  bank" are one predicate.
+- **Defence in depth** — the pay page gates on `paymentMethodsFor`, which
+  requires both fields, so a row that predates the API rule (or slips past
+  it) shows "pay directly", never a substituted name.
+
+### SEPA reach
+
+IBAN-only transfers, and the BIC-less EPC QR (version `002`), are guaranteed
+within the EU/EEA (SEPA Regulation, EU 260/2012). Two known gaps, recorded
+here rather than built:
+
+- **SEPA countries outside the EEA** (Switzerland, the UK, Monaco, San Marino,
+  Andorra, Vatican City and others): the payer's bank may require the BIC and
+  the payee's address. An optional BIC field is the fix, worth building when
+  a teacher with such an IBAN appears.
+- **Non-euro accounts**: SEPA and the EPC QR are euro-only. A UK or US
+  teacher is paid by sort code or routing number, not IBAN. `/bookings` and
+  `PaymentQr` hard-code euro today; `Teacher.defaultCurrency` is not read by
+  either. Pre-existing, unchanged here.
+
 ### Notification links
 
 - `studentNotificationHref`: `payment_request` and `reminder` with a related
@@ -157,9 +204,11 @@ The inline "How to pay" panel is removed.
 Failing test first for each.
 
 - **Unit**
-  - `paymentMethodsFor`: IBAN → both methods in order; `null`, `''` and
-    whitespace-only IBAN → `[]`; beneficiary falls back to the name when
-    `bankAccountName` is null or blank.
+  - `paymentMethodsFor`: IBAN and holder name → both methods in order,
+    beneficiary the holder name; `null`, `''` or whitespace-only IBAN → `[]`;
+    IBAN with a `null`, `''` or whitespace-only holder name → `[]`.
+  - Onboarding `bank` step: done with IBAN and name, not done with IBAN
+    alone.
   - `studentNotificationHref`: `payment_request` and `reminder` →
     `/bookings/{id}/pay`; existing types unchanged.
   - `renderNotificationEmail`: Pay now button with the class path when
@@ -170,13 +219,22 @@ Failing test first for each.
   - Another student's `classId` → 404; a class this student is registered
     for but which has no payment → 404; a nonexistent id → 404.
   - Teacher session → `/schedule`; signed out → `/login?redirect=…`.
+  - Teacher with an IBAN and no holder name: the pay page shows the
+    "directly" copy and no IBAN.
+  - `PUT /api/teachers/[id]`: IBAN without a name → 400; name added to a
+    stored IBAN → 200; IBAN added to a stored name → 200; clearing the name
+    while an IBAN is stored → 400; clearing both → 200; blank strings stored
+    as `null`.
   - `/bookings`: outstanding with IBAN links to the pay page; without IBAN
     shows the "directly" line and no link; `not_charged` shows no link. The
     existing "How to pay" assertions in `bookings-page.test.ts` move here, not
     away.
 - **Mutations** — removing `studentId` from the ownership lookup must fail
   the other-student 404 test; testing the IBAN with `!== null` instead of
-  for non-blank must fail the `''` test.
+  for non-blank must fail the `''` test; dropping the holder-name condition
+  from `paymentMethodsFor` must fail the IBAN-without-name tests; checking
+  the PUT body alone instead of the merged row must fail the
+  clear-the-name test.
 - **Visual** — 390px: chooser closed, Bank transfer open, QR open (Bank
   transfer closes).
 
@@ -186,4 +244,6 @@ Failing test first for each.
 - A student "I've paid" signal to the teacher — a new payment state; its own
   issue.
 - Opening a lone method by default — with an IBAN there are always two.
-- Any teacher-side change.
+- A BIC field and non-euro bank details (see *SEPA reach*).
+- IBAN checksum validation.
+- Teacher-side changes beyond the holder-name rule above.
