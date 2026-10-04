@@ -23,122 +23,173 @@ Measured on `feat/725-offline-schedule` off `origin/main` at `dd8f6dc0`.
 | SSE must be excluded | **Holds.** `/api/notifications/stream` is the only streaming route. §3.2 answers only navigations and `/_next/static/`, so the stream is excluded by construction, not by a deny-list entry. |
 | Offline soft navigations need handling | **They already fall back.** Next 16.3.4's `fetchServerResponse` answers a failed RSC fetch with a browser navigation (`experimental.useOffline` is off here), so a tap on a class card offline becomes a document navigation the worker can answer. The worker never caches RSC payloads. |
 | Write controls are check-in, finish, walk-in | **Incomplete.** The class page also has publish, mark paid, undo paid, send reminder, announce and cancel; the studio-class page has count edit, cancel, restore and delete; the schedule page has two onboarding writes. Every one is a `<button>` calling `fetch` (none is a `<form>`), which §3.5 relies on. |
+| The installed app opens on a cacheable page | **No.** `manifest.ts` sets `start_url: '/start'`, a redirect page, and both detail pages' back link is `/`, which redirects to `/schedule`. Neither is a page worth caching, so §3.2 rule 2 redirects them to the stored schedule when offline. |
+
+An adversarial review of this spec's first draft (before any code) found two
+gaps that each failed the acceptance case — warmed pages had no JavaScript
+offline, and the installed app's launch URL landed on the offline page — and
+one claim of mine that was false: there are no portals in `src/` (no
+`createPortal`, no `<dialog>`), so sheets render inside the page and the
+"open sheet escapes the fieldset" gap D6 once named does not exist.
 
 ## 2. Decisions
 
 **D1. Hand-written worker, no dependency.** Serwist would add a build-plugin
 dependency subject to `docs/supply-chain.md` (7-day release age,
-`strictDepBuilds`, signature audit) for what is three request rules and two
-caches. The existing worker is hand-written and tested by evaluating the
+`strictDepBuilds`, signature audit) for what is a handful of request rules and
+three caches. The existing worker is hand-written and tested by evaluating the
 script (`sw.test.ts`). *Rejected:* Serwist — its value is precache manifests
 and strategy plumbing this design does not use.
 
 **D2. Cache three page shapes, nothing else that carries data.**
 `/schedule`, `/class/[id]`, `/studio-class/[id]` (the schedule's two card
-links). Not `/schedule/past`, not `/students/*` (contact data), not edit
-pages, not the inbox. *Rejected:* caching every visited teacher page — widens
-the privacy surface for pages nobody needs in a basement.
+links), with `new` excluded from the id segment and nothing deeper (no edit
+pages). Not `/schedule/past`, not `/students/*` (contact data), not the inbox.
+*Rejected:* caching every visited teacher page — widens the privacy surface
+for pages nobody needs in a basement.
 
 **D3. Warm today's classes from the schedule; cache visited pages too.** A
 schedule load asks the worker to fetch today's class and studio-class pages
 (in the teacher's timezone) so the acceptance case — "opened the app earlier
 today, can see each class's registered students" — holds without tapping into
-each class. Each warm skips a page cached in the last 10 minutes. *Rejected:*
-visit-only (fails the acceptance case); also warming tomorrow (more renders on
-every schedule load for a case a morning app-open already covers — revisit if
-teachers ask).
+each class. A warm skips a page stored in the last 10 minutes or already being
+stored. *Rejected:* visit-only (fails the acceptance case); also warming
+tomorrow (more renders on every schedule load for a case a morning app-open
+already covers — revisit if teachers ask).
 
-**D4. Network-first, always.** A cached page is served only when the network
-request *fails*; there is no timeout racing a slow network against the cache,
-so a slow-but-working connection always shows live data. *Rejected:*
-stale-while-revalidate and cache-first — the issue rules both out.
+**D4. Network-first, with a patience limit.** The network is always asked
+first. The stored copy is served when the request fails, when it answers 502,
+503 or 504 (a deploy or an outage), or when 8 seconds pass with no response
+*and* a stored copy exists — one bar of signal in a basement would otherwise
+show a blank screen until the OS gives up. A slow response that does arrive
+still replaces the stored copy for next time. Whenever a stored copy is shown,
+the marker (D5) says so. *Rejected:* stale-while-revalidate and cache-first,
+which the issue rules out; and no timeout at all (the first draft), because
+"stale and labelled" beats "blank" for a teacher at the door.
 
-**D5. Offline is detected by the page, not reported by the worker.** A client
-component pings a new `GET /api/ping` (no auth, no database, `no-store`)
-on mount, on `online`/`offline` events and on returning to the tab. A failed
-ping or `navigator.onLine === false` shows the marker. A successful ping returns
-server time; if the page's own render time is more than a minute behind it,
-the page is a stale snapshot shown while online, and it calls
-`router.refresh()`. Both times are the server's clock, so device clock skew
-cannot trigger it. *Rejected:* having the worker inject a flag into cached HTML
-(rewrites React-owned markup) or report via `postMessage` keyed on
-`resultingClientId` (uneven Safari support). The ping also covers a page that
-loaded live and lost its connection while open, which no worker-side flag
-can see. `/api/health` was not reused: it runs two database queries.
+**D5. Offline is detected by the page, not reported by the worker.** One
+client-side status store (`useSyncExternalStore`) is fed by
+`navigator.onLine`, the `online`/`offline` events, and a ping to a new
+`GET /api/ping` (no auth, no database, `no-store`, 5 s timeout) on mount, on
+the `online` event and on returning to the tab. A failed ping or
+`navigator.onLine === false` means offline. A successful ping returns server
+time; if the page's own render time is more than a minute behind it, the page
+is a stored snapshot shown while online, and it calls `router.refresh()` —
+at most once per render, so it cannot loop. Both times are the server's clock,
+so device clock skew cannot trigger it. `RefreshAt` and `LiveUpdates` read the
+same store and do not refresh while offline: offline, `router.refresh()` is a
+hard reload (Next's failed-RSC fallback), so `RefreshAt` re-arming from a
+snapshot's render time would otherwise reload the page on a timer.
+*Rejected:* having the worker inject a flag into cached HTML (rewrites
+React-owned markup) or report via `postMessage` keyed on `resultingClientId`
+(uneven Safari support). The ping also covers a page that loaded live and lost
+its connection while open, which no worker-side flag can see. `/api/health`
+was not reused: it runs two database queries.
 
 **D6. Write controls are disabled by one `<fieldset disabled>`.** The page
-content is wrapped; while offline, every descendant `<button>` is disabled
-by the browser, which holds for any control added later without opting in.
-Links still work and land on the offline page if uncached. *Rejected:* a
-per-control `useOffline()` — every new control would have to remember it.
-Known gap: a sheet already open when the connection drops renders in a portal
-outside the fieldset; its request fails into the existing error handling.
+content is wrapped; while offline, every descendant `<button>` is disabled by
+the browser, which holds for any control added later without opting in. Links
+still work and land on the offline page if uncached. Because the browser
+disables them and not the `disabled` prop, the disabled look must come from
+the `:disabled` pseudo-class: `Button` (`src/components/ui/button.tsx`) and the
+raw buttons on the three pages move their disabled styling to Tailwind's
+`disabled:` variant, which matches both. The fieldset resets its UA styling
+(`min-w-0`, no border, padding or margin). *Rejected:* a per-control
+`useOffline()` — every new control would have to remember it.
 
-**D7. Retention: 24 hours.** A stored page older than 24 hours is neither
-served nor kept. Long enough for "loaded last night, teaching at 7"; short
-enough that rosters do not accumulate on the device. The marker names the
-day as well as the time when the snapshot is from an earlier day in the
-teacher's timezone.
+**D7. Retention: 24 hours, and static files by reference.** A stored page
+older than 24 hours is neither served nor kept, and expired pages are purged
+whenever the worker runs (activate, message, any handled fetch), not only when
+read. A static file is kept while any stored page references it and deleted
+when none does. Long enough for "loaded last night, teaching at 7"; short
+enough that rosters do not accumulate on the device. The marker names the day
+as well as the time when the snapshot is from an earlier day in the teacher's
+timezone.
 
 ## 3. Design
 
 ### 3.1 Registration
 
 A client component in `src/app/(teacher)/layout.tsx` registers `/sw.js`
-(scope `/`) on mount, once per page load, where `serviceWorker` exists. Same
-URL and scope as `enablePush`, so push and offline share one registration and
-neither re-registers over the other. Students get no new registration; a
-student who turned push on has the same worker, which caches none of their
-pages (§3.2) but does give them the offline fallback page.
+(scope `/`) on mount where `serviceWorker` exists. Same URL and scope as
+`enablePush`, so push and offline share one registration and neither
+re-registers over the other. Students get no new registration; a student who
+turned push on has the same worker, which stores none of their pages (§3.2)
+but does give them the offline page.
 
 ### 3.2 Request rules (`public/sw.js`)
 
 Only `GET` is ever answered. In order:
 
 1. **Document navigation to a cacheable path** (`request.mode === 'navigate'`,
-   path matches D2): network first. A network response is returned to the
-   page unchanged (streaming intact) and a clone goes to the store rule
-   (§3.4). On network failure: the stored copy if one exists and is under
-   24 hours old, else the offline page.
-2. **Any other same-origin navigation:** network, and on failure the offline
+   path matches D2): network first per D4. A network response is returned to
+   the page unchanged (streaming intact) and a clone goes to the store rule
+   (§3.4). A redirect empties the page cache (§3.4). When the stored copy
+   is not available, the offline page.
+2. **Navigation to `/` or `/start` that fails** (D4's conditions): a redirect
+   to `/schedule` when a servable stored schedule exists, else the offline
+   page. Online, both behave exactly as before.
+3. **Any other same-origin navigation:** network, and on failure the offline
    page. Never stored.
-3. **`/_next/static/*`:** network first (normally the browser's HTTP cache,
-   since these are immutable hashed files), a copy stored in the static
-   cache; the stored copy only on failure. These hold no personal data. Without
-   them a cached page would render as dead HTML with no marker, which §3.5
-   needs JavaScript for.
-4. **Everything else** — API routes, the SSE stream, RSC fetches, `/api/ping`,
+4. **`/_next/static/*`:** network first (normally the browser's HTTP cache,
+   since these are immutable hashed files), falling back to the stored copy.
+   These hold no personal data.
+5. **Everything else** — API routes, the SSE stream, RSC fetches, `/api/ping`,
    cross-origin requests — is not answered (`respondWith` is never called), so
    the browser handles it exactly as before this change.
 
-### 3.3 Caches
+The offline page is a self-contained HTML string inside `sw.js` (inline styles
+in the design tokens, no JavaScript): "You're offline, and this page wasn't
+saved on this device." with a link to the schedule. Built into the worker, it
+cannot fail to install or go stale against a later build's CSS. *Rejected:* a
+Next `/offline` route precached at install — a failed precache fails the
+install, which push's `ready` wait then times out on.
+
+### 3.3 Caches and what is stored with each entry
 
 | Cache | Holds | Cleared |
 |---|---|---|
-| `fy-pages-v1` | the three page shapes, each with a stored-at time and an owner | sign-out, a redirect on a teacher page, an owner change, 24 h age, a new worker version |
-| `fy-static-v1` | `/_next/static/*` responses | entries over 24 h old, a new worker version |
-| `fy-shell-v1` | `/offline` | a new worker version |
+| `fy-pages-v1` | the three page shapes, keyed by pathname alone, each a rebuilt `Response` carrying `x-fy-owner` and `x-fy-stored-at` headers | clear message, a redirect on a cacheable path, an owner change, 24 h age, a new worker version |
+| `fy-static-v1` | `/_next/static/*` responses | when no stored page references the file, a new worker version |
+| `fy-meta-v1` | the clear generation (§3.4) | a new worker version |
 
-`/offline` is fetched into `fy-shell-v1` during `install`.
+An entry missing either header, or with one unparseable, is unservable and
+deleted. Lookups use `ignoreSearch` and `ignoreVary` (Next sends
+`Vary: rsc, next-router-state-tree, …`), so `/class/x?from=inbox` finds
+`/class/x`.
+
+**Storing a page pulls its static files.** When a page is stored, every
+`/_next/static/…` URL in its body — `<script src>`, `<link href>` and the
+flight payload's chunk references — is fetched into `fy-static-v1`. Those are
+normally HTTP-cache hits. Without this, a warmed page (fetched as HTML only)
+or a first-load page would hydrate offline against missing chunks: no marker,
+live-looking buttons, or `error.tsx` replacing the roster.
 
 ### 3.4 Binding the cache to the signed-in account
 
-- **Owner marker.** The wrapper component (§3.5) renders
-  `data-offline-owner="<accountId>"` in the page HTML. The store rule reads
-  the response body, and **refuses to store a page that has no marker** —
-  so only a page wrapped by §3.5 can ever be cached, whatever the path rule
-  says. A stored page carries its owner; storing a page whose owner differs
-  from the current one empties `fy-pages-v1` first. A second account signing
-  in on the device therefore wipes the first's pages on its first load.
+- **Owner marker.** The wrapper (§3.5) renders `data-offline-owner="<id>"`
+  in the page HTML. The store rule reads the body and **refuses to store a
+  page without exactly one owner value** (the strict pattern matches only the
+  attribute React writes; a name containing that text is escaped to `&quot;`
+  and cannot match) — so only a wrapped page can be cached, whatever the path
+  rule says. Storing a page whose owner differs from any stored entry's owner
+  empties `fy-pages-v1` first.
 - **Redirect means signed out.** A cacheable-path request answered with a
-  redirect (an `opaqueredirect` under `redirect: 'manual'`) empties
-  `fy-pages-v1`: the proxy says the device has no valid teacher session (signed
-  out, expired, revoked from another device).
-- **Explicit sign-out** deletes `fy-pages-v1` from the page (`caches.delete`
-  is available to windows) in `SignOutButton`, before it navigates.
+  redirect (`opaqueredirect` under `redirect: 'manual'`, for navigations and
+  warms alike) empties `fy-pages-v1`: the proxy or the teacher layout says the
+  device has no valid teacher session.
+- **Explicit clears, from the page.** One client function,
+  `clearOfflinePages()`, posts `{type: 'clear'}` to the worker and deletes
+  `fy-pages-v1` itself. It runs on sign-out (after the session DELETE settles,
+  whatever its result), on successful sign-in (every flow that completes one),
+  and after account deletion. The worker, on `clear`, aborts in-flight warms and
+  bumps a generation number in `fy-meta-v1`; every store reads the generation
+  when its fetch starts and re-checks it immediately before `put`, so a warm
+  that was in flight with the old cookie cannot repopulate the cache after a
+  sign-out.
 - **Residual, stated:** a session revoked elsewhere while this device stays
-  offline keeps its pages until the device next reaches the server. The person
-  holding the device is the one who loaded them.
+  offline keeps its pages until the device next reaches the server or a clear
+  runs. The person holding the device is the one who loaded them.
 
 ### 3.5 The snapshot wrapper and the marker
 
@@ -148,12 +199,13 @@ on the server in the teacher's timezone (clock, and day-plus-clock), the
 teacher's local date and timezone, and — on the schedule only — the warm list.
 
 - Renders the owner marker on its wrapper.
-- While offline: shows **"Offline — showing what was loaded at HH:MM"** (or
-  "… loaded Sat 3 Oct, 21:40" when the load date is not today in the
+- While offline (D5): shows **"Offline — showing what was loaded at HH:MM"**
+  (or "… loaded Sat 3 Oct, 21:40" when the load date is not today in the
   teacher's timezone), and puts the content in `<fieldset disabled>`.
-- On mount, online: posts `{ type: 'warm', paths }` to the active worker —
-  its own path plus the warm list — so the page the worker could not yet
-  control (the very first load) is stored too.
+- On mount, online: waits for `navigator.serviceWorker.ready` and posts
+  `{type: 'warm', paths}` to the active worker — its own path plus the warm
+  list — so the very first load, which the worker did not yet control, is
+  stored too. The worker holds the warm under `waitUntil`.
 - Formatting happens on the server (`formatClockInZone`,
   `formatInstantInZone`): client components server-render in UTC, and both
   formatters import the server logger.
@@ -162,41 +214,42 @@ teacher's local date and timezone, and — on the schedule only — the warm lis
 
 The worker's behaviour depends only on its own script, not on the app build:
 pages are network-first, and static files are content-hashed, so a new app
-build is picked up online on the next load with no worker change. Old static
-entries age out at 24 hours. The worker itself updates the standard way: the
-browser byte-compares `/sw.js` on navigation, bypassing the HTTP cache for the
-main script. A changed worker calls `skipWaiting()` on install and
-`clients.claim()` on activate, and `activate` deletes every `fy-*` cache not in
-its current set, so a cache-format change ships as a version bump in the cache
-names. No manual cache clear is ever needed.
-
-### 3.7 The offline page
-
-`/offline`, a static public page outside the proxy matcher: "You're offline,
-and this page wasn't saved on this device." with a link to today's schedule.
-It renders without JavaScript.
+build is picked up online on the next load with no worker change; a stored
+page keeps the static files it references until it is replaced or expires.
+The worker itself updates the standard way: the browser byte-compares
+`/sw.js` on navigation, bypassing the HTTP cache for the main script. A changed
+worker calls `skipWaiting()` on install and `clients.claim()` on activate, and
+`activate` deletes every `fy-*` cache not in its current set, so a
+cache-format change ships as a version bump in the cache names. No manual cache
+clear is ever needed.
 
 ## 4. Testing
 
 - **Worker (unit, `sw.test.ts`):** the harness gains injected `caches` and
-  `fetch`; each request rule, the store refusals (no marker, non-200,
-  redirect), owner change, 24-hour expiry, warm throttle, `activate` cleanup,
-  and the SSE / API / RSC pass-through. The `'registers no fetch listener'`
-  test is replaced, not deleted silently.
-- **Wrapper and registration (components):** marker hidden online, shown on
-  `offline` and on a failed ping, day form across dates, the fieldset
-  disables a descendant button, stale-while-online calls `router.refresh()`,
-  the warm message.
+  `fetch`; each request rule, D4's three fallback conditions, the store
+  refusals (no marker, two markers, non-200, redirect), owner change, the clear
+  generation race, 24-hour expiry and purge, static extraction and
+  reference pruning, the warm throttle, `activate` cleanup, and the SSE / API /
+  RSC pass-through. The `'registers no fetch listener'` test is replaced.
+- **Status store, wrapper and registration (components):** marker hidden
+  online, shown on `offline` and on a failed ping, the day form across dates,
+  the fieldset disables a descendant `Button` and it looks disabled, the
+  stale-while-online refresh fires once, `RefreshAt` does not refresh while
+  offline, the warm message.
 - **Ping route (integration).**
-- **Sign-out clears the cache (components).**
-- **End to end (Playwright, Chromium, worker allowed only in its own spec):**
-  load the schedule, wait for the class page to be stored, go offline, open the
-  class page and see the student name, the marker, a disabled button; open an
-  uncached page and see `/offline`; sign out and see `fy-pages-v1` gone. The
-  rest of the suite runs with `serviceWorkers: 'block'`, because `page.route`
-  does not see worker-issued requests and several specs depend on it.
-- **Every guard bites:** the plan carries a mutation per guard (marker refusal,
-  redirect wipe, owner wipe, expiry, pass-through, fieldset).
+- **Every clear site (components):** sign-out, each sign-in flow, account
+  deletion.
+- **End to end (Playwright, Chromium, production build in CI):** the offline
+  spec opts into the worker; the rest of the suite runs with
+  `serviceWorkers: 'block'` so its behaviour is unchanged by this PR (and
+  `setOffline` only reaches worker fetches when the worker is allowed). Load
+  the schedule, wait for a class page that was **never visited** to be stored,
+  go offline, open it: student name, marker, a disabled button; open `/` and
+  land on the schedule; open an uncached page and see the offline page; sign
+  out and see `fy-pages-v1` empty.
+- **Every guard bites:** the plan carries a mutation per guard (marker
+  refusal, redirect wipe, owner wipe, clear generation, expiry, static
+  extraction, pass-through, fieldset, offline refresh suppression).
 
 ## 5. Out of scope
 
@@ -204,3 +257,5 @@ It renders without JavaScript.
 - Navigation preload — a latency optimisation for network-first, measurable
   later.
 - Caching any student-side page.
+- Profile photos offline: an uploaded image is not a static file and shows as
+  broken in a snapshot.
