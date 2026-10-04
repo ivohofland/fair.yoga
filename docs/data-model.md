@@ -110,7 +110,7 @@ first; one row per device is identity enough for dispatch and cleanup.
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
 | bank_iban | string, nullable | Level 1 only |
-| bank_account_name | string, nullable | Level 1 only |
+| bank_account_name | string, nullable | Level 1 only; required by `PUT /api/teachers/[id]` whenever an IBAN would be stored (Verification of Payee) — students are shown bank methods only when both are set |
 | processor_type | enum: mollie, stripe | Level 2 only |
 | processor_account_id | string, nullable | Level 2 only |
 | **Timestamps** | | |

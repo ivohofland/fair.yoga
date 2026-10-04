@@ -200,7 +200,7 @@ Four-layer communication model, same content, different delivery:
 
 **In-app notifications:** Real-time alerts for time-sensitive events (waitlist promotion, class cancellation, booking confirmation).
 
-**In-app inbox:** Chronological log of notifications, kept for a year, a few short-lived types for 30 days (`NOTIFICATION_RETENTION_DAYS`). Acts as a personal activity history — booking confirmations, payment requests, class updates. Always available regardless of email settings. Important for Level 1: the student's outstanding payments, with bank details, are shown on `/bookings` from the payment record.
+**In-app inbox:** Chronological log of notifications, kept for a year, a few short-lived types for 30 days (`NOTIFICATION_RETENTION_DAYS`). Acts as a personal activity history — booking confirmations, payment requests, class updates. Always available regardless of email settings. Important for Level 1: a student's outstanding payment, with bank details, is shown on the class's pay page (`/bookings/[classId]/pay`), reached from `/bookings` and from payment notifications. Bank methods appear there only when the teacher's IBAN and account holder name are both set.
 
 **Email:** External fallback. The system sends in-app first; if the student hasn't seen it within a reasonable window, email follows. Student controls whether email notifications are on or off (on by default).
 
