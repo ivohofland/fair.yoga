@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import {
-  getOutbox,
+  readOutbox,
   settleEntry,
   withLock,
   type PendingEntry,
@@ -30,6 +30,8 @@ let running: Promise<void> | null = null;
 let rerunScope: string | null | undefined;
 let backoffStep = 0;
 let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+/** Started syncs not yet stopped; the backoff arms only while one is running, so a stop holds against a flush still in flight. */
+let activeSyncs = 0;
 /** Bumped by `resetSyncForTests`, so a flush still in flight from before it changes nothing after it. */
 let generation = 0;
 
@@ -136,7 +138,8 @@ async function pass(scope: string | null, gen: number): Promise<boolean> {
   return withLock(FLUSH_LOCK, async () => {
     let retried = false;
     let succeeded = false;
-    const entries = Object.values(getOutbox().pending).sort((a, b) => a.recordedAt - b.recordedAt);
+    // Fresh: another tab may have replaced or settled an entry since this tab last looked.
+    const entries = Object.values(readOutbox().pending).sort((a, b) => a.recordedAt - b.recordedAt);
     for (const entry of entries) {
       if (gen !== generation) break;
       if (scope !== null && entry.ownerId !== scope) {
@@ -172,7 +175,7 @@ function scheduleBackoff(retried: boolean, scope: string | null): void {
     backoffStep = 0;
     return;
   }
-  if (document.visibilityState !== 'visible') return;
+  if (activeSyncs === 0 || document.visibilityState !== 'visible') return;
   const delay = BACKOFF_MS[Math.min(backoffStep, BACKOFF_MS.length - 1)];
   backoffStep++;
   backoffTimer = setTimeout(() => {
@@ -188,7 +191,13 @@ async function run(first: string | null, gen: number): Promise<void> {
     let rerun: boolean;
     do {
       rerunScope = undefined;
-      retried = await pass(scope, gen);
+      try {
+        retried = await pass(scope, gen);
+      } catch (err) {
+        logRequestFailure('attendance-sync', { scope }, err);
+        // Whatever was pending is still pending; the backoff keeps trying it.
+        retried = true;
+      }
       if (gen !== generation) return;
       const next = rerunScope;
       rerun = next !== undefined;
@@ -228,8 +237,13 @@ export function startAttendanceSync(ownerId: string): () => void {
   wasOffline = getConnectionStatus().offline;
   window.addEventListener('online', flush);
   document.addEventListener('visibilitychange', onVisibilityChange);
+  activeSyncs++;
   flush();
+  let stopped = false;
   return () => {
+    if (stopped) return;
+    stopped = true;
+    activeSyncs--;
     window.removeEventListener('online', flush);
     document.removeEventListener('visibilitychange', onVisibilityChange);
     unsubscribe();
@@ -239,6 +253,7 @@ export function startAttendanceSync(ownerId: string): () => void {
 
 export function resetSyncForTests(): void {
   generation++;
+  activeSyncs = 0;
   clearBackoff();
   backoffStep = 0;
   running = null;

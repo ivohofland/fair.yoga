@@ -17,12 +17,18 @@ import {
   type ReplayOutcome,
 } from '@/lib/attendance-sync';
 
-const conn = vi.hoisted(() => ({ offline: false, listeners: new Set<() => void>() }));
+const conn = vi.hoisted(() => ({
+  offline: false,
+  /** Like the real store's first subscribe: the answer changes without a notification. */
+  offlineOnSubscribe: false,
+  listeners: new Set<() => void>(),
+}));
 
 vi.mock('@/lib/offline-status', () => ({
   getConnectionStatus: () => ({ offline: conn.offline, serverNow: null }),
   subscribeConnectionStatus: (listener: () => void) => {
     conn.listeners.add(listener);
+    if (conn.offlineOnSubscribe) conn.offline = true;
     return () => {
       conn.listeners.delete(listener);
     };
@@ -80,6 +86,7 @@ describe('attendance sync', () => {
     resetOutboxForTests();
     resetSyncForTests();
     conn.offline = false;
+    conn.offlineOnSubscribe = false;
     conn.listeners.clear();
     visibility = 'visible';
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
@@ -92,6 +99,7 @@ describe('attendance sync', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    Reflect.deleteProperty(navigator, 'locks');
   });
 
   it('classifies every answer', async () => {
@@ -220,6 +228,54 @@ describe('attendance sync', () => {
     expect(getOutbox().pending).toEqual({});
   });
 
+  it('needsSignIn stays set until a 2xx, not merely until a pass ends', async () => {
+    await enqueue('attended');
+    const { result } = renderHook(() => useSyncState());
+    fetchMock.mockResolvedValueOnce(bare(401)).mockResolvedValueOnce(bare(503));
+    await act(() => flushAttendance('acct-1'));
+    expect(result.current.needsSignIn).toBe(true);
+    await act(() => flushAttendance('acct-1'));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.needsSignIn).toBe(true);
+  });
+
+  it('each pass reads the outbox past this tab\'s cache', async () => {
+    const stale = await enqueue('attended');
+    expect(getOutbox().pending.r1?.status).toBe('attended');
+    const newer: PendingEntry = { ...stale, id: 'other-tab', status: 'no_show', recordedAt: stale.recordedAt + 1 };
+    localStorage.setItem(
+      'fy-outbox-v1',
+      JSON.stringify({ pending: { r1: newer }, confirmed: {}, refused: {} }),
+    );
+    fetchMock.mockResolvedValueOnce(ok({ id: 'r1', status: 'no_show' }));
+    await flushAttendance('acct-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe('{"status":"no_show"}');
+    expect(getOutbox().pending).toEqual({});
+    expect(getOutbox().confirmed.r1?.status).toBe('no_show');
+  });
+
+  it('a failed pass is logged, never rejects, and keeps the backoff going', async () => {
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended');
+    const request = vi
+      .fn((_name: string, fn: () => Promise<unknown>) => fn())
+      .mockImplementationOnce(async () => {
+        throw new Error('lock manager failed');
+      });
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } });
+    fetchMock.mockResolvedValue(ok({ id: 'r1', status: 'attended' }));
+    onTestFinished(startAttendanceSync('acct-1'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors.mock.calls[0]?.[0]).toBe('[attendance-sync] request failed');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getOutbox().pending).toEqual({});
+  });
+
   it('a tap during a flush is sent after it, in order', async () => {
     await enqueue('attended');
     let answerFirst: (res: Response) => void = () => {};
@@ -287,7 +343,7 @@ describe('attendance sync', () => {
           signal?.addEventListener('abort', () => reject(signal.reason));
         }),
     );
-    void flushAttendance('acct-1');
+    onTestFinished(startAttendanceSync('acct-1'));
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(10_000);
@@ -303,7 +359,7 @@ describe('attendance sync', () => {
     vi.useFakeTimers();
     await enqueue('attended');
     fetchMock.mockImplementation(async () => bare(503));
-    void flushAttendance('acct-1');
+    onTestFinished(startAttendanceSync('acct-1'));
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     let calls = 1;
@@ -361,5 +417,40 @@ describe('attendance sync', () => {
     setOffline(false);
     await vi.advanceTimersByTimeAsync(120_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop holds against a flush still in flight', async () => {
+    vi.useFakeTimers();
+    await enqueue('attended');
+    let answerFirst: (res: Response) => void = () => {};
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            answerFirst = resolve;
+          }),
+      )
+      .mockImplementation(async () => bare(503));
+    const stop = startAttendanceSync('acct-1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    stop();
+    answerFirst(bare(503));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getOutbox().pending.r1?.status).toBe('attended');
+  });
+
+  it('a reconnect counts from the status as it stands after subscribing', async () => {
+    conn.offlineOnSubscribe = true;
+    await enqueue('attended');
+    fetchMock.mockImplementation(async () => bare(503));
+    onTestFinished(startAttendanceSync('acct-1'));
+    await drain();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    setOffline(false);
+    await drain();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
