@@ -147,5 +147,11 @@
   a:hover {
     color: var(--color-teal);
   }
+
+  /* Controls the offline snapshot's fieldset disables look disabled, whatever classes they carry. */
+  fieldset[data-offline-fieldset]:disabled :is(button, input, select, textarea):disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 

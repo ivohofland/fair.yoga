@@ -62,6 +62,11 @@ describe('OfflineSnapshot', () => {
     expect(container.querySelector('fieldset')).not.toBeDisabled();
   });
 
+  it('marks its fieldset for the stylesheet rule that dims what it disables', () => {
+    const { container } = render(ui());
+    expect(container.querySelector('fieldset')).toHaveAttribute('data-offline-fieldset');
+  });
+
   it('says "at HH:MM" offline when loaded today in the stamp zone', () => {
     status.current = { offline: true, serverNow: null };
     render(ui());
