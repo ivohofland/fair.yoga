@@ -2,12 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { RegistrationStatus } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import type { AttendanceStatus } from '@/lib/registration-status';
 
-/** A registration this list can show: every status but `cancelled`. */
-export type AttendanceStatus = Exclude<RegistrationStatus, 'cancelled'>;
+export type { AttendanceStatus };
 
 export interface AttendanceItem {
   registrationId: string;
