@@ -103,7 +103,7 @@ describe('OfflineSnapshot', () => {
   });
 
   describe('staleness refresh', () => {
-    it('refreshes once when a ping lands more than 60 s after the render, and again only for a new render stamp', () => {
+    it('refreshes once when a ping lands more than 60 s after the render, and not again on a later stale ping', () => {
       status.current = { offline: false, serverNow: stamp.renderedAt + 60_001 };
       const { rerender } = render(ui());
       expect(router.refresh).toHaveBeenCalledTimes(1);
