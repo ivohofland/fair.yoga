@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
+import type { FlushResult } from '@/lib/attendance-outbox';
 
 const disablePushMock = vi.fn<() => Promise<'off' | 'failed'>>();
 vi.mock('@/lib/push-client', async (importOriginal) => {
@@ -16,7 +17,7 @@ vi.mock('@/lib/offline-client', () => ({
   clearOfflinePages: () => clearOfflinePages(),
 }));
 
-const flushOutbox = vi.fn<(owner: string) => Promise<{ applied: number }>>(async () => ({ applied: 0 }));
+const flushOutbox = vi.fn<(owner: string) => Promise<FlushResult>>(async () => ({ applied: 0, replayed: 0 }));
 const pendingCount = vi.fn<(owner: string) => number>(() => 0);
 const clearAllOutboxes = vi.fn<() => void>();
 vi.mock('@/lib/attendance-outbox', () => ({
@@ -49,7 +50,7 @@ describe('SignOutButton', () => {
     disablePushMock.mockReset();
     clearOfflinePages.mockClear();
     flushOutbox.mockReset();
-    flushOutbox.mockImplementation(async () => ({ applied: 0 }));
+    flushOutbox.mockImplementation(async () => ({ applied: 0, replayed: 0 }));
     pendingCount.mockReset();
     pendingCount.mockImplementation(() => 0);
     clearAllOutboxes.mockReset();
@@ -269,7 +270,7 @@ describe('SignOutButton and the attendance outbox', () => {
     disablePushMock.mockReset();
     clearOfflinePages.mockClear();
     flushOutbox.mockReset();
-    flushOutbox.mockImplementation(async () => ({ applied: 0 }));
+    flushOutbox.mockImplementation(async () => ({ applied: 0, replayed: 0 }));
     pendingCount.mockReset();
     pendingCount.mockImplementation(() => 0);
     clearAllOutboxes.mockReset();
@@ -320,7 +321,7 @@ describe('SignOutButton and the attendance outbox', () => {
     flushOutbox.mockImplementation(async (owner) => {
       order.push(`flush:${owner}`);
       flushed = true;
-      return { applied: 1 };
+      return { applied: 1, replayed: 0 };
     });
     disablePushMock.mockImplementation(async () => {
       order.push('disablePush');
@@ -342,7 +343,7 @@ describe('SignOutButton and the attendance outbox', () => {
 
   it('stops waiting for the flush after 5 s', async () => {
     vi.useFakeTimers();
-    flushOutbox.mockReturnValue(new Promise<{ applied: number }>(() => {}));
+    flushOutbox.mockReturnValue(new Promise<FlushResult>(() => {}));
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
     try {
