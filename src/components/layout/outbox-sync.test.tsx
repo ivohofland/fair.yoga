@@ -1,21 +1,42 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
 import { OutboxSync } from './outbox-sync';
 import type { ConnectionStatus } from '@/lib/offline-status';
 
-const { status, isOfflineNow, flushOutbox, purgeOtherOwners } = vi.hoisted(() => ({
-  status: { current: { offline: false, serverNow: null } as ConnectionStatus },
-  isOfflineNow: vi.fn(() => false),
-  flushOutbox: vi.fn(async (_owner: string) => ({ applied: 0, replayed: 0 })),
-  purgeOtherOwners: vi.fn((_owner: string) => {}),
-}));
+const { status, isOfflineNow, flushOutbox, purgeOtherOwners, outbox, getOutboxSnapshot, subscribeOutbox } = vi.hoisted(
+  () => {
+    const outbox = { queued: [] as Array<{ registrationId: string }>, listeners: new Set<() => void>() };
+    return {
+      status: { current: { offline: false, serverNow: null } as ConnectionStatus },
+      isOfflineNow: vi.fn(() => false),
+      flushOutbox: vi.fn(async (_owner: string) => ({ applied: 0, replayed: 0 })),
+      purgeOtherOwners: vi.fn((_owner: string) => {}),
+      outbox,
+      getOutboxSnapshot: vi.fn((_owner: string) => ({ queued: outbox.queued })),
+      subscribeOutbox: vi.fn((listener: () => void) => {
+        outbox.listeners.add(listener);
+        return () => {
+          outbox.listeners.delete(listener);
+        };
+      }),
+    };
+  },
+);
 
 vi.mock('@/lib/offline-status', () => ({
   useConnectionStatus: () => status.current,
   isOfflineNow,
 }));
-vi.mock('@/lib/attendance-outbox', () => ({ flushOutbox, purgeOtherOwners }));
+vi.mock('@/lib/attendance-outbox', () => ({ flushOutbox, purgeOtherOwners, getOutboxSnapshot, subscribeOutbox }));
+
+/** The owner's queue as storage now holds it, told to every subscriber. */
+function setQueued(ids: string[]): void {
+  outbox.queued = ids.map((registrationId) => ({ registrationId }));
+  act(() => {
+    outbox.listeners.forEach((listener) => listener());
+  });
+}
 
 function setVisibility(state: DocumentVisibilityState): void {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
@@ -33,7 +54,13 @@ beforeEach(() => {
   isOfflineNow.mockReset().mockReturnValue(false);
   flushOutbox.mockReset().mockResolvedValue({ applied: 0, replayed: 0 });
   purgeOtherOwners.mockReset();
+  outbox.queued = [];
+  outbox.listeners.clear();
   setVisibility('visible');
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('OutboxSync', () => {
@@ -151,5 +178,71 @@ describe('OutboxSync', () => {
     finish({ applied: 1, replayed: 1 });
     await settle();
     expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  describe('retrying on a timer', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    function advance(ms: number): void {
+      act(() => {
+        vi.advanceTimersByTime(ms);
+      });
+    }
+
+    it('flushes every 30 s while online with a queued mark', async () => {
+      outbox.queued = [{ registrationId: 'r1' }];
+      render(<OutboxSync owner="account-1" />);
+      await settle();
+      flushOutbox.mockClear();
+      advance(29_999);
+      expect(flushOutbox).not.toHaveBeenCalled();
+      advance(1);
+      expect(flushOutbox).toHaveBeenCalledTimes(1);
+      expect(flushOutbox).toHaveBeenCalledWith('account-1');
+      advance(30_000);
+      expect(flushOutbox).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not flush on a timer while the queue is empty', async () => {
+      render(<OutboxSync owner="account-1" />);
+      await settle();
+      flushOutbox.mockClear();
+      advance(90_000);
+      expect(flushOutbox).not.toHaveBeenCalled();
+    });
+
+    it('starts when a mark is queued, and stops once the queue empties', async () => {
+      render(<OutboxSync owner="account-1" />);
+      await settle();
+      flushOutbox.mockClear();
+      setQueued(['r1']);
+      advance(30_000);
+      expect(flushOutbox).toHaveBeenCalledTimes(1);
+      setQueued([]);
+      advance(90_000);
+      expect(flushOutbox).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not flush on a timer while offline', async () => {
+      outbox.queued = [{ registrationId: 'r1' }];
+      status.current = { offline: true, serverNow: null };
+      render(<OutboxSync owner="account-1" />);
+      await settle();
+      flushOutbox.mockClear();
+      advance(90_000);
+      expect(flushOutbox).not.toHaveBeenCalled();
+    });
+
+    it('stops once unmounted', async () => {
+      outbox.queued = [{ registrationId: 'r1' }];
+      const { unmount } = render(<OutboxSync owner="account-1" />);
+      await settle();
+      unmount();
+      flushOutbox.mockClear();
+      advance(90_000);
+      expect(flushOutbox).not.toHaveBeenCalled();
+    });
   });
 });

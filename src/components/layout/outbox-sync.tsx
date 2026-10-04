@@ -1,16 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
-import { flushOutbox, purgeOtherOwners, type FlushResult } from '@/lib/attendance-outbox';
+import {
+  flushOutbox,
+  getOutboxSnapshot,
+  purgeOtherOwners,
+  subscribeOutbox,
+  type FlushResult,
+} from '@/lib/attendance-outbox';
 import { isOfflineNow, useConnectionStatus } from '@/lib/offline-status';
 
 /**
  * Replays the account's queued attendance marks from every teacher page
  * (#726, spec D4): on mount, on the `online` event, when the page becomes
- * visible, and when the connection store goes from offline to online. Renders
- * nothing.
+ * visible, when the connection store goes from offline to online, and every
+ * 30 s while online with a mark still queued. Renders nothing.
  */
+const RETRY_INTERVAL_MS = 30_000;
+
 export function OutboxSync({ owner }: { owner: string }) {
   const router = useRouter();
   /** Read at refresh time, so the listeners below are not re-bound when the router object changes. */
@@ -19,6 +27,11 @@ export function OutboxSync({ owner }: { owner: string }) {
     routerRef.current = router;
   }, [router]);
   const { offline } = useConnectionStatus();
+  const hasQueued = useSyncExternalStore(
+    subscribeOutbox,
+    () => getOutboxSnapshot(owner).queued.length > 0,
+    () => false,
+  );
   const wasOffline = useRef(offline);
   /** The flush a refresh is already waiting on: triggers that join it add no second refresh. */
   const awaited = useRef<Promise<FlushResult> | null>(null);
@@ -53,6 +66,14 @@ export function OutboxSync({ owner }: { owner: string }) {
     if (wasOffline.current && !offline) sync();
     wasOffline.current = offline;
   }, [offline, sync]);
+
+  // A flush that stopped while the store still says online (a timeout, a 503)
+  // has no transition to retry it.
+  useEffect(() => {
+    if (offline || !hasQueued) return;
+    const timer = setInterval(sync, RETRY_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [offline, hasQueued, sync]);
 
   return null;
 }
