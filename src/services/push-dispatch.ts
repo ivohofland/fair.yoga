@@ -13,7 +13,7 @@ export const PUSH_WORKERS = 4;
  * No notification is claimed once a tick has run this long. A tick therefore
  * ends within one send timeout of it, plus the database calls after its last
  * deadline check, which is what keeps the job under the scheduler's stall line (derivation in `docs/technical-architecture.md`,
- * Cron Jobs; pinned in `scheduler.test.ts`).
+ * Cron Jobs → Push dispatch; pinned in `scheduler.test.ts`).
  */
 export const PUSH_CLAIM_DEADLINE_MS = 10_000;
 
