@@ -27,7 +27,7 @@
 ## Review Focus
 
 1. **Two tabs, sign out in one** — a warm still in flight in the other must not put the signed-out account's page back. Pinned in Task 2 (generation race test).
-2. **A deep link with a query** (`/class/x?from=inbox`) opened offline must find `/class/x`. Pinned in Task 2 (`ignoreSearch` test).
+2. **A deep link with a query** (`/class/x?from=inbox`) opened offline must find `/class/x`. Pinned in Task 2 (query-string test; entries are keyed by pathname alone).
 3. **A teacher whose timezone is ahead of UTC, near midnight** — "today's classes" and the marker's day form follow the teacher's zone, not the server's or the device's. Pinned in Task 3 (`Pacific/Auckland` tests).
 4. **A deploy answering 503 while the device is online** — the stored copy is served and the page shows the marker (the ping fails too). Pinned in Task 2 (gateway test) and Task 1 (ping non-ok counts as offline).
 5. **A stored entry written by a different worker format** (missing or garbage `x-fy-stored-at` / `x-fy-owner`) is never served. Pinned in Task 2.
@@ -39,7 +39,7 @@
 **Files:**
 - Create: `src/app/api/ping/route.ts`
 - Create: `src/lib/offline-status.ts`
-- Create: `src/lib/offline-status.test.ts` (unit project, `node` environment: `src/**/*.test.ts`). Stub `window`, `document`, `navigator` and `fetch` with `vi.stubGlobal` as `src/lib/push-client.test.ts` does — `window` and `document` as `EventTarget` instances (plus `visibilityState` on `document`) so dispatched events reach the listeners. Drive the hook through `useSyncExternalStore`'s functions or a tiny `renderToString`/`react-dom/client`-free harness; the components project (jsdom) only includes `src/components/**/*.test.tsx` and `src/app/**/*.test.tsx`.
+- Create: `src/lib/offline-status.test.ts` (unit project, `node` environment: `src/**/*.test.ts`). Stub `window`, `document`, `navigator` and `fetch` with `vi.stubGlobal` as `src/lib/push-client.test.ts` does — `window` and `document` as `EventTarget` instances (plus `visibilityState` on `document`) so dispatched events reach the listeners. There is no DOM in this project, so tests drive the store through `subscribeConnectionStatus(listener)` and `getConnectionStatus()`; the components project (jsdom) only includes `src/components/**/*.test.tsx` and `src/app/**/*.test.tsx`.
 - Create: `tests/integration/ping-api.test.ts`
 - Modify: `src/components/class/refresh-at.tsx` (+ its existing test)
 - Modify: `src/components/layout/live-updates.tsx` (+ its existing test, if any)
@@ -49,7 +49,8 @@
   - `GET /api/ping` → `200 {"now": <server epoch ms>}`, header `Cache-Control: no-store`, no auth, no database.
   - `src/lib/offline-status.ts`:
     - `export interface ConnectionStatus { offline: boolean; serverNow: number | null }`
-    - `export function useConnectionStatus(): ConnectionStatus` — `useSyncExternalStore`; server snapshot `{ offline: false, serverNow: null }`; first subscriber triggers a check and attaches `online`, `offline` and `visibilitychange` listeners.
+    - `export function useConnectionStatus(): ConnectionStatus` — `useSyncExternalStore`; server snapshot `{ offline: false, serverNow: null }`.
+    - `export function subscribeConnectionStatus(listener: () => void): () => void` and `export function getConnectionStatus(): ConnectionStatus` — the two functions `useConnectionStatus` hands to `useSyncExternalStore`, exported so the unit project can drive the store without a DOM. The first subscriber triggers a check and attaches `online`, `offline` and `visibilitychange` listeners; while the snapshot says offline and a subscriber remains, the ping is retried every 15 s.
     - `export function isOfflineNow(): boolean` — `navigator.onLine === false` or the last ping failed; no subscription, no request.
     - `export function checkConnection(): Promise<void>` — one ping (5 s timeout via `AbortSignal.timeout(5000)`); a non-ok status or a rejection counts as failed; never throws.
     - `export function resetConnectionStatus(): void` — test-only reset.
@@ -69,14 +70,12 @@ describe('GET /api/ping', () => {
     expect(res.headers.get('cache-control')).toContain('no-store');
     const body: unknown = await res.json();
     expect(body).toEqual({ now: expect.any(Number) });
-    const { now } = body as { now: number };
-    expect(now).toBeGreaterThanOrEqual(before - 60_000);
-    expect(now).toBeLessThanOrEqual(after + 60_000);
+    if (typeof body !== 'object' || body === null || !('now' in body) || typeof body.now !== 'number') throw new Error('no now');
+    expect(body.now).toBeGreaterThanOrEqual(before - 60_000);
+    expect(body.now).toBeLessThanOrEqual(after + 60_000);
   });
 });
 ```
-
-(If `body as { now: number }` trips the no-widening-cast rule, narrow with a type guard instead.)
 
 - [ ] **Step 2: Run it, see it fail** — `pnpm run worktree:up` then `pnpm exec vitest run --project integration tests/integration/ping-api.test.ts`. Expected: 404.
 
@@ -88,11 +87,7 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * Reachability probe for `src/lib/offline-status.ts`. Public, touches no
- * database; `now` lets a page compare its own render time against the
- * server's clock rather than the device's.
- */
+/** Reachability probe: public, no database; `now` is the server's clock. */
 export function GET() {
   return NextResponse.json({ now: Date.now() }, { headers: { 'Cache-Control': 'no-store' } });
 }
@@ -101,13 +96,15 @@ export function GET() {
 Check whether `src/proxy.ts` or a rate limiter needs anything for a new public route (it should not: the proxy matcher does not include `/api`). Run the test: PASS.
 
 - [ ] **Step 4: Write failing tests for the status store** — cover, each as its own `it`:
-  1. Server snapshot: rendering a component using `useConnectionStatus` with `renderToString` gives `offline: false`.
-  2. A mounted consumer pings `/api/ping` once on mount (mock `fetch`), and a `{now}` answer yields `{ offline: false, serverNow: now }`.
+  1. Server snapshot: rendering a component using `useConnectionStatus` with `renderToString` (no DOM needed) gives `offline: false`.
+  2. A `subscribeConnectionStatus(listener)` call pings `/api/ping` once (mock `fetch`), and a `{now}` answer yields `{ offline: false, serverNow: now }` from `getConnectionStatus()`.
   3. A rejected ping → `offline: true`; a `503` ping → `offline: true` (Review Focus 4).
   4. Dispatching `offline` on `window` → `offline: true` without a request; dispatching `online` → a new ping.
   5. `visibilitychange` to visible → a new ping.
-  6. `isOfflineNow()` is true while `navigator.onLine` is false (stub it with `vi.spyOn(navigator, 'onLine', 'get')`) and after a failed ping; false after a successful one.
+  6. `isOfflineNow()` is true while `navigator.onLine` is false (stub `navigator` with `vi.stubGlobal('navigator', { onLine: false })`) and after a failed ping; false after a successful one.
   7. The ping passes an abort signal (assert `fetch` was called with an object whose `signal` is an `AbortSignal`) and `cache: 'no-store'`.
+  8. **Retry while offline:** subscribe; the first ping answers 503 (offline). Advance fake timers by 15 s; the second ping answers `{now}`, and the snapshot becomes `offline: false`. Once unsubscribed, advancing time sends no ping.
+  9. **Latest ping wins:** ping A hangs (deferred), ping B (from `online`) answers `{now}`, then A rejects. The snapshot stays `offline: false`.
   Call `resetConnectionStatus()` in `afterEach`.
 
 - [ ] **Step 5: Run, see them fail** (module missing).
@@ -124,22 +121,38 @@ export interface ConnectionStatus {
 }
 
 const PING_TIMEOUT_MS = 5_000;
+/** While a subscriber sees `offline`, how long until the ping is tried again. */
+const RETRY_MS = 15_000;
 const SERVER_SNAPSHOT: ConnectionStatus = { offline: false, serverNow: null };
 
 let pingFailed = false;
 let serverNow: number | null = null;
 let snapshot: ConnectionStatus = SERVER_SNAPSHOT;
+/** Numbers each ping; an answer is kept only from the latest one sent. */
+let latestPing = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<() => void>();
 
 function browserOffline(): boolean {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
-function publish(): void {
+/** A new object only when a value changed: React requires a stable snapshot. */
+function refreshSnapshot(): void {
   const offline = pingFailed || browserOffline();
   if (snapshot.offline !== offline || snapshot.serverNow !== serverNow) {
     snapshot = { offline, serverNow };
   }
+}
+
+function scheduleRetry(): void {
+  if (retryTimer !== null) clearTimeout(retryTimer);
+  retryTimer = listeners.size > 0 && snapshot.offline ? setTimeout(() => void checkConnection(), RETRY_MS) : null;
+}
+
+function publish(): void {
+  refreshSnapshot();
+  scheduleRetry();
   listeners.forEach((listener) => listener());
 }
 
@@ -149,15 +162,22 @@ function isServerNow(value: unknown): value is { now: number } {
 
 /** One reachability check against `/api/ping`. Never throws. */
 export async function checkConnection(): Promise<void> {
+  const ping = ++latestPing;
+  let failed = true;
+  let now: number | null = null;
   try {
     const res = await fetch('/api/ping', { cache: 'no-store', signal: AbortSignal.timeout(PING_TIMEOUT_MS) });
     const body: unknown = res.ok ? await res.json() : null;
-    pingFailed = !isServerNow(body);
-    if (isServerNow(body)) serverNow = body.now;
+    if (isServerNow(body)) {
+      failed = false;
+      now = body.now;
+    }
   } catch {
     // A failed ping is the answer this function exists to find, not an error.
-    pingFailed = true;
   }
+  if (ping !== latestPing) return;
+  pingFailed = failed;
+  if (now !== null) serverNow = now;
   publish();
 }
 
@@ -169,26 +189,37 @@ function onOnline(): void {
   void checkConnection();
 }
 
-function subscribe(listener: () => void): () => void {
+function detach(): void {
+  window.removeEventListener('online', onOnline);
+  window.removeEventListener('offline', publish);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  if (retryTimer !== null) clearTimeout(retryTimer);
+  retryTimer = null;
+}
+
+export function subscribeConnectionStatus(listener: () => void): () => void {
   listeners.add(listener);
   if (listeners.size === 1) {
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', publish);
     document.addEventListener('visibilitychange', onVisibilityChange);
+    // Seen by React's post-subscribe snapshot check, so a page opened with
+    // the browser already offline disables its controls before the ping.
+    refreshSnapshot();
     void checkConnection();
   }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', publish);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    }
+    if (listeners.size === 0) detach();
   };
 }
 
+export function getConnectionStatus(): ConnectionStatus {
+  return snapshot;
+}
+
 export function useConnectionStatus(): ConnectionStatus {
-  return useSyncExternalStore(subscribe, () => snapshot, () => SERVER_SNAPSHOT);
+  return useSyncExternalStore(subscribeConnectionStatus, getConnectionStatus, () => SERVER_SNAPSHOT);
 }
 
 /** For a caller deciding at fire time, without subscribing. */
@@ -198,25 +229,29 @@ export function isOfflineNow(): boolean {
 
 /** Test-only. */
 export function resetConnectionStatus(): void {
+  detach();
   pingFailed = false;
   serverNow = null;
+  latestPing = 0;
   snapshot = SERVER_SNAPSHOT;
   listeners.clear();
 }
 ```
 
-Note: `publish` must produce a new snapshot object only when a value changed (React requires a stable snapshot); the `offline` listener calls it directly. Run the tests: PASS.
+Run the tests: PASS.
 
 - [ ] **Step 7: Failing tests for refresh suppression.**
   - `refresh-at` test: with `isOfflineNow` mocked true (`vi.mock('@/lib/offline-status', …)`), advancing fake timers past an instant does **not** call `router.refresh`; the remount-with-seen-`serverNow` path does not either. With it false, existing behaviour holds (existing tests stay green).
   - `live-updates` test (if a test file exists; otherwise add one beside it): a stream message while `isOfflineNow()` is true schedules no `router.refresh`.
 
-- [ ] **Step 8: Implement.** In `refresh-at.tsx`, replace each `router.refresh()` call with a local `refreshUnlessOffline()` that returns early when `isOfflineNow()`; add one sentence to the `RefreshAt` docblock: offline, `router.refresh()` is a hard reload of a stored snapshot (Next's failed-RSC fallback), so a refresh due while offline is skipped and `OfflineSnapshot` refreshes once the connection is back. Same guard in `live-updates.tsx`'s timer. Run: PASS.
+- [ ] **Step 8: Implement.** In `refresh-at.tsx`, replace each `router.refresh()` call with a local `refreshUnlessOffline()` that returns early when `isOfflineNow()`; add one sentence to the `RefreshAt` docblock about its own behaviour: it does not refresh while offline, because offline `router.refresh()` is a hard reload of a stored snapshot (Next's failed-RSC fallback). What recovers a skipped refresh is documented in Task 5's section (`docs/technical-architecture.md`, Offline (service worker)). Same guard in `live-updates.tsx`'s timer. Run: PASS.
 
 - [ ] **Step 9: Prove the guards bite.** Commit first (memory: `git checkout` eats sibling edits). Then, one at a time, record the failing test name and message in the task report, and restore with `git checkout -- <file>`:
   - M1.1 `checkConnection`: change `pingFailed = !isServerNow(body)` to `pingFailed = false` → the 503 test fails.
   - M1.2 `refresh-at.tsx`: remove the `isOfflineNow()` early return → the offline refresh test fails.
   - M1.3 `isOfflineNow`: return `pingFailed` only → the `navigator.onLine` test fails.
+  - M1.4 `scheduleRetry`: body → `retryTimer = null;` → test 8 fails.
+  - M1.5 `checkConnection`: delete `if (ping !== latestPing) return;` → test 9 fails.
   Finish with `git status --porcelain` empty.
 
 - [ ] **Step 10: Commit**
@@ -240,7 +275,7 @@ git commit -m "feat: ping route and connection status; no refresh while offline 
   - Messages accepted: `{ type: 'clear' }`, `{ type: 'warm', paths: string[] }`.
   - The owner marker pattern: exactly one `data-offline-owner="<uuid>"` in a page body.
 
-The push behaviour (`push`, `notificationclick`, `safePath`) must stay byte-for-byte equivalent; its tests stay green unedited except where the harness signature changes.
+The push behaviour (`push`, `notificationclick`, `safePath`) must stay byte-for-byte equivalent; its tests stay green unedited except where the harness signature changes. The existing activate test is the one rewritten (Step 4's last paragraph).
 
 - [ ] **Step 1: Extend the harness.** `loadWorker` gains injectable `caches` and `fetch`, passed as extra `new Function` parameters so the script resolves them before Node's globals:
 
@@ -250,23 +285,20 @@ type Stored = Map<string, Response>;
 /** An in-memory CacheStorage: enough of the API for public/sw.js. */
 function fakeCaches() {
   const stores = new Map<string, Stored>();
-  const strip = (url: string) => url.split('?')[0]!;
   const urlOf = (r: string | { url: string }) => (typeof r === 'string' ? r : r.url);
   function cache(store: Stored) {
     return {
-      match: async (r: string | { url: string }, options?: { ignoreSearch?: boolean }) => {
-        const url = urlOf(r);
-        const hit = options?.ignoreSearch
-          ? [...store.entries()].find(([k]) => strip(k) === strip(url))?.[1]
-          : store.get(url);
+      // Lookups are exact: the worker keys every entry by pathname alone.
+      match: async (r: string | { url: string }) => {
+        const hit = store.get(urlOf(r));
         return hit ? hit.clone() : undefined;
       },
-      put: async (r: string | { url: string }, res: Response) => { store.set(urlOf(r), res.clone()); },
-      delete: async (r: string | { url: string }, options?: { ignoreSearch?: boolean }) => {
-        const url = urlOf(r);
-        const k = options?.ignoreSearch ? [...store.keys()].find((x) => strip(x) === strip(url)) : url;
-        return k !== undefined && store.delete(k);
+      // Real Cache.put rejects a body that was already read; so does this.
+      put: async (r: string | { url: string }, res: Response) => {
+        if (res.bodyUsed) throw new TypeError('body used');
+        store.set(urlOf(r), res.clone());
       },
+      delete: async (r: string | { url: string }) => store.delete(urlOf(r)),
       keys: async () => [...store.keys()].map((url) => ({ url })),
     };
   }
@@ -291,11 +323,13 @@ function fakeCaches() {
 ```ts
 const ORIGIN = 'https://fair.yoga';
 const OWNER = '3f6c2a7e-0b1d-4c8e-9a5f-1e2d3c4b5a69';
-function html(body: string, status = 200) {
-  return new Response(`<!doctype html><html><body>${body}</body></html>`, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+function html(body: string, status = 200, headers: Record<string, string> = {}) {
+  return new Response(`<!doctype html><html><body>${body}</body></html>`, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', ...headers } });
 }
 function page(owner = OWNER, extra = '') {
-  return html(`<div data-offline-owner="${owner}"><script src="/_next/static/chunks/app-abc.js"></script>${extra}</div>`);
+  return html(`<div data-offline-owner="${owner}"><script src="/_next/static/chunks/app-abc.js"></script>${extra}</div>`, 200, {
+    'Content-Security-Policy': "frame-ancestors 'none'",
+  });
 }
 function navigation(pathname: string) {
   return { method: 'GET', url: `${ORIGIN}${pathname}`, mode: 'navigate' };
@@ -316,26 +350,28 @@ function fetchEvent(request: { method: string; url: string; mode: string }) {
 
 Replace the `'registers no fetch listener'` test with `'answers no request that is not a GET'`.
 
+The mock `fetch` ignores `signal`, which is why case 12 pins the generation check and not the abort; say so in a comment on that test, so nobody "fixes" the fake and makes the generation half vacuous.
+
 - [ ] **Step 2: Write the failing tests.** Each its own `it`, in a `describe('offline')` block. Use `vi.useFakeTimers({ shouldAdvanceTime: true })` only in the patience tests. Required cases, with the assertion each must make:
   1. **Pass-through:** a `POST` navigation, `GET /api/notifications/stream` (mode `cors`), `GET /api/classes/x` (mode `cors`), `GET /class/x?_rsc=1` (mode `cors`), `GET /api/ping`, and a cross-origin navigation → `respondWith` never called.
-  2. **Online cacheable navigation:** `fetch` answers `page()` for `/class/c1` → the page receives that response; after `settled()`, `fy-pages-v1` holds `${ORIGIN}/class/c1` with `x-fy-owner: OWNER` and a numeric `x-fy-stored-at`, and `fy-static-v1` holds `${ORIGIN}/_next/static/chunks/app-abc.js` (static pulled; mock `fetch` answers `200` JS for static URLs).
+  2. **Online cacheable navigation:** `fetch` answers `page()` for `/class/c1` → the page receives that response; after `settled()`, `fy-pages-v1` holds `${ORIGIN}/class/c1` with `x-fy-owner: OWNER`, a numeric `x-fy-stored-at` and the response's `Content-Security-Policy` (`page()` sends `frame-ancestors 'none'`), and `fy-static-v1` holds `${ORIGIN}/_next/static/chunks/app-abc.js` (static pulled; mock `fetch` answers `200` JS for static URLs).
   3. **Not stored:** a body with no marker; a body with two markers; a `500`; a non-HTML `200` (`application/json`); a marker with a non-UUID-ish value containing `"` (`data-offline-owner="x&quot;y"`) → `fy-pages-v1` empty after `settled()`.
   4. **Offline serves the stored copy:** store `/class/c1`, then `fetch` rejects → the response body is the stored page.
   5. **Query string:** stored `/class/c1`, offline navigation to `/class/c1?from=inbox` → stored page (Review Focus 2).
-  6. **Offline, nothing stored:** → `503`, body contains `You're offline`, `Content-Type` HTML.
+  6. **Offline, nothing stored:** → `503`, body contains `You're offline`, `Content-Type` HTML, and a `Content-Security-Policy` header.
   7. **Expiry:** a stored entry with `x-fy-stored-at` 24 h + 1 ms old → offline page, and the entry is deleted; 24 h − 1 min old → served.
   8. **Garbage headers:** an entry with `x-fy-stored-at: nope`, or with no `x-fy-owner` → never served (Review Focus 5).
   9. **Redirect wipes:** stored `/schedule`; a navigation to `/class/c2` answered `Response` with `type` `opaqueredirect` (construct with `Object.defineProperty(new Response(null), 'type', { value: 'opaqueredirect' })` or `new Response(null, { status: 307, headers: { Location: '/login' } })` — test both) → the page gets the redirect; `fy-pages-v1` has no entries; and the generation in `fy-meta-v1` increased.
   10. **Owner change wipes:** stored `/class/c1` for OWNER; storing `/schedule` for another UUID → `fy-pages-v1` holds only `/schedule`.
   11. **Clear message:** `listeners.message({ data: { type: 'clear' }, waitUntil })` → `fy-pages-v1` gone, generation +1, static entries no page references are deleted.
-  12. **Generation race (Review Focus 1):** start a warm whose `fetch` is a `deferred`; send `clear`; resolve the warm's fetch with `page()` → nothing is stored. Also: the warm's fetch received an `AbortSignal` that is aborted after `clear`.
+  12. **Generation race (Review Focus 1):** start a warm whose `fetch` is a `deferred`; send `clear`; resolve the warm's fetch with `page()` → nothing is stored. Also: the warm's fetch received an `AbortSignal` that is aborted after `clear`. Annotate the test: the mock ignores the signal, so the generation check is what keeps the page out.
   13. **Warm:** `{ type: 'warm', paths: ['/class/c1', '/students/s1', '/class/new', '/class/c1/edit', 42] }` → only `/class/c1` fetched, with `credentials: 'same-origin'`, `redirect: 'manual'`; stored. A second warm within 10 minutes makes no fetch; after 10 minutes (advance `Date.now` via fake timers) it fetches again. A warm for a path whose navigation store is still in flight makes no fetch.
   14. **Patience:** online-but-silent network (`fetch` returns a never-settling deferred), stored copy exists → after 8 s the stored copy is served; with no stored copy → the response waits for the network (resolve it later; the page gets it).
   15. **Gateway (Review Focus 4):** network answers `503`, stored copy exists → stored copy; no stored copy → the `503` itself.
   16. **Launch URL:** offline navigation to `/` and to `/start` with a stored `/schedule` → a `302` to `${ORIGIN}/schedule`; without one → the offline page; online → the network response untouched and nothing stored.
   17. **Other navigation:** offline `/students` → offline page; online → network response, nothing stored.
-  18. **Static:** offline `GET /_next/static/chunks/app-abc.js` with a stored copy → the copy; online → network response.
-  19. **Static pruning:** two stored pages referencing `a.js` and `b.js`; the page referencing `b.js` expires and a purge runs (any navigation) → `b.js` deleted, `a.js` kept. Flight-payload form: a body containing `self.__next_f.push([1,"…\"/_next/static/chunks/c.js\"…"])` pulls `c.js` (the backslash ends the match).
+  18. **Static:** offline `GET /_next/static/chunks/app-abc.js` with a stored copy → the copy; online → network response; a static request whose network never settles with a stored copy → the copy after 8 s.
+  19. **Static pruning:** two stored pages referencing `a.js` and `b.js`; the page referencing `b.js` expires and a purge runs (a navigation to a cacheable path) → `b.js` deleted, `a.js` kept. Flight-payload form: a body containing `self.__next_f.push([1,"…\"/_next/static/chunks/c.js\"…"])` pulls `c.js` (the backslash ends the match).
   20. **Install / activate:** install calls `skipWaiting` inside `waitUntil`; activate deletes `fy-pages-v0` and `fy-old`-prefixed caches not in the current set, keeps `fy-pages-v1`, leaves a non-`fy-` cache alone, and still calls `clients.claim()` — also when deleting throws.
 
 - [ ] **Step 3: Run, see them fail.** `pnpm exec vitest run --project unit src/lib/sw.test.ts`. Expected: every new test fails (no fetch listener).
@@ -345,7 +381,8 @@ Replace the `'registers no fetch listener'` test with `'answers no request that 
 ```js
 // fair.yoga service worker: push, and a read-only offline copy of a
 // teacher's schedule and class pages. The rules, and why each holds, are in
-// docs/technical-architecture.md (Offline); this file is their code.
+// docs/technical-architecture.md (Offline (service worker)); this file is
+// their code.
 
 const PAGES = 'fy-pages-v1';
 const STATIC = 'fy-static-v1';
@@ -357,7 +394,6 @@ const PATIENCE_MS = 8000;
 const WARM_FRESH_MS = 10 * 60 * 1000;
 const MAX_WARM_PATHS = 20;
 const GATEWAY_FAILURES = new Set([502, 503, 504]);
-const MATCH = { ignoreSearch: true, ignoreVary: true };
 const GENERATION_KEY = '/__fy/generation';
 // The attribute React writes for OfflineSnapshot's owner. A `"` inside any
 // other text arrives escaped (`&quot;`, or `\"` in the flight payload), so
@@ -397,8 +433,35 @@ function isRedirect(res) {
 function offlineResponse() {
   return new Response(OFFLINE_HTML, {
     status: 503,
-    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+      'X-Frame-Options': 'DENY',
+    },
   });
+}
+
+// Copied from the network response, so a stored page is served under the
+// same policy it was rendered with.
+const KEPT_HEADERS = [
+  'content-type',
+  'content-security-policy',
+  'x-frame-options',
+  'x-content-type-options',
+  'referrer-policy',
+  'permissions-policy',
+];
+
+function storedHeaders(res, owner) {
+  const headers = new Headers();
+  for (const name of KEPT_HEADERS) {
+    const value = res.headers.get(name);
+    if (value !== null) headers.set(name, value);
+  }
+  headers.set('x-fy-owner', owner);
+  headers.set('x-fy-stored-at', String(Date.now()));
+  return headers;
 }
 
 function storedAt(res) {
@@ -488,7 +551,6 @@ async function storePage(pathname, res, startedAt) {
   const owners = Array.from(body.matchAll(OWNER_PATTERN), (m) => m[1]);
   if (owners.length !== 1) return;
   const owner = owners[0];
-  if ((await generation()) !== startedAt) return;
   let pages = await caches.open(PAGES);
   for (const req of await pages.keys()) {
     const existing = await pages.match(req);
@@ -498,27 +560,20 @@ async function storePage(pathname, res, startedAt) {
       break;
     }
   }
-  const headers = new Headers({
-    'Content-Type': res.headers.get('content-type'),
-    'x-fy-owner': owner,
-    'x-fy-stored-at': String(Date.now()),
-  });
+  const headers = storedHeaders(res, owner);
+  // clearPages bumps the generation before it deletes PAGES, so a put that
+  // passes this check lands in a cache that clear then removes.
   if ((await generation()) !== startedAt) return;
   await pages.put(key(pathname), new Response(body, { status: 200, headers }));
-  // A clear that landed during the put above.
-  if ((await generation()) !== startedAt) {
-    await pages.delete(key(pathname));
-    return;
-  }
   await pullStatic(body);
 }
 
 async function storedCopy(pathname) {
   const pages = await caches.open(PAGES);
-  const res = await pages.match(key(pathname), MATCH);
+  const res = await pages.match(key(pathname));
   if (!res) return null;
   if (isServable(res)) return res;
-  await pages.delete(key(pathname), MATCH);
+  await pages.delete(key(pathname));
   return null;
 }
 
@@ -535,7 +590,10 @@ async function networkFirst(fromNetwork, fallback) {
   const first = await Promise.race([fromNetwork.catch(() => FAILED), slow]);
   clearTimeout(timer);
   if (first !== SLOW && first !== FAILED && !GATEWAY_FAILURES.has(first.status)) return first;
-  const stored = await fallback();
+  const stored = await fallback().catch((err) => {
+    console.warn('[sw] stored copy unreadable', err);
+    return null;
+  });
   if (stored) return stored;
   if (first === SLOW) return fromNetwork.catch(() => offlineResponse());
   return first === FAILED ? offlineResponse() : first;
@@ -566,16 +624,6 @@ async function scheduleRedirect() {
   return (await storedCopy('/schedule')) ? Response.redirect(key('/schedule'), 302) : null;
 }
 
-async function staticFile(request) {
-  try {
-    return await fetch(request);
-  } catch (err) {
-    const stored = await (await caches.open(STATIC)).match(request.url);
-    if (stored) return stored;
-    throw err;
-  }
-}
-
 async function warm(paths) {
   const startedAt = await generation();
   const pages = await caches.open(PAGES);
@@ -583,7 +631,7 @@ async function warm(paths) {
   await Promise.all(
     wanted.map(async (pathname) => {
       if (pathsBeingStored.has(pathname)) return;
-      const existing = await pages.match(key(pathname), MATCH);
+      const existing = await pages.match(key(pathname));
       if (existing && isServable(existing) && Date.now() - storedAt(existing) < WARM_FRESH_MS) return;
       const controller = new AbortController();
       warmControllers.add(controller);
@@ -638,7 +686,9 @@ self.addEventListener('fetch', (event) => {
     }
     return;
   }
-  if (url.pathname.startsWith('/_next/static/')) event.respondWith(staticFile(request));
+  if (url.pathname.startsWith('/_next/static/')) {
+    event.respondWith(networkFirst(fetch(request), async () => (await caches.open(STATIC)).match(request.url, { ignoreVary: true }) || null));
+  }
 });
 
 self.addEventListener('message', (event) => {
@@ -649,24 +699,25 @@ self.addEventListener('message', (event) => {
 });
 ```
 
-The original `activate` listener (claim only) is removed — the harness keeps only the last listener per type, and the browser would run both. Adjust the existing activate test to call through the new one.
+The original `activate` listener (claim only) is removed — the harness keeps only the last listener per type, and the browser would run both. The existing activate test is rewritten, not just re-signatured: `claim` now runs after `caches.keys()` resolves, and `waitUntil` receives the chain rather than `claim`'s promise, so it awaits the event's `waitUntil` promise and then asserts `claim` was called once.
 
 Run: all `sw.test.ts` tests pass. If a case in Step 2 exposes a defect in the code above, fix the code (and say so in the task report) — do not bend the test.
 
-- [ ] **Step 5: Check the static pattern against a real build.** Run `pnpm run build`, start the standalone server on a free port (`PORT=3199 node .next-build/standalone/server.js` — check `package.json`/CI for the exact command and env), sign in as a seeded teacher (the `verify` skill's recipe), `curl` `/schedule` and one `/class/<id>` with the session cookie, and confirm with `grep -oE '/_next/static/[^"'"'"'\\\\ )<>]+'` that every chunk the page's `<script src>` tags name is matched, and whether the flight payload names chunks with or without the `/_next/` prefix. If any chunk reference uses a form the pattern misses, widen `STATIC_PATTERN` and add a test case with that literal form. Record the counts (scripts in HTML vs pattern matches) in the task report. Stop the server.
+- [ ] **Step 5: Check the static pattern against a real build.** Run `pnpm run build`, start the standalone server on a free port (`PORT=3199 node .next-build/standalone/server.js` — check `package.json`/CI for the exact command and env), sign in as a seeded teacher (the `verify` skill's recipe), `curl` `/schedule` and one `/class/<id>` with the session cookie, and confirm with `grep -oE '/_next/static/[^"'"'"'\\\\ )<>]+'` that every chunk the page's `<script src>` tags name is matched, and whether the flight payload names chunks with or without the `/_next/` prefix. If any chunk reference uses a form the pattern misses, widen `STATIC_PATTERN` and add a test case with that literal form. Record the counts (scripts in HTML vs pattern matches) in the task report. Also `curl -sI` a class page the signed-in teacher does not own (a real id, not theirs) and a deleted class id, with the session cookie, and record the status each answers: both pages call `redirect('/schedule')`, which may reach the worker as a 3xx. Ruling: if it is a 3xx, it wipes the page cache, which costs the teacher one re-warm and only happens when visiting another teacher's class URL — acceptable, no code change; Task 5's doc section records it. Stop the server.
 
 - [ ] **Step 6: Prove the guards bite.** Commit first. One at a time, with exact text recorded, then `git checkout -- public/sw.js`:
   - M2.1 `storePage`: `if (owners.length !== 1) return;` → `if (owners.length === 0) return;` → case 3 (two markers) fails.
   - M2.2 `handleCacheablePage`: `if (isRedirect(res)) return clearPages();` → `if (isRedirect(res)) return undefined;` → case 9 fails.
   - M2.3 `storePage`: remove the owner-mismatch loop → case 10 fails.
-  - M2.4 `storePage`: remove the first `if ((await generation()) !== startedAt) return;` and the second → case 12 fails (if it still passes with only one removed, record which check the test pins and add a case that pins the other).
+  - M2.4 `storePage`: delete `if ((await generation()) !== startedAt) return;` → case 12 fails.
   - M2.5 `isServable`: `Date.now() - at < MAX_AGE_MS` → `true` → case 7 fails.
   - M2.6 `fetch` listener: drop `if (request.method !== 'GET') return;` → case 1 fails.
   - M2.7 `isCacheablePath`: remove `(?!new$)` → case 13 fails.
   - M2.8 `pullStatic` call removed from `storePage` → case 2 fails.
   - M2.9 `pruneStatic`: delete nothing → case 19 fails.
   - M2.10 `networkFirst`: drop `!GATEWAY_FAILURES.has(first.status)` → case 15 fails.
-  - M2.11 `MATCH` → `{}` → case 5 fails.
+  - M2.11 `fetch` listener: `handleCacheablePage(event, url.pathname)` → `handleCacheablePage(event, url.pathname + url.search)` → case 5 fails.
+  - M2.12 `KEPT_HEADERS` → `['content-type']` → case 2 fails.
   Finish with `git status --porcelain` empty.
 
 - [ ] **Step 7: Commit**
@@ -702,21 +753,21 @@ git commit -m "feat(sw): network-first offline copy of the schedule and class pa
   - `src/lib/offline-snapshot-props.ts`:
     - `export interface OfflineSnapshotStamp { ownerId: string; renderedAt: number; loadedAtClock: string; loadedAtDayClock: string; loadedOn: string; timeZone: string }`
     - `export function offlineSnapshotStamp(session: TeacherSession, now: Date): OfflineSnapshotStamp` — `loadedAtClock = formatClockInZone(now, tz)`, `loadedAtDayClock = formatInstantInZone(now, tz)`, `loadedOn = localDateKey(now, tz)`.
-    - `export function localDateKey(instant: Date, timeZone: string): string` — `YYYY-MM-DD` in `timeZone` via `Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })`.
+    - `export function localDateKey(instant: Date, timeZone: string): string` — `YYYY-MM-DD` of `instant` in `timeZone`, taken from `startOfLocalDay(instant, timeZone).toISOString().slice(0, 10)` so an unknown zone degrades to UTC's date (logged) instead of throwing.
     - `export function todaysOfflinePaths(classes: ReadonlyArray<{ id: string; calendarEntry: { date: Date } }>, studioClasses: ReadonlyArray<{ id: string; calendarEntry: { date: Date } }>, todayKey: string): string[]` — `/class/<id>` and `/studio-class/<id>` for entries whose `calendarEntry.date.toISOString().slice(0, 10) === todayKey` (an `@db.Date` is midnight UTC of the local date).
   - `OfflineSnapshot` props: `OfflineSnapshotStamp & { warmPaths?: readonly string[]; children: ReactNode }`.
 
 - [ ] **Step 1: Tether the cache name.** A unit test in `src/lib/offline-client.test.ts` (unit project, node; stub globals as `push-client.test.ts` does) reads `public/sw.js` and asserts it contains `const PAGES = '${OFFLINE_PAGES_CACHE}';`. Plus behaviour tests (stub `navigator.serviceWorker` and `caches`): `clearOfflinePages` posts `{type:'clear'}` and deletes the cache; resolves when `serviceWorker` or `caches` is absent; resolves when `getRegistration` rejects (and logs). `warmOfflinePages` posts the paths after `ready`; resolves after 10 s when `ready` never settles (fake timers). `registerOfflineWorker` calls `register('/sw.js', { scope: '/' })`; swallows and logs a rejection.
 
-- [ ] **Step 2: Unit tests for `offline-snapshot-props.ts`** (unit project, TZ is `America/New_York` there): `localDateKey(new Date('2026-10-04T11:30:00Z'), 'Pacific/Auckland')` is `'2026-10-05'` (Review Focus 3); `todaysOfflinePaths` keeps only entries on `todayKey` and emits both families' paths; `offlineSnapshotStamp` uses `session.accountId` and the session's `defaultTimezone`.
+- [ ] **Step 2: Unit tests for `offline-snapshot-props.ts`** (unit project, TZ is `America/New_York` there): `localDateKey(new Date('2026-10-04T11:30:00Z'), 'Pacific/Auckland')` is `'2026-10-05'` (Review Focus 3); `todaysOfflinePaths` keeps only entries on `todayKey` and emits both families' paths; `offlineSnapshotStamp` uses `session.accountId` and the session's `defaultTimezone`; `localDateKey` with an unknown zone returns UTC's date without throwing; `todaysOfflinePaths` with `todayKey: '2026-10-05'` under `vi.setSystemTime(new Date('2026-10-04T11:30:00Z'))` keeps the 2026-10-05 entries and drops the 2026-10-04 ones.
 
-- [ ] **Step 3: Component tests for `OfflineSnapshot`** (mock `@/lib/offline-status`'s `useConnectionStatus`, `@/lib/offline-client`'s `warmOfflinePages`, and `next/navigation`'s `useRouter`):
-  1. Renders `data-offline-owner` with the owner id on its wrapper; online → no marker text, fieldset not disabled.
+- [ ] **Step 3: Component tests for `OfflineSnapshot`** (mock `@/lib/offline-status`'s `useConnectionStatus` and `isOfflineNow`, `@/lib/offline-client`'s `warmOfflinePages`, and `next/navigation`'s `useRouter`):
+  1. Renders `data-offline-owner` with the owner id on its wrapper; online → the status element is empty and `sr-only`, fieldset not disabled.
   2. Offline, `loadedOn` equal to today in the stamp's zone → `Offline — showing what was loaded at 09:12` (exact), with `role="status"`.
-  3. Offline, `loadedOn` an earlier day → `Offline — showing what was loaded Sat 3 Oct, 21:40` (whatever `loadedAtDayClock` holds, verbatim). Use `timeZone: 'Pacific/Auckland'` and fake system time so the device's own date differs from Auckland's (Review Focus 3).
-  4. Offline → a descendant `<Button>` is disabled (`toBeDisabled()`), and has the `disabled:opacity-50` class (the look comes from the pseudo-class).
-  5. Online with `serverNow - renderedAt > 60_000` → `router.refresh` called exactly once, also after a re-render with the same props; `≤ 60_000` → not called; offline → not called.
-  6. Online on mount → `warmOfflinePages` called once with the current path (mock `usePathname`) followed by `warmPaths`; offline → not called.
+  3. Offline, `loadedOn` an earlier day → `Offline — showing what was loaded Sat 3 Oct 21:40` (whatever `loadedAtDayClock` holds, verbatim). Use `timeZone: 'Pacific/Auckland'` and fake system time so the device's own date differs from Auckland's (Review Focus 3).
+  4. Offline → a descendant `<Button>` is disabled (`toBeDisabled()`), and has the `disabled:opacity-50` class (the look comes from the pseudo-class); an `AttendanceList` check-in button inside the wrapper has `disabled:opacity-50` too.
+  5. Online with `serverNow - renderedAt > 60_000` → `router.refresh` called exactly once, also after a second successful ping that brings a later, still-stale `serverNow` (the mock returns a new status object), with the router mock returning one stable object; `≤ 60_000` → not called; offline → not called. Any successful ping triggers this, not only one on a stored snapshot; a page left open and returned to after a minute refreshes, which is intended.
+  6. Online on mount → `warmOfflinePages` called once with the current path (mock `usePathname`) followed by `warmPaths`; offline → not called; and with `useConnectionStatus` still saying online but `isOfflineNow()` true (a page opened from the cache while offline) → not called.
   7. Toggling offline → online does not remount children (a child with local state keeps it).
 
 - [ ] **Step 4: Run, see them fail.**
@@ -729,22 +780,27 @@ git commit -m "feat(sw): network-first offline copy of the schedule and class pa
 
 import { useEffect, useRef, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { useConnectionStatus } from '@/lib/offline-status';
+import { isOfflineNow, useConnectionStatus } from '@/lib/offline-status';
 import { warmOfflinePages } from '@/lib/offline-client';
 import type { OfflineSnapshotStamp } from '@/lib/offline-snapshot-props';
 
-/** How far a page's render may trail the server's clock before it counts as a stored snapshot. */
+/** How far a page's render may trail the server's clock before a successful ping refreshes it. */
 const STALE_AFTER_MS = 60_000;
 
-function todayIn(timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+function todayIn(timeZone: string): string | null {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (err) {
+    console.error('[offline-snapshot] unreadable timezone, showing the day', { timeZone }, err);
+    return null;
+  }
 }
 
 /**
  * Wraps a page the service worker may store. Offline, it says when the page
- * was loaded and disables every control inside it through the fieldset; the
- * `data-offline-owner` attribute is what lets public/sw.js store the page at
- * all.
+ * was loaded and disables every control inside it through the fieldset. The
+ * `data-offline-owner` attribute is the owner marker the worker requires; see
+ * docs/technical-architecture.md (Offline (service worker)).
  */
 export function OfflineSnapshot({
   ownerId,
@@ -763,7 +819,8 @@ export function OfflineSnapshot({
   const warmKey = [pathname, ...warmPaths].join('|');
 
   useEffect(() => {
-    if (offline) return;
+    // The first run sees the server snapshot, before the browser's own state is read.
+    if (offline || isOfflineNow()) return;
     void warmOfflinePages(warmKey.split('|'));
   }, [offline, warmKey]);
 
@@ -774,15 +831,13 @@ export function OfflineSnapshot({
     router.refresh();
   }, [offline, serverNow, renderedAt, router]);
 
-  const loaded = loadedOn === todayIn(timeZone) ? `at ${loadedAtClock}` : loadedAtDayClock;
+  const loaded = offline ? (loadedOn === todayIn(timeZone) ? `at ${loadedAtClock}` : loadedAtDayClock) : null;
 
   return (
     <div data-offline-owner={ownerId}>
-      {offline && (
-        <p role="status" className="…">
-          Offline — showing what was loaded {loaded}
-        </p>
-      )}
+      <p role="status" className={offline ? 'type-label text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-4' : 'sr-only'}>
+        {offline && `Offline — showing what was loaded ${loaded}`}
+      </p>
       <fieldset disabled={offline} className="m-0 min-w-0 border-0 p-0">
         {children}
       </fieldset>
@@ -791,13 +846,13 @@ export function OfflineSnapshot({
 }
 ```
 
-Style the `<p>` from existing tokens only (`src/app/globals.css`; the gold attention colour, sand-soft surface, radius 16 card, `type-label`/`type-caption`) — a calm notice, not a danger state, no shadow. `todayIn` runs on every render, the server's included; that is safe because its result only reaches the DOM while `offline` is true, which the server snapshot never is, so hydration cannot mismatch.
+The marker is a calm notice, not a danger state: gold attention colour on its tint, card radius, no shadow. The `<p>` stays mounted (empty and `sr-only` online) because a live region inserted already holding its text is not reliably announced.
 
 `OfflineWorker`: `'use client'`, `useEffect(() => { void registerOfflineWorker(); }, [])`, returns `null`.
 
-`src/lib/offline-snapshot-props.ts` imports `formatClockInZone` (`@/lib/finish-window`) and `formatInstantInZone` (`@/lib/timezone`); it is server-only by its imports — do not import it from a client component except as `import type`.
+`src/lib/offline-snapshot-props.ts` imports `formatClockInZone` (`@/lib/finish-window`) and `formatInstantInZone` and `startOfLocalDay` (`@/lib/timezone`); it is server-only by its imports — do not import it from a client component except as `import type`.
 
-`Button`: drop `disabledClass`; add `disabled:opacity-50 disabled:cursor-not-allowed` to `base`. Then census the raw buttons: `grep -rn "disabled ?" src/components/class src/components/schedule src/components/studio-class src/components/payments src/lib/use-payment-actions.ts` (widen the directories to every component the three pages render — follow their imports) and convert each prop-conditional disabled style to the `disabled:` variant. List each converted site in the task report.
+`Button`: drop `disabledClass`; add `disabled:opacity-50 disabled:cursor-not-allowed` to `base`. Then census the raw controls: `grep -rnE "\? '[^']*(opacity-|cursor-not-allowed)" src/components` (quoted, run from the worktree), keeping only files the three pages render (follow their imports). For each hit on a `<button>`, `<select>` or `<input>`, add `disabled:opacity-50` (and `disabled:cursor-not-allowed`) beside the existing class. Keep the busy-state class: it covers a pending write while online. List each converted site in the task report.
 
 - [ ] **Step 6: Wrap the pages.** In each page, after the session is read and before `return`, compute `const stamp = offlineSnapshotStamp(session, new Date());` and wrap the whole returned tree in `<OfflineSnapshot {...stamp}>…</OfflineSnapshot>` — the class page's `PageHeader` (whose action holds Publish / Finish) goes inside. The schedule passes `warmPaths={todaysOfflinePaths(classes, studioClasses, stamp.loadedOn)}`. Any early `redirect`/`notFound` stays before the wrap. Add `<OfflineWorker />` to `src/app/(teacher)/layout.tsx`.
 
@@ -808,7 +863,7 @@ Style the `<p>` from existing tokens only (`src/app/globals.css`; the gold atten
 - [ ] **Step 8: Prove the guards bite.** Commit first; one at a time, record, restore:
   - M3.1 `OfflineSnapshot`: `disabled={offline}` → `disabled={false}` → test 4 fails.
   - M3.2 remove `if (refreshedFor.current === renderedAt) return;` → test 5 (exactly once) fails.
-  - M3.3 `todaysOfflinePaths`: compare against `new Date().toISOString().slice(0,10)` instead of `todayKey` → the Auckland test fails.
+  - M3.3 `todaysOfflinePaths`: compare against `new Date().toISOString().slice(0,10)` instead of `todayKey` → the `todaysOfflinePaths` fixed-clock test (Step 2) fails.
   - M3.4 `Button`: restore the prop-conditional `disabledClass` and drop the `disabled:` classes → test 4's class assertion fails.
   - M3.5 the tether: change `OFFLINE_PAGES_CACHE` to `'fy-pages-v2'` → the tether test fails.
 
@@ -852,11 +907,11 @@ Style the `<p>` from existing tokens only (`src/app/globals.css`; the gold atten
 - Modify: `docs/technical-architecture.md` — a new section **Offline (service worker)**.
 - Modify: `docs/superpowers/specs/2026-10-04-offline-schedule-design.md` only if the build contradicted it (record what changed and why in the commit message).
 
-- [ ] **Step 1: Write the spec.** `test.use({ serviceWorkers: 'allow' })`; Chromium project only (`test.skip(({ browserName }, ) => …)` or a project filter — follow how other specs scope to one project). Fixture: a teacher whose timezone is `UTC` (memory: real-time fixtures need a UTC teacher), signed in the way `tests/e2e/teacher-journey.spec.ts` does it, with one open class **today** starting about two hours from now and one registered student with a distinctive first name, created through Prisma as neighbouring specs do (`tests/class-fixtures.ts` helpers where they fit), cleaned up in `afterAll` scoped by ids assigned in the test (memory: never `deleteMany` by an id a failed `beforeAll` left undefined).
+- [ ] **Step 1: Write the spec.** `test.use({ serviceWorkers: 'allow' })`; Chromium project only (`test.skip(({ browserName }, ) => …)` or a project filter — follow how other specs scope to one project). Fixture: a teacher whose timezone is `UTC` (memory: real-time fixtures need a UTC teacher), signed in the way `tests/e2e/teacher-journey.spec.ts` does it, with one open class **today** starting at the earlier of now + 2 h and 23:00 UTC today (floored to the minute), 30 minutes long (after 23:00 UTC the class is under way, and the page still renders its roster; assert this once by running the spec with the clock-derived start pinned to now − 10 min), and one registered student with a distinctive first name, created through Prisma as neighbouring specs do (`tests/class-fixtures.ts` helpers where they fit), cleaned up in `afterAll` scoped by ids assigned in the test (memory: never `deleteMany` by an id a failed `beforeAll` left undefined).
 
 Steps of the test:
   1. `page.goto('/schedule')`; `await page.evaluate(() => navigator.serviceWorker.ready.then(() => true))`.
-  2. `await expect.poll(() => page.evaluate(async (path) => Boolean(await (await caches.open('fy-pages-v1')).match(path, { ignoreSearch: true })), `/class/${classId}`), { timeout: 20_000 }).toBe(true)` — the class page was warmed, never visited.
+  2. `await expect.poll(() => page.evaluate(async (path) => Boolean(await (await caches.open('fy-pages-v1')).match(path)), `/class/${classId}`), { timeout: 20_000 }).toBe(true)` — the class page was warmed, never visited.
   3. `await context.setOffline(true)`; `page.goto(`/class/${classId}`)` → the student's first name is visible; `getByRole('status')` has text matching `/^Offline — showing what was loaded at \d{2}:\d{2}$/`; a control on the page (e.g. the Cancel class button) `toBeDisabled()`.
   4. `page.goto('/')` → `expect(page).toHaveURL(/\/schedule$/)` and the marker shows.
   5. `page.goto('/students')` → text `You're offline`.
@@ -866,7 +921,7 @@ Steps of the test:
 
 - [ ] **Step 3: Run the whole e2e suite once with `serviceWorkers: 'block'`** to confirm nothing else changed: `pnpm exec playwright test --project=chromium`. Also run it against a production build if time allows (CI's job does: `pnpm run build`, then the standalone server — see `.github/workflows/ci.yml` `test-e2e`).
 
-- [ ] **Step 4: Write the doc section** in `docs/technical-architecture.md` (find the PWA / push section and put it beside it). It owns the facts the code comments point to: the three cacheable paths and why only those; network-first with the 8 s patience and the gateway fallback; the three caches and what clears each; the owner marker and why a page without it is never stored; the clear sites, with the re-derivation command `grep -rn "clearOfflinePages()" src --include='*.tsx' | grep -v test`; the 24 h retention and static pruning by reference; the deploy story (byte-compared `sw.js`, `skipWaiting`, versioned cache names — bump the `-v1` suffix when the stored format changes); the residual (a session revoked elsewhere while the device stays offline); why the e2e suite blocks service workers except in `offline.spec.ts`. Link the spec.
+- [ ] **Step 4: Write the doc section** in `docs/technical-architecture.md` (find the PWA / push section and put it beside it). It owns the facts the code comments point to: the three cacheable paths and why only those; network-first with the 8 s patience and the gateway fallback; the three caches and what clears each; the owner marker and why a page without it is never stored; the clear sites, with the re-derivation command `grep -rn "clearOfflinePages()" src --include='*.tsx' | grep -v test`; the 24 h retention and static pruning by reference; the deploy story (byte-compared `sw.js`, `skipWaiting`, versioned cache names — bump the `-v1` suffix when the stored format changes); the residual (a session revoked elsewhere while the device stays offline); why the e2e suite blocks service workers except in `offline.spec.ts`. Also record: the stale-while-online rule is not snapshot-only — a successful ping (pings fire only on mount, on the `online` event, on returning to the tab and on the offline retry) makes any page whose render is more than a minute behind the server's clock call `router.refresh()` once, so a page left open more than a minute refreshes on tab return, and this is what recovers a `RefreshAt` refresh skipped while offline; the connection store retries its ping every 15 s while offline; an owner wipe inside one warm can delete a sibling's just-stored entry (data lost, nothing leaked, healed by the next warm); and the class and studio-class pages' `redirect('/schedule')` for a missing or foreign id, if Task 2 Step 5 measured it as a 3xx, wipes the cache (one re-warm, accepted). Link the spec.
 
 - [ ] **Step 5: Commit.**
 
