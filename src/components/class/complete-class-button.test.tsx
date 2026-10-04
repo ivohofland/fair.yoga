@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CompleteClassButton } from './complete-class-button';
 import { routerRefresh } from '../../../tests/setup/components';
+import { enqueueAttendance, flushOutbox, getOutboxSnapshot, resetOutboxForTests } from '@/lib/attendance-outbox';
 
 /**
  * Same defect as `PublishClassButton` (#166 re-review M5), with more behind
@@ -139,5 +140,164 @@ describe('CompleteClassButton', () => {
       err: offline,
     });
     consoleError.mockRestore();
+  });
+
+  /**
+   * Completion reads the server's statuses and picks each student's payment
+   * wording from them, so a mark still queued on this device would be billed
+   * as the server last heard it. Finish syncs first, and asks before going on
+   * without what did not sync.
+   */
+  describe('with attendance queued on this device', () => {
+    const OWNER = 'acct-1';
+
+    function queue(registrationId: string, classId = 'c-9'): void {
+      enqueueAttendance(OWNER, {
+        registrationId,
+        classId,
+        classLabel: 'Hatha on Tue 6 Oct 18:00',
+        studentName: `Student ${registrationId}`,
+        target: 'attended',
+        knownCompleted: false,
+      });
+    }
+
+    /** The class's completion answers ok; every attendance PUT fails as `put` says. */
+    function server(put: (url: string) => Promise<Response>): void {
+      fetchMock.mockImplementation((url: string) =>
+        url.endsWith('/complete') ? Promise.resolve({ ok: true }) : put(url),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    const offline = () => Promise.reject(new TypeError('Failed to fetch'));
+
+    function completions(): unknown[][] {
+      return fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/complete'));
+    }
+
+    function finish(): void {
+      fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      localStorage.clear();
+      resetOutboxForTests();
+    });
+
+    it('names an unsynced mark for this class and posts nothing until the teacher chooses', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      queue('r1');
+      server(offline);
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      const reason = await screen.findByText("1 attendance change for this class hasn't synced.");
+      expect(completions()).toEqual([]);
+      const cancel = screen.getByRole('button', { name: 'Cancel' });
+      const anyway = screen.getByRole('button', { name: 'Finish anyway' });
+      expect(cancel).toHaveFocus();
+      expect(reason.id).not.toBe('');
+      expect(cancel).toHaveAttribute('aria-describedby', reason.id);
+      expect(anyway).toHaveAttribute('aria-describedby', reason.id);
+
+      fireEvent.click(anyway);
+      await waitFor(() => expect(completions()).toEqual([['/api/classes/c-9/complete', { method: 'POST' }]]));
+      await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    });
+
+    it('counts every unsynced mark for this class', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      queue('r1');
+      queue('r2');
+      server(offline);
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      await screen.findByText("2 attendance changes for this class haven't synced.");
+    });
+
+    it('Cancel keeps the class open and returns to Finish class', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      queue('r1');
+      server(offline);
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+      fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+      expect(screen.getByRole('button', { name: 'Finish class' })).toHaveFocus();
+      expect(screen.queryByText(/hasn't synced/)).toBeNull();
+      expect(completions()).toEqual([]);
+    });
+
+    it('syncs first, and finishes straight away once everything synced', async () => {
+      queue('r1');
+      server((url) =>
+        Promise.resolve(
+          new Response(JSON.stringify({ data: { id: url.split('/').pop(), status: 'attended' } }), { status: 200 }),
+        ),
+      );
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      await waitFor(() => expect(completions()).toHaveLength(1));
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+        '/api/registrations/r1',
+        '/api/classes/c-9/complete',
+      ]);
+      expect(screen.queryByText(/hasn't synced/)).toBeNull();
+    });
+
+    it("is not held up by another class's unsynced mark", async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      queue('r1', 'other-class');
+      server(offline);
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      await waitFor(() => expect(completions()).toHaveLength(1));
+      expect(screen.queryByText(/hasn't synced/)).toBeNull();
+    });
+
+    it('is not held up by a refused mark: the server already said no to it', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      queue('r1');
+      server(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Gone' } }), { status: 404 }),
+        ),
+      );
+      await flushOutbox(OWNER);
+      expect(getOutboxSnapshot(OWNER).refused).toHaveLength(1);
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      await waitFor(() => expect(completions()).toHaveLength(1));
+      expect(screen.queryByText(/hasn't synced/)).toBeNull();
+    });
+
+    it('waits at most 5 s for a sync that does not answer', async () => {
+      vi.useFakeTimers();
+      queue('r1');
+      server(() => new Promise<Response>(() => {}));
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      await act(() => vi.advanceTimersByTimeAsync(4_999));
+      expect(screen.queryByText(/hasn't synced/)).toBeNull();
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      screen.getByText("1 attendance change for this class hasn't synced.");
+      expect(completions()).toEqual([]);
+    });
   });
 });
