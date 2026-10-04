@@ -13,6 +13,7 @@ import { PaymentChecklist } from '@/components/class/payment-checklist';
 import { PublishClassButton } from '@/components/class/publish-class-button';
 import { CompleteClassButton } from '@/components/class/complete-class-button';
 import { RefreshAt } from '@/components/class/refresh-at';
+import { CheckinGate } from '@/components/class/checkin-gate';
 import type { AttendanceItem, AttendanceStatus } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 import { classStartInstant } from '@/lib/timezone';
@@ -152,7 +153,7 @@ export default async function ClassDetailPage({
   // Check-in, the finish button, its caption and the instants at which any of
   // them can change, all read from this render's `now`.
   const tz = cls.calendarEntry.teacher.defaultTimezone;
-  const { live, showCheckin, canFinish, autoFinishing, autoAt, refreshInstants } = classPageClock({
+  const { live, showCheckin, canFinish, autoFinishing, autoAt, checkinAt, refreshInstants } = classPageClock({
     now: new Date(now),
     start: classStartInstant(cls.calendarEntry, tz),
     end: classEndInstant(cls.calendarEntry, tz),
@@ -162,8 +163,108 @@ export default async function ClassDetailPage({
 
   const stamp = offlineSnapshotStamp(session, new Date(now));
 
+  // Registered students, the list an open class shows until check-in.
+  const registeredList = activeRegistrations.length > 0 ? (
+    <div className="py-6">
+      <h2 className="type-subtitle mb-1">Registered students</h2>
+      <div>
+        {activeRegistrations.map((r) => (
+          <ListRow
+            key={r.id}
+            href={`/students/${r.studentId}`}
+            className="flex items-center no-underline"
+          >
+            <span className="text-base text-ink">{teacherVisibleName(r.student, session.teacherId)}</span>
+          </ListRow>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
+  // The attendance region, the snapshot's `queueable` slot. On a live class it
+  // always renders through the gate, which shows it once the server or the
+  // device clock reaches the check-in instant.
+  const queueable = live ? (
+    <CheckinGate
+      serverShowCheckin={showCheckin}
+      checkinAt={checkinAt.getTime()}
+      attendance={<AttendanceList items={attendanceItems} classId={cls.id} renderedAt={now} />}
+      registered={registeredList}
+    />
+  ) : !cancelled && cls.status === 'completed' ? (
+    // Completed: attendance (read-only; Edit attendance to correct)
+    <AttendanceList items={attendanceItems} classId={cls.id} renderedAt={now} locked />
+  ) : undefined;
+
   return (
-    <OfflineSnapshot {...stamp}>
+    <OfflineSnapshot
+      {...stamp}
+      queueable={queueable}
+      after={
+        <>
+          {/* Check-in mode: walk-ins + pricing estimate */}
+          {showCheckin && (
+            <>
+              <div className="py-2">
+                <AddWalkIn
+                  classId={cls.id}
+                  registeredStudentIds={activeRegistrations.map((r) => r.studentId)}
+                />
+              </div>
+              <PricingPreview cls={cls} />
+            </>
+          )}
+
+          {/* Draft: pricing preview */}
+          {!cancelled && cls.status === 'draft' && (
+            <PricingPreview cls={cls} />
+          )}
+
+          {/* Open (not check-in): pricing preview */}
+          {!cancelled && cls.status === 'open' && !showCheckin && (
+            <PricingPreview cls={cls} />
+          )}
+
+          {/* Completed: pricing breakdown, payment checklist */}
+          {!cancelled && cls.status === 'completed' && (
+            <>
+              <PricingBreakdown cls={cls} tierPrices={tierPrices} />
+              <PaymentChecklist items={paymentItems} />
+            </>
+          )}
+
+          {/* Cancelled */}
+          {cancelled && (
+            <div className="py-8 text-center type-body">
+              This class was cancelled.
+            </div>
+          )}
+
+          {/* Actions: share while bookable, announce while it has students, cancel while upcoming */}
+          {!cancelled && (
+            <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
+              {cls.status === 'open' && (
+                <ShareBookingLink pageSlug={cls.calendarEntry.teacher.pageSlug} />
+              )}
+              {activeRegistrations.length > 0 && (
+                <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
+              )}
+              {(cls.status === 'draft' || cls.status === 'open') && (
+                <>
+                  <Link
+                    href={`/class/${cls.id}/edit`}
+                    className="type-label text-teal no-underline"
+                  >
+                    Edit class
+                  </Link>
+                  <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
+                </>
+              )}
+            </div>
+          )}
+        </>
+      }
+    >
       <PageHeader
         title={cls.calendarEntry.classType}
         backHref="/" backLabel="Schedule"
@@ -190,87 +291,6 @@ export default async function ClassDetailPage({
               ? `Payment requests go out automatically at ${formatClockInZone(autoAt, tz)}.`
               : `This class finishes automatically at ${formatClockInZone(autoAt, tz)}.`}
         </p>
-      )}
-
-      {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}
-      {showCheckin && (
-        <>
-          <AttendanceList items={attendanceItems} classId={cls.id} renderedAt={now} />
-          <div className="py-2">
-            <AddWalkIn
-              classId={cls.id}
-              registeredStudentIds={activeRegistrations.map((r) => r.studentId)}
-            />
-          </div>
-          <PricingPreview cls={cls} />
-        </>
-      )}
-
-      {/* Open (not yet check-in): registered students + pricing preview */}
-      {!cancelled && cls.status === 'open' && !showCheckin && activeRegistrations.length > 0 && (
-        <div className="py-6">
-          <h2 className="type-subtitle mb-1">Registered students</h2>
-          <div>
-            {activeRegistrations.map((r) => (
-              <ListRow
-                key={r.id}
-                href={`/students/${r.studentId}`}
-                className="flex items-center no-underline"
-              >
-                <span className="text-base text-ink">{teacherVisibleName(r.student, session.teacherId)}</span>
-              </ListRow>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Draft: pricing preview */}
-      {!cancelled && cls.status === 'draft' && (
-        <PricingPreview cls={cls} />
-      )}
-
-      {/* Open (not check-in): pricing preview */}
-      {!cancelled && cls.status === 'open' && !showCheckin && (
-        <PricingPreview cls={cls} />
-      )}
-
-      {/* Completed: attendance (read-only; Edit attendance to correct), pricing breakdown, payment checklist */}
-      {!cancelled && cls.status === 'completed' && (
-        <>
-          <AttendanceList items={attendanceItems} classId={cls.id} renderedAt={now} locked />
-          <PricingBreakdown cls={cls} tierPrices={tierPrices} />
-          <PaymentChecklist items={paymentItems} />
-        </>
-      )}
-
-      {/* Cancelled */}
-      {cancelled && (
-        <div className="py-8 text-center type-body">
-          This class was cancelled.
-        </div>
-      )}
-
-      {/* Actions: share while bookable, announce while it has students, cancel while upcoming */}
-      {!cancelled && (
-        <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
-          {cls.status === 'open' && (
-            <ShareBookingLink pageSlug={cls.calendarEntry.teacher.pageSlug} />
-          )}
-          {activeRegistrations.length > 0 && (
-            <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
-          )}
-          {(cls.status === 'draft' || cls.status === 'open') && (
-            <>
-              <Link
-                href={`/class/${cls.id}/edit`}
-                className="type-label text-teal no-underline"
-              >
-                Edit class
-              </Link>
-              <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
-            </>
-          )}
-        </div>
       )}
     </OfflineSnapshot>
   );

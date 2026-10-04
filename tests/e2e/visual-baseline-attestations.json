@@ -1,9 +1,9 @@
 {
   "class-detail-open": {
-    "sourceSha256": "7d6942a76972636108bd0d3ba2340261e8472bf630e5d73b1dce6bfb04c20a05",
+    "sourceSha256": "e3ec87ffb5a6b78c18242fe74af1edac0a5011d2a55d6533a69efbe3a91765fb",
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
     "verifiedAt": "2026-10-04",
-    "note": "the offline snapshot wrapper adds no pixels online"
+    "note": "The attendance region moves into the snapshot's queueable slot and the rest into a second borderless, unpadded fieldset; the page renders the same blocks in the same order."
   },
   "inbox": {
     "sourceSha256": "32b1ba66f9143e9bdd77423e8e8785820ac29da655838e5b854e3c9248cc52ac",
