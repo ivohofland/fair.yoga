@@ -1,0 +1,580 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  EMPTY_OUTBOX,
+  clearAllOutboxes,
+  dismissNote,
+  dismissRefused,
+  enqueueAttendance,
+  flushOutbox,
+  getOutboxSnapshot,
+  pendingCount,
+  purgeOtherOwners,
+  resetOutboxForTests,
+  subscribeOutbox,
+  type AttendanceTarget,
+} from './attendance-outbox';
+
+const OWNER = 'acc1';
+const NOW = 1_780_000_000_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** An in-memory `Storage`, so the node environment has a `localStorage`. */
+class MemoryStorage implements Storage {
+  private items = new Map<string, string>();
+  get length(): number {
+    return this.items.size;
+  }
+  key(index: number): string | null {
+    return [...this.items.keys()][index] ?? null;
+  }
+  getItem(key: string): string | null {
+    return this.items.get(key) ?? null;
+  }
+  setItem(key: string, value: string): void {
+    this.items.set(key, String(value));
+  }
+  removeItem(key: string): void {
+    this.items.delete(key);
+  }
+  clear(): void {
+    this.items.clear();
+  }
+  keys(): string[] {
+    return [...this.items.keys()].sort();
+  }
+}
+
+/** A storage that refuses every write, as Safari's private mode and a full quota do. */
+class FullStorage extends MemoryStorage {
+  override setItem(): void {
+    throw new DOMException('quota', 'QuotaExceededError');
+  }
+}
+
+function entry(registrationId: string, target: AttendanceTarget = 'attended', knownCompleted = false) {
+  return {
+    registrationId,
+    classId: `class-${registrationId}`,
+    classLabel: `Hatha ${registrationId}`,
+    studentName: `Student ${registrationId}`,
+    target,
+    knownCompleted,
+  };
+}
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+function applied(id: string, status: AttendanceTarget, classCompleted = false): Response {
+  return json(200, { data: { id, status, classCompleted } });
+}
+
+function unchanged(id: string, status: AttendanceTarget): Response {
+  return json(200, { data: { id, status }, outcome: 'unchanged' });
+}
+
+function refusal(status: number, code: string | undefined, message: string): Response {
+  return json(status, { error: { message, code } });
+}
+
+/** Answers each PUT with the server's echo of what it was sent. */
+function echoServer(classCompleted = false) {
+  return (url: string, init: RequestInit): Promise<Response> => {
+    const id = url.split('/').pop() ?? '';
+    const { status } = JSON.parse(String(init.body)) as { status: AttendanceTarget };
+    return Promise.resolve(applied(id, status, classCompleted));
+  };
+}
+
+function sentBodies(fetchMock: ReturnType<typeof vi.fn>): Array<{ url: string; status: string }> {
+  return fetchMock.mock.calls.map(([url, init]) => ({
+    url: String(url),
+    status: (JSON.parse(String((init as RequestInit).body)) as { status: string }).status,
+  }));
+}
+
+describe('attendance outbox', () => {
+  let storage: MemoryStorage;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    storage = new MemoryStorage();
+    fetchMock = vi.fn();
+    vi.stubGlobal('window', new EventTarget());
+    vi.stubGlobal('localStorage', storage);
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    resetOutboxForTests();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  describe('storage', () => {
+    it('stores one key per registration under the owner, as versioned JSON', () => {
+      expect(enqueueAttendance(OWNER, entry('r1'))).toBe('queued');
+      expect(storage.keys()).toEqual(['fy-outbox:acc1:r1']);
+      const stored = JSON.parse(storage.getItem('fy-outbox:acc1:r1') ?? 'null') as Record<string, unknown>;
+      expect(stored).toMatchObject({
+        v: 1,
+        registrationId: 'r1',
+        target: 'attended',
+        attempts: 0,
+        recordedAt: NOW,
+        knownCompleted: false,
+      });
+      expect(typeof stored.nonce).toBe('string');
+    });
+
+    it('keeps only the latest mark per registration, with a fresh nonce', () => {
+      enqueueAttendance(OWNER, entry('r1', 'attended'));
+      const first = getOutboxSnapshot(OWNER).queued[0];
+      vi.setSystemTime(NOW + 1000);
+      enqueueAttendance(OWNER, entry('r1', 'no_show'));
+      const { queued } = getOutboxSnapshot(OWNER);
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({ target: 'no_show', attempts: 0, recordedAt: NOW + 1000 });
+      expect(queued[0]?.nonce).not.toBe(first?.nonce);
+    });
+
+    it('a new mark removes a refused entry for the same registration', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      fetchMock.mockResolvedValueOnce(refusal(404, 'NOT_FOUND', 'This booking no longer exists.'));
+      await flushOutbox(OWNER);
+      expect(getOutboxSnapshot(OWNER).refused).toHaveLength(1);
+      enqueueAttendance(OWNER, entry('r1', 'no_show'));
+      expect(getOutboxSnapshot(OWNER).refused).toEqual([]);
+      expect(getOutboxSnapshot(OWNER).queued).toHaveLength(1);
+    });
+
+    it("answers 'unavailable' when storage refuses the write", () => {
+      vi.stubGlobal('localStorage', new FullStorage());
+      expect(enqueueAttendance(OWNER, entry('r1'))).toBe('unavailable');
+    });
+
+    it("answers 'unavailable' when storage itself cannot be reached", () => {
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        get() {
+          throw new DOMException('denied', 'SecurityError');
+        },
+      });
+      expect(enqueueAttendance(OWNER, entry('r1'))).toBe('unavailable');
+      expect(getOutboxSnapshot(OWNER)).toBe(EMPTY_OUTBOX);
+    });
+
+    it('deletes a stored value that is not JSON or has the wrong shape', () => {
+      storage.setItem('fy-outbox:acc1:r1', '{not json');
+      storage.setItem('fy-outbox:acc1:r2', JSON.stringify({ v: 1, registrationId: 'r2', target: 'toggle' }));
+      storage.setItem('fy-outbox-refused:acc1:r3', JSON.stringify({ v: 2 }));
+      storage.setItem('fy-outbox-note:acc1:c1', JSON.stringify({ v: 1, classId: 7 }));
+      enqueueAttendance(OWNER, entry('r4'));
+      // Stored under the wrong registration's key.
+      storage.setItem('fy-outbox:acc1:r5', storage.getItem('fy-outbox:acc1:r4') ?? '');
+      const snapshot = getOutboxSnapshot(OWNER);
+      expect(snapshot.queued.map((e) => e.registrationId)).toEqual(['r4']);
+      expect(snapshot.refused).toEqual([]);
+      expect(snapshot.notes).toEqual([]);
+      expect(storage.keys()).toEqual(['fy-outbox:acc1:r4']);
+    });
+
+    it('purging other owners leaves the current owner and unrelated keys', () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      enqueueAttendance('acc2', entry('r2'));
+      storage.setItem('fy-outbox-refused:acc2:r3', '{}');
+      storage.setItem('fy-outbox-note:acc2:c1', '{}');
+      storage.setItem('fy-outbox-note:acc1:c1', JSON.stringify({ v: 1, classId: 'c1', classLabel: 'Hatha' }));
+      storage.setItem('fy-theme', 'dark');
+      purgeOtherOwners(OWNER);
+      expect(storage.keys()).toEqual(['fy-outbox-note:acc1:c1', 'fy-outbox:acc1:r1', 'fy-theme']);
+    });
+
+    it('clearing removes every outbox key for every owner, and nothing else', () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      enqueueAttendance('acc2', entry('r2'));
+      storage.setItem('fy-outbox-refused:acc2:r3', '{}');
+      storage.setItem('fy-outbox-note:acc1:c1', '{}');
+      storage.setItem('fy-theme', 'dark');
+      storage.setItem('fy-offline-page:x', '1');
+      clearAllOutboxes();
+      expect(storage.keys()).toEqual(['fy-offline-page:x', 'fy-theme']);
+    });
+
+    it('counts queued and refused entries for the owner only', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      enqueueAttendance(OWNER, entry('r2'));
+      enqueueAttendance('acc2', entry('r3'));
+      fetchMock.mockResolvedValueOnce(refusal(404, 'NOT_FOUND', 'Gone'));
+      fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      await flushOutbox(OWNER);
+      expect(pendingCount(OWNER)).toBe(2);
+      expect(pendingCount('acc2')).toBe(1);
+    });
+  });
+
+  describe('snapshot', () => {
+    it('is the same object until something changes', () => {
+      expect(getOutboxSnapshot(OWNER)).toBe(EMPTY_OUTBOX);
+      enqueueAttendance(OWNER, entry('r1'));
+      const first = getOutboxSnapshot(OWNER);
+      expect(getOutboxSnapshot(OWNER)).toBe(first);
+      enqueueAttendance(OWNER, entry('r2'));
+      expect(getOutboxSnapshot(OWNER)).not.toBe(first);
+    });
+
+    it('shows only the owner’s entries, oldest first', () => {
+      enqueueAttendance(OWNER, entry('r2'));
+      vi.setSystemTime(NOW + 1);
+      enqueueAttendance('acc2', entry('r3'));
+      enqueueAttendance(OWNER, entry('r1'));
+      expect(getOutboxSnapshot(OWNER).queued.map((e) => e.registrationId)).toEqual(['r2', 'r1']);
+    });
+
+    it('drops refused entries older than seven days', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      fetchMock.mockResolvedValueOnce(refusal(404, 'NOT_FOUND', 'Gone'));
+      await flushOutbox(OWNER);
+      vi.setSystemTime(NOW + 7 * DAY_MS);
+      expect(getOutboxSnapshot(OWNER).refused).toHaveLength(1);
+      vi.setSystemTime(NOW + 7 * DAY_MS + 1);
+      enqueueAttendance(OWNER, entry('r2'));
+      expect(getOutboxSnapshot(OWNER).refused).toEqual([]);
+      expect(storage.keys()).toEqual(['fy-outbox:acc1:r2']);
+    });
+
+    it('notifies listeners in this tab on a change, and on another tab’s outbox write only', () => {
+      const listener = vi.fn();
+      const unsubscribe = subscribeOutbox(listener);
+      enqueueAttendance(OWNER, entry('r1'));
+      expect(listener).toHaveBeenCalledTimes(1);
+      window.dispatchEvent(Object.assign(new Event('storage'), { key: 'fy-theme' }));
+      expect(listener).toHaveBeenCalledTimes(1);
+      window.dispatchEvent(Object.assign(new Event('storage'), { key: 'fy-outbox-refused:acc1:r9' }));
+      expect(listener).toHaveBeenCalledTimes(2);
+      unsubscribe();
+      enqueueAttendance(OWNER, entry('r2'));
+      window.dispatchEvent(Object.assign(new Event('storage'), { key: 'fy-outbox:acc1:r9' }));
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('dismissing removes a refused entry and a note', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      enqueueAttendance(OWNER, entry('r2'));
+      fetchMock.mockResolvedValueOnce(refusal(403, undefined, 'Not your class'));
+      fetchMock.mockResolvedValueOnce(applied('r2', 'attended', true));
+      await flushOutbox(OWNER);
+      expect(getOutboxSnapshot(OWNER).refused).toHaveLength(1);
+      expect(getOutboxSnapshot(OWNER).notes).toEqual([{ classId: 'class-r2', classLabel: 'Hatha r2' }]);
+      dismissRefused(OWNER, 'r1');
+      dismissNote(OWNER, 'class-r2');
+      expect(getOutboxSnapshot(OWNER)).toMatchObject({ refused: [], notes: [] });
+    });
+  });
+
+  describe('flush', () => {
+    it('sends the absolute target, PUT with no redirects and a timeout', async () => {
+      enqueueAttendance(OWNER, entry('r1', 'no_show'));
+      fetchMock.mockResolvedValueOnce(applied('r1', 'no_show'));
+      await flushOutbox(OWNER);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('/api/registrations/r1');
+      expect(init).toMatchObject({ method: 'PUT', redirect: 'error' });
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(JSON.parse(String(init.body))).toEqual({ status: 'no_show' });
+    });
+
+    it('two taps on one row replay as the latest target, and a second flush answers unchanged', async () => {
+      enqueueAttendance(OWNER, entry('r1', 'attended'));
+      enqueueAttendance(OWNER, entry('r1', 'no_show'));
+      fetchMock.mockImplementation(echoServer());
+      await flushOutbox(OWNER);
+      expect(sentBodies(fetchMock)).toEqual([{ url: '/api/registrations/r1', status: 'no_show' }]);
+      // The same mark queued again (a replay) still names the target, never a flip.
+      enqueueAttendance(OWNER, entry('r1', 'no_show'));
+      fetchMock.mockResolvedValueOnce(unchanged('r1', 'no_show'));
+      const second = await flushOutbox(OWNER);
+      expect(sentBodies(fetchMock).map((b) => b.status)).toEqual(['no_show', 'no_show']);
+      expect(second.applied).toBe(0);
+      expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r1: 'no_show' });
+    });
+
+    it('the same mark queued twice is sent as that mark, not flipped', async () => {
+      enqueueAttendance(OWNER, entry('r1', 'attended'));
+      enqueueAttendance(OWNER, entry('r1', 'attended'));
+      fetchMock.mockImplementation(echoServer());
+      await flushOutbox(OWNER);
+      expect(sentBodies(fetchMock).map((b) => b.status)).toEqual(['attended']);
+    });
+
+    it('sends entries oldest first', async () => {
+      enqueueAttendance(OWNER, entry('r2'));
+      vi.setSystemTime(NOW + 1);
+      enqueueAttendance(OWNER, entry('r1'));
+      fetchMock.mockImplementation(echoServer());
+      await flushOutbox(OWNER);
+      expect(sentBodies(fetchMock).map((b) => b.url)).toEqual(['/api/registrations/r2', '/api/registrations/r1']);
+    });
+
+    it('uses the cross-tab lock when the browser has one', async () => {
+      const request = vi.fn((_name: string, callback: () => Promise<number>) => callback());
+      vi.stubGlobal('navigator', { onLine: true, locks: { request } });
+      enqueueAttendance(OWNER, entry('r1'));
+      fetchMock.mockImplementation(echoServer());
+      await flushOutbox(OWNER);
+      expect(request).toHaveBeenCalledWith('fy-outbox', expect.any(Function));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    describe('one row per response (D5)', () => {
+      it('200 with the matching body: removes the entry and records the confirmed status', async () => {
+        enqueueAttendance(OWNER, entry('r1', 'attended'));
+        fetchMock.mockResolvedValueOnce(applied('r1', 'attended'));
+        const result = await flushOutbox(OWNER);
+        expect(result).toEqual({ applied: 1 });
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: 'attended' }, notes: [] });
+        expect(storage.keys()).toEqual([]);
+      });
+
+      it('200 with the matching body on a class that had completed: writes one note for its class', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        enqueueAttendance(OWNER, { ...entry('r2'), classId: 'class-r1', classLabel: 'Hatha r1' });
+        fetchMock.mockImplementation(echoServer(true));
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).notes).toEqual([{ classId: 'class-r1', classLabel: 'Hatha r1' }]);
+      });
+
+      it('200 on a completed class the teacher already saw completed: no note', async () => {
+        enqueueAttendance(OWNER, entry('r1', 'attended', true));
+        fetchMock.mockResolvedValueOnce(applied('r1', 'attended', true));
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).notes).toEqual([]);
+      });
+
+      it('200 unchanged: removes the entry, confirms it, writes no note and counts nothing applied', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        fetchMock.mockResolvedValueOnce(
+          json(200, { data: { id: 'r1', status: 'attended', classCompleted: true }, outcome: 'unchanged' }),
+        );
+        const result = await flushOutbox(OWNER);
+        expect(result).toEqual({ applied: 0 });
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], notes: [], confirmed: { r1: 'attended' } });
+      });
+
+      it.each([
+        ['an HTML page (a captive portal)', () => new Response('<html>Hotel wifi</html>', { status: 200 })],
+        ['JSON naming another registration', () => applied('r9', 'attended')],
+        ['JSON naming another status', () => applied('r1', 'no_show')],
+        ['JSON without data', () => json(200, { ok: true })],
+        ['a 204', () => new Response(null, { status: 204 })],
+      ])('200 without the matching body — %s: keeps everything and stops', async (_name, answer) => {
+        enqueueAttendance(OWNER, entry('r1'));
+        vi.setSystemTime(NOW + 1);
+        enqueueAttendance(OWNER, entry('r2'));
+        fetchMock.mockResolvedValueOnce(answer());
+        const result = await flushOutbox(OWNER);
+        expect(result).toEqual({ applied: 0 });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([
+          ['r1', 0],
+          ['r2', 0],
+        ]);
+        expect(getOutboxSnapshot(OWNER).confirmed).toEqual({});
+      });
+
+      it.each([
+        ['a network failure', () => Promise.reject(new TypeError('Failed to fetch'))],
+        ['a timeout', () => Promise.reject(new DOMException('timed out', 'TimeoutError'))],
+        ['a redirect', () => Promise.reject(new TypeError('unexpected redirect'))],
+        ['429', () => Promise.resolve(refusal(429, undefined, 'Slow down'))],
+        ['502', () => Promise.resolve(new Response('Bad gateway', { status: 502 }))],
+        ['503', () => Promise.resolve(refusal(503, undefined, 'Down'))],
+        ['504', () => Promise.resolve(new Response('', { status: 504 }))],
+        ['a 403 that is not JSON', () => Promise.resolve(new Response('<html>Forbidden</html>', { status: 403 }))],
+      ])('%s: keeps everything and stops', async (_name, answer) => {
+        enqueueAttendance(OWNER, entry('r1'));
+        vi.setSystemTime(NOW + 1);
+        enqueueAttendance(OWNER, entry('r2'));
+        fetchMock.mockImplementationOnce(answer);
+        await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 0 });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({ refused: [], needsSignIn: false });
+        expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([
+          ['r1', 0],
+          ['r2', 0],
+        ]);
+      });
+
+      it.each([
+        ['409 CONCURRENT_MODIFICATION', () => refusal(409, 'CONCURRENT_MODIFICATION', 'Changed meanwhile')],
+        ['500', () => new Response('<html>Internal error</html>', { status: 500 })],
+      ])('%s: counts an attempt, refuses on the third, and carries on to the next entry', async (_name, answer) => {
+        enqueueAttendance(OWNER, entry('r1'));
+        vi.setSystemTime(NOW + 1);
+        enqueueAttendance(OWNER, entry('r2'));
+        fetchMock.mockImplementation((url: string, init: RequestInit) =>
+          url.endsWith('/r1') ? Promise.resolve(answer()) : echoServer()(url, init),
+        );
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([['r1', 1]]);
+        expect(getOutboxSnapshot(OWNER).confirmed).toEqual({ r2: 'attended' });
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).queued.map((e) => e.attempts)).toEqual([2]);
+        await flushOutbox(OWNER);
+        const snapshot = getOutboxSnapshot(OWNER);
+        expect(snapshot.queued).toEqual([]);
+        expect(snapshot.refused.map((e) => [e.registrationId, e.attempts, e.refusedAt])).toEqual([['r1', 3, NOW + 1]]);
+        expect(snapshot.refused[0]?.message).not.toBe('');
+      });
+
+      it('409 CONCURRENT_MODIFICATION on the third attempt is refused with the server’s message', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(refusal(409, 'CONCURRENT_MODIFICATION', 'Someone changed this booking.')),
+        );
+        await flushOutbox(OWNER);
+        await flushOutbox(OWNER);
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).refused[0]?.message).toBe('Someone changed this booking.');
+      });
+
+      it.each([
+        ['409 with another code', () => refusal(409, 'CLASS_NOT_STARTED', 'The class has not started.'), 'The class has not started.'],
+        ['404', () => refusal(404, 'NOT_FOUND', 'This booking no longer exists.'), 'This booking no longer exists.'],
+        ['403', () => refusal(403, undefined, 'Not your class'), 'Not your class'],
+        ['400', () => refusal(400, undefined, 'Invalid status'), 'Invalid status'],
+      ])('%s: refused with the server’s message, and the flush carries on', async (_name, answer, message) => {
+        enqueueAttendance(OWNER, entry('r1'));
+        vi.setSystemTime(NOW + 1);
+        enqueueAttendance(OWNER, entry('r2'));
+        fetchMock.mockImplementation((url: string, init: RequestInit) =>
+          url.endsWith('/r1') ? Promise.resolve(answer()) : echoServer()(url, init),
+        );
+        await flushOutbox(OWNER);
+        const snapshot = getOutboxSnapshot(OWNER);
+        expect(snapshot.queued).toEqual([]);
+        expect(snapshot.refused).toEqual([
+          expect.objectContaining({
+            registrationId: 'r1',
+            studentName: 'Student r1',
+            classLabel: 'Hatha r1',
+            message,
+            refusedAt: NOW + 1,
+          }),
+        ]);
+        expect(snapshot.confirmed).toEqual({ r2: 'attended' });
+        expect(storage.keys()).toEqual(['fy-outbox-refused:acc1:r1']);
+      });
+
+      it('401: sets needsSignIn, keeps everything and stops; a later answered flush clears it', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        vi.setSystemTime(NOW + 1);
+        enqueueAttendance(OWNER, entry('r2'));
+        fetchMock.mockResolvedValueOnce(refusal(401, undefined, 'Session expired'));
+        await flushOutbox(OWNER);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({ needsSignIn: true, refused: [] });
+        expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([
+          ['r1', 0],
+          ['r2', 0],
+        ]);
+        fetchMock.mockImplementation(echoServer());
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({ needsSignIn: false, queued: [] });
+      });
+
+      it('a portal 200 after a 401 does not clear needsSignIn', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        fetchMock.mockResolvedValueOnce(refusal(401, undefined, 'Session expired'));
+        await flushOutbox(OWNER);
+        fetchMock.mockResolvedValueOnce(new Response('<html>Hotel wifi</html>', { status: 200 }));
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).needsSignIn).toBe(true);
+      });
+    });
+
+    it('a tap while its PUT is in flight keeps the new entry and sends it in the same flush', async () => {
+      enqueueAttendance(OWNER, entry('r1', 'attended'));
+      let release: (res: Response) => void = () => {};
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      );
+      fetchMock.mockImplementation(echoServer());
+      const flushing = flushOutbox(OWNER);
+      await vi.advanceTimersByTimeAsync(0);
+      enqueueAttendance(OWNER, entry('r1', 'no_show'));
+      release(applied('r1', 'attended'));
+      await flushing;
+      expect(sentBodies(fetchMock).map((b) => b.status)).toEqual(['attended', 'no_show']);
+      expect(getOutboxSnapshot(OWNER)).toMatchObject({ queued: [], confirmed: { r1: 'no_show' } });
+    });
+
+    it('a tap while a failing PUT is in flight keeps the new entry untouched', async () => {
+      enqueueAttendance(OWNER, entry('r1', 'attended'));
+      let release: (res: Response) => void = () => {};
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      );
+      fetchMock.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')));
+      const flushing = flushOutbox(OWNER);
+      await vi.advanceTimersByTimeAsync(0);
+      enqueueAttendance(OWNER, entry('r1', 'no_show'));
+      release(refusal(404, 'NOT_FOUND', 'Gone'));
+      await flushing;
+      const snapshot = getOutboxSnapshot(OWNER);
+      expect(snapshot.refused).toEqual([]);
+      expect(snapshot.queued.map((e) => [e.target, e.attempts])).toEqual([['no_show', 0]]);
+    });
+
+    it('a flush called during a flush shares it: one PUT per entry', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      enqueueAttendance(OWNER, entry('r2'));
+      fetchMock.mockImplementation(echoServer());
+      const first = flushOutbox(OWNER);
+      const second = flushOutbox(OWNER);
+      expect(second).toBe(first);
+      await Promise.all([first, second]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('a flush called during a flush runs one more pass for an entry queued meanwhile', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      let release: (res: Response) => void = () => {};
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      );
+      fetchMock.mockImplementation(echoServer());
+      const first = flushOutbox(OWNER);
+      await vi.advanceTimersByTimeAsync(0);
+      enqueueAttendance(OWNER, entry('r2'));
+      void flushOutbox(OWNER);
+      release(applied('r1', 'attended'));
+      await expect(first).resolves.toEqual({ applied: 2 });
+      expect(sentBodies(fetchMock).map((b) => b.url)).toEqual(['/api/registrations/r1', '/api/registrations/r2']);
+    });
+
+    it('never throws, even when storage fails mid-flush', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      fetchMock.mockImplementation(() => {
+        vi.stubGlobal('localStorage', new FullStorage());
+        return Promise.resolve(refusal(500, undefined, 'boom'));
+      });
+      await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 0 });
+    });
+  });
+});
