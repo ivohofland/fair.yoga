@@ -6,6 +6,7 @@ import {
   dismissRefused,
   enqueueAttendance,
   getOutbox,
+  readOutbox,
   resetOutboxForTests,
   settleEntry,
   shownStatus,
@@ -80,6 +81,25 @@ describe('attendance outbox', () => {
     await clearOutbox();
     expect(getOutbox()).toEqual(EMPTY_OUTBOX);
     expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('readOutbox sees a write the cache missed, and keeps the cache when nothing changed', async () => {
+    await enqueueAttendance(input('attended'));
+    const primed = getOutbox();
+    const listener = vi.fn();
+    const unsubscribe = subscribeOutbox(listener);
+    expect(readOutbox()).toBe(primed);
+    expect(listener).not.toHaveBeenCalled();
+
+    const pending = primed.pending.r1;
+    if (pending === undefined) throw new Error('expected a pending entry');
+    const newer = { ...pending, id: 'other-tab', status: 'no_show' };
+    localStorage.setItem(KEY, JSON.stringify({ ...primed, pending: { r1: newer } }));
+    expect(getOutbox().pending.r1?.status).toBe('attended');
+    expect(readOutbox().pending.r1).toEqual(newer);
+    expect(getOutbox().pending.r1?.status).toBe('no_show');
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 
   it('state persists through storage and is re-read after a reset', async () => {

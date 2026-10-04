@@ -52,6 +52,8 @@ export const EMPTY_OUTBOX: OutboxState = Object.freeze({ pending: {}, confirmed:
 let memory: string | null = null;
 let useMemory = false;
 let cached: OutboxState | null = null;
+/** The stored text `cached` was parsed from or written as. */
+let cachedRaw: string | null = null;
 const listeners = new Set<() => void>();
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -149,14 +151,32 @@ function parse(raw: string | null, now: number): OutboxState {
 }
 
 export function getOutbox(): OutboxState {
-  if (cached === null) cached = parse(readRaw(), Date.now());
+  if (cached === null) {
+    cachedRaw = readRaw();
+    cached = parse(cachedRaw, Date.now());
+  }
+  return cached;
+}
+/**
+ * Reads storage past the cache, which only this tab's writes and a subscribed
+ * `storage` listener refresh. Keeps the cached object, and its identity, when
+ * nothing changed; otherwise subscribers are told.
+ */
+export function readOutbox(): OutboxState {
+  const raw = readRaw();
+  if (cached !== null && raw === cachedRaw) return cached;
+  const hadCache = cached !== null;
+  cached = parse(raw, Date.now());
+  cachedRaw = raw;
+  if (hadCache) notify();
   return cached;
 }
 function notify(): void {
   listeners.forEach((l) => l());
 }
 function commit(next: OutboxState): void {
-  writeRaw(JSON.stringify(next));
+  cachedRaw = JSON.stringify(next);
+  writeRaw(cachedRaw);
   cached = next;
   notify();
 }
@@ -244,6 +264,7 @@ export async function clearOutbox(): Promise<void> {
   await withLock(LOCK, async () => {
     writeRaw(null);
     cached = EMPTY_OUTBOX;
+    cachedRaw = null;
     notify();
   });
 }
