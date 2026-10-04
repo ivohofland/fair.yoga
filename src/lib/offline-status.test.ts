@@ -139,11 +139,29 @@ describe('connection status', () => {
     expect(getConnectionStatus().offline).toBe(false);
   });
 
-  it('sends the ping with an abort signal and no cache', async () => {
-    fetchMock.mockImplementation(() => Promise.resolve(answer(200)));
-    await checkConnection();
-    const init: unknown = fetchMock.mock.calls[0]?.[1];
-    expect(init).toEqual(expect.objectContaining({ cache: 'no-store', signal: expect.any(AbortSignal) }));
+  it('drops a ping still in flight when the last subscriber leaves', async () => {
+    let rejectPing: (reason: unknown) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((_, reject) => { rejectPing = reject; }));
+    const unsubscribe = subscribeConnectionStatus(() => {});
+    await settle();
+    unsubscribe();
+    rejectPing(new TypeError('Failed to fetch'));
+    await settle();
+    expect(isOfflineNow()).toBe(false);
+    expect(getConnectionStatus().offline).toBe(false);
+  });
+
+  it('sends the ping with an abort signal that times out after 5 seconds, and no cache', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      fetchMock.mockImplementation(() => Promise.resolve(answer(200)));
+      await checkConnection();
+      const init: unknown = fetchMock.mock.calls[0]?.[1];
+      expect(init).toEqual(expect.objectContaining({ cache: 'no-store', signal: expect.any(AbortSignal) }));
+      expect(timeout).toHaveBeenCalledWith(5000);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it('retries every 15 s while offline and a subscriber remains, and stops once none does', async () => {
