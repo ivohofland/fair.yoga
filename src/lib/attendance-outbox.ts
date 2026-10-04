@@ -278,7 +278,8 @@ export function shownStatus(
   const pending = outbox.pending[registrationId];
   if (pending) return { status: pending.status, pending: true };
   const confirmed = outbox.confirmed[registrationId];
-  if (confirmed && confirmed.confirmedAt >= renderedAt) {
+  // `confirmedAt` is a `Date` header, truncated to the second, so it can read up to 999 ms early.
+  if (confirmed && confirmed.confirmedAt + 1000 > renderedAt) {
     return { status: confirmed.status, pending: false };
   }
   return { status: rendered, pending: false };

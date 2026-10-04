@@ -12,6 +12,7 @@ import {
   type QueuedStatus,
 } from '@/lib/attendance-outbox';
 import { flushAttendance } from '@/lib/attendance-sync';
+import { logRequestFailure } from '@/lib/client-errors';
 import {
   refusalLine,
   useAttendanceOwner,
@@ -114,7 +115,10 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
     if (arrived) router.refresh();
   }, [outbox, classId, router]);
 
-  async function toggleAttendance(owner: string, item: AttendanceItem, currentStatus: AttendanceStatus) {
+  async function toggleAttendance(owner: string, item: AttendanceItem) {
+    // The live store, not this render's `outbox`: a second tap can land before
+    // the first tap's write has re-rendered the row.
+    const currentStatus = shownStatus(getOutbox(), item.registrationId, item.status, renderedAt).status;
     // A student who cancelled late is not a no-show — they told the teacher they
     // were not coming, and were charged for saying so. The only correction that
     // means anything for them is "they came after all", and it has to be
@@ -155,7 +159,7 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
   const refusals = refused.map((entry) => {
     const line = refusalLine(entry);
     return (
-      <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3 mb-3">
+      <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3 mt-3">
         <p role="alert" className="type-caption text-danger">
           {line}
         </p>
@@ -175,8 +179,8 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
     return (
       <div className="py-6">
         {heading}
-        {refusals}
         <p className="type-body">No registered students.</p>
+        {refusals}
       </div>
     );
   }
@@ -196,8 +200,6 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
           Corrections update the record — the payment request already sent stays as it is.
         </p>
       )}
-
-      {refusals}
 
       <div>
         {items.map((item) => {
@@ -220,7 +222,11 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
                 {editing && ownerId !== null && (
                   <button
                     type="button"
-                    onClick={() => void toggleAttendance(ownerId, item, shown.status)}
+                    onClick={() => {
+                      toggleAttendance(ownerId, item).catch((err: unknown) =>
+                        logRequestFailure('attendance-list', { registrationId: item.registrationId }, err),
+                      );
+                    }}
                     className={`
                       w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
                       ${isAttended
@@ -242,7 +248,8 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
           );
         })}
       </div>
+
+      {refusals}
     </div>
   );
 }
-
