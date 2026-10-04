@@ -127,6 +127,10 @@ describe('classPageClock', () => {
     expect(clock(checkinAt, 'open').showCheckin).toBe(true);
   });
 
+  it('answers the check-in instant as the start minus CHECKIN_OPENS_MINUTES', () => {
+    expect(clock(ms(checkinAt, -60 * MINUTE), 'open').checkinAt.toISOString()).toBe(checkinAt.toISOString());
+  });
+
   it('shows check-in on an in_progress class whatever the time', () => {
     expect(clock(ms(start, 5 * MINUTE), 'in_progress').showCheckin).toBe(true);
   });

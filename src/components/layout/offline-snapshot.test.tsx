@@ -3,10 +3,6 @@ import { render, screen, act } from '@testing-library/react';
 import { useState } from 'react';
 import { OfflineSnapshot } from './offline-snapshot';
 import { Button } from '@/components/ui/button';
-import { AttendanceList } from '@/components/class/attendance-list';
-import { AttendanceSyncProvider } from '@/components/layout/attendance-sync-status';
-import { resetOutboxForTests } from '@/lib/attendance-outbox';
-import { resetSyncForTests } from '@/lib/attendance-sync';
 import type { ConnectionStatus } from '@/lib/offline-status';
 
 const { status, isOfflineNow, warmOfflinePages, router, pathname } = vi.hoisted(() => ({
@@ -22,10 +18,6 @@ vi.mock('@/lib/offline-status', () => ({
   isOfflineNow,
 }));
 vi.mock('@/lib/offline-client', () => ({ warmOfflinePages }));
-vi.mock('@/lib/attendance-sync', async (orig) => ({
-  ...(await orig<typeof import('@/lib/attendance-sync')>()),
-  startAttendanceSync: () => () => {},
-}));
 vi.mock('next/navigation', () => ({ useRouter: () => router, usePathname: () => pathname.current }));
 
 const stamp = {
@@ -46,9 +38,6 @@ function ui(props: Partial<Parameters<typeof OfflineSnapshot>[0]> = {}, children
 }
 
 beforeEach(() => {
-  localStorage.clear();
-  resetOutboxForTests();
-  resetSyncForTests();
   status.current = { offline: false, serverNow: null };
   isOfflineNow.mockReturnValue(false);
   pathname.current = '/schedule';
@@ -98,29 +87,35 @@ describe('OfflineSnapshot', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Offline — showing what was loaded at 09:12');
   });
 
-  it('disables a descendant Button and AttendanceList check-in, and the look comes from the pseudo-class', () => {
-    status.current = { offline: true, serverNow: null };
-    render(
+  describe('slots', () => {
+    const slotted = () =>
       ui(
-        {},
-        <>
-          <Button>Publish</Button>
-          <AttendanceSyncProvider ownerId="account-1">
-            <AttendanceList
-              items={[{ registrationId: 'r1', studentName: 'Ada', status: 'registered' }]}
-              classId="class-1"
-              renderedAt={stamp.renderedAt}
-            />
-          </AttendanceSyncProvider>
-        </>,
-      ),
-    );
-    const publish = screen.getByRole('button', { name: 'Publish' });
-    expect(publish).toBeDisabled();
-    expect(publish).toHaveClass('disabled:opacity-50');
-    const checkIn = screen.getByRole('button', { name: /Ada/ });
-    expect(checkIn).toBeDisabled();
-    expect(checkIn).toHaveClass('disabled:opacity-50');
+        { queueable: <Button>Check in</Button>, after: <Button>Cancel class</Button> },
+        <Button>Publish</Button>,
+      );
+
+    it('offline, disables children and after, leaves queueable enabled, and the look comes from the pseudo-class', () => {
+      status.current = { offline: true, serverNow: null };
+      const { container } = render(slotted());
+      const publish = screen.getByRole('button', { name: 'Publish' });
+      expect(publish).toBeDisabled();
+      expect(publish).toHaveClass('disabled:opacity-50');
+      expect(screen.getByRole('button', { name: 'Cancel class' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Check in' })).toBeEnabled();
+      expect(container.querySelectorAll('fieldset[data-offline-fieldset]')).toHaveLength(2);
+    });
+
+    it('online, disables none of them', () => {
+      render(slotted());
+      for (const name of ['Publish', 'Check in', 'Cancel class']) {
+        expect(screen.getByRole('button', { name })).toBeEnabled();
+      }
+    });
+
+    it('renders children, queueable, after in that order', () => {
+      render(slotted());
+      expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Publish', 'Check in', 'Cancel class']);
+    });
   });
 
   describe('staleness refresh', () => {

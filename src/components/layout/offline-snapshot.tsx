@@ -20,8 +20,10 @@ function todayIn(timeZone: string): string | null {
 
 /**
  * Wraps a page the service worker may store. Offline, it says when the page
- * was loaded and disables every control inside it through the fieldset. The
- * `data-offline-owner` attribute is the owner marker the worker requires; see
+ * was loaded and disables the controls in `children` and `after` through their
+ * fieldsets. The `queueable` slot, rendered between them, is the one region
+ * left enabled offline, for writes the page queues. The `data-offline-owner`
+ * attribute is the owner marker the worker requires; see
  * docs/technical-architecture.md (Offline (service worker)).
  */
 export function OfflineSnapshot({
@@ -33,7 +35,14 @@ export function OfflineSnapshot({
   timeZone,
   warmPaths = [],
   children,
-}: OfflineSnapshotStamp & { warmPaths?: readonly string[]; children: ReactNode }) {
+  queueable,
+  after,
+}: OfflineSnapshotStamp & {
+  warmPaths?: readonly string[];
+  children: ReactNode;
+  queueable?: ReactNode;
+  after?: ReactNode;
+}) {
   const { offline, serverNow } = useConnectionStatus();
   const router = useRouter();
   const pathname = usePathname();
@@ -63,6 +72,12 @@ export function OfflineSnapshot({
       <fieldset data-offline-fieldset disabled={offline} className="m-0 min-w-0 border-0 p-0">
         {children}
       </fieldset>
+      {queueable !== undefined && <div data-offline-queueable>{queueable}</div>}
+      {after !== undefined && (
+        <fieldset data-offline-fieldset disabled={offline} className="m-0 min-w-0 border-0 p-0">
+          {after}
+        </fieldset>
+      )}
     </div>
   );
 }
