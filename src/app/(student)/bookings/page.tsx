@@ -9,14 +9,14 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { CancelBookingButton } from '@/components/student/cancel-booking-button';
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
-import { PaymentQr } from '@/components/student/payment-qr';
 import { ClassPriceLine } from '@/components/booking/price-range';
 import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { getWaitlistWindow, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
 import { formatInstantInZone } from '@/lib/timezone';
-import { studentNotificationHref } from '@/lib/notification-links';
+import { PAY_NOW_LABEL, payPagePath, studentNotificationHref } from '@/lib/notification-links';
+import { paymentMethodsFor } from '@/lib/payment-methods';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
@@ -400,44 +400,19 @@ export default async function StudentBookingsPage() {
                   )}
                 </div>
                 {payment && outstanding && (
-                  <details className="mt-2">
-                    <summary
-                      className="type-label text-teal cursor-pointer"
-                      aria-label={`How to pay — ${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)}`}
-                    >
-                      How to pay
-                    </summary>
-                    <div className="mt-2 bg-sand-soft border border-border rounded-field p-4">
-                      {cls.calendarEntry.teacher.bankIban ? (
-                        <>
-                          <p className="type-body">
-                            Transfer{' '}
-                            <span className="type-number">€{Number(payment.amount).toFixed(2)}</span> to:
-                          </p>
-                          <p className="type-body text-ink mt-1 tabular-nums">{cls.calendarEntry.teacher.bankIban}</p>
-                          <p className="type-caption">
-                            {cls.calendarEntry.teacher.bankAccountName ??
-                              `${cls.calendarEntry.teacher.firstName} ${cls.calendarEntry.teacher.lastName}`}
-                            {' · '}mention &ldquo;{cls.calendarEntry.classType} {formatDayHeader(cls.calendarEntry.date)}&rdquo;
-                          </p>
-                          <PaymentQr
-                            iban={cls.calendarEntry.teacher.bankIban}
-                            beneficiary={
-                              cls.calendarEntry.teacher.bankAccountName ??
-                              `${cls.calendarEntry.teacher.firstName} ${cls.calendarEntry.teacher.lastName}`
-                            }
-                            amount={Number(payment.amount)}
-                            remittance={`${cls.calendarEntry.classType} ${formatDayHeader(cls.calendarEntry.date)}`}
-                          />
-                        </>
-                      ) : (
-                        <p className="type-body">
-                          Pay your teacher directly — cash or transfer, whatever you
-                          two agreed. They&apos;ll mark it as received.
-                        </p>
-                      )}
+                  paymentMethodsFor(cls.calendarEntry.teacher).length > 0 ? (
+                    <div className="mt-3">
+                      <Link
+                        href={payPagePath(cls.id)}
+                        aria-label={`${PAY_NOW_LABEL} — ${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)}`}
+                        className="inline-flex items-center h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint no-underline"
+                      >
+                        {PAY_NOW_LABEL}
+                      </Link>
                     </div>
-                  </details>
+                  ) : (
+                    <p className="type-caption mt-2">{`Pay ${cls.calendarEntry.teacher.firstName} directly`}</p>
+                  )
                 )}
                 {breakdown.kind === 'shown' && (
                   <PaymentBreakdown

@@ -11,14 +11,11 @@ const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 
 /**
- * `/bookings` — the "How to pay" disclosure's payment-status gate.
+ * `/bookings` — the Pay now link's payment-status gate.
  *
- * A `not_charged` payment must not solicit payment: no "How to pay"
- * disclosure, no teacher IBAN, no QR code. An actually-unpaid payment still
- * gets all three. The load-bearing assertion is the IBAN's absence, not just
- * the state label's presence: the label and the disclosure render from
- * independent conditions, so a test that only checked the label would not
- * exercise the disclosure gate at all.
+ * A `not_charged` payment must not solicit payment: no Pay now link. An
+ * actually-unpaid payment links to its pay page. The bank details themselves
+ * live on that page, so the IBAN appears on `/bookings` in neither case.
  */
 describe('GET /bookings (page) — payment status gate', () => {
   const TEACHER_IBAN = 'NL91ABNA0417164300';
@@ -30,6 +27,7 @@ describe('GET /bookings (page) — payment status gate', () => {
   let studentToken = '';
   let roomId = '';
   let paymentId = '';
+  let classId = '';
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -99,6 +97,7 @@ describe('GET /bookings (page) — payment status gate', () => {
       totalStudents: 1,
       totalRevenue: 30,
     });
+    classId = cls.id;
 
     const registration = await prisma.registration.create({
       data: {
@@ -147,14 +146,12 @@ describe('GET /bookings (page) — payment status gate', () => {
     const html = await res.text();
 
     expect(html).toContain('⊘ Not charged');
-    expect(html).not.toContain('How to pay');
-    // The load-bearing assertion: a not-charged payment must not solicit
-    // payment, and the IBAN in the disclosure is the specific thing that
-    // would.
+    expect(html).not.toContain('Pay now');
+    // No pay link and no bank details for a payment nobody is collecting.
     expect(html).not.toContain(TEACHER_IBAN);
   });
 
-  it('still shows an unpaid student how to pay', async () => {
+  it('links an unpaid student to the pay page', async () => {
     await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', notChargedAt: null } });
 
     const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
@@ -162,8 +159,21 @@ describe('GET /bookings (page) — payment status gate', () => {
     const html = await res.text();
 
     expect(html).toContain('○ Unpaid');
-    expect(html).toContain('How to pay');
-    expect(html).toContain(TEACHER_IBAN);
+    expect(html).toContain(`href="/bookings/${classId}/pay"`);
+    expect(html).toContain('Pay now');
+    expect(html).not.toContain(TEACHER_IBAN);
+  });
+
+  it('tells an unpaid student to pay directly when the teacher has no holder name', async () => {
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', notChargedAt: null } });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { bankAccountName: null } });
+    try {
+      const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+      expect(html).toContain('Pay Bookings directly');
+      expect(html).not.toContain(`href="/bookings/${classId}/pay"`);
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { bankAccountName: 'Bookings Teacher' } });
+    }
   });
 });
 
@@ -841,7 +851,8 @@ describe('GET /bookings (page) — cancelled class moves to Past', () => {
     // reached `completed`.
     expect(html).toContain('Cancelled');
     expect(html).not.toContain('€');
-    expect(html).not.toContain('How to pay');
+    expect(html).not.toContain('Pay now');
+    expect(html).not.toContain('directly');
     expect(html).not.toContain('Where your payment goes');
   });
 });
@@ -1064,6 +1075,8 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
         email: teacherEmail,
         bio: 'Breakdown fixture teacher',
         pageSlug: `breakdown-teacher-${suffixB}`,
+        bankIban: 'NL91ABNA0417164300',
+        bankAccountName: 'Breakdown Teacher',
         account: { create: { email: teacherEmail } },
       },
       select: { id: true, accountId: true },
@@ -1201,7 +1214,7 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
   it('shows a pending payment the room, teacher, class total, class size and share behind it', async () => {
     const html = await bookingsHtml();
     expect(html).toContain(breakdownLabel(pendingClass));
-    expect(html).toContain(`How to pay — ${pendingClass.classType}, ${formatDayHeader(pendingClass.date)}`);
+    expect(html).toContain(`Pay now — ${pendingClass.classType}, ${formatDayHeader(pendingClass.date)}`);
     expect(html).toContain('€41.30');
     expect(html).toContain('€16.25');
     expect(html).toContain('€57.55');
