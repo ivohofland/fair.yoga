@@ -10,6 +10,9 @@ const { routerRefresh, router } = vi.hoisted(() => {
 });
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
 
+const { isOfflineNow } = vi.hoisted(() => ({ isOfflineNow: vi.fn(() => false) }));
+vi.mock('@/lib/offline-status', () => ({ isOfflineNow }));
+
 /**
  * Stands in for the browser's `EventSource`, which jsdom does not implement.
  * The helpers drive the state transitions the component reacts to; nothing
@@ -73,6 +76,7 @@ describe('LiveUpdates', () => {
   beforeEach(() => {
     sources = [];
     routerRefresh.mockClear();
+    isOfflineNow.mockReturnValue(false);
     vi.useFakeTimers();
     vi.stubGlobal('EventSource', FakeEventSource);
   });
@@ -109,6 +113,15 @@ describe('LiveUpdates', () => {
 
     vi.advanceTimersByTime(10_000);
     expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('schedules no refresh for a message while offline', () => {
+    isOfflineNow.mockReturnValue(true);
+    render(<LiveUpdates />);
+
+    latest().message();
+    vi.advanceTimersByTime(10_000);
+    expect(routerRefresh).not.toHaveBeenCalled();
   });
 
   it('refreshes again for a message after the previous refresh', () => {
