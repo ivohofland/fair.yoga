@@ -34,7 +34,6 @@ describe('GET /bookings/[classId]/pay', () => {
     notCharged: '',
     cancelledRegistration: '',
     noBank: '',
-    ibanNoHolder: '',
     dual: '',
   };
   const overdueClass = { classType: `Pay Overdue ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') };
@@ -148,9 +147,6 @@ describe('GET /bookings/[classId]/pay', () => {
 
     const bankTeacher = await makeTeacher('bank', { bankIban: IBAN, bankAccountName: HOLDER });
     const noBankTeacher = await makeTeacher('nobank', { bankIban: null, bankAccountName: null });
-    // Written straight to the row: the API now refuses this pair, but a row
-    // from before that rule can still hold it.
-    const noHolderTeacher = await makeTeacher('noholder', { bankIban: IBAN, bankAccountName: null });
 
     const student = await makeStudent('main');
     studentToken = await seedSession(prisma, student.accountId);
@@ -168,7 +164,6 @@ describe('GET /bookings/[classId]/pay', () => {
     classIds.notCharged = await completedClass(bankTeacher, { classType: `Pay Waived ${suffix}`, date: new Date('2026-06-03T00:00:00.000Z') }, student.id, 'attended', { amount: 7.12, status: 'not_charged' });
     classIds.cancelledRegistration = await completedClass(bankTeacher, { classType: `Pay Cancelled ${suffix}`, date: new Date('2026-06-04T00:00:00.000Z') }, student.id, 'cancelled', null);
     classIds.noBank = await completedClass(noBankTeacher, { classType: `Pay NoBank ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') }, student.id, 'attended', { amount: 8.13, status: 'pending' });
-    classIds.ibanNoHolder = await completedClass(noHolderTeacher, { classType: `Pay NoHolder ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') }, student.id, 'attended', { amount: 9.14, status: 'pending' });
     classIds.dual = await completedClass(noBankTeacher, { classType: `Pay Dual ${suffix}`, date: new Date('2026-06-02T00:00:00.000Z') }, dualStudent.id, 'attended', { amount: 4.5, status: 'pending' });
 
     // Warm the route: `next dev` compiles a page lazily on its first request.
@@ -219,16 +214,6 @@ describe('GET /bookings/[classId]/pay', () => {
     const html = await res.text();
     expect(html).toContain('Pay Paynobank directly');
     expect(html).not.toContain('How would you like to pay?');
-  });
-
-  // The page's own gate, independent of the API rule: an IBAN without its
-  // holder name shows no bank details at all.
-  it('shows no bank details for an IBAN stored without its holder name', async () => {
-    const res = await payPage(classIds.ibanNoHolder, studentToken);
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain('Pay Paynoholder directly');
-    expect(html).not.toContain(IBAN);
   });
 
   it('answers a paid payment calmly, with no methods', async () => {

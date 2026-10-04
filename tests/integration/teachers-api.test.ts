@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { expectRefusal } from '../api-assertions';
+import { isCheckViolationOn } from '@/lib/check-violation';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -270,8 +271,8 @@ describe('PUT /api/teachers/[id] — an IBAN needs its holder name', () => {
     expect(await storedBank()).toEqual({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
   });
 
-  it('accepts a holder name added to a stored IBAN', async () => {
-    await setBank({ bankIban: IBAN, bankAccountName: null });
+  it('accepts a new holder name beside a stored IBAN', async () => {
+    await setBank({ bankIban: IBAN, bankAccountName: 'Old Name' });
     const res = await putTeacher(holderTeacherId, { bankAccountName: 'H. Teacher' }, holderToken);
     expect(res.status).toBe(200);
     expect(await storedBank()).toEqual({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
@@ -312,13 +313,35 @@ describe('PUT /api/teachers/[id] — an IBAN needs its holder name', () => {
     expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: 'H. Teacher' });
   });
 
-  // A row from before this rule must not lock its teacher out
-  // of saving anything else.
-  it('saves an unrelated field for a teacher whose stored IBAN has no holder name', async () => {
-    await setBank({ bankIban: IBAN, bankAccountName: null });
-    const res = await putTeacher(holderTeacherId, { bio: 'Still editable' }, holderToken);
-    expect(res.status).toBe(200);
-    const after = await prisma.teacher.findUniqueOrThrow({ where: { id: holderTeacherId } });
-    expect(after.bio).toBe('Still editable');
+  // The database holds the rule too, for writes that do not come through
+  // this route and for a teacher racing their own two saves past its check.
+  describe('the database refuses an IBAN without its holder name', () => {
+    async function refusalOf(bank: { bankIban: string | null; bankAccountName: string | null }): Promise<unknown> {
+      await setBank({ bankIban: null, bankAccountName: null });
+      return setBank(bank).then(
+        () => 'stored',
+        (err: unknown) => err,
+      );
+    }
+
+    it('refuses an IBAN with a null holder name', async () => {
+      const err = await refusalOf({ bankIban: IBAN, bankAccountName: null });
+      expect(isCheckViolationOn(err, 'Teacher_bank_holder_name_check')).toBe(true);
+      expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
+    });
+
+    it('refuses an IBAN whose holder name is only spaces', async () => {
+      const err = await refusalOf({ bankIban: IBAN, bankAccountName: '   ' });
+      expect(isCheckViolationOn(err, 'Teacher_bank_holder_name_check')).toBe(true);
+    });
+
+    it('refuses a blank IBAN', async () => {
+      const err = await refusalOf({ bankIban: '   ', bankAccountName: 'H. Teacher' });
+      expect(isCheckViolationOn(err, 'Teacher_bank_iban_not_blank_check')).toBe(true);
+    });
+
+    it('stores an IBAN with its holder name', async () => {
+      expect(await refusalOf({ bankIban: IBAN, bankAccountName: 'H. Teacher' })).toBe('stored');
+    });
   });
 });

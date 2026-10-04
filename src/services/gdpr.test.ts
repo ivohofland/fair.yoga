@@ -167,6 +167,7 @@ let studentAccountId: string;
         bio: 'GDPR tests',
         pageSlug: `gdpr-teacher-${uniqueSuffix}`,
         bankIban: 'NL00TEST0123456789',
+        bankAccountName: 'G. Teacher',
       },
     });
     teacherId = teacher.id;

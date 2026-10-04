@@ -164,15 +164,18 @@ describe('GET /bookings (page) — payment status gate', () => {
     expect(html).not.toContain(TEACHER_IBAN);
   });
 
-  it('tells an unpaid student to pay directly when the teacher has no holder name', async () => {
+  it('tells an unpaid student to pay directly when the teacher has no payment method', async () => {
     await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', notChargedAt: null } });
-    await prisma.teacher.update({ where: { id: teacherId }, data: { bankAccountName: null } });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
     try {
       const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
       expect(html).toContain('Pay Bookings directly');
       expect(html).not.toContain(`href="/bookings/${classId}/pay"`);
     } finally {
-      await prisma.teacher.update({ where: { id: teacherId }, data: { bankAccountName: 'Bookings Teacher' } });
+      await prisma.teacher.update({
+        where: { id: teacherId },
+        data: { bankIban: TEACHER_IBAN, bankAccountName: 'Bookings Teacher' },
+      });
     }
   });
 });
