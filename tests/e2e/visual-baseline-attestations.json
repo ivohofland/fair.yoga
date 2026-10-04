@@ -1,8 +1,9 @@
 {
   "class-detail-open": {
-    "sourceSha256": "4d568d955190818289339ce8f63f6d114e1f4be1ac1c5243dd7a2300869f1c75",
+    "sourceSha256": "7d6942a76972636108bd0d3ba2340261e8472bf630e5d73b1dce6bfb04c20a05",
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
-    "verifiedAt": "2026-10-03"
+    "verifiedAt": "2026-10-04",
+    "note": "the offline snapshot wrapper adds no pixels online"
   },
   "inbox": {
     "sourceSha256": "32b1ba66f9143e9bdd77423e8e8785820ac29da655838e5b854e3c9248cc52ac",
@@ -10,9 +11,9 @@
     "verifiedAt": "2026-10-03"
   },
   "schedule": {
-    "sourceSha256": "fcc83773eaaaa04d9ec2442c18bc0dc1e1a45d33ad1f44e9784402d3bec84f84",
+    "sourceSha256": "b7a3cfee8c2da15293dddf293e1be47f2f63351ac1633ebed9f7aa207441cd35",
     "baselineSha256": "89c0bb9171896fb2bd9911bbc7ba27ae90e412c35738711448550de0c9631da6",
-    "verifiedAt": "2026-10-03",
+    "verifiedAt": "2026-10-04",
     "note": "the install card renders only on the client, for a browser that can install"
   },
   "settings": {
