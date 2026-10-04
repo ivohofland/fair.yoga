@@ -12,7 +12,7 @@ export interface StudentUpdate {
   title: string;
   body: string;
   createdAt: string; // ISO
-  /** Booking page of the related class while it's still open, else null. */
+  /** Where the row links (`studentNotificationHref`), or null. */
   href: string | null;
 }
 

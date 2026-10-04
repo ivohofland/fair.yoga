@@ -287,7 +287,7 @@ export const studentProfileSchema = z.object({
 /** Trimmed, with a blank answer stored as no answer. */
 const blankAsNull = z.string().trim().transform((value) => (value === '' ? null : value));
 
-/** The PUT refusal for an IBAN without its holder name. */
+/** Refusal copy for an IBAN stored without its account holder name. */
 export const BANK_HOLDER_NAME_REQUIRED_MESSAGE =
   'Add the account holder name exactly as your bank shows it.';
 
