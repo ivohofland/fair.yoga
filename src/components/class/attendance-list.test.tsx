@@ -131,12 +131,11 @@ async function hydrate(
  * are easy to get wrong and are held below.
  *
  * FIRST: the server refuses `late_cancel -> attended` while the class is still
- * `open`, and an earlier version of this component took a `classIsOpen` prop to
- * avoid offering a doomed tap. That could not work. The page is server-rendered
- * with no revalidation and check-in opens from T-15min, so the prop froze at
- * render and the control never unlocked once the class actually started — a
- * silent failure in place of a visible one. The server decides; a refusal
- * refreshes.
+ * `open`, and the control is offered anyway. The page is server-rendered with
+ * no revalidation and check-in opens from T-15min, so any class-status prop
+ * would be frozen at render, and a control gated on it would stay dead once the
+ * class actually started — a silent failure in place of a visible one. The
+ * server decides; a refusal refreshes.
  *
  * SECOND: the toggle must not destroy the record. `late_cancel` is what tells
  * the student, on their own `/bookings`, why they were charged for a class they
@@ -181,9 +180,9 @@ describe('AttendanceList', () => {
 
   /**
    * The control is OFFERED regardless of class status, because this component
-   * cannot know it. Whether the write lands is the server's call, and the
-   * previous attempt to pre-empt it here is what produced a permanently dead
-   * button.
+   * cannot know it. Whether the write lands is the server's call; a control
+   * that tried to pre-empt it would be judged against a render-time snapshot
+   * and could stay dead for the whole class.
    */
   it('offers the control and marks the student present', async () => {
     fetchMock.mockImplementation(echo);
@@ -364,7 +363,8 @@ describe('AttendanceList', () => {
     await settleEntry(queued, { kind: 'confirmed', at: 500 });
     vi.stubGlobal('fetch', fetchMock);
 
-    renderList({ items: [untouched], renderedAt: 1000 });
+    // More than a second after the stamp, so not within the `Date` header's resolution.
+    renderList({ items: [untouched], renderedAt: 1_700 });
 
     screen.getByText('Not marked');
     expect(screen.queryByText('Present')).toBeNull();
@@ -475,5 +475,80 @@ describe('AttendanceList', () => {
     expect(screen.queryByText(/Network error/)).toBeNull();
     expect(refresh).not.toHaveBeenCalled();
     expect(Object.keys(getOutbox().pending)).toEqual(['reg-1']);
+  });
+
+  /**
+   * The `Date` header has one-second resolution and is truncated, so a write
+   * landing in the same second as the render carries a stamp up to 999 ms
+   * before `renderedAt`.
+   */
+  it('keeps a confirmation whose Date header falls in the render’s own second', async () => {
+    const second = Math.floor(Date.now() / 1000) * 1000 - 5_000;
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: 'reg-1', status: 'attended' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', date: new Date(second).toUTCString() },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderList({ items: [untouched], renderedAt: second + 700 });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+    await waitFor(() => expect(getOutbox().confirmed['reg-1']?.confirmedAt).toBe(second));
+    screen.getByText('Present');
+    expect(screen.queryByText('Not marked')).toBeNull();
+  });
+
+  it('two taps before a re-render queue a toggle and its undo, not the same status twice', async () => {
+    fetchMock.mockReturnValue(held().promise);
+    vi.stubGlobal('fetch', fetchMock);
+    renderList({ items: [untouched] });
+    const button = screen.getByRole('button', { name: 'Mark Grace Hopper as present' });
+
+    // One act scope: React does not re-render between the two clicks, so the
+    // second runs the first render's handler.
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+      button.click();
+    });
+
+    await waitFor(() => expect(getOutbox().pending['reg-1']?.status).toBe('no_show'));
+  });
+
+  it('logs a tap whose outbox write fails rather than leaving it unhandled', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    Object.defineProperty(navigator, 'locks', {
+      value: { request: () => Promise.reject(new Error('lock unavailable')) },
+      configurable: true,
+    });
+    try {
+      vi.stubGlobal('fetch', fetchMock);
+      renderList({ items: [untouched] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+      await waitFor(() =>
+        expect(consoleError).toHaveBeenCalledWith(
+          '[attendance-list] request failed',
+          expect.objectContaining({ registrationId: 'reg-1' }),
+        ),
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks');
+    }
+  });
+
+  it('shows a refusal after the rows, so its arrival moves none of them', async () => {
+    vi.stubGlobal('fetch', fetchMock);
+    await storeRefusal({ registrationId: 'reg-1' }, 'This class was cancelled.');
+
+    renderList({ items: [untouched] });
+
+    const row = screen.getByText('Grace Hopper');
+    const alert = screen.getByRole('alert');
+    expect(row.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

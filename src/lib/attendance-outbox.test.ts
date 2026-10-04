@@ -185,9 +185,19 @@ describe('attendance outbox', () => {
 
     const confirmedOnly: OutboxState = { ...EMPTY_OUTBOX, confirmed: { r1: { status: 'attended', confirmedAt: 100 } } };
     expect(shownStatus(confirmedOnly, 'r1', 'registered', 50)).toEqual({ status: 'attended', pending: false });
-    expect(shownStatus(confirmedOnly, 'r1', 'no_show', 101)).toEqual({ status: 'no_show', pending: false });
+    expect(shownStatus(confirmedOnly, 'r1', 'no_show', 1_100)).toEqual({ status: 'no_show', pending: false });
 
     expect(shownStatus(EMPTY_OUTBOX, 'r1', 'registered', 50)).toEqual({ status: 'registered', pending: false });
+  });
+
+  it('shownStatus: a confirmation stamped in the render’s own second wins, one a full second older loses', () => {
+    const at = (confirmedAt: number): OutboxState => ({
+      ...EMPTY_OUTBOX,
+      confirmed: { r1: { status: 'attended', confirmedAt } },
+    });
+    // The `Date` header truncates to the second, so 1_000 may stand for any instant up to 1_999.
+    expect(shownStatus(at(1_000), 'r1', 'registered', 1_700)).toEqual({ status: 'attended', pending: false });
+    expect(shownStatus(at(500), 'r1', 'registered', 1_700)).toEqual({ status: 'registered', pending: false });
   });
 
   it('withLock runs the function when navigator.locks is absent', async () => {
