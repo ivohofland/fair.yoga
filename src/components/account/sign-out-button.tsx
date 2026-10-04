@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { logRequestFailure } from '@/lib/client-errors';
+import { clearOutbox, readOutbox } from '@/lib/attendance-outbox';
+import { flushAttendance } from '@/lib/attendance-sync';
 import { clearOfflinePages } from '@/lib/offline-client';
 import { disablePush } from '@/lib/push-client';
 
@@ -15,15 +17,47 @@ interface SignOutButtonProps {
   redirectTo?: '/login' | '/signup';
 }
 
+const FLUSH_WAIT_MS = 3_000;
+
+function pendingCount(): number {
+  return Object.keys(readOutbox().pending).length;
+}
+
 /** Ends the session and sends the browser to `redirectTo` either way —
- *  a failed DELETE surfaces a visible message but never blocks the leave. */
+ *  a failed DELETE surfaces a visible message but never blocks the leave.
+ *  Attendance changes still queued on the device are sent first; any that
+ *  remain are shown, and leaving then needs a second, explicit tap. */
 export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
+  const [unsynced, setUnsynced] = useState(0);
 
   async function handleSignOut() {
     setBusy(true);
+    setUnsynced(0);
+    if (pendingCount() > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, FLUSH_WAIT_MS);
+      });
+      const flushed = flushAttendance(null)
+        .catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'flush' }, err))
+        .finally(() => clearTimeout(timer));
+      await Promise.race([flushed, timedOut]);
+      const remaining = pendingCount();
+      if (remaining > 0) {
+        setUnsynced(remaining);
+        setBusy(false);
+        return;
+      }
+    }
+    await leave();
+  }
+
+  async function leave() {
+    setBusy(true);
+    setUnsynced(0);
     let cleared = false;
     try {
       // A device left subscribed would keep receiving this account's
@@ -49,6 +83,7 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
     } finally {
       // The device's stored teacher pages belong to the account that just left.
       await clearOfflinePages();
+      await clearOutbox();
       // #40. Neither `router.push` nor `router.refresh` is guaranteed to
       // commit on a starved or offline device, and both return `void`, so this
       // component cannot learn whether they did. Resetting here means a dropped commit
@@ -72,6 +107,19 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
       >
         {busy ? 'Signing out...' : 'Sign out'}
       </button>
+      {unsynced > 0 && (
+        <>
+          <p role="alert" className="type-caption text-danger">
+            {unsynced === 1
+              ? "1 attendance change hasn't synced yet."
+              : `${unsynced} attendance changes haven't synced yet.`}{' '}
+            Signing out discards them.
+          </p>
+          <button type="button" onClick={leave} disabled={busy} className="type-label text-teal disabled:opacity-50">
+            Sign out anyway
+          </button>
+        </>
+      )}
       {signOutFailed && (
         <p role="alert" className="type-caption text-danger">Couldn&apos;t sign out — try again.</p>
       )}

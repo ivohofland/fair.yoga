@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { enqueueAttendance, getOutbox, resetOutboxForTests } from './attendance-outbox';
 import { clearOfflinePages, OFFLINE_PAGES_CACHE, registerOfflineWorker, warmOfflinePages } from './offline-client';
 
 describe('the cache name', () => {
@@ -34,6 +35,22 @@ describe('the worker client', () => {
       expect(getRegistration).toHaveBeenCalledWith('/');
       expect(postMessage).toHaveBeenCalledWith({ type: 'clear' });
       expect(deleteCache).toHaveBeenCalledWith(OFFLINE_PAGES_CACHE);
+    });
+
+    it('leaves a queued attendance entry alone', async () => {
+      resetOutboxForTests();
+      await enqueueAttendance({
+        ownerId: 'owner-1',
+        registrationId: 'reg-1',
+        classId: 'class-1',
+        studentName: 'Student',
+        status: 'attended',
+      });
+      vi.stubGlobal('navigator', {});
+      vi.stubGlobal('caches', { delete: vi.fn(async () => true) });
+      await clearOfflinePages();
+      expect(Object.keys(getOutbox().pending)).toEqual(['reg-1']);
+      resetOutboxForTests();
     });
 
     it('resolves when neither serviceWorker nor caches exists', async () => {
