@@ -8,8 +8,8 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
 /**
  * Queued offline check-in (#726), end to end: attendance marked with no
  * connection is queued, synced on reconnect, and stays shown as synced; and
- * on the cached class page offline, no control outside the attendance list
- * escapes the fieldset. The design: docs/technical-architecture.md (Offline
+ * on the cached class page offline, every enabled control is one marked to
+ * work offline (`data-offline-writable`). The design: docs/technical-architecture.md (Offline
  * (service worker) → The attendance outbox).
  *
  * Like `offline.spec.ts`, the worker is allowed here (the config blocks it by
@@ -75,6 +75,15 @@ async function expectStored(page: Page, path: string, needle: string): Promise<v
       { timeout: 20_000 },
     )
     .toBe(true);
+}
+
+/** No mark waiting, and every row reads Present with a toggle to no-show. */
+async function expectSyncedRows(page: Page): Promise<void> {
+  await expect(page.getByText(/changes? waiting to sync/)).toHaveCount(0);
+  for (const name of STUDENT_NAMES) {
+    await expect(page.getByRole('button', { name: markAs(name, 'no-show') })).toBeVisible();
+  }
+  await expect(page.getByText('Present', { exact: true })).toHaveCount(STUDENT_NAMES.length);
 }
 
 async function expectOfflineMarker(page: Page): Promise<void> {
@@ -223,12 +232,23 @@ test.describe('Offline check-in', () => {
 
   test('marks taken offline after the warm sync on reconnect and stay shown as saved', async ({ page, context }) => {
     await context.addCookies([sessionCookie(teacherToken)]);
-    const writes: string[] = [];
-    page.on('response', (res) => {
-      if (res.request().method() === 'PUT' && res.url().includes('/api/registrations/') && res.status() === 200) {
-        writes.push(res.url());
+    // By registration, not by response: a mark the old document's sync had
+    // already sent may be sent again by the next one and answer `unchanged`.
+    const written = new Set<string>();
+    const sentTargets = new Set<unknown>();
+    let putsSent = 0;
+    page.on('request', (req) => {
+      if (req.method() === 'PUT' && req.url().includes('/api/registrations/')) {
+        putsSent++;
+        sentTargets.add((req.postDataJSON() as { status?: unknown } | null)?.status);
       }
     });
+    page.on('response', (res) => {
+      if (res.request().method() === 'PUT' && res.url().includes('/api/registrations/') && res.status() === 200) {
+        written.add(new URL(res.url()).pathname);
+      }
+    });
+    const expectedWrites = registrationIds.map((id) => `/api/registrations/${id}`).sort();
 
     // Warmed from the schedule while the class is still before check-in.
     await page.goto('/schedule');
@@ -247,30 +267,34 @@ test.describe('Offline check-in', () => {
     }
     await expect(page.getByText('3 changes waiting to sync')).toBeVisible();
     await expect(page.getByText('Waiting to sync', { exact: true })).toHaveCount(STUDENT_NAMES.length);
+    // D9's tether on the check-in view the device clock opened.
+    expect(await escapedControls(page)).toEqual([]);
 
+    // The same document, no reload: these are its own taps, so the sync
+    // refreshes nothing and only the confirmations can turn the rows Present.
     await context.setOffline(false);
-    await page.reload();
+    await expectSyncedRows(page);
 
-    await expect(page.getByText(/changes? waiting to sync/)).toHaveCount(0);
-    for (const name of STUDENT_NAMES) {
-      await expect(page.getByRole('button', { name: markAs(name, 'no-show') })).toBeVisible();
-    }
-    await expect(page.getByText('Present', { exact: true })).toHaveCount(STUDENT_NAMES.length);
+    await page.reload();
+    await expectSyncedRows(page);
     await expect
       .poll(() =>
         prisma.registration.count({ where: { id: { in: registrationIds }, status: 'attended' } }),
       )
       .toBe(STUDENT_NAMES.length);
-    expect(writes).toHaveLength(STUDENT_NAMES.length);
+    expect([...written].sort()).toEqual(expectedWrites);
 
     // Further reconnects and reloads replay nothing: the queue is empty.
+    const putsBefore = putsSent;
     for (let i = 0; i < 2; i++) {
       await context.setOffline(true);
       await context.setOffline(false);
       await page.reload();
       await expect(page.getByText('Present', { exact: true })).toHaveCount(STUDENT_NAMES.length);
     }
-    expect(writes).toHaveLength(STUDENT_NAMES.length);
+    expect(putsSent).toBe(putsBefore);
+    expect([...written].sort()).toEqual(expectedWrites);
+    expect([...sentTargets]).toEqual(['attended']);
     expect(
       await prisma.registration.count({ where: { id: { in: registrationIds }, status: 'attended' } }),
     ).toBe(STUDENT_NAMES.length);
