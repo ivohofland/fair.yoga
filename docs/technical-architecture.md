@@ -517,6 +517,38 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
   `VAPID_*` variable is set, and logs an error naming the reason for any
   other problem.
 
+### Offline (service worker)
+
+Full design and the alternatives it rejected: `docs/superpowers/specs/2026-10-04-offline-schedule-design.md` (#725). `public/sw.js` is the worker (it also carries push, above); `src/components/layout/offline-snapshot.tsx` wraps the pages it may store; `src/lib/offline-status.ts` is the page-side connection store; `src/lib/offline-client.ts` posts the worker its `warm` and `clear` messages. Read-only: nothing is written while offline.
+
+**What is stored, and why only that.** Three path shapes: `/schedule`, `/class/<id>` and `/studio-class/<id>` (`<id>` not `new`, nothing deeper). They are what a teacher needs at the door, and they carry names only (`studentNameSelect`, `src/lib/student-visibility.ts`), never contact data, which lives on `/students/[id]` and is never stored. Anything else a worker could answer (other navigations, RSC fetches, API routes, the SSE stream, cross-origin requests) is passed through untouched; `/_next/static/*` is the only other request it answers.
+
+**Network first, with patience.** The network is asked first. The stored copy is served when the request fails, when it answers 502, 503 or 504 (a deploy or an outage), or when 8 s pass with no response and a stored copy exists; a slow response that does arrive still replaces the stored copy. `/` and `/start` (the installed app's launch URL and both detail pages' back link) redirect to the stored schedule when they fail; with none, any failed navigation gets the offline page, an inline "You're offline" HTML string inside `sw.js`, so it cannot fail to install.
+
+**Three caches** (`fy-pages-v1`, `fy-static-v1`, `fy-meta-v1`):
+
+| Cache | Holds | Cleared by |
+|---|---|---|
+| `fy-pages-v1` | the stored pages, keyed by pathname alone, each rebuilt with `x-fy-owner` and `x-fy-stored-at` | a `clear` message, a redirect on a cacheable path, an owner change, 24 h age, a new worker version |
+| `fy-static-v1` | `/_next/static/*` files referenced by a stored page | no stored page referencing the file, a new worker version |
+| `fy-meta-v1` | the clear generation | a new worker version |
+
+An entry missing either header, or with one unparseable, is never served. Retention is 24 h, enforced when a page is read and whenever the worker runs (activate, message, a navigation to a cacheable path); static files are pruned by reference, so a file lives while any stored page names it. When a page is stored, every `/_next/static/` URL in its body is fetched into `fy-static-v1` (`<script src>`, `<link href>` and the flight payload's chunk references, which carry the `/_next/` prefix); measured on a production build, the pattern matched every `<script src>` chunk on `/schedule`, `/class/<id>` and `/studio-class/<id>`. Without that a warmed page would hydrate offline against missing chunks.
+
+**The owner marker.** `OfflineSnapshot` renders `data-offline-owner="<accountId>"` in the page HTML. The worker cannot see the session (the cookie is `HttpOnly`), so the marker is how it knows whose page it holds: it refuses to store a page without exactly one owner value, and storing a page whose owner differs from a stored one empties `fy-pages-v1` first. The marker therefore has to sit inside each page's own tree, not in a layout. Measured on a running server: a class page the signed-in teacher does not own, or a deleted one, answers HTTP 200 with an in-body redirect (a `<meta http-equiv="refresh">` and `NEXT_REDIRECT` in the flight data), never a 3xx, so it carries no marker and is neither stored nor wipes the cache. Were a page to answer with a real 3xx or an opaque redirect (a signed-out request for a teacher page is a 307 to `/login`), the worker treats it as "no valid session" and empties `fy-pages-v1`; a missing or foreign id that did redirect that way would cost one re-warm, accepted.
+
+**Clear sites.** `clearOfflinePages()` posts `{type: 'clear'}` to the worker and deletes `fy-pages-v1` itself; the worker aborts its in-flight warms and bumps the generation in `fy-meta-v1`, and every store re-checks the generation just before `put`, so a warm begun under the old cookie in another tab cannot put the signed-out account's page back. It runs on sign-out, on every sign-in completion and after account deletion. Re-derive the list of callers: `grep -rn "clearOfflinePages()" src --include='*.tsx' | grep -v test`.
+
+**Warming.** A schedule load asks the worker to fetch the teacher's class and studio-class pages for today (in their timezone), so a class never opened is stored. A warm skips a page stored in the last 10 minutes or being stored now. Wiping for an owner change inside one warm can delete a sibling page that same warm just stored: data lost, nothing leaked, healed by the next warm.
+
+**Offline detection and the stale-while-online rule.** The page, not the worker, decides it is offline: `navigator.onLine`, the `online` / `offline` events and a ping to `GET /api/ping` (no auth, no database, 5 s timeout). Pings fire on mount, on the `online` event, on returning to the tab, and every 15 s while offline. The wrapper then shows "Offline — showing what was loaded at HH:MM" (with the day when the load was not today in the teacher's timezone) and puts the content in a `<fieldset disabled>`, so every descendant control is disabled by the browser; one rule in `src/app/globals.css` dims them. The stale rule is not snapshot-only: a successful ping makes any page whose render is more than a minute behind the server's clock call `router.refresh()` once, so a page left open for more than a minute refreshes when the teacher returns to the tab, and this is also what recovers a `RefreshAt` refresh skipped while offline (offline, `router.refresh()` is a hard reload of a stored page, so `RefreshAt` and `LiveUpdates` do not refresh while offline).
+
+**Deploys.** Pages are network first and static files are content-hashed, so a new app build is picked up online with no worker change. The worker itself updates the standard way: the browser byte-compares `/sw.js` on navigation, a changed one calls `skipWaiting()` on install and `clients.claim()` on activate, and `activate` deletes every `fy-*` cache outside its current set. A change to the stored format ships as a bump of the `-v1` suffix on the cache names.
+
+**Residual.** A session revoked elsewhere while this device stays offline keeps its pages until the device reaches the server or a clear runs; the person holding the device is the one who loaded them.
+
+**End-to-end.** `tests/e2e/offline.spec.ts` is the one spec that runs with the worker (`serviceWorkers: 'allow'`); `playwright.config.ts` blocks it everywhere else so no other spec's behaviour depends on it, and Playwright's `setOffline` reaches a worker's fetches only when the worker is allowed. It needs a production build: under `next dev` the page's own lazily loaded dev chunks (the turbopack HMR client) are not named in any stored page, fail offline, and the page never hydrates, so no marker appears. CI runs the production standalone build.
+
 ### Entry Generator (`services/entry-generation.ts`)
 
 Runs hourly as part of the in-process scheduler (see Cron Jobs below). For each template whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one entry per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
