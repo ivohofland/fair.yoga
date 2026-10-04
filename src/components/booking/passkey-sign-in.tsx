@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceForSignIn } from '@/lib/push-client';
 import { Button } from '@/components/ui/button';
 
@@ -58,6 +59,7 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       // Not awaited: `router.push` below is a client navigation, so the
       // request is not aborted by it.
       void recordPushDeviceForSignIn();
+      void clearOfflinePages();
       router.push(verified.data.redirectTo);
       router.refresh();
       // #40. Explicitly NOT a `finally`: `state` carries the error too, so a

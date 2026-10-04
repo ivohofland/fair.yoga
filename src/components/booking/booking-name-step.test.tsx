@@ -3,6 +3,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
 import { BookingNameStep } from './booking-name-step';
 
+const clearOfflinePages = vi.fn(async () => {});
+vi.mock('@/lib/offline-client', () => ({
+  clearOfflinePages: () => clearOfflinePages(),
+}));
+
 const recordPushDevice = vi.fn(async () => {});
 vi.mock('@/lib/push-client', () => ({
   recordPushDeviceForSignIn: () => recordPushDevice(),
@@ -18,6 +23,7 @@ describe('BookingNameStep', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     recordPushDevice.mockClear();
+    clearOfflinePages.mockClear();
   });
 
   // #745. This POST mints the session for a new student, so it is where a
@@ -29,6 +35,28 @@ describe('BookingNameStep', () => {
     fillAndSubmit();
 
     await vi.waitFor(() => expect(recordPushDevice).toHaveBeenCalledTimes(1));
+  });
+
+  it('clears the stored pages once the profile is created', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }));
+    render(<BookingNameStep email="anna@example.com" redirect="/t/book/c1" />);
+
+    fillAndSubmit();
+
+    await vi.waitFor(() => expect(clearOfflinePages).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the stored pages when the ticket has expired', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) }),
+    );
+    render(<BookingNameStep email="anna@example.com" redirect="/t/book/c1" />);
+
+    fillAndSubmit();
+
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(clearOfflinePages).not.toHaveBeenCalled();
   });
 
   it('does not re-record the push device when the ticket has expired', async () => {

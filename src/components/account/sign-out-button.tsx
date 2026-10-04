@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { logRequestFailure } from '@/lib/client-errors';
+import { clearOfflinePages } from '@/lib/offline-client';
 import { disablePush } from '@/lib/push-client';
 
 interface SignOutButtonProps {
@@ -46,6 +47,8 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
       // cleared stays false — surfaced below as well as logged.
       logRequestFailure('sign-out-button', {}, err);
     } finally {
+      // The device's stored teacher pages belong to the account that just left.
+      await clearOfflinePages();
       // #40. Neither `router.push` nor `router.refresh` is guaranteed to
       // commit on a starved or offline device, and both return `void`, so this
       // component cannot learn whether they did. Resetting here means a dropped commit

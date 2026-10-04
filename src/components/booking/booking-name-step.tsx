@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceForSignIn } from '@/lib/push-client';
 
 interface BookingNameStepProps {
@@ -73,6 +74,7 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
       // JoinAsStudent uses so a failed round-trip leaves no dead button.
       // Not awaited: `router.refresh()` does not unload the page.
       void recordPushDeviceForSignIn();
+      void clearOfflinePages();
       router.refresh();
       setTimeout(() => setStatus('idle'), 4000);
       return;

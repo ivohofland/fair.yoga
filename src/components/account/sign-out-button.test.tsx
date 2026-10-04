@@ -11,6 +11,11 @@ vi.mock('@/lib/push-client', async (importOriginal) => {
   };
 });
 
+const clearOfflinePages = vi.fn<() => Promise<void>>(async () => {});
+vi.mock('@/lib/offline-client', () => ({
+  clearOfflinePages: () => clearOfflinePages(),
+}));
+
 import { SignOutButton } from './sign-out-button';
 
 /**
@@ -33,6 +38,7 @@ describe('SignOutButton', () => {
   afterEach(() => {
     fetchMock.mockReset();
     disablePushMock.mockReset();
+    clearOfflinePages.mockClear();
     vi.unstubAllGlobals();
   });
 
@@ -99,6 +105,34 @@ describe('SignOutButton', () => {
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
     expect(order).toEqual(['disablePush', 'fetch']);
+  });
+
+  // The device's stored teacher pages belong to the account that just left.
+  it.each([
+    ['answers ok', () => Promise.resolve({ ok: true })],
+    ['answers not-ok', () => Promise.resolve({ ok: false })],
+    ['rejects', () => Promise.reject(new Error('offline'))],
+  ])('clears the stored pages after the DELETE %s, before it navigates', async (_label, answer) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const order: string[] = [];
+    fetchMock.mockImplementation(async () => {
+      order.push('fetch');
+      return answer();
+    });
+    clearOfflinePages.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('cleared');
+    });
+    routerPush.mockImplementation(() => order.push('push'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(order).toEqual(['fetch', 'cleared', 'push']);
+    clearOfflinePages.mockImplementation(async () => {});
+    routerPush.mockReset();
   });
 
   it('proceeds within 3s when disablePush never resolves', async () => {

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { routerPush } from '../../../tests/setup/components';
 import { DataAndDeletion } from './data-and-deletion';
+
+const clearOfflinePages = vi.fn<() => Promise<void>>(async () => {});
+vi.mock('@/lib/offline-client', () => ({
+  clearOfflinePages: () => clearOfflinePages(),
+}));
 
 /**
  * #171: the student delete confirmation discloses that the address behind a
@@ -121,5 +127,48 @@ describe('DataAndDeletion', () => {
         err: boom,
       });
     });
+  });
+});
+
+describe('DataAndDeletion, deleting the account', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearOfflinePages.mockReset();
+    clearOfflinePages.mockImplementation(async () => {});
+  });
+
+  function confirmDelete() {
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }));
+  }
+
+  it('clears the stored pages after the DELETE succeeds, before it navigates', async () => {
+    const order: string[] = [];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    clearOfflinePages.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('cleared');
+    });
+    routerPush.mockImplementation(() => order.push('push'));
+    render(<DataAndDeletion role="teacher" />);
+
+    confirmDelete();
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(order).toEqual(['cleared', 'push']);
+    routerPush.mockReset();
+  });
+
+  it('keeps the stored pages when the DELETE is refused', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }),
+    );
+    render(<DataAndDeletion role="teacher" />);
+
+    confirmDelete();
+
+    await screen.findByRole('alert');
+    expect(clearOfflinePages).not.toHaveBeenCalled();
   });
 });

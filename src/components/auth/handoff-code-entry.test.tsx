@@ -2,6 +2,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { HandoffCodeEntry } from './handoff-code-entry';
 
+const clearOfflinePages = vi.fn(async () => {});
+vi.mock('@/lib/offline-client', () => ({
+  clearOfflinePages: () => clearOfflinePages(),
+}));
+
 const recordPushDevice = vi.fn(async () => {});
 vi.mock('@/lib/push-client', () => ({
   recordPushDeviceBeforeNavigation: () => recordPushDevice(),
@@ -27,6 +32,8 @@ function enterCode(code = '482913') {
 describe('HandoffCodeEntry', () => {
   afterEach(() => {
     vi.useRealTimers();
+    clearOfflinePages.mockReset();
+    clearOfflinePages.mockImplementation(async () => {});
     recordPushDevice.mockReset();
     recordPushDevice.mockImplementation(async () => {});
     vi.unstubAllGlobals();
@@ -105,6 +112,29 @@ describe('HandoffCodeEntry', () => {
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
     expect(order).toEqual(['recorded', 'navigated']);
+  });
+
+  it.each([
+    ['a session', { accountId: 'acc-1', redirectTo: '/schedule' }],
+    ['a signup ticket', { redirectTo: '/signup/teacher' }],
+  ])('clears the stored pages for %s before it navigates away', async (_label, data) => {
+    const order: string[] = [];
+    clearOfflinePages.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('cleared');
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data }) }),
+    );
+    const assign = stubLocation();
+    assign.mockImplementation(() => order.push('navigated'));
+    render(<HandoffCodeEntry />);
+
+    enterCode();
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(data.redirectTo));
+    expect(order).toEqual(['cleared', 'navigated']);
   });
 
   it('does not re-record the push device for a signup ticket, which is not a session', async () => {

@@ -29,6 +29,11 @@ vi.mock('next/navigation', () => ({
   useRouter: () => router,
 }));
 
+const clearOfflinePages = vi.fn(async () => {});
+vi.mock('@/lib/offline-client', () => ({
+  clearOfflinePages: () => clearOfflinePages(),
+}));
+
 const recordPushDevice = vi.fn(async () => {});
 vi.mock('@/lib/push-client', () => ({
   recordPushDeviceForSignIn: () => recordPushDevice(),
@@ -58,6 +63,7 @@ describe('VerifyPage', () => {
     vi.restoreAllMocks();
     push.mockReset();
     recordPushDevice.mockClear();
+    clearOfflinePages.mockClear();
     searchParams = new URLSearchParams(WITH_TOKEN);
     suspendSearchParams = false;
   });
@@ -324,6 +330,35 @@ describe('VerifyPage', () => {
     render(<VerifyPage />);
 
     await waitFor(() => expect(recordPushDevice).toHaveBeenCalledTimes(1));
+  });
+
+  // The device's stored teacher pages belong to whoever was signed in before.
+  it.each([
+    ['a session', { accountId: 'acct-1', redirectTo: '/schedule' }],
+    ['a signup ticket', { redirectTo: '/signup/teacher' }],
+  ])('clears the stored pages for %s', async (_label, data) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data }) }));
+    render(<VerifyPage />);
+
+    await waitFor(() => expect(clearOfflinePages).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    ['a handoff code, which consumed nothing', { handoffCode: '123456' }],
+  ])('keeps the stored pages for %s', async (_label, data) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data }) }));
+    render(<VerifyPage />);
+
+    await settleResponse();
+    expect(clearOfflinePages).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored pages when the link is refused', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400 }));
+    render(<VerifyPage />);
+
+    await settleResponse();
+    expect(clearOfflinePages).not.toHaveBeenCalled();
   });
 
   it.each([
