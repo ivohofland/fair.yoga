@@ -60,7 +60,7 @@ export function OfflineSnapshot({
       <p role="status" className={offline ? 'type-label text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-4' : 'sr-only'}>
         {offline && `Offline — showing what was loaded ${loaded}`}
       </p>
-      <fieldset disabled={offline} className="m-0 min-w-0 border-0 p-0">
+      <fieldset data-offline-fieldset disabled={offline} className="m-0 min-w-0 border-0 p-0">
         {children}
       </fieldset>
     </div>
