@@ -115,10 +115,15 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
     if (arrived) router.refresh();
   }, [outbox, classId, router]);
 
+  // Taps whose outbox write is still waiting on the storage lock, newest per
+  // registration. Neither `outbox` nor `getOutbox()` holds them until it is
+  // granted, and a second tap in that gap must toggle from the first one.
+  const uncommitted = useRef(new Map<string, { status: QueuedStatus; tap: object }>());
+
   async function toggleAttendance(owner: string, item: AttendanceItem) {
-    // The live store, not this render's `outbox`: a second tap can land before
-    // the first tap's write has re-rendered the row.
-    const currentStatus = shownStatus(getOutbox(), item.registrationId, item.status, renderedAt).status;
+    const id = item.registrationId;
+    const currentStatus =
+      uncommitted.current.get(id)?.status ?? shownStatus(getOutbox(), id, item.status, renderedAt).status;
     // A student who cancelled late is not a no-show — they told the teacher they
     // were not coming, and were charged for saying so. The only correction that
     // means anything for them is "they came after all", and it has to be
@@ -136,13 +141,19 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
           ? 'no_show'
           : 'attended';
 
-    await enqueueAttendance({
-      ownerId: owner,
-      registrationId: item.registrationId,
-      classId,
-      studentName: item.studentName,
-      status: newStatus,
-    });
+    const tap = {};
+    uncommitted.current.set(id, { status: newStatus, tap });
+    try {
+      await enqueueAttendance({
+        ownerId: owner,
+        registrationId: id,
+        classId,
+        studentName: item.studentName,
+        status: newStatus,
+      });
+    } finally {
+      if (uncommitted.current.get(id)?.tap === tap) uncommitted.current.delete(id);
+    }
     void flushAttendance(owner);
   }
 
