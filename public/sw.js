@@ -14,9 +14,9 @@ const WARM_FRESH_MS = 10 * 60 * 1000;
 const MAX_WARM_PATHS = 20;
 const GATEWAY_FAILURES = new Set([502, 503, 504]);
 const GENERATION_KEY = '/__fy/generation';
-// The attribute React writes for OfflineSnapshot's owner. A `"` inside any
-// other text arrives escaped (`&quot;`, or `\"` in the flight payload), so
-// page content cannot forge a second match.
+// The attribute that names a stored page's owner. A `"` inside any other
+// text arrives escaped (`&quot;`, or `\"` in the flight payload), so page
+// content cannot forge a second match.
 const OWNER_PATTERN = /data-offline-owner="([A-Za-z0-9-]+)"/g;
 const STATIC_PATTERN = /\/_next\/static\/[^"'\\\s)<>]+/g;
 const SLOW = 'slow';
@@ -104,8 +104,27 @@ function staticPaths(body) {
   return new Set(Array.from(body.matchAll(STATIC_PATTERN), (m) => m[0]));
 }
 
+/**
+ * Runs `task` after every earlier one has settled. Pruning and the stretch of
+ * a store that writes a page and pulls its files take turns, so a prune
+ * never deletes a file a page it could not yet see is about to rely on.
+ */
+let turn = Promise.resolve();
+function exclusive(task) {
+  const run = turn.then(task, task);
+  turn = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 /** Deletes every static file no stored page references. */
-async function pruneStatic() {
+function pruneStatic() {
+  return exclusive(pruneStaticNow);
+}
+
+async function pruneStaticNow() {
   const referenced = new Set();
   if (await caches.has(PAGES)) {
     const pages = await caches.open(PAGES);
@@ -170,6 +189,9 @@ async function storePage(pathname, res, startedAt) {
   const owners = Array.from(body.matchAll(OWNER_PATTERN), (m) => m[1]);
   if (owners.length !== 1) return;
   const owner = owners[0];
+  // Before the wipe below as well as before the put: a stale store must not
+  // clear the pages of the account that replaced the one it belongs to.
+  if ((await generation()) !== startedAt) return;
   let pages = await caches.open(PAGES);
   for (const req of await pages.keys()) {
     const existing = await pages.match(req);
@@ -180,11 +202,13 @@ async function storePage(pathname, res, startedAt) {
     }
   }
   const headers = storedHeaders(res, owner);
-  // clearPages bumps the generation before it deletes PAGES, so a put that
-  // passes this check lands in a cache that clear then removes.
-  if ((await generation()) !== startedAt) return;
-  await pages.put(key(pathname), new Response(body, { status: 200, headers }));
-  await pullStatic(body);
+  await exclusive(async () => {
+    // clearPages bumps the generation before it deletes PAGES, so a put that
+    // passes this check lands in a cache that clear then removes.
+    if ((await generation()) !== startedAt) return;
+    await pages.put(key(pathname), new Response(body, { status: 200, headers }));
+    await pullStatic(body);
+  });
 }
 
 async function storedCopy(pathname) {
@@ -220,8 +244,10 @@ async function networkFirst(fromNetwork, fallback) {
 
 function handleCacheablePage(event, pathname) {
   pathsBeingStored.add(pathname);
-  const startedAt = generation();
-  const fromNetwork = fetch(event.request);
+  // The generation is read before the request goes out, so a clear cannot
+  // land between the two. An unreadable one stores nothing and still serves.
+  const startedAt = generation().catch(() => -1);
+  const fromNetwork = startedAt.then(() => fetch(event.request));
   const stored = fromNetwork
     .then(
       (res) => {

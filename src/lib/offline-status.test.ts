@@ -129,6 +129,16 @@ describe('connection status', () => {
     expect(isOfflineNow()).toBe(false);
   });
 
+  it('forgets a failed ping when the last subscriber leaves', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    const unsubscribe = subscribeConnectionStatus(() => {});
+    await settle();
+    expect(isOfflineNow()).toBe(true);
+    unsubscribe();
+    expect(isOfflineNow()).toBe(false);
+    expect(getConnectionStatus().offline).toBe(false);
+  });
+
   it('sends the ping with an abort signal and no cache', async () => {
     fetchMock.mockImplementation(() => Promise.resolve(answer(200)));
     await checkConnection();
