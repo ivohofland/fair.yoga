@@ -23,7 +23,7 @@ export function PaymentBreakdown({ lines, classType, date }: PaymentBreakdownPro
   return (
     <details className="mt-2">
       <summary
-        className="type-label text-teal cursor-pointer"
+        className="type-caption text-brown cursor-pointer"
         aria-label={`Where your payment goes — ${classType}, ${formatDayHeader(date)}`}
       >
         Where your payment goes
