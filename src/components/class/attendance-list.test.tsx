@@ -500,21 +500,34 @@ describe('AttendanceList', () => {
     expect(screen.queryByText('Not marked')).toBeNull();
   });
 
-  it('two taps before a re-render queue a toggle and its undo, not the same status twice', async () => {
-    fetchMock.mockReturnValue(held().promise);
-    vi.stubGlobal('fetch', fetchMock);
-    renderList({ items: [untouched] });
-    const button = screen.getByRole('button', { name: 'Mark Grace Hopper as present' });
-
-    // One act scope: React does not re-render between the two clicks, so the
-    // second runs the first render's handler.
-    await act(async () => {
-      button.click();
-      await Promise.resolve();
-      button.click();
+  /**
+   * With Web Locks the outbox write waits for its lock grant, so a second tap
+   * can arrive while neither the store nor the render holds the first one.
+   * The stub grants each request on a later task, in order, as the real lock
+   * manager does.
+   */
+  it('a second tap while the first waits on the storage lock toggles from the first', async () => {
+    Object.defineProperty(navigator, 'locks', {
+      value: {
+        request: (_name: string, fn: () => Promise<unknown>) =>
+          new Promise((resolve) => setTimeout(resolve, 0)).then(fn),
+      },
+      configurable: true,
     });
+    try {
+      fetchMock.mockReturnValue(held().promise);
+      vi.stubGlobal('fetch', fetchMock);
+      renderList({ items: [untouched] });
+      const button = screen.getByRole('button', { name: 'Mark Grace Hopper as present' });
 
-    await waitFor(() => expect(getOutbox().pending['reg-1']?.status).toBe('no_show'));
+      fireEvent.click(button);
+      fireEvent.click(button);
+
+      await waitFor(() => expect(getOutbox().pending['reg-1']?.status).toBe('no_show'));
+      await screen.findByRole('button', { name: 'Mark Grace Hopper as present' });
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks');
+    }
   });
 
   it('logs a tap whose outbox write fails rather than leaving it unhandled', async () => {
