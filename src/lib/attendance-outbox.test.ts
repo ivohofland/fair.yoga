@@ -160,6 +160,17 @@ describe('attendance outbox', () => {
       expect(enqueueAttendance(OWNER, entry('r1'))).toBe('unavailable');
     });
 
+    it("drops an older queued mark for the row when a newer one answers 'unavailable'", () => {
+      const store = new MemoryStorage();
+      vi.stubGlobal('localStorage', store);
+      expect(enqueueAttendance(OWNER, entry('r1', 'attended'))).toBe('queued');
+      vi.spyOn(store, 'setItem').mockImplementation(() => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      });
+      expect(enqueueAttendance(OWNER, entry('r1', 'no_show'))).toBe('unavailable');
+      expect(getOutboxSnapshot(OWNER).queued).toEqual([]);
+    });
+
     it("answers 'unavailable' when storage itself cannot be reached", () => {
       Object.defineProperty(globalThis, 'localStorage', {
         configurable: true,

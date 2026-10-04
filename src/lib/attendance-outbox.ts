@@ -341,7 +341,14 @@ export function enqueueAttendance(
     return 'unavailable';
   }
   const full: OutboxEntry = { ...entry, nonce, recordedAt: Date.now(), attempts: 0 };
-  if (!write(keyFor(QUEUED_PREFIX, owner, entry.registrationId), full)) return 'unavailable';
+  const queuedKey = keyFor(QUEUED_PREFIX, owner, entry.registrationId);
+  if (!write(queuedKey, full)) {
+    // The caller writes this mark directly; an older queued mark left behind
+    // would show in its place and later overwrite it.
+    remove(queuedKey);
+    notify();
+    return 'unavailable';
+  }
   enqueuedHere.add(nonce);
   remove(keyFor(REFUSED_PREFIX, owner, entry.registrationId));
   notify();
