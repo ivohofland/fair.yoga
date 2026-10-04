@@ -54,6 +54,12 @@ export const DEGRADATION_CODES = {
       'A notification addressed to a teacher had a type outside the teacher notification types. It was emailed without consulting the email preferences of the teacher.',
     contextKeys: ['notificationId', 'type'],
   },
+  PAYMENT_NOTIFICATION_WITHOUT_CLASS: {
+    level: 'warn',
+    description:
+      'A payment notification for a student had no related class although every writer of one sets it. Its email went out without the Pay now button.',
+    contextKeys: ['notificationId', 'type'],
+  },
 } as const satisfies Record<
   string,
   { level: 'warn' | 'error'; description: string; contextKeys: readonly string[] }

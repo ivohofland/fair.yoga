@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { log } from '@/lib/log';
 import {
   CLASS_REMINDER_EMAIL_FOOTER,
   escapeHtml,
@@ -132,35 +133,117 @@ describe('email templates', () => {
     expect(html).not.toContain('href=');
   });
 
-  it('gives a student payment request a Pay now button to its class’s pay page', () => {
+  it('gives a student payment request a Pay now button to its class’s pay page when the teacher has a payment method', () => {
     const { html } = renderNotificationEmail(
-      { type: 'payment_request', title: 'Priced', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9' },
+      {
+        type: 'payment_request',
+        title: 'Priced',
+        body: '€5.75',
+        recipientType: 'student',
+        relatedClassId: 'class-9',
+        teacherHasPaymentMethods: true,
+      },
       'https://example.test',
     );
     expect(html).toContain('href="https://example.test/bookings/class-9/pay"');
     expect(html).toContain('Pay now');
   });
 
-  it('gives a student payment reminder the same button', () => {
+  it('gives a student payment reminder the same button when the teacher has a payment method', () => {
     const { html } = renderNotificationEmail(
-      { type: 'reminder', title: 'Payment outstanding', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9' },
+      {
+        type: 'reminder',
+        title: 'Payment outstanding',
+        body: '€5.75',
+        recipientType: 'student',
+        relatedClassId: 'class-9',
+        teacherHasPaymentMethods: true,
+      },
       'https://example.test',
     );
     expect(html).toContain('href="https://example.test/bookings/class-9/pay"');
   });
 
-  it('gives a payment notification without a class no button', () => {
+  // The body tells this student to pay the teacher directly; a button to a
+  // page saying the same would only send them round.
+  it.each(['payment_request', 'reminder'] as const)(
+    'gives a student %s no button when the teacher has no payment method',
+    (type) => {
+      const { html } = renderNotificationEmail(
+        { type, title: 'T', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9', teacherHasPaymentMethods: false },
+        'https://example.test',
+      );
+      expect(html).not.toContain('href=');
+      expect(html).not.toContain('Pay now');
+    },
+  );
+
+  it('gives a student payment notification no button when nobody said whether the teacher has a payment method', () => {
     const { html } = renderNotificationEmail(
-      { type: 'reminder', title: 'Payment outstanding', body: '€5.75', recipientType: 'student', relatedClassId: null },
+      { type: 'payment_request', title: 'Priced', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9' },
       'https://example.test',
     );
     expect(html).not.toContain('href=');
   });
 
+  describe('a payment notification without a class', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('gets no button, and is recorded as PAYMENT_NOTIFICATION_WITHOUT_CLASS', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      const { html } = renderNotificationEmail(
+        {
+          id: 'note-7',
+          type: 'reminder',
+          title: 'Payment outstanding',
+          body: '€5.75',
+          recipientType: 'student',
+          relatedClassId: null,
+          teacherHasPaymentMethods: true,
+        },
+        'https://example.test',
+      );
+      expect(html).not.toContain('href=');
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'PAYMENT_NOTIFICATION_WITHOUT_CLASS', notificationId: 'note-7', type: 'reminder' }),
+        'payment notification has no related class; emailed without a Pay now button',
+      );
+    });
+
+    it('records nothing for a payment notification that has its class', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      renderNotificationEmail(
+        { type: 'reminder', title: 'T', body: 'B', recipientType: 'student', relatedClassId: 'class-9', teacherHasPaymentMethods: true },
+        'https://example.test',
+      );
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('records nothing for a teacher payment notification without a class', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      renderNotificationEmail(
+        { type: 'payment_request', title: 'T', body: 'B', recipientType: 'teacher', relatedClassId: null },
+        'https://example.test',
+      );
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
   // Teachers receive payment_request too, and the pay page is a student route.
-  it('gives a teacher payment request no Pay now button', () => {
+  // The flag is set so that a teacher falling through to the student branch
+  // would get the button.
+  it('keeps a teacher-audience payment request on the teacher branch: no Pay now', () => {
     const { html } = renderNotificationEmail(
-      { type: 'payment_request', title: 'Class completed', body: 'Prices are out.', recipientType: 'teacher', relatedClassId: 'class-9' },
+      {
+        type: 'payment_request',
+        title: 'Class completed',
+        body: 'Prices are out.',
+        recipientType: 'teacher',
+        relatedClassId: 'class-9',
+        teacherHasPaymentMethods: true,
+      },
       'https://example.test',
     );
     expect(html).not.toContain('/bookings/class-9/pay');

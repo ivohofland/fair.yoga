@@ -46,8 +46,8 @@ export function payPagePath(classId: string): string {
 /** The label for that action, in the app and on the email's button. */
 export const PAY_NOW_LABEL = 'Pay now';
 
-/** Whether a student notification is about paying for its class. */
-export function isPaymentNotification(type: NotificationType): boolean {
+/** Whether a notification type is about paying for its class. */
+export function isPaymentNotification(type: NotificationType): type is 'payment_request' | 'reminder' {
   return type === 'payment_request' || type === 'reminder';
 }
 

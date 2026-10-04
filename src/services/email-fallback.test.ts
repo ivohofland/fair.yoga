@@ -550,5 +550,112 @@ describe('processEmailFallback (DB)', () => {
         await prisma.student.delete({ where: { id: student.id } });
       }
     });
+
+    // The button follows the class's teacher: one with a payment method gets
+    // the student a Pay now link to that class's pay page, one without gets
+    // no pay link at all.
+    it('gives a student payment email a Pay now link only when the class teacher has a payment method', async () => {
+      const bankEmail = `fallback-bank-${uniqueSuffix}@test.local`;
+      const studentEmail = `fallback-payer-${uniqueSuffix}@test.local`;
+      let bankTeacherId: string | undefined;
+      let bankRoomId: string | undefined;
+      let studentId: string | undefined;
+      try {
+        const bankTeacher = await prisma.teacher.create({
+          data: {
+            firstName: 'Bank',
+            lastName: 'Teacher',
+            email: bankEmail,
+            account: { create: { email: bankEmail } },
+            bio: 'Pay-link fixture',
+            pageSlug: `fallback-bank-${uniqueSuffix}`,
+            defaultTimezone: 'UTC',
+            bankIban: 'NL91ABNA0417164300',
+            bankAccountName: 'B. Teacher',
+          },
+        });
+        bankTeacherId = bankTeacher.id;
+        const room = await prisma.room.create({
+          data: {
+            venueName: 'Bank Studio',
+            address: `${uniqueSuffix} Bank St`,
+            city: 'Amsterdam',
+            postcode: '1111BK',
+            maxCapacity: 10,
+            createdById: bankTeacher.id,
+          },
+        });
+        bankRoomId = room.id;
+        const teacherRoom = await prisma.teacherRoom.create({
+          data: { teacherId: bankTeacher.id, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+        });
+        const bankClass = await createClassFixture(prisma, {
+          teacherId: bankTeacher.id,
+          teacherRoomId: teacherRoom.id,
+          classType: 'Vinyasa',
+          date: new Date('2026-06-01'),
+          startTime: hhmmToTime('09:00'),
+          durationMinutes: 60,
+          roomCost: 30,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents: 10,
+          status: 'completed',
+        });
+        classIds.push(bankClass.id);
+
+        const student = await prisma.student.create({
+          data: { firstName: 'Paying', lastName: 'Student', email: studentEmail },
+        });
+        studentId = student.id;
+
+        const common = {
+          recipientType: 'student' as const,
+          recipientId: student.id,
+          type: 'payment_request' as const,
+          body: 'Your price is €9.00.',
+          isRead: false,
+          emailSent: false,
+          createdAt: new Date(Date.now() - 45 * 60 * 1000),
+        };
+        const withMethods = await prisma.notification.create({
+          data: { ...common, title: 'Priced with methods', relatedClassId: bankClass.id },
+        });
+        // `laterClassId` belongs to the suite's teacher, who has no bank details.
+        const withoutMethods = await prisma.notification.create({
+          data: { ...common, title: 'Priced without methods', relatedClassId: laterClassId },
+        });
+        perTestNotificationIds.push(withMethods.id, withoutMethods.id);
+
+        const scoped = scopeSweep(prisma, {
+          Notification: { id: { in: [withMethods.id, withoutMethods.id] } },
+        });
+        await processEmailFallback(scoped.db);
+
+        expect(sendsTo(studentEmail)).toBe(2);
+        const htmlFor = (subject: string): string => {
+          const call = sendMock.mock.calls.find(([args]) => args.subject === subject);
+          if (!call) throw new Error(`no email sent with subject "${subject}"`);
+          return call[0].html as string;
+        };
+        expect(htmlFor('Priced with methods')).toContain(`/bookings/${bankClass.id}/pay"`);
+        expect(htmlFor('Priced with methods')).toContain('Pay now');
+        expect(htmlFor('Priced without methods')).not.toContain('/pay"');
+        expect(htmlFor('Priced without methods')).not.toContain('Pay now');
+      } finally {
+        if (studentId !== undefined) {
+          await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+          await prisma.student.delete({ where: { id: studentId } });
+        }
+        if (bankTeacherId !== undefined) {
+          await prisma.calendarEntry.deleteMany({ where: { teacherId: bankTeacherId } });
+          await prisma.teacherRoom.deleteMany({ where: { teacherId: bankTeacherId } });
+        }
+        if (bankRoomId !== undefined) await prisma.room.delete({ where: { id: bankRoomId } });
+        if (bankTeacherId !== undefined) await prisma.teacher.delete({ where: { id: bankTeacherId } });
+        await prisma.account.deleteMany({ where: { email: bankEmail } });
+      }
+    });
   });
 });

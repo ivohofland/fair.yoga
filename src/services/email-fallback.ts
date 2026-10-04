@@ -9,7 +9,7 @@
  * 3. Email fallback (this service)
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { NotificationType, PrismaClient } from '@prisma/client';
 import { Resend } from 'resend';
 import { getUnreadForEmailFallback, claimEmailFallback } from './notifications';
 import { shouldEmailStudent, shouldEmailTeacher, isTeacherNotificationType } from './notification-policy';
@@ -17,12 +17,32 @@ import { renderNotificationEmail } from '@/lib/email-templates';
 import { emailDryRun } from '@/lib/email';
 import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';
+import { isPaymentNotification } from '@/lib/notification-links';
+import { paymentMethodsFor } from '@/lib/payment-methods';
 
 // Lazy for the same reason as lib/email: a keyless environment must be
 // able to import this module (the dry-run path never constructs).
 let resendClient: Resend | null = null;
 function resend(): Resend {
   return (resendClient ??= new Resend(process.env.RESEND_API_KEY));
+}
+
+/**
+ * Whether the class a student payment notification is about belongs to a
+ * teacher with a payment method; `undefined` for every other notification,
+ * which reads no row.
+ */
+async function studentPaymentEmailHasMethods(
+  db: PrismaClient,
+  notification: { recipientType: string; type: NotificationType; relatedClassId: string | null },
+): Promise<boolean | undefined> {
+  if (notification.recipientType !== 'student') return undefined;
+  if (!isPaymentNotification(notification.type) || notification.relatedClassId === null) return undefined;
+  const cls = await db.class.findUnique({
+    where: { id: notification.relatedClassId },
+    select: { calendarEntry: { select: { teacher: { select: { bankIban: true, bankAccountName: true } } } } },
+  });
+  return cls !== null && paymentMethodsFor(cls.calendarEntry.teacher).length > 0;
 }
 
 /**
@@ -313,7 +333,10 @@ export async function processEmailFallback(
     try {
       // Branded template; escapes teacher-authored bodies so markup or
       // phishing HTML never renders in a platform email.
-      const { subject, html } = renderNotificationEmail(notification);
+      const { subject, html } = renderNotificationEmail({
+        ...notification,
+        teacherHasPaymentMethods: await studentPaymentEmailHasMethods(db, notification),
+      });
       const { error } = await resend().emails.send({
         from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
         to: email,
