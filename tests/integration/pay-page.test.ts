@@ -35,6 +35,10 @@ describe('GET /bookings/[classId]/pay', () => {
     cancelledRegistration: '',
     noBank: '',
     dual: '',
+    lateCancel: '',
+    noShow: '',
+    chargedWithoutPayment: '',
+    paidWithoutTimestamp: '',
   };
   const overdueClass = { classType: `Pay Overdue ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') };
 
@@ -98,8 +102,13 @@ describe('GET /bookings/[classId]/pay', () => {
     teacher: { id: string; teacherRoomId: string },
     c: { classType: string; date: Date },
     studentId: string,
-    registrationStatus: 'attended' | 'cancelled',
-    payment: { amount: number; status: 'pending' | 'overdue' | 'paid' | 'not_charged' } | null,
+    registrationStatus: 'attended' | 'cancelled' | 'late_cancel' | 'no_show',
+    payment: {
+      amount: number;
+      status: 'pending' | 'overdue' | 'paid' | 'not_charged';
+      /** Overrides the default `paidAt` of a `paid` fixture. */
+      paidAt?: Date | null;
+    } | null,
   ): Promise<string> {
     const cls = await createClassFixture(prisma, {
       teacherId: teacher.id,
@@ -119,7 +128,13 @@ describe('GET /bookings/[classId]/pay', () => {
       totalRevenue: 30,
     });
     const registration = await prisma.registration.create({
-      data: { classId: cls.id, studentId, status: registrationStatus, tierAtBooking: 3 },
+      data: {
+        classId: cls.id,
+        studentId,
+        status: registrationStatus,
+        tierAtBooking: 3,
+        cancelledAt: registrationStatus === 'late_cancel' || registrationStatus === 'cancelled' ? new Date('2026-05-31T12:00:00.000Z') : null,
+      },
     });
     if (payment) {
       await prisma.payment.create({
@@ -127,7 +142,12 @@ describe('GET /bookings/[classId]/pay', () => {
           registrationId: registration.id,
           amount: payment.amount,
           status: payment.status,
-          paidAt: payment.status === 'paid' ? new Date('2026-06-05T10:00:00.000Z') : null,
+          paidAt:
+            payment.paidAt !== undefined
+              ? payment.paidAt
+              : payment.status === 'paid'
+                ? new Date('2026-06-05T10:00:00.000Z')
+                : null,
           notChargedAt: payment.status === 'not_charged' ? new Date() : null,
         },
       });
@@ -165,6 +185,10 @@ describe('GET /bookings/[classId]/pay', () => {
     classIds.cancelledRegistration = await completedClass(bankTeacher, { classType: `Pay Cancelled ${suffix}`, date: new Date('2026-06-04T00:00:00.000Z') }, student.id, 'cancelled', null);
     classIds.noBank = await completedClass(noBankTeacher, { classType: `Pay NoBank ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') }, student.id, 'attended', { amount: 8.13, status: 'pending' });
     classIds.dual = await completedClass(noBankTeacher, { classType: `Pay Dual ${suffix}`, date: new Date('2026-06-02T00:00:00.000Z') }, dualStudent.id, 'attended', { amount: 4.5, status: 'pending' });
+    classIds.lateCancel = await completedClass(bankTeacher, { classType: `Pay Late ${suffix}`, date: new Date('2026-06-06T00:00:00.000Z') }, student.id, 'late_cancel', { amount: 5.5, status: 'pending' });
+    classIds.noShow = await completedClass(bankTeacher, { classType: `Pay Absent ${suffix}`, date: new Date('2026-06-07T00:00:00.000Z') }, student.id, 'no_show', { amount: 5.25, status: 'pending' });
+    classIds.chargedWithoutPayment = await completedClass(bankTeacher, { classType: `Pay Missing ${suffix}`, date: new Date('2026-06-08T00:00:00.000Z') }, student.id, 'attended', null);
+    classIds.paidWithoutTimestamp = await completedClass(bankTeacher, { classType: `Pay Undated ${suffix}`, date: new Date('2026-06-09T00:00:00.000Z') }, student.id, 'attended', { amount: 6.5, status: 'paid', paidAt: null });
 
     // Warm the route: `next dev` compiles a page lazily on its first request.
     await payPage(classIds.overdue, studentToken).catch(() => {});
@@ -214,6 +238,41 @@ describe('GET /bookings/[classId]/pay', () => {
     const html = await res.text();
     expect(html).toContain('Pay Paynobank directly');
     expect(html).not.toContain('How would you like to pay?');
+  });
+
+  it('tells a late cancel why the class is still charged', async () => {
+    const res = await payPage(classIds.lateCancel, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Cancelled after the deadline — this class is still charged.');
+    expect(html).not.toContain('Marked absent');
+  });
+
+  it('tells a no-show why the class is still charged', async () => {
+    const res = await payPage(classIds.noShow, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Marked absent — this class is still charged.');
+    expect(html).not.toContain('Cancelled after the deadline');
+  });
+
+  it('gives an attended registration no charge explanation', async () => {
+    const html = await (await payPage(classIds.overdue, studentToken)).text();
+    expect(html).not.toContain('this class is still charged');
+  });
+
+  // The log line is pinned in `pay-page.server.test.ts`; this pins the page's
+  // answer, which stays the same.
+  it('answers a charged registration on a completed class with no payment as not found', async () => {
+    expect((await payPage(classIds.chargedWithoutPayment, studentToken)).status).toBe(404);
+  });
+
+  it('answers a paid payment with no timestamp without naming a date', async () => {
+    const res = await payPage(classIds.paidWithoutTimestamp, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('✓ Paid');
+    expect(html).toContain('Marked paid.');
   });
 
   it('answers a paid payment calmly, with no methods', async () => {
