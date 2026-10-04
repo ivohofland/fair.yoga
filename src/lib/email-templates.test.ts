@@ -122,14 +122,49 @@ describe('email templates', () => {
     expect(html).toContain('href="https://example.test/account/privacy"');
   });
 
-  // The link is per-type, not a blanket addition: a class-scoped type such as
-  // `reminder` gets none, because the class routes are teacher-only.
+  // The link is per-type, not a blanket addition: a type with no student
+  // destination gets none.
   it('adds no link to a notification type that has nowhere to send a student', () => {
     const { html } = renderNotificationEmail(
-      { type: 'reminder', title: 'Reminder', body: 'Class tomorrow.', recipientType: 'student' },
+      { type: 'booking_cancelled', title: 'Cancelled', body: 'You cancelled Tuesday.', recipientType: 'student' },
       'https://example.test',
     );
     expect(html).not.toContain('href=');
+  });
+
+  it('gives a student payment request a Pay now button to its class’s pay page', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'payment_request', title: 'Priced', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9' },
+      'https://example.test',
+    );
+    expect(html).toContain('href="https://example.test/bookings/class-9/pay"');
+    expect(html).toContain('Pay now');
+  });
+
+  it('gives a student payment reminder the same button', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'reminder', title: 'Payment outstanding', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9' },
+      'https://example.test',
+    );
+    expect(html).toContain('href="https://example.test/bookings/class-9/pay"');
+  });
+
+  it('gives a payment notification without a class no button', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'reminder', title: 'Payment outstanding', body: '€5.75', recipientType: 'student', relatedClassId: null },
+      'https://example.test',
+    );
+    expect(html).not.toContain('href=');
+  });
+
+  // Teachers receive payment_request too, and the pay page is a student route.
+  it('gives a teacher payment request no Pay now button', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'payment_request', title: 'Class completed', body: 'Prices are out.', recipientType: 'teacher', relatedClassId: 'class-9' },
+      'https://example.test',
+    );
+    expect(html).not.toContain('/bookings/class-9/pay');
+    expect(html).not.toContain('Pay now');
   });
 
   // #236 m5: an email meant to be acted on within a short grace or claim

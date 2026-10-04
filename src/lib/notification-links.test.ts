@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH, studentNotificationHref, teacherNotificationHref } from './notification-links';
+import { STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH, payPagePath, studentNotificationHref, teacherNotificationHref } from './notification-links';
 
 /**
  * #166 whole-branch review I5. A `teacher_invitation` notification carries no
@@ -57,6 +57,28 @@ describe('studentNotificationHref', () => {
 
   it('yields null for anything else with no related class', () => {
     expect(studentNotificationHref({ type: 'announcement', relatedClass: null })).toBeNull();
+  });
+
+  const completedClass = { ...openClass, status: 'completed' as const };
+
+  it('sends a payment request to the pay page of its class', () => {
+    expect(
+      studentNotificationHref({ type: 'payment_request', relatedClass: completedClass }),
+    ).toBe('/bookings/class-1/pay');
+  });
+
+  it('sends a payment reminder to the pay page of its class', () => {
+    expect(
+      studentNotificationHref({ type: 'reminder', relatedClass: completedClass }),
+    ).toBe('/bookings/class-1/pay');
+  });
+
+  it('yields null for a payment notification with no related class', () => {
+    expect(studentNotificationHref({ type: 'payment_request', relatedClass: null })).toBeNull();
+  });
+
+  it('builds the pay page path from the class id', () => {
+    expect(payPagePath('abc')).toBe('/bookings/abc/pay');
   });
 });
 
