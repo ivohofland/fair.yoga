@@ -5,9 +5,11 @@ import { SignOutButton } from '@/components/account/sign-out-button';
  * Explains that the signed-in address already has a teacher page (#431, #442).
  *
  * Offers both ways out: the teacher's schedule, and the sign-out that makes
- * a different address reachable.
+ * a different address reachable. `accountId`, the signed-in account when
+ * the caller has it, makes that sign-out sync the account's queued attendance
+ * first or say what would be lost; without it the queue is only cleared.
  */
-export function AlreadyTeachingPanel({ email }: { email: string }) {
+export function AlreadyTeachingPanel({ email, accountId }: { email: string; accountId?: string }) {
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
       <p className="type-label text-teal mb-[10px]">Already teaching</p>
@@ -26,7 +28,7 @@ export function AlreadyTeachingPanel({ email }: { email: string }) {
         Setting up a page for a different address?
       </p>
       <div className="mt-2">
-        <SignOutButton redirectTo="/signup" />
+        <SignOutButton redirectTo="/signup" outboxOwner={accountId} />
       </div>
     </div>
   );

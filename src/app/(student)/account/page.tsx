@@ -91,7 +91,9 @@ export default async function StudentSettingsPage() {
         <h2 className="type-subtitle mb-3">Sign-in</h2>
         <AddPasskey />
         <div className="mt-5">
-          <SignOutButton />
+          {/* A dual-hat account reaches this page from its teacher settings;
+              a student-only account's queue is empty, and the sync sends nothing. */}
+          <SignOutButton outboxOwner={session.accountId} />
         </div>
       </section>
     </div>
