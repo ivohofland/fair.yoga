@@ -254,9 +254,9 @@ describe('SignOutButton', () => {
   });
 });
 
-// #726, spec D6 and D8. Queued attendance belongs to the account that leaves;
-// given that account as `outboxOwner`, the button first tries to sync it and,
-// failing that, says what will be lost before anything is sent.
+// #726, spec D6 and D8. Given an account as `outboxOwner`, the button first
+// tries to sync it; either way it names what every account on the device
+// would lose before anything is sent.
 describe('SignOutButton and the attendance outbox', () => {
   const fetchMock = vi.fn();
 
