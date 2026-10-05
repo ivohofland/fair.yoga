@@ -41,6 +41,17 @@ describe('ProfileSetupPage identity precedence', () => {
     expect(peekSignupTicket).not.toHaveBeenCalled();
   });
 
+  // The form's sign-outs sync this account's queued attendance before they
+  // clear it: a tab left open here can outlive the account gaining a teacher page.
+  it("hands the form the session's account in session mode", async () => {
+    const { default: ProfileSetupPage } = await import('./page');
+    getSession.mockResolvedValue({ sessionId: 's1', accountId: 'a1', teacherId: null, studentId: 'st1' });
+
+    const json = JSON.stringify(await ProfileSetupPage());
+
+    expect(json).toContain('"mode":"session","accountId":"a1"');
+  });
+
   it('falls to the fresh-link form, not a ticket-mode form, when the session cookie is present but invalid', async () => {
     // getSession() returning null is not the same fact as "no session
     // cookie": it also covers a present cookie that failed to validate.
@@ -78,5 +89,6 @@ describe('ProfileSetupPage identity precedence', () => {
 
     expect(json).toContain('ticket-holder@test.local');
     expect(json).toContain('"mode":"ticket"');
+    expect(json).not.toContain('accountId');
   });
 });

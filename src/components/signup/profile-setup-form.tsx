@@ -142,14 +142,22 @@ type Status =
  */
 export type ProfileSetupMode = 'ticket' | 'session';
 
-interface ProfileSetupFormProps {
+type ProfileSetupFormProps = {
   /** The address this profile will be created for — from the live signup
    *  ticket, or from the signed-in account. Display and re-send only: the
    *  route takes the email from the ticket or session it verifies, never
    *  from us. */
   email: string;
-  mode: ProfileSetupMode;
-}
+} & (
+  | { mode: 'ticket' }
+  | {
+      mode: 'session';
+      /** The signed-in account: both sign-outs sync its queued attendance
+       *  first, since a tab left open here can outlive the account gaining a
+       *  teacher page in another one. */
+      accountId: string;
+    }
+);
 
 /**
  * Step two of teacher signup (#385): the profile the ticket authorises.
@@ -159,7 +167,9 @@ interface ProfileSetupFormProps {
  * and not an error — every value stays exactly where it was, and a fresh link
  * goes out on its own.
  */
-export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
+export function ProfileSetupForm(props: ProfileSetupFormProps) {
+  const { email, mode } = props;
+  const accountId = props.mode === 'session' ? props.accountId : undefined;
   const [form, setForm] = useState<Draft>(EMPTY_DRAFT);
   const [status, setStatus] = useState<Status>('idle');
   const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
@@ -337,7 +347,7 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
   }
 
   if (status === 'already-teacher') {
-    return <AlreadyTeachingPanel email={email} />;
+    return <AlreadyTeachingPanel email={email} accountId={accountId} />;
   }
 
   if (status === 'account-exists') {
@@ -383,7 +393,7 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
             for a different one?
           </p>
           <div className="mt-2">
-            <SignOutButton redirectTo="/signup" />
+            <SignOutButton redirectTo="/signup" outboxOwner={accountId} />
           </div>
         </div>
       )}

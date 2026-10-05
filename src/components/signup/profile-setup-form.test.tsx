@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ProfileSetupForm } from './profile-setup-form';
 import { routerPush } from '../../../tests/setup/components';
 import { isLoginRedirectTarget } from '@/lib/schemas';
+import { enqueueAttendance, resetOutboxForTests } from '@/lib/attendance-outbox';
 
 const DRAFT_KEY = 'fair_yoga_profile_draft';
 
@@ -108,7 +109,7 @@ describe('ProfileSetupForm', () => {
   it('keeps the stored pages in session mode, where the account did not change', async () => {
     const assign = stubLocation();
     stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -120,7 +121,7 @@ describe('ProfileSetupForm', () => {
   it('does not re-record the push device in session mode, which minted no session', async () => {
     const assign = stubLocation();
     stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -148,7 +149,7 @@ describe('ProfileSetupForm', () => {
   });
 
   it('names the address it will attach the hat to in session mode', () => {
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
     expect(screen.getByText(/Adding a teacher page to/)).toBeInTheDocument();
   });
 
@@ -158,7 +159,7 @@ describe('ProfileSetupForm', () => {
   it('session mode explains the address is the session\'s, and offers the sign-out that changes it', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
 
     expect(screen.getByText(/That's the address you're signed in with/)).toBeInTheDocument();
 
@@ -196,7 +197,7 @@ describe('ProfileSetupForm', () => {
       status: 200,
       json: async () => ({ data: { teacherId: 't-1' }, outcome: 'unchanged' }),
     }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -295,7 +296,7 @@ describe('ProfileSetupForm', () => {
       throw new Error(`unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', mock);
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -342,7 +343,7 @@ describe('ProfileSetupForm', () => {
   it('session mode: a 401 at submit is a dead session, and hard-navigates to /login', async () => {
     const assign = stubLocation();
     stubFetch(() => ({ ok: false, status: 401, json: async () => ({}) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -425,5 +426,73 @@ describe('ProfileSetupForm', () => {
       err: offline,
     });
     consoleError.mockRestore();
+  });
+
+  // A tab left open here while the account becomes a teacher in another one:
+  // by the time this form's sign-out is tapped, the account may hold check-ins
+  // queued offline.
+  describe("signing out with the account's attendance queued", () => {
+    afterEach(() => {
+      resetOutboxForTests();
+    });
+
+    function queueMark(): void {
+      enqueueAttendance('acc-1', {
+        registrationId: 'reg-1',
+        classId: 'class-1',
+        classLabel: 'Hatha on Tue 6 Oct 18:00',
+        studentName: 'Grace Hopper',
+        target: 'attended',
+        knownCompleted: false,
+      });
+    }
+
+    it("the session-mode sign-out tries to sync it, and says what would be lost", async () => {
+      queueMark();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const mock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+      vi.stubGlobal('fetch', mock);
+      render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+      expect(await screen.findByText("1 attendance change hasn't synced and will be lost.")).toBeInTheDocument();
+      expect(mock).toHaveBeenCalledWith('/api/registrations/reg-1', expect.objectContaining({ method: 'PUT' }));
+      expect(mock).not.toHaveBeenCalledWith('/api/auth/session', expect.anything());
+      consoleError.mockRestore();
+    });
+
+    it('the Already teaching panel\'s sign-out tries to sync it, and says what would be lost', async () => {
+      queueMark();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const mock = vi.fn((input: unknown) => {
+        const url = String(input);
+        if (url.startsWith('/api/teachers/slug-available')) {
+          return Promise.resolve({ ok: true, json: async () => ({ data: { available: true } }) });
+        }
+        if (url === '/api/account/teacher-profile') {
+          return Promise.resolve({
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: { code: 'ALREADY_TEACHER', message: 'You already have a teacher page. Edit it in Settings.' },
+            }),
+          });
+        }
+        return Promise.reject(new TypeError('Failed to fetch'));
+      });
+      vi.stubGlobal('fetch', mock);
+      render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acc-1" />);
+
+      fillForm();
+      fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
+      await screen.findByRole('heading', { name: 'You already have a page.' });
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+      expect(await screen.findByText("1 attendance change hasn't synced and will be lost.")).toBeInTheDocument();
+      expect(mock).toHaveBeenCalledWith('/api/registrations/reg-1', expect.objectContaining({ method: 'PUT' }));
+      expect(mock).not.toHaveBeenCalledWith('/api/auth/session', expect.anything());
+      consoleError.mockRestore();
+    });
   });
 });
