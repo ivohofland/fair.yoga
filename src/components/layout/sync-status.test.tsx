@@ -67,14 +67,48 @@ beforeEach(() => {
 });
 
 describe('SyncStatus', () => {
-  it('renders nothing for the empty outbox', () => {
+  it('renders only its live region, empty, for the empty outbox', () => {
     const { container } = render(<SyncStatus owner="account-1" />);
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(container.querySelector('[data-sync-status]')).toBeNull();
+    expect(container).toHaveTextContent('');
   });
 
-  it('renders nothing on the server, whatever the device holds', () => {
+  it('renders only the empty live region on the server, whatever the device holds', () => {
     snapshot.current = snap({ queued: [entry('r1')], refused: [refused('r2', 'No.')], needsSignIn: true });
-    expect(renderToString(<SyncStatus owner="account-1" />)).toBe('');
+    const host = document.createElement('div');
+    host.innerHTML = renderToString(<SyncStatus owner="account-1" />);
+    expect(host.querySelector('[role="status"]')).toBeEmptyDOMElement();
+    expect(host.textContent).toBe('');
+  });
+
+  // A region mounted together with its text is often not announced, and the
+  // schedule page has no row region to announce a refusal a background sync
+  // finds: the region is there, empty, before anything it says arrives.
+  it('says each thing from inside one live region mounted before any of it arrived', () => {
+    render(<SyncStatus owner="account-1" />);
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
+
+    publish(snap({ queued: [entry('r1')] }));
+    expect(region).toContainElement(screen.getByText('1 change waiting to sync'));
+
+    publish(snap({ queued: [entry('r1')], needsSignIn: true }));
+    expect(region).toContainElement(screen.getByRole('link', { name: 'Sign in again to sync 1 change' }));
+
+    publish(snap({ refused: [refused('r2', 'This class was cancelled.')] }));
+    expect(region).toContainElement(screen.getByText("1 change couldn't be saved"));
+    expect(region).toContainElement(screen.getByText('This class was cancelled.'));
+    expect(region).toContainElement(screen.getByRole('button', { name: 'Dismiss: Student r2, Hatha · Tue 6 Oct 18:00' }));
+
+    publish(snap({ notes: [{ classId: 'c1', classLabel: 'Hatha · Tue 6 Oct 18:00' }] }));
+    expect(region).toContainElement(
+      screen.getByText('Saved after Hatha · Tue 6 Oct 18:00 finished — the payment requests already sent stay as they are.'),
+    );
+
+    publish(null);
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toBeEmptyDOMElement();
   });
 
   it('says one change is waiting, and a visible block, not a screen-reader-only one', () => {
@@ -93,11 +127,12 @@ describe('SyncStatus', () => {
 
   it('follows the store: appears on a change and disappears when it empties', () => {
     const { container } = render(<SyncStatus owner="account-1" />);
-    expect(container).toBeEmptyDOMElement();
+    expect(container.querySelector('[data-sync-status]')).toBeNull();
     publish(snap({ queued: [entry('r1')] }));
     expect(screen.getByText('1 change waiting to sync')).toBeInTheDocument();
     publish(null);
-    expect(container).toBeEmptyDOMElement();
+    expect(container.querySelector('[data-sync-status]')).toBeNull();
+    expect(container).toHaveTextContent('');
   });
 
   it('lists one refusal with student, class and the server message, and its Dismiss works offline', () => {
@@ -160,6 +195,7 @@ describe('SyncStatus', () => {
   it('says nothing for confirmed statuses alone', () => {
     snapshot.current = snap({ confirmed: { r1: { target: 'attended', confirmedAt: 1 } } });
     const { container } = render(<SyncStatus owner="account-1" />);
-    expect(container).toBeEmptyDOMElement();
+    expect(container.querySelector('[data-sync-status]')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 });

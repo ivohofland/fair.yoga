@@ -343,13 +343,15 @@ describe('AttendanceList', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
     renderList([lateCancel]);
-    // The live region is there, empty, before any refusal arrives — a region
+    // The live regions are there, empty, before any refusal arrives — a region
     // mounted together with its text is often not announced.
-    expect(screen.getByRole('status').textContent).toBe('');
+    const regions = screen.getAllByRole('status');
+    for (const region of regions) expect(region).toBeEmptyDOMElement();
 
     fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
 
     const reason = await screen.findByText(/once the class has started/);
+    expect(regions).toContain(reason);
     expect(reason).toHaveClass('text-danger');
     expect(screen.queryByText('Waiting to sync')).toBeNull();
     // Never shown as saved: the row falls back to what the server holds.
@@ -478,10 +480,13 @@ describe('AttendanceList', () => {
       fetchMock.mockResolvedValue(json(200, { data: { id: 'reg-1', status: 'attended', classCompleted: true } }));
       vi.stubGlobal('fetch', fetchMock);
       renderList([untouched]);
+      // Mounted empty before the line arrives, so it is announced.
+      const regions = screen.getAllByRole('status');
+      for (const region of regions) expect(region).toBeEmptyDOMElement();
 
       fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
 
-      expect(await screen.findByText(savedAfterFinish)).toBeInTheDocument();
+      expect(regions).toContain(await screen.findByText(savedAfterFinish));
     });
 
     it.each([

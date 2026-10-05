@@ -64,6 +64,14 @@ const queuedMark = {
   knownCompleted: false,
 } as const;
 
+/** The snapshot's own status line, beside the sync block's live region. */
+function offlineMarker(): HTMLElement {
+  const markers = screen.getAllByRole('status').filter((element) => element.tagName === 'P');
+  const [marker, ...others] = markers;
+  if (marker === undefined || others.length > 0) throw new Error(`expected one offline marker, found ${markers.length}`);
+  return marker;
+}
+
 /** A refused mark as the outbox stores one, for an owner. */
 function storeRefused(owner: string): void {
   localStorage.setItem(
@@ -87,7 +95,7 @@ describe('OfflineSnapshot', () => {
   it('carries the owner marker, and online its status is empty and screen-reader-only', () => {
     const { container } = render(ui());
     expect(container.querySelector('[data-offline-owner="account-1"]')).not.toBeNull();
-    const notice = screen.getByRole('status');
+    const notice = offlineMarker();
     expect(notice).toBeEmptyDOMElement();
     expect(notice).toHaveClass('sr-only');
     expect(container.querySelector('fieldset')).not.toBeDisabled();
@@ -137,7 +145,7 @@ describe('OfflineSnapshot', () => {
   it('says "at HH:MM" offline when loaded today in the stamp zone', () => {
     status.current = { offline: true, serverNow: null };
     render(ui());
-    expect(screen.getByRole('status')).toHaveTextContent('Offline — showing what was loaded at 09:12');
+    expect(offlineMarker()).toHaveTextContent('Offline — showing what was loaded at 09:12');
   });
 
   it('gives the day and time when loaded on an earlier day, in the stamp zone rather than the device zone', () => {
@@ -145,14 +153,14 @@ describe('OfflineSnapshot', () => {
     // the 3rd is an earlier day there, though the device's UTC date is the 4th.
     status.current = { offline: true, serverNow: null };
     render(ui({ timeZone: 'Pacific/Auckland', loadedOn: '2026-10-03' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Offline — showing what was loaded Sat 3 Oct 21:40');
+    expect(offlineMarker()).toHaveTextContent('Offline — showing what was loaded Sat 3 Oct 21:40');
   });
 
   it('uses the clock form when the stamp day is today in Auckland but not on the device', () => {
     status.current = { offline: true, serverNow: null };
     vi.setSystemTime(new Date('2026-10-04T11:30:00Z')); // 5 Oct in Auckland, 4 Oct in UTC
     render(ui({ timeZone: 'Pacific/Auckland', loadedOn: '2026-10-05' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Offline — showing what was loaded at 09:12');
+    expect(offlineMarker()).toHaveTextContent('Offline — showing what was loaded at 09:12');
   });
 
   it('disables a descendant Button and AttendanceList check-in, and the look comes from the pseudo-class', () => {

@@ -249,11 +249,14 @@ export function AttendanceList({
         </p>
       )}
 
-      {savedAfterFinish && (
-        <p role="status" className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-3">
-          {savedAfterFinishCopy(classLabel)}
-        </p>
-      )}
+      {/* Mounted empty, like each row's region below, so the line is
+          announced when it arrives. */}
+      <p
+        role="status"
+        className={savedAfterFinish ? 'type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-3' : undefined}
+      >
+        {savedAfterFinish ? savedAfterFinishCopy(classLabel) : null}
+      </p>
 
       <div>
         {items.map((item) => {
