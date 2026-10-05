@@ -837,6 +837,35 @@ describe('attendance outbox', () => {
         expect(getOutboxSnapshot(OWNER)).toMatchObject({ needsSignIn: false, queued: [] });
       });
 
+      it('a flush over a queue another tab emptied after a 401 clears needsSignIn', async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        fetchMock.mockResolvedValueOnce(refusal(401, undefined, 'Session expired'));
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).needsSignIn).toBe(true);
+        // Signed in elsewhere, that tab's flush sent the mark and removed it.
+        storage.removeItem('fy-outbox:acc1:r1');
+        await flushOutbox(OWNER);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(getOutboxSnapshot(OWNER).needsSignIn).toBe(false);
+      });
+
+      it("the app's own refusal after a 401 clears needsSignIn, even when the flush then stops", async () => {
+        enqueueAttendance(OWNER, entry('r1'));
+        vi.setSystemTime(NOW + 1);
+        enqueueAttendance(OWNER, entry('r2'));
+        fetchMock.mockResolvedValueOnce(refusal(401, undefined, 'Session expired'));
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER).needsSignIn).toBe(true);
+        // Signed in elsewhere: the app answers r1, then the network drops before r2.
+        fetchMock.mockResolvedValueOnce(refusal(404, 'NOT_FOUND', 'This booking no longer exists.'));
+        fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        await flushOutbox(OWNER);
+        expect(getOutboxSnapshot(OWNER)).toMatchObject({
+          needsSignIn: false,
+          queued: [expect.objectContaining({ registrationId: 'r2' })],
+        });
+      });
+
       it('a portal 200 after a 401 does not clear needsSignIn', async () => {
         enqueueAttendance(OWNER, entry('r1'));
         fetchMock.mockResolvedValueOnce(refusal(401, undefined, 'Session expired'));
