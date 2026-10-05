@@ -234,8 +234,8 @@ function isOutboxVolatile(): boolean {
 }
 /**
  * True once this tab's outbox lives in memory because storage threw, so a
- * reload loses what is pending. Subscribers are told by the write that made
- * the switch; the server snapshot is `false`.
+ * reload loses what is pending. A switch made by a write tells subscribers;
+ * one made by a read shows at the next render. The server snapshot is `false`.
  */
 export function useOutboxVolatile(): boolean {
   return useSyncExternalStore(subscribeOutbox, isOutboxVolatile, () => false);
