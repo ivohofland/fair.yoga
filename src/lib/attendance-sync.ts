@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import {
+  isRecord,
   readOutbox,
   settleEntry,
   withLock,
@@ -65,10 +66,6 @@ function timeoutSignal(ms: number): { signal: AbortSignal; clear: () => void } {
   return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
 /** The server's clock from the `Date` header, or this device's when the header is missing or unreadable. */
 function serverTime(res: Response): number {
   const header = res.headers.get('date');
@@ -92,14 +89,19 @@ async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutco
   }
   if (res.status === 401) return { kind: 'signed_out' };
   if (res.status === 403) return { kind: 'dropped' };
-  if (res.status === 429 || res.status >= 500) return { kind: 'retry' };
+  if (res.status === 408 || res.status === 429 || res.status >= 500) return { kind: 'retry' };
   const { code, message } = await readError(res, 'Could not record attendance.');
   if (code === 'CONCURRENT_MODIFICATION') return { kind: 'retry' };
   return { kind: 'refused', message };
 }
 
-/** One replay, and whether the server answered it with a 2xx. Never throws. */
-async function send(entry: PendingEntry): Promise<{ outcome: ReplayOutcome; succeeded: boolean }> {
+/**
+ * One replay; whether the server answered it with a 2xx; and whether no answer
+ * arrived at all (the request threw or timed out). Never throws.
+ */
+async function send(
+  entry: PendingEntry,
+): Promise<{ outcome: ReplayOutcome; succeeded: boolean; unanswered: boolean }> {
   const timeout = timeoutSignal(REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`/api/registrations/${entry.registrationId}`, {
@@ -108,7 +110,7 @@ async function send(entry: PendingEntry): Promise<{ outcome: ReplayOutcome; succ
       body: JSON.stringify({ status: entry.status }),
       signal: timeout.signal,
     });
-    return { outcome: await classify(res, entry), succeeded: res.ok };
+    return { outcome: await classify(res, entry), succeeded: res.ok, unanswered: false };
   } catch (err) {
     if (!timeout.signal.aborted) {
       logRequestFailure(
@@ -117,7 +119,7 @@ async function send(entry: PendingEntry): Promise<{ outcome: ReplayOutcome; succ
         err,
       );
     }
-    return { outcome: { kind: 'retry' }, succeeded: false };
+    return { outcome: { kind: 'retry' }, succeeded: false, unanswered: true };
   } finally {
     timeout.clear();
   }
@@ -140,7 +142,7 @@ async function pass(scope: string | null, gen: number): Promise<boolean> {
     let succeeded = false;
     // Fresh: another tab may have replaced or settled an entry since this tab last looked.
     const entries = Object.values(readOutbox().pending).sort((a, b) => a.recordedAt - b.recordedAt);
-    for (const entry of entries) {
+    sending: for (const entry of entries) {
       if (gen !== generation) break;
       if (scope !== null && entry.ownerId !== scope) {
         await settleEntry(entry, { kind: 'dropped' });
@@ -150,13 +152,24 @@ async function pass(scope: string | null, gen: number): Promise<boolean> {
       if (gen !== generation) break;
       succeeded ||= sent.succeeded;
       const outcome = sent.outcome;
-      if (outcome.kind === 'retry') {
-        retried = true;
-      } else if (outcome.kind === 'signed_out') {
-        setNeedsSignIn(true);
-        return retried;
-      } else {
-        await settleEntry(entry, outcome);
+      switch (outcome.kind) {
+        case 'retry':
+          retried = true;
+          // No answer at all: the next entry would wait out the same failure, holding the flush lock.
+          if (sent.unanswered) break sending;
+          break;
+        case 'signed_out':
+          setNeedsSignIn(true);
+          return retried;
+        case 'confirmed':
+        case 'refused':
+        case 'dropped':
+          await settleEntry(entry, outcome);
+          break;
+        default: {
+          const unreachable: never = outcome;
+          throw new Error(`unhandled replay outcome: ${JSON.stringify(unreachable)}`);
+        }
       }
     }
     if (succeeded && gen === generation) setNeedsSignIn(false);

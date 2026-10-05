@@ -144,6 +144,7 @@ describe('attendance sync', () => {
         async () => refusal(400, undefined, 'Invalid status.'),
         { kind: 'refused', message: 'Invalid status.' },
       ],
+      ['408', async () => bare(408), { kind: 'retry' }],
       ['429', async () => bare(429), { kind: 'retry' }],
       ['503', async () => bare(503), { kind: 'retry' }],
       [
@@ -167,6 +168,124 @@ describe('attendance sync', () => {
     expect(errors.mock.calls[0]?.[0]).toBe('[attendance-sync] request failed');
   });
 
+  it.each([
+    ['no Date header', undefined],
+    ['an unreadable Date header', 'not a date'],
+  ])('a confirmation with %s is stamped with the device clock', async (_name, date) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(7_777_000);
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (date !== undefined) headers.date = date;
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { id: 'r1', status: 'attended' } }), { status: 200, headers }),
+    );
+    const entry: PendingEntry = {
+      id: 'e1',
+      ownerId: 'acct-1',
+      registrationId: 'r1',
+      classId: 'c1',
+      studentName: 'Ada',
+      status: 'attended',
+      recordedAt: 1,
+    };
+    expect(await sendAttendance(entry)).toEqual({ kind: 'confirmed', at: 7_777_000 });
+  });
+
+  it('a pass runs under the cross-tab flush lock', async () => {
+    let flushLockHeld = false;
+    const request = vi.fn(async (name: string, fn: () => Promise<unknown>) => {
+      if (name !== 'fy-outbox-flush') return fn();
+      flushLockHeld = true;
+      try {
+        return await fn();
+      } finally {
+        flushLockHeld = false;
+      }
+    });
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } });
+    await enqueue('attended');
+    const sentUnderLock: boolean[] = [];
+    fetchMock.mockImplementationOnce(async () => {
+      sentUnderLock.push(flushLockHeld);
+      return ok({ id: 'r1', status: 'attended' });
+    });
+    await flushAttendance('acct-1');
+    expect(request).toHaveBeenCalledWith('fy-outbox-flush', expect.any(Function));
+    expect(sentUnderLock).toEqual([true]);
+    expect(getOutbox().pending).toEqual({});
+  });
+
+  it('a pass stops at a network failure, keeping every entry', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended', 'r1');
+    await enqueue('no_show', 'r2');
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    await flushAttendance('acct-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2']);
+  });
+
+  it('a pass stops at a timeout, and the backoff tries again', async () => {
+    vi.useFakeTimers();
+    await enqueue('attended', 'r1');
+    await enqueue('no_show', 'r2');
+    fetchMock.mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener('abort', () => reject(signal.reason));
+        }),
+    );
+    onTestFinished(startAttendanceSync('acct-1'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await drain();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2']);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['a 503', () => bare(503)],
+    ['a 429', () => bare(429)],
+    ['a 409 CONCURRENT_MODIFICATION', () => refusal(409, 'CONCURRENT_MODIFICATION', 'Someone else changed this.')],
+  ])('a pass carries on past %s', async (_name, answer) => {
+    await enqueue('attended', 'r1');
+    await enqueue('no_show', 'r2');
+    fetchMock.mockImplementation(async () => answer());
+    await flushAttendance('acct-1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('several triggers while a request is in flight still send each entry once', async () => {
+    await enqueue('attended');
+    let answerFirst: (res: Response) => void = () => {};
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            answerFirst = resolve;
+          }),
+      )
+      .mockImplementation(async () => ok({ id: 'r1', status: 'attended' }));
+    onTestFinished(startAttendanceSync('acct-1'));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    window.dispatchEvent(new Event('online'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    setOffline(true);
+    setOffline(false);
+    void flushAttendance('acct-1');
+    answerFirst(ok({ id: 'r1', status: 'attended' }));
+    await drain();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getOutbox().pending).toEqual({});
+    expect(getOutbox().confirmed.r1?.status).toBe('attended');
+  });
+
   it('confirmed drops the entry and records the confirmation at the server\'s clock', async () => {
     await enqueue('attended');
     fetchMock.mockResolvedValueOnce(ok({ id: 'r1', status: 'attended' }));
@@ -187,12 +306,14 @@ describe('attendance sync', () => {
     expect(getOutbox().refused).toEqual({});
   });
 
-  it('a null flush sends every owner\'s entries', async () => {
+  it('a null flush sends every owner\'s entries, oldest recorded first', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(1_000);
-    await enqueue('no_show', 'r2', 'acct-B');
+    // Stored newest first, so the send order comes from `recordedAt`, not from storage.
     vi.setSystemTime(2_000);
     await enqueue('attended', 'r1', 'acct-A');
+    vi.setSystemTime(1_000);
+    await enqueue('no_show', 'r2', 'acct-B');
+    expect(Object.keys(getOutbox().pending)).toEqual(['r1', 'r2']);
     fetchMock.mockImplementation(async (input) =>
       urlOf(input) === '/api/registrations/r2' ? bare(403) : ok({ id: 'r1', status: 'attended' }),
     );

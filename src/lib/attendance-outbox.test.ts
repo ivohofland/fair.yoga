@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+import { createElement } from 'react';
+import { renderToString } from 'react-dom/server';
 import {
   EMPTY_OUTBOX,
   clearOutbox,
@@ -12,12 +15,17 @@ import {
   settleEntry,
   shownStatus,
   subscribeOutbox,
+  useOutboxVolatile,
   withLock,
   type OutboxState,
   type QueuedStatus,
 } from '@/lib/attendance-outbox';
 
 const KEY = 'fy-outbox-v1';
+
+function VolatileProbe() {
+  return String(useOutboxVolatile());
+}
 
 function input(status: QueuedStatus, registrationId = 'r1') {
   return { ownerId: 'a', registrationId, classId: 'c', studentName: 'Ada', status };
@@ -164,6 +172,7 @@ describe('attendance outbox', () => {
   });
 
   it('malformed stored JSON reads as empty', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     localStorage.setItem(KEY, '{not json');
     expect(getOutbox()).toEqual(EMPTY_OUTBOX);
 
@@ -207,6 +216,112 @@ describe('attendance outbox', () => {
     });
     await expect(enqueueAttendance(input('attended'))).resolves.toBeDefined();
     expect(getOutbox().pending.r1).toBeDefined();
+  });
+
+  it('storage that throws is reported as volatile; working storage is not', async () => {
+    const { result } = renderHook(() => useOutboxVolatile());
+    expect(result.current).toBe(false);
+    await act(() => enqueueAttendance(input('attended')));
+    expect(result.current).toBe(false);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded');
+    });
+    await act(() => enqueueAttendance(input('no_show')));
+    expect(result.current).toBe(true);
+  });
+
+  it('volatile storage reads false on the server', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    getOutbox();
+    const html = renderToString(createElement(VolatileProbe));
+    expect(html).toBe('false');
+  });
+
+  it('a stored __proto__ key alters no map’s prototype', () => {
+    const now = Date.now();
+    const entry = { id: 'x', ownerId: 'a', registrationId: '__proto__', classId: 'c', studentName: 'n', status: 'attended', recordedAt: 1 };
+    localStorage.setItem(
+      KEY,
+      `{"pending":{"__proto__":${JSON.stringify(entry)}},"confirmed":{"__proto__":{"status":"attended","confirmedAt":${now}}},"refused":{}}`,
+    );
+    const { pending, confirmed } = getOutbox();
+    expect('status' in pending).toBe(false);
+    expect('confirmedAt' in confirmed).toBe(false);
+    expect(Object.getPrototypeOf(pending)).not.toEqual(entry);
+  });
+
+  it('prunes a confirmation stamped more than 5 minutes in the future', () => {
+    vi.useFakeTimers();
+    const now = new Date('2026-10-04T12:00:00Z').getTime();
+    vi.setSystemTime(now);
+    const minute = 60_000;
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        pending: {},
+        confirmed: {
+          far: { status: 'attended', confirmedAt: now + 5 * minute + 1 },
+          near: { status: 'attended', confirmedAt: now + 5 * minute },
+        },
+        refused: {},
+      }),
+    );
+    expect(Object.keys(getOutbox().confirmed)).toEqual(['near']);
+  });
+
+  it('warns once with how many stored entries failed validation, naming none', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const good = { id: 'x', ownerId: 'a', registrationId: 'r1', classId: 'c', studentName: 'Secret Name', status: 'attended', recordedAt: 1 };
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        pending: { r1: good, r2: { ...good, registrationId: 'r2', status: 'bogus' }, r3: { ...good } },
+        confirmed: { r4: { status: 'attended' } },
+        refused: {},
+      }),
+    );
+    expect(Object.keys(getOutbox().pending)).toEqual(['r1']);
+    // A storage event drops the cache, so the same stored text is parsed again.
+    const unsubscribe = subscribeOutbox(() => {});
+    window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+    expect(Object.keys(getOutbox().pending)).toEqual(['r1']);
+    unsubscribe();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[attendance-outbox] stored entries discarded', { dropped: 3 });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('Secret Name');
+  });
+
+  it('warns once when the stored document cannot be read, and not for expired entries', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.setItem(KEY, '{not json');
+    getOutbox();
+    readOutbox();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[attendance-outbox] stored entries discarded', { unreadable: true });
+
+    warn.mockClear();
+    resetOutboxForTests();
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ pending: {}, confirmed: { old: { status: 'attended', confirmedAt: 1 } }, refused: {} }),
+    );
+    expect(getOutbox().confirmed).toEqual({});
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('enqueue works where crypto.randomUUID is missing', async () => {
+    vi.stubGlobal('crypto', {});
+    try {
+      const a = await enqueueAttendance(input('attended', 'r1'));
+      const b = await enqueueAttendance(input('attended', 'r2'));
+      expect(a.id).toEqual(expect.any(String));
+      expect(a.id).not.toBe('');
+      expect(a.id).not.toBe(b.id);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('shownStatus: pending wins, then a confirmation newer than the render, then the rendered status', () => {
