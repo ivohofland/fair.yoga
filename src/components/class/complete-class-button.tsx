@@ -11,8 +11,9 @@ interface CompleteClassButtonProps {
   chargedCount: number;
   /**
    * The account whose queued attendance is synced before finishing. With it,
-   * a mark for this class still queued after the flush is named in an inline
-   * confirm before anything is sent; without it, Finish posts straight away.
+   * a mark for this class still unsynced after the flush — queued, or refused
+   * once the outbox stopped retrying it — is named in an inline confirm before
+   * completion is posted; without it, Finish posts straight away.
    */
   outboxOwner?: string;
 }

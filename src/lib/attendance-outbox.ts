@@ -79,13 +79,13 @@ const VERSION = 1;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 const REFUSED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-/** The stored pages' retention (docs/superpowers/specs/2026-10-04-offline-schedule-design.md, D7). */
+/** How long a confirmation is kept: docs/technical-architecture.md (Offline (service worker) → The attendance outbox → *Confirmations*). */
 const CONFIRMED_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_NAME = 'fy-outbox';
 /** Far above one pass; a holder that keeps the lock longer is treated as gone, and this pass ends with its entries queued. */
 const LOCK_WAIT_MS = 60_000;
 const REFUSED_FALLBACK = "This change couldn't be saved.";
-/** A refusal after `MAX_ATTEMPTS`: the server's own words there ask for a refresh, which does nothing for a queued mark. */
+/** The message on a mark the outbox stopped retrying after `MAX_ATTEMPTS`. */
 const RETRIES_EXHAUSTED = "This change couldn't be saved after several tries.";
 const TARGETS = { attended: true, no_show: true, late_cancel: true } satisfies Record<AttendanceTarget, true>;
 

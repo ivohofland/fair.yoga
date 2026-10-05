@@ -43,8 +43,8 @@ interface AttendanceListProps {
    *  mark, so a sync can tell a correction from a mark that landed after the
    *  class finished. */
   completed: boolean;
-  /** Server epoch ms at which `items` was read: a confirmation older than this
-   *  is already in `items`, or was overtaken by a later write. */
+  /** Server epoch ms taken just before `items` was read: a confirmation older
+   *  than this is already in `items`, or was overtaken by a later write. */
   renderedAt: number;
 }
 

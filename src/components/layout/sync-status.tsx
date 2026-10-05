@@ -23,10 +23,11 @@ const DISMISS_CLASSES = 'type-caption text-teal shrink-0 min-h-[44px] px-1 focus
 
 /**
  * What the attendance outbox holds that the teacher should know about (#726,
- * spec §3): marks waiting to sync, marks the server refused, a session that
- * needs signing in again, and writes that landed after their class finished.
- * Visible online and offline, and empty — nothing rendered — on the server and
- * whenever there is nothing to say. Its Dismiss controls work offline.
+ * docs/superpowers/specs/2026-10-04-offline-checkin-design.md §3): marks
+ * waiting to sync, marks refused, a session that needs signing in again, and
+ * writes that landed after their class finished. Visible online and offline,
+ * and empty — nothing rendered — on the server and whenever there is nothing
+ * to say. Its Dismiss controls carry `data-offline-writable`.
  */
 export function SyncStatus({ owner }: { owner: string }) {
   const getSnapshot = useCallback(() => getOutboxSnapshot(owner), [owner]);
