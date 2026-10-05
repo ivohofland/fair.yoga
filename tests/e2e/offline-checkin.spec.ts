@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
+import { reloadHydrated } from './page-helpers';
 
 /**
  * Queued offline check-in (#726), end to end: attendance marked with no
@@ -284,12 +285,15 @@ test.describe('Offline check-in', () => {
       .toBe(STUDENT_NAMES.length);
     expect([...written].sort()).toEqual(expectedWrites);
 
-    // Further reconnects and reloads replay nothing: the queue is empty.
+    // Further reconnects and reloads replay nothing: the queue is empty. The
+    // rows read Present from the server's render, before hydration; the PUT a
+    // replay would send comes from OutboxSync's mount flush, which runs in the
+    // same effects pass that opens the stream `reloadHydrated` waits for.
     const putsBefore = putsSent;
     for (let i = 0; i < 2; i++) {
       await context.setOffline(true);
       await context.setOffline(false);
-      await page.reload();
+      await reloadHydrated(page);
       await expect(page.getByText('Present', { exact: true })).toHaveCount(STUDENT_NAMES.length);
     }
     expect(putsSent).toBe(putsBefore);
