@@ -11,6 +11,7 @@
  * consume these types.
  */
 
+import type { RegistrationStatus } from '@prisma/client';
 import type { SkipCounts } from '@/lib/generation';
 import type { TemplateGenerationState } from '@/lib/template-selection';
 import type { NoneOf } from '@/lib/type-pins';
@@ -126,6 +127,24 @@ export interface AnnouncementSendResponse {
   recipientCount: number;
   duplicateSuppressed: boolean;
   alreadyNotified: number;
+}
+
+/**
+ * The `data` payload of a `PUT /api/registrations/[id]` that answered
+ * `unchanged`: the registration already held the status (#726).
+ */
+export interface AttendanceUnchangedResponse {
+  id: string;
+  status: RegistrationStatus;
+}
+
+/**
+ * The `data` payload of an applied `PUT /api/registrations/[id]` (#726):
+ * `classCompleted` is whether the class was `completed` when read just after
+ * the write, so a mark that lands after completion can say so.
+ */
+export interface AttendanceAppliedResponse extends AttendanceUnchangedResponse {
+  classCompleted: boolean;
 }
 
 // Compile-time pins asserting that the class and studio toggle response types

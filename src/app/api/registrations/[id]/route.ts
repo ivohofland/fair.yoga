@@ -20,15 +20,7 @@ import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
-
-/** A PUT's unchanged response body. */
-type AttendanceBody = { id: string; status: RegistrationStatus };
-
-/**
- * A PUT's applied response body: whether the class was `completed` when read
- * just after the write, so a mark that lands after completion can say so.
- */
-type AppliedAttendanceBody = AttendanceBody & { classCompleted: boolean };
+import type { AttendanceAppliedResponse, AttendanceUnchangedResponse } from '@/lib/api-types';
 
 /** A DELETE's response body, applied or unchanged. */
 type CancelledBooking = { id: string; status: 'cancelled' | 'late_cancel' };
@@ -201,7 +193,7 @@ export const PUT = withErrorHandler(async (
       );
     }
     if (current.status === requested) {
-      return respondUnchanged<AttendanceBody>({ id, status: requested });
+      return respondUnchanged<AttendanceUnchangedResponse>({ id, status: requested });
     }
     switch (current.status) {
       case 'late_cancel':
@@ -241,7 +233,7 @@ export const PUT = withErrorHandler(async (
     where: { id: registration.classId },
     select: { status: true },
   });
-  return respondTyped<AppliedAttendanceBody>({
+  return respondTyped<AttendanceAppliedResponse>({
     id,
     status: requested,
     classCompleted: cls?.status === 'completed',

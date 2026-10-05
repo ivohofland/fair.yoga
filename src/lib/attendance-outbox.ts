@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { AttendanceAppliedResponse, AttendanceUnchangedResponse } from './api-types';
 import { readError, logRequestFailure } from './client-errors';
 import type { updateRegistrationSchema } from './schemas';
 
@@ -491,12 +492,21 @@ export function attendanceRequest(target: AttendanceTarget): RequestInit {
   };
 }
 
+/** `T`'s keys, their values not yet checked. */
+type Unchecked<T> = { [K in keyof T]: unknown };
+
+/** The PUT's answer, applied or `unchanged`: the server's keys, each value left for its reader to check. */
+export interface AttendanceAnswer {
+  data: Unchecked<AttendanceUnchangedResponse> & Partial<Unchecked<AttendanceAppliedResponse>>;
+  outcome?: unknown;
+}
+
 /** Whether `value` is the app's answer for this write: the registration, holding the target. */
 export function isAttendanceAnswer(
   value: unknown,
   registrationId: string,
   target: AttendanceTarget,
-): value is { data: { id: string; status: string; classCompleted?: unknown }; outcome?: unknown } {
+): value is AttendanceAnswer {
   if (!isRecord(value) || !isRecord(value.data)) return false;
   return value.data.id === registrationId && value.data.status === target;
 }
