@@ -90,6 +90,28 @@ describe('CheckinGate', () => {
     container.remove();
   });
 
+  it('re-arms when a check-in instant beyond the longest timer is still ahead', () => {
+    const maxTimeout = 2 ** 31 - 1;
+    const checkinAt = NOW + maxTimeout + 10 * MINUTE;
+    render(gate(false, checkinAt));
+    act(() => vi.advanceTimersByTime(maxTimeout));
+    expect(screen.getByText('registered list')).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(10 * MINUTE - 1));
+    expect(screen.getByText('registered list')).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByText('attendance list')).toBeInTheDocument();
+  });
+
+  it('re-arms when the clock was set back before the timer fired', () => {
+    const checkinAt = NOW + 10 * MINUTE;
+    render(gate(false, checkinAt));
+    vi.setSystemTime(NOW - 5 * MINUTE);
+    act(() => vi.advanceTimersByTime(10 * MINUTE));
+    expect(screen.getByText('registered list')).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(5 * MINUTE));
+    expect(screen.getByText('attendance list')).toBeInTheDocument();
+  });
+
   it('shows registered and arms no timer for an unreadable check-in instant', () => {
     render(gate(false, Number.NaN));
     expect(screen.getByText('registered list')).toBeInTheDocument();

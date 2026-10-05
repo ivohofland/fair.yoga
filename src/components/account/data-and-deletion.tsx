@@ -64,7 +64,12 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
       if (res.ok) {
         // The device's stored teacher pages belong to the account just deleted.
         await clearOfflinePages();
-        await clearOutbox();
+        try {
+          await clearOutbox();
+        } catch (err) {
+          // The account is gone either way; leaving its page must not wait on this.
+          logRequestFailure('data-and-deletion-delete', { role, step: 'clear-outbox' }, err);
+        }
         router.push('/login');
         router.refresh();
       } else {

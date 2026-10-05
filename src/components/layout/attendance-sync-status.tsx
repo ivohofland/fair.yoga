@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import Link from 'next/link';
-import { dismissRefused, ownedOutbox, useOutbox } from '@/lib/attendance-outbox';
+import { dismissRefused, ownedOutbox, useOutbox, useOutboxVolatile } from '@/lib/attendance-outbox';
 import type { QueuedStatus, RefusedEntry } from '@/lib/attendance-outbox';
 import { startAttendanceSync, useSyncState } from '@/lib/attendance-sync';
 
@@ -109,6 +109,7 @@ export function refusalLine(entry: RefusedEntry): string {
 export function AttendanceSyncStatus() {
   const ctx = useContext(SyncContext);
   const outbox = useOutbox();
+  const volatile = useOutboxVolatile();
   const { needsSignIn } = useSyncState();
   const inline = useSyncExternalStore(
     ctx?.registry.subscribe ?? noSubscribe,
@@ -128,6 +129,7 @@ export function AttendanceSyncStatus() {
             <p className="type-caption">
               {pending} attendance {pending === 1 ? 'change' : 'changes'} waiting to sync
               {needsSignIn ? ' — sign in to sync them' : ''}
+              {volatile ? ". This device can't keep them if the page reloads." : ''}
             </p>
           )}
           {refused.map((entry) => (
@@ -136,14 +138,14 @@ export function AttendanceSyncStatus() {
               <Link
                 href={`/class/${entry.classId}`}
                 aria-label={`Open class for ${entry.studentName}`}
-                className="type-caption underline"
+                className="type-label text-teal no-underline inline-flex items-center min-h-11"
               >
                 Open class
               </Link>
               <button
                 type="button"
                 aria-label={`Dismiss: ${refusalLine(entry)}`}
-                className="type-caption underline"
+                className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
                 onClick={() => void dismissRefused(entry.registrationId)}
               >
                 Dismiss

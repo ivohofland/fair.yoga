@@ -83,7 +83,11 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
     } finally {
       // The device's stored teacher pages belong to the account that just left.
       await clearOfflinePages();
-      await clearOutbox();
+      try {
+        await clearOutbox();
+      } catch (err) {
+        logRequestFailure('sign-out-button', { step: 'clear-outbox' }, err);
+      }
       // #40. Neither `router.push` nor `router.refresh` is guaranteed to
       // commit on a starved or offline device, and both return `void`, so this
       // component cannot learn whether they did. Resetting here means a dropped commit

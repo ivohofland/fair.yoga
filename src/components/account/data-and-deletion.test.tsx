@@ -180,6 +180,33 @@ describe('DataAndDeletion, deleting the account', () => {
     routerPush.mockReset();
   });
 
+  it('still navigates when clearing the queued attendance rejects', async () => {
+    const failure = new Error('lock unavailable');
+    Object.defineProperty(navigator, 'locks', {
+      value: { request: () => Promise.reject(failure) },
+      configurable: true,
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      render(<DataAndDeletion role="teacher" />);
+
+      confirmDelete();
+
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(consoleError).toHaveBeenCalledWith('[data-and-deletion-delete] request failed', {
+        role: 'teacher',
+        step: 'clear-outbox',
+        err: failure,
+      });
+    } finally {
+      consoleError.mockRestore();
+      Reflect.deleteProperty(navigator, 'locks');
+      routerPush.mockReset();
+    }
+  });
+
   it('keeps the stored pages when the DELETE is refused', async () => {
     vi.stubGlobal(
       'fetch',

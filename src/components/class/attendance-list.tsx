@@ -44,7 +44,8 @@ export interface AttendanceListProps {
  * A row's label, tethered to the compiler against `AttendanceStatus` so a
  * future member fails here rather than falling through to a wrong label.
  * `registered` reads "Not marked" rather than "No-show" — an untouched row is
- * not a recorded absence, and must not read as one (spec D5; #234).
+ * not a recorded absence, and must not read as one
+ * (`docs/superpowers/specs/2026-09-24-attendance-finish-window-design.md`, D5; #234).
  */
 function statusLabel(status: AttendanceStatus): string {
   switch (status) {
@@ -64,22 +65,19 @@ function statusLabel(status: AttendanceStatus): string {
 }
 
 /**
- * No class-status prop, deliberately. The server refuses
- * `late_cancel -> attended` while the class is still `open` (see the WHERE in
- * `api/registrations/[id]/route.ts`), and disabling the control until then
- * looks like the obvious move. But this page is a server component with no
- * `revalidate`, check-in renders from T-15min, and `autoTransitionToInProgress`
- * flips the class up to 60s after the start, so any class-status prop is frozen
- * at render: a teacher who opened the page before the class began would hold a
- * permanently disabled control for the whole class — a silent refusal in place
- * of a visible one.
+ * No class-status prop, deliberately. Whether a write lands (a late cancel
+ * marked present before the class has started, say) is the server's call, and
+ * a status passed in here is frozen at render: the list can show before the
+ * class starts (`CHECKIN_OPENS_MINUTES`), so a control gated on it would stay
+ * disabled after the class began — a silent refusal in place of a visible one.
  *
- * The server is the only thing that knows, so it decides and says why. A tap is
- * queued in the attendance outbox and a flush sends it, online or offline alike
- * (spec D1); a row shows what is queued, else what a flush confirmed after this
+ * So every row control is offered and the server decides and says why. A tap
+ * is queued in the attendance outbox and a flush sends it, online or offline
+ * alike; a row shows what is queued, else what a flush confirmed after this
  * render, else `items`. A refusal for this class shows here in the server's
- * words and refreshes the page, so the next tap is judged against what is now
- * true. A success does not refresh.
+ * words; one that arrives while the list is mounted also refreshes the page,
+ * so the next tap is judged against what is now true. A success does not
+ * refresh.
  */
 export function AttendanceList({ items, classId, renderedAt, locked = false }: AttendanceListProps) {
   const router = useRouter();
@@ -90,6 +88,8 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
   // completed class opens read-only until the teacher's own "Edit
   // attendance" tap unlocks the row controls.
   const [editing, setEditing] = useState(!locked);
+  // The last tap's outbox write failed, so that tap is neither queued nor shown.
+  const [saveFailed, setSaveFailed] = useState(false);
   useInlineRefusals(classId);
 
   // Refusal ids already on the device at mount. Seeded from the live store, not
@@ -180,7 +180,7 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
         <button
           type="button"
           aria-label={`Dismiss: ${line}`}
-          className="type-caption underline"
+          className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
           onClick={() => void dismissRefused(entry.registrationId)}
         >
           Dismiss
@@ -230,15 +230,21 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
 
               <div className="flex items-center gap-3">
                 <span className="type-caption">
-                  {shown.pending ? 'Waiting to sync' : statusLabel(shown.status)}
+                  {shown.pending
+                    ? `${statusLabel(shown.status)} · waiting to sync`
+                    : statusLabel(shown.status)}
                 </span>
                 {/* No owner, no control: a tap could not be queued without one. */}
                 {editing && ownerId !== null && (
                   <button
                     type="button"
                     onClick={() => {
-                      toggleAttendance(ownerId, item).catch((err: unknown) =>
-                        logRequestFailure('attendance-list', { registrationId: item.registrationId }, err),
+                      toggleAttendance(ownerId, item).then(
+                        () => setSaveFailed(false),
+                        (err: unknown) => {
+                          setSaveFailed(true);
+                          logRequestFailure('attendance-list', { registrationId: item.registrationId }, err);
+                        },
                       );
                     }}
                     className={`
@@ -262,6 +268,12 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
           );
         })}
       </div>
+
+      {saveFailed && (
+        <p role="alert" className="type-caption text-danger mt-3">
+          Couldn&apos;t save this mark on this device.
+        </p>
+      )}
 
       {refusals}
     </div>
