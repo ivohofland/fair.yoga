@@ -836,6 +836,28 @@ describe('attendance outbox', () => {
           ]);
         });
 
+        it("a 200 whose body stalls past the timeout logs the abort, not a body mismatch", async () => {
+          enqueueAttendance(OWNER, entry('r1'));
+          const timedOut = new DOMException('The operation timed out.', 'TimeoutError');
+          const stalled = new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(timedOut);
+              },
+            }),
+            { status: 200 },
+          );
+          fetchMock.mockResolvedValueOnce(stalled);
+          await flushOutbox(OWNER);
+          expect(outboxErrors()).toEqual([
+            [
+              '[attendance-outbox] request failed',
+              expect.objectContaining({ stage: 'send', reason: 'non-matching-body', status: 200, err: timedOut }),
+            ],
+          ]);
+          expect(getOutboxSnapshot(OWNER).queued.map((e) => e.registrationId)).toEqual(['r1']);
+        });
+
         it('but not while the device says offline', async () => {
           vi.stubGlobal('navigator', { onLine: false });
           enqueueAttendance(OWNER, entry('r1'));

@@ -538,11 +538,12 @@ function answeredAt(res: Response): number {
   return Number.isNaN(parsed) ? Date.now() : parsed;
 }
 
-async function readJsonBody(res: Response): Promise<{ ok: true; body: unknown } | { ok: false }> {
+/** The body as JSON, or why it could not be read: not JSON, or a read the request's timeout aborted. */
+async function readJsonBody(res: Response): Promise<{ ok: true; body: unknown } | { ok: false; err: unknown }> {
   try {
     return { ok: true, body: (await res.json()) as unknown };
-  } catch {
-    return { ok: false };
+  } catch (err) {
+    return { ok: false, err };
   }
 }
 
@@ -559,7 +560,8 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
 
   if (res.status === 200) {
     const read = await readJsonBody(res);
-    if (!read.ok || !isAttendanceAnswer(read.body, entry.registrationId, entry.target)) {
+    if (!read.ok) return stop(entry, 'non-matching-body', res.status, read.err);
+    if (!isAttendanceAnswer(read.body, entry.registrationId, entry.target)) {
       return stop(entry, 'non-matching-body', res.status, new Error('200 without the matching body'));
     }
     const { body } = read;
