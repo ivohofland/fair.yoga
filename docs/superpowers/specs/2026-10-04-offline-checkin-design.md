@@ -94,7 +94,7 @@ tap on the device wins either way. Entries go oldest first; the PUT uses
 | 409 `CONCURRENT_MODIFICATION`, 500 whatever its body, or a 4xx other than 401 and 429 that is not JSON | kept and retried on the next flush; after 3 attempts, refused with "This change couldn't be saved after several tries." |
 | any other 4xx except 401 and 429 | moved to *refused*, with the server's message |
 | 401 | flush stops, everything kept, "Sign in again to sync N changes"; logged while the device says online |
-| network failure, timeout, redirect, 429, 502/503/504 | flush stops, everything kept; logged with its reason while the device says online |
+| network failure, timeout, redirect, or any status no row above names (429 among them) | flush stops, everything kept; logged with its reason while the device says online |
 
 A 500 is per-entry, not flush-stopping, so one row the server keeps failing
 on cannot block every later tap.
@@ -187,8 +187,10 @@ header sits in a fieldset (D9), so Finish is disabled and none of this arises.
   its confirmation, a stored page hard-loaded offline included, and a render
   newer than the confirmation (another device's correction) wins.
 - **Row markers:** a queued row shows "Waiting to sync" in place of the status
-  label; a refused row shows the server's message in danger text with
-  Dismiss. A queued write is never shown as saved.
+  label; a refused row shows its refusal's message in danger text with
+  Dismiss — the server's own, or, for a mark refused after 3 attempts
+  (D5), "This change couldn't be saved after several tries." A queued write
+  is never shown as saved.
 - **Sync block:** its own element at the top of the three snapshot pages,
   visible online and offline whenever there is anything to say (the offline
   marker's status line is `sr-only` online, so it cannot carry this): "N
