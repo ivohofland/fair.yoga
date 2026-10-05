@@ -34,7 +34,7 @@ export interface OutboxState {
 /**
  * `at` is the confirmation time: the response's `Date` header, so it compares
  * with the page's server-side `renderedAt`, or the device clock when the
- * response carries no `Date` header.
+ * response has no readable `Date` header.
  */
 export type Settlement =
   | { kind: 'confirmed'; at: number }
@@ -45,6 +45,8 @@ const KEY = 'fy-outbox-v1';
 const LOCK = 'fy-outbox';
 const CONFIRMED_TTL_MS = 24 * 60 * 60 * 1000;
 const REFUSED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** A confirmation stamped further ahead than this would mask the server's status for as long as it stays ahead. */
+const CONFIRMED_FUTURE_SLACK_MS = 5 * 60 * 1000;
 
 /** Tethered to the schema: a status added there fails to compile here until it is listed. */
 const QUEUED = { attended: true, no_show: true, late_cancel: true } satisfies Record<QueuedStatus, true>;
@@ -58,9 +60,11 @@ let useMemory = false;
 let cached: OutboxState | null = null;
 /** The stored text `cached` was parsed from or written as. */
 let cachedRaw: string | null = null;
+/** The last stored text whose discarded entries were reported, so one document warns once. */
+let warnedRaw: string | null = null;
 const listeners = new Set<() => void>();
 
-function isRecord(v: unknown): v is Record<string, unknown> {
+export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 function isQueued(v: unknown): v is QueuedStatus {
@@ -118,19 +122,33 @@ function writeRaw(value: string | null): void {
   memory = value;
 }
 
-/** Keeps the entries of `source` that `guard` accepts and `keep` approves. */
+/**
+ * Keeps the entries of `source` that `guard` accepts, `valid` approves and
+ * `fresh` has not expired, into a null-prototype map, so a stored `__proto__`
+ * key is an own entry rather than the map's prototype. Counts the entries that
+ * failed `guard` or `valid` into `discarded`; expired ones are not counted.
+ */
 function pick<T>(
   source: unknown,
   guard: (v: unknown) => T | null,
-  keep: (entry: T, key: string) => boolean,
+  valid: (entry: T, key: string) => boolean,
+  fresh: (entry: T) => boolean,
+  discarded: { count: number },
 ): Record<string, T> {
-  const out: Record<string, T> = {};
+  const out: Record<string, T> = Object.create(null);
   if (!isRecord(source)) return out;
   for (const [key, value] of Object.entries(source)) {
     const entry = guard(value);
-    if (entry !== null && keep(entry, key)) out[key] = entry;
+    if (entry === null || !valid(entry, key)) discarded.count++;
+    else if (fresh(entry)) out[key] = entry;
   }
   return out;
+}
+
+function warnDiscarded(raw: string, detail: { dropped: number } | { unreadable: true }): void {
+  if (raw === warnedRaw) return;
+  warnedRaw = raw;
+  console.warn('[attendance-outbox] stored entries discarded', detail);
 }
 
 /** Parses what is stored, keeping only well-formed, unexpired entries. Never throws. */
@@ -140,18 +158,27 @@ function parse(raw: string | null, now: number): OutboxState {
   try {
     doc = JSON.parse(raw);
   } catch {
+    doc = undefined;
+  }
+  if (!isRecord(doc)) {
+    warnDiscarded(raw, { unreadable: true });
     return EMPTY_OUTBOX;
   }
-  if (!isRecord(doc)) return EMPTY_OUTBOX;
-  return {
-    pending: pick(doc.pending, asPending, (e, key) => e.registrationId === key),
-    confirmed: pick(doc.confirmed, asConfirmed, (e) => now - e.confirmedAt <= CONFIRMED_TTL_MS),
-    refused: pick(
-      doc.refused,
-      asRefused,
-      (e, key) => e.registrationId === key && now - e.refusedAt <= REFUSED_TTL_MS,
+  const discarded = { count: 0 };
+  const keyed = (e: PendingEntry, key: string): boolean => e.registrationId === key;
+  const state: OutboxState = {
+    pending: pick(doc.pending, asPending, keyed, () => true, discarded),
+    confirmed: pick(
+      doc.confirmed,
+      asConfirmed,
+      () => true,
+      (e) => now - e.confirmedAt <= CONFIRMED_TTL_MS && e.confirmedAt - now <= CONFIRMED_FUTURE_SLACK_MS,
+      discarded,
     ),
+    refused: pick(doc.refused, asRefused, keyed, (e) => now - e.refusedAt <= REFUSED_TTL_MS, discarded),
   };
+  if (discarded.count > 0) warnDiscarded(raw, { dropped: discarded.count });
+  return state;
 }
 
 export function getOutbox(): OutboxState {
@@ -164,7 +191,8 @@ export function getOutbox(): OutboxState {
 /**
  * Reads storage past the cache, which only this tab's writes and a subscribed
  * `storage` listener refresh. Keeps the cached object, and its identity, when
- * nothing changed; otherwise subscribers are told.
+ * nothing changed. Subscribers are told only when the stored text differs from
+ * a cache that existed; a read that fills an empty cache tells no one.
  */
 export function readOutbox(): OutboxState {
   const raw = readRaw();
@@ -201,6 +229,18 @@ export function useOutbox(): OutboxState {
   return useSyncExternalStore(subscribeOutbox, getOutbox, () => EMPTY_OUTBOX);
 }
 
+function isOutboxVolatile(): boolean {
+  return useMemory;
+}
+/**
+ * True once this tab's outbox lives in memory because storage threw, so a
+ * reload loses what is pending. Subscribers are told by the write that made
+ * the switch; the server snapshot is `false`.
+ */
+export function useOutboxVolatile(): boolean {
+  return useSyncExternalStore(subscribeOutbox, isOutboxVolatile, () => false);
+}
+
 export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
   return locks ? locks.request(name, fn) : fn();
@@ -214,10 +254,16 @@ async function update(change: (current: OutboxState) => OutboxState): Promise<vo
   });
 }
 
+/** `crypto.randomUUID` is missing outside a secure context and on older Safari; the id only has to differ from this registration's previous one. */
+function newEntryId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export async function enqueueAttendance(
   input: Omit<PendingEntry, 'id' | 'recordedAt'>,
 ): Promise<PendingEntry> {
-  const entry: PendingEntry = { ...input, id: crypto.randomUUID(), recordedAt: Date.now() };
+  const entry: PendingEntry = { ...input, id: newEntryId(), recordedAt: Date.now() };
   await update((s) => ({ ...s, pending: { ...s.pending, [entry.registrationId]: entry } }));
   return entry;
 }
@@ -307,6 +353,8 @@ export function shownStatus(
 
 export function resetOutboxForTests(): void {
   cached = null;
+  cachedRaw = null;
+  warnedRaw = null;
   memory = null;
   useMemory = false;
   listeners.clear();
