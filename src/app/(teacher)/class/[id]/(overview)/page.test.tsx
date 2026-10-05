@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 
 const { findUnique, waitlistCount, requireTeacherSession, redirect, completeClassButton } = vi.hoisted(() => ({
@@ -21,25 +21,36 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/components/class/complete-class-button', () => ({
   CompleteClassButton: (props: Record<string, unknown>) => {
     completeClassButton(props);
-    return null;
+    return <div data-testid="complete-class-button" />;
   },
 }));
-// Everything else on the page renders nothing here: this file is about the
-// props the page hands its children, not what they draw.
+// The rest of the page draws a marker or nothing: this file is about the props
+// the page hands its children and which of them sit in an `OfflineFieldset`,
+// not what they draw.
 vi.mock('@/components/class/class-info', () => ({ ClassInfo: () => null }));
 vi.mock('@/components/class/pricing-preview', () => ({ PricingPreview: () => null }));
-vi.mock('@/components/class/pricing-breakdown', () => ({ PricingBreakdown: () => null }));
+vi.mock('@/components/class/pricing-breakdown', () => ({
+  PricingBreakdown: () => <div data-testid="pricing-breakdown" />,
+}));
 vi.mock('@/components/class/payment-checklist', () => ({ PaymentChecklist: () => null }));
-vi.mock('@/components/class/attendance-list', () => ({ AttendanceList: () => null }));
-vi.mock('@/components/class/add-walk-in', () => ({ AddWalkIn: () => null }));
+vi.mock('@/components/class/attendance-list', () => ({
+  AttendanceList: ({ locked = false }: { locked?: boolean }) => (
+    <div data-testid="attendance-list" data-locked={String(locked)} />
+  ),
+}));
+vi.mock('@/components/class/add-walk-in', () => ({ AddWalkIn: () => <div data-testid="add-walk-in" /> }));
 vi.mock('@/components/class/send-announcement', () => ({ SendAnnouncement: () => null }));
 vi.mock('@/components/class/share-booking-link', () => ({ ShareBookingLink: () => null }));
 vi.mock('@/components/class/cancel-class-button', () => ({ CancelClassButton: () => null }));
 vi.mock('@/components/class/refresh-at', () => ({ RefreshAt: () => null }));
-vi.mock('@/components/class/checkin-switch', () => ({ CheckinSwitch: () => null }));
+vi.mock('@/components/class/checkin-switch', () => ({
+  CheckinSwitch: ({ initial, before, checkin }: { initial: 'before' | 'checkin'; before: ReactNode; checkin: ReactNode }) => (
+    <>{initial === 'checkin' ? checkin : before}</>
+  ),
+}));
 vi.mock('@/components/layout/offline-snapshot', () => ({
   OfflineSnapshot: ({ children }: { children: ReactNode }) => <>{children}</>,
-  OfflineFieldset: ({ children }: { children: ReactNode }) => <>{children}</>,
+  OfflineFieldset: ({ children }: { children: ReactNode }) => <div data-testid="offline-fieldset">{children}</div>,
 }));
 
 import ClassDetailPage from './page';
@@ -82,5 +93,33 @@ describe('ClassDetailPage', () => {
     expect(completeClassButton).toHaveBeenCalledWith(
       expect.objectContaining({ classId: 'class-1', outboxOwner: 'acc-1' }),
     );
+  });
+
+  /** Whether `testId`'s element sits inside an `OfflineFieldset`, which disables it offline. */
+  function inFieldset(testId: string): boolean {
+    return screen.getByTestId(testId).closest('[data-testid="offline-fieldset"]') !== null;
+  }
+
+  // Offline, a fieldset disables every control inside it: the attendance list
+  // must sit outside them so its taps can queue, and everything else inside one.
+  it('leaves the check-in attendance list outside every fieldset, and the rest inside one', async () => {
+    findUnique.mockResolvedValue(classInItsFinishWindow());
+
+    render(await ClassDetailPage({ params: Promise.resolve({ id: 'class-1' }) }));
+
+    expect(screen.getByTestId('attendance-list')).toHaveAttribute('data-locked', 'false');
+    expect(inFieldset('attendance-list')).toBe(false);
+    expect(inFieldset('add-walk-in')).toBe(true);
+    expect(inFieldset('complete-class-button')).toBe(true);
+  });
+
+  it("leaves a completed class's attendance list outside every fieldset, and the rest inside one", async () => {
+    findUnique.mockResolvedValue({ ...classInItsFinishWindow(), status: 'completed' });
+
+    render(await ClassDetailPage({ params: Promise.resolve({ id: 'class-1' }) }));
+
+    expect(screen.getByTestId('attendance-list')).toHaveAttribute('data-locked', 'true');
+    expect(inFieldset('attendance-list')).toBe(false);
+    expect(inFieldset('pricing-breakdown')).toBe(true);
   });
 });
