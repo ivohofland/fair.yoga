@@ -1,4 +1,6 @@
+import type { z } from 'zod';
 import { readError, logRequestFailure } from './client-errors';
+import type { updateRegistrationSchema } from './schemas';
 
 /**
  * Attendance marks queued on the device and replayed to
@@ -8,7 +10,8 @@ import { readError, logRequestFailure } from './client-errors';
  * docs/technical-architecture.md (Offline (service worker) → The attendance outbox).
  */
 
-export type AttendanceTarget = 'attended' | 'no_show' | 'late_cancel';
+/** A status a mark writes: the one `updateRegistrationSchema` accepts, imported as a type only. */
+export type AttendanceTarget = z.infer<typeof updateRegistrationSchema>['status'];
 
 export interface OutboxEntry {
   registrationId: string;
@@ -83,7 +86,11 @@ const LOCK_WAIT_MS = 60_000;
 const REFUSED_FALLBACK = "This change couldn't be saved.";
 /** A refusal after `MAX_ATTEMPTS`: the server's own words there ask for a refresh, which does nothing for a queued mark. */
 const RETRIES_EXHAUSTED = "This change couldn't be saved after several tries.";
-const TARGETS: ReadonlySet<string> = new Set<AttendanceTarget>(['attended', 'no_show', 'late_cancel']);
+const TARGETS = { attended: true, no_show: true, late_cancel: true } satisfies Record<AttendanceTarget, true>;
+
+function isAttendanceTarget(value: unknown): value is AttendanceTarget {
+  return typeof value === 'string' && Object.hasOwn(TARGETS, value);
+}
 
 export const EMPTY_OUTBOX: OutboxSnapshot = Object.freeze({
   queued: Object.freeze([]),
@@ -207,8 +214,7 @@ function asEntry(value: unknown, id: string): OutboxEntry | null {
     typeof classId !== 'string' ||
     typeof classLabel !== 'string' ||
     typeof studentName !== 'string' ||
-    typeof target !== 'string' ||
-    !TARGETS.has(target) ||
+    !isAttendanceTarget(target) ||
     typeof nonce !== 'string' ||
     typeof recordedAt !== 'number' ||
     typeof attempts !== 'number' ||
@@ -221,7 +227,7 @@ function asEntry(value: unknown, id: string): OutboxEntry | null {
     classId,
     classLabel,
     studentName,
-    target: target as AttendanceTarget,
+    target,
     nonce,
     recordedAt,
     attempts,
@@ -243,8 +249,8 @@ function asConfirmation(
 ): { registrationId: string; confirmation: Confirmation } | null {
   if (!isRecord(value) || value.v !== VERSION) return null;
   const { target, confirmedAt } = value;
-  if (typeof target !== 'string' || !TARGETS.has(target) || typeof confirmedAt !== 'number') return null;
-  return { registrationId: id, confirmation: { target: target as AttendanceTarget, confirmedAt } };
+  if (!isAttendanceTarget(target) || typeof confirmedAt !== 'number') return null;
+  return { registrationId: id, confirmation: { target, confirmedAt } };
 }
 
 function asNote(value: unknown, id: string): CompletionNote | null {

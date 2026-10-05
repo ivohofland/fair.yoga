@@ -217,6 +217,17 @@ describe('attendance outbox', () => {
       expect(storage.keys()).toEqual(['fy-outbox:acc1:r4']);
     });
 
+    it.each(['registered', 'cancelled', 'toString', 'constructor'])(
+      'deletes a stored mark or confirmation whose target is %s',
+      (target) => {
+        const mark = { v: 1, ...entry('r1'), target, nonce: 'n', recordedAt: NOW, attempts: 0 };
+        storage.setItem('fy-outbox:acc1:r1', JSON.stringify(mark));
+        storage.setItem('fy-outbox-confirmed:acc1:r1', JSON.stringify({ v: 1, target, confirmedAt: NOW }));
+        expect(getOutboxSnapshot(OWNER)).toBe(EMPTY_OUTBOX);
+        expect(storage.keys()).toEqual([]);
+      },
+    );
+
     it.each([
       ['without a kind', {}],
       ['with a kind it does not know', { kind: 'gave-up' }],
