@@ -471,6 +471,35 @@ describe('AttendanceList', () => {
       expect(screen.queryByText('Waiting to sync')).toBeNull();
     });
 
+    const savedAfterFinish = `Saved after ${CLASS_LABEL} finished — the payment requests already sent stay as they are.`;
+
+    it('says so when the write landed after the class finished, on a page that did not show it finished', async () => {
+      breakStorage();
+      fetchMock.mockResolvedValue(json(200, { data: { id: 'reg-1', status: 'attended', classCompleted: true } }));
+      vi.stubGlobal('fetch', fetchMock);
+      renderList([untouched]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+      expect(await screen.findByText(savedAfterFinish)).toBeInTheDocument();
+    });
+
+    it.each([
+      ['the class had not finished', { classCompleted: false }, false, undefined],
+      ['the page already showed it finished', { classCompleted: true }, true, undefined],
+      ['the answer was unchanged', { classCompleted: true }, false, 'unchanged'],
+    ])('says nothing of the payment requests when %s', async (_name, extra, completed, outcome) => {
+      breakStorage();
+      fetchMock.mockResolvedValue(json(200, { data: { id: 'reg-1', status: 'attended', ...extra }, outcome }));
+      vi.stubGlobal('fetch', fetchMock);
+      renderList([untouched], { completed, locked: false });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+      await screen.findByText('Present');
+      expect(screen.queryByText(/payment requests already sent/)).toBeNull();
+    });
+
     it('times the direct write out after 10 s', async () => {
       breakStorage();
       const timeout = vi.spyOn(AbortSignal, 'timeout');

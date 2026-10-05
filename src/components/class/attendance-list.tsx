@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from 'react';
 import type { RegistrationStatus } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
+import { savedAfterFinishCopy } from '@/components/layout/sync-status';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
   EMPTY_OUTBOX,
@@ -121,6 +122,9 @@ export function AttendanceList({
   // Set only while a direct write is in flight.
   const [updating, setUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A direct write that landed after the class finished, on a page that did
+  // not show it finished: the queued path's note, with no storage to hold it.
+  const [savedAfterFinish, setSavedAfterFinish] = useState(false);
   // `locked` only sets where this starts — check-in opens editable, a
   // completed class opens read-only until the teacher's own "Edit
   // attendance" tap unlocks the row controls.
@@ -190,6 +194,7 @@ export function AttendanceList({
         }
         if (isAttendanceAnswer(body, registrationId, newStatus)) {
           setDirect((prev) => ({ ...prev, [registrationId]: newStatus }));
+          if (body.outcome === undefined && body.data.classCompleted === true && !completed) setSavedAfterFinish(true);
         } else {
           logRequestFailure('attendance-list', { registrationId, newStatus, status: response.status }, notTheAnswer);
           setError("Couldn't confirm the change was saved. Check your connection and try again.");
@@ -241,6 +246,12 @@ export function AttendanceList({
       {error && (
         <p role="alert" className="text-danger text-sm mb-3">
           {error}
+        </p>
+      )}
+
+      {savedAfterFinish && (
+        <p role="status" className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-3">
+          {savedAfterFinishCopy(classLabel)}
         </p>
       )}
 

@@ -14,6 +14,11 @@ function changes(n: number): string {
   return n === 1 ? '1 change' : `${n} changes`;
 }
 
+/** What a mark saved after its class finished, on a page that showed it unfinished, tells the teacher. */
+export function savedAfterFinishCopy(classLabel: string): string {
+  return `Saved after ${classLabel} finished — the payment requests already sent stay as they are.`;
+}
+
 const DISMISS_CLASSES = 'type-caption text-teal shrink-0 min-h-[44px] px-1 focus-visible:shadow-focus';
 
 /**
@@ -79,7 +84,7 @@ export function SyncStatus({ owner }: { owner: string }) {
           className="flex items-center justify-between gap-3 bg-gold-tint rounded-card px-4 py-1"
         >
           <p className="type-caption text-gold-deep py-2">
-            Saved after {note.classLabel} finished — the payment requests already sent stay as they are.
+            {savedAfterFinishCopy(note.classLabel)}
           </p>
           <button
             type="button"
