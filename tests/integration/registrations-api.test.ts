@@ -10,6 +10,7 @@ import { cancelDeadlineInstant } from '@/services/waitlist';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
+import { completeClass } from '@/services/class-lifecycle';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -45,7 +46,10 @@ const classIds: string[] = [];
 // its class landed on.
 let makeClassCounter = 0;
 
-async function makeClass(maxStudents: number): Promise<string> {
+async function makeClass(
+  maxStudents: number,
+  status: 'open' | 'in_progress' = 'open',
+): Promise<string> {
   const startTime = slotTime(makeClassCounter++);
   const cls = await createClassFixture(prisma, {
       teacherId: ownerId,
@@ -64,7 +68,7 @@ async function makeClass(maxStudents: number): Promise<string> {
       targetRate: 25,
       minStudents: 1,
       maxStudents,
-      status: 'open',
+      status,
     });
   classIds.push(cls.id);
   return cls.id;
@@ -1660,6 +1664,76 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       body: JSON.stringify({ status }),
     });
   }
+
+  /**
+   * A queued tap can replay after the class completed (#726). The write moves
+   * the registration and nothing else: the prices were fixed at completion, the
+   * student keeps the neutral payment request it was sent, and no second
+   * message goes out (spec D8).
+   */
+  it('a post-completion no-show changes no money and sends nothing', async () => {
+    const classId = await makeClass(4, 'in_progress');
+    onTestFinished(async () => {
+      if (classId) await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    const [absent, present] = await Promise.all(
+      [studentIds[0]!, studentIds[1]!].map((studentId) =>
+        prisma.registration.create({
+          data: { classId, studentId, status: 'registered', tierAtBooking: 3 },
+        }),
+      ),
+    );
+
+    const completed = await completeClass(prisma, classId, { finishedEarly: true });
+    expect(completed.ok).toBe(true);
+
+    async function moneyAndMessages() {
+      const [payments, cls, notifications] = await Promise.all([
+        prisma.payment.findMany({
+          where: { registration: { classId } },
+          select: { registrationId: true, amount: true },
+          orderBy: { registrationId: 'asc' },
+        }),
+        prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { totalRevenue: true } }),
+        prisma.notification.findMany({
+          where: { relatedClassId: classId },
+          select: { id: true, type: true, recipientId: true, body: true },
+          orderBy: { id: 'asc' },
+        }),
+      ]);
+      return {
+        payments: payments.map((p) => ({
+          registrationId: p.registrationId,
+          amount: p.amount.toString(),
+        })),
+        totalRevenue: cls.totalRevenue?.toString() ?? null,
+        notifications,
+      };
+    }
+    const before = await moneyAndMessages();
+    expect(before.payments.map((p) => p.registrationId).sort()).toEqual(
+      [absent!.id, present!.id].sort(),
+    );
+    expect(before.notifications.length).toBeGreaterThan(0);
+
+    expect(await expectApplied(await putStatus(ownerToken, absent!.id, 'no_show'))).toEqual({
+      id: absent!.id,
+      status: 'no_show',
+    });
+    const written = await prisma.registration.findUniqueOrThrow({ where: { id: absent!.id } });
+    expect(written.status).toBe('no_show');
+
+    const after = await moneyAndMessages();
+    expect(after).toEqual(before);
+    const absentRequest = after.notifications.find(
+      (n) => n.type === 'payment_request' && n.recipientId === studentIds[0],
+    );
+    expect(absentRequest).toBeDefined();
+    expect(absentRequest!.body).not.toContain('We missed you');
+
+    const again = await putStatus(ownerToken, absent!.id, 'no_show');
+    expect(await expectUnchanged(again)).toEqual({ id: absent!.id, status: 'no_show' });
+  });
 
   it('answers a repeated attendance mark as unchanged, without rewriting the row', async () => {
     const classId = await makeClass(4);
