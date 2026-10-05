@@ -263,8 +263,8 @@ function asNote(value: unknown, id: string): CompletionNote | null {
 
 /**
  * The owner's valid values under `prefix`. A value that is not JSON, or has the
- * wrong shape, is deleted; one in a newer format, or one whose read threw, is
- * skipped and kept.
+ * wrong shape, is deleted and logged by key; one in a newer format, or one
+ * whose read threw, is skipped and kept.
  */
 function readAll<T>(owner: string, prefix: string, parse: (value: unknown, id: string) => T | null): T[] {
   const store = storage();
@@ -277,8 +277,12 @@ function readAll<T>(owner: string, prefix: string, parse: (value: unknown, id: s
       if (stored.kind === 'missing' || stored.kind === 'unreadable') continue;
       if (stored.kind === 'parsed' && isNewerFormat(stored.value)) continue;
       const parsed = stored.kind === 'parsed' ? parse(stored.value, id) : null;
-      if (parsed === null) remove(key);
-      else values.push(parsed);
+      if (parsed === null) {
+        console.error('[attendance-outbox] discarded a stored value of the wrong shape', { prefix, id });
+        remove(key);
+      } else {
+        values.push(parsed);
+      }
     }
   } catch {
     return values;

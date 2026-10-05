@@ -215,6 +215,20 @@ describe('attendance outbox', () => {
       expect(snapshot.refused).toEqual([]);
       expect(snapshot.notes).toEqual([]);
       expect(storage.keys()).toEqual(['fy-outbox:acc1:r4']);
+      // Once per value, naming its prefix and id and nothing it held.
+      const discarded = vi
+        .mocked(console.error)
+        .mock.calls.filter(([first]) => first === '[attendance-outbox] discarded a stored value of the wrong shape');
+      expect(discarded.map(([, context]) => context)).toEqual(
+        expect.arrayContaining([
+          { prefix: 'fy-outbox:', id: 'r1' },
+          { prefix: 'fy-outbox:', id: 'r2' },
+          { prefix: 'fy-outbox:', id: 'r5' },
+          { prefix: 'fy-outbox-refused:', id: 'r3' },
+          { prefix: 'fy-outbox-note:', id: 'c1' },
+        ]),
+      );
+      expect(discarded).toHaveLength(5);
     });
 
     it.each(['registered', 'cancelled', 'toString', 'constructor'])(
