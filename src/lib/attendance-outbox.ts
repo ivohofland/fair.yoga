@@ -368,6 +368,24 @@ export function pendingCount(owner: string): number {
   return queued.length + refused.length;
 }
 
+/** `pendingCount` summed over every account with a queued or refused key: what a clear of every outbox would discard. */
+export function pendingCountAllOwners(): number {
+  const store = storage();
+  if (store === null) return 0;
+  const owners = new Set<string>();
+  try {
+    for (const prefix of [QUEUED_PREFIX, REFUSED_PREFIX]) {
+      for (const { owner } of keysUnder(store, prefix)) owners.add(owner);
+    }
+  } catch {
+    // A store that throws on enumeration holds nothing this module can reach.
+    return 0;
+  }
+  let total = 0;
+  for (const owner of owners) total += pendingCount(owner);
+  return total;
+}
+
 /**
  * Queue a mark, replacing any queued or refused one for that registration.
  * `'unavailable'` when storage cannot hold it — the caller then writes

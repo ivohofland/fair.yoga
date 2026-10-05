@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { clearAllOutboxes, pendingCount } from '@/lib/attendance-outbox';
+import { clearAllOutboxes, pendingCount, pendingCountAllOwners } from '@/lib/attendance-outbox';
 import { logRequestFailure } from '@/lib/client-errors';
 import { flushWithinBound } from '@/lib/flush-within-bound';
 import { clearOfflinePages } from '@/lib/offline-client';
@@ -18,9 +18,11 @@ interface SignOutButtonProps {
   redirectTo?: '/login' | '/signup';
   /**
    * The account whose queued attendance this button tries to sync first.
-   * With it, anything still queued or refused after the flush is named in an
-   * inline confirm before the session is touched; without it, the queue is
-   * only cleared.
+   * With it, anything of that account's still queued or refused after the
+   * flush is named in an inline confirm before the session is touched.
+   * Without it nothing is flushed, there being no account to send as, and the
+   * confirm names what any account on this device has queued or refused: the
+   * clear discards every account's.
    */
   outboxOwner?: string;
 }
@@ -56,14 +58,17 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
 
   async function handleSignOut() {
     setBusy(true);
-    if (outboxOwner !== undefined) {
+    let left: number;
+    if (outboxOwner === undefined) {
+      left = pendingCountAllOwners();
+    } else {
       await flushWithinBound(outboxOwner, 'sign-out-button');
-      const left = pendingCount(outboxOwner);
-      if (left > 0) {
-        setUnsynced(left);
-        setBusy(false);
-        return;
-      }
+      left = pendingCount(outboxOwner);
+    }
+    if (left > 0) {
+      setUnsynced(left);
+      setBusy(false);
+      return;
     }
     await leave();
   }

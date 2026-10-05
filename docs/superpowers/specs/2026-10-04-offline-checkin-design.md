@@ -124,20 +124,24 @@ requests already sent stay as they are." This covers the offline replay and
 the online tap that lands after auto-completion with one rule, as the issue
 asked; the deliberate correction on a completed class already has its caption.
 
-**D8. Sign-out: flush, then warn** (decided at the gate), on every sign-out a
-teacher can reach with a session: the teacher settings page, the student
-account page (a dual-hat account's other side), the signup "Already teaching"
-panel, and the profile setup form's own sign-out and "Already teaching" panel
-in session mode. `SignOutButton` takes an optional
-`outboxOwner`; with it, the order is flush (bounded at 5 s) → if anything is
-still queued or refused, an inline confirm in the button's own place ("N
-attendance changes haven't synced and will be lost." with "Sign out anyway"
-and "Cancel"; focus moves to Cancel, and both buttons are described by the copy) → push
-teardown → session DELETE → clears (D6). A student-only account's queue is
-empty, so on the account page the flush sends nothing. The profile setup
-form's account has no teacher profile when the page renders, but a tab left
-open there can outlive the account gaining one in another tab, with marks
-queued since. Without an owner only the clear is added. One login serves both hats,
+**D8. Sign-out: flush, then warn** (decided at the gate). No sign-out
+discards a queued or refused mark without asking. `SignOutButton` takes an
+optional `outboxOwner`; with it, the order is flush (bounded at 5 s) → if
+anything of that account's is still queued or refused, an inline confirm in
+the button's own place ("N attendance changes haven't synced and will be
+lost." with "Sign out anyway" and "Cancel"; focus moves to Cancel, and both
+buttons are described by the copy) → push teardown → session DELETE → clears
+(D6). The teacher settings page, the student account page (a dual-hat
+account's other side), the signup "Already teaching" panel, and the profile
+setup form's own sign-out and "Already teaching" panel in session mode pass
+the account. A student-only account's queue is empty, so on the account page
+the flush sends nothing. The profile setup form's account has no teacher
+profile when the page renders, but a tab left open there can outlive the
+account gaining one in another tab, with marks queued since. Without an owner
+— the profile setup form's "Already teaching" panel in ticket mode, which a
+session started in another tab can reach — nothing is flushed, there being no
+account to send as, and the same confirm names every account's queued or
+refused marks on the device, since the clear discards them all. One login serves both hats,
 so the account page's sign-out reaches a dual-hat teacher's queue as surely as
 the settings page's does. The bounded flush is `flushWithinBound`
 (`src/lib/flush-within-bound.ts`), shared with D10.

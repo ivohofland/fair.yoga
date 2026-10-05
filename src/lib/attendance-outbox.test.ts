@@ -8,6 +8,7 @@ import {
   flushOutbox,
   getOutboxSnapshot,
   pendingCount,
+  pendingCountAllOwners,
   purgeOtherOwners,
   resetOutboxForTests,
   subscribeOutbox,
@@ -314,6 +315,40 @@ describe('attendance outbox', () => {
       await flushOutbox(OWNER);
       expect(pendingCount(OWNER)).toBe(2);
       expect(pendingCount('acc2')).toBe(1);
+    });
+
+    it('counts queued and refused entries of every owner, and nothing else, for a sign-out that knows no account', async () => {
+      expect(pendingCountAllOwners()).toBe(0);
+      enqueueAttendance(OWNER, entry('r1'));
+      enqueueAttendance(OWNER, entry('r2'));
+      enqueueAttendance('acc2', entry('r3'));
+      fetchMock.mockResolvedValueOnce(refusal(404, 'NOT_FOUND', 'Gone'));
+      fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      await flushOutbox(OWNER);
+      // An account with nothing queued, only a refusal.
+      storage.setItem(
+        'fy-outbox-refused:acc4:r5',
+        JSON.stringify({
+          v: 1,
+          ...entry('r5'),
+          nonce: 'n5',
+          recordedAt: NOW,
+          attempts: 0,
+          message: 'Gone',
+          refusedAt: NOW,
+          kind: 'verdict',
+        }),
+      );
+      storage.setItem('fy-outbox-note:acc3:c1', JSON.stringify({ v: 1, classId: 'c1', classLabel: 'Hatha' }));
+      storage.setItem('fy-outbox-confirmed:acc3:r4', JSON.stringify({ v: 1, target: 'attended', confirmedAt: NOW }));
+      expect(pendingCountAllOwners()).toBe(4);
+      vi.setSystemTime(NOW + 7 * DAY_MS + 1);
+      expect(pendingCountAllOwners()).toBe(2);
+    });
+
+    it('counts nothing where storage is out of reach', () => {
+      vi.stubGlobal('localStorage', undefined);
+      expect(pendingCountAllOwners()).toBe(0);
     });
 
     it('does not count a refused entry past its seven-day expiry', async () => {

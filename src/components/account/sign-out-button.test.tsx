@@ -19,10 +19,12 @@ vi.mock('@/lib/offline-client', () => ({
 
 const flushOutbox = vi.fn<(owner: string) => Promise<FlushResult>>(async () => ({ applied: 0, replayed: 0 }));
 const pendingCount = vi.fn<(owner: string) => number>(() => 0);
+const pendingCountAllOwners = vi.fn<() => number>(() => 0);
 const clearAllOutboxes = vi.fn<() => void>();
 vi.mock('@/lib/attendance-outbox', () => ({
   flushOutbox: (owner: string) => flushOutbox(owner),
   pendingCount: (owner: string) => pendingCount(owner),
+  pendingCountAllOwners: () => pendingCountAllOwners(),
   clearAllOutboxes: () => clearAllOutboxes(),
 }));
 
@@ -53,6 +55,8 @@ describe('SignOutButton', () => {
     flushOutbox.mockImplementation(async () => ({ applied: 0, replayed: 0 }));
     pendingCount.mockReset();
     pendingCount.mockImplementation(() => 0);
+    pendingCountAllOwners.mockReset();
+    pendingCountAllOwners.mockImplementation(() => 0);
     clearAllOutboxes.mockReset();
     vi.unstubAllGlobals();
   });
@@ -273,6 +277,8 @@ describe('SignOutButton and the attendance outbox', () => {
     flushOutbox.mockImplementation(async () => ({ applied: 0, replayed: 0 }));
     pendingCount.mockReset();
     pendingCount.mockImplementation(() => 0);
+    pendingCountAllOwners.mockReset();
+    pendingCountAllOwners.mockImplementation(() => 0);
     clearAllOutboxes.mockReset();
     routerPush.mockReset();
     vi.unstubAllGlobals();
@@ -312,6 +318,54 @@ describe('SignOutButton and the attendance outbox', () => {
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
     expect(flushOutbox).not.toHaveBeenCalled();
     expect(pendingCount).not.toHaveBeenCalled();
+  });
+
+  // A sign-out that knows no account (the profile setup form in ticket mode,
+  // with a session another tab started) has no one to flush as, but clears
+  // every account's queue all the same.
+  it.each([
+    [1, "1 attendance change hasn't synced and will be lost."],
+    [2, "2 attendance changes haven't synced and will be lost."],
+  ])('without an owner, names the %i change(s) any account left before clearing, and flushes nothing', async (count, copy) => {
+    const order: string[] = [];
+    pendingCountAllOwners.mockReturnValue(count);
+    fetchMock.mockImplementation(async () => {
+      order.push('fetch');
+      return { ok: true };
+    });
+    clearAllOutboxes.mockImplementation(() => order.push('outboxes'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton redirectTo="/signup" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(flushOutbox).not.toHaveBeenCalled();
+    expect(pendingCount).not.toHaveBeenCalled();
+    expect(disablePushMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(clearAllOutboxes).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out anyway' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/signup'));
+    expect(order).toEqual(['fetch', 'outboxes']);
+    expect(flushOutbox).not.toHaveBeenCalled();
+  });
+
+  it("with an owner, asks about that account's changes alone, as before", async () => {
+    pendingCountAllOwners.mockReturnValue(4);
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton outboxOwner="acc-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+    expect(screen.queryByText(/will be lost/)).not.toBeInTheDocument();
+    expect(pendingCount).toHaveBeenCalledWith('acc-1');
+    expect(pendingCountAllOwners).not.toHaveBeenCalled();
   });
 
   it("flushes the owner's queue before the push teardown and the DELETE, and asks nothing once it empties", async () => {
