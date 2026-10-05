@@ -7,9 +7,10 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
  * Shows `attendance` once the server showed check-in or the device clock has
- * reached `checkinAt` (epoch ms), and `registered` until then. The answer only
- * grows, so a device clock behind the server never hides a list the server
- * showed. The clock is read again when a timer reaches `checkinAt` and on
+ * reached `checkinAt` (epoch ms), and `registered` until then. A list the
+ * server showed stays shown whatever the device clock says. One shown by the
+ * device clock alone hides again if that clock is set back before `checkinAt`,
+ * until it reaches `checkinAt` again. The clock is read again when a timer reaches `checkinAt` and on
  * `visibilitychange`, since a suspended page's timers do not fire on time.
  * The server snapshot is `false`, so the first paint is the server's and
  * hydration matches; the clock takes over after mount.

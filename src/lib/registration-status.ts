@@ -80,6 +80,5 @@ export const ACTIVE_REGISTRATION_STATUSES: readonly RegistrationStatus[] = Objec
   ),
 );
 
-
 /** A registration the attendance list can show: every status but `cancelled`. */
 export type AttendanceStatus = Exclude<RegistrationStatus, 'cancelled'>;

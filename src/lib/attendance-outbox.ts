@@ -31,7 +31,11 @@ export interface OutboxState {
   refused: Readonly<Record<string, RefusedEntry>>;
 }
 
-/** `at` is the server's clock (the response's `Date` header), so it compares with the page's server-side `renderedAt`. */
+/**
+ * `at` is the confirmation time: the response's `Date` header, so it compares
+ * with the page's server-side `renderedAt`, or the device clock when the
+ * response carries no `Date` header.
+ */
 export type Settlement =
   | { kind: 'confirmed'; at: number }
   | { kind: 'refused'; message: string }
@@ -224,15 +228,20 @@ export async function settleEntry(sent: PendingEntry, settlement: Settlement): P
     const pending = { ...s.pending };
     delete pending[sent.registrationId];
     switch (settlement.kind) {
-      case 'confirmed':
+      case 'confirmed': {
+        // The server now holds this registration's write, so an earlier refusal no longer describes it.
+        const refused = { ...s.refused };
+        delete refused[sent.registrationId];
         return {
           ...s,
           pending,
+          refused,
           confirmed: {
             ...s.confirmed,
             [sent.registrationId]: { status: sent.status, confirmedAt: settlement.at },
           },
         };
+      }
       case 'refused':
         return {
           ...s,
@@ -267,6 +276,17 @@ export async function clearOutbox(): Promise<void> {
     cachedRaw = null;
     notify();
   });
+}
+
+/**
+ * The part of `outbox` that belongs to `ownerId`: its pending and refused
+ * entries. Confirmations carry no owner and are all kept. A null owner keeps
+ * no pending or refused entry.
+ */
+export function ownedOutbox(outbox: OutboxState, ownerId: string | null): OutboxState {
+  const mine = <T extends PendingEntry>(entries: Readonly<Record<string, T>>): Record<string, T> =>
+    Object.fromEntries(Object.entries(entries).filter(([, e]) => e.ownerId === ownerId));
+  return { pending: mine(outbox.pending), confirmed: outbox.confirmed, refused: mine(outbox.refused) };
 }
 
 export function shownStatus(

@@ -6,6 +6,7 @@ import {
   dismissRefused,
   enqueueAttendance,
   getOutbox,
+  ownedOutbox,
   readOutbox,
   resetOutboxForTests,
   settleEntry,
@@ -57,6 +58,36 @@ describe('attendance outbox', () => {
     expect(getOutbox().pending).toEqual({});
     expect(getOutbox().refused.r1?.message).toBe('This booking was cancelled.');
     expect(getOutbox().refused.r1?.studentName).toBe('Ada');
+  });
+
+  it('a later confirmed write for the same registration clears its refusal', async () => {
+    const a = await enqueueAttendance(input('attended', 'r1'));
+    const other = await enqueueAttendance(input('attended', 'r2'));
+    await settleEntry(a, { kind: 'refused', message: 'Record it once the class has started.' });
+    await settleEntry(other, { kind: 'refused', message: 'y' });
+    const retry = await enqueueAttendance(input('attended', 'r1'));
+    // A retap alone proves nothing yet: the refusal stays until the retry is confirmed.
+    expect(getOutbox().refused.r1?.message).toBe('Record it once the class has started.');
+    await settleEntry(retry, { kind: 'confirmed', at: 3000 });
+    expect(Object.keys(getOutbox().refused)).toEqual(['r2']);
+    expect(getOutbox().confirmed.r1?.status).toBe('attended');
+  });
+
+  it('ownedOutbox keeps only the owner’s pending and refused entries, and every confirmation', async () => {
+    const mine = await enqueueAttendance(input('attended', 'r1'));
+    await enqueueAttendance({ ...input('attended', 'r2'), ownerId: 'b' });
+    const theirs = await enqueueAttendance({ ...input('no_show', 'r3'), ownerId: 'b' });
+    await enqueueAttendance(input('no_show', 'r4'));
+    await settleEntry(theirs, { kind: 'refused', message: 'x' });
+    await settleEntry(mine, { kind: 'refused', message: 'y' });
+    const r5 = await enqueueAttendance({ ...input('attended', 'r5'), ownerId: 'b' });
+    await settleEntry(r5, { kind: 'confirmed', at: 1000 });
+
+    const owned = ownedOutbox(getOutbox(), 'a');
+    expect(Object.keys(owned.pending)).toEqual(['r4']);
+    expect(Object.keys(owned.refused)).toEqual(['r1']);
+    expect(Object.keys(owned.confirmed)).toEqual(['r5']);
+    expect(ownedOutbox(getOutbox(), null)).toEqual({ ...getOutbox(), pending: {}, refused: {} });
   });
 
   it('dropped removes without recording', async () => {

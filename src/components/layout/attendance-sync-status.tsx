@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import Link from 'next/link';
-import { dismissRefused, useOutbox } from '@/lib/attendance-outbox';
+import { dismissRefused, ownedOutbox, useOutbox } from '@/lib/attendance-outbox';
 import type { QueuedStatus, RefusedEntry } from '@/lib/attendance-outbox';
 import { startAttendanceSync, useSyncState } from '@/lib/attendance-sync';
 
@@ -117,10 +117,9 @@ export function AttendanceSyncStatus() {
   );
   if (!ctx) return null;
 
-  const pending = Object.values(outbox.pending).filter((e) => e.ownerId === ctx.ownerId).length;
-  const refused = Object.values(outbox.refused).filter(
-    (e) => e.ownerId === ctx.ownerId && !inline.has(e.classId),
-  );
+  const owned = ownedOutbox(outbox, ctx.ownerId);
+  const pending = Object.keys(owned.pending).length;
+  const refused = Object.values(owned.refused).filter((e) => !inline.has(e.classId));
   return (
     <div role="status">
       {(pending > 0 || refused.length > 0) && (
