@@ -203,6 +203,9 @@ export function AttendanceList({
         if (isAttendanceAnswer(body, registrationId, newStatus)) {
           const answer: Confirmation = { target: newStatus, confirmedAt: answeredAt(response) };
           setDirect((prev) => ({ ...prev, [registrationId]: answer }));
+          // The app took this write, so an older refusal for the row no longer
+          // describes it.
+          dismissRefused(owner, registrationId);
           if (body.outcome === undefined && body.data.classCompleted === true && !completed) setSavedAfterFinish(true);
         } else {
           logRequestFailure('attendance-list', { registrationId, newStatus, status: response.status }, notTheAnswer);

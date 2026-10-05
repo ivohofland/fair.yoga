@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderToString } from 'react-dom/server';
 import { AttendanceList, type AttendanceItem } from './attendance-list';
-import { enqueueAttendance, flushOutbox, resetOutboxForTests } from '@/lib/attendance-outbox';
+import { CompleteClassButton } from './complete-class-button';
+import { enqueueAttendance, flushOutbox, getOutboxSnapshot, resetOutboxForTests } from '@/lib/attendance-outbox';
 
 const refresh = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
@@ -506,6 +507,85 @@ describe('AttendanceList', () => {
 
       await screen.findByText('Present');
       expect(screen.queryByText(/payment requests already sent/)).toBeNull();
+    });
+
+    // Refused once the outbox gave up retrying, so Finish counts it as unsynced
+    // (complete-class-button); then the quota fills, and the next tap writes directly.
+    it("clears the row's older refusal once the app answers the direct write, and Finish no longer counts it", async () => {
+      localStorage.setItem(
+        `fy-outbox-refused:${OWNER}:reg-1`,
+        JSON.stringify({
+          v: 1,
+          registrationId: 'reg-1',
+          classId: CLASS_ID,
+          classLabel: CLASS_LABEL,
+          studentName: 'Grace Hopper',
+          target: 'attended',
+          nonce: 'n-old',
+          recordedAt: Date.now() - 60_000,
+          attempts: 3,
+          knownCompleted: false,
+          message: "This change couldn't be saved after several tries.",
+          refusedAt: Date.now() - 30_000,
+          kind: 'retries-exhausted',
+        }),
+      );
+      breakStorage();
+      fetchMock.mockImplementation((url: string) =>
+        Promise.resolve(
+          url.endsWith('/complete') ? json(200, { data: {} }) : json(200, { data: { id: 'reg-1', status: 'attended' } }),
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <>
+          <CompleteClassButton classId={CLASS_ID} chargedCount={1} outboxOwner={OWNER} />
+          {list([untouched])}
+        </>,
+      );
+      await screen.findByText(/after several tries/);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+      await screen.findByText('Present');
+      expect(screen.queryByText(/after several tries/)).toBeNull();
+      expect(getOutboxSnapshot(OWNER).refused).toEqual([]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/classes/${CLASS_ID}/complete`, { method: 'POST' }));
+      expect(screen.queryByText(/hasn't synced/)).toBeNull();
+    });
+
+    it("keeps the row's older refusal when the direct write is refused too", async () => {
+      localStorage.setItem(
+        `fy-outbox-refused:${OWNER}:reg-1`,
+        JSON.stringify({
+          v: 1,
+          registrationId: 'reg-1',
+          classId: CLASS_ID,
+          classLabel: CLASS_LABEL,
+          studentName: 'Grace Hopper',
+          target: 'attended',
+          nonce: 'n-old',
+          recordedAt: Date.now() - 60_000,
+          attempts: 0,
+          knownCompleted: false,
+          message: 'This class was cancelled.',
+          refusedAt: Date.now() - 30_000,
+          kind: 'verdict',
+        }),
+      );
+      breakStorage();
+      fetchMock.mockResolvedValue(json(409, { error: { message: 'This class was cancelled.', code: 'CLASS_CANCELLED' } }));
+      vi.stubGlobal('fetch', fetchMock);
+      renderList([untouched]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+      await screen.findByRole('alert');
+      expect(getOutboxSnapshot(OWNER).refused.map((entry) => entry.registrationId)).toEqual(['reg-1']);
     });
 
     describe('and a later render of the page arrives', () => {
