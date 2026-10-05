@@ -18,12 +18,10 @@ vi.mock('@/lib/offline-client', () => ({
 }));
 
 const flushOutbox = vi.fn<(owner: string) => Promise<FlushResult>>(async () => ({ applied: 0, replayed: 0 }));
-const pendingCount = vi.fn<(owner: string) => number>(() => 0);
 const pendingCountAllOwners = vi.fn<() => number>(() => 0);
 const clearAllOutboxes = vi.fn<() => void>();
 vi.mock('@/lib/attendance-outbox', () => ({
   flushOutbox: (owner: string) => flushOutbox(owner),
-  pendingCount: (owner: string) => pendingCount(owner),
   pendingCountAllOwners: () => pendingCountAllOwners(),
   clearAllOutboxes: () => clearAllOutboxes(),
 }));
@@ -53,8 +51,6 @@ describe('SignOutButton', () => {
     clearOfflinePages.mockClear();
     flushOutbox.mockReset();
     flushOutbox.mockImplementation(async () => ({ applied: 0, replayed: 0 }));
-    pendingCount.mockReset();
-    pendingCount.mockImplementation(() => 0);
     pendingCountAllOwners.mockReset();
     pendingCountAllOwners.mockImplementation(() => 0);
     clearAllOutboxes.mockReset();
@@ -275,8 +271,6 @@ describe('SignOutButton and the attendance outbox', () => {
     clearOfflinePages.mockClear();
     flushOutbox.mockReset();
     flushOutbox.mockImplementation(async () => ({ applied: 0, replayed: 0 }));
-    pendingCount.mockReset();
-    pendingCount.mockImplementation(() => 0);
     pendingCountAllOwners.mockReset();
     pendingCountAllOwners.mockImplementation(() => 0);
     clearAllOutboxes.mockReset();
@@ -317,12 +311,10 @@ describe('SignOutButton and the attendance outbox', () => {
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
     expect(flushOutbox).not.toHaveBeenCalled();
-    expect(pendingCount).not.toHaveBeenCalled();
   });
 
-  // A sign-out that knows no account (the profile setup form in ticket mode,
-  // with a session another tab started) has no one to flush as, but clears
-  // every account's queue all the same.
+  // A sign-out that knows no account has no one to flush as, but clears every
+  // account's queue all the same.
   it.each([
     [1, "1 attendance change hasn't synced and will be lost."],
     [2, "2 attendance changes haven't synced and will be lost."],
@@ -342,7 +334,6 @@ describe('SignOutButton and the attendance outbox', () => {
     expect(await screen.findByText(copy)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     expect(flushOutbox).not.toHaveBeenCalled();
-    expect(pendingCount).not.toHaveBeenCalled();
     expect(disablePushMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(clearAllOutboxes).not.toHaveBeenCalled();
@@ -354,24 +345,31 @@ describe('SignOutButton and the attendance outbox', () => {
     expect(flushOutbox).not.toHaveBeenCalled();
   });
 
-  it("with an owner, asks about that account's changes alone, as before", async () => {
-    pendingCountAllOwners.mockReturnValue(4);
-    fetchMock.mockResolvedValue({ ok: true });
+  it("with an owner, names another account's changes the clear would discard, though the owner has none", async () => {
+    const order: string[] = [];
+    flushOutbox.mockImplementation(async (owner) => {
+      order.push(`flush:${owner}`);
+      return { applied: 0, replayed: 0 };
+    });
+    pendingCountAllOwners.mockImplementation(() => {
+      order.push('count');
+      return 4;
+    });
     vi.stubGlobal('fetch', fetchMock);
     render(<SignOutButton outboxOwner="acc-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 
-    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
-    expect(screen.queryByText(/will be lost/)).not.toBeInTheDocument();
-    expect(pendingCount).toHaveBeenCalledWith('acc-1');
-    expect(pendingCountAllOwners).not.toHaveBeenCalled();
+    expect(await screen.findByText("4 attendance changes haven't synced and will be lost.")).toBeInTheDocument();
+    expect(order).toEqual(['flush:acc-1', 'count']);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(clearAllOutboxes).not.toHaveBeenCalled();
   });
 
   it("flushes the owner's queue before the push teardown and the DELETE, and asks nothing once it empties", async () => {
     const order: string[] = [];
     let flushed = false;
-    pendingCount.mockImplementation(() => (flushed ? 0 : 1));
+    pendingCountAllOwners.mockImplementation(() => (flushed ? 0 : 1));
     flushOutbox.mockImplementation(async (owner) => {
       order.push(`flush:${owner}`);
       flushed = true;
@@ -405,11 +403,11 @@ describe('SignOutButton and the attendance outbox', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
       await vi.advanceTimersByTimeAsync(4_999);
-      expect(pendingCount).not.toHaveBeenCalled();
+      expect(pendingCountAllOwners).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1);
-      expect(pendingCount).toHaveBeenCalledWith('acc-1');
+      expect(pendingCountAllOwners).toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
     } finally {
       vi.useRealTimers();
@@ -419,8 +417,8 @@ describe('SignOutButton and the attendance outbox', () => {
   it.each([
     [1, '1 attendance change hasn\'t synced and will be lost.'],
     [3, '3 attendance changes haven\'t synced and will be lost.'],
-  ])('with %i queued change(s) left after the flush, confirms in the button\'s place and sends nothing', async (count, copy) => {
-    pendingCount.mockReturnValue(count);
+  ])('with %i change(s) left on the device after the flush, confirms in the button\'s place and sends nothing', async (count, copy) => {
+    pendingCountAllOwners.mockReturnValue(count);
     vi.stubGlobal('fetch', fetchMock);
     render(<SignOutButton outboxOwner="acc-1" />);
 
@@ -439,7 +437,7 @@ describe('SignOutButton and the attendance outbox', () => {
 
   it('"Sign out anyway" tears push down, DELETEs and clears', async () => {
     const order: string[] = [];
-    pendingCount.mockReturnValue(2);
+    pendingCountAllOwners.mockReturnValue(2);
     disablePushMock.mockImplementation(async () => {
       order.push('disablePush');
       return 'off';
@@ -466,7 +464,7 @@ describe('SignOutButton and the attendance outbox', () => {
   });
 
   it('moves focus to Cancel when the confirm appears, describes both buttons by its reason, and returns focus on Cancel', async () => {
-    pendingCount.mockReturnValue(1);
+    pendingCountAllOwners.mockReturnValue(1);
     vi.stubGlobal('fetch', fetchMock);
     render(<SignOutButton outboxOwner="acc-1" />);
 
@@ -482,7 +480,7 @@ describe('SignOutButton and the attendance outbox', () => {
   });
 
   it('"Cancel" restores the button and sends nothing', async () => {
-    pendingCount.mockReturnValue(1);
+    pendingCountAllOwners.mockReturnValue(1);
     vi.stubGlobal('fetch', fetchMock);
     render(<SignOutButton outboxOwner="acc-1" />);
 

@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { clearAllOutboxes, pendingCount, pendingCountAllOwners } from '@/lib/attendance-outbox';
+import { clearAllOutboxes, pendingCountAllOwners } from '@/lib/attendance-outbox';
 import { logRequestFailure } from '@/lib/client-errors';
 import { flushWithinBound } from '@/lib/flush-within-bound';
 import { clearOfflinePages } from '@/lib/offline-client';
@@ -18,11 +18,10 @@ interface SignOutButtonProps {
   redirectTo?: '/login' | '/signup';
   /**
    * The account whose queued attendance this button tries to sync first.
-   * With it, anything of that account's still queued or refused after the
-   * flush is named in an inline confirm before the session is touched.
-   * Without it nothing is flushed, there being no account to send as, and the
-   * confirm names what any account on this device has queued or refused: the
-   * clear discards every account's.
+   * Without it nothing is flushed, there being no account to send as. Either
+   * way, what every account on this device still has queued or refused is
+   * named in an inline confirm before the session is touched: the clear
+   * discards every account's.
    */
   outboxOwner?: string;
 }
@@ -58,13 +57,8 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
 
   async function handleSignOut() {
     setBusy(true);
-    let left: number;
-    if (outboxOwner === undefined) {
-      left = pendingCountAllOwners();
-    } else {
-      await flushWithinBound(outboxOwner, 'sign-out-button');
-      left = pendingCount(outboxOwner);
-    }
+    if (outboxOwner !== undefined) await flushWithinBound(outboxOwner, 'sign-out-button');
+    const left = pendingCountAllOwners();
     if (left > 0) {
       setUnsynced(left);
       setBusy(false);
@@ -103,8 +97,8 @@ export function SignOutButton({ redirectTo = '/login', outboxOwner }: SignOutBut
       // cleared stays false — surfaced below as well as logged.
       logRequestFailure('sign-out-button', {}, err);
     } finally {
-      // The device's stored teacher pages and queued attendance belong to the
-      // account that just left — cleared whether or not the DELETE succeeded.
+      // The device's stored teacher pages and every account's outbox —
+      // cleared whether or not the DELETE succeeded.
       await clearOfflinePages();
       clearAllOutboxes();
       // #40. Neither `router.push` nor `router.refresh` is guaranteed to

@@ -7,8 +7,8 @@ import { SignOutButton } from '@/components/account/sign-out-button';
  * Offers both ways out: the teacher's schedule, and the sign-out that makes
  * a different address reachable. `accountId`, the signed-in account when
  * the caller has it, makes that sign-out sync the account's queued attendance
- * first; with it or without it, the sign-out says what would be lost before
- * clearing (`SignOutButton`).
+ * first; with it or without it, the sign-out names every account's unsynced
+ * marks before clearing them (`SignOutButton`).
  */
 export function AlreadyTeachingPanel({ email, accountId }: { email: string; accountId?: string }) {
   return (
