@@ -458,6 +458,18 @@ describe('AttendanceList', () => {
     expect(Object.keys(getOutbox().refused)).toEqual(['reg-other']);
   });
 
+  it('ignores another account’s pending and refused entries for this class', async () => {
+    vi.stubGlobal('fetch', fetchMock);
+    await storeRefusal({ ownerId: 'acct-2', registrationId: 'reg-2', studentName: 'Ada Lovelace' }, 'Nope.');
+    await enqueueAttendance(entry({ ownerId: 'acct-2', status: 'no_show' }));
+
+    renderList({ items: [untouched] });
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/waiting to sync/i)).toBeNull();
+    expect(screen.getByText('Not marked')).toBeTruthy();
+  });
+
   it('a network failure leaves the row waiting, with no error text', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);

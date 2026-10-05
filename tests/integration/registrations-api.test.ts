@@ -1715,6 +1715,7 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       [absent!.id, present!.id].sort(),
     );
     expect(before.notifications.length).toBeGreaterThan(0);
+    expect(before.totalRevenue).not.toBeNull();
 
     expect(await expectApplied(await putStatus(ownerToken, absent!.id, 'no_show'))).toEqual({
       id: absent!.id,

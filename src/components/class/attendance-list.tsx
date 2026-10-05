@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
 import {
   dismissRefused,
   enqueueAttendance,
   getOutbox,
+  ownedOutbox,
   shownStatus,
   useOutbox,
   type QueuedStatus,
@@ -83,7 +84,8 @@ function statusLabel(status: AttendanceStatus): string {
 export function AttendanceList({ items, classId, renderedAt, locked = false }: AttendanceListProps) {
   const router = useRouter();
   const ownerId = useAttendanceOwner();
-  const outbox = useOutbox();
+  const stored = useOutbox();
+  const outbox = useMemo(() => ownedOutbox(stored, ownerId), [stored, ownerId]);
   // `locked` only sets where this starts — check-in opens editable, a
   // completed class opens read-only until the teacher's own "Edit
   // attendance" tap unlocks the row controls.
@@ -123,7 +125,8 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
   async function toggleAttendance(owner: string, item: AttendanceItem) {
     const id = item.registrationId;
     const currentStatus =
-      uncommitted.current.get(id)?.status ?? shownStatus(getOutbox(), id, item.status, renderedAt).status;
+      uncommitted.current.get(id)?.status ??
+      shownStatus(ownedOutbox(getOutbox(), owner), id, item.status, renderedAt).status;
     // A student who cancelled late is not a no-show — they told the teacher they
     // were not coming, and were charged for saying so. The only correction that
     // means anything for them is "they came after all", and it has to be
@@ -229,7 +232,7 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
                 <span className="type-caption">
                   {shown.pending ? 'Waiting to sync' : statusLabel(shown.status)}
                 </span>
-                {/* No owner means no teacher layout, and the teacher layout always provides one. */}
+                {/* No owner, no control: a tap could not be queued without one. */}
                 {editing && ownerId !== null && (
                   <button
                     type="button"
