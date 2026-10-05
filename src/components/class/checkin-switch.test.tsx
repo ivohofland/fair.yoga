@@ -99,7 +99,7 @@ describe('CheckinSwitch', () => {
     expect(screen.queryByText('attendance list')).toBeNull();
   });
 
-  it('never switches back once check-in shows, even if the clock moves earlier', () => {
+  it('never switches back once the device clock opened check-in, even if the clock moves earlier', () => {
     vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
     const { rerender } = render(ui());
     act(() => vi.advanceTimersByTime(5 * 60_000));
@@ -161,6 +161,35 @@ describe('CheckinSwitch', () => {
     expect(removed).toContain(added[0]);
     add.mockRestore();
     remove.mockRestore();
+  });
+
+  describe('when a later server render chooses the before view', () => {
+    // The class's start moved later from another device, and a refresh
+    // re-renders the page with the new instant.
+    const MOVED_CHECKIN_AT = '2026-10-04T10:15:00.000Z';
+
+    it('follows it from a check-in view the server chose', () => {
+      vi.setSystemTime(new Date('2026-10-04T09:46:00Z'));
+      const { rerender } = render(ui('checkin'));
+      expect(screen.getByText('attendance list')).toBeInTheDocument();
+
+      rerender(ui('before', MOVED_CHECKIN_AT));
+
+      expect(screen.getByText('registered students')).toBeInTheDocument();
+      expect(screen.queryByText('attendance list')).toBeNull();
+    });
+
+    it('does not undo a check-in view the device clock opened', () => {
+      vi.setSystemTime(new Date('2026-10-04T09:40:00Z'));
+      const { rerender } = render(ui('before'));
+      act(() => vi.advanceTimersByTime(5 * 60_000));
+      expect(screen.getByText('attendance list')).toBeInTheDocument();
+
+      rerender(ui('before', MOVED_CHECKIN_AT));
+
+      expect(screen.getByText('attendance list')).toBeInTheDocument();
+      expect(screen.queryByText('registered students')).toBeNull();
+    });
   });
 
   describe('when the server re-renders with check-in chosen', () => {

@@ -17,10 +17,12 @@ export type CheckinView = 'before' | 'checkin';
  * element, so the server's re-render at the edge keeps what is mounted under
  * it. After mount it checks `Date.now()` against `checkinAt` at once, on a
  * timer to that instant (waiting again if it fires short, never armed past
- * what `setTimeout` can wait) and on returning to the tab. Once it shows
- * `checkin` it never goes back: a list holding queued marks must not
- * disappear. The clock only picks what is displayed; the server judges every
- * write.
+ * what `setTimeout` can wait) and on returning to the tab. The clock's switch
+ * is one way: once it has opened check-in, no later render closes it, so a
+ * list holding queued marks does not disappear under the teacher. A check-in
+ * view the server chose is the server's to take back: a later render whose
+ * `initial` is `before` (a start moved later) shows `before`. The clock only
+ * picks what is displayed; the server judges every write.
  */
 export function CheckinSwitch({
   checkinAt,

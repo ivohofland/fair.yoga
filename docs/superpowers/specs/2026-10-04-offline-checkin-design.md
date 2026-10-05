@@ -57,10 +57,13 @@ plus the pre-check-in `PricingPreview`, and the check-in block (attendance
 list, walk-in, check-in `PricingPreview`) — and a client switch shows exactly
 one. It starts on the server's choice (no clock read in the first render, so
 hydration matches), then arms a timer to the check-in instant and re-checks on
-returning to the tab. Once it has shown check-in it never switches back,
-online or offline: reconnecting does not hide a list holding queued rows.
-Online, `RefreshAt` re-renders at the same edge anyway and the server then
-renders check-in itself. The device clock only decides what is displayed; the
+returning to the tab. The device clock's switch is one way, online or
+offline: once it has opened check-in no later render closes it, so
+reconnecting does not hide a list holding queued rows. A check-in view the
+server rendered follows the server: a later render choosing the before view
+(the start moved later from another device) shows it, and queued marks stay
+in the sync block. Online, `RefreshAt` re-renders at the same edge anyway and
+the server then renders check-in itself. The device clock only decides what is displayed; the
 server judges every write. *Rejected:* only pages loaded inside the window
 work offline — fails the basement case; *rejected:* switching on connection
 state — flips back to the stale view on reconnect.
