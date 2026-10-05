@@ -266,7 +266,7 @@ test.describe('Offline check-in', () => {
       await expect(toggle).toBeEnabled();
       await toggle.click();
     }
-    await expect(page.getByText('3 changes waiting to sync')).toBeVisible();
+    await expect(page.getByText('3 changes waiting to sync', { exact: true })).toBeVisible();
     await expect(page.getByText('Waiting to sync', { exact: true })).toHaveCount(STUDENT_NAMES.length);
     // D9's tether on the check-in view the device clock opened.
     expect(await escapedControls(page)).toEqual([]);

@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, within } from '@testing-library/react';
 import { renderToString } from 'react-dom/server';
 import { SyncStatus } from './sync-status';
 import type { OutboxEntry, OutboxSnapshot, RefusedEntry } from '@/lib/attendance-outbox';
+import type { ConnectionStatus } from '@/lib/offline-status';
 
-const { snapshot, listeners, dismissRefused, dismissNote, pathname } = vi.hoisted(() => ({
+const { snapshot, listeners, dismissRefused, dismissNote, pathname, connection } = vi.hoisted(() => ({
   snapshot: { current: null as OutboxSnapshot | null },
+  connection: { current: { offline: false, serverNow: null } as ConnectionStatus },
   listeners: new Set<() => void>(),
   dismissRefused: vi.fn((_owner: string, _registrationId: string) => {}),
   dismissNote: vi.fn((_owner: string, _classId: string) => {}),
@@ -26,6 +28,7 @@ vi.mock('@/lib/attendance-outbox', async (importOriginal) => {
   };
 });
 vi.mock('next/navigation', () => ({ usePathname: () => pathname.current }));
+vi.mock('@/lib/offline-status', () => ({ useConnectionStatus: () => connection.current }));
 
 function entry(id: string, overrides: Partial<OutboxEntry> = {}): OutboxEntry {
   return {
@@ -64,51 +67,119 @@ beforeEach(() => {
   dismissRefused.mockReset();
   dismissNote.mockReset();
   pathname.current = '/class/c1';
+  connection.current = { offline: false, serverNow: null };
 });
 
+const HATHA_NOTE = 'Saved after Hatha · Tue 6 Oct 18:00 finished — the payment requests already sent stay as they are.';
+
+/** The summary region: the one status element, holding a single text node or nothing. */
+function summary(): HTMLElement {
+  const region = screen.getByRole('status');
+  expect(region.children).toHaveLength(0);
+  expect(region.childNodes.length).toBeLessThanOrEqual(1);
+  return region;
+}
+
+/** The visible block, for queries its summary would otherwise duplicate. */
+function block(): ReturnType<typeof within> {
+  const element = document.querySelector<HTMLElement>('[data-sync-status]');
+  if (element === null) throw new Error('no sync block');
+  return within(element);
+}
+
 describe('SyncStatus', () => {
-  it('renders only its live region, empty, for the empty outbox', () => {
+  it('renders only its summary region, empty and screen-reader-only, for the empty outbox', () => {
     const { container } = render(<SyncStatus owner="account-1" />);
-    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    const region = summary();
+    expect(region).toBeEmptyDOMElement();
+    expect(region).toHaveClass('sr-only');
     expect(container.querySelector('[data-sync-status]')).toBeNull();
     expect(container).toHaveTextContent('');
   });
 
-  it('renders only the empty live region on the server, whatever the device holds', () => {
+  it('renders only the empty summary region on the server, whatever the device holds', () => {
     snapshot.current = snap({ queued: [entry('r1')], refused: [refused('r2', 'No.')], needsSignIn: true });
+    connection.current = { offline: true, serverNow: null };
     const host = document.createElement('div');
     host.innerHTML = renderToString(<SyncStatus owner="account-1" />);
     expect(host.querySelector('[role="status"]')).toBeEmptyDOMElement();
+    expect(host.querySelector('[data-sync-status]')).toBeNull();
     expect(host.textContent).toBe('');
   });
 
-  // A region mounted together with its text is often not announced, and the
-  // schedule page has no row region to announce a refusal a background sync
-  // finds: the region is there, empty, before anything it says arrives.
-  it('says each thing from inside one live region mounted before any of it arrived', () => {
+  // A region mounted together with its text is often not announced: the
+  // region is there, empty, before anything it says arrives.
+  it('announces a text-only summary into the region it mounted empty', () => {
+    connection.current = { offline: true, serverNow: null };
     render(<SyncStatus owner="account-1" />);
-    const region = screen.getByRole('status');
+    const region = summary();
     expect(region).toBeEmptyDOMElement();
 
     publish(snap({ queued: [entry('r1')] }));
-    expect(region).toContainElement(screen.getByText('1 change waiting to sync'));
+    expect(summary()).toBe(region);
+    expect(region.textContent).toBe('1 change waiting to sync.');
 
-    publish(snap({ queued: [entry('r1')], needsSignIn: true }));
-    expect(region).toContainElement(screen.getByRole('link', { name: 'Sign in again to sync 1 change' }));
+    publish(snap({ queued: [entry('r1'), entry('r3')], needsSignIn: true }));
+    expect(summary()).toBe(region);
+    expect(region.textContent).toBe('Sign in again to sync 2 changes.');
 
     publish(snap({ refused: [refused('r2', 'This class was cancelled.')] }));
-    expect(region).toContainElement(screen.getByText("1 change couldn't be saved"));
-    expect(region).toContainElement(screen.getByText('This class was cancelled.'));
-    expect(region).toContainElement(screen.getByRole('button', { name: 'Dismiss: Student r2, Hatha · Tue 6 Oct 18:00' }));
+    expect(summary()).toBe(region);
+    expect(region.textContent).toBe("1 change couldn't be saved.");
 
     publish(snap({ notes: [{ classId: 'c1', classLabel: 'Hatha · Tue 6 Oct 18:00' }] }));
-    expect(region).toContainElement(
-      screen.getByText('Saved after Hatha · Tue 6 Oct 18:00 finished — the payment requests already sent stay as they are.'),
-    );
+    expect(summary()).toBe(region);
+    expect(region.textContent).toBe(HATHA_NOTE);
 
     publish(null);
-    expect(screen.getByRole('status')).toBe(region);
+    expect(summary()).toBe(region);
     expect(region).toBeEmptyDOMElement();
+  });
+
+  it('says every clause as a sentence, naming no control and no refusal message', () => {
+    connection.current = { offline: true, serverNow: null };
+    snapshot.current = snap({
+      queued: [entry('r1'), entry('r2')],
+      refused: [refused('r3', 'This class was cancelled.'), refused('r4', 'No.')],
+      notes: [
+        { classId: 'c1', classLabel: 'Hatha · Tue 6 Oct 18:00' },
+        { classId: 'c2', classLabel: 'Yin · Wed 7 Oct 09:00' },
+      ],
+    });
+    render(<SyncStatus owner="account-1" />);
+    expect(summary().textContent).toBe(
+      "2 changes waiting to sync. 2 changes couldn't be saved. " +
+        `${HATHA_NOTE} Saved after Yin · Wed 7 Oct 09:00 finished — the payment requests already sent stay as they are.`,
+    );
+    expect(summary()).not.toHaveTextContent('Dismiss');
+    expect(summary()).not.toHaveTextContent('This class was cancelled.');
+  });
+
+  it('leaves the queued count out of the summary online, and shows it in the block', () => {
+    snapshot.current = snap({ queued: [entry('r1')] });
+    const { container } = render(<SyncStatus owner="account-1" />);
+    expect(summary()).toBeEmptyDOMElement();
+    expect(container.querySelector('[data-sync-status]')).toHaveTextContent('1 change waiting to sync');
+  });
+
+  it('says the sign-in clause online too, since it waits on the teacher', () => {
+    snapshot.current = snap({ queued: [entry('r1')], needsSignIn: true });
+    render(<SyncStatus owner="account-1" />);
+    expect(summary().textContent).toBe('Sign in again to sync 1 change.');
+  });
+
+  it('puts no live role on the visible block or around it', () => {
+    connection.current = { offline: true, serverNow: null };
+    snapshot.current = snap({
+      queued: [entry('r1')],
+      refused: [refused('r2', 'No.')],
+      notes: [{ classId: 'c1', classLabel: 'Hatha · Tue 6 Oct 18:00' }],
+    });
+    const { container } = render(<SyncStatus owner="account-1" />);
+    const block = container.querySelector('[data-sync-status]');
+    expect(block).not.toBeNull();
+    expect(block?.closest('[role], [aria-live]')).toBeNull();
+    expect(block?.querySelector('[role], [aria-live]')).toBeNull();
   });
 
   it('says one change is waiting, and a visible block, not a screen-reader-only one', () => {
@@ -116,7 +187,8 @@ describe('SyncStatus', () => {
     const { container } = render(<SyncStatus owner="account-1" />);
     const line = screen.getByText('1 change waiting to sync');
     expect(line).toBeVisible();
-    expect(container.querySelector('.sr-only')).toBeNull();
+    expect(line.closest('.sr-only')).toBeNull();
+    expect(container.querySelector('[data-sync-status]')).not.toHaveClass('sr-only');
   });
 
   it('says how many changes are waiting', () => {
@@ -138,7 +210,7 @@ describe('SyncStatus', () => {
   it('lists one refusal with student, class and the server message, and its Dismiss works offline', () => {
     snapshot.current = snap({ refused: [refused('r1', 'This class was cancelled.')] });
     render(<SyncStatus owner="account-1" />);
-    expect(screen.getByText("1 change couldn't be saved")).toBeInTheDocument();
+    expect(block().getByText("1 change couldn't be saved")).toBeInTheDocument();
     const item = screen.getByRole('listitem');
     expect(item).toHaveTextContent('Student r1');
     expect(item).toHaveTextContent('Hatha · Tue 6 Oct 18:00');
@@ -152,7 +224,7 @@ describe('SyncStatus', () => {
   it('counts several refusals', () => {
     snapshot.current = snap({ refused: [refused('r1', 'A.'), refused('r2', 'B.')] });
     render(<SyncStatus owner="account-1" />);
-    expect(screen.getByText("2 changes couldn't be saved")).toBeInTheDocument();
+    expect(block().getByText("2 changes couldn't be saved")).toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
   });
 
@@ -180,11 +252,9 @@ describe('SyncStatus', () => {
       ],
     });
     render(<SyncStatus owner="account-1" />);
+    expect(block().getByText(HATHA_NOTE)).toBeInTheDocument();
     expect(
-      screen.getByText('Saved after Hatha · Tue 6 Oct 18:00 finished — the payment requests already sent stay as they are.'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Saved after Yin · Wed 7 Oct 09:00 finished — the payment requests already sent stay as they are.'),
+      block().getByText('Saved after Yin · Wed 7 Oct 09:00 finished — the payment requests already sent stay as they are.'),
     ).toBeInTheDocument();
     const dismiss = screen.getByRole('button', { name: 'Dismiss: Yin · Wed 7 Oct 09:00' });
     expect(dismiss).toHaveAttribute('data-offline-writable');
@@ -196,6 +266,6 @@ describe('SyncStatus', () => {
     snapshot.current = snap({ confirmed: { r1: { target: 'attended', confirmedAt: 1 } } });
     const { container } = render(<SyncStatus owner="account-1" />);
     expect(container.querySelector('[data-sync-status]')).toBeNull();
-    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(summary()).toBeEmptyDOMElement();
   });
 });

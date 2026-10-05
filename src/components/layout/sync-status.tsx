@@ -2,6 +2,7 @@
 
 import { useCallback, useSyncExternalStore } from 'react';
 import { usePathname } from 'next/navigation';
+import { useConnectionStatus } from '@/lib/offline-status';
 import {
   EMPTY_OUTBOX,
   dismissNote,
@@ -25,10 +26,15 @@ const DISMISS_CLASSES = 'type-caption text-teal shrink-0 min-h-[44px] px-1 focus
  * What the attendance outbox holds that the teacher should know about (#726,
  * docs/superpowers/specs/2026-10-04-offline-checkin-design.md §3): marks
  * waiting to sync, marks refused, a session that needs signing in again, and
- * writes that landed after their class finished. Visible online and offline.
- * Everything it says sits in one polite live region, mounted empty on the
- * server and whenever there is nothing to say, so each line is announced when
- * it arrives. Its Dismiss controls carry `data-offline-writable`.
+ * writes that landed after their class finished. Visible online and offline;
+ * its Dismiss controls carry `data-offline-writable`.
+ *
+ * The visible block has no live role. A screen reader hears a text-only
+ * summary from a polite region that is mounted empty on the server and stays
+ * mounted: the sign-in request, the waiting count only while offline (online
+ * a tap's line clears within moments, and nothing says it synced), the
+ * refused count, and each completion note. A change re-reads that summary,
+ * never a refusal's message or a Dismiss label.
  */
 export function SyncStatus({ owner }: { owner: string }) {
   const getSnapshot = useCallback(() => getOutboxSnapshot(owner), [owner]);
@@ -37,20 +43,28 @@ export function SyncStatus({ owner }: { owner: string }) {
     getSnapshot,
     () => EMPTY_OUTBOX,
   );
+  const { offline } = useConnectionStatus();
   const pathname = usePathname();
 
   const signIn = needsSignIn && queued.length > 0;
   const empty = queued.length === 0 && refused.length === 0 && notes.length === 0;
 
+  const clauses: string[] = [];
+  if (signIn) clauses.push(`Sign in again to sync ${changes(queued.length)}.`);
+  else if (offline && queued.length > 0) clauses.push(`${changes(queued.length)} waiting to sync.`);
+  if (refused.length > 0) clauses.push(`${changes(refused.length)} couldn't be saved.`);
+  for (const note of notes) clauses.push(savedAfterFinishCopy(note.classLabel));
+
   return (
-    <div role="status">
+    <>
+      <p role="status" data-sync-summary className="sr-only">{clauses.join(' ')}</p>
       {!empty && (
         <div data-sync-status className="mb-4 flex flex-col gap-2">
           {queued.length > 0 && (
             <p className="type-label text-gold-deep bg-gold-tint rounded-card px-4 py-3">
               {signIn ? (
                 <a href={`/login?redirect=${encodeURIComponent(pathname)}`} className="underline text-gold-deep">
-                  Sign in again to sync {changes(queued.length)}
+                  {`Sign in again to sync ${changes(queued.length)}`}
                 </a>
               ) : (
                 `${changes(queued.length)} waiting to sync`
@@ -60,7 +74,7 @@ export function SyncStatus({ owner }: { owner: string }) {
 
           {refused.length > 0 && (
             <div className="bg-sand-soft border border-border rounded-card px-4 py-3">
-              <p className="type-label text-danger">{changes(refused.length)} couldn&apos;t be saved</p>
+              <p className="type-label text-danger">{`${changes(refused.length)} couldn't be saved`}</p>
               <ul className="mt-1">
                 {refused.map((entry) => (
                   <li key={entry.registrationId} className="flex items-center justify-between gap-3">
@@ -103,6 +117,6 @@ export function SyncStatus({ owner }: { owner: string }) {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }

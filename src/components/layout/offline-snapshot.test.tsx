@@ -64,9 +64,9 @@ const queuedMark = {
   knownCompleted: false,
 } as const;
 
-/** The snapshot's own status line, beside the sync block's live region. */
+/** The snapshot's own status line, beside the sync block's summary region. */
 function offlineMarker(): HTMLElement {
-  const markers = screen.getAllByRole('status').filter((element) => element.tagName === 'P');
+  const markers = screen.getAllByRole('status').filter((element) => !element.hasAttribute('data-sync-summary'));
   const [marker, ...others] = markers;
   if (marker === undefined || others.length > 0) throw new Error(`expected one offline marker, found ${markers.length}`);
   return marker;
@@ -115,7 +115,7 @@ describe('OfflineSnapshot', () => {
       expect(block).toHaveTextContent('1 change waiting to sync');
       expect(block).not.toHaveClass('sr-only');
       expect(block?.closest('fieldset')).toBeNull();
-      const marker = container.querySelector('p[role="status"].sr-only');
+      const marker = container.querySelector('p[role="status"].sr-only:not([data-sync-summary])');
       expect(marker).not.toBeNull();
       expect(block?.compareDocumentPosition(marker as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     });
