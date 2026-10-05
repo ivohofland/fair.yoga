@@ -286,9 +286,9 @@ test.describe('Offline check-in', () => {
     expect([...written].sort()).toEqual(expectedWrites);
 
     // Further reconnects and reloads replay nothing: the queue is empty. The
-    // rows read Present from the server's render, before hydration; the PUT a
-    // replay would send comes from OutboxSync's mount flush, which runs in the
-    // same effects pass that opens the stream `reloadHydrated` waits for.
+    // rows read Present from the server's render, before hydration, so each
+    // reload waits for hydration: the mount flush that would send a replay has
+    // run before the count.
     const putsBefore = putsSent;
     for (let i = 0; i < 2; i++) {
       await context.setOffline(true);
