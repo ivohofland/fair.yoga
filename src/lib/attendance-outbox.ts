@@ -141,15 +141,26 @@ function keysUnder(store: Storage, prefix: string): Array<{ key: string; owner: 
   return found;
 }
 
-function write(key: string, value: object): boolean {
+type WriteResult = { ok: true } | { ok: false; err: unknown };
+
+function tryWrite(key: string, value: object): WriteResult {
   const store = storage();
-  if (store === null) return false;
+  if (store === null) return { ok: false, err: new Error('storage is unavailable') };
   try {
     store.setItem(key, JSON.stringify({ v: VERSION, ...value }));
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, err };
   }
+}
+
+function write(key: string, value: object): boolean {
+  return tryWrite(key, value).ok;
+}
+
+/** A flush write that failed: the entry stays as it was, and is sent again on every flush. */
+function logWriteFailure(entry: OutboxEntry, what: 'refused' | 'attempts', err: unknown): void {
+  logRequestFailure('attendance-outbox', { stage: 'store', registrationId: entry.registrationId, write: what }, err);
 }
 
 function remove(key: string): void {
@@ -439,9 +450,10 @@ function ifUnchanged(owner: string, sent: OutboxEntry, change: () => void): bool
 function refuse(owner: string, entry: OutboxEntry, kind: RefusalKind, message: string, attempts: number): boolean {
   return ifUnchanged(owner, entry, () => {
     const refused: RefusedEntry = { ...entry, attempts, message, refusedAt: Date.now(), kind };
-    if (write(keyFor(REFUSED_PREFIX, owner, entry.registrationId), refused)) {
-      remove(keyFor(QUEUED_PREFIX, owner, entry.registrationId));
-    }
+    const written = tryWrite(keyFor(REFUSED_PREFIX, owner, entry.registrationId), refused);
+    // Unwritten, the refusal would be lost with the queued key, so that stays.
+    if (written.ok) remove(keyFor(QUEUED_PREFIX, owner, entry.registrationId));
+    else logWriteFailure(entry, 'refused', written.err);
   });
 }
 
@@ -578,9 +590,10 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
     superseded =
       attempts >= MAX_ATTEMPTS
         ? refuse(owner, entry, 'retries-exhausted', RETRIES_EXHAUSTED, attempts)
-        : ifUnchanged(owner, entry, () =>
-            write(keyFor(QUEUED_PREFIX, owner, entry.registrationId), { ...entry, attempts }),
-          );
+        : ifUnchanged(owner, entry, () => {
+            const written = tryWrite(keyFor(QUEUED_PREFIX, owner, entry.registrationId), { ...entry, attempts });
+            if (!written.ok) logWriteFailure(entry, 'attempts', written.err);
+          });
   } else {
     superseded = refuse(owner, entry, 'verdict', message, entry.attempts);
   }

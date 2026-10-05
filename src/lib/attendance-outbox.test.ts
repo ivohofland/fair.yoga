@@ -996,7 +996,34 @@ describe('attendance outbox', () => {
       await expect(flushOutbox(OWNER)).resolves.toEqual({ applied: 1, replayed: 0 });
       expect(sentBodies(fetchMock).map((b) => b.url)).toEqual(['/api/registrations/r1', '/api/registrations/r2']);
       expect(getOutboxSnapshot(OWNER).queued.map((e) => [e.registrationId, e.attempts])).toEqual([['r1', 0]]);
-      expect(outboxErrors()).toEqual([]);
+      // A full store leaves a trace, or the attempt that never counts repeats unseen.
+      expect(outboxErrors()).toEqual([
+        [
+          '[attendance-outbox] request failed',
+          expect.objectContaining({ stage: 'store', registrationId: 'r1', write: 'attempts', err: expect.any(DOMException) }),
+        ],
+      ]);
+    });
+
+    it('a refusal the store cannot hold leaves the entry queued, and says so', async () => {
+      enqueueAttendance(OWNER, entry('r1'));
+      const setItem = storage.setItem.bind(storage);
+      vi.spyOn(storage, 'setItem').mockImplementation((key, value) => {
+        if (key.startsWith('fy-outbox-refused:')) throw new DOMException('quota', 'QuotaExceededError');
+        setItem(key, value);
+      });
+      fetchMock.mockResolvedValueOnce(refusal(404, 'NOT_FOUND', 'This booking no longer exists.'));
+      await flushOutbox(OWNER);
+      expect(getOutboxSnapshot(OWNER)).toMatchObject({
+        queued: [expect.objectContaining({ registrationId: 'r1', attempts: 0 })],
+        refused: [],
+      });
+      expect(outboxErrors()).toEqual([
+        [
+          '[attendance-outbox] request failed',
+          expect.objectContaining({ stage: 'store', registrationId: 'r1', write: 'refused', err: expect.any(DOMException) }),
+        ],
+      ]);
     });
 
     it('a removal that fails on an applied answer leaves the entry queued for a later flush', async () => {
