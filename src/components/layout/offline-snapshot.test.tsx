@@ -78,6 +78,7 @@ function storeRefused(owner: string): void {
       attempts: 0,
       message: 'This class was cancelled.',
       refusedAt: Date.now(),
+      kind: 'verdict',
     }),
   );
 }

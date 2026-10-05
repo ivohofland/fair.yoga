@@ -43,7 +43,7 @@ function entry(id: string, overrides: Partial<OutboxEntry> = {}): OutboxEntry {
 }
 
 function refused(id: string, message: string): RefusedEntry {
-  return { ...entry(id), message, refusedAt: 2 };
+  return { ...entry(id), message, refusedAt: 2, kind: 'verdict' };
 }
 
 function snap(overrides: Partial<OutboxSnapshot>): OutboxSnapshot {

@@ -157,9 +157,10 @@ row's status at that moment (D7), so a mark still queued for this class when
 the teacher finishes would be billed as the server holds it. `CompleteClassButton`
 takes an optional `outboxOwner` (the class page passes the session's
 account); with it, the charge confirm's Finish runs the same bounded flush as
-sign-out (D8, at most 5 s), then counts this class's marks still queued —
-refused ones are not counted, the server already answered them, and another
-class's marks hold nothing up. None left: the class finishes. Otherwise an
+sign-out (D8, at most 5 s), then counts this class's marks still queued and
+those refused after 3 attempts, which the server may never have seen — a mark
+the server itself refused is not counted, since it already answered that one,
+and another class's marks hold nothing up. None left: the class finishes. Otherwise an
 inline confirm takes the button's place: "N attendance changes for this class
 haven't synced." with "Cancel" (focused; it returns to "Finish class" and
 focus follows) and "Finish anyway", both described by the copy. Offline the

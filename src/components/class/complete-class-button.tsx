@@ -58,8 +58,12 @@ export function CompleteClassButton({ classId, chargedCount, outboxOwner }: Comp
     setError('');
     if (outboxOwner !== undefined) {
       await flushWithinBound(outboxOwner, 'complete-class-button');
-      // A refused mark is not counted: the server already said no to it.
-      const left = getOutboxSnapshot(outboxOwner).queued.filter((entry) => entry.classId === classId).length;
+      // A mark the server refused is not counted: it answered that one. A mark
+      // the outbox gave up retrying is: the server may never have seen it.
+      const { queued, refused } = getOutboxSnapshot(outboxOwner);
+      const left =
+        queued.filter((entry) => entry.classId === classId).length +
+        refused.filter((entry) => entry.classId === classId && entry.kind === 'retries-exhausted').length;
       if (left > 0) {
         setUnsynced(left);
         setSubmitting(false);

@@ -217,6 +217,17 @@ describe('attendance outbox', () => {
       expect(storage.keys()).toEqual(['fy-outbox:acc1:r4']);
     });
 
+    it.each([
+      ['without a kind', {}],
+      ['with a kind it does not know', { kind: 'gave-up' }],
+    ])('deletes a stored refusal %s', (_name, kind) => {
+      const refused = { v: 1, ...entry('r1'), nonce: 'n', recordedAt: NOW, attempts: 0, message: 'Gone', refusedAt: NOW };
+      storage.setItem('fy-outbox-refused:acc1:r1', JSON.stringify({ ...refused, ...kind }));
+      storage.setItem('fy-outbox-refused:acc1:r2', JSON.stringify({ ...refused, ...entry('r2'), kind: 'verdict' }));
+      expect(getOutboxSnapshot(OWNER).refused.map((e) => [e.registrationId, e.kind])).toEqual([['r2', 'verdict']]);
+      expect(storage.keys()).toEqual(['fy-outbox-refused:acc1:r2']);
+    });
+
     it('keeps, and skips, a value written in a newer format', () => {
       const newer = JSON.stringify({ v: 2, ...entry('r1'), nonce: 'n', recordedAt: NOW, attempts: 0 });
       storage.setItem('fy-outbox:acc1:r1', newer);
@@ -726,6 +737,8 @@ describe('attendance outbox', () => {
         expect(snapshot.queued).toEqual([]);
         expect(snapshot.refused.map((e) => [e.registrationId, e.attempts, e.refusedAt])).toEqual([['r1', 3, NOW + 1]]);
         expect(snapshot.refused[0]?.message).toBe("This change couldn't be saved after several tries.");
+        // The server never refused it, so Finish still counts it as unsynced.
+        expect(snapshot.refused[0]?.kind).toBe('retries-exhausted');
       });
 
       it.each([
@@ -764,6 +777,7 @@ describe('attendance outbox', () => {
             classLabel: 'Hatha r1',
             message,
             refusedAt: NOW + 1,
+            kind: 'verdict',
           }),
         ]);
         expect(snapshot.confirmed).toEqual({ r2: confirmedAs('attended', NOW + 1) });

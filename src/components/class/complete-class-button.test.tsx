@@ -267,7 +267,41 @@ describe('CompleteClassButton', () => {
       expect(screen.queryByText(/hasn't synced/)).toBeNull();
     });
 
-    it('is not held up by a refused mark: the server already said no to it', async () => {
+    /** Three 500s: the outbox gives up on the mark, though the server never refused it. */
+    async function exhaustRetries(): Promise<void> {
+      for (let i = 0; i < 3; i++) await flushOutbox(OWNER);
+      expect(getOutboxSnapshot(OWNER).refused.map((e) => e.kind)).toEqual(['retries-exhausted']);
+    }
+
+    const serverError = () => Promise.resolve(new Response('<html>Internal error</html>', { status: 500 }));
+
+    it('counts a mark the outbox gave up retrying: the server never refused it', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      queue('r1');
+      server(serverError);
+      await exhaustRetries();
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      await screen.findByText("1 attendance change for this class hasn't synced.");
+      expect(completions()).toEqual([]);
+    });
+
+    it("is not held up by another class's mark the outbox gave up retrying", async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      queue('r1', 'other-class');
+      server(serverError);
+      await exhaustRetries();
+      render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
+
+      finish();
+
+      await waitFor(() => expect(completions()).toHaveLength(1));
+      expect(screen.queryByText(/hasn't synced/)).toBeNull();
+    });
+
+    it('is not held up by a mark the server refused: it already said no to it', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
       queue('r1');
       server(() =>
@@ -276,7 +310,7 @@ describe('CompleteClassButton', () => {
         ),
       );
       await flushOutbox(OWNER);
-      expect(getOutboxSnapshot(OWNER).refused).toHaveLength(1);
+      expect(getOutboxSnapshot(OWNER).refused.map((e) => e.kind)).toEqual(['verdict']);
       render(<CompleteClassButton classId="c-9" chargedCount={2} outboxOwner={OWNER} />);
 
       finish();

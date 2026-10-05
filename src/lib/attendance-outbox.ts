@@ -26,9 +26,23 @@ export interface OutboxEntry {
   knownCompleted: boolean;
 }
 
+/**
+ * Who said no: `verdict` is the app's own answer to the write, and the server
+ * holds whatever it held before; `retries-exhausted` is this module giving up
+ * after `MAX_ATTEMPTS`, and the server may never have seen the mark.
+ */
+export type RefusalKind = 'verdict' | 'retries-exhausted';
+
+const REFUSAL_KINDS = { verdict: true, 'retries-exhausted': true } satisfies Record<RefusalKind, true>;
+
+function isRefusalKind(value: unknown): value is RefusalKind {
+  return typeof value === 'string' && Object.hasOwn(REFUSAL_KINDS, value);
+}
+
 export interface RefusedEntry extends OutboxEntry {
   message: string;
   refusedAt: number;
+  kind: RefusalKind;
 }
 
 export interface CompletionNote {
@@ -207,9 +221,9 @@ function asEntry(value: unknown, id: string): OutboxEntry | null {
 function asRefused(value: unknown, id: string): RefusedEntry | null {
   const entry = asEntry(value, id);
   if (entry === null || !isRecord(value)) return null;
-  const { message, refusedAt } = value;
-  if (typeof message !== 'string' || typeof refusedAt !== 'number') return null;
-  return { ...entry, message, refusedAt };
+  const { message, refusedAt, kind } = value;
+  if (typeof message !== 'string' || typeof refusedAt !== 'number' || !isRefusalKind(kind)) return null;
+  return { ...entry, message, refusedAt, kind };
 }
 
 function asConfirmation(
@@ -422,9 +436,9 @@ function ifUnchanged(owner: string, sent: OutboxEntry, change: () => void): bool
   return false;
 }
 
-function refuse(owner: string, entry: OutboxEntry, message: string, attempts: number): boolean {
+function refuse(owner: string, entry: OutboxEntry, kind: RefusalKind, message: string, attempts: number): boolean {
   return ifUnchanged(owner, entry, () => {
-    const refused: RefusedEntry = { ...entry, attempts, message, refusedAt: Date.now() };
+    const refused: RefusedEntry = { ...entry, attempts, message, refusedAt: Date.now(), kind };
     if (write(keyFor(REFUSED_PREFIX, owner, entry.registrationId), refused)) {
       remove(keyFor(QUEUED_PREFIX, owner, entry.registrationId));
     }
@@ -563,12 +577,12 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
     const attempts = entry.attempts + 1;
     superseded =
       attempts >= MAX_ATTEMPTS
-        ? refuse(owner, entry, RETRIES_EXHAUSTED, attempts)
+        ? refuse(owner, entry, 'retries-exhausted', RETRIES_EXHAUSTED, attempts)
         : ifUnchanged(owner, entry, () =>
             write(keyFor(QUEUED_PREFIX, owner, entry.registrationId), { ...entry, attempts }),
           );
   } else {
-    superseded = refuse(owner, entry, message, entry.attempts);
+    superseded = refuse(owner, entry, 'verdict', message, entry.attempts);
   }
   notify();
   return { applied: false, replayed: false, superseded };
