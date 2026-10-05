@@ -210,6 +210,33 @@ describe('SignOutButton', () => {
     }
   });
 
+  it('still leaves, and re-enables, when clearing the queued attendance rejects', async () => {
+    const failure = new Error('lock unavailable');
+    Object.defineProperty(navigator, 'locks', {
+      value: { request: () => Promise.reject(failure) },
+      configurable: true,
+    });
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      render(<SignOutButton />);
+
+      fireEvent.click(screen.getByRole('button'));
+
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
+      expect(routerRefresh).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.getByRole('button')).toBeEnabled());
+      expect(consoleError).toHaveBeenCalledWith('[sign-out-button] request failed', {
+        step: 'clear-outbox',
+        err: failure,
+      });
+    } finally {
+      consoleError.mockRestore();
+      Reflect.deleteProperty(navigator, 'locks');
+    }
+  });
+
   // #431. The signup flow mounts this button to open a door, and landing on
   // /login would be a second closed one: someone signing out in order to sign
   // UP wants the signup page.

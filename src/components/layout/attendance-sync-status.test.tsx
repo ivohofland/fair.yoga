@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { resetOutboxForTests, enqueueAttendance, settleEntry, getOutbox } from '@/lib/attendance-outbox';
 import type { PendingEntry } from '@/lib/attendance-outbox';
@@ -72,6 +72,10 @@ beforeEach(() => {
   syncState.needsSignIn = false;
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('AttendanceSyncProvider', () => {
   it('starts sync with the owner and stops it on unmount', () => {
     const { unmount } = renderRegion();
@@ -104,6 +108,42 @@ describe('AttendanceSyncStatus', () => {
     await enqueueAttendance(entry());
     renderRegion();
     expect(screen.getByRole('status')).toHaveTextContent('1 attendance change waiting to sync');
+    expect(screen.getByRole('status')).not.toHaveTextContent(/reloads/);
+  });
+
+  it('says the device cannot keep pending changes when storage fell back to memory', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded');
+    });
+    await enqueueAttendance(entry());
+    renderRegion();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "1 attendance change waiting to sync. This device can't keep them if the page reloads.",
+    );
+  });
+
+  it('says nothing about the device when storage fell back to memory with nothing pending', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded');
+    });
+    await enqueueAttendance(entry({ ownerId: 'acct-2' }));
+    renderRegion();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('tells a mounted region when storage falls back to memory', async () => {
+    await enqueueAttendance(entry());
+    renderRegion();
+    expect(screen.getByRole('status')).not.toHaveTextContent(/reloads/);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded');
+    });
+    await act(async () => {
+      await enqueueAttendance(entry({ registrationId: 'reg-2' }));
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "2 attendance changes waiting to sync. This device can't keep them if the page reloads.",
+    );
   });
 
   it('says several are waiting, plural', async () => {
@@ -187,6 +227,13 @@ describe('AttendanceSyncStatus', () => {
     expect(screen.getByRole('button', { name: /^Dismiss: Couldn't record Ben/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open class for Asha' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open class for Ben' })).toBeInTheDocument();
+  });
+
+  it('gives Open class and Dismiss full-height tap targets', async () => {
+    await refuse();
+    renderRegion();
+    expect(screen.getByRole('link', { name: 'Open class for Asha' })).toHaveClass('min-h-11');
+    expect(screen.getByRole('button', { name: /^Dismiss: / })).toHaveClass('min-h-11');
   });
 
   it('shows a refusal for a class that has no inline consumer', async () => {

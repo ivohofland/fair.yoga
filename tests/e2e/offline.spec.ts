@@ -317,7 +317,8 @@ test.describe('Offline schedule', () => {
     for (const firstName of CHECKIN_FIRST_NAMES) {
       await page.getByRole('button', { name: `Mark ${firstName}` }).click();
     }
-    const waiting = page.getByText('Waiting to sync', { exact: true });
+    // The row captions only: the Attendance heading and the layout line also say "waiting to sync".
+    const waiting = page.getByText('Present · waiting to sync', { exact: true });
     await expect(waiting).toHaveCount(CHECKIN_FIRST_NAMES.length);
 
     await page.reload();

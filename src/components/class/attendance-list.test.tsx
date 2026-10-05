@@ -272,6 +272,26 @@ describe('AttendanceList', () => {
 
   const untouched: AttendanceItem = { registrationId: 'reg-1', studentName: 'Grace Hopper', status: 'registered' };
 
+  it('a queued late cancel reads as such while it waits', async () => {
+    fetchMock.mockReturnValue(held().promise);
+    vi.stubGlobal('fetch', fetchMock);
+    renderList({ items: [lateCancel] });
+
+    fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
+    await screen.findByText('Present · waiting to sync');
+    fireEvent.click(await screen.findByRole('button', { name: /mark them cancelled again/i }));
+
+    await screen.findByText('Late cancel · waiting to sync');
+    expect(getOutbox().pending['reg-late']?.status).toBe('late_cancel');
+  });
+
+  it('gives an inline Dismiss a full-height tap target', async () => {
+    vi.stubGlobal('fetch', fetchMock);
+    await storeRefusal({ registrationId: 'reg-1' }, 'This class was cancelled.');
+    renderList({ items: [untouched] });
+    expect(screen.getByRole('button', { name: /^Dismiss: / })).toHaveClass('min-h-11');
+  });
+
   it('labels an untouched registration "Not marked", never "No-show"', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderList({ items: [untouched] });
@@ -323,7 +343,7 @@ describe('AttendanceList', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('shows Waiting to sync until the flush confirms', async () => {
+  it('shows the queued status waiting to sync until the flush confirms', async () => {
     const answer = held();
     fetchMock.mockReturnValueOnce(answer.promise);
     vi.stubGlobal('fetch', fetchMock);
@@ -331,7 +351,7 @@ describe('AttendanceList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
 
-    await screen.findByText('Waiting to sync');
+    await screen.findByText('Present · waiting to sync');
     screen.getByText('1 waiting to sync');
     expect(screen.queryByText('Present')).toBeNull();
     // The checkbox already reflects the queued status.
@@ -342,7 +362,6 @@ describe('AttendanceList', () => {
     });
 
     await screen.findByText('Present');
-    expect(screen.queryByText('Waiting to sync')).toBeNull();
     expect(screen.queryByText(/waiting to sync/)).toBeNull();
     expect(refresh).not.toHaveBeenCalled();
   });
@@ -383,7 +402,7 @@ describe('AttendanceList', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Mark Grace Hopper as no-show' }));
     // The second status, still pending.
     await screen.findByRole('button', { name: 'Mark Grace Hopper as present' });
-    screen.getByText('Waiting to sync');
+    screen.getByText('No-show · waiting to sync');
 
     await act(async () => {
       first.release(ok({ id: 'reg-1', status: 'attended' }));
@@ -395,7 +414,7 @@ describe('AttendanceList', () => {
 
     await screen.findByText('No-show');
     expect(sentBodies(fetchMock).at(-1)).toBe(JSON.stringify({ status: 'no_show' }));
-    expect(screen.queryByText('Waiting to sync')).toBeNull();
+    expect(screen.queryByText(/· waiting to sync/)).toBeNull();
   });
 
   it('pending entry reapplies after remount without a hydration error', async () => {
@@ -408,7 +427,7 @@ describe('AttendanceList', () => {
     try {
       expect(onRecoverableError).not.toHaveBeenCalled();
       expect(consoleError).not.toHaveBeenCalled();
-      expect(container.textContent).toContain('Waiting to sync');
+      expect(container.textContent).toContain('Present · waiting to sync');
       expect(container.textContent).toContain('1 waiting to sync');
     } finally {
       teardown();
@@ -482,7 +501,7 @@ describe('AttendanceList', () => {
       await Promise.resolve();
     });
 
-    screen.getByText('Waiting to sync');
+    screen.getByText('Present · waiting to sync');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByText(/Network error/)).toBeNull();
     expect(refresh).not.toHaveBeenCalled();
@@ -542,25 +561,34 @@ describe('AttendanceList', () => {
     }
   });
 
-  it('logs a tap whose outbox write fails rather than leaving it unhandled', async () => {
+  it('says so, and logs, when a tap cannot be saved on the device; the next saved tap clears it', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     Object.defineProperty(navigator, 'locks', {
       value: { request: () => Promise.reject(new Error('lock unavailable')) },
       configurable: true,
     });
     try {
+      fetchMock.mockReturnValue(held().promise);
       vi.stubGlobal('fetch', fetchMock);
       renderList({ items: [untouched] });
 
       fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
 
-      await waitFor(() =>
-        expect(consoleError).toHaveBeenCalledWith(
-          '[attendance-list] request failed',
-          expect.objectContaining({ registrationId: 'reg-1' }),
-        ),
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent("Couldn't save this mark on this device.");
+      expect(alert).toHaveClass('text-danger');
+      const row = screen.getByText('Grace Hopper');
+      expect(row.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(consoleError).toHaveBeenCalledWith(
+        '[attendance-list] request failed',
+        expect.objectContaining({ registrationId: 'reg-1' }),
       );
       expect(fetchMock).not.toHaveBeenCalled();
+
+      Reflect.deleteProperty(navigator, 'locks');
+      fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+      await screen.findByText('Present · waiting to sync');
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     } finally {
       Reflect.deleteProperty(navigator, 'locks');
     }

@@ -10,8 +10,9 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
  * reached `checkinAt` (epoch ms), and `registered` until then. A list the
  * server showed stays shown whatever the device clock says. One shown by the
  * device clock alone hides again if that clock is set back before `checkinAt`,
- * until it reaches `checkinAt` again. The clock is read again when a timer reaches `checkinAt` and on
- * `visibilitychange`, since a suspended page's timers do not fire on time.
+ * until it reaches `checkinAt` again. The clock is read again when a timer
+ * reaches `checkinAt` and on `visibilitychange`, since a suspended page's
+ * timers do not fire on time.
  * The server snapshot is `false`, so the first paint is the server's and
  * hydration matches; the clock takes over after mount.
  */
@@ -29,8 +30,18 @@ export function CheckinGate({
   const subscribe = useCallback(
     (onChange: () => void) => {
       if (!Number.isFinite(checkinAt)) return () => {};
-      const delay = Math.min(checkinAt - Date.now(), MAX_TIMEOUT_MS);
-      const timer = delay > 0 ? setTimeout(onChange, delay) : undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // A timer can fire before `checkinAt`: a delay clamped to the longest
+      // timer, or a clock set back while it waited. Then it waits again.
+      const arm = (): void => {
+        const remaining = checkinAt - Date.now();
+        timer = remaining > 0 ? setTimeout(fire, Math.min(remaining, MAX_TIMEOUT_MS)) : undefined;
+      };
+      const fire = (): void => {
+        if (Date.now() >= checkinAt) onChange();
+        else arm();
+      };
+      arm();
       document.addEventListener('visibilitychange', onChange);
       return () => {
         clearTimeout(timer);
