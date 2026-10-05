@@ -35,8 +35,8 @@ function storedTarget(registrationId: string): unknown {
   return raw === null ? null : (JSON.parse(raw) as { target: unknown }).target;
 }
 
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
 }
 
 /** The server applying whatever status the PUT asked for. */
@@ -92,10 +92,9 @@ describe('AttendanceList', () => {
   };
   const untouched: AttendanceItem = { registrationId: 'reg-1', studentName: 'Grace Hopper', status: 'registered' };
 
-  function renderList(
-    items: AttendanceItem[],
-    extra: { locked?: boolean; completed?: boolean; renderedAt?: number } = {},
-  ) {
+  type Extra = { locked?: boolean; completed?: boolean; renderedAt?: number };
+
+  function list(items: AttendanceItem[], extra: Extra = {}) {
     const props = {
       owner: OWNER,
       classId: CLASS_ID,
@@ -104,7 +103,11 @@ describe('AttendanceList', () => {
       renderedAt: Date.now(),
       ...extra,
     };
-    return render(<AttendanceList items={items} {...props} />);
+    return <AttendanceList items={items} {...props} />;
+  }
+
+  function renderList(items: AttendanceItem[], extra: Extra = {}) {
+    return render(list(items, extra));
   }
 
   it('labels a late-cancelled student as such rather than as a no-show', () => {
@@ -503,6 +506,47 @@ describe('AttendanceList', () => {
 
       await screen.findByText('Present');
       expect(screen.queryByText(/payment requests already sent/)).toBeNull();
+    });
+
+    describe('and a later render of the page arrives', () => {
+      const noShow: AttendanceItem = { ...untouched, status: 'no_show' };
+      // The server's answer to the direct write, by its Date header: whole seconds.
+      const answeredAt = Math.floor(Date.now() / 1000) * 1000 - 30_000;
+
+      async function writeDirectly() {
+        breakStorage();
+        fetchMock.mockResolvedValue(
+          json(200, { data: { id: 'reg-1', status: 'attended' } }, { Date: new Date(answeredAt).toUTCString() }),
+        );
+        vi.stubGlobal('fetch', fetchMock);
+        const view = renderList([noShow], { renderedAt: renderedAMinuteAgo() });
+        fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+        await screen.findByText('Present');
+        return view;
+      }
+
+      // An older PUT still in flight can land after the direct write; a render
+      // begun after the direct write's answer holds whatever the server kept.
+      it('shows items from a render that began in a later second than the answer', async () => {
+        const { rerender } = await writeDirectly();
+
+        rerender(list([noShow], { renderedAt: answeredAt + 1000 }));
+
+        screen.getByText('No-show');
+        expect(screen.queryByText('Present')).toBeNull();
+      });
+
+      it.each([
+        ['the answer’s own second, which the Date header cannot split', answeredAt + 999],
+        ['an earlier second', answeredAt - 1000],
+      ])('keeps the direct write over a render from %s', async (_name, renderedAt) => {
+        const { rerender } = await writeDirectly();
+
+        rerender(list([noShow], { renderedAt }));
+
+        screen.getByText('Present');
+        expect(screen.queryByText('No-show')).toBeNull();
+      });
     });
 
     it('times the direct write out after 10 s', async () => {

@@ -174,8 +174,9 @@ header sits in a fieldset (D9), so Finish is disabled and none of this arises.
   queued entry's target; else a stored confirmation (`fy-outbox-confirmed:`,
   written by a sync in any tab or document, kept 24 h) whose `confirmedAt` (the
   server's `Date` header, else the device clock) is no earlier than the page's render, floored
-  to the second; else the status the direct-write fallback saved on this page;
-  else the `items` prop. A row never falls back to a server render older than
+  to the second; else the status the direct-write fallback saved on this page,
+  under the same rule against the time of its own answer; else the `items`
+  prop. A row never falls back to a server render older than
   its confirmation, a stored page hard-loaded offline included, and a render
   newer than the confirmation (another device's correction) wins.
 - **Row markers:** a queued row shows "Waiting to sync" in place of the status

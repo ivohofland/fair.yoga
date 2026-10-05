@@ -532,7 +532,7 @@ function stop(
 }
 
 /** When the server answered, by its `Date` header; the device clock when the header is missing or unreadable. */
-function answeredAt(res: Response): number {
+export function answeredAt(res: Response): number {
   const header = res.headers.get('Date');
   const parsed = header === null ? Number.NaN : Date.parse(header);
   return Number.isNaN(parsed) ? Date.now() : parsed;

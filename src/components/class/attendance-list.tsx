@@ -13,9 +13,11 @@ import {
   enqueueAttendance,
   flushOutbox,
   getOutboxSnapshot,
+  answeredAt,
   isAttendanceAnswer,
   subscribeOutbox,
   type AttendanceTarget,
+  type Confirmation,
 } from '@/lib/attendance-outbox';
 
 /** A registration this list can show: every status but `cancelled`. */
@@ -93,8 +95,9 @@ function statusLabel(status: AttendanceStatus): string {
  * Every tap is queued in the attendance outbox (`@/lib/attendance-outbox`) and
  * a sync replays it. A row shows, in order: its queued mark; else a
  * confirmation no earlier than this render's second (a tie goes to the
- * confirmation); else the status the direct-write fallback saved; else
- * `items`. Why that order, and what `confirmedAt` holds:
+ * confirmation); else, by the same rule against its own answer's time, the
+ * status the direct-write fallback saved; else `items`. Why that order, and
+ * what `confirmedAt` holds:
  * docs/technical-architecture.md (Offline (service worker) → The attendance
  * outbox → *Confirmations*).
  */
@@ -116,9 +119,10 @@ export function AttendanceList({
   );
   const queued = new Map(outbox.queued.map((entry) => [entry.registrationId, entry.target]));
   const refused = new Map(outbox.refused.map((entry) => [entry.registrationId, entry.message]));
-  // Statuses the direct-write fallback saved, for when storage cannot queue.
-  // A later queued mark for the row clears its entry here.
-  const [direct, setDirect] = useState<Readonly<Record<string, AttendanceTarget>>>({});
+  // Statuses the direct-write fallback saved, for when storage cannot queue,
+  // each with the time of the server's answer. A later queued mark for the row
+  // clears its entry here.
+  const [direct, setDirect] = useState<Readonly<Record<string, Confirmation>>>({});
   // Set only while a direct write is in flight.
   const [updating, setUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -132,12 +136,16 @@ export function AttendanceList({
 
   const renderedSecond = Math.floor(renderedAt / 1000) * 1000;
 
+  /** The answered status, unless this render began in a later second than the answer. */
+  function heldSinceRender(answer: Confirmation | undefined): AttendanceTarget | undefined {
+    return answer !== undefined && answer.confirmedAt >= renderedSecond ? answer.target : undefined;
+  }
+
   function displayedStatus(item: AttendanceItem): AttendanceStatus {
-    const confirmation = outbox.confirmed[item.registrationId];
     return (
       queued.get(item.registrationId) ??
-      (confirmation !== undefined && confirmation.confirmedAt >= renderedSecond ? confirmation.target : undefined) ??
-      direct[item.registrationId] ??
+      heldSinceRender(outbox.confirmed[item.registrationId]) ??
+      heldSinceRender(direct[item.registrationId]) ??
       item.status
     );
   }
@@ -193,7 +201,8 @@ export function AttendanceList({
           notTheAnswer = err;
         }
         if (isAttendanceAnswer(body, registrationId, newStatus)) {
-          setDirect((prev) => ({ ...prev, [registrationId]: newStatus }));
+          const answer: Confirmation = { target: newStatus, confirmedAt: answeredAt(response) };
+          setDirect((prev) => ({ ...prev, [registrationId]: answer }));
           if (body.outcome === undefined && body.data.classCompleted === true && !completed) setSavedAfterFinish(true);
         } else {
           logRequestFailure('attendance-list', { registrationId, newStatus, status: response.status }, notTheAnswer);
