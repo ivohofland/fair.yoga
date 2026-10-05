@@ -1,9 +1,9 @@
 {
   "class-detail-open": {
-    "sourceSha256": "7d6942a76972636108bd0d3ba2340261e8472bf630e5d73b1dce6bfb04c20a05",
+    "sourceSha256": "e601876a5437218a8418037b3bbf7e4fc1841bba108dd6e8cff96898e56aaa58",
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
-    "verifiedAt": "2026-10-04",
-    "note": "the offline snapshot wrapper adds no pixels online"
+    "verifiedAt": "2026-10-05",
+    "note": "the offline fieldsets are borderless wrappers, the check-in switch renders the same block as before, and the sync block is empty with nothing queued"
   },
   "inbox": {
     "sourceSha256": "32b1ba66f9143e9bdd77423e8e8785820ac29da655838e5b854e3c9248cc52ac",
@@ -17,9 +17,9 @@
     "note": "the select adds bankAccountName and the install card renders only on the client; the visual teacher has no IBAN, so the bank step is todo before and after"
   },
   "settings": {
-    "sourceSha256": "8148c26282f4c4038b67935abc2ad524888a81041e4324a7c72d29f81590f33d",
+    "sourceSha256": "02bff3d1a47e670031d521501595380edfcc3fedec32e505a5b3a93c04d0551b",
     "baselineSha256": "981b53c74746867fea5f1459a0e697100a93a23cdd3b7eb717712f39b65f9f0c",
-    "verifiedAt": "2026-10-03",
-    "note": "the install row renders only on the client, for a browser that can install"
+    "verifiedAt": "2026-10-05",
+    "note": "SignOutButton gains an outboxOwner prop; it changes what sign-out clears, not what renders"
   }
 }
