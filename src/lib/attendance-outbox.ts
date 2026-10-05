@@ -570,7 +570,8 @@ async function send(owner: string, entry: OutboxEntry): Promise<SendResult> {
     }
     const applied = body.outcome === undefined;
     if (stored !== null && applied && body.data.classCompleted === true && !entry.knownCompleted) {
-      write(keyFor(NOTE_PREFIX, owner, entry.classId), { classId: entry.classId, classLabel: entry.classLabel });
+      const note: CompletionNote = { classId: entry.classId, classLabel: entry.classLabel };
+      write(keyFor(NOTE_PREFIX, owner, entry.classId), note);
     }
     notify();
     return { applied, replayed: applied && !enqueuedHere.has(entry.nonce), superseded };
