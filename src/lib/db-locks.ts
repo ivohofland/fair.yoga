@@ -1,4 +1,4 @@
-import { ClassStatus, Prisma } from '@prisma/client';
+import { ClassStatus, Currency, Prisma } from '@prisma/client';
 
 /**
  * A Prisma client that must be an interactive transaction client, never the
@@ -18,6 +18,8 @@ import { ClassStatus, Prisma } from '@prisma/client';
  *          `SET LOCAL` and then a row lock on `Student` (#183).
  *   adopt  `lockLiveTeacher` below — issues `SET LOCAL` and then a
  *          `FOR SHARE` on `Teacher` (#46).
+ *   adopt  `lockTeacherForNoKeyUpdate` and `lockTeacherForShare` below — each
+ *          issues `SET LOCAL` and then a row lock on `Teacher` (#758).
  *   adopt  `claimRuleForGeneration` (`entry-generation.ts`) — issues
  *          `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`, for either template
  *          family from the one statement.
@@ -410,6 +412,51 @@ export async function lockLiveTeacher(
     SELECT "deletedAt" FROM "Teacher" WHERE id = ${teacherId} FOR SHARE`;
   const row = rows[0];
   return row !== undefined && row.deletedAt === null;
+}
+
+/**
+ * The teacher's row `FOR NO KEY UPDATE`, with the shared bounded wait, taken
+ * as the first lock of a transaction that writes teacher-wide state (#758).
+ * Answers the live teacher's currency and timezone, read under the lock, or
+ * `null` when the row is absent or erased.
+ *
+ * `FOR NO KEY UPDATE`, not `FOR UPDATE`: an insert into any table referencing
+ * `Teacher` takes `FOR KEY SHARE` on the teacher in its foreign-key check, and
+ * the generator does that while holding its template row. `FOR UPDATE` would
+ * conflict with that check and close a cycle against a caller that goes on to
+ * lock templates; this mode does not, and still conflicts with `FOR SHARE`
+ * and with itself. `docs/lock-order.md`, "The `Teacher` row is the first lock
+ * (#758)".
+ */
+export async function lockTeacherForNoKeyUpdate(
+  tx: TransactionClientOnly,
+  teacherId: string,
+): Promise<{ currency: Currency; defaultTimezone: string } | null> {
+  await setLockTimeout(tx);
+  const rows = await tx.$queryRaw<Array<{ currency: Currency; defaultTimezone: string }>>`
+    SELECT currency, "defaultTimezone" FROM "Teacher"
+     WHERE id = ${teacherId} AND "deletedAt" IS NULL
+     FOR NO KEY UPDATE`;
+  return rows[0] ?? null;
+}
+
+/**
+ * The teacher's row `FOR SHARE`, with the shared bounded wait, taken as the
+ * first lock of a transaction that must not overlap a
+ * `lockTeacherForNoKeyUpdate` holder. Answers the live teacher's currency,
+ * read under the lock, or `null` when the row is absent or erased.
+ * `docs/lock-order.md`, "The `Teacher` row is the first lock (#758)".
+ */
+export async function lockTeacherForShare(
+  tx: TransactionClientOnly,
+  teacherId: string,
+): Promise<{ currency: Currency } | null> {
+  await setLockTimeout(tx);
+  const rows = await tx.$queryRaw<Array<{ currency: Currency }>>`
+    SELECT currency FROM "Teacher"
+     WHERE id = ${teacherId} AND "deletedAt" IS NULL
+     FOR SHARE`;
+  return rows[0] ?? null;
 }
 
 /**

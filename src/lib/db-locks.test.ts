@@ -11,6 +11,8 @@ import {
   lockLiveStudent,
   lockLiveTeacher,
   lockStudentForErasure,
+  lockTeacherForNoKeyUpdate,
+  lockTeacherForShare,
   setLockTimeout,
   statusesWhere,
   statusInList,
@@ -89,6 +91,10 @@ async function _theBrandRejectsABareClient(client: PrismaClient, lock: ClassLock
   await lockStudentForErasure(client, 'never-called');
   // @ts-expect-error `SET LOCAL` then `FOR SHARE` on `Student` (#183).
   await lockLiveStudent(client, 'never-called');
+  // @ts-expect-error `SET LOCAL` then `FOR NO KEY UPDATE` on `Teacher` (#758).
+  await lockTeacherForNoKeyUpdate(client, 'never-called');
+  // @ts-expect-error `SET LOCAL` then `FOR SHARE` on `Teacher` (#758).
+  await lockTeacherForShare(client, 'never-called');
 }
 
 /**
@@ -206,6 +212,26 @@ describe('the shared lock timeout', () => {
   it('is in force after lockLiveTeacher, which sets it itself', async () => {
     const observed = await prisma.$transaction(async (tx) => {
       await lockLiveTeacher(tx, '00000000-0000-4000-8000-000000000000');
+      const rows = await tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
+      return rows[0]?.lock_timeout;
+    });
+
+    expect(observed).toBe('2s');
+  });
+
+  it('is in force after lockTeacherForNoKeyUpdate, which sets it itself', async () => {
+    const observed = await prisma.$transaction(async (tx) => {
+      await lockTeacherForNoKeyUpdate(tx, '00000000-0000-4000-8000-000000000000');
+      const rows = await tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
+      return rows[0]?.lock_timeout;
+    });
+
+    expect(observed).toBe('2s');
+  });
+
+  it('is in force after lockTeacherForShare, which sets it itself', async () => {
+    const observed = await prisma.$transaction(async (tx) => {
+      await lockTeacherForShare(tx, '00000000-0000-4000-8000-000000000000');
       const rows = await tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
       return rows[0]?.lock_timeout;
     });
@@ -804,5 +830,93 @@ describe('lockLiveStudent', () => {
     await expect(prisma.$transaction((tx) => lockLiveStudent(tx, missing))).rejects.toBeInstanceOf(
       StudentErasedError,
     );
+  });
+});
+
+describe('the Teacher first lock (#758)', () => {
+  const suffix = `teacher-lock-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const missing = '00000000-0000-4000-8000-000000000000';
+  let liveId: string;
+  let erasedId: string;
+  const accountIds: string[] = [];
+
+  beforeAll(async () => {
+    const make = async (label: string) => {
+      const t = await prisma.teacher.create({
+        data: {
+          firstName: 'Lock',
+          lastName: label,
+          email: `${suffix}-${label}@test.local`,
+          account: { create: { email: `${suffix}-${label}@test.local` } },
+          bio: '',
+          pageSlug: `${suffix}-${label}`,
+          currency: 'GBP',
+          defaultTimezone: 'Europe/London',
+        },
+        select: { id: true, accountId: true },
+      });
+      accountIds.push(t.accountId);
+      return t.id;
+    };
+    liveId = await make('live');
+    erasedId = await make('erased');
+    await prisma.teacher.update({ where: { id: erasedId }, data: { deletedAt: new Date() } });
+  });
+
+  afterAll(async () => {
+    if (liveId === undefined || erasedId === undefined) return;
+    await prisma.teacher.deleteMany({ where: { id: { in: [liveId, erasedId] } } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  /** Runs `hold` in one transaction, then probes the live teacher row `NOWAIT` from another. */
+  async function probeWhileHeld(
+    hold: (tx: TransactionClientOnly) => Promise<unknown>,
+    mode: 'FOR KEY SHARE' | 'FOR SHARE' | 'FOR NO KEY UPDATE',
+  ): Promise<'acquired' | string> {
+    return prisma.$transaction(async (tx) => {
+      await hold(tx);
+      return prisma
+        .$transaction((probe) =>
+          probe.$queryRawUnsafe(`SELECT id FROM "Teacher" WHERE id = $1 ${mode} NOWAIT`, liveId),
+        )
+        .then(
+          () => 'acquired' as const,
+          (err: unknown) => String(err),
+        );
+    });
+  }
+
+  it('lockTeacherForNoKeyUpdate answers currency and timezone for a live teacher', async () => {
+    await expect(prisma.$transaction((tx) => lockTeacherForNoKeyUpdate(tx, liveId))).resolves.toEqual({
+      currency: 'GBP',
+      defaultTimezone: 'Europe/London',
+    });
+  });
+
+  it('lockTeacherForNoKeyUpdate answers null for an erased teacher and for no row', async () => {
+    await expect(prisma.$transaction((tx) => lockTeacherForNoKeyUpdate(tx, erasedId))).resolves.toBeNull();
+    await expect(prisma.$transaction((tx) => lockTeacherForNoKeyUpdate(tx, missing))).resolves.toBeNull();
+  });
+
+  it('lockTeacherForShare answers the currency for a live teacher, null otherwise', async () => {
+    await expect(prisma.$transaction((tx) => lockTeacherForShare(tx, liveId))).resolves.toEqual({ currency: 'GBP' });
+    await expect(prisma.$transaction((tx) => lockTeacherForShare(tx, erasedId))).resolves.toBeNull();
+    await expect(prisma.$transaction((tx) => lockTeacherForShare(tx, missing))).resolves.toBeNull();
+  });
+
+  // The mode is the point: a foreign-key check's `KEY SHARE` must pass the
+  // no-key lock, and `FOR SHARE` (the photo gate, the creators) must not.
+  it('lockTeacherForNoKeyUpdate lets a foreign-key KEY SHARE through and refuses FOR SHARE', async () => {
+    const hold = (tx: TransactionClientOnly) => lockTeacherForNoKeyUpdate(tx, liveId);
+    expect(await probeWhileHeld(hold, 'FOR KEY SHARE')).toBe('acquired');
+    expect(await probeWhileHeld(hold, 'FOR SHARE')).toMatch(/55P03/);
+    expect(await probeWhileHeld(hold, 'FOR NO KEY UPDATE')).toMatch(/55P03/);
+  });
+
+  it('lockTeacherForShare shares with FOR SHARE and refuses FOR NO KEY UPDATE', async () => {
+    const hold = (tx: TransactionClientOnly) => lockTeacherForShare(tx, liveId);
+    expect(await probeWhileHeld(hold, 'FOR SHARE')).toBe('acquired');
+    expect(await probeWhileHeld(hold, 'FOR NO KEY UPDATE')).toMatch(/55P03/);
   });
 });

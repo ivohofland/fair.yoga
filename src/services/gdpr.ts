@@ -25,6 +25,7 @@ import {
   CLASS_TO_WAITLIST_JOIN,
   lockClassRowsOrdered,
   lockStudentForErasure,
+  lockTeacherForNoKeyUpdate,
   setLockTimeout,
   statusInList,
   statusesWhere,
@@ -1243,8 +1244,22 @@ export async function deleteTeacherAccount(
       // `freedClassIds` above.
       const skipped: string[] = [];
 
-      // Template child rows locked first, ordered by id (#229) — this
-      // transaction's FIRST lock acquisition. `ClassTemplate` before `Class`
+      // The `Teacher` row, this transaction's first lock (#758): `Teacher`
+      // precedes the template families and `Class` in every transaction that
+      // takes it. `FOR NO KEY UPDATE` rather than `FOR UPDATE` because a
+      // generation holding its template row inserts entries whose foreign-key
+      // check takes `KEY SHARE` on this row. `docs/lock-order.md`, "The
+      // `Teacher` row is the first lock (#758)".
+      //
+      // A duplicate erasure waits here for the first one to commit and then
+      // reads the row as erased, so it aborts before contending for anything
+      // else.
+      if ((await lockTeacherForNoKeyUpdate(tx, teacherId)) === null) {
+        throw new AlreadyErasedError('teacher');
+      }
+
+      // Template child rows locked next, ordered by id (#229), ahead of every
+      // `Class` lock. `ClassTemplate` before `Class`
       // is the canonical direction, and this function was the sole site
       // taking the opposite one until #229 moved these locks ahead of
       // `lockClassRowsOrdered` below. Which sites take that order is
@@ -1274,9 +1289,9 @@ export async function deleteTeacherAccount(
       // teacher's. Restoring the child lock is what makes the sweep's claim
       // wait here the same way it waits on `archiveOrUnarchiveTemplate`.
       //
-      // `setLockTimeout` called explicitly here — `lockClassRowsOrdered`
-      // below calls it again internally, but `SET LOCAL` is transaction-
-      // scoped, so the second call is a harmless no-op.
+      // `setLockTimeout` called explicitly here — `lockTeacherForNoKeyUpdate`
+      // above and `lockClassRowsOrdered` below call it internally too, but
+      // `SET LOCAL` is transaction-scoped, so a repeat is a harmless no-op.
       await setLockTimeout(tx);
       await tx.$queryRaw`
         SELECT ct."id" FROM "ClassTemplate" ct
@@ -1307,8 +1322,9 @@ export async function deleteTeacherAccount(
       // choice.
       //
       // First among the `Class`/`CalendarEntry` locks, though not the
-      // transaction's first lock acquisition overall — the template locks
-      // above are (#229). It is the transaction's first read of any `Class`
+      // transaction's first lock acquisition overall — the `Teacher` lock
+      // (#758) and the template locks (#229) above come before it. It is the
+      // transaction's first read of any `Class`
       // data at all. Same wording `docs/lock-order.md` uses for this site,
       // and deliberately no ordinal: `lockClassRowsOrdered` issues a
       // statement per table when `entries` is set, so an absolute count is
@@ -1495,8 +1511,8 @@ export async function deleteTeacherAccount(
         data: { cancelledAt: new Date() },
       });
 
-      // ClassTemplate/StudioClassTemplate child row locks moved to the top
-      // of this transaction (#229) — before the `Class` pre-lock — to
+      // ClassTemplate/StudioClassTemplate child row locks are taken near the
+      // top of this transaction (#229) — before the `Class` pre-lock — to
       // resolve the `Class`-before-`ClassTemplate` inversion that
       // `docs/lock-order.md` documented as a known violation.
 
@@ -1562,20 +1578,23 @@ export async function deleteTeacherAccount(
       await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
 
       // Scoped and aborting, for the same reason the student erasure above
-      // is — see that write for the argument. It matters MORE here now:
-      // the post-commit diagnostic loop below only runs once this
-      // transaction has committed, so this abort is what keeps a losing
-      // duplicate from logging a residual warn for a skip it never
-      // actually made. Done anyway so the two halves answer a repeated
-      // request the same way: the route reads each half's outcome
-      // separately, and a teacher half that silently re-erased while the
-      // student half reported already-erased would make that asymmetry look
-      // arbitrary to the next reader.
+      // is — see that write for the argument. A losing duplicate normally
+      // aborts earlier, at the `Teacher` lock at the top of this
+      // transaction; this write is what makes the row erased, and its count
+      // is the check that holds whatever reached it. The abort matters
+      // because the post-commit diagnostic loop below only runs once this
+      // transaction has committed, so it is what keeps a losing duplicate
+      // from logging a residual warn for a skip it never actually made. It
+      // also makes the two halves answer a repeated request the same way:
+      // the route reads each half's outcome separately, and a teacher half
+      // that silently re-erased while the student half reported
+      // already-erased would make that asymmetry look arbitrary to the next
+      // reader.
       //
-      // What this abort does NOT undo, stated so it is not mistaken for a
+      // What these aborts do NOT undo, stated so they are not mistaken for a
       // whole-function guard: the `completeClass` loop at the top of this
       // function runs BEFORE this transaction opens and commits per class.
-      // A loser that reaches this throw has already been through that
+      // A loser that reaches either throw has already been through that
       // loop — but which of the two concurrent calls for a given class
       // wrote anything depends on which reached it first, not on which
       // later loses this CAS. When the winner's call reaches a class
@@ -1614,9 +1633,10 @@ export async function deleteTeacherAccount(
       });
       if (erased.count === 0) throw new AlreadyErasedError('teacher');
 
-      // After the anonymising UPDATE, never before it: that UPDATE is what
-      // waits out an upload holding the teacher row (`lockLiveTeacher`), and
-      // this DELETE's own snapshot then sees the row that upload wrote.
+      // After the `Teacher` lock at the top of this transaction, never
+      // before it: that lock is what waits out an upload holding the teacher
+      // row (`lockLiveTeacher`, `FOR SHARE`), and this DELETE's own snapshot
+      // then sees the row that upload wrote.
       // `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate (#46)".
       await tx.teacherPhoto.deleteMany({ where: { teacherId } });
 

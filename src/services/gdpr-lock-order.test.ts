@@ -2905,3 +2905,246 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
     }
   }, 20_000);
 });
+
+/**
+ * #758: `Teacher` is the first lock of every transaction that takes it
+ * (`docs/lock-order.md`, "The `Teacher` row is the first lock (#758)"). A
+ * transaction that takes `Teacher` and then template rows is the AB-BA partner
+ * of an erasure that took them the other way round.
+ */
+describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
+  const prisma = new PrismaClient();
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  /** One teacher with one regular template, fresh per test: each test erases it. */
+  async function makeTeacherWithTemplate() {
+    const suffix = `gdpr-teacher-first-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'First',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Teacher-first fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'First Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234TF',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacher.id,
+      },
+      select: { id: true },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const template = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: teacher.id,
+            kind: 'regular',
+            classType: 'Teacher first',
+            dayOfWeek: 4,
+            startTime: hhmmToTime('07:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoom.id } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      select: { id: true },
+    });
+    return { teacherId: teacher.id, accountId: teacher.accountId, roomId: room.id, templateId: template.id };
+  }
+
+  type Fixture = Awaited<ReturnType<typeof makeTeacherWithTemplate>>;
+
+  async function cleanup(fx: Fixture): Promise<void> {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.classTemplate.deleteMany({ where: { id: fx.templateId } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.room.deleteMany({ where: { id: fx.roomId } });
+    await prisma.teacher.deleteMany({ where: { id: fx.teacherId } });
+    await prisma.account.deleteMany({ where: { id: fx.accountId } });
+  }
+
+  /** Resolves once some backend waits on a lock `holderPid` holds; inside the 2s `lock_timeout`. */
+  async function waitUntilBlockedBy(holderPid: number): Promise<void> {
+    const deadline = Date.now() + 1_500;
+    while (Date.now() < deadline) {
+      const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock'
+           AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+      if ((row?.n ?? 0) > 0) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`nothing waited behind backend ${holderPid} within 1500ms`);
+  }
+
+  const ownPid = async (tx: Prisma.TransactionClient): Promise<number> => {
+    const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+    return row!.pid;
+  };
+
+  it('issues a FOR NO KEY UPDATE on Teacher as its first lock, before the template pre-lock', async () => {
+    const fx = await makeTeacherWithTemplate();
+    try {
+      const locks: string[] = [];
+      const recording = prisma.$extends({
+        query: {
+          async $queryRaw({ args, query }) {
+            if (/\bFOR (NO KEY )?(UPDATE|SHARE)\b/.test(args.sql)) locks.push(args.sql);
+            return query(args);
+          },
+        },
+        // Same cast as the other `$extends` hooks in this file.
+      }) as unknown as PrismaClient;
+
+      await expectErased(deleteTeacherAccount(recording, fx.teacherId));
+
+      const teacherLock = locks.findIndex((sql) => sql.includes('FROM "Teacher"'));
+      const templateLock = locks.findIndex((sql) => sql.includes('FOR UPDATE OF ct'));
+      expect(templateLock).toBeGreaterThan(-1);
+      expect(teacherLock).toBe(0);
+      expect(locks[0]).toMatch(/FOR NO KEY UPDATE/);
+      expect(teacherLock).toBeLessThan(templateLock);
+    } finally {
+      await cleanup(fx);
+    }
+  }, 20_000);
+
+  it('holds no ClassTemplate row while it waits for a holder of the Teacher row', async () => {
+    const fx = await makeTeacherWithTemplate();
+    try {
+      let holderPid = 0;
+      let parked!: () => void;
+      const isParked = new Promise<void>((r) => { parked = r; });
+      let release!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      const holder = prisma
+        .$transaction(
+          async (tx) => {
+            holderPid = await ownPid(tx);
+            await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${fx.teacherId} FOR SHARE`;
+            parked();
+            await released;
+          },
+          { timeout: 10_000 },
+        )
+        .then(
+          () => 'held' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+
+      let erasing: Promise<'erased' | { error: string }> | undefined;
+      let probe: 'free' | { error: string } | undefined;
+      try {
+        await awaitHandshake(isParked, 'Teacher FOR SHARE holder');
+        erasing = expectErased(deleteTeacherAccount(prisma, fx.teacherId)).then(
+          () => 'erased' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+        await waitUntilBlockedBy(holderPid);
+        // `NOWAIT`: is the template row held right now, by anyone?
+        probe = await prisma
+          .$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "ClassTemplate" WHERE id = ${fx.templateId} FOR UPDATE NOWAIT`;
+          })
+          .then(
+            () => 'free' as const,
+            (err: unknown) => ({ error: String(err) }),
+          );
+      } finally {
+        release();
+        await Promise.all([holder, erasing]);
+      }
+
+      expect(probe).toBe('free');
+      expect(await holder).toBe('held');
+      expect(await erasing).toBe('erased');
+    } finally {
+      await cleanup(fx);
+    }
+  }, 20_000);
+
+  /**
+   * The generator's shape: claim the template row `FOR UPDATE`, then insert a
+   * `CalendarEntry`, whose foreign-key check takes `KEY SHARE` on the teacher.
+   * The erasure holds the teacher row and waits for the template; were its
+   * teacher lock `FOR UPDATE`, the insert would wait for the erasure and
+   * Postgres would answer `40P01`. `FOR NO KEY UPDATE` does not conflict with
+   * `KEY SHARE`.
+   */
+  it('does not deadlock against a generation holding the template row and inserting an entry', async () => {
+    const fx = await makeTeacherWithTemplate();
+    try {
+      let holderPid = 0;
+      let claimed!: () => void;
+      const isClaimed = new Promise<void>((r) => { claimed = r; });
+      let proceed!: () => void;
+      const proceeding = new Promise<void>((r) => { proceed = r; });
+      const generating = prisma
+        .$transaction(
+          async (tx) => {
+            holderPid = await ownPid(tx);
+            expect(await claimTemplateForGeneration(tx, fx.templateId)).not.toBeNull();
+            claimed();
+            await proceeding;
+            await tx.calendarEntry.create({
+              data: {
+                teacherId: fx.teacherId,
+                kind: 'studio',
+                classType: 'Generated',
+                date: new Date('2099-01-07'),
+                startTime: hhmmToTime('07:00'),
+                durationMinutes: 60,
+              },
+            });
+          },
+          { timeout: 10_000 },
+        )
+        .then(
+          () => 'generated' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+
+      let erasing: Promise<'erased' | { error: string }> | undefined;
+      try {
+        await awaitHandshake(isClaimed, 'template claim');
+        erasing = expectErased(deleteTeacherAccount(prisma, fx.teacherId)).then(
+          () => 'erased' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+        // The erasure is parked on the template row, holding its teacher lock.
+        await waitUntilBlockedBy(holderPid);
+      } finally {
+        proceed();
+        await Promise.all([generating, erasing]);
+      }
+
+      expect(await generating).toBe('generated');
+      expect(await erasing).toBe('erased');
+    } finally {
+      await cleanup(fx);
+    }
+  }, 20_000);
+});

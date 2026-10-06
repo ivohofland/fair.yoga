@@ -1809,22 +1809,26 @@ takes the teacher's row `FOR SHARE`, and it answers whether the row is live
 (`deletedAt IS NULL`) from the read it locks with. `saveTeacherPhoto` takes it
 as the first statement of its transaction, and refuses with `teacher-gone`
 when the answer is no. The image is processed before `saveTeacherPhoto` is
-called, so sharp's time is not spent holding the lock. The
-erasure's anonymising `teacher.updateMany` rewrites `email` and `pageSlug`,
-both unique, so it takes the row `FOR UPDATE`, which conflicts with
-`FOR SHARE`. The two queue on the one row in either order:
+called, so sharp's time is not spent holding the lock. The erasure's first
+statement takes the row `FOR NO KEY UPDATE` (`lockTeacherForNoKeyUpdate`,
+"The `Teacher` row is the first lock (#758)" below), which conflicts with
+`FOR SHARE`; its closing anonymising `teacher.updateMany` rewrites `email` and
+`pageSlug`, both unique, and so holds the row `FOR UPDATE` from there to
+commit. The two queue on the one row in either order:
 
-- **Upload first.** The erasure's `UPDATE` waits until the upload commits. The
-  erasure's `teacherPhoto.deleteMany`, a later statement under READ COMMITTED,
-  takes a fresh snapshot, sees the row the upload wrote, and deletes it.
+- **Upload first.** The erasure's first lock waits until the upload commits.
+  The erasure's `teacherPhoto.deleteMany`, a later statement under READ
+  COMMITTED, takes a fresh snapshot, sees the row the upload wrote, and
+  deletes it.
 - **Erasure first.** The upload's `FOR SHARE` waits until the erasure commits,
   then reads the row with `deletedAt` set, and the upload refuses without
   writing.
 
 **The placement rule: the erasure's `teacherPhoto.deleteMany` goes after its
-`teacher.updateMany`, never before.** Before it, the upload-first order
-leaks: the delete finds nothing, the `UPDATE` then waits out the upload, and
-the upload's row survives the erasure.
+`Teacher` lock, never before.** Before it, the upload-first order leaks: the
+delete finds nothing, the lock then waits out the upload, and the upload's row
+survives the erasure. It sits after the closing `teacher.updateMany` in the
+code, which satisfies the rule with room to spare.
 
 ### Why `FOR SHARE` and not `FOR KEY SHARE`
 
@@ -1854,9 +1858,9 @@ one teacher leave one row and no error".
 ### Where `TeacherPhoto` sits: after `Teacher`
 
 The upload takes `Teacher` (`FOR SHARE`) and then the `TeacherPhoto` row its
-`upsert` inserts or updates. The erasure takes `Teacher` (its `UPDATE`) and
-then the `TeacherPhoto` row its `deleteMany` removes. Both take `Teacher`
-first. The upload takes no other lock, so it holds nothing another
+`upsert` inserts or updates. The erasure takes `Teacher` (`FOR NO KEY
+UPDATE`, as its first lock) and, at the end, the `TeacherPhoto` row its
+`deleteMany` removes. Both take `Teacher` first. The upload takes no other lock, so it holds nothing another
 transaction could be waiting on while it waits for `Teacher`, and no cycle
 through it is possible. `removeTeacherPhoto` is a single `deleteMany` of the
 `TeacherPhoto` row and takes no `Teacher` lock, so the photo's own row is the
@@ -1881,6 +1885,95 @@ releasing the holder:
   gate to `FOR KEY SHARE`: this case fails with `expected null not to be
   null`, the upload never having parked. The upload-first case stays green
   under that mutation, because the real erasure's `UPDATE` takes `FOR UPDATE`.
+
+## The `Teacher` row is the first lock (#758)
+
+`Teacher` comes before every other row a transaction locks:
+
+    Teacher → ClassTemplate → StudioClassTemplate → Class → …
+
+A transaction that locks the teacher's row does it as its first lock, before
+any template, `Class` or `CalendarEntry` row. The sites:
+
+- `deleteTeacherAccount` (`src/services/gdpr.ts`): `lockTeacherForNoKeyUpdate`,
+  as the first statement of its closing transaction and ahead of the
+  `FOR UPDATE OF ct` / `FOR UPDATE OF sct` pre-locks. A duplicate erasure
+  waits there for the first one's commit, reads the row as erased, and aborts
+  before it takes anything else. Its closing `teacher.updateMany` writes a row
+  the transaction already holds. That `UPDATE` rewrites `email` and `pageSlug`,
+  so it raises the hold to `FOR UPDATE`. By then the transaction holds every
+  template and `Class` row it locks.
+- The photo upload (`saveTeacherPhoto`, `src/services/teacher-photo.ts`):
+  `lockLiveTeacher`, `FOR SHARE`, as its first and only lock. See the section
+  above.
+- The currency switch takes `lockTeacherForNoKeyUpdate`, and the transactions
+  that create a row under no existing template take `lockTeacherForShare`.
+  Both arrive with #758 Task 6.
+
+Re-derive the sites with:
+
+    grep -rn "lockTeacherForNoKeyUpdate\|lockTeacherForShare\|lockLiveTeacher" src | grep -v "\.test\."
+
+### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`
+
+An insert into any table with a foreign key to `Teacher` takes `FOR KEY SHARE`
+on the teacher's row in the foreign-key check. `CalendarEntry`, `ScheduleRule`,
+`TeacherStudent`, `TeacherRoom`, `Invitation`, `TeacherBlock`, `StudentPrivacy`,
+`TeacherPhoto` and `Announcement` all reference it (`prisma/schema.prisma`).
+`FOR UPDATE` conflicts with `FOR KEY SHARE`, so a `Teacher` lock in that mode
+would add a wait edge to every site that inserts such a row while holding a
+template or `Class` row. Two of them close a cycle against a first lock in
+that mode:
+
+- **The generator.** `claimRuleForGeneration` (`entry-generation.ts`) holds the
+  template row `FOR UPDATE OF tpl` and then inserts `CalendarEntry` rows. An
+  erasure holding `Teacher FOR UPDATE` and waiting for that template row is
+  AB-BA. On 2026-10-06, flipping `lockTeacherForNoKeyUpdate` to `FOR UPDATE`
+  made `gdpr-lock-order.test.ts`'s "does not deadlock against a generation
+  holding the template row and inserting an entry" fail with `40P01`.
+- **`POST /api/registrations`.** It holds `lockClassRow` and then
+  `linkTeacherStudent` inserts `TeacherStudent`. An erasure holding
+  `Teacher FOR UPDATE` and waiting in `lockClassRowsOrdered` for that class is
+  AB-BA. On 2026-10-06 a probe staged this: a holder took `lockClassRow`,
+  waited until the real `deleteTeacherAccount` was blocked behind it, and then
+  inserted the `TeacherStudent` row. Under `FOR UPDATE` that ended in `40P01`.
+  Under `FOR NO KEY UPDATE` both committed. The probe was not kept as a test.
+  The generator test pins the same mechanism.
+
+`FOR NO KEY UPDATE` does not conflict with `FOR KEY SHARE`, so neither insert
+waits. It does conflict with `FOR SHARE` (the photo gate, and the creators
+Task 6 adds) and with itself (erasure against the switch), and those are the
+serialisations this node exists for. `src/lib/db-locks.test.ts`, "the Teacher
+first lock (#758)", probes each mode with `NOWAIT`.
+
+The closing `UPDATE`'s raise to `FOR UPDATE` is an acquisition this
+transaction has always made at that point. Before #758 it was made from
+nothing, so moving a weaker lock to the top adds no wait edge at the end.
+
+### What else takes `Teacher` inside a transaction
+
+`grep -rn -e 'tx\.teacher\.\(update\|upsert\|delete\)' -e 'FROM "Teacher"' -e 'lockLiveTeacher(' src | grep -v '\.test\.'`
+on 2026-10-06 found the two lock helpers' callers above, a lock-free
+`COUNT(*)` in `db-provision.ts`, and the erasure's own `teacher.updateMany`.
+No site holds a template or `Class` row and then explicitly locks or writes
+`Teacher`. The foreign-key `KEY SHARE` above is the only implicit edge, and
+`FOR NO KEY UPDATE` is chosen so that it does not conflict.
+
+### How it is pinned
+
+`src/services/gdpr-lock-order.test.ts`, "deleteTeacherAccount takes the Teacher
+row first (#758)":
+
+- "issues a FOR NO KEY UPDATE on Teacher as its first lock, before the template
+  pre-lock" records every raw locking statement in order. On 2026-10-06,
+  moving the call after the `FOR UPDATE OF ct` pre-lock made it fail with
+  `expected 1 to be +0`.
+- "holds no ClassTemplate row while it waits for a holder of the Teacher row":
+  a second connection holds `Teacher` `FOR SHARE`, and a third probes the
+  template row `FOR UPDATE NOWAIT` while the erasure is parked. Under the same
+  mutation, the probe was refused instead of answering `free`.
+- "does not deadlock against a generation holding the template row and
+  inserting an entry": the mode pin described above.
 
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
