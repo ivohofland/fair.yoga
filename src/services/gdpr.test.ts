@@ -3665,7 +3665,7 @@ describe('exports carry currency (#758)', () => {
       await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.scheduleRule.deleteMany({ where: { teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-      await prisma.room.deleteMany({ where: { id: roomId } });
+      if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
       await prisma.teacher.deleteMany({ where: { id: teacherId } });
       await prisma.account.deleteMany({ where: { id: accountId } });
     }
