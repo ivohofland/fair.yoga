@@ -1,5 +1,7 @@
 # Credentials outlive the session — plan (#765)
 
+Built as: `add-passkey.tsx` was deleted and its behaviour folded into `AccountSecurity`; see the spec's "As built".
+
 Spec: `docs/superpowers/specs/2026-10-06-credentials-outlive-session-design.md`. Tool-agnostic: files, behaviour, tests.
 Each task is test-first (failing test seen, then implementation), and each guard gets a break-it step recorded in the task report.
 

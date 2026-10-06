@@ -1,5 +1,28 @@
 # Credentials outlive the session that minted them (#765)
 
+## As built
+
+Where the build differs from the text below, which is the design as argued
+before building:
+
+- **Sign out everywhere also deletes the account's push subscriptions**, in the
+  same transaction as the sessions (`signOutEverywhere`,
+  `src/services/account-sign-out.ts`): a subscription is keyed by account, not
+  session, so it would keep delivering to a signed-out device. The client also
+  calls `disablePush()` first, waiting at most 3 seconds.
+- **`AddPasskey` was folded into `AccountSecurity`** and `add-passkey.tsx` is
+  deleted; the step-up offer ("Email me a sign-in link") is `AccountSecurity`'s.
+- **Email copy** is as shipped in `renderPasskeyAddedEmail`
+  (`src/lib/email-templates.ts`): it names the passkey being added, the UTC
+  time, and where to find passkeys (Settings → Profile for teachers, Account
+  for students) with remove-then-sign-out-everywhere. It carries no link.
+- **Rate limit:** none new, the "otherwise none new" branch below.
+- **Session-issuing doors are five**, not two; the roster and the commands that
+  re-derive it are in `docs/technical-architecture.md` (Session-issuing
+  doors).
+- **Premise row 1** ("deletion only in `services/gdpr.ts`") describes the state
+  before this change; the delete route now exists.
+
 Autonomous run (no brainstorm gate with the user); every decision below is
 mine and is argued, so a reviewer can overrule it.
 
@@ -39,7 +62,7 @@ mine and is argued, so a reviewer can overrule it.
   Applies to `register/options` and `register/verify` (both, so a session that
   ages out between the two steps cannot finish). Refusal: `403
   RECENT_AUTH_REQUIRED` (new registered code).
-- **Step-up UI:** on that refusal, `AddPasskey` offers "Email me a sign-in
+- **Step-up UI:** on that refusal, `AccountSecurity` offers "Email me a sign-in
   link" (existing `magic-link/send`, `redirect` back to the same page). Clicking
   the link mints a fresh session, which passes the gate.
 - **Email on every new passkey:** `deliverPasskeyAddedNotice` returns

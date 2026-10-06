@@ -4,9 +4,9 @@ import type { PrismaClient } from '@prisma/client';
  * How recently a person must have signed in to add a passkey.
  *
  * Measured from a session row's `createdAt`; sliding a session's expiry never
- * moves it. Why `createdAt` is the time of the last authentication, and which
- * doors mint a session, is `docs/technical-architecture.md` (Session-issuing
- * doors).
+ * moves it. Why `createdAt` is the time of the last authentication is argued
+ * in `docs/technical-architecture.md` (Session Management → Recent
+ * authentication).
  */
 export const RECENT_AUTH_WINDOW_MS = 5 * 60 * 1000;
 
