@@ -14,15 +14,17 @@ import { getConnectionStatus, subscribeConnectionStatus } from '@/lib/offline-st
 
 export type ReplayOutcome = Settlement | { kind: 'retry' } | { kind: 'signed_out' };
 
-export interface SyncState {
+export type SyncState = {
   needsSignIn: boolean;
-}
+  /** The last flush in this tab ended with an entry it had tried and must try again. */
+  retrying: boolean;
+};
 
 const FLUSH_LOCK = 'fy-outbox-flush';
 const REQUEST_TIMEOUT_MS = 10_000;
 /** The last delay repeats for as long as retryable entries remain. */
 const BACKOFF_MS = [5_000, 15_000, 60_000] as const;
-const SERVER_SYNC_STATE: SyncState = { needsSignIn: false };
+const SERVER_SYNC_STATE: SyncState = { needsSignIn: false, retrying: false };
 
 let syncState: SyncState = SERVER_SYNC_STATE;
 const syncListeners = new Set<() => void>();
@@ -38,9 +40,10 @@ let activeSyncs = 0;
 /** Bumped by `resetSyncForTests`, so a flush still in flight from before it changes nothing after it. */
 let generation = 0;
 
-function setNeedsSignIn(needsSignIn: boolean): void {
-  if (syncState.needsSignIn === needsSignIn) return;
-  syncState = { needsSignIn };
+function setSyncState(patch: Partial<SyncState>): void {
+  const before: Readonly<Record<string, boolean>> = syncState;
+  if (Object.entries(patch).every(([key, value]) => before[key] === value)) return;
+  syncState = { ...syncState, ...patch };
   syncListeners.forEach((listener) => listener());
 }
 
@@ -218,7 +221,7 @@ async function pass(ownerId: string, gen: number): Promise<boolean> {
           if (sent.unanswered) break sending;
           break;
         case 'signed_out':
-          setNeedsSignIn(true);
+          setSyncState({ needsSignIn: true });
           return retried;
         case 'confirmed':
         case 'refused':
@@ -231,7 +234,7 @@ async function pass(ownerId: string, gen: number): Promise<boolean> {
         }
       }
     }
-    if (signedIn && gen === generation) setNeedsSignIn(false);
+    if (signedIn && gen === generation) setSyncState({ needsSignIn: false });
     return retried;
   });
 }
@@ -275,6 +278,7 @@ async function run(first: string, gen: number): Promise<void> {
       rerun = next !== undefined;
       if (next !== undefined) ownerId = next;
     } while (rerun);
+    setSyncState({ retrying: retried });
     scheduleBackoff(retried, ownerId);
   } finally {
     // Synchronous with the last `rerun` check, so no trigger can slip between them unseen.

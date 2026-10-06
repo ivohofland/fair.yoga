@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { dismissRefused, ownedOutbox, useOutbox, useOutboxVolatile } from '@/lib/attendance-outbox';
 import type { QueuedStatus, RefusedEntry } from '@/lib/attendance-outbox';
 import { startAttendanceSync, useSyncState } from '@/lib/attendance-sync';
+import { useConnectionStatus } from '@/lib/offline-status';
 
 /** Class ids whose refusals a mounted attendance list shows itself. */
 interface InlineRegistry {
@@ -106,11 +107,29 @@ export function refusalLine(entry: RefusedEntry): string {
   return `Couldn't record ${entry.studentName} as ${statusWord(entry.status)}: ${entry.message}`;
 }
 
+function changes(n: number): string {
+  return `${n} attendance ${n === 1 ? 'change' : 'changes'}`;
+}
+
+/** Ends `sentence` with a full stop unless it already has one. */
+function stopped(sentence: string): string {
+  return sentence.endsWith('.') ? sentence : `${sentence}.`;
+}
+
+/**
+ * The signed-in account's pending count and the refusals no mounted list
+ * shows. Announced through a text-only `role="status"` that is always
+ * mounted, empty when there is nothing to say; the visible block with its
+ * controls sits outside it. The waiting count is announced only when it is
+ * more than a round trip in progress: offline, after an attempt that must be
+ * retried, or when a sign-in is needed.
+ */
 export function AttendanceSyncStatus() {
   const ctx = useContext(SyncContext);
   const outbox = useOutbox();
   const volatile = useOutboxVolatile();
-  const { needsSignIn } = useSyncState();
+  const { needsSignIn, retrying } = useSyncState();
+  const { offline } = useConnectionStatus();
   const inline = useSyncExternalStore(
     ctx?.registry.subscribe ?? noSubscribe,
     ctx?.registry.getSnapshot ?? getNoClasses,
@@ -121,17 +140,26 @@ export function AttendanceSyncStatus() {
   const owned = ownedOutbox(outbox, ctx.ownerId);
   const pending = Object.keys(owned.pending).length;
   const refused = Object.values(owned.refused).filter((e) => !inline.has(e.classId));
+
+  const waiting =
+    pending === 0 ? '' : `${changes(pending)} waiting to sync${needsSignIn ? ' — sign in to sync them' : ''}`;
+  const unkept = pending > 0 && volatile ? "This device can't keep them if the page reloads." : '';
+  const shownWaiting = unkept === '' ? waiting : `${waiting}. ${unkept}`;
+  const announceWaiting = offline || retrying || needsSignIn;
+  const unrecorded = refused.length === 0 ? '' : `${changes(refused.length)} couldn't be recorded.`;
+  const summary = [announceWaiting ? waiting : '', announceWaiting ? unkept : '', unrecorded]
+    .filter((sentence) => sentence !== '')
+    .map(stopped)
+    .join(' ');
+
   return (
-    <div role="status">
+    <>
+      <p role="status" className="sr-only">
+        {summary}
+      </p>
       {(pending > 0 || refused.length > 0) && (
         <div className="flex flex-col gap-2 py-2">
-          {pending > 0 && (
-            <p className="type-caption">
-              {pending} attendance {pending === 1 ? 'change' : 'changes'} waiting to sync
-              {needsSignIn ? ' — sign in to sync them' : ''}
-              {volatile ? ". This device can't keep them if the page reloads." : ''}
-            </p>
-          )}
+          {pending > 0 && <p className="type-caption">{shownWaiting}</p>}
           {refused.map((entry) => (
             <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3">
               <p className="type-caption text-danger">{refusalLine(entry)}</p>
@@ -154,7 +182,7 @@ export function AttendanceSyncStatus() {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
