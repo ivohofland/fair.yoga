@@ -82,6 +82,15 @@ describe('parseBankDetails', () => {
       expect(ok(c, { iban: 'NO9386011117947' }).scheme).toBe('iban');
     });
 
+    it('accepts registry countries outside the EEA, such as a Faroese DKK account', () => {
+      expect(ok('DKK', { iban: 'FO6264600001631634' })).toEqual({ scheme: 'iban', iban: 'FO6264600001631634', bic: null });
+    });
+
+    it('requires a BIC for EUR with Montenegro, which is not in the EEA', () => {
+      expect(parseBankDetails('EUR', { iban: 'ME25505000012345678951' })).toEqual({ ok: false, error: 'bic_required', field: 'bic' });
+      expect(ok('EUR', { iban: 'ME25505000012345678951', bic: 'CKBCMEPG' })).toEqual({ scheme: 'sepa', iban: 'ME25505000012345678951', bic: 'CKBCMEPG' });
+    });
+
     it('rejects an invalid IBAN', () => {
       expect(parseBankDetails('CHF', { iban: 'CH9300762011623852958' })).toEqual({ ok: false, error: 'iban_invalid', field: 'iban' });
     });
@@ -139,6 +148,10 @@ describe('parseBankDetails', () => {
       expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '12a4567' })).toEqual({ ok: false, error: 'account_number_invalid', field: 'accountNumber' });
     });
 
+    it('strips dashes and spaces from the account number', () => {
+      expect(ok('USD', { routingNumber: '021000021', accountNumber: '1234-5678 90' })).toEqual({ scheme: 'us', routingNumber: '021000021', accountNumber: '1234567890' });
+    });
+
     it('refuses an IBAN or sort code', () => {
       expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '1234567', iban: 'NL91ABNA0417164300' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'iban' });
       expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '1234567', sortCode: '123456' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'sortCode' });
@@ -149,6 +162,11 @@ describe('parseBankDetails', () => {
 describe('scheme tables', () => {
   it('maps every currency to its scheme', () => {
     expect(SCHEME_FOR_CURRENCY).toEqual({ EUR: 'sepa', GBP: 'uk', USD: 'us', CHF: 'iban', SEK: 'iban', NOK: 'iban', DKK: 'iban' });
+  });
+
+  it('holds exactly the EU member states plus IS, LI and NO', () => {
+    const eu27 = ['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'];
+    expect([...EEA_COUNTRIES].sort()).toEqual([...eu27, 'IS', 'LI', 'NO'].sort());
   });
 
   it('holds the EEA members that matter for the BIC rule', () => {
@@ -170,6 +188,11 @@ describe('bankDetailsFromRow', () => {
   it('returns null for a row the CHECK should have made impossible', () => {
     expect(bankDetailsFromRow({ ...blank, currency: 'GBP', sortCode: '123456', accountNumber: '12345678', iban: 'GB82WEST12345698765432' })).toBeNull();
     expect(bankDetailsFromRow({ ...blank, currency: 'EUR' })).toBeNull();
-    expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000022', accountNumber: '1234567' })).toBeNull();
+    expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000021' })).toBeNull();
+  });
+
+  it('is structural: it applies no checksum and no BIC policy to a stored row', () => {
+    expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000022', accountNumber: '1234567' })).toEqual({ scheme: 'us', routingNumber: '021000022', accountNumber: '1234567' });
+    expect(bankDetailsFromRow({ ...blank, currency: 'EUR', iban: 'CH9300762011623852957' })).toEqual({ scheme: 'sepa', iban: 'CH9300762011623852957', bic: null });
   });
 });
