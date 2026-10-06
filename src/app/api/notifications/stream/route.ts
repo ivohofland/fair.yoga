@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { validateSession, getSessionToken } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
 import { notificationBus, type NotificationEvent } from '@/lib/event-bus';
 
 export const dynamic = 'force-dynamic';
@@ -64,8 +65,23 @@ export async function GET(request: NextRequest) {
         }
       };
 
-      // Send periodic keepalive to prevent proxy timeouts
-      const keepalive = setInterval(() => send(': keepalive\n\n'), 30000);
+      // Each tick keeps proxies from timing the connection out, and asks
+      // again whether the connect-time token is still a session: a revoked
+      // one must stop hearing events. A failed check keeps the stream — a
+      // database blip must not sign every open tab out.
+      const keepalive = setInterval(() => {
+        send(': keepalive\n\n');
+        void (async () => {
+          try {
+            if (!(await validateSession(prisma, token))) cleanup();
+          } catch (err) {
+            log.error(
+              { err, accountId: userKey },
+              'notification stream: session revalidation failed; keeping the stream open',
+            );
+          }
+        })();
+      }, 30000);
 
       const cleanup = () => {
         if (closed) return;
