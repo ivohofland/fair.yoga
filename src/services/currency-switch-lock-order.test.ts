@@ -13,6 +13,8 @@
  *   booked class keeps its currency;
  * - a generation holding its template row while it inserts a class: the
  *   switch waits on the template, then sees and relabels that class;
+ * - a creator holding the teacher row `FOR SHARE` while it inserts a class:
+ *   the switch waits on the teacher, then sees and relabels that class;
  * - a creator under no existing template, while a switch holds the teacher
  *   row: the creator waits on the teacher and stamps the new currency.
  *
@@ -261,6 +263,31 @@ describe('the currency switch against a generation (#758)', () => {
     expect(
       (await prisma.studioClass.findUniqueOrThrow({ where: { id: generatedId }, select: { currency: true } })).currency,
     ).toBe('GBP');
+    expect(parked).toBe(true);
+  }, CASE_TIMEOUT_MS);
+});
+
+describe('the currency switch against a create holding the teacher (#758)', () => {
+  // A creator's shape: the teacher row `FOR SHARE`, then a class stamped with
+  // the currency it read, held open. The switch must park on the teacher row
+  // until that class commits, then relabel it.
+  it('waits for the create and relabels the class it committed', async () => {
+    const f = await utcTeacher();
+    let createdId = '';
+
+    const { result, parked } = await raceBehindHolder(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${f.teacherId} FOR SHARE`;
+        createdId = (await openClass(tx, f, 12)).id;
+      },
+      () => switchToGbp(f.teacherId),
+    );
+
+    expect(createdId).not.toBe('');
+    expect(
+      (await prisma.class.findUniqueOrThrow({ where: { id: createdId }, select: { currency: true } })).currency,
+    ).toBe('GBP');
+    expect(result).toEqual({ relabelled: { classes: 1, studioClasses: 0 }, kept: [] });
     expect(parked).toBe(true);
   }, CASE_TIMEOUT_MS);
 });
