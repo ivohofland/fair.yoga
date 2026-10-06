@@ -493,11 +493,15 @@ describe('attendance sync', () => {
     expect(result.current.needsSignIn).toBe(false);
   });
 
-  it('needsSignIn stays set through an answer that is not the app\'s', async () => {
+  it.each([
+    ['an intermediary\'s 403', () => html(403)],
+    ['a portal\'s 200', () => html(200)],
+    ['a 200 that does not answer the write', () => ok({ id: 'r1', status: 'no_show' })],
+  ])('needsSignIn stays set through %s', async (_name, answer) => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await enqueue('attended');
     const { result } = renderHook(() => useSyncState());
-    fetchMock.mockResolvedValueOnce(bare(401)).mockResolvedValueOnce(html(403));
+    fetchMock.mockResolvedValueOnce(bare(401)).mockResolvedValueOnce(answer());
     await act(() => flushAttendance('acct-1'));
     await act(() => flushAttendance('acct-1'));
     expect(fetchMock).toHaveBeenCalledTimes(2);
