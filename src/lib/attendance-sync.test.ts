@@ -68,6 +68,13 @@ function setOffline(offline: boolean): void {
   conn.listeners.forEach((listener) => listener());
 }
 
+function setOnLine(onLine: boolean): void {
+  Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => onLine });
+  onTestFinished(() => {
+    Reflect.deleteProperty(navigator, 'onLine');
+  });
+}
+
 function setVisibility(state: DocumentVisibilityState): void {
   visibility = state;
 }
@@ -665,6 +672,59 @@ describe('attendance sync', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledWith('[attendance-sync] request failed', {
+      registrationId: 'r1',
+      status: 'attended',
+      err: expect.objectContaining({ name: 'TimeoutError' }),
+    });
+  });
+
+  it('a timeout is not logged while the device is offline', async () => {
+    vi.useFakeTimers();
+    setOnLine(false);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended');
+    fetchMock.mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener('abort', () => reject(signal.reason));
+        }),
+    );
+    void flushAttendance('acct-1');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await drain();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it.each([408, 429, 500, 503])('logs a %i it retries, once per entry per pass, naming no student', async (code) => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended', 'r1');
+    await enqueue('no_show', 'r2');
+    fetchMock.mockImplementation(async () => refusal(code, undefined, 'Busy'));
+    await flushAttendance('acct-1');
+    expect(errors).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveBeenCalledWith('[attendance-sync] request failed', {
+      registrationId: 'r1',
+      status: 'attended',
+      httpStatus: code,
+      contentType: 'application/json',
+      err: expect.any(Error),
+    });
+    await flushAttendance('acct-1');
+    expect(errors).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(errors.mock.calls)).not.toContain('Ada');
+  });
+
+  it('does not log a retried 503 while the device is offline', async () => {
+    setOnLine(false);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended');
+    fetchMock.mockResolvedValue(bare(503));
+    await flushAttendance('acct-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(errors).not.toHaveBeenCalled();
   });
 

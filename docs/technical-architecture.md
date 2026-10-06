@@ -565,8 +565,8 @@ Full design and the alternatives it rejected: `docs/superpowers/specs/2026-10-04
 |---|---|
 | 2xx whose `data` is `{id, status}` matching what was sent (applied or unchanged) | confirmed, at the `Date` header's instant (the device clock if it is missing or unreadable) |
 | 2xx with any other body, or none that parses | kept and logged (ids and statuses, no name); retried on the next trigger or the backoff |
-| 409 `CONCURRENT_MODIFICATION`, 408, 429, 5xx | kept; retried on the next trigger or the backoff |
-| timeout, network failure | kept, and the pass stops; retried on the next trigger or the backoff |
+| 409 `CONCURRENT_MODIFICATION`, 408, 429, 5xx | kept; retried on the next trigger or the backoff. A 408, 429 or 5xx is logged (ids and statuses, no name) while `navigator.onLine` says the device is online |
+| timeout, network failure | kept, and the pass stops; retried on the next trigger or the backoff. Logged (ids and statuses, no name), except a timeout while `navigator.onLine` says the device is offline |
 | 401 | kept; the pass stops, and the status line adds "sign in to sync them" until a later pass in this tab gets a 2xx that answers the write sent, or a 4xx other than 401, 408 or 429 with the app's JSON error body, or finds nothing pending for its account |
 | 403 with the app's JSON error body (`{ error: { message, code? } }`) | dropped, and logged with the registration id and status (no name): the signed-in account may not write this registration, and a refusal shown here could show one account's student to another |
 | any other 4xx with the app's JSON error body | refused, with the server's message; never retried |
