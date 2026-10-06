@@ -71,6 +71,17 @@ describe('LandingPricingDemo', () => {
     expect(screen.queryByText('You earn')).toBeNull();
   });
 
+  it('keeps its live region mounted so the cancellation is announced when it appears', () => {
+    render(<LandingPricingDemo />);
+    const region = screen.getByRole('status');
+    expect(region.textContent).toBe('');
+
+    fireEvent.change(students(), { target: { value: '3' } });
+
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region.textContent).toBe(BELOW_MINIMUM);
+  });
+
   it('server-renders the default state with no shuffle control', () => {
     const html = renderToStaticMarkup(<LandingPricingDemo />);
 
