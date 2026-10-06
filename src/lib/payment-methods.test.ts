@@ -2,6 +2,8 @@ import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, onTestFinished } from 'vitest';
 import { Currency } from '@prisma/client';
 import type { PaymentQr } from '@/components/student/payment-qr';
+import { SCHEME_FOR_CURRENCY } from '@/lib/bank-details';
+import { log } from '@/lib/log';
 import {
   EPC_QR_CURRENCY,
   PAYMENT_METHOD_COPY,
@@ -14,10 +16,11 @@ import {
 
 const IBAN = 'NL91ABNA0417164300';
 const HOLDER = 'I. Hofland';
+const TEACHER_ID = 'teacher-1';
 const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
 
 function account(fields: Partial<StoredBankAccount> & Pick<StoredBankAccount, 'currency'>): StoredBankAccount {
-  return { ...blank, holderName: HOLDER, ...fields };
+  return { ...blank, id: `acct-${fields.currency}`, teacherId: TEACHER_ID, holderName: HOLDER, ...fields };
 }
 
 describe('nonBlank', () => {
@@ -36,6 +39,13 @@ describe('nonBlank', () => {
 describe('EPC_QR_CURRENCY', () => {
   it('names the euro as the one currency an EPC QR carries', () => {
     expect(EPC_QR_CURRENCY).toBe('EUR');
+  });
+
+  // paymentMethodsFor offers the QR on the account's currency as well as its
+  // scheme; this pins that the two conditions still pick the same accounts.
+  it('is the only currency whose accounts use the sepa scheme', () => {
+    const sepa = Object.entries(SCHEME_FOR_CURRENCY).filter(([, scheme]) => scheme === 'sepa');
+    expect(sepa).toEqual([[EPC_QR_CURRENCY, 'sepa']]);
   });
 
   it('types a QR code and its component to the euro alone', () => {
@@ -90,12 +100,15 @@ describe('paymentMethodsFor', () => {
     expect(transfer?.beneficiary).toBe(HOLDER);
   });
 
-  it('offers nothing for, and logs, a row the CHECK should have made impossible', () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('offers nothing for, and logs with its teacher and row, a row the CHECK should have made impossible', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
     onTestFinished(() => error.mockRestore());
-    expect(paymentMethodsFor(account({ currency: 'GBP', iban: IBAN }))).toEqual([]);
-    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  ' }))).toEqual([]);
-    expect(error).toHaveBeenCalledTimes(2);
+    expect(paymentMethodsFor(account({ currency: 'GBP', iban: IBAN, id: 'acct-gbp' }))).toEqual([]);
+    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  ', id: 'acct-eur' }))).toEqual([]);
+    expect(error.mock.calls.map(([context]) => context)).toEqual([
+      { teacherId: TEACHER_ID, accountId: 'acct-gbp', currency: 'GBP' },
+      { teacherId: TEACHER_ID, accountId: 'acct-eur', currency: 'EUR' },
+    ]);
   });
 });
 

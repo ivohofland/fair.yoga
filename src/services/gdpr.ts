@@ -32,7 +32,7 @@ import {
 } from '@/lib/db-locks';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
-import { bankAccountSelect } from '@/lib/payment-methods';
+import { bankAccountDataSelect } from '@/lib/payment-methods';
 import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 import { startOfLocalDay } from '@/lib/timezone';
 import { withSlot as withClassSlot } from './class-template-lifecycle';
@@ -274,7 +274,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       },
       announcements: true,
       photo: { select: { bytes: true } },
-      bankAccounts: { select: bankAccountSelect, orderBy: { currency: 'asc' } },
+      bankAccounts: { select: bankAccountDataSelect, orderBy: { currency: 'asc' } },
     },
   });
 
