@@ -80,6 +80,19 @@ function storageQuota(limit: () => number) {
   });
 }
 
+/** Storage whose next `times` reads of `key` throw, the way blocked storage does, whichever tab reads it. */
+function throwOnReadsOf(key: string, times: number) {
+  const realGetItem = Storage.prototype.getItem;
+  let left = times;
+  return vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, read: string) {
+    if (read === key && left > 0) {
+      left--;
+      throw new DOMException('read', 'UnknownError');
+    }
+    return realGetItem.call(this, read);
+  });
+}
+
 /** The registration ids of the stored document's pending entries, sorted. */
 function storedPendingIds(): string[] {
   const doc: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}');
@@ -639,6 +652,134 @@ describe('attendance outbox', () => {
       other.resetOutboxForTests();
     }
   });
+
+  it('a memory-only correction gives way once another tab settles that registration and its refused write leaves the stored confirmation out', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      const sent = await enqueueAttendance(input('attended', 'r5'));
+      await settleEntry(sent, { kind: 'confirmed', at: Date.now() });
+      other.getOutbox();
+      const full = storedLength();
+      storageQuota(() => full);
+      await enqueueAttendance(input('no_show', 'r5'));
+      expect(readOutbox().pending.r5?.status).toBe('no_show');
+
+      await other.enqueueAttendance(input('attended', 'r6'));
+      await other.enqueueAttendance(input('late_cancel', 'r5'));
+      for (const id of ['r6', 'r5']) {
+        const entry = other.readOutbox().pending[id];
+        if (entry === undefined) throw new Error(`the other tab holds no pending ${id}`);
+        await other.settleEntry(entry, { kind: 'confirmed', at: Date.now() + 1000 });
+      }
+      expect(storedPendingIds()).toEqual(['r1']);
+      expect(localStorage.getItem(KEY)).not.toContain('"r5"');
+
+      expect(readOutbox().pending.r5).toBeUndefined();
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a memory-only correction gives way when another tab’s settle of that registration alone is refused for a longer status', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      const sent = await enqueueAttendance(input('attended', 'r5'));
+      await settleEntry(sent, { kind: 'confirmed', at: Date.now() });
+      other.getOutbox();
+      const full = storedLength();
+      storageQuota(() => full);
+      await enqueueAttendance(input('no_show', 'r5'));
+
+      const newer = await other.enqueueAttendance(input('late_cancel', 'r5'));
+      await other.settleEntry(newer, { kind: 'confirmed', at: Date.now() + 1000 });
+      expect(localStorage.getItem(KEY)).not.toContain('"r5"');
+
+      expect(readOutbox().pending.r5).toBeUndefined();
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it.each([
+    ['only its own read threw', 1],
+    ['a sync pass’s read threw before it', 2],
+  ])(
+    'a correction held while storage could not be read stays when another tab pruned a confirmation that was ahead when this tab last read it, where %s',
+    async (_, throws) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const now = new Date('2026-10-04T12:00:00Z').getTime();
+      vi.setSystemTime(now);
+      vi.resetModules();
+      const other = await import('@/lib/attendance-outbox');
+      const unsubscribe = subscribeOutbox(() => {});
+      try {
+        await enqueueAttendance(input('attended', 'r1'));
+        const sent = await enqueueAttendance(input('attended', 'r5'));
+        await settleEntry(sent, { kind: 'confirmed', at: now + 10 * 60_000 });
+        vi.setSystemTime(now + 60_000);
+        await other.enqueueAttendance(input('attended', 'r9'));
+        expect(localStorage.getItem(KEY)).not.toContain('"confirmed":{"r5"');
+
+        vi.setSystemTime(now + 6 * 60_000);
+        throwOnReadsOf(KEY, throws);
+        if (throws === 2) {
+          fireStorage();
+          readOutbox();
+        }
+        await enqueueAttendance(input('no_show', 'r5'));
+
+        vi.setSystemTime(now + 7 * 60_000);
+        expect(readOutbox().pending.r5?.status).toBe('no_show');
+      } finally {
+        unsubscribe();
+        other.resetOutboxForTests();
+      }
+    },
+  );
+
+  it.each([
+    ['its own change read it', false],
+    ['a sync pass read it before a read that threw', true],
+  ])(
+    'a memory-only correction gives way to another tab’s settle that leaves out a confirmation stamped less than 5 minutes ahead when %s',
+    async (_, throughPass) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const now = new Date('2026-10-04T12:00:00Z').getTime();
+      vi.setSystemTime(now);
+      vi.resetModules();
+      const other = await import('@/lib/attendance-outbox');
+      try {
+        await enqueueAttendance(input('attended', 'r1'));
+        vi.setSystemTime(now + 10 * 60_000);
+        const sent = await other.enqueueAttendance(input('attended', 'r5'));
+        await other.settleEntry(sent, { kind: 'confirmed', at: now + 14 * 60_000 });
+        const full = storedLength();
+        storageQuota(() => full);
+        if (throughPass) {
+          expect(readOutbox().confirmed.r5?.status).toBe('attended');
+          throwOnReadsOf(KEY, 1);
+        }
+        await enqueueAttendance(input('no_show', 'r5'));
+        expect(getOutbox().pending.r5?.status).toBe('no_show');
+
+        const newer = await other.enqueueAttendance(input('late_cancel', 'r5'));
+        await other.settleEntry(newer, { kind: 'confirmed', at: now + 14 * 60_000 + 1000 });
+        expect(localStorage.getItem(KEY)).not.toContain('"r5"');
+
+        expect(readOutbox().pending.r5).toBeUndefined();
+      } finally {
+        other.resetOutboxForTests();
+      }
+    },
+  );
 
   it('a correction held while storage could not be read stays when a stored confirmation stamped ahead comes into view', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
