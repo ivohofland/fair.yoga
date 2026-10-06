@@ -351,15 +351,6 @@ describe('Payment Service (DB)', () => {
   // teacher with euro bank details is reminded in CHF, and told to pay the
   // teacher directly because a bank method is euro-only.
   it('sendPaymentReminder words a CHF payment in CHF, with no bank method, under a EUR teacher who has an IBAN', async () => {
-    let chfClassId: string | undefined;
-    onTestFinished(async () => {
-      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
-      if (chfClassId === undefined) return;
-      await prisma.notification.deleteMany({ where: { relatedClassId: chfClassId } });
-      await prisma.payment.deleteMany({ where: { registration: { classId: chfClassId } } });
-      await prisma.registration.deleteMany({ where: { classId: chfClassId } });
-      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: chfClassId } } } });
-    });
     const chf = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
@@ -376,7 +367,13 @@ describe('Payment Service (DB)', () => {
       settingsLocked: true,
       currency: 'CHF',
     });
-    chfClassId = chf.id;
+    onTestFinished(async () => {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+      await prisma.notification.deleteMany({ where: { relatedClassId: chf.id } });
+      await prisma.payment.deleteMany({ where: { registration: { classId: chf.id } } });
+      await prisma.registration.deleteMany({ where: { classId: chf.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: chf.id } } } });
+    });
     const registration = await prisma.registration.create({
       data: { classId: chf.id, studentId, status: 'attended', tierAtBooking: 3, price: 24.59, tierRatio: 1.0 },
     });
