@@ -31,22 +31,8 @@ type CreateStudioClassWire = z.infer<typeof createStudioClassSchema>;
 
 /**
  * #136. `StudioClassFormValues` is the one enumeration of this form's fields;
- * these pins tie it to the schema in both directions, with no exclusions.
- *
- * Both keys that used to be excluded are gone from the schema as of #148.
- * `templateId` was server-set — a studio template materialising a class writes
- * it — and reached `prisma.studioClass.create` from the request body with no
- * ownership check. `studentCount` was dead surface: attendance is not known
- * when a studio class is created, and `student-count-editor.tsx` sets it
- * afterwards through `PUT /api/studio-classes/[id]`.
- *
- * This pin has no exclusions, and adding one should be a decision with its own
- * reason written down. An exclusion is not itself how the last two hid — the
- * previous revision carried `templateId`'s exclusion *and* named the mechanism
- * and #148 beside it, which is what exposed them. What hides a key is a false
- * reason attached to the exclusion, and an exclusion nothing pins (as the
- * class wizard's `description` exclusion did before #147, with its own
- * non-vacuity pin).
+ * these pins tie it to the schema in both directions. This pin has no
+ * exclusions; adding one needs its own written reason.
  */
 const _formCoversCreate: NoneOf<
   Exclude<keyof CreateStudioClassWire, keyof StudioClassFormValues>
