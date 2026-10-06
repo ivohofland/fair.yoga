@@ -2104,8 +2104,7 @@ An insert into any table with a foreign key to `Teacher` takes `FOR KEY SHARE`
 on the teacher's row in the foreign-key check. `CalendarEntry`, `ScheduleRule`,
 `TeacherStudent`, `TeacherRoom`, `Invitation`, `TeacherBlock`, `StudentPrivacy`,
 `TeacherPhoto`, `TeacherBankAccount` and `Announcement` all reference it
-(`prisma/schema.prisma`). A `TeacherBankAccount` insert holds no template or
-`Class` row, so it closes no cycle.
+(`prisma/schema.prisma`).
 `FOR UPDATE` conflicts with `FOR KEY SHARE`, so a `Teacher` lock in that mode
 would add a wait edge to every site that inserts such a row while holding a
 template or `Class` row. Two of them close a cycle against a first lock in
@@ -2125,6 +2124,9 @@ that mode:
   inserted the `TeacherStudent` row. Under `FOR UPDATE` that ended in `40P01`.
   Under `FOR NO KEY UPDATE` both committed. The probe was not kept as a test.
   The generator test pins the same mechanism.
+
+A `TeacherBankAccount` insert holds no template or `Class` row, so it closes no
+cycle of this kind and waits on neither.
 
 `FOR NO KEY UPDATE` does not conflict with `FOR KEY SHARE`, so neither insert
 waits. It does conflict with `FOR SHARE` (the photo gate, and the creators

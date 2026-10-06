@@ -197,7 +197,8 @@ Settings
 ├── Profile
 │   ├── Name, photo, bio (250 chars)
 │   ├── Personal page URL
-│   └── Custom domain
+│   ├── Custom domain
+│   └── Bank details (one account per currency, its fields following the currency's scheme)
 │
 ├── Rooms
 │   ├── My rooms list
@@ -207,7 +208,6 @@ Settings
 │
 ├── Payments
 │   ├── Payment overview (cross-class: Outstanding / Received, per-row reminders)
-│   ├── Bank details (Level 1: one account per currency, its fields following the currency's scheme) — planned
 │   ├── Payment processor (Level 2: connect Mollie/Stripe) — planned
 │   └── Payment level toggle — planned
 │

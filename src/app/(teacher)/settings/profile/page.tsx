@@ -57,6 +57,7 @@ export default async function ProfilePage() {
           accountNumber: current?.accountNumber ?? '',
           routingNumber: current?.routingNumber ?? '',
         }}
+        hasAccount={current !== null}
         others={others}
       />
 
