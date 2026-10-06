@@ -5,8 +5,10 @@ import { CURRENCIES, formatMoneyCents } from '@/lib/format';
 export type MoneyTotals = ReadonlyArray<{ currency: Currency; cents: number }>;
 
 /**
- * Sums `items` per currency in whole cents. Order: `first` (the teacher's
- * current currency) when present, then the rest in `CURRENCIES` order.
+ * Sums `items` per currency in whole cents: each amount is rounded to cents
+ * before it is added, so the sum is integer arithmetic with no float drift.
+ * Order: `first` (the teacher's current currency) when present, then the
+ * rest in `CURRENCIES` order.
  */
 export function totalsByCurrency(
   items: Iterable<{ currency: Currency; amount: number | Prisma.Decimal }>,

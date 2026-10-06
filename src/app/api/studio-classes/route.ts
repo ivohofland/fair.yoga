@@ -116,7 +116,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   if (!outcome.ok) {
     if (outcome.reason === 'teacher_gone') {
-      // LOGGED before responding, like the slot refusal below.
+      // LOGGED before responding: `respondError` does not log, and
+      // `withErrorHandler` never sees a response that was returned.
       log.warn({ teacherId: session.teacherId }, 'studio class create refused: the teacher was erased');
       return respondError('Teacher not found', 404);
     }
