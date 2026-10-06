@@ -258,12 +258,26 @@
         <div class="field"><span class="field-name">email_on_invitation</span><span class="field-type">boolean, default true</span></div>
         <div class="section-label">Payment settings</div>
         <div class="field"><span class="field-name">payment_level</span><span class="field-type">enum: 1, 2</span></div>
-        <div class="field"><span class="field-name">bank_iban</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">bank_account_name</span><span class="field-type">string, nullable</span></div>
         <div class="field"><span class="field-name">processor_type</span><span class="field-type">enum: mollie, stripe</span></div>
         <div class="field"><span class="field-name">processor_account_id</span><span class="field-type">string, nullable</span></div>
         <div class="section-label">Timestamps</div>
         <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>
+      </div>
+    </div>
+
+    <div class="entity cat-people">
+      <div class="entity-header">TeacherBankAccount <span class="badge">per currency</span></div>
+      <div class="entity-body">
+        <div class="field"><span class="field-name">id (PK)</span><span class="field-type">uuid</span></div>
+        <div class="field"><span class="field-name">teacher_id (FK)</span><span class="field-type">→ Teacher, unique with currency</span></div>
+        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency</span></div>
+        <div class="field"><span class="field-name">holder_name</span><span class="field-type">string</span></div>
+        <div class="field"><span class="field-name">iban</span><span class="field-type">string, nullable</span></div>
+        <div class="field"><span class="field-name">bic</span><span class="field-type">string, nullable</span></div>
+        <div class="field"><span class="field-name">sort_code</span><span class="field-type">string, nullable</span></div>
+        <div class="field"><span class="field-name">account_number</span><span class="field-type">string, nullable</span></div>
+        <div class="field"><span class="field-name">routing_number</span><span class="field-type">string, nullable</span></div>
+        <div class="field"><span class="field-name">created_at, updated_at</span><span class="field-type">datetime</span></div>
       </div>
     </div>
 
