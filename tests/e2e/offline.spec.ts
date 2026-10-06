@@ -324,7 +324,8 @@ test.describe('Offline schedule', () => {
     await page.reload();
     await expect(page.getByRole('status').filter({ hasText: 'Offline' })).toBeVisible();
     await expect(waiting).toHaveCount(CHECKIN_FIRST_NAMES.length);
-    const queued = page.getByText('3 attendance changes waiting to sync');
+    // Exact: the layout's screen-reader-only status announces the same count, ending in a full stop.
+    const queued = page.getByText('3 attendance changes waiting to sync', { exact: true });
     await expect(queued).toBeVisible();
 
     await context.setOffline(false);

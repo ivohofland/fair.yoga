@@ -23,6 +23,8 @@ import type { AttendanceStatus } from '@/lib/registration-status';
 
 export type { AttendanceStatus };
 
+const SAVE_FAILED = "Couldn't save this mark on this device.";
+
 export interface AttendanceItem {
   registrationId: string;
   studentName: string;
@@ -91,6 +93,13 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
   // The last tap's outbox write failed, so that tap is neither queued nor shown.
   const [saveFailed, setSaveFailed] = useState(false);
   useInlineRefusals(classId);
+
+  // Refusal ids already stored when this list first rendered: shown, never
+  // announced. Read on the client's first render; on the server, which
+  // announces nothing either, there is no store to read.
+  const [storedAtMount] = useState<ReadonlySet<string> | null>(() =>
+    typeof window === 'undefined' ? null : new Set(Object.values(getOutbox().refused).map((e) => e.id)),
+  );
 
   // Refusal ids already on the device at mount. Seeded from the live store, not
   // `outbox`: while hydrating, `outbox` is the empty server snapshot, and every
@@ -170,13 +179,27 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
     </div>
   );
 
+  // One always-mounted live region, text only: the save failure and the
+  // refusals that arrived while this list was mounted.
+  const announced = [
+    saveFailed ? SAVE_FAILED : '',
+    ...refused
+      .filter((e) => storedAtMount !== null && !storedAtMount.has(e.id))
+      .map((e) => refusalLine(e)),
+  ]
+    .filter((line) => line !== '')
+    .join(' ');
+  const live = (
+    <p role="alert" className="sr-only">
+      {announced}
+    </p>
+  );
+
   const refusals = refused.map((entry) => {
     const line = refusalLine(entry);
     return (
       <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3 mt-3">
-        <p role="alert" className="type-caption text-danger">
-          {line}
-        </p>
+        <p className="type-caption text-danger">{line}</p>
         <button
           type="button"
           aria-label={`Dismiss: ${line}`}
@@ -194,6 +217,7 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
       <div className="py-6">
         {heading}
         <p className="type-body">No registered students.</p>
+        {live}
         {refusals}
       </div>
     );
@@ -269,12 +293,9 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
         })}
       </div>
 
-      {saveFailed && (
-        <p role="alert" className="type-caption text-danger mt-3">
-          Couldn&apos;t save this mark on this device.
-        </p>
-      )}
+      {saveFailed && <p className="type-caption text-danger mt-3">{SAVE_FAILED}</p>}
 
+      {live}
       {refusals}
     </div>
   );

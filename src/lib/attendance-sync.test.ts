@@ -504,6 +504,19 @@ describe('attendance sync', () => {
     expect(result.current.needsSignIn).toBe(true);
   });
 
+  it('reports retrying once a flush leaves an attempted entry to retry, and not after one that leaves none', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended');
+    const { result } = renderHook(() => useSyncState());
+    expect(result.current.retrying).toBe(false);
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await act(() => flushAttendance('acct-1'));
+    expect(result.current.retrying).toBe(true);
+    fetchMock.mockResolvedValueOnce(ok({ id: 'r1', status: 'attended' }));
+    await act(() => flushAttendance('acct-1'));
+    expect(result.current.retrying).toBe(false);
+  });
+
   it('each pass reads the outbox past this tab\'s cache', async () => {
     const stale = await enqueue('attended');
     expect(getOutbox().pending.r1?.status).toBe('attended');

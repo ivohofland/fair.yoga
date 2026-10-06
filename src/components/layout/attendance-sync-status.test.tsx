@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent } from '@testing-library/react';
+import { render, screen, act, fireEvent, within } from '@testing-library/react';
 import { resetOutboxForTests, enqueueAttendance, settleEntry, getOutbox } from '@/lib/attendance-outbox';
 import type { PendingEntry } from '@/lib/attendance-outbox';
 import { resetSyncForTests } from '@/lib/attendance-sync';
@@ -11,18 +11,22 @@ import {
   refusalLine,
 } from './attendance-sync-status';
 
-const { startAttendanceSync, stop, syncState } = vi.hoisted(() => {
+const { startAttendanceSync, stop, syncState, connection } = vi.hoisted(() => {
   const stopFn = vi.fn();
   return {
     stop: stopFn,
     startAttendanceSync: vi.fn(() => stopFn),
-    syncState: { needsSignIn: false },
+    syncState: { needsSignIn: false, retrying: false },
+    connection: { offline: false },
   };
 });
 vi.mock('@/lib/attendance-sync', async (orig) => ({
   ...(await orig<typeof import('@/lib/attendance-sync')>()),
   startAttendanceSync,
   useSyncState: () => syncState,
+}));
+vi.mock('@/lib/offline-status', () => ({
+  useConnectionStatus: () => ({ offline: connection.offline, serverNow: null }),
 }));
 
 function entry(over: Partial<Omit<PendingEntry, 'id'>> = {}): Omit<PendingEntry, 'id'> {
@@ -70,6 +74,8 @@ beforeEach(() => {
   startAttendanceSync.mockClear();
   stop.mockClear();
   syncState.needsSignIn = false;
+  syncState.retrying = false;
+  connection.offline = false;
 });
 
 afterEach(() => {
@@ -107,8 +113,42 @@ describe('AttendanceSyncStatus', () => {
   it('says one change is waiting, singular', async () => {
     await enqueueAttendance(entry());
     renderRegion();
-    expect(screen.getByRole('status')).toHaveTextContent('1 attendance change waiting to sync');
-    expect(screen.getByRole('status')).not.toHaveTextContent(/reloads/);
+    expect(screen.getByText('1 attendance change waiting to sync')).toBeInTheDocument();
+    expect(screen.queryByText(/reloads/)).toBeNull();
+  });
+
+  it('does not announce a change that is only waiting on its round trip', async () => {
+    await enqueueAttendance(entry());
+    renderRegion();
+    expect(screen.getByText('1 attendance change waiting to sync')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it.each([
+    ['offline', () => (connection.offline = true)],
+    ['after an attempt that must be retried', () => (syncState.retrying = true)],
+  ])('announces the waiting changes %s', async (_name, arrange) => {
+    arrange();
+    await enqueueAttendance(entry());
+    await enqueueAttendance(entry({ registrationId: 'reg-2' }));
+    renderRegion();
+    expect(screen.getByRole('status')).toHaveTextContent(/^2 attendance changes waiting to sync\.$/);
+  });
+
+  it('keeps one text-only live region mounted, and the text arrives in that same node', async () => {
+    await enqueueAttendance(entry());
+    renderRegion();
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
+    expect(region).toHaveClass('sr-only');
+    const sent = getOutbox().pending['reg-1'];
+    if (!sent) throw new Error('not queued');
+    await act(async () => {
+      await settleEntry(sent, { kind: 'refused', message: 'Nope' });
+    });
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toHaveTextContent(/^1 attendance change couldn't be recorded\.$/);
+    expect(region.children).toHaveLength(0);
   });
 
   it('says the device cannot keep pending changes when storage fell back to memory', async () => {
@@ -117,8 +157,21 @@ describe('AttendanceSyncStatus', () => {
     });
     await enqueueAttendance(entry());
     renderRegion();
+    expect(
+      screen.getByText("1 attendance change waiting to sync. This device can't keep them if the page reloads."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('announces that the device cannot keep them along with the waiting changes', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded');
+    });
+    connection.offline = true;
+    await enqueueAttendance(entry());
+    renderRegion();
     expect(screen.getByRole('status')).toHaveTextContent(
-      "1 attendance change waiting to sync. This device can't keep them if the page reloads.",
+      /^1 attendance change waiting to sync\. This device can't keep them if the page reloads\.$/,
     );
   });
 
@@ -134,31 +187,32 @@ describe('AttendanceSyncStatus', () => {
   it('tells a mounted region when storage falls back to memory', async () => {
     await enqueueAttendance(entry());
     renderRegion();
-    expect(screen.getByRole('status')).not.toHaveTextContent(/reloads/);
+    expect(screen.queryByText(/reloads/)).toBeNull();
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceeded');
     });
     await act(async () => {
       await enqueueAttendance(entry({ registrationId: 'reg-2' }));
     });
-    expect(screen.getByRole('status')).toHaveTextContent(
-      "2 attendance changes waiting to sync. This device can't keep them if the page reloads.",
-    );
+    expect(
+      screen.getByText("2 attendance changes waiting to sync. This device can't keep them if the page reloads."),
+    ).toBeInTheDocument();
   });
 
   it('says several are waiting, plural', async () => {
     await enqueueAttendance(entry());
     await enqueueAttendance(entry({ registrationId: 'reg-2' }));
     renderRegion();
-    expect(screen.getByRole('status')).toHaveTextContent('2 attendance changes waiting to sync');
+    expect(screen.getByText('2 attendance changes waiting to sync')).toBeInTheDocument();
   });
 
   it('appends the sign-in prompt when sync needs one', async () => {
     syncState.needsSignIn = true;
     await enqueueAttendance(entry());
     renderRegion();
+    expect(screen.getByText('1 attendance change waiting to sync — sign in to sync them')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(
-      '1 attendance change waiting to sync — sign in to sync them',
+      /^1 attendance change waiting to sync — sign in to sync them\.$/,
     );
   });
 
@@ -219,14 +273,21 @@ describe('AttendanceSyncStatus', () => {
     expect(screen.getByText(/Couldn't record Asha/)).toBeInTheDocument();
   });
 
-  it('gives each refusal its own accessible Dismiss and Open class names', async () => {
+  it('gives each refusal its own accessible Dismiss and Open class names, outside any live region', async () => {
     await refuse({ registrationId: 'reg-1', studentName: 'Asha' });
     await refuse({ registrationId: 'reg-2', studentName: 'Ben' });
     renderRegion();
-    expect(screen.getByRole('button', { name: /^Dismiss: Couldn't record Asha/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Dismiss: Couldn't record Ben/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open class for Asha' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open class for Ben' })).toBeInTheDocument();
+    const controls = [
+      screen.getByRole('button', { name: /^Dismiss: Couldn't record Asha/ }),
+      screen.getByRole('button', { name: /^Dismiss: Couldn't record Ben/ }),
+      screen.getByRole('link', { name: 'Open class for Asha' }),
+      screen.getByRole('link', { name: 'Open class for Ben' }),
+    ];
+    for (const control of controls) {
+      expect(control.closest('[role="status"], [role="alert"], [aria-live]')).toBeNull();
+    }
+    expect(within(screen.getByRole('status')).queryAllByRole('button')).toEqual([]);
+    expect(screen.getByRole('status')).toHaveTextContent(/^2 attendance changes couldn't be recorded\.$/);
   });
 
   it('gives Open class and Dismiss full-height tap targets', async () => {

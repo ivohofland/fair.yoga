@@ -339,7 +339,7 @@ describe('AttendanceList', () => {
     fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
 
     await waitFor(() => expect(screen.getByText('Present')).toBeTruthy());
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -446,8 +446,9 @@ describe('AttendanceList', () => {
     const { container, teardown } = await hydrate({ items: [untouched] });
     try {
       expect(refresh).not.toHaveBeenCalled();
-      const alert = container.querySelector('[role="alert"]');
-      expect(alert?.textContent).toBe("Couldn't record Grace Hopper as present: This class was cancelled.");
+      expect(container).toHaveTextContent("Couldn't record Grace Hopper as present: This class was cancelled.");
+      // Shown, not announced: it was on the device before this list mounted.
+      expect(container.querySelector('[role="alert"]')).toBeEmptyDOMElement();
     } finally {
       teardown();
     }
@@ -463,8 +464,8 @@ describe('AttendanceList', () => {
 
     renderList({ items: [untouched] });
 
-    const alerts = screen.getAllByRole('alert');
-    expect(alerts.map((a) => a.textContent)).toEqual([
+    const lines = screen.getAllByText(/^Couldn't record/);
+    expect(lines.map((line) => line.textContent)).toEqual([
       "Couldn't record Ada Lovelace as present: This booking was cancelled.",
     ]);
 
@@ -473,7 +474,7 @@ describe('AttendanceList', () => {
         name: "Dismiss: Couldn't record Ada Lovelace as present: This booking was cancelled.",
       }),
     );
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/^Couldn't record/)).toBeNull());
     expect(Object.keys(getOutbox().refused)).toEqual(['reg-other']);
   });
 
@@ -484,7 +485,8 @@ describe('AttendanceList', () => {
 
     renderList({ items: [untouched] });
 
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
+    expect(screen.queryByText(/^Couldn't record/)).toBeNull();
     expect(screen.queryByText(/waiting to sync/i)).toBeNull();
     expect(screen.getByText('Not marked')).toBeTruthy();
   });
@@ -502,7 +504,7 @@ describe('AttendanceList', () => {
     });
 
     screen.getByText('Present · waiting to sync');
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
     expect(screen.queryByText(/Network error/)).toBeNull();
     expect(refresh).not.toHaveBeenCalled();
     expect(Object.keys(getOutbox().pending)).toEqual(['reg-1']);
@@ -571,14 +573,17 @@ describe('AttendanceList', () => {
       fetchMock.mockReturnValue(held().promise);
       vi.stubGlobal('fetch', fetchMock);
       renderList({ items: [untouched] });
+      const alert = screen.getByRole('alert');
+      expect(alert).toBeEmptyDOMElement();
 
       fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
 
-      const alert = await screen.findByRole('alert');
-      expect(alert).toHaveTextContent("Couldn't save this mark on this device.");
-      expect(alert).toHaveClass('text-danger');
+      const line = await screen.findByText("Couldn't save this mark on this device.", { selector: ':not([role="alert"])' });
+      expect(line).toHaveClass('text-danger');
+      expect(screen.getByRole('alert')).toBe(alert);
+      expect(alert).toHaveTextContent(/^Couldn't save this mark on this device\.$/);
       const row = screen.getByText('Grace Hopper');
-      expect(row.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(row.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(consoleError).toHaveBeenCalledWith(
         '[attendance-list] request failed',
         expect.objectContaining({ registrationId: 'reg-1' }),
@@ -588,7 +593,8 @@ describe('AttendanceList', () => {
       Reflect.deleteProperty(navigator, 'locks');
       fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
       await screen.findByText('Present · waiting to sync');
-      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      await waitFor(() => expect(alert).toBeEmptyDOMElement());
+      expect(screen.queryByText("Couldn't save this mark on this device.")).toBeNull();
     } finally {
       Reflect.deleteProperty(navigator, 'locks');
     }
@@ -601,7 +607,30 @@ describe('AttendanceList', () => {
     renderList({ items: [untouched] });
 
     const row = screen.getByText('Grace Hopper');
+    const line = screen.getByText(/^Couldn't record Grace Hopper/);
+    expect(row.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows a stored refusal without announcing it, and announces one that arrives, in the same mounted node', async () => {
+    await storeRefusal({ registrationId: 'reg-old', studentName: 'Ada Lovelace' }, 'This booking was cancelled.');
+    fetchMock.mockResolvedValue(refusal(409, 'CLASS_CANCELLED', 'This class was cancelled.'));
+    vi.stubGlobal('fetch', fetchMock);
+    renderList({ items: [untouched] });
+
     const alert = screen.getByRole('alert');
-    expect(row.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Couldn't record Ada Lovelace as present: This booking was cancelled.")).toBeInTheDocument();
+    expect(alert).toBeEmptyDOMElement();
+    expect(alert).toHaveClass('sr-only');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Grace Hopper as present' }));
+
+    await waitFor(() =>
+      expect(alert).toHaveTextContent(/^Couldn't record Grace Hopper as present: This class was cancelled\.$/),
+    );
+    expect(screen.getByRole('alert')).toBe(alert);
+    expect(alert.children).toHaveLength(0);
+    for (const button of screen.getAllByRole('button', { name: /^Dismiss: / })) {
+      expect(button.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    }
   });
 });
