@@ -168,7 +168,7 @@ function stopped(sentence: string): string {
 export function AttendanceSyncStatus() {
   const ctx = useContext(SyncContext);
   const outbox = useOutbox();
-  const volatile = useOutboxVolatile();
+  const volatile = useOutboxVolatile(ctx?.ownerId ?? null);
   const { needsSignIn, retrying } = useSyncState();
   const { offline } = useConnectionStatus();
   const inline = useSyncExternalStore(

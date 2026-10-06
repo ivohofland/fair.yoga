@@ -25,7 +25,7 @@ import {
 const KEY = 'fy-outbox-v1';
 
 function VolatileProbe() {
-  return String(useOutboxVolatile());
+  return String(useOutboxVolatile('a'));
 }
 
 function input(status: QueuedStatus, registrationId = 'r1') {
@@ -254,7 +254,7 @@ describe('attendance outbox', () => {
   });
 
   it('storage that throws is reported as volatile; working storage is not', async () => {
-    const { result } = renderHook(() => useOutboxVolatile());
+    const { result } = renderHook(() => useOutboxVolatile('a'));
     expect(result.current).toBe(false);
     await act(() => enqueueAttendance(input('attended')));
     expect(result.current).toBe(false);
@@ -298,7 +298,7 @@ describe('attendance outbox', () => {
 
   it('a refused write that leaves only a confirmation in memory is not reported as volatile', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { result } = renderHook(() => useOutboxVolatile());
+    const { result } = renderHook(() => useOutboxVolatile('a'));
     const entry = await act(() => enqueueAttendance(input('attended')));
     quota(() => 0);
     await act(() => settleEntry(entry, { kind: 'confirmed', at: Date.now() }));
@@ -574,7 +574,7 @@ describe('attendance outbox', () => {
 
   it('once a whole write succeeds again, storage holds everything and nothing is volatile', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { result } = renderHook(() => useOutboxVolatile());
+    const { result } = renderHook(() => useOutboxVolatile('a'));
     await act(() => enqueueAttendance(input('attended', 'r1')));
     let fits = storedLength();
     quota(() => fits);
@@ -599,7 +599,7 @@ describe('attendance outbox', () => {
     ['pagehide', () => window.dispatchEvent(new Event('pagehide'))],
   ])('%s retries the whole write, so what memory held survives a reload once storage has room', async (_, trigger) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { result } = renderHook(() => useOutboxVolatile());
+    const { result } = renderHook(() => useOutboxVolatile('a'));
     try {
       await act(() => enqueueAttendance(input('attended', 'r1')));
       let fits = storedLength();
@@ -651,6 +651,63 @@ describe('attendance outbox', () => {
       expect(localStorage.getItem(KEY)).not.toContain('"r2"');
     } finally {
       Reflect.deleteProperty(document, 'visibilityState');
+    }
+  });
+
+  it('volatile counts only the given account’s entries, so another account’s memory-only marks do not make it true', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const a = renderHook(() => useOutboxVolatile('a'));
+    const b = renderHook(() => useOutboxVolatile('b'));
+    try {
+      await act(() => enqueueAttendance(input('attended', 'r1')));
+      refuseWhere((value) => pendingStatusIn(value, 'r2') === 'attended');
+      await act(() => enqueueAttendance(input('attended', 'r2')));
+      await act(async () => {
+        await other.enqueueAttendance({ ...input('attended', 'b1'), ownerId: 'b', studentName: 'Bo' });
+        fireStorage();
+      });
+      expect(getOutbox().pending.b1?.ownerId).toBe('b');
+      expect(a.result.current).toBe(true);
+      expect(b.result.current).toBe(false);
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('volatile stays false when a change held in memory leaves a pending entry storage still holds', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = renderHook(() => useOutboxVolatile('a'));
+    const sent = await act(() => enqueueAttendance(input('attended', 'r1')));
+    await act(() => settleEntry(sent, { kind: 'refused', message: 'Class is finished' }));
+    await act(() => enqueueAttendance(input('attended', 'r1')));
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+      throw new DOMException('read', 'UnknownError');
+    });
+    await act(() => dismissRefused('r1'));
+    expect(getOutbox().refused.r1).toBeUndefined();
+    expect(getOutbox().pending.r1?.status).toBe('attended');
+    expect(result.current).toBe(false);
+  });
+
+  it('volatile ends once another tab writes the only registration this tab held in memory', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const { result } = renderHook(() => useOutboxVolatile('a'));
+    try {
+      await act(() => enqueueAttendance(input('attended', 'r1')));
+      refuseWhere((value) => pendingStatusIn(value, 'r5') === 'attended');
+      await act(() => enqueueAttendance(input('attended', 'r5')));
+      expect(result.current).toBe(true);
+      await act(async () => {
+        await other.enqueueAttendance(input('no_show', 'r5'));
+        fireStorage();
+      });
+      expect(result.current).toBe(false);
+    } finally {
+      other.resetOutboxForTests();
     }
   });
 

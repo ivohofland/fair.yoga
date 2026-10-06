@@ -436,15 +436,22 @@ export function useOutbox(): OutboxState {
   return useSyncExternalStore(subscribeOutbox, getOutbox, () => EMPTY_OUTBOX);
 }
 
-function isOutboxVolatile(): boolean {
-  return overlay !== null && [...overlay.values()].some(({ mine, held }) => mine.pending !== undefined && !sameEntry(held.pending, mine.pending));
+/** Whether `ownerId` has a pending entry this tab shows that storage does not hold. */
+function isOutboxVolatile(ownerId: string | null): boolean {
+  const { pending } = ownedOutbox(getOutbox(), ownerId);
+  const memory = overlay;
+  if (memory === null) return false;
+  return Object.values(pending).some((entry) => {
+    const held = memory.get(entry.registrationId)?.held;
+    return held !== undefined && !sameEntry(held.pending, entry);
+  });
 }
 /**
- * True while this tab holds pending entries storage refused, so a reload
- * would lose them. The server snapshot is `false`.
+ * True while this tab shows pending entries of `ownerId` that storage
+ * refused, so a reload would lose them. The server snapshot is `false`.
  */
-export function useOutboxVolatile(): boolean {
-  return useSyncExternalStore(subscribeOutbox, isOutboxVolatile, () => false);
+export function useOutboxVolatile(ownerId: string | null): boolean {
+  return useSyncExternalStore(subscribeOutbox, () => isOutboxVolatile(ownerId), () => false);
 }
 
 export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T> {

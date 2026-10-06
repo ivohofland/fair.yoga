@@ -184,6 +184,20 @@ describe('AttendanceSyncStatus', () => {
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 
+  it('says nothing about the device when only another account’s pending changes are in memory', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await enqueueAttendance(entry());
+    const realSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (value.includes('"reg-2"')) throw new DOMException('quota', 'QuotaExceededError');
+      realSetItem.call(this, key, value);
+    });
+    await enqueueAttendance(entry({ ownerId: 'acct-2', registrationId: 'reg-2' }));
+    renderRegion();
+    expect(screen.getByText('1 attendance change waiting to sync')).toBeInTheDocument();
+    expect(screen.queryByText(/reloads/)).toBeNull();
+  });
+
   it('tells a mounted region when storage falls back to memory', async () => {
     await enqueueAttendance(entry());
     renderRegion();
