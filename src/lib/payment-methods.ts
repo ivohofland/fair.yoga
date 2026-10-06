@@ -1,5 +1,6 @@
 import type { Currency, Prisma } from '@prisma/client';
-import { bankDetailsFromRow, type BankDetails } from '@/lib/bank-details';
+import { log } from '@/lib/log';
+import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';
 
 /** The one currency an EPC QR can carry. */
 export const EPC_QR_CURRENCY = 'EUR' as const satisfies Currency;
@@ -20,8 +21,14 @@ export const PAYMENT_METHOD_COPY = {
   epc_qr: { label: 'QR code', hint: 'For a banking app on another device' },
 } as const satisfies Record<PaymentMethodKind, { label: string; hint: string }>;
 
-/** The columns every payment-facing reader selects from a `TeacherBankAccount`. */
-export const bankAccountSelect = {
+/** A stored account's own data: its currency, holder name and every scheme column. */
+export type BankAccountData = { currency: Currency; holderName: string } & BankAccountColumns;
+
+/** A stored account with the keys that name its row in a log line. */
+export type StoredBankAccount = BankAccountData & { id: string; teacherId: string };
+
+/** The columns `BankAccountData` holds; a column the type gains and this select lacks fails to compile. */
+export const bankAccountDataSelect = {
   currency: true,
   holderName: true,
   iban: true,
@@ -29,10 +36,14 @@ export const bankAccountSelect = {
   sortCode: true,
   accountNumber: true,
   routingNumber: true,
-} as const satisfies Prisma.TeacherBankAccountSelect;
+} as const satisfies Record<keyof BankAccountData, true> & Prisma.TeacherBankAccountSelect;
 
-/** A stored account, as `bankAccountSelect` reads it. */
-export type StoredBankAccount = Parameters<typeof bankDetailsFromRow>[0] & { holderName: string };
+/** The columns `StoredBankAccount` holds, so one select reads every one `paymentMethodsFor` needs. */
+export const bankAccountSelect = {
+  ...bankAccountDataSelect,
+  id: true,
+  teacherId: true,
+} as const satisfies Record<keyof StoredBankAccount, true> & Prisma.TeacherBankAccountSelect;
 
 /** The value with surrounding whitespace removed, or `null` when nothing is left. */
 export function nonBlank(value: string | null | undefined): string | null {
@@ -44,10 +55,13 @@ export function nonBlank(value: string | null | undefined): string | null {
 export function accountInCurrency<A extends { currency: Currency }>(accounts: readonly A[], currency: Currency): A | null {
   return accounts.find((a) => a.currency === currency) ?? null;
 }
+function isEpcQrCurrency(currency: Currency): currency is typeof EPC_QR_CURRENCY {
+  return currency === EPC_QR_CURRENCY;
+}
 
 /**
  * The methods a student may use to pay into `account`, in chooser order: a
- * transfer for every scheme, and an EPC QR for a euro account.
+ * transfer for every scheme, and an EPC QR for a SEPA account in euros.
  *
  * The holder name is the beneficiary with no stand-in: the payer's bank checks
  * it against the account (Verification of Payee).
@@ -57,16 +71,16 @@ export function paymentMethodsFor(account: StoredBankAccount | null): PaymentMet
   const details = bankDetailsFromRow(account);
   const beneficiary = nonBlank(account.holderName);
   if (details === null || beneficiary === null) {
-    // Client-reachable module, so no server logger.
-    console.error('[payment-methods] stored bank account does not parse; offering no method', {
-      currency: account.currency,
-    });
+    log.error(
+      { teacherId: account.teacherId, accountId: account.id, currency: account.currency },
+      'stored bank account does not parse; offering no method',
+    );
     return [];
   }
   const transfer: PaymentMethod = { kind: 'bank_transfer', beneficiary, details };
-  if (details.scheme !== 'sepa') return [transfer];
+  if (details.scheme !== 'sepa' || !isEpcQrCurrency(account.currency)) return [transfer];
   return [
     transfer,
-    { kind: 'epc_qr', beneficiary, iban: details.iban, bic: details.bic, currency: EPC_QR_CURRENCY },
+    { kind: 'epc_qr', beneficiary, iban: details.iban, bic: details.bic, currency: account.currency },
   ];
 }

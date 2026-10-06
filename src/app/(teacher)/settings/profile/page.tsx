@@ -7,7 +7,7 @@ import { ProfilePhotoField } from '@/components/settings/profile-photo-field';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
 import { AddPasskey } from '@/components/account/add-passkey';
 import { BankAccountForm } from '@/components/settings/bank-account-form';
-import { bankAccountSelect, accountInCurrency } from '@/lib/payment-methods';
+import { bankAccountDataSelect, accountInCurrency } from '@/lib/payment-methods';
 import { maskedIdentifier } from '@/lib/bank-details';
 
 export default async function ProfilePage() {
@@ -15,7 +15,7 @@ export default async function ProfilePage() {
 
   const teacher = await prisma.teacher.findUniqueOrThrow({
     where: { id: session.teacherId },
-    include: { photo: { select: { id: true } }, bankAccounts: { select: bankAccountSelect, orderBy: { currency: 'asc' } } },
+    include: { photo: { select: { id: true } }, bankAccounts: { select: bankAccountDataSelect, orderBy: { currency: 'asc' } } },
   });
   const current = accountInCurrency(teacher.bankAccounts, teacher.currency);
   const others = teacher.bankAccounts
