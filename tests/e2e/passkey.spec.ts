@@ -30,7 +30,6 @@ let teacherId: string;
 let roomId: string;
 let classId: string;
 let studentId: string;
-let studentToken: string;
 
 /**
  * A CTAP2 security key with no PIN and no biometric: it can prove presence
@@ -113,7 +112,6 @@ test.describe('Passkey sign-in', () => {
       },
     });
     studentId = student.id;
-    studentToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
   });
 
   test.afterAll(async () => {
@@ -154,11 +152,14 @@ test.describe('Passkey sign-in', () => {
       },
     });
 
-    // Signed in (session cookie), the student enrols a passkey.
+    // Signed in (session cookie), the student enrols a passkey. The session is
+    // seeded here, not in beforeAll: adding a passkey needs a sign-in within
+    // `RECENT_AUTH_WINDOW_MS`, and its clock starts at the seed.
+    const studentToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
     await context.addCookies([sessionCookie(studentToken)]);
     await page.goto('/account');
     await page.getByRole('button', { name: 'Add a passkey' }).click();
-    await expect(page.getByText(/Passkey added/)).toBeVisible();
+    await expect(page.getByText(/next sign-in is one tap/)).toBeVisible();
     expect(
       await prisma.passkeyCredential.count({
         where: { accountId: await accountIdOfStudent(prisma, studentId) },
