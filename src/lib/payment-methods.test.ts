@@ -8,6 +8,7 @@ import {
   EPC_QR_CURRENCY,
   PAYMENT_METHOD_COPY,
   accountInCurrency,
+  hasAccountInCurrency,
   nonBlank,
   paymentMethodsFor,
   type PaymentMethod,
@@ -120,6 +121,16 @@ describe('accountInCurrency', () => {
     expect(accountInCurrency([gbp, eur], 'GBP')).toBe(gbp);
     expect(accountInCurrency([gbp, eur], 'CHF')).toBeNull();
     expect(accountInCurrency([], Currency.EUR)).toBeNull();
+  });
+});
+
+describe('hasAccountInCurrency', () => {
+  it('answers whether the accounts include one in the asked currency', () => {
+    const accounts = [{ currency: Currency.GBP }, { currency: Currency.EUR }];
+    expect(hasAccountInCurrency(accounts, 'EUR')).toBe(true);
+    expect(hasAccountInCurrency(accounts, 'GBP')).toBe(true);
+    expect(hasAccountInCurrency(accounts, 'CHF')).toBe(false);
+    expect(hasAccountInCurrency([], 'EUR')).toBe(false);
   });
 });
 
