@@ -47,6 +47,12 @@ export function LandingPricingDemo() {
             onChange={(e) => setStudentCount(Number(e.target.value))}
             className="w-full accent-teal mt-3"
           />
+          {/* Mounted empty so screen readers announce the message when it fills */}
+          <p role="status" className={`type-body text-danger ${goesAhead ? '' : 'mt-4'}`.trim()}>
+            {goesAhead
+              ? null
+              : `This class needs ${EXAMPLE.minStudents} students to go ahead. If it doesn’t get there, it’s cancelled and nobody pays.`}
+          </p>
         </div>
 
         <div>
@@ -70,18 +76,13 @@ export function LandingPricingDemo() {
           <p className="type-caption mt-1">What you earn with a full class of {EXAMPLE.maxStudents}</p>
         </div>
 
-        {goesAhead ? (
+        {goesAhead && (
           <PricingPreviewResult
             {...EXAMPLE}
             targetRate={targetRate}
             studentCount={studentCount}
             distribution={normalSpread(studentCount)}
           />
-        ) : (
-          <p role="status" className="type-body text-danger">
-            This class needs {EXAMPLE.minStudents} students to go ahead. If it doesn’t get there,
-            it’s cancelled and nobody pays.
-          </p>
         )}
       </div>
     </Card>
