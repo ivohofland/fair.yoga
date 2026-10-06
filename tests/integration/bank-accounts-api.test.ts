@@ -43,6 +43,27 @@ describe('PUT /api/teachers/[id]/bank-accounts/[currency]', () => {
     expect(await prisma.teacherBankAccount.count({ where: { teacherId: t.id } })).toBe(1);
   });
 
+  // The form omits a blank field from the body rather than sending null.
+  it('clears a stored BIC when a replacing save omits it', async () => {
+    const t = await makeTeacher();
+    await expectApplied(await send('PUT', t.id, 'EUR', t.token, { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A' }));
+    const data = await expectApplied(await send('PUT', t.id, 'EUR', t.token, { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }));
+    expect(data).toMatchObject({ bic: null });
+    expect(await prisma.teacherBankAccount.findMany({ where: { teacherId: t.id }, select: { bic: true } })).toEqual([{ bic: null }]);
+  });
+
+  it('answers 200 to concurrent saves in one currency and keeps one row', async () => {
+    const t = await makeTeacher();
+    const holders = ['A. Teacher', 'B. Teacher', 'C. Teacher', 'D. Teacher'];
+    const responses = await Promise.all(
+      holders.map((holderName) => send('PUT', t.id, 'EUR', t.token, { holderName, iban: 'NL91ABNA0417164300' })),
+    );
+    expect(responses.map((r) => r.status)).toEqual(holders.map(() => 200));
+    const rows = await prisma.teacherBankAccount.findMany({ where: { teacherId: t.id }, select: { holderName: true } });
+    expect(rows).toHaveLength(1);
+    expect(holders).toContain(rows[0]?.holderName);
+  });
+
   it('refuses a non-EEA euro IBAN without a BIC with BIC_REQUIRED', async () => {
     const t = await makeTeacher();
     await expectRefusal(await send('PUT', t.id, 'EUR', t.token, { holderName: 'A. Teacher', iban: 'CH9300762011623852957' }), 'BIC_REQUIRED');
