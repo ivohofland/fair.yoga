@@ -72,15 +72,20 @@ relabelled by the switch, so a column on it could only ever repeat
 one transaction:
 
 1. `Teacher` row `FOR UPDATE`.
-2. Candidate `Class` ids: this teacher's, `settingsLocked = false`, not
-   terminal. Lock them with `lockClassRowsOrdered`, then **re-filter under the
-   lock** — a first registration may have flipped `settingsLocked` between the
-   candidate read and the lock (`api/registrations` holds `lockClassRow` when it
-   flips it).
-3. `UPDATE "Class" SET currency` on the re-filtered set.
-4. `StudioClass` rows of this teacher dated today-or-later in the teacher's
+2. This teacher's `ClassTemplate` rows, then `StudioClassTemplate` rows,
+   `FOR UPDATE` in id order — the template families' lock node (#315). A
+   generation in flight holds its template row `FOR UPDATE` across its insert,
+   so this waits it out and the next step sees what it committed; a generation
+   starting later waits on the template and reads the new currency.
+3. Candidate `Class` ids: this teacher's, `settingsLocked = false`,
+   `status <> 'completed'`, `entryLive`. Lock them with `lockClassRowsOrdered`;
+   the predicate is evaluated under the lock, so a first registration that
+   flipped `settingsLocked` while this waited (`api/registrations` holds
+   `lockClassRow` when it flips it) drops the row from the set.
+4. `UPDATE "Class" SET currency` on the locked set.
+5. `StudioClass` rows of this teacher dated today-or-later in the teacher's
    timezone: `UPDATE ... SET currency`.
-5. `UPDATE Teacher SET currency`.
+6. `UPDATE Teacher SET currency`.
 
 The response carries `{ relabelled: { classes, studioClasses }, kept: { classes, studioClasses } }`
 so the form can say "12 upcoming classes now show £; 3 booked classes keep €".
@@ -88,21 +93,31 @@ Same currency as stored → `respondUnchanged` (CLAUDE.md: already-done answers 
 
 **The create race.** A class created while the switch runs could read the old
 currency and commit after the switch, leaving an unlocked future row in the old
-currency. Every `Class`/`StudioClass` creator takes `Teacher` `FOR SHARE` before
-reading the currency, which the switch's `FOR UPDATE` excludes. Where `Teacher`
-sits in the lock order (it must precede `Class`) is fixed in
-`docs/lock-order.md` as part of the plan, with the census of creators that take
-it; the photo-upload gate (`Teacher` before `TeacherPhoto`, #46) is the existing
-precedent.
+currency. Generated rows are covered by step 2 (the template lock). The
+transactions that create a row under **no existing template** — the one-off
+`POST /api/classes` and `POST /api/studio-classes`, and template creation in
+both families (which generates its first window in the same transaction) —
+take `Teacher` `FOR SHARE` as their first lock, which the switch's
+`FOR UPDATE` excludes.
+
+**Teacher is first, everywhere.** The resulting order is
+`Teacher → ClassTemplate → StudioClassTemplate → Class → …`. Before this change
+`deleteTeacherAccount` (`gdpr.ts`) locked templates and classes and wrote
+`Teacher` last — the reverse edge, a deadlock against the switch. Erasure
+therefore takes `Teacher` `FOR UPDATE` as its first lock; its final
+`teacher.updateMany` then writes a row it already holds. The photo upload's
+`FOR SHARE` (#46) was already first in its transaction. `docs/lock-order.md`
+records the new node and every site that takes it.
 
 **Database guard.** A trigger `class_currency_frozen_guard` refuses a change to
-`Class.currency` when the row is `settingsLocked` or terminal, and
-`studio_class_currency_frozen_guard` refuses one on a `StudioClass` whose entry
-date is in the past. Like `entry_frozen_schedule_guard`, it reads only the row
-being written (plus, for the studio guard, its own entry) — never another
-table's status — so it adds no lock edge. The guard exists because the switch
-is a bulk `UPDATE`: any future script or route that relabels by `teacherId`
-would otherwise silently rewrite a booked class.
+`Class.currency` when the row is `settingsLocked`, `status = 'completed'`, or
+`NOT "entryLive"` — all columns of the row being written (`entryLive` mirrors
+the entry's liveness, so a cancelled class is covered without reading the
+entry). `studio_class_currency_frozen_guard` refuses one on a `StudioClass`
+whose entry date is in the past; it reads its own entry with a plain `SELECT`,
+which takes no row lock and adds no lock edge. The guard exists because the
+switch is a bulk `UPDATE`: any future script or route that relabels by
+`teacherId` would otherwise silently rewrite a booked class.
 
 `StudioClass` "past" needs the teacher's timezone, which a trigger cannot read
 cheaply; the studio guard therefore compares against the entry date with a
