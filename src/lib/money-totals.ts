@@ -4,9 +4,10 @@ import { CURRENCY_PREFIX, formatMoneyCents } from '@/lib/format';
 /** One total per currency present, never across currencies. */
 export type MoneyTotals = ReadonlyArray<{ currency: Currency; cents: number }>;
 
-// `CURRENCY_PREFIX` is tethered to the `Currency` enum by its `satisfies`, so
-// its key order is the declaration order without a value import of
-// `@prisma/client` here (this module is reachable from client components).
+// `CURRENCY_PREFIX`'s keys in `Currency` declaration order, read without a
+// value import of `@prisma/client` (this module is reachable from client
+// components). Its `satisfies` fixes which keys exist; their order is pinned
+// by `money-totals.test.ts`.
 const DECLARATION_ORDER = Object.keys(CURRENCY_PREFIX) as Currency[];
 
 /**
