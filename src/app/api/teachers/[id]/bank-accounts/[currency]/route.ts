@@ -8,31 +8,46 @@ import {
 } from '@/lib/api-utils';
 import { bankAccountSchema } from '@/lib/schemas';
 import { formatIssues } from '@/lib/validation-message';
+import type { BankDetailsInput } from '@/lib/bank-details';
 import { saveBankAccount, removeBankAccount, type BankAccountFailure } from '@/services/bank-accounts';
 
 type Params = { params: Promise<{ id: string; currency: string }> };
 
 const currencySegment = z.enum(Currency);
 
-/** The message shown on the field a refusal names. */
+/** The message shown on the field a refusal names, for each refusal whose wording is fixed. */
 const INVALID_MESSAGES = {
-  iban_invalid: 'Enter a valid IBAN',
-  bic_invalid: 'Enter a valid BIC',
-  bic_required: 'Add the BIC — this IBAN is from outside the EEA',
-  sort_code_invalid: 'Enter a six-digit sort code',
-  account_number_invalid: 'Enter a valid account number',
-  routing_number_invalid: 'Enter a valid nine-digit routing number',
-  field_not_in_scheme: 'Accounts in this currency don’t use this field',
-  holder_required: 'Enter the account holder’s name',
-} as const satisfies Record<BankAccountFailure['error'], string>;
+  iban_invalid: 'Enter a valid IBAN.',
+  bic_invalid: 'Enter a valid BIC.',
+  bic_required: 'Add the BIC. This IBAN is from outside the EEA.',
+  sort_code_invalid: 'Enter a six-digit sort code.',
+  account_number_invalid: 'Enter a valid account number.',
+  routing_number_invalid: 'Enter a valid nine-digit routing number.',
+  holder_required: 'Enter the account holder’s name.',
+} as const satisfies Record<Exclude<BankAccountFailure['error'], 'field_not_in_scheme'>, string>;
+
+/** Each scheme field in words, as a sentence names it. */
+const FIELD_IN_WORDS = {
+  iban: 'an IBAN',
+  bic: 'a BIC',
+  sortCode: 'a sort code',
+  accountNumber: 'an account number',
+  routingNumber: 'a routing number',
+} as const satisfies Record<keyof BankDetailsInput, string>;
+
+function invalidMessage(failure: BankAccountFailure): string {
+  return failure.error === 'field_not_in_scheme'
+    ? `Accounts in this currency don’t use ${FIELD_IN_WORDS[failure.field]}.`
+    : INVALID_MESSAGES[failure.error];
+}
 
 /**
  * The 400 for an invalid field, in `parseBody`'s `path: message` shape so a
  * client reads the field back the same way. `bic_required` carries its code.
  */
-function respondInvalid({ error, field }: BankAccountFailure): NextResponse {
-  const message = formatIssues([{ path: [field], message: INVALID_MESSAGES[error] }]);
-  return error === 'bic_required'
+function respondInvalid(failure: BankAccountFailure): NextResponse {
+  const message = formatIssues([{ path: [failure.field], message: invalidMessage(failure) }]);
+  return failure.error === 'bic_required'
     ? respondError(message, 400, 'BIC_REQUIRED')
     : respondError(message, 400);
 }
