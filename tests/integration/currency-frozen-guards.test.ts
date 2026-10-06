@@ -129,8 +129,9 @@ describe('studio_class_currency_frozen_guard', () => {
    * clock.
    */
   async function studioAtDbDay(f: RoomFixture, offset: number) {
-    const [{ today }] = await prisma.$queryRaw<{ today: Date }[]>`SELECT CURRENT_DATE AS today`;
-    const date = new Date(today);
+    const [row] = await prisma.$queryRaw<{ today: Date }[]>`SELECT CURRENT_DATE AS today`;
+    if (!row) throw new Error('SELECT CURRENT_DATE returned no row');
+    const date = new Date(row.today);
     date.setUTCDate(date.getUTCDate() + offset);
     return createStudioClassFixture(prisma, {
       teacherId: f.teacherId,
