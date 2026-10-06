@@ -242,6 +242,12 @@ test.describe('Accessibility sweep', () => {
     await expectNoSeriousViolations(page);
   });
 
+  test('landing page', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expectNoSeriousViolations(page);
+  });
+
   test('public teacher page', async ({ page }) => {
     await page.goto(`/${slug}`);
     await expect(page.getByText('A11y Vinyasa')).toBeVisible();
