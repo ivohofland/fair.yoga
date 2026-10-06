@@ -111,6 +111,9 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
           class: {
             select: {
               status: true,
+              // The currency the class priced in: `price` and the payment's
+              // `amount` are denominated in it.
+              currency: true,
               // The calendar identity moved to the entry (#327), the teacher
               // with it. `cancelledAt` is selected because `status` can no
               // longer carry a cancellation, and an Art. 15 export that stops
@@ -218,8 +221,9 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       status: r.status,
       classCancelledAt: r.class.calendarEntry.cancelledAt,
       tierAtBooking: r.tierAtBooking,
+      currency: r.class.currency,
       price: r.price,
-      payment: r.payment,
+      payment: r.payment ? { ...r.payment, currency: r.class.currency } : null,
       registeredAt: r.registeredAt,
     })),
     waitlist: student.waitlistEntries.map((w) => ({
@@ -307,13 +311,14 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       room: tr.room.roomName,
       address: `${tr.room.address}, ${tr.room.city}`,
       rentalRate: tr.rentalRate,
+      currency: teacher.currency,
       capacity: tr.capacityOverride,
     })),
     // Both template families reached via `scheduleRules` now (issue 298) —
     // `classTemplates`/`studioClassTemplates` left `Teacher`'s own relations
     // for the rule's, and each rule carries at most one of either family.
     recurringTemplates: teacher.scheduleRules.flatMap((r) =>
-      r.classTemplates.map((ct) => withClassSlot(ct, r)),
+      r.classTemplates.map((ct) => ({ ...withClassSlot(ct, r), currency: teacher.currency })),
     ),
     // `cancelledAt` alongside `status` on both families, because since #327
     // `status` cannot say a class was cancelled and an Art. 15 export that
@@ -325,6 +330,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         startTime: timeToHHmm(e.startTime),
         durationMinutes: e.durationMinutes,
         status: c.status,
+        currency: c.currency,
         cancelledAt: e.cancelledAt,
         registrations: c._count.registrations,
         totalRevenue: c.totalRevenue,
@@ -342,7 +348,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       })),
     ),
     studioClassTemplates: teacher.scheduleRules.flatMap((r) =>
-      r.studioClassTemplates.map((sct) => withStudioSlot(sct, r)),
+      r.studioClassTemplates.map((sct) => ({ ...withStudioSlot(sct, r), currency: teacher.currency })),
     ),
     announcements: teacher.announcements.map((a) => ({
       message: a.message,

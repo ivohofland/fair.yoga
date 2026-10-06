@@ -13,7 +13,7 @@ import * as dbLocks from '@/lib/db-locks';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { startOfLocalDay } from '@/lib/timezone';
-import { createClassFixture } from '../../tests/class-fixtures';
+import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
 import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 
@@ -3587,5 +3587,104 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
       emailOnClassCompleted: false,
       emailOnInvitation: false,
     });
+  });
+});
+
+/** #758: every amount in an export names its currency. */
+describe('exports carry currency (#758)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-cur-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let studentId: string;
+  let roomId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Cur', lastName: 'Teacher', email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: '', pageSlug: suffix, currency: 'GBP',
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Cur Studio', address: `${suffix} St`, city: 'London', postcode: 'N1',
+        floor: '1', roomName: 'Main', maxCapacity: 20, createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    // Stamped CHF and SEK, deliberately unlike the teacher's GBP: an export
+    // that read a class's currency off the teacher would pass on equal values.
+    const cls = await createClassFixture(prisma, {
+      teacherId, teacherRoomId: teacherRoom.id, classType: 'Cur class',
+      date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
+      roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 10,
+      status: 'open', currency: 'CHF',
+    });
+    await createStudioClassFixture(prisma, {
+      teacherId, classType: 'Cur studio', date: new Date('2099-06-02'),
+      startTime: hhmmToTime('09:00'), durationMinutes: 60,
+      location: 'Cur', hourlyRate: 50, currency: 'SEK',
+    });
+    await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'studio', classType: 'Cur tpl', dayOfWeek: 2,
+            startTime: hhmmToTime('10:00'), durationMinutes: 60,
+          },
+        },
+        location: 'Cur', hourlyRate: 40,
+      },
+    });
+    const student = await prisma.student.create({
+      data: { firstName: 'Cur', lastName: 'Student', email: `${suffix}-s@test.local`, incomeTier: 2 },
+      select: { id: true },
+    });
+    studentId = student.id;
+    await prisma.registration.create({
+      data: {
+        classId: cls.id, studentId, status: 'registered', tierAtBooking: 2, price: 12,
+        payment: { create: { amount: 12 } },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    if (studentId) await prisma.student.deleteMany({ where: { id: studentId } });
+    if (teacherId) {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      await prisma.room.deleteMany({ where: { id: roomId } });
+      await prisma.teacher.deleteMany({ where: { id: teacherId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+    await prisma.$disconnect();
+  });
+
+  it('teacher export: each class and studio class carries its own currency, the rest the teacher’s', async () => {
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.profile.currency).toBe('GBP');
+    expect(exported.classes.map((c) => c.currency)).toEqual(['CHF']);
+    expect(exported.studioClasses.map((c) => c.currency)).toEqual(['SEK']);
+    expect(exported.rooms.map((r) => r.currency)).toEqual(['GBP']);
+    expect(exported.studioClassTemplates.map((t) => t.currency)).toEqual(['GBP']);
+  });
+
+  it('student export: booking and payment carry their class’s currency', async () => {
+    const exported = await exportStudentData(prisma, studentId);
+    expect(exported.bookings).toHaveLength(1);
+    expect(exported.bookings[0]).toMatchObject({ currency: 'CHF' });
+    expect(exported.bookings[0]?.payment).toMatchObject({ currency: 'CHF' });
   });
 });
