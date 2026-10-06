@@ -29,8 +29,28 @@ function prismaError(code: string, meta?: Record<string, unknown>) {
 }
 
 
-/** The declaration that puts a trigger function under the contract below. */
-const RAISES_23514 = "USING ERRCODE = '23514'";
+/**
+ * The declaration that puts a trigger function under the contract below, in
+ * either spelling PL/pgSQL accepts for SQLSTATE 23514: the code itself or its
+ * condition name.
+ */
+const RAISES_23514 = /USING\s+ERRCODE\s*=\s*'(?:23514|check_violation)'/i;
+
+function raises23514(fn: MigrationFunction): boolean {
+  return RAISES_23514.test(fn.body);
+}
+
+/**
+ * Functions that raise 23514 WITHOUT the terminality clause on purpose, so
+ * `classifyApiError` answers them 500, each with its reason. The live sweep
+ * skips these; the test after it fails on an entry no live function matches.
+ */
+const DELIBERATE_500_RAISERS: Readonly<Record<string, string>> = {
+  class_reject_frozen_currency_change:
+    'a currency write reaching this guard means a writer outside the switch’s own filter exists — a bug, not a refusal (#758)',
+  studio_class_reject_frozen_currency_change:
+    'a currency write reaching this guard means a writer outside the switch’s own filter exists — a bug, not a refusal (#758)',
+};
 
 /** Why one function fails the contract. `compliant` never appears in a result. */
 type ContractBreach = {
@@ -565,17 +585,56 @@ describe('classifyApiError', () => {
    * above, at the matcher rather than at the migration.
    */
   it('every LIVE function declaring SQLSTATE 23514 carries the clause and a tail the classifier knows', () => {
-    const raisers = [...liveFunctions(migrationSqlFiles()).values()].filter((fn) =>
-      fn.body.includes(RAISES_23514),
+    const raisers = [...liveFunctions(migrationSqlFiles()).values()].filter(
+      (fn) => raises23514(fn) && !(fn.functionName in DELIBERATE_500_RAISERS),
     );
 
-    // Not vacuous: the four live terminality guards are what this covers, and
-    // a parser change that stopped finding any of them would otherwise pass.
+    // Not vacuous: the live terminality guards are what this covers, and a
+    // parser change that stopped finding any of them would otherwise pass.
     expect(raisers.length).toBeGreaterThan(0);
 
     for (const offender of nonCompliantRaisers(raisers)) {
       expect(offender.reason, offender.message).toBe('compliant');
     }
+  });
+
+  /** An allowlist entry no live 23514 function answers to exempts nothing and hides a rename. */
+  it('every DELIBERATE_500_RAISERS entry names a live function raising 23514', () => {
+    const live = new Set(
+      [...liveFunctions(migrationSqlFiles()).values()].filter(raises23514).map((fn) => fn.functionName),
+    );
+    for (const name of Object.keys(DELIBERATE_500_RAISERS)) {
+      expect(live.has(name), `${name} is allowlisted but no live function of that name raises 23514`).toBe(true);
+    }
+  });
+
+  /**
+   * The two currency guards raise 23514 with no terminality clause, so they
+   * reach the generic 500, never `CLASS_FROZEN`. Messages transcribed from the
+   * guards' own `RAISE EXCEPTION` text in
+   * `20261006130000_currency_frozen_guards`.
+   */
+  it.each([
+    [
+      'class_reject_frozen_currency_change',
+      'class',
+      'Class 30cb2d25-dd22-4bd3-8baf-e99f4f9c8219 is booked or terminal and cannot change its currency',
+    ],
+    [
+      'studio_class_reject_frozen_currency_change',
+      'studioClass',
+      'Studio class 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is a past income record and cannot change its currency',
+    ],
+  ] as const)('classifies %s as a 500, not CLASS_FROZEN', (_guard, model, message) => {
+    const error = new Prisma.PrismaClientUnknownRequestError(
+      `Invalid \`prisma.${model}.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "${message}", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+      { clientVersion: 'test' },
+    );
+
+    const failure = classifyApiError(error);
+
+    expect(failure.status).toBe(500);
+    expect(failure.code).not.toBe('CLASS_FROZEN');
   });
 
   /**
@@ -590,7 +649,7 @@ describe('classifyApiError', () => {
     const raisers = [...liveFunctions([
       { name: '20990101000000_first', sql: OFFENDING_FUNCTION_SQL },
       { name: '20990102000000_second', sql: COMPLIANT_FUNCTION_SQL },
-    ]).values()].filter((fn) => fn.body.includes(RAISES_23514));
+    ]).values()].filter((fn) => raises23514(fn));
 
     expect(raisers.map((fn) => fn.migration)).toEqual(['20990102000000_second']);
     expect(nonCompliantRaisers(raisers)).toEqual([]);
@@ -608,7 +667,7 @@ describe('classifyApiError', () => {
     const raisers = [...liveFunctions([
       { name: '20990101000000_no_clause', sql: OFFENDING_FUNCTION_SQL },
       { name: '20990102000000_no_tail', sql: UNPLACEABLE_TAIL_SQL },
-    ]).values()].filter((fn) => fn.body.includes(RAISES_23514));
+    ]).values()].filter((fn) => raises23514(fn));
 
     const reasons = nonCompliantRaisers(raisers).map((o) => o.reason).sort();
     expect(reasons).toEqual(['no_known_tail', 'no_terminal_clause']);

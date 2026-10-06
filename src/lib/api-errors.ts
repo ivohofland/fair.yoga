@@ -99,7 +99,9 @@ export type ApiFailure =
  * that should be a 409. That requirement used to be undocumented and
  * unenforced, so the author of a new trigger would have had to already know
  * it; `api-errors.test.ts` now sweeps `prisma/migrations/` and reddens on the
- * commit that adds a `23514` trigger without the phrase. Mechanical, not
+ * commit that adds a `23514` trigger without the phrase — in either spelling,
+ * `'23514'` or `'check_violation'` — unless that test's
+ * `DELIBERATE_500_RAISERS` names it as meant to classify 500. Mechanical, not
  * remembered.
  *
  * The name is narrower than what this matches — a frozen-schedule violation
