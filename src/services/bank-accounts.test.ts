@@ -78,6 +78,15 @@ describe('saveBankAccount', () => {
     expect((await storedAccounts(teacherId)).map((a) => a.currency)).toEqual(['EUR']);
   });
 
+  // EUR and CHF accounts both hold an IBAN, so only the stored currency
+  // tells the two apart.
+  it('stores the named currency when the teacher’s current one shares its columns', async () => {
+    const teacherId = await makeTeacher('CHF');
+    const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' });
+    expect(out.kind).toBe('saved');
+    expect((await storedAccounts(teacherId)).map((a) => a.currency)).toEqual(['EUR']);
+  });
+
   it('replaces an existing account in the same currency, keeping one row', async () => {
     const teacherId = await makeTeacher();
     await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'Old Name', iban: 'NL91ABNA0417164300' });
