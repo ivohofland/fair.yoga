@@ -41,7 +41,7 @@ import { economicsViolations, type EconomicsViolation } from '@/lib/class-econom
 import {
   CLASS_TO_ENTRY_JOIN,
   lockClassRowsOrdered,
-  setLockTimeout,
+  lockTeacherForShare,
   statusInList,
   statusesWhere,
 } from '@/lib/db-locks';
@@ -1032,19 +1032,25 @@ export async function createClassTemplate(
     | { ok: false };
   try {
     outcome = await db.$transaction(async (tx) => {
-      // FIRST STATEMENT, per every sibling in this file. FOUR statements in
-      // this transaction can wait on a lock — this insert, the template
-      // insert below, and generation's own two writes
-      // (`generateEntriesForRule`'s `calendarEntry.createManyAndReturn` and
-      // the `family.createChildren` call after it, which for this family is
-      // `class.createMany`). Every other statement that function issues is a
-      // plain read, and a read waits on no lock under READ COMMITTED — which
-      // is why none of them is in the sum, and why no roster of them is kept
-      // here: another read cannot move this budget and another WRITE must. So
-      // 4 x 2s sits inside the 10s budget with 2s of headroom; redo that sum
-      // before adding a fifth waiting statement (issue 228,
-      // docs/lock-order.md).
-      await setLockTimeout(tx);
+      // FIRST STATEMENT, per every sibling in this file: `lockTeacherForShare`
+      // arms `setLockTimeout` before it locks. It is also the transaction's
+      // first lock (`docs/lock-order.md`, "The `Teacher` row is the first
+      // lock (#758)"): a currency switch holds this row until it commits, so
+      // the first window generated below stamps the currency the switch
+      // wrote. FIVE statements in this transaction can wait on a lock — this
+      // one, the rule insert, the template insert below, and generation's own
+      // two writes (`generateEntriesForRule`'s
+      // `calendarEntry.createManyAndReturn` and the `family.createChildren`
+      // call after it, which for this family is `class.createMany`). Every
+      // other statement that function issues is a plain read, and a read
+      // waits on no lock under READ COMMITTED — which is why none of them is
+      // in the sum, and why no roster of them is kept here: another read
+      // cannot move this budget and another WRITE must. So 5 x 2s sits inside
+      // the 12s budget with 2s of headroom; redo that sum before adding a
+      // sixth waiting statement (issue 228, docs/lock-order.md).
+      if (!(await lockTeacherForShare(tx, teacherId))) {
+        throw new Error(`createClassTemplate: teacher ${teacherId} is absent or erased`);
+      }
       const [rule] = await tx.scheduleRule.createManyAndReturn({
         data: [{
           teacherId,
@@ -1088,7 +1094,7 @@ export async function createClassTemplate(
       const generation = await generateInstancesForTemplate(tx, created);
       const { scheduleRule, ...bare } = created;
       return { ok: true as const, created: withSlot(bare, scheduleRule), generation };
-    }, { timeout: 10_000 });
+    }, { timeout: 12_000 });
   } catch (err) {
     // BEFORE any conflict check (`api-errors.ts`: `transientDbFailure` is
     // checked ahead of every other branch precisely so a non-matching check

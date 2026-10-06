@@ -12,6 +12,8 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
+import { currencyLabel } from '@/lib/format';
+import type { CurrencySwitchResult } from '@/services/currency-switch';
 
 type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
 
@@ -59,9 +61,37 @@ const CURRENCY_OPTIONS: ReadonlyArray<{ value: Currency; label: string }> = [
   { value: 'DKK', label: 'DKK (kr)' },
 ];
 
+/**
+ * What a currency switch did, in one line: the classes now in the new
+ * currency, then the ones that keep the old one. Studio classes count as
+ * classes. A clause whose count is zero is left out; empty when both are.
+ */
+export function currencySwitchLine(result: CurrencySwitchResult, from: Currency, to: Currency): string {
+  const relabelled = result.relabelled.classes + result.relabelled.studioClasses;
+  const kept = result.kept.classes + result.kept.studioClasses;
+  const clauses: string[] = [];
+  if (relabelled > 0) {
+    clauses.push(
+      relabelled === 1
+        ? `1 upcoming class now shows ${currencyLabel(to)}.`
+        : `${relabelled} upcoming classes now show ${currencyLabel(to)}.`,
+    );
+  }
+  if (kept > 0) {
+    clauses.push(
+      kept === 1
+        ? `1 class keeps ${currencyLabel(from)}, because it’s booked or finished.`
+        : `${kept} classes keep ${currencyLabel(from)}, because they’re booked or finished.`,
+    );
+  }
+  return clauses.join(' ');
+}
+
 export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: ProfileFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
+  // The currency as last saved, which is what a switch's kept classes keep.
+  const [storedCurrency, setStoredCurrency] = useState(initial.currency);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -113,7 +143,10 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         return;
       }
 
-      setSuccess('Saved');
+      const saved = (await res.json()) as { data?: { currencySwitch?: CurrencySwitchResult } };
+      const switched = saved.data?.currencySwitch;
+      setSuccess((switched && currencySwitchLine(switched, storedCurrency, payload.currency)) || 'Saved');
+      setStoredCurrency(payload.currency);
       router.refresh();
     } catch (err) {
       logRequestFailure('profile-form', { teacherId }, err);

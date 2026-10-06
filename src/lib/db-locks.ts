@@ -53,6 +53,9 @@ import { ClassStatus, Currency, Prisma } from '@prisma/client';
  *   adopt  `completeWalkIn` (`walk-ins.ts`) — issues nothing itself and
  *          passes `tx` straight on to `linkTeacherStudent`, the same reason
  *          the per-family claim names above are branded.
+ *   adopt  `switchTeacherCurrency` (`currency-switch.ts`) — calls
+ *          `lockTeacherForNoKeyUpdate` and `lockClassRowsOrdered` below and
+ *          issues the template families' `FOR UPDATE OF` itself (#758).
  *   skip   `activateRegistration`, `hasActiveRegistration` and
  *          `reorderWaitingEntries` (`waitlist.ts`), and
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a
