@@ -64,9 +64,10 @@ export const PROJECTED_STUDENT_KEYS = [
  *  fact `cookie()` and `sessionCookie()` must never drift apart on. */
 const SESSION_COOKIE_NAME = 'fair_yoga_session';
 
-/** A day — comfortably longer than any run. Deliberately not the app's own
- *  lifetime (30 days, src/lib/auth/session.ts); no test depends on the value. */
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+/** Thirty days, so a seeded session sits outside `validateSession`'s sliding
+ *  window and a request on it writes nothing. A shorter expiry makes the first
+ *  request write the row, which blocks behind any transaction holding it. */
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Session rows are keyed by the sha256 hex of the raw token. This is the
