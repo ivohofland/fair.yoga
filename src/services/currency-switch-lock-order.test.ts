@@ -192,7 +192,7 @@ describe('the currency switch against a first booking (#758)', () => {
     ).toEqual({ currency: 'EUR', settingsLocked: true });
     expect(result).toEqual({
       relabelled: { classes: 0, studioClasses: 0 },
-      kept: { classes: 1, studioClasses: 0 },
+      kept: [{ currency: 'EUR', classes: 1, studioClasses: 0 }],
     });
     expect(parked).toBe(true);
   }, CASE_TIMEOUT_MS);
@@ -293,6 +293,63 @@ describe('a create under no existing template against a switch holding the teach
     expect(res.status).toBe(201);
     expect(await classCurrencies(f.teacherId)).toEqual(['GBP']);
     expect(parked).toBe(true);
+  }, CASE_TIMEOUT_MS);
+
+  // The lock sequence, not just the outcome: parked on its room's
+  // `FOR KEY SHARE`, the create must already hold the `Teacher` row, so a
+  // switch's `FOR NO KEY UPDATE` probe is refused.
+  it('POST /api/classes takes the Teacher row before its room', async () => {
+    const f = await utcTeacher();
+    const token = await seedSession(prisma, f.accountId);
+    const holder = new PrismaClient();
+    const held = latch();
+    const release = latch();
+    let holderPid = 0;
+    const holding = holder.$transaction(async (tx) => {
+      holderPid = await ownPid(tx);
+      await tx.$queryRaw`SELECT id FROM "TeacherRoom" WHERE id = ${f.linkId} FOR UPDATE`;
+      held.open();
+      await release.promise;
+    }, { timeout: CASE_TIMEOUT_MS });
+    try {
+      await Promise.race([held.promise, holding]);
+      let settled = false;
+      const pending = postClass(new NextRequest('http://localhost:3000/api/classes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(token) },
+        body: JSON.stringify({
+          teacherRoomId: f.linkId,
+          classType: 'Hatha',
+          date: isoDay(daysAhead(9)),
+          startTime: '18:00',
+          durationMinutes: 60,
+          roomCost: 20,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 2,
+          maxStudents: 10,
+        }),
+      })).finally(() => { settled = true; });
+      void pending.catch(() => undefined);
+      const parked = (await waiterOf(holderPid, () => settled)) !== null;
+
+      // While the create is still parked on the room, before the holder lets go.
+      const probe = await prisma
+        .$transaction((tx) => tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${f.teacherId} FOR NO KEY UPDATE NOWAIT`)
+        .then(() => 'free', (err: unknown) => (String(err).includes('55P03') ? 'held' : `error: ${String(err)}`));
+
+      release.open();
+      await holding;
+      const res = await pending;
+
+      expect(probe).toBe('held');
+      expect(res.status).toBe(201);
+      expect(parked).toBe(true);
+    } finally {
+      release.open();
+      await holding.catch(() => undefined);
+      await holder.$disconnect();
+    }
   }, CASE_TIMEOUT_MS);
 
   it('POST /api/studio-classes waits for the switch and stamps its currency', async () => {

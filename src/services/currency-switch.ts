@@ -1,4 +1,4 @@
-import { Prisma, type Currency } from '@prisma/client';
+import { Currency, Prisma } from '@prisma/client';
 import {
   CLASS_TO_ENTRY_JOIN,
   lockClassRowsOrdered,
@@ -17,9 +17,14 @@ import { studioClassDateIsPast } from './studio-class-editability';
  * transaction and maps the answer to a response.
  */
 
+/**
+ * `kept` is every row of this teacher's still NOT in the new currency after
+ * the relabel, grouped by the currency it shows, in `Currency` declaration
+ * order, with no zero entries.
+ */
 export type CurrencySwitchResult = {
   relabelled: { classes: number; studioClasses: number };
-  kept: { classes: number; studioClasses: number };
+  kept: ReadonlyArray<{ currency: Currency; classes: number; studioClasses: number }>;
 };
 
 /**
@@ -88,15 +93,22 @@ export async function switchTeacherCurrency(
     data: { currency },
   });
 
-  const totalClasses = await tx.class.count({ where: { calendarEntry: { teacherId } } });
+  const notInNew = { calendarEntry: { teacherId }, currency: { not: currency } };
+  const keptClasses = await tx.class.groupBy({ by: ['currency'], where: notInNew, _count: { _all: true } });
+  const keptStudio = await tx.studioClass.groupBy({ by: ['currency'], where: notInNew, _count: { _all: true } });
 
   await tx.teacher.update({ where: { id: teacherId }, data: { currency } });
 
+  const kept = Object.values(Currency)
+    .map((c) => ({
+      currency: c,
+      classes: keptClasses.find((g) => g.currency === c)?._count._all ?? 0,
+      studioClasses: keptStudio.find((g) => g.currency === c)?._count._all ?? 0,
+    }))
+    .filter((k) => k.classes + k.studioClasses > 0);
+
   return {
     relabelled: { classes: relabelledClasses.count, studioClasses: relabelledStudio.count },
-    kept: {
-      classes: totalClasses - relabelledClasses.count,
-      studioClasses: studio.length - relabelledStudio.count,
-    },
+    kept,
   };
 }

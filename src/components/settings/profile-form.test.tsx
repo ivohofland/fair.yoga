@@ -156,10 +156,8 @@ describe('ProfileForm', () => {
   });
 
   describe('after a currency switch (#758)', () => {
-    function switched(
-      relabelled: { classes: number; studioClasses: number },
-      kept: { classes: number; studioClasses: number },
-    ): void {
+    type Kept = { currency: string; classes: number; studioClasses: number };
+    function switched(relabelled: { classes: number; studioClasses: number }, kept: Kept[]): void {
       fetchMock.mockResolvedValue({
         ok: true,
         json: async () => ({ data: { currency: 'GBP', currencySwitch: { relabelled, kept } } }),
@@ -170,39 +168,51 @@ describe('ProfileForm', () => {
       save();
     }
 
-    it('says how many classes now show the new currency and how many keep the old one', async () => {
-      switched({ classes: 10, studioClasses: 2 }, { classes: 2, studioClasses: 1 });
+    it('says how many classes now show the new currency and how many keep theirs', async () => {
+      switched({ classes: 10, studioClasses: 2 }, [{ currency: 'EUR', classes: 2, studioClasses: 1 }]);
       expect(
         await screen.findByText(
-          '12 upcoming classes now show £. 3 classes keep €, because they’re booked or finished.',
+          '12 upcoming classes now show £. 3 classes keep €, because they’re booked, finished or cancelled.',
         ),
       ).toBeInTheDocument();
       expect(sentBody().currency).toBe('GBP');
     });
 
+    it('names each currency the kept classes show, in the order given', async () => {
+      switched({ classes: 2, studioClasses: 0 }, [
+        { currency: 'EUR', classes: 3, studioClasses: 0 },
+        { currency: 'USD', classes: 0, studioClasses: 1 },
+      ]);
+      expect(
+        await screen.findByText(
+          '2 upcoming classes now show £. 3 classes keep €, 1 class keeps $, because they’re booked, finished or cancelled.',
+        ),
+      ).toBeInTheDocument();
+    });
+
     it('omits the kept clause when nothing kept its currency', async () => {
-      switched({ classes: 4, studioClasses: 0 }, { classes: 0, studioClasses: 0 });
+      switched({ classes: 4, studioClasses: 0 }, []);
       expect(await screen.findByText('4 upcoming classes now show £.')).toBeInTheDocument();
     });
 
     it('omits the relabelled clause when nothing was relabelled', async () => {
-      switched({ classes: 0, studioClasses: 0 }, { classes: 0, studioClasses: 3 });
+      switched({ classes: 0, studioClasses: 0 }, [{ currency: 'EUR', classes: 0, studioClasses: 3 }]);
       expect(
-        await screen.findByText('3 classes keep €, because they’re booked or finished.'),
+        await screen.findByText('3 classes keep €, because they’re booked, finished or cancelled.'),
       ).toBeInTheDocument();
     });
 
     it('speaks of one class in the singular', async () => {
-      switched({ classes: 0, studioClasses: 1 }, { classes: 1, studioClasses: 0 });
+      switched({ classes: 0, studioClasses: 1 }, [{ currency: 'EUR', classes: 1, studioClasses: 0 }]);
       expect(
         await screen.findByText(
-          '1 upcoming class now shows £. 1 class keeps €, because it’s booked or finished.',
+          '1 upcoming class now shows £. 1 class keeps €, because it’s booked, finished or cancelled.',
         ),
       ).toBeInTheDocument();
     });
 
     it('says only Saved when the teacher had no classes to relabel or keep', async () => {
-      switched({ classes: 0, studioClasses: 0 }, { classes: 0, studioClasses: 0 });
+      switched({ classes: 0, studioClasses: 0 }, []);
       expect(await screen.findByText('Saved')).toBeInTheDocument();
     });
   });

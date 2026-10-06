@@ -109,7 +109,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // The lock behavior for this create — what `setLockTimeout(tx)` bounds,
   // how many of `createClassTemplate`'s own transaction's statements can
-  // wait on it, and what its 10s budget does and does not cover — is
+  // wait on it, and what its budget does and does not cover — is
   // documented beside that transaction in `class-template-lifecycle.ts`, not
   // here (issue 228).
   let result: CreateTemplateResult;
@@ -173,6 +173,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   if (!result.ok && result.reason === 'busy') {
     return templateCreateBusyResponse();
+  }
+  if (!result.ok && result.reason === 'teacher_gone') {
+    log.warn({ teacherId: session.teacherId }, 'recurring class create refused: the teacher was erased');
+    return respondError('Teacher not found', 404);
   }
   if (!result.ok) {
     // Exhaustiveness: a new CreateTemplateResult arm becomes a compile error

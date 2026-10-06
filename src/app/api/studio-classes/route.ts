@@ -117,7 +117,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!outcome.ok) {
-    if (outcome.reason === 'teacher_gone') return respondError('Teacher not found', 404);
+    if (outcome.reason === 'teacher_gone') {
+      // LOGGED before responding, like the slot refusal below.
+      log.warn({ teacherId: session.teacherId }, 'studio class create refused: the teacher was erased');
+      return respondError('Teacher not found', 404);
+    }
     // WHICH entry, asked of the database, because a zero row count does not
     // say — and either family can be the answer, since both live in one
     // table now. On `prisma`, never on a transaction client: the one above

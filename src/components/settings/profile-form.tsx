@@ -63,35 +63,40 @@ const CURRENCY_OPTIONS: ReadonlyArray<{ value: Currency; label: string }> = [
 
 /**
  * What a currency switch did, in one line: the classes now in the new
- * currency, then the ones that keep the old one. Studio classes count as
- * classes. A clause whose count is zero is left out; empty when both are.
+ * currency, then, per currency, the ones that keep their own. Studio classes
+ * count as classes. A clause whose count is zero is left out; empty when
+ * every one is.
  */
-export function currencySwitchLine(result: CurrencySwitchResult, from: Currency, to: Currency): string {
+export function currencySwitchLine(result: CurrencySwitchResult, to: Currency): string {
   const relabelled = result.relabelled.classes + result.relabelled.studioClasses;
-  const kept = result.kept.classes + result.kept.studioClasses;
-  const clauses: string[] = [];
+  const sentences: string[] = [];
   if (relabelled > 0) {
-    clauses.push(
+    sentences.push(
       relabelled === 1
         ? `1 upcoming class now shows ${currencyLabel(to)}.`
         : `${relabelled} upcoming classes now show ${currencyLabel(to)}.`,
     );
   }
-  if (kept > 0) {
-    clauses.push(
-      kept === 1
-        ? `1 class keeps ${currencyLabel(from)}, because it’s booked or finished.`
-        : `${kept} classes keep ${currencyLabel(from)}, because they’re booked or finished.`,
+  const keptClauses: string[] = [];
+  let keptTotal = 0;
+  for (const group of result.kept) {
+    const n = group.classes + group.studioClasses;
+    if (n === 0) continue;
+    keptTotal += n;
+    keptClauses.push(
+      n === 1 ? `1 class keeps ${currencyLabel(group.currency)}` : `${n} classes keep ${currencyLabel(group.currency)}`,
     );
   }
-  return clauses.join(' ');
+  if (keptTotal > 0) {
+    const reason = keptTotal === 1 ? 'it’s' : 'they’re';
+    sentences.push(`${keptClauses.join(', ')}, because ${reason} booked, finished or cancelled.`);
+  }
+  return sentences.join(' ');
 }
 
 export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: ProfileFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
-  // The currency as last saved, which is what a switch's kept classes keep.
-  const [storedCurrency, setStoredCurrency] = useState(initial.currency);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -145,8 +150,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
 
       const saved = (await res.json()) as { data?: { currencySwitch?: CurrencySwitchResult } };
       const switched = saved.data?.currencySwitch;
-      setSuccess((switched && currencySwitchLine(switched, storedCurrency, payload.currency)) || 'Saved');
-      setStoredCurrency(payload.currency);
+      setSuccess((switched && currencySwitchLine(switched, payload.currency)) || 'Saved');
       router.refresh();
     } catch (err) {
       logRequestFailure('profile-form', { teacherId }, err);

@@ -351,28 +351,47 @@ pre-lock is what makes `Class`-first sufficient rather than merely usual, and
 it is the reason the flag is opt-in with a written verdict per call site.
 
 **No pre-lock exists for the studio pair, and none is needed.** With all three
-writers agreeing, there is no second order for one to protect against.
+writers of the pair agreeing, there is no second order for one to protect against.
 `lockClassRowsOrdered` reads `FROM "Class"` and cannot serve this family
 without becoming a different function; a studio equivalent would add wait edges
 to defend an order nothing takes.
 
-**The two orders do not compose into a cycle.** The edges are
-`Class → CalendarEntry` and `CalendarEntry → StudioClass`; a cycle needs
-something acquiring `StudioClass` before `Class` or before an entry, and
-nothing does — no `SELECT … FOR UPDATE` names `StudioClass` anywhere in `src/`,
-and the only transaction touching both families' children is
-`deleteTeacherAccount`, whose `Class` locks all come from
-`lockClassRowsOrdered` and which writes no `StudioClass` row. Re-derive the
-three claims with:
+**The orders do not compose into a cycle.** The edges are
+`Class → CalendarEntry`, `CalendarEntry → StudioClass`, and `Class →
+StudioClass` from the currency switch (`switchTeacherCurrency`,
+`currency-switch.ts`, #758), whose `studioClass.updateMany` locks the
+`StudioClass` rows it relabels while the transaction holds this teacher's
+`Class` rows from `lockClassRowsOrdered`. Before those it holds the `Teacher`
+row and every template row of the teacher. A cycle needs something that holds
+a `StudioClass` row and then waits on a `Class` row, an entry, a template or
+the `Teacher` row, and nothing does:
+
+- no `SELECT … FOR UPDATE` names `StudioClass` anywhere in `src/`;
+- `PUT /api/studio-classes/[id]` acquires its entry and then its `StudioClass`
+  row and takes nothing after them. The switch takes no entry lock, so the PUT
+  never waits on the switch; the switch may wait on the PUT's `StudioClass`
+  row, which is the one direction;
+- `DELETE /api/studio-classes/[id]` is a single cascading statement, entry
+  then `StudioClass`, with nothing after it;
+- the studio archive holds its `StudioClassTemplate` row `FOR UPDATE` before
+  its cascading delete, and the switch takes that row before any `Class` or
+  `StudioClass` row, so an archive and a switch serialise on the template
+  before either reaches a child;
+- `deleteTeacherAccount` touches both families' children but writes no
+  `StudioClass` row, and it serialises with the switch on the `Teacher` row,
+  which both take first.
+
+Re-derive the three censuses with:
 
     # (a) nothing takes an explicit StudioClass row lock — expect NO output
     grep -rn '"StudioClass"' --include='*.ts' src/ | grep -v '\.test\.ts:' \
       | grep -E 'FOR UPDATE|FOR NO KEY UPDATE'
 
-    # (b) direct StudioClass writers — expect TWO, the PUT's `update` and
-    #     `studio-class-generator.ts`'s `createMany` (an insert takes no
-    #     existing row's lock, so the PUT is the only one that can acquire one
-    #     outside a cascade)
+    # (b) direct StudioClass writers — expect THREE: the PUT's `update`, the
+    #     currency switch's `updateMany` (`currency-switch.ts`) and
+    #     `studio-class-generator.ts`'s `createMany`. An insert takes no
+    #     existing row's lock, so the PUT and the switch are the two that
+    #     acquire one outside a cascade. Re-run for #758 on 2026-10-06: three.
     grep -rnE 'studioClass\.(update|updateMany|delete|deleteMany|createMany)' \
       --include='*.ts' src/ | grep -v '\.test\.ts:' | grep -vE ':[0-9]+: *(\*|//)'
 
@@ -493,7 +512,15 @@ a call):
    re-deriving it against the six-plus-two new sites its own steps were about
    to add, which is the same mistake in the same document for a fifth time.
    The count was never the thing to trust; re-deriving the list
-   was;
+   was.
+
+   Re-run for issue 758 on 2026-10-06 it returns seventeen: the fourteen
+   above; `roster-link.ts`'s `TeacherStudent` row lock
+   (`lockTeacherStudentLink`, #265), which landed without a note here; and
+   this issue's two, the currency switch's ordered `FOR UPDATE OF ct` and
+   `FOR UPDATE OF sct` pre-locks (`switchTeacherCurrency`,
+   `currency-switch.ts`). Ten of the seventeen now lock a template row, and
+   `db-locks.ts` still holds every `Class` and `CalendarEntry` row lock;
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
    category a grep for `class.` misses. `Class` holds three FKs pointing *out*
@@ -1022,6 +1049,25 @@ bound through `lockTeacherForShare`, their first statement, so their own
 `  setLockTimeout,` import line. The two one-off create routes and the
 currency switch arm it through the same helpers and add no line. Every other
 line sits in one of the files listed above.
+
+### Template creation's transaction budget (#758)
+
+`CREATE_TEMPLATE_TIMEOUT_MS` (`class-template-lifecycle.ts`) and
+`CREATE_STUDIO_TEMPLATE_TIMEOUT_MS` (`studio-class-template-lifecycle.ts`)
+are 12s: the statements in each create's transaction that can wait on a lock,
+times the 2s `lock_timeout` each wait may run to, plus 2s of headroom. Under
+READ COMMITTED a plain read waits on no lock, so only writes and explicit
+locks are in the sum. On 2026-10-06 each transaction had five:
+`lockTeacherForShare`, the `ScheduleRule` insert, the template insert, and
+generation's two writes (`generateEntriesForRule`'s
+`calendarEntry.createManyAndReturn` and the family's `createChildren`, a
+`class.createMany` or `studioClass.createMany`). 5 × 2s + 2s = 12s. Before
+#758 the `Teacher` lock was absent and the budget 10s.
+
+Re-derive by reading each create's transaction and `generateEntriesForRule`
+(`entry-generation.ts`) for statements that write or lock; a grep cannot tell
+a write reached through a family descriptor from a read. A new one moves the
+budget by the lock timeout.
 
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
