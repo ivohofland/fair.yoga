@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 const getSession = vi.fn();
 
@@ -40,6 +40,37 @@ describe('LandingPage', () => {
     getSession.mockResolvedValue({ ...base, ...hats });
 
     await expect(LandingPage()).rejects.toThrow(`REDIRECT:${home}`);
+  });
+
+  it('shows the page to a signed-in account with neither hat', async () => {
+    const { default: LandingPage } = await import('./page');
+    getSession.mockResolvedValue({ ...base, teacherId: null, studentId: null });
+    render(await LandingPage());
+
+    expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();
+  });
+
+  it('sends each call to action where it says', async () => {
+    await renderAsVisitor();
+    const href = (scope: HTMLElement, name: string | RegExp) =>
+      within(scope).getByRole('link', { name }).getAttribute('href');
+
+    const nav = screen.getByRole('navigation', { name: 'Site' });
+    const footer = screen.getByRole('contentinfo');
+    expect(href(nav, 'Sign in')).toBe('/login');
+    expect(href(document.body, 'Set up your first class')).toBe('/signup');
+    expect(href(document.body, /See how the pricing works/)).toBe('#pricing');
+    expect(href(document.body, 'Get started — it’s free')).toBe('/signup');
+    expect(href(footer, 'Open source')).toBe('https://github.com/ivohofland/fair.yoga');
+    expect(href(footer, 'Contact')).toBe('mailto:hello@fair.yoga');
+    expect(href(footer, 'Sign in')).toBe('/login');
+  });
+
+  it('lands the pricing link on the demo', async () => {
+    await renderAsVisitor();
+
+    const pricing = document.getElementById('pricing');
+    expect(pricing?.contains(screen.getByRole('slider', { name: 'Students registered' }))).toBe(true);
   });
 
   it('opens on the question in the room', async () => {
