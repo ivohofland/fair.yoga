@@ -1,4 +1,4 @@
-import type { CalendarEntry, Class, Prisma, PrismaClient, StudioClass } from '@prisma/client';
+import type { CalendarEntry, Class, Currency, Prisma, PrismaClient, StudioClass } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
@@ -38,15 +38,20 @@ interface EntryFixtureFields {
   calendarEntryId?: string;
 }
 
+/**
+ * `currency` is required on both children in production (every writer stamps
+ * it from the teacher), but a fixture rarely has a stake in it, so the
+ * builders default it to EUR and a suite that does care passes its own.
+ */
 type ClassOwnFields = Omit<
   Prisma.ClassUncheckedCreateInput,
-  'calendarEntryId' | 'kind' | 'calendarEntry'
->;
+  'calendarEntryId' | 'kind' | 'calendarEntry' | 'currency'
+> & { currency?: Currency };
 
 type StudioClassOwnFields = Omit<
   Prisma.StudioClassUncheckedCreateInput,
-  'calendarEntryId' | 'kind' | 'calendarEntry'
->;
+  'calendarEntryId' | 'kind' | 'calendarEntry' | 'currency'
+> & { currency?: Currency };
 
 export type ClassWithEntry = Class & { calendarEntry: CalendarEntry };
 export type StudioClassWithEntry = StudioClass & { calendarEntry: CalendarEntry };
@@ -101,6 +106,7 @@ export async function createClassFixture(
       classes: {
         create: {
           ...classFields,
+          currency: classFields.currency ?? 'EUR',
           roomArchived: room.isArchived,
           ...(classFields.status === 'completed' ? { status: 'in_progress' as const } : {}),
         },
@@ -164,7 +170,7 @@ export async function createStudioClassFixture(
       durationMinutes,
       cancelledAt: cancelledAt ?? null,
       scheduleRuleId: scheduleRuleId ?? null,
-      studioClasses: { create: studioFields },
+      studioClasses: { create: { ...studioFields, currency: studioFields.currency ?? 'EUR' } },
     },
     include: { studioClasses: true },
   });

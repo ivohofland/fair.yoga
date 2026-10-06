@@ -125,7 +125,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       data: {
         ...requested,
         email: auth.email,
-        defaultCurrency: 'EUR',
+        currency: 'EUR',
         // A ticket has no account yet; a session has one already.
         ...(auth.source === 'session'
           ? { accountId: auth.session.accountId }

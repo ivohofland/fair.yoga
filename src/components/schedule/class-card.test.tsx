@@ -45,6 +45,7 @@ function studioRow(overrides?: { cancelled?: boolean; studentCount?: number | nu
       updatedAt: AT,
     },
     location: 'Studio Zen',
+    currency: 'EUR' as const,
     studentCount: overrides?.studentCount ?? null,
     hourlyRate: new Decimal(50),
     createdAt: AT,

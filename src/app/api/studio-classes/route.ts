@@ -71,6 +71,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // carry, so contention here can already surface that same generic,
   // code-less 503 before any `setLockTimeout` is added.
   const outcome = await prisma.$transaction(async (tx) => {
+    // The class is stamped with the teacher's currency as it stands in this
+    // transaction.
+    const { currency } = await tx.teacher.findUniqueOrThrow({
+      where: { id: session.teacherId },
+      select: { currency: true },
+    });
+
     // The ENTRY is inserted alone and first — it holds the slot constraint,
     // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
     // zero rows rather than deadlock against a concurrent conflicting insert
@@ -102,6 +109,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         calendarEntryId: entry.id,
         kind: 'studio',
         location: body.location,
+        currency,
         hourlyRate: body.hourlyRate,
       },
     });

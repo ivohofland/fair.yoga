@@ -148,7 +148,7 @@ async function freshClassTemplate() {
       roomCost: 20, minRate: 30, targetRate: 60,
       minStudents: 3, maxStudents: 10,
     },
-    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
   });
 }
 
@@ -164,7 +164,7 @@ async function freshStudioTemplate() {
       },
       location: 'Elsewhere', hourlyRate: 40,
     },
-    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
   });
 }
 

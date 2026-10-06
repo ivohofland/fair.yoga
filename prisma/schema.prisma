@@ -11,6 +11,16 @@ datasource db {
 // ENUMS
 // ============================================================================
 
+enum Currency {
+  EUR
+  GBP
+  USD
+  CHF
+  SEK
+  NOK
+  DKK
+}
+
 enum ReminderTiming {
   evening_before
   morning_of
@@ -176,7 +186,7 @@ model Teacher {
   bio                   String                      @db.VarChar(250)
   pageSlug              String                      @unique
   customDomain          String?
-  defaultCurrency       String                      @default("EUR")
+  currency              Currency                    @default(EUR)
   defaultTimezone       String                      @default("Europe/Amsterdam")
   classReminder         ReminderTiming              @default(morning_of)
   classReminderChannel  ReminderChannel             @default(inbox_and_email)
@@ -546,6 +556,7 @@ model Class {
   entryLive            Boolean         @default(true)
   roomArchived         Boolean         @default(false)
   description          String?         @db.Text
+  currency             Currency
   roomCost             Decimal         @db.Decimal(10, 2)
   minRate              Decimal         @db.Decimal(10, 2)
   targetRate           Decimal         @db.Decimal(10, 2)
@@ -1016,6 +1027,7 @@ model StudioClass {
   kind            ClassFamily
   location        String
   studentCount    Int?
+  currency        Currency
   hourlyRate      Decimal     @db.Decimal(10, 2)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt

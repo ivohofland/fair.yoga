@@ -96,6 +96,7 @@ export function classRow(
     entryLive: overrides?.cancelled !== true,
     roomArchived: false,
     description: null,
+    currency: 'EUR' as const,
     roomCost: new Decimal(20),
     minRate: new Decimal(40),
     targetRate: new Decimal(80),

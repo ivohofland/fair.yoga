@@ -1712,7 +1712,7 @@ export async function updateRule<TChild>(
             ? await tx.scheduleRule.update({
                 where: { id: template.scheduleRuleId },
                 data: ruleData,
-                include: { teacher: { select: { defaultTimezone: true } } },
+                include: { teacher: { select: { defaultTimezone: true, currency: true } } },
               })
             : template.scheduleRule;
 

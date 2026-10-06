@@ -1178,7 +1178,7 @@ describe('POST /api/account/student-profile answers a raced join unchanged (#161
         email: raceEmail,
         bio: 'Raced join fixture',
         pageSlug: `race-join-${suffix}`,
-        defaultCurrency: 'EUR',
+        currency: 'EUR',
         defaultTimezone: 'Europe/Amsterdam',
         account: { create: { email: raceEmail } },
       },

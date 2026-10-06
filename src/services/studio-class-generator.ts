@@ -30,7 +30,7 @@ import { readInPages } from '@/lib/read-in-pages';
  * `StudioClassTemplate` carries no zone of its own.
  */
 type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
-  include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
+  include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true; currency: true } } } } };
 }>;
 
 /**
@@ -50,7 +50,7 @@ export const STUDIO_GENERATOR: GeneratorFamily<StudioClassTemplate, 'studio'> = 
   readChildOrThrow: (tx, templateId) =>
     tx.studioClassTemplate.findUniqueOrThrow({
       where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     }),
   createChildren: async (db, template, entries) => {
     await db.studioClass.createMany({
@@ -58,6 +58,7 @@ export const STUDIO_GENERATOR: GeneratorFamily<StudioClassTemplate, 'studio'> = 
         calendarEntryId: entry.id,
         kind: 'studio' as const,
         location: template.location,
+        currency: template.scheduleRule.teacher.currency,
         hourlyRate: template.hourlyRate,
       })),
     });

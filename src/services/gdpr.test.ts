@@ -3131,6 +3131,7 @@ describe('deleteTeacherAccount cancels future studio classes (#280)', () => {
     const pastClass = await prisma.studioClass.create({
       data: {
         location: 'Studio Cancel Test',
+        currency: 'EUR',
         hourlyRate: 50,
         calendarEntry: {
           create: {
@@ -3150,6 +3151,7 @@ describe('deleteTeacherAccount cancels future studio classes (#280)', () => {
     const todayClass = await prisma.studioClass.create({
       data: {
         location: 'Studio Cancel Test',
+        currency: 'EUR',
         hourlyRate: 50,
         calendarEntry: {
           create: {
@@ -3169,6 +3171,7 @@ describe('deleteTeacherAccount cancels future studio classes (#280)', () => {
     const futureClass = await prisma.studioClass.create({
       data: {
         location: 'Studio Cancel Test',
+        currency: 'EUR',
         hourlyRate: 50,
         calendarEntry: {
           create: {

@@ -286,7 +286,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       email: teacher.email,
       bio: teacher.bio,
       pageSlug: teacher.pageSlug,
-      defaultCurrency: teacher.defaultCurrency,
+      currency: teacher.currency,
       defaultTimezone: teacher.defaultTimezone,
       bookingNotifications: teacher.bookingNotifications,
       emailOnClassCompleted: teacher.emailOnClassCompleted,

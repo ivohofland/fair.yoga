@@ -187,6 +187,7 @@ export async function seedClasses(
       entryLive: true,
       teacherRoomId,
       roomArchived: false,
+      currency: 'EUR',
       roomCost: 0,
       minRate: 0,
       targetRate: 0,

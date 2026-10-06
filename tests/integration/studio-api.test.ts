@@ -263,7 +263,7 @@ describe('POST /api/studio-class-templates', () => {
             location: 'Doomed Studio',
             hourlyRate: 40,
           },
-          include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+          include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
         });
         // A teacherId no Teacher row has: `studioClass.create` fails its FK
         // check with P2003, which nothing in the generator catches.
@@ -861,7 +861,7 @@ describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (
 
     const template = await prisma.studioClassTemplate.findUniqueOrThrow({
       where: { id },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
 
     // The sweep as it runs today. Its four-occurrence window is entirely held

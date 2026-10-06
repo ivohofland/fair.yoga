@@ -120,8 +120,8 @@ async function regularEntryWithClass(
   );
   const classId = randomUUID();
   await prisma.$executeRawUnsafe(
-    `INSERT INTO "Class" (id,"calendarEntryId",kind,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents",status,"createdAt","updatedAt")
-     VALUES ($1,$2,'regular',$3,35,15,25,4,12,$4::"ClassStatus",now(),now())`,
+    `INSERT INTO "Class" (id,"calendarEntryId",kind,currency,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents",status,"createdAt","updatedAt")
+     VALUES ($1,$2,'regular','EUR',$3,35,15,25,4,12,$4::"ClassStatus",now(),now())`,
     classId, entryId, teacherRoom.id, classStatus,
   );
   return { entryId, classId };
@@ -138,8 +138,8 @@ async function studioEntryWithClass(): Promise<{ entryId: string; studioClassId:
   );
   const studioClassId = randomUUID();
   await prisma.$executeRawUnsafe(
-    `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,location,"hourlyRate","createdAt","updatedAt")
-     VALUES ($1,$2,'studio','Yoga Studio Centrum',35,now(),now())`,
+    `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,currency,location,"hourlyRate","createdAt","updatedAt")
+     VALUES ($1,$2,'studio','EUR','Yoga Studio Centrum',35,now(),now())`,
     studioClassId, entryId,
   );
   return { entryId, studioClassId };
@@ -322,16 +322,16 @@ describe('disjoint occupancy — one entry, one child', () => {
   it('refuses a studio child on a regular entry (composite FK)', async () => {
     const { entryId } = await regularEntryWithClass();
     await expect(prisma.$executeRawUnsafe(
-      `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,location,"hourlyRate","createdAt","updatedAt")
-       VALUES (gen_random_uuid()::text,$1,'studio','Probe',50,now(),now())`, entryId,
+      `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,currency,location,"hourlyRate","createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'studio','EUR','Probe',50,now(),now())`, entryId,
     )).rejects.toThrow(/StudioClass_calendarEntryId_kind_fkey/);
   });
 
   it('refuses forging the child kind to satisfy that FK (CHECK)', async () => {
     const { entryId } = await regularEntryWithClass();
     await expect(prisma.$executeRawUnsafe(
-      `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,location,"hourlyRate","createdAt","updatedAt")
-       VALUES (gen_random_uuid()::text,$1,'regular','Probe',50,now(),now())`, entryId,
+      `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,currency,location,"hourlyRate","createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'regular','EUR','Probe',50,now(),now())`, entryId,
     )).rejects.toThrow(/StudioClass_kind_check/);
   });
 
@@ -370,8 +370,8 @@ describe('disjoint occupancy — one entry, one child', () => {
       select: { id: true },
     });
     await expect(prisma.$executeRawUnsafe(
-      `INSERT INTO "Class" (id,"calendarEntryId",kind,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents",status,"createdAt","updatedAt")
-       VALUES (gen_random_uuid()::text,$1,'regular',$2,35,15,25,4,12,'draft',now(),now())`,
+      `INSERT INTO "Class" (id,"calendarEntryId",kind,currency,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents",status,"createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'regular','EUR',$2,35,15,25,4,12,'draft',now(),now())`,
       entryId, teacherRoom.id,
     )).rejects.toThrow(/Code: `23505`[\s\S]*Key \("calendarEntryId"\)/);
   });
@@ -379,8 +379,8 @@ describe('disjoint occupancy — one entry, one child', () => {
   it('refuses a second StudioClass on one entry', async () => {
     const { entryId } = await studioEntryWithClass();
     await expect(prisma.$executeRawUnsafe(
-      `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,location,"hourlyRate","createdAt","updatedAt")
-       VALUES (gen_random_uuid()::text,$1,'studio','Second',50,now(),now())`, entryId,
+      `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,currency,location,"hourlyRate","createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'studio','EUR','Second',50,now(),now())`, entryId,
     )).rejects.toThrow(/Code: `23505`[\s\S]*Key \("calendarEntryId"\)/);
   });
 });
