@@ -12,7 +12,7 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
-import { currencyLabel } from '@/lib/format';
+import { CURRENCIES, currencyLabel } from '@/lib/format';
 import { bankMethodsAvailable } from '@/lib/payment-methods';
 import type { CurrencySwitchResult } from '@/services/currency-switch';
 
@@ -56,7 +56,7 @@ interface ProfileFormProps {
   timeZoneOptions: TimeZoneOptions;
 }
 
-/** In `Currency` declaration order, which is the order the select offers them. */
+/** Each currency's option label; the select lists them in `CURRENCIES` order. */
 const CURRENCY_OPTION_LABELS = {
   EUR: 'EUR (€)',
   GBP: 'GBP (£)',
@@ -67,7 +67,7 @@ const CURRENCY_OPTION_LABELS = {
   DKK: 'DKK (kr)',
 } as const satisfies Record<Currency, string>;
 
-const CURRENCY_OPTIONS = Object.entries(CURRENCY_OPTION_LABELS) as ReadonlyArray<[Currency, string]>;
+const CURRENCY_OPTIONS = CURRENCIES.map((currency) => [currency, CURRENCY_OPTION_LABELS[currency]] as const);
 
 function isCurrency(value: string): value is Currency {
   return Object.hasOwn(CURRENCY_OPTION_LABELS, value);
