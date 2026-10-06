@@ -397,17 +397,39 @@ function hold(next: OutboxState): void {
   cached = next;
   notify();
 }
+/**
+ * Tries the whole write again while this tab holds entries storage refused,
+ * since storage may have room by now; otherwise they are written only with
+ * this tab's next change. Best-effort: a page being unloaded may not finish it.
+ */
+function retryWrite(): void {
+  if (overlay !== null) void update((s) => s);
+}
 function onStorage(e: StorageEvent): void {
   if (e.key !== KEY && e.key !== null) return;
   cached = null;
   notify();
+  retryWrite();
+}
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'hidden') retryWrite();
+}
+function listen(): void {
+  window.addEventListener('storage', onStorage);
+  window.addEventListener('pagehide', retryWrite);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+}
+function unlisten(): void {
+  window.removeEventListener('storage', onStorage);
+  window.removeEventListener('pagehide', retryWrite);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
 }
 export function subscribeOutbox(listener: () => void): () => void {
   listeners.add(listener);
-  if (listeners.size === 1) window.addEventListener('storage', onStorage);
+  if (listeners.size === 1) listen();
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) window.removeEventListener('storage', onStorage);
+    if (listeners.size === 0) unlisten();
   };
 }
 export function useOutbox(): OutboxState {
@@ -562,5 +584,5 @@ export function resetOutboxForTests(): void {
   readFailureLogged = false;
   lastReadFailed = false;
   listeners.clear();
-  if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
+  if (typeof window !== 'undefined') unlisten();
 }

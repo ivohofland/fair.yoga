@@ -587,6 +587,73 @@ describe('attendance outbox', () => {
     expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2', 'r3']);
   });
 
+  it.each([
+    ['a storage event', () => fireStorage()],
+    [
+      'the page being hidden',
+      () => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      },
+    ],
+    ['pagehide', () => window.dispatchEvent(new Event('pagehide'))],
+  ])('%s retries the whole write, so what memory held survives a reload once storage has room', async (_, trigger) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = renderHook(() => useOutboxVolatile());
+    try {
+      await act(() => enqueueAttendance(input('attended', 'r1')));
+      let fits = storedLength();
+      quota(() => fits);
+      await act(() => enqueueAttendance(input('attended', 'r2')));
+      expect(result.current).toBe(true);
+
+      fits = Number.MAX_SAFE_INTEGER;
+      await act(async () => trigger());
+      expect(result.current).toBe(false);
+      resetOutboxForTests();
+      expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2']);
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState');
+    }
+  });
+
+  it('a storage event, the page being hidden or pagehide writes nothing while storage holds all of it', async () => {
+    const unsubscribe = subscribeOutbox(() => {});
+    await enqueueAttendance(input('attended', 'r1'));
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    try {
+      fireStorage();
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('pagehide'));
+      await Promise.resolve();
+      expect(setItem).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState');
+      unsubscribe();
+    }
+  });
+
+  it('once nothing is subscribed, the page being hidden or pagehide retries nothing', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unsubscribe = subscribeOutbox(() => {});
+    await enqueueAttendance(input('attended', 'r1'));
+    let fits = storedLength();
+    quota(() => fits);
+    await enqueueAttendance(input('attended', 'r2'));
+    unsubscribe();
+    fits = Number.MAX_SAFE_INTEGER;
+    try {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('pagehide'));
+      await Promise.resolve();
+      expect(localStorage.getItem(KEY)).not.toContain('"r2"');
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState');
+    }
+  });
+
   it('when storage refuses even a removal, this tab stops reading what storage still holds', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     await enqueueAttendance(input('attended', 'r1'));
