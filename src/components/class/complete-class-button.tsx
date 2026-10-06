@@ -9,7 +9,7 @@ import { flushWithinWait } from '@/lib/attendance-sync';
 interface CompleteClassButtonProps {
   classId: string;
   chargedCount: number;
-  /** The signed-in account, whose queued attendance changes for this class are sent before finishing. */
+  /** The signed-in account, whose queued attendance changes are sent before finishing while this class has any. */
   ownerId: string;
 }
 
@@ -25,9 +25,10 @@ function confirmCopy(chargedCount: number): string {
 
 /**
  * Finishing prices the class and words each payment request from the
- * statuses the server holds, so this class's attendance changes still queued
- * on the device are sent first; if any are still unsent after the wait, the
- * teacher is asked again before finishing.
+ * statuses the server holds. So while this class has attendance changes
+ * queued on the device, the account's queued changes are flushed first, and
+ * if any of this class's are still unsent after the wait, the teacher is
+ * asked again before finishing.
  */
 export function CompleteClassButton({ classId, chargedCount, ownerId }: CompleteClassButtonProps) {
   const router = useRouter();
@@ -146,7 +147,7 @@ export function CompleteClassButton({ classId, chargedCount, ownerId }: Complete
           <button
             type="button"
             onClick={() => setConfirming(false)}
-            // The POST cannot be recalled once sent.
+            // Finish is under way: the flush wait can end in the POST, which cannot be recalled once sent.
             disabled={submitting}
             className="type-label text-teal disabled:opacity-50"
           >
