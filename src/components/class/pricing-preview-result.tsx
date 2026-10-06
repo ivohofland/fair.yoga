@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { Currency } from '@prisma/client';
 import { formatMoney } from '@/lib/format';
 import { TIER_INFO } from '@/lib/tiers';
-import { tierPrices, priceSpread } from '@/lib/pricing-preview';
+import { tierPrices, priceSpread, studentsIn, type TierCounts } from '@/lib/pricing-preview';
 import { calculateEffectiveTeacherRate } from '@/services/pricing';
 
 export interface PricingPreviewInputs {
@@ -15,14 +15,13 @@ export interface PricingPreviewInputs {
 }
 
 interface PricingPreviewResultProps extends PricingPreviewInputs {
-  studentCount: number;
-  /** Students per tier, `TIER_INFO` order. */
-  distribution: readonly number[];
+  /** The class being previewed; its size sets the teacher's rate. */
+  distribution: TierCounts;
   /** Rendered between "What students pay" and the tier rows. */
   distributionControl?: ReactNode;
 }
 
-/** What a class of `studentCount` earns the teacher and costs each tier. */
+/** What the class in `distribution` earns the teacher and costs each tier. */
 export function PricingPreviewResult({
   currency,
   roomCost,
@@ -30,12 +29,11 @@ export function PricingPreviewResult({
   targetRate,
   minStudents,
   maxStudents,
-  studentCount,
   distribution,
   distributionControl,
 }: PricingPreviewResultProps) {
   const teacherRate = calculateEffectiveTeacherRate({
-    studentCount,
+    studentCount: studentsIn(distribution),
     minStudents,
     maxStudents,
     minRate,
@@ -90,8 +88,8 @@ export function PricingPreviewResult({
             <span className="w-20 text-right">STUDENTS</span>
             <span className="w-20 text-right">PRICE</span>
           </div>
-          {TIER_INFO.map((info, i) => {
-            const count = distribution[i] ?? 0;
+          {TIER_INFO.map((info) => {
+            const count = distribution[info.tier];
             return (
               <div
                 key={info.tier}
@@ -102,7 +100,7 @@ export function PricingPreviewResult({
                 <span className="flex-1 text-base text-ink">{`${info.tier} · ${info.label}`}</span>
                 <span className="w-20 text-right text-sm text-brown tabular-nums">{count}</span>
                 <span className="w-20 text-right type-number text-sm">
-                  {formatMoney(prices[i] ?? 0, currency)}
+                  {formatMoney(prices[info.tier], currency)}
                 </span>
               </div>
             );

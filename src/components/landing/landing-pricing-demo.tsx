@@ -3,12 +3,21 @@
 import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
-import { PricingPreviewResult } from '@/components/class/pricing-preview-result';
-import { formatEuro } from '@/lib/format';
+import {
+  PricingPreviewResult,
+  type PricingPreviewInputs,
+} from '@/components/class/pricing-preview-result';
+import { formatMoney } from '@/lib/format';
 import { normalSpread } from '@/lib/pricing-preview';
 
 /** The example class a visitor explores, as a teacher would configure it. */
-const EXAMPLE = { roomCost: 20, minRate: 40, minStudents: 4, maxStudents: 12 } as const;
+const EXAMPLE = {
+  currency: 'EUR',
+  roomCost: 20,
+  minRate: 40,
+  minStudents: 4,
+  maxStudents: 12,
+} as const satisfies Omit<PricingPreviewInputs, 'targetRate'>;
 
 const FEWEST_STUDENTS = 2;
 const RATE_RANGE = { min: 50, max: 130, step: 5 } as const;
@@ -21,8 +30,8 @@ export function LandingPricingDemo() {
   return (
     <Card>
       <p className="type-caption mb-5">
-        Example class: room {formatEuro(EXAMPLE.roomCost)} · minimum rate{' '}
-        {formatEuro(EXAMPLE.minRate)} at {EXAMPLE.minStudents} students · your target at{' '}
+        Example class: room {formatMoney(EXAMPLE.roomCost, EXAMPLE.currency)} · minimum rate{' '}
+        {formatMoney(EXAMPLE.minRate, EXAMPLE.currency)} at {EXAMPLE.minStudents} students · your target at{' '}
         {EXAMPLE.maxStudents}
       </p>
 
@@ -60,7 +69,7 @@ export function LandingPricingDemo() {
             <label htmlFor="demo-rate" className="type-label text-ink">
               Your target rate
             </label>
-            <span className="type-number text-base">{formatEuro(targetRate)}</span>
+            <span className="type-number text-base">{formatMoney(targetRate, EXAMPLE.currency)}</span>
           </div>
           <input
             id="demo-rate"
@@ -69,7 +78,7 @@ export function LandingPricingDemo() {
             max={RATE_RANGE.max}
             step={RATE_RANGE.step}
             value={targetRate}
-            aria-valuetext={formatEuro(targetRate)}
+            aria-valuetext={formatMoney(targetRate, EXAMPLE.currency)}
             onChange={(e) => setTargetRate(Number(e.target.value))}
             className="w-full accent-teal mt-2"
           />
@@ -80,7 +89,6 @@ export function LandingPricingDemo() {
           <PricingPreviewResult
             {...EXAMPLE}
             targetRate={targetRate}
-            studentCount={studentCount}
             distribution={normalSpread(studentCount)}
           />
         )}
