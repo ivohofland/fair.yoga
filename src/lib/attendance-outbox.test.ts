@@ -45,6 +45,27 @@ function storedLength(): number {
   return localStorage.getItem(KEY)?.length ?? 0;
 }
 
+/** Storage that refuses any value `refused` matches, whichever tab writes it. */
+function refuseWhere(refused: (value: string) => boolean) {
+  const realSetItem = Storage.prototype.setItem;
+  return vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+    if (refused(value)) throw new DOMException('quota', 'QuotaExceededError');
+    realSetItem.call(this, key, value);
+  });
+}
+
+/** The status of `registrationId`'s pending entry in a stored document. */
+function pendingStatusIn(value: string, registrationId: string): unknown {
+  const doc: unknown = JSON.parse(value);
+  if (typeof doc !== 'object' || doc === null || !('pending' in doc)) return undefined;
+  const pending: unknown = doc.pending;
+  if (typeof pending !== 'object' || pending === null) return undefined;
+  const entry: unknown = Reflect.get(pending, registrationId);
+  return typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'status') : undefined;
+}
+
+const fireStorage = () => window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+
 describe('attendance outbox', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -378,6 +399,122 @@ describe('attendance outbox', () => {
     } finally {
       unsubscribe();
       unsubscribeOther();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a memory-only mark gives way for good once another tab writes that registration', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribeOther = other.subscribeOutbox(() => {});
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      refuseWhere((value) => pendingStatusIn(value, 'r5') === 'attended');
+      await enqueueAttendance(input('attended', 'r5'));
+      const newer = await other.enqueueAttendance(input('no_show', 'r5'));
+      fireStorage();
+      expect(readOutbox().pending.r5?.status).toBe('no_show');
+
+      await other.settleEntry(newer, { kind: 'confirmed', at: Date.now() });
+      fireStorage();
+      expect(readOutbox().pending.r5).toBeUndefined();
+      expect(readOutbox().confirmed.r5?.status).toBe('no_show');
+    } finally {
+      unsubscribe();
+      unsubscribeOther();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a memory-only mark gives way to another tab’s write of that registration that this tab never saw pending', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      let fits = storedLength();
+      quota(() => fits);
+      await enqueueAttendance(input('attended', 'r5'));
+      fits = Number.MAX_SAFE_INTEGER;
+      const newer = await other.enqueueAttendance(input('no_show', 'r5'));
+      await other.settleEntry(newer, { kind: 'confirmed', at: Date.now() });
+
+      expect(readOutbox().pending.r5).toBeUndefined();
+      expect(readOutbox().confirmed.r5?.status).toBe('no_show');
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a memory-only mark another tab replaced stays gone once that tab clears the outbox', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribeOther = other.subscribeOutbox(() => {});
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      refuseWhere((value) => pendingStatusIn(value, 'r5') === 'attended');
+      await enqueueAttendance(input('attended', 'r5'));
+      await other.enqueueAttendance(input('no_show', 'r5'));
+      fireStorage();
+      expect(readOutbox().pending.r5?.status).toBe('no_show');
+
+      await other.clearOutbox();
+      fireStorage();
+      expect(Object.keys(readOutbox().pending)).toEqual([]);
+    } finally {
+      unsubscribe();
+      unsubscribeOther();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a refusal held in memory gives way to another tab’s later confirmation and is never written back', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      const sent = await enqueueAttendance(input('attended', 'r5'));
+      let fits = storedLength();
+      quota(() => fits);
+      await settleEntry(sent, { kind: 'refused', message: 'Class is finished' });
+      expect(getOutbox().refused.r5?.message).toBe('Class is finished');
+      fits = Number.MAX_SAFE_INTEGER;
+      const newer = await other.enqueueAttendance(input('no_show', 'r5'));
+      await other.settleEntry(newer, { kind: 'confirmed', at: Date.now() });
+
+      expect(readOutbox().refused.r5).toBeUndefined();
+      await enqueueAttendance(input('attended', 'r6'));
+      other.resetOutboxForTests();
+      expect(other.getOutbox().refused.r5).toBeUndefined();
+      expect(other.getOutbox().confirmed.r5?.status).toBe('no_show');
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a memory-only mark stays when the stored confirmation beside it expires', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = new Date('2026-10-04T12:00:00Z').getTime();
+    vi.setSystemTime(now);
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      const sent = await enqueueAttendance(input('attended', 'r5'));
+      await settleEntry(sent, { kind: 'confirmed', at: now - 24 * 60 * 60 * 1000 + 60_000 });
+      refuseWhere((value) => pendingStatusIn(value, 'r5') === 'no_show');
+      await enqueueAttendance(input('no_show', 'r5'));
+      vi.setSystemTime(now + 2 * 60_000);
+      // Another tab's write of another registration, which stores the confirmation pruned.
+      await other.enqueueAttendance(input('attended', 'r9'));
+
+      expect(readOutbox().pending.r5?.status).toBe('no_show');
+    } finally {
       other.resetOutboxForTests();
     }
   });

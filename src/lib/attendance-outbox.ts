@@ -54,12 +54,23 @@ const QUEUED_KEYS: ReadonlySet<string> = new Set(Object.keys(QUEUED));
 
 export const EMPTY_OUTBOX: OutboxState = Object.freeze({ pending: {}, confirmed: {}, refused: {} });
 
+/** One registration's entries, one per map. */
+interface Slot {
+  pending: PendingEntry | undefined;
+  confirmed: ConfirmedEntry | undefined;
+  refused: RefusedEntry | undefined;
+}
+/** A registration storage refused this tab's entries for: `mine` is what this tab holds, `held` what storage held then. */
+interface Override {
+  mine: Slot;
+  held: Slot;
+}
 /**
- * The entries of this tab's outbox that storage refused (a full quota, a
- * private window, blocked storage): what a reload would lose. Null while
+ * The registrations of this tab's outbox that storage refused (a full quota,
+ * a private window, blocked storage): what a reload would lose. Null while
  * storage holds all of it.
  */
-let overlay: OutboxState | null = null;
+let overlay: ReadonlyMap<string, Override> | null = null;
 /** Storage refused even a removal, so its copy may contradict this tab's: none of it is read until a write succeeds. */
 let detached = false;
 /** What storage holds, as of `cachedRaw`. */
@@ -141,18 +152,59 @@ function readRaw(): string | null {
 function sameEntry(a: object | undefined, b: object): boolean {
   return a !== undefined && JSON.stringify(a, Object.keys(a).sort()) === JSON.stringify(b, Object.keys(b).sort());
 }
-/** Splits `next` into the entries `held` holds identically and the rest. */
-function splitAgreed<T extends object>(
-  next: Readonly<Record<string, T>>,
-  held: Readonly<Record<string, T>>,
-): { agreed: Record<string, T>; rest: Record<string, T> } {
-  const agreed: Record<string, T> = Object.create(null);
-  const rest: Record<string, T> = Object.create(null);
-  for (const [key, entry] of Object.entries(next)) {
-    if (sameEntry(held[key], entry)) agreed[key] = entry;
-    else rest[key] = entry;
+function sameOrAbsent(a: object | undefined, b: object | undefined): boolean {
+  return b === undefined ? a === undefined : sameEntry(a, b);
+}
+/** An own entry only: a map built by spreading has `Object.prototype`, so a `__proto__` key must not reach it. */
+function own<T>(map: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+}
+function slotOf(state: OutboxState, registrationId: string): Slot {
+  return {
+    pending: own(state.pending, registrationId),
+    confirmed: own(state.confirmed, registrationId),
+    refused: own(state.refused, registrationId),
+  };
+}
+function sameSlot(a: Slot, b: Slot): boolean {
+  return sameOrAbsent(a.pending, b.pending) && sameOrAbsent(a.confirmed, b.confirmed) && sameOrAbsent(a.refused, b.refused);
+}
+function confirmedFresh(e: ConfirmedEntry, now: number): boolean {
+  return now - e.confirmedAt <= CONFIRMED_TTL_MS && e.confirmedAt - now <= CONFIRMED_FUTURE_SLACK_MS;
+}
+function refusedFresh(e: RefusedEntry, now: number): boolean {
+  return now - e.refusedAt <= REFUSED_TTL_MS;
+}
+/** `slot` as a read at `now` would find it: expired entries gone. */
+function freshSlot(slot: Slot, now: number): Slot {
+  const { pending, confirmed, refused } = slot;
+  return {
+    pending,
+    confirmed: confirmed !== undefined && confirmedFresh(confirmed, now) ? confirmed : undefined,
+    refused: refused !== undefined && refusedFresh(refused, now) ? refused : undefined,
+  };
+}
+/** Each registration whose entries in `next` differ from `held`'s, with both. Null when none does. */
+function overridesOf(next: OutboxState, held: OutboxState): ReadonlyMap<string, Override> | null {
+  const ids = new Set<string>();
+  for (const state of [next, held]) {
+    for (const map of [state.pending, state.confirmed, state.refused]) Object.keys(map).forEach((id) => ids.add(id));
   }
-  return { agreed, rest };
+  const out = new Map<string, Override>();
+  for (const id of ids) {
+    const mine = slotOf(next, id);
+    const was = slotOf(held, id);
+    if (!sameSlot(mine, was)) out.set(id, { mine, held: was });
+  }
+  return out.size === 0 ? null : out;
+}
+/** The entries of `next` that `held` holds identically. */
+function agreed<T extends object>(next: Readonly<Record<string, T>>, held: Readonly<Record<string, T>>): Record<string, T> {
+  const out: Record<string, T> = Object.create(null);
+  for (const [key, entry] of Object.entries(next)) {
+    if (sameEntry(own(held, key), entry)) out[key] = entry;
+  }
+  return out;
 }
 function entryCount(state: OutboxState): number {
   return Object.keys(state.pending).length + Object.keys(state.confirmed).length + Object.keys(state.refused).length;
@@ -162,8 +214,9 @@ function entryCount(state: OutboxState): number {
  * keeps only the entries it already held that `next` holds identically, so
  * its copy is no larger than one that fit, and may lag behind this tab's but
  * never contradicts it: a mark corrected or settled here cannot come back on
- * a reload. The rest stays in `overlay`. If storage refuses that too, its copy
- * is removed; if it refuses even the removal, this tab stops reading it.
+ * a reload. This tab's entries for every registration that differs stay in
+ * `overlay`. If storage refuses that too, its copy is removed; if it refuses
+ * even the removal, this tab stops reading it.
  */
 function persist(next: OutboxState): void {
   const value = JSON.stringify(next);
@@ -182,11 +235,11 @@ function persist(next: OutboxState): void {
     }
   }
   const held = detached ? EMPTY_OUTBOX : stored;
-  const pending = splitAgreed(next.pending, held.pending);
-  const confirmed = splitAgreed(next.confirmed, held.confirmed);
-  const refused = splitAgreed(next.refused, held.refused);
-  const kept: OutboxState = { pending: pending.agreed, confirmed: confirmed.agreed, refused: refused.agreed };
-  const rest: OutboxState = { pending: pending.rest, confirmed: confirmed.rest, refused: refused.rest };
+  const kept: OutboxState = {
+    pending: agreed(next.pending, held.pending),
+    confirmed: agreed(next.confirmed, held.confirmed),
+    refused: agreed(next.refused, held.refused),
+  };
   try {
     if (entryCount(kept) === 0) {
       localStorage.removeItem(KEY);
@@ -196,7 +249,7 @@ function persist(next: OutboxState): void {
       localStorage.setItem(KEY, cachedRaw);
     }
     stored = kept;
-    overlay = entryCount(rest) === 0 ? null : rest;
+    overlay = overridesOf(next, kept);
     detached = false;
   } catch (err) {
     console.warn('[attendance-outbox] storage refused even what it held; the stored copy is removed', {
@@ -205,20 +258,36 @@ function persist(next: OutboxState): void {
     detached = !removeStored();
     stored = EMPTY_OUTBOX;
     cachedRaw = null;
-    overlay = next;
+    overlay = overridesOf(next, EMPTY_OUTBOX);
   }
 }
-/** This tab's outbox. An entry storage holds wins: storage held none of `overlay`'s keys after this tab's write, so one there now is another tab's, and newer. */
+/**
+ * Drops for good each registration in `overlay` whose stored entries are no
+ * longer what storage held when this tab's write was refused: only another
+ * tab writes storage meanwhile, so that write is the newer. Run on every read
+ * of storage; an entry expiring is not a change.
+ */
+function reconcile(now: number): void {
+  if (overlay === null || detached) return;
+  const kept = new Map([...overlay].filter(([id, o]) => sameSlot(slotOf(stored, id), freshSlot(o.held, now))));
+  overlay = kept.size === 0 ? null : kept;
+}
+/** This tab's outbox: `stored`, with each registration in `overlay` replaced by this tab's entries for it. */
 function view(): OutboxState {
   if (overlay === null) return stored;
-  if (detached) return overlay;
-  const under = <T>(mine: Readonly<Record<string, T>>, theirs: Readonly<Record<string, T>>): Record<string, T> =>
-    Object.assign(Object.create(null), mine, theirs);
-  return {
-    pending: under(overlay.pending, stored.pending),
-    confirmed: under(overlay.confirmed, stored.confirmed),
-    refused: under(overlay.refused, stored.refused),
+  const base = detached ? EMPTY_OUTBOX : stored;
+  const copy = <T>(map: Readonly<Record<string, T>>): Record<string, T> => Object.assign(Object.create(null), map);
+  const out = { pending: copy(base.pending), confirmed: copy(base.confirmed), refused: copy(base.refused) };
+  const put = <T>(map: Record<string, T>, id: string, entry: T | undefined): void => {
+    if (entry === undefined) delete map[id];
+    else map[id] = entry;
   };
+  for (const [id, { mine }] of overlay) {
+    put(out.pending, id, mine.pending);
+    put(out.confirmed, id, mine.confirmed);
+    put(out.refused, id, mine.refused);
+  }
+  return out;
 }
 
 /**
@@ -267,14 +336,8 @@ function parse(raw: string | null, now: number): OutboxState {
   const keyed = (e: PendingEntry, key: string): boolean => e.registrationId === key;
   const state: OutboxState = {
     pending: pick(doc.pending, asPending, keyed, () => true, discarded),
-    confirmed: pick(
-      doc.confirmed,
-      asConfirmed,
-      () => true,
-      (e) => now - e.confirmedAt <= CONFIRMED_TTL_MS && e.confirmedAt - now <= CONFIRMED_FUTURE_SLACK_MS,
-      discarded,
-    ),
-    refused: pick(doc.refused, asRefused, keyed, (e) => now - e.refusedAt <= REFUSED_TTL_MS, discarded),
+    confirmed: pick(doc.confirmed, asConfirmed, () => true, (e) => confirmedFresh(e, now), discarded),
+    refused: pick(doc.refused, asRefused, keyed, (e) => refusedFresh(e, now), discarded),
   };
   if (discarded.count > 0) warnDiscarded(raw, { dropped: discarded.count });
   return state;
@@ -283,8 +346,10 @@ function parse(raw: string | null, now: number): OutboxState {
 export function getOutbox(): OutboxState {
   if (cached === null) {
     if (!detached) {
+      const now = Date.now();
       cachedRaw = readRaw();
-      stored = parse(cachedRaw, Date.now());
+      stored = parse(cachedRaw, now);
+      reconcile(now);
     }
     cached = view();
   }
@@ -301,8 +366,10 @@ export function readOutbox(): OutboxState {
   const raw = readRaw();
   if (cached !== null && raw === cachedRaw) return cached;
   const hadCache = cached !== null;
-  stored = parse(raw, Date.now());
+  const now = Date.now();
+  stored = parse(raw, now);
   cachedRaw = raw;
+  reconcile(now);
   cached = view();
   if (hadCache) notify();
   return cached;
@@ -333,7 +400,7 @@ export function useOutbox(): OutboxState {
 }
 
 function isOutboxVolatile(): boolean {
-  return overlay !== null && Object.keys(overlay.pending).length > 0;
+  return overlay !== null && [...overlay.values()].some(({ mine, held }) => mine.pending !== undefined && !sameEntry(held.pending, mine.pending));
 }
 /**
  * True while this tab holds pending entries storage refused, so a reload
