@@ -3,6 +3,7 @@ import type { Currency } from '@prisma/client';
 import {
   parseBankDetails,
   bankDetailsFromRow,
+  maskedIdentifier,
   SCHEME_FOR_CURRENCY,
   EEA_COUNTRIES,
   type BankDetails,
@@ -205,5 +206,12 @@ describe('bankDetailsFromRow', () => {
   it('is structural: it applies no checksum and no BIC policy to a stored row', () => {
     expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000022', accountNumber: '1234567' })).toEqual({ scheme: 'us', routingNumber: '021000022', accountNumber: '1234567' });
     expect(bankDetailsFromRow({ ...blank, currency: 'EUR', iban: 'CH9300762011623852957' })).toEqual({ scheme: 'sepa', iban: 'CH9300762011623852957', bic: null });
+  });
+});
+
+describe('maskedIdentifier', () => {
+  it('shows only the last four characters of the IBAN or account number', () => {
+    expect(maskedIdentifier({ iban: 'NL91ABNA0417164300', accountNumber: null })).toBe('•••• 4300');
+    expect(maskedIdentifier({ iban: null, accountNumber: '12345678' })).toBe('•••• 5678');
   });
 });

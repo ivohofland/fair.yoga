@@ -303,6 +303,22 @@ export const updateTeacherSchema = z.object({
   pushInvitations: z.boolean().optional(),
 }).strict();
 
+const bankField = z.string().max(64).nullable().optional();
+
+/**
+ * `PUT /api/teachers/[id]/bank-accounts/[currency]`'s wire shape: the shape
+ * only. Which fields the currency's scheme takes, and their formats, are
+ * `parseBankDetails`' to check.
+ */
+export const bankAccountSchema = z.object({
+  holderName: z.string().max(200),
+  iban: bankField,
+  bic: bankField,
+  sortCode: bankField,
+  accountNumber: bankField,
+  routingNumber: bankField,
+}).strict();
+
 /**
  * `POST /api/account/onboarding`'s wire shape. `z.enum(OnboardingStep)`
  * derives the accepted values from the Prisma enum itself — a hand-copied

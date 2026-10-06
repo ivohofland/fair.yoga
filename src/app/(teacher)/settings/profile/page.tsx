@@ -6,14 +6,21 @@ import { ProfileForm } from '@/components/settings/profile-form';
 import { ProfilePhotoField } from '@/components/settings/profile-photo-field';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
 import { AddPasskey } from '@/components/account/add-passkey';
+import { BankAccountForm } from '@/components/settings/bank-account-form';
+import { bankAccountSelect, accountInCurrency } from '@/lib/payment-methods';
+import { maskedIdentifier } from '@/lib/bank-details';
 
 export default async function ProfilePage() {
   const session = await requireTeacherSession();
 
   const teacher = await prisma.teacher.findUniqueOrThrow({
     where: { id: session.teacherId },
-    include: { photo: { select: { id: true } } },
+    include: { photo: { select: { id: true } }, bankAccounts: { select: bankAccountSelect, orderBy: { currency: 'asc' } } },
   });
+  const current = accountInCurrency(teacher.bankAccounts, teacher.currency);
+  const others = teacher.bankAccounts
+    .filter((a) => a.currency !== teacher.currency)
+    .map((a) => ({ currency: a.currency, masked: maskedIdentifier(a) }));
 
   return (
     <>
@@ -36,6 +43,21 @@ export default async function ProfilePage() {
           currency: teacher.currency,
           defaultTimezone: teacher.defaultTimezone,
         }}
+      />
+
+      <BankAccountForm
+        key={teacher.currency}
+        teacherId={teacher.id}
+        currency={teacher.currency}
+        initial={{
+          holderName: current?.holderName ?? '',
+          iban: current?.iban ?? '',
+          bic: current?.bic ?? '',
+          sortCode: current?.sortCode ?? '',
+          accountNumber: current?.accountNumber ?? '',
+          routingNumber: current?.routingNumber ?? '',
+        }}
+        others={others}
       />
 
       <section className="mt-10 pt-6 border-t border-border">
