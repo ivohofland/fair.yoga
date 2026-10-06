@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { ProfileForm } from '@/components/settings/profile-form';
 import { ProfilePhotoField } from '@/components/settings/profile-photo-field';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
-import { AddPasskey } from '@/components/account/add-passkey';
+import { AccountSecurity } from '@/components/account/account-security';
 import { BankAccountForm } from '@/components/settings/bank-account-form';
 import { bankAccountDataSelect, accountInCurrency } from '@/lib/payment-methods';
 import { maskedIdentifier } from '@/lib/bank-details';
@@ -63,7 +63,7 @@ export default async function ProfilePage() {
 
       <section className="mt-10 pt-6 border-t border-border">
         <h2 className="type-subtitle mb-3">Sign-in</h2>
-        <AddPasskey />
+        <AccountSecurity email={teacher.email} redirectPath="/settings/profile" />
       </section>
 
       <DataAndDeletion role="teacher" accountId={session.accountId} />

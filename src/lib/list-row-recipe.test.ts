@@ -11,6 +11,8 @@ const OWNER = 'components/ui/list-row.tsx';
 const SPLIT_RECIPE_SITES: Readonly<Record<string, string>> = {
   'components/class/outstanding-payment-row.tsx':
     'border and py-2 sit on a wrapper and min-h-14 on the inner row, so its minimum is 72px, not 56',
+  'components/account/account-security.tsx':
+    'a bordered list of rows with inline actions, not a chevron link: the border and dividers sit on the ul, so ListRow\'s own border would double them',
   'components/account/install-app-row.tsx':
     'the wrapper holds the border so the row can expand to show install steps under its button',
   'components/class/audience-picker.tsx':

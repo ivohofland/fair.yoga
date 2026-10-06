@@ -15,7 +15,7 @@ vi.mock('@/components/settings/bank-account-form', () => ({
     <span data-testid="bank-account-form" data-props={JSON.stringify(props)} />
   ),
 }));
-vi.mock('@/components/account/add-passkey', () => ({ AddPasskey: () => null }));
+vi.mock('@/components/account/account-security', () => ({ AccountSecurity: () => null }));
 vi.mock('@/components/account/data-and-deletion', () => ({
   DataAndDeletion: ({ accountId }: { accountId: string }) => (
     <span data-testid="data-and-deletion" data-account-id={accountId} />

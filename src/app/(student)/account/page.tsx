@@ -5,7 +5,7 @@ import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { ListRow } from '@/components/ui/list-row';
-import { AddPasskey } from '@/components/account/add-passkey';
+import { AccountSecurity } from '@/components/account/account-security';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { InstallAppRow } from '@/components/account/install-app-row';
 import { NameForm } from '@/components/student/name-form';
@@ -34,6 +34,7 @@ export default async function StudentSettingsPage() {
       firstName: true,
       lastName: true,
       phone: true,
+      email: true,
       birthday: true,
       address: true,
     },
@@ -89,7 +90,7 @@ export default async function StudentSettingsPage() {
 
       <section className="mt-10 pt-6 border-t border-border">
         <h2 className="type-subtitle mb-3">Sign-in</h2>
-        <AddPasskey />
+        <AccountSecurity email={student.email} redirectPath="/account" />
         <div className="mt-5">
           <SignOutButton accountId={session.accountId} />
         </div>
