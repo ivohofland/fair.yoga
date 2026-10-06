@@ -149,6 +149,8 @@ interface ProfileSetupFormProps {
    *  from us. */
   email: string;
   mode: ProfileSetupMode;
+  /** The signed-in account in session mode; null in ticket mode, which has no session. */
+  accountId: string | null;
 }
 
 /**
@@ -159,7 +161,7 @@ interface ProfileSetupFormProps {
  * and not an error — every value stays exactly where it was, and a fresh link
  * goes out on its own.
  */
-export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
+export function ProfileSetupForm({ email, mode, accountId }: ProfileSetupFormProps) {
   const [form, setForm] = useState<Draft>(EMPTY_DRAFT);
   const [status, setStatus] = useState<Status>('idle');
   const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
@@ -337,7 +339,7 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
   }
 
   if (status === 'already-teacher') {
-    return <AlreadyTeachingPanel email={email} />;
+    return <AlreadyTeachingPanel email={email} accountId={accountId} />;
   }
 
   if (status === 'account-exists') {
@@ -383,7 +385,7 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
             for a different one?
           </p>
           <div className="mt-2">
-            <SignOutButton redirectTo="/signup" />
+            <SignOutButton accountId={accountId} redirectTo="/signup" />
           </div>
         </div>
       )}

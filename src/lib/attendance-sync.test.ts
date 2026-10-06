@@ -391,40 +391,40 @@ describe('attendance sync', () => {
     expect(getOutbox().confirmed.r1).toEqual({ status: 'attended', confirmedAt: SERVER_DATE });
   });
 
-  it('an owner flush drops other owners\' entries without a request', async () => {
+  it('a flush sends only its owner\'s entries, leaving the others untouched and unlogged', async () => {
+    const warn = vi.spyOn(console, 'warn');
+    const errors = vi.spyOn(console, 'error');
     await enqueue('attended', 'r1', 'acct-1');
-    await enqueue('no_show', 'r2', 'acct-2');
+    const theirs = await enqueue('no_show', 'r2', 'acct-2');
     fetchMock.mockResolvedValueOnce(ok({ id: 'r1', status: 'attended' }));
     await flushAttendance('acct-1');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/registrations/r1');
-    expect(getOutbox().pending).toEqual({});
-    expect(getOutbox().confirmed.r2).toBeUndefined();
+    expect(getOutbox().pending).toEqual({ r2: theirs });
     expect(getOutbox().refused).toEqual({});
+    expect(warn).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalled();
   });
 
-  it('a null flush sends every owner\'s entries, oldest recorded first', async () => {
+  it('a flush sends its owner\'s entries oldest recorded first', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     // Stored newest first, so the send order comes from `recordedAt`, not from storage.
     vi.setSystemTime(2_000);
-    await enqueue('attended', 'r1', 'acct-A');
+    await enqueue('attended', 'r1');
     vi.setSystemTime(1_000);
-    await enqueue('no_show', 'r2', 'acct-B');
+    await enqueue('no_show', 'r2');
     expect(Object.keys(getOutbox().pending)).toEqual(['r1', 'r2']);
     fetchMock.mockImplementation(async (input) =>
       urlOf(input) === '/api/registrations/r2'
-        ? refusal(403, undefined, 'Not your class')
+        ? ok({ id: 'r2', status: 'no_show' })
         : ok({ id: 'r1', status: 'attended' }),
     );
-    await flushAttendance(null);
+    await flushAttendance('acct-1');
     expect(fetchMock.mock.calls.map(([input]) => urlOf(input))).toEqual([
       '/api/registrations/r2',
       '/api/registrations/r1',
     ]);
     expect(getOutbox().pending).toEqual({});
-    expect(getOutbox().confirmed.r1?.status).toBe('attended');
-    expect(getOutbox().confirmed.r2).toBeUndefined();
-    expect(getOutbox().refused).toEqual({});
   });
 
   it('stops the pass at the first 401 and reports needsSignIn', async () => {
@@ -566,9 +566,9 @@ describe('attendance sync', () => {
   });
 
   it.each([
-    ['null then an owner', [null, 'acct-1']],
-    ['two different owners', ['acct-2', 'acct-1']],
-  ] as const)('a rerun asked for by %s sends every owner\'s entries', async (_name, scopes) => {
+    ['acct-2 then acct-1', ['acct-2', 'acct-1'], 'acct-1'],
+    ['acct-1 then acct-2', ['acct-1', 'acct-2'], 'acct-2'],
+  ] as const)('a rerun asked for by %s runs for the owner asked last, and only for them', async (_name, scopes, last) => {
     await enqueue('attended', 'r1', 'acct-1');
     let answerFirst: (res: Response) => void = () => {};
     fetchMock
@@ -590,11 +590,10 @@ describe('attendance sync', () => {
     for (const scope of scopes) void flushAttendance(scope);
     answerFirst(ok({ id: 'r1', status: 'attended' }));
     await first;
-    expect(fetchMock.mock.calls.map(([input]) => urlOf(input)).slice(1).sort()).toEqual([
-      '/api/registrations/r2',
-      '/api/registrations/r3',
-    ]);
-    expect(getOutbox().pending).toEqual({});
+    const sent = last === 'acct-1' ? 'r3' : 'r2';
+    const kept = last === 'acct-1' ? 'r2' : 'r3';
+    expect(fetchMock.mock.calls.map(([input]) => urlOf(input)).slice(1)).toEqual([`/api/registrations/${sent}`]);
+    expect(Object.keys(getOutbox().pending)).toEqual([kept]);
   });
 
   it('a hung request times out and the entry is retried', async () => {

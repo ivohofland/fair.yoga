@@ -37,13 +37,13 @@ export default async function ProfileSetupPage() {
   const session = await getSession();
   if (session?.teacherId) redirect('/schedule');
 
-  let identity: { email: string; mode: 'ticket' | 'session' } | null = null;
+  let identity: { email: string; mode: 'ticket' | 'session'; accountId: string | null } | null = null;
   if (session) {
     const account = await prisma.account.findUniqueOrThrow({
       where: { id: session.accountId },
       select: { email: true },
     });
-    identity = { email: account.email, mode: 'session' };
+    identity = { email: account.email, mode: 'session', accountId: session.accountId };
   } else {
     // The shared precedence rule (`ticketTokenFrom`, profile-authorization.ts):
     // no ticket while a session cookie is present, valid or not. Calling it
@@ -54,13 +54,13 @@ export default async function ProfileSetupPage() {
     // than a ticket-mode form.
     const token = ticketTokenFrom(await cookies());
     const ticketEmail = token ? await peekSignupTicket(prisma, token, 'teacher') : null;
-    if (ticketEmail) identity = { email: ticketEmail, mode: 'ticket' };
+    if (ticketEmail) identity = { email: ticketEmail, mode: 'ticket', accountId: null };
   }
 
   return (
     <div className="flex-1 flex flex-col justify-center py-10">
       {identity ? (
-        <ProfileSetupForm email={identity.email} mode={identity.mode} />
+        <ProfileSetupForm email={identity.email} mode={identity.mode} accountId={identity.accountId} />
       ) : (
         <SignupForm
           title="Let's get you a fresh link"

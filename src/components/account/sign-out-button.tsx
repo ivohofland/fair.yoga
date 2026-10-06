@@ -10,6 +10,12 @@ import { disablePush } from '@/lib/push-client';
 
 interface SignOutButtonProps {
   /**
+   * The signed-in account, whose queued attendance changes are sent before
+   * leaving; null where the page knows of none. Another account's are never
+   * sent under this session: they are counted, and leaving discards them.
+   */
+  accountId: string | null;
+  /**
    * Where the browser lands once the session is gone. Defaults to `/login`;
    * pass an explicit destination when signing out is a step toward
    * somewhere else (e.g. re-starting a signup under a different address).
@@ -25,9 +31,10 @@ function pendingCount(): number {
 
 /** Ends the session and sends the browser to `redirectTo` either way —
  *  a failed DELETE surfaces a visible message but never blocks the leave.
- *  Attendance changes still queued on the device are sent first; any that
- *  remain are shown, and leaving then needs a second, explicit tap. */
-export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
+ *  The signed-in account's queued attendance changes are sent first; any
+ *  change still on the device after that, whichever account made it, is
+ *  shown, and leaving then needs a second, explicit tap. */
+export function SignOutButton({ accountId, redirectTo = '/login' }: SignOutButtonProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
@@ -37,14 +44,16 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
     setBusy(true);
     setUnsynced(0);
     if (pendingCount() > 0) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timedOut = new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, FLUSH_WAIT_MS);
-      });
-      const flushed = flushAttendance(null)
-        .catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'flush' }, err))
-        .finally(() => clearTimeout(timer));
-      await Promise.race([flushed, timedOut]);
+      if (accountId !== null) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, FLUSH_WAIT_MS);
+        });
+        const flushed = flushAttendance(accountId)
+          .catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'flush' }, err))
+          .finally(() => clearTimeout(timer));
+        await Promise.race([flushed, timedOut]);
+      }
       const remaining = pendingCount();
       if (remaining > 0) {
         setUnsynced(remaining);

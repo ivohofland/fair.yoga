@@ -29,8 +29,8 @@ const syncListeners = new Set<() => void>();
 
 /** The flush running in this tab, if any. */
 let running: Promise<void> | null = null;
-/** Scope a trigger asked for while a flush ran; `undefined` when none did. */
-let rerunScope: string | null | undefined;
+/** The owner the last trigger during a running flush asked for; `undefined` when none did. */
+let rerunOwner: string | undefined;
 let backoffStep = 0;
 let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 /** Started syncs not yet stopped; the backoff arms only while one is running, so a stop holds against a flush still in flight. */
@@ -191,27 +191,22 @@ export async function sendAttendance(entry: PendingEntry): Promise<ReplayOutcome
   return (await send(entry)).outcome;
 }
 
-/** `null` is wider than any owner id, and two different owner ids widen to `null`. */
-function widen(requested: string | null | undefined, scope: string | null): string | null {
-  if (requested === undefined) return scope;
-  return requested === scope ? scope : null;
-}
-
-/** One pass over the outbox; answers whether any entry is left to retry. */
-async function pass(scope: string | null, gen: number): Promise<boolean> {
+/**
+ * One pass over `ownerId`'s pending entries; answers whether any is left to
+ * retry. Another owner's entries are neither sent nor settled: under this
+ * session's cookie they would only be refused.
+ */
+async function pass(ownerId: string, gen: number): Promise<boolean> {
   return withLock(FLUSH_LOCK, async () => {
     let retried = false;
-    let signedIn = false;
     // Fresh: another tab may have replaced or settled an entry since this tab last looked.
-    const entries = Object.values(readOutbox().pending).sort((a, b) => a.recordedAt - b.recordedAt);
-    // Nothing of this scope's is waiting, so nothing is waiting on a sign-in either.
-    if (!entries.some((entry) => scope === null || entry.ownerId === scope)) signedIn = true;
+    const entries = Object.values(readOutbox().pending)
+      .filter((entry) => entry.ownerId === ownerId)
+      .sort((a, b) => a.recordedAt - b.recordedAt);
+    // Nothing of this owner's is waiting, so nothing is waiting on a sign-in either.
+    let signedIn = entries.length === 0;
     sending: for (const entry of entries) {
       if (gen !== generation) break;
-      if (scope !== null && entry.ownerId !== scope) {
-        await settleEntry(entry, { kind: 'dropped' });
-        continue;
-      }
       const sent = await send(entry);
       if (gen !== generation) break;
       signedIn ||= sent.signedIn;
@@ -246,7 +241,7 @@ function clearBackoff(): void {
   backoffTimer = null;
 }
 
-function scheduleBackoff(retried: boolean, scope: string | null): void {
+function scheduleBackoff(retried: boolean, ownerId: string): void {
   clearBackoff();
   if (!retried) {
     backoffStep = 0;
@@ -257,40 +252,44 @@ function scheduleBackoff(retried: boolean, scope: string | null): void {
   backoffStep++;
   backoffTimer = setTimeout(() => {
     backoffTimer = null;
-    void flushAttendance(scope);
+    void flushAttendance(ownerId);
   }, delay);
 }
 
-async function run(first: string | null, gen: number): Promise<void> {
+async function run(first: string, gen: number): Promise<void> {
   try {
-    let scope = first;
+    let ownerId = first;
     let retried: boolean;
     let rerun: boolean;
     do {
-      rerunScope = undefined;
+      rerunOwner = undefined;
       try {
-        retried = await pass(scope, gen);
+        retried = await pass(ownerId, gen);
       } catch (err) {
-        logRequestFailure('attendance-sync', { scope }, err);
+        logRequestFailure('attendance-sync', { ownerId }, err);
         // Whatever was pending is still pending; the backoff keeps trying it.
         retried = true;
       }
       if (gen !== generation) return;
-      const next = rerunScope;
+      const next = rerunOwner;
       rerun = next !== undefined;
-      if (next !== undefined) scope = next;
+      if (next !== undefined) ownerId = next;
     } while (rerun);
-    scheduleBackoff(retried, scope);
+    scheduleBackoff(retried, ownerId);
   } finally {
     // Synchronous with the last `rerun` check, so no trigger can slip between them unseen.
     if (gen === generation) running = null;
   }
 }
 
-/** `null` sends every pending entry whoever owns it (sign-out); an owner id sends that owner's and drops the rest unsent. */
-export function flushAttendance(ownerId: string | null): Promise<void> {
+/**
+ * Sends `ownerId`'s pending entries. A call while a flush runs makes it run
+ * one more pass when it ends, for the owner the last such call named: a tab
+ * whose account changed sends only the account it now has.
+ */
+export function flushAttendance(ownerId: string): Promise<void> {
   if (running !== null) {
-    rerunScope = widen(rerunScope, ownerId);
+    rerunOwner = ownerId;
     return running;
   }
   running = run(ownerId, generation);
@@ -334,7 +333,7 @@ export function resetSyncForTests(): void {
   clearBackoff();
   backoffStep = 0;
   running = null;
-  rerunScope = undefined;
+  rerunOwner = undefined;
   syncState = SERVER_SYNC_STATE;
   syncListeners.clear();
 }

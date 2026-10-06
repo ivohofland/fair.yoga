@@ -7,7 +7,7 @@ import { SignOutButton } from '@/components/account/sign-out-button';
  * Offers both ways out: the teacher's schedule, and the sign-out that makes
  * a different address reachable.
  */
-export function AlreadyTeachingPanel({ email }: { email: string }) {
+export function AlreadyTeachingPanel({ email, accountId }: { email: string; accountId: string | null }) {
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
       <p className="type-label text-teal mb-[10px]">Already teaching</p>
@@ -26,7 +26,7 @@ export function AlreadyTeachingPanel({ email }: { email: string }) {
         Setting up a page for a different address?
       </p>
       <div className="mt-2">
-        <SignOutButton redirectTo="/signup" />
+        <SignOutButton accountId={accountId} redirectTo="/signup" />
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ProfileSetupForm } from './profile-setup-form';
 import { routerPush } from '../../../tests/setup/components';
 import { isLoginRedirectTarget } from '@/lib/schemas';
+import { enqueueAttendance, resetOutboxForTests } from '@/lib/attendance-outbox';
 
 const DRAFT_KEY = 'fair_yoga_profile_draft';
 
@@ -78,7 +79,7 @@ describe('ProfileSetupForm', () => {
     const assign = stubLocation();
     assign.mockImplementation(() => order.push('navigated'));
     stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -96,7 +97,7 @@ describe('ProfileSetupForm', () => {
     const assign = stubLocation();
     assign.mockImplementation(() => order.push('navigated'));
     stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -105,10 +106,30 @@ describe('ProfileSetupForm', () => {
     expect(order).toEqual(['cleared', 'navigated']);
   });
 
+  it('signs out in session mode as the signed-in account, sending its queued attendance first', async () => {
+    resetOutboxForTests();
+    await enqueueAttendance({ ownerId: 'acct-1', registrationId: 'r1', classId: 'c1', studentName: 'Ada', status: 'attended' });
+    const fetchMock = stubFetch(() => ({ ok: true }));
+    fetchMock.mockImplementation((input: unknown) =>
+      Promise.resolve(
+        String(input) === '/api/registrations/r1'
+          ? new Response(JSON.stringify({ data: { id: 'r1', status: 'attended' } }), { status: 200 })
+          : { ok: true },
+      ),
+    );
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/signup'));
+    expect(fetchMock).toHaveBeenCalledWith('/api/registrations/r1', expect.anything());
+    resetOutboxForTests();
+  });
+
   it('keeps the stored pages in session mode, where the account did not change', async () => {
     const assign = stubLocation();
     stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -120,7 +141,7 @@ describe('ProfileSetupForm', () => {
   it('does not re-record the push device in session mode, which minted no session', async () => {
     const assign = stubLocation();
     stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -132,7 +153,7 @@ describe('ProfileSetupForm', () => {
   it('does not re-record the push device when the profile is refused', async () => {
     stubLocation();
     stubFetch(() => ({ ok: false, status: 400, json: async () => ({ error: { message: 'Nope' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -142,13 +163,13 @@ describe('ProfileSetupForm', () => {
   });
 
   it('names the address it will create in ticket mode', () => {
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
     expect(screen.getByText(/You're signing up as/)).toBeInTheDocument();
     expect(screen.getByText('anna@example.com')).toBeInTheDocument();
   });
 
   it('names the address it will attach the hat to in session mode', () => {
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
     expect(screen.getByText(/Adding a teacher page to/)).toBeInTheDocument();
   });
 
@@ -158,7 +179,7 @@ describe('ProfileSetupForm', () => {
   it('session mode explains the address is the session\'s, and offers the sign-out that changes it', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
 
     expect(screen.getByText(/That's the address you're signed in with/)).toBeInTheDocument();
 
@@ -167,7 +188,7 @@ describe('ProfileSetupForm', () => {
   });
 
   it('ticket mode offers no sign-out — there is no session behind that address', () => {
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     expect(screen.queryByText(/That's the address you're signed in with/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
@@ -180,7 +201,7 @@ describe('ProfileSetupForm', () => {
       JSON.stringify({ email: 'anna@example.com', firstName: 'Old', lastName: 'Draft', bio: '', pageSlug: 'old-draft', slugEdited: true }),
     );
     stubFetch(() => ({ ok: true, status: 201, json: async () => ({ data: { teacherId: 't-1' } }) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -196,7 +217,7 @@ describe('ProfileSetupForm', () => {
       status: 200,
       json: async () => ({ data: { teacherId: 't-1' }, outcome: 'unchanged' }),
     }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -210,7 +231,7 @@ describe('ProfileSetupForm', () => {
       DRAFT_KEY,
       JSON.stringify({ email: 'anna@example.com', firstName: 'Anna', lastName: 'Draft', bio: 'In progress', pageSlug: 'anna-draft', slugEdited: true }),
     );
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     await waitFor(() => expect(screen.getByLabelText('First name')).toHaveValue('Anna'));
     expect(screen.getByLabelText('Bio')).toHaveValue('In progress');
@@ -221,7 +242,7 @@ describe('ProfileSetupForm', () => {
       DRAFT_KEY,
       JSON.stringify({ email: 'anna@example.com', firstName: 'Anna', lastName: 'Draft', bio: 'In progress', pageSlug: 'anna-draft', slugEdited: true }),
     );
-    render(<ProfileSetupForm email="someone-else@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="someone-else@example.com" mode="ticket" accountId={null} />);
 
     await waitFor(() => expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull());
     const firstNameInputs = screen.getAllByLabelText('First name');
@@ -239,7 +260,7 @@ describe('ProfileSetupForm', () => {
         },
       }),
     }));
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -295,7 +316,7 @@ describe('ProfileSetupForm', () => {
       throw new Error(`unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', mock);
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -326,7 +347,7 @@ describe('ProfileSetupForm', () => {
       status: 409,
       json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page slug is already taken.' } }),
     }));
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -342,7 +363,7 @@ describe('ProfileSetupForm', () => {
   it('session mode: a 401 at submit is a dead session, and hard-navigates to /login', async () => {
     const assign = stubLocation();
     stubFetch(() => ({ ok: false, status: 401, json: async () => ({}) }));
-    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" accountId="acct-1" />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -367,7 +388,7 @@ describe('ProfileSetupForm', () => {
       throw new Error(`unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', mock);
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -394,7 +415,7 @@ describe('ProfileSetupForm', () => {
       throw new Error(`unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', mock);
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
@@ -413,7 +434,7 @@ describe('ProfileSetupForm', () => {
       return Promise.reject(offline);
     });
     vi.stubGlobal('fetch', mock);
-    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));

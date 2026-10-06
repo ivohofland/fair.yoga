@@ -61,6 +61,8 @@ describe('SignupPage', () => {
     // swapped this for a bare `<div>{account.email}</div>` would still pass
     // the assertion above.
     expect(tree.type).toBe(AlreadyTeachingPanel);
+    // Its sign-out sends this account's queued attendance changes, and only this account's.
+    expect(tree.props).toMatchObject({ accountId: 'a1' });
   });
 
   it('still sends a signed-in student straight to the profile form', async () => {
