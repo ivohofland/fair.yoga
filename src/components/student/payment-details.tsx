@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import type { BankDetails } from '@/lib/bank-details';
 
 interface PaymentDetailsProps {
-  iban: string;
+  details: BankDetails;
   beneficiary: string;
   reference: string;
 }
@@ -11,17 +12,50 @@ interface PaymentDetailsProps {
 type Field = { key: string; label: string; shown: string; copied: string };
 type CopyState = { field: Field; outcome: 'copied' | 'failed' } | null;
 
+/** The account rows of one scheme, in the order a banking app asks for them. */
+function accountFields(details: BankDetails): Field[] {
+  switch (details.scheme) {
+    case 'sepa':
+    case 'iban':
+      return [
+        // Copied without the display grouping: some bank apps cap the field at the
+        // IBAN's bare length and would cut a pasted, spaced one short.
+        { key: 'IBAN', label: 'IBAN', shown: details.iban, copied: details.iban.replace(/\s/g, '') },
+        ...(details.bic === null ? [] : [{ key: 'BIC', label: 'BIC', shown: details.bic, copied: details.bic }]),
+      ];
+    case 'uk':
+      return [
+        // Shown in the 12-34-56 grouping UK banks print; copied as bare digits.
+        {
+          key: 'sort code',
+          label: 'Sort code',
+          shown: details.sortCode.replace(/^(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3'),
+          copied: details.sortCode,
+        },
+        { key: 'account number', label: 'Account number', shown: details.accountNumber, copied: details.accountNumber },
+      ];
+    case 'us':
+      return [
+        { key: 'routing number', label: 'Routing number', shown: details.routingNumber, copied: details.routingNumber },
+        { key: 'account number', label: 'Account number', shown: details.accountNumber, copied: details.accountNumber },
+      ];
+    default: {
+      const unhandled: never = details;
+      console.error('[payment-details] unhandled bank scheme', { scheme: String((unhandled as { scheme?: unknown }).scheme) });
+      return [];
+    }
+  }
+}
+
 /**
  * The transfer details, each copyable on its own.
  */
-export function PaymentDetails({ iban, beneficiary, reference }: PaymentDetailsProps) {
+export function PaymentDetails({ details, beneficiary, reference }: PaymentDetailsProps) {
   const [state, setState] = useState<CopyState>(null);
 
   const fields: ReadonlyArray<Field> = [
     { key: 'name', label: 'Name', shown: beneficiary, copied: beneficiary },
-    // Copied without the display grouping: some bank apps cap the field at the
-    // IBAN's bare length and would cut a pasted, spaced one short.
-    { key: 'IBAN', label: 'IBAN', shown: iban, copied: iban.replace(/\s/g, '') },
+    ...accountFields(details),
     { key: 'reference', label: 'Reference', shown: reference, copied: reference },
   ];
 

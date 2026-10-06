@@ -284,13 +284,6 @@ export const studentProfileSchema = z.object({
   lastName: z.string().trim().min(1),
 }).strict();
 
-/** Trimmed, with a blank answer stored as no answer. */
-const blankAsNull = z.string().trim().transform((value) => (value === '' ? null : value));
-
-/** Refusal copy for an IBAN stored without its account holder name. */
-export const BANK_HOLDER_NAME_REQUIRED_MESSAGE =
-  'Add the account holder name exactly as your bank shows it.';
-
 export const updateTeacherSchema = z.object({
   firstName: z.string().trim().min(1).optional(),
   lastName: z.string().trim().min(1).optional(),
@@ -308,8 +301,6 @@ export const updateTeacherSchema = z.object({
   pushClassCompleted: z.boolean().optional(),
   pushClassReminders: z.boolean().optional(),
   pushInvitations: z.boolean().optional(),
-  bankIban: blankAsNull.nullable().optional(),
-  bankAccountName: blankAsNull.nullable().optional(),
 }).strict();
 
 /**

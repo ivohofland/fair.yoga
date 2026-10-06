@@ -10,6 +10,8 @@ const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 const IBAN = 'NL91ABNA0417164300';
 const HOLDER = 'P. Paypage';
+const SORT_CODE_SHOWN = '40-47-84';
+const UK_ACCOUNT_NUMBER = '70872490';
 
 /**
  * `/bookings/[classId]/pay` — one class's payment, for the signed-in student.
@@ -41,12 +43,19 @@ describe('GET /bookings/[classId]/pay', () => {
     chargedWithoutPayment: '',
     paidWithoutTimestamp: '',
     gbp: '',
+    chf: '',
   };
   const overdueClass = { classType: `Pay Overdue ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') };
 
   async function makeTeacher(
     key: string,
-    bank: { bankIban: string | null; bankAccountName: string | null },
+    bank: {
+      currency: 'EUR' | 'GBP';
+      accounts: Array<
+        | { currency: 'EUR'; holderName: string; iban: string }
+        | { currency: 'GBP'; holderName: string; sortCode: string; accountNumber: string }
+      >;
+    } | null,
   ): Promise<{ id: string; accountId: string; teacherRoomId: string }> {
     const email = `paypage-${key}-${suffix}@test.local`;
     const teacher = await prisma.teacher.create({
@@ -57,7 +66,7 @@ describe('GET /bookings/[classId]/pay', () => {
         bio: 'Pay page fixture',
         pageSlug: `paypage-${key}-${suffix}`,
         defaultTimezone: 'UTC',
-        ...bank,
+        ...(bank ? { currency: bank.currency, bankAccounts: { create: bank.accounts } } : {}),
         account: { create: { email } },
       },
       select: { id: true, accountId: true },
@@ -102,7 +111,7 @@ describe('GET /bookings/[classId]/pay', () => {
 
   async function completedClass(
     teacher: { id: string; teacherRoomId: string },
-    c: { classType: string; date: Date; currency?: 'EUR' | 'GBP' },
+    c: { classType: string; date: Date; currency?: 'EUR' | 'GBP' | 'CHF' },
     studentId: string,
     registrationStatus: 'attended' | 'cancelled' | 'late_cancel' | 'no_show',
     payment: {
@@ -168,8 +177,16 @@ describe('GET /bookings/[classId]/pay', () => {
   beforeAll(async () => {
     await prisma.$connect();
 
-    const bankTeacher = await makeTeacher('bank', { bankIban: IBAN, bankAccountName: HOLDER });
-    const noBankTeacher = await makeTeacher('nobank', { bankIban: null, bankAccountName: null });
+    // A teacher who has switched to pounds and kept their euro account: each
+    // payment is offered the account in its own class's currency.
+    const bankTeacher = await makeTeacher('bank', {
+      currency: 'GBP',
+      accounts: [
+        { currency: 'EUR', holderName: HOLDER, iban: IBAN },
+        { currency: 'GBP', holderName: HOLDER, sortCode: SORT_CODE_SHOWN.replaceAll('-', ''), accountNumber: UK_ACCOUNT_NUMBER },
+      ],
+    });
+    const noBankTeacher = await makeTeacher('nobank', null);
 
     const student = await makeStudent('main');
     studentToken = await seedSession(prisma, student.accountId);
@@ -178,7 +195,7 @@ describe('GET /bookings/[classId]/pay', () => {
     teacherToken = await seedSession(prisma, bankTeacher.accountId);
 
     // An account with both hats, paying for its own class as a student.
-    const dualTeacher = await makeTeacher('dual', { bankIban: null, bankAccountName: null });
+    const dualTeacher = await makeTeacher('dual', null);
     const dualStudent = await makeStudent('dual', dualTeacher.accountId);
     dualToken = await seedSession(prisma, dualTeacher.accountId);
 
@@ -195,6 +212,7 @@ describe('GET /bookings/[classId]/pay', () => {
     classIds.paidWithoutTimestamp = await completedClass(bankTeacher, { classType: `Pay Undated ${suffix}`, date: new Date('2026-06-09T00:00:00.000Z') }, student.id, 'attended', { amount: 6.5, status: 'paid', paidAt: null });
 
     classIds.gbp = await completedClass(bankTeacher, { classType: `Pay Pounds ${suffix}`, date: new Date('2026-06-11T00:00:00.000Z'), currency: 'GBP' }, student.id, 'attended', { amount: 9.5, status: 'pending' });
+    classIds.chf = await completedClass(bankTeacher, { classType: `Pay Francs ${suffix}`, date: new Date('2026-06-12T00:00:00.000Z'), currency: 'CHF' }, student.id, 'attended', { amount: 11, status: 'pending' });
 
     // Warm the route: `next dev` compiles a page lazily on its first request.
     await payPage(classIds.overdue, studentToken).catch(() => {});
@@ -207,6 +225,7 @@ describe('GET /bookings/[classId]/pay', () => {
     }
     if (teacherIds.length > 0) {
       await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId: { in: teacherIds } } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
     }
     if (roomIds.length > 0) await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
@@ -217,7 +236,9 @@ describe('GET /bookings/[classId]/pay', () => {
     await prisma.$disconnect();
   });
 
-  it('offers an outstanding payment its methods, with the bank details inside them', async () => {
+  // The overdue class is in euros while its teacher now works in pounds: the
+  // euro account answers, never the pound one.
+  it('offers a euro payment the euro account and a QR code, after the teacher switched to pounds', async () => {
     const res = await payPage(classIds.overdue, studentToken);
     expect(res.status).toBe(200);
     const html = await res.text();
@@ -229,22 +250,38 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).toContain('name="pay-method"');
     expect(html).toContain(IBAN);
     expect(html).toContain(HOLDER);
+    expect(html).not.toContain('Sort code');
+    expect(html).not.toContain(SORT_CODE_SHOWN);
     expect(html).toContain('href="/bookings"');
     expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
 
-  // Bank methods exist only for euros until accounts are per currency, so a
-  // pound payment must not produce a euro transfer or QR.
-  it('shows a pound payment in pounds and offers no bank method for it', async () => {
+  // An EPC QR carries euros only, so a pound payment is offered a transfer
+  // to the pound account and nothing else.
+  it('offers a pound payment the sort-code account, and no QR code', async () => {
     const res = await payPage(classIds.gbp, studentToken);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('£9.50');
     expect(html).not.toContain('€');
-    expect(html).not.toContain('Bank transfer');
+    expect(html).toContain('Bank transfer');
+    expect(html).toContain('Sort code');
+    expect(html).toContain(SORT_CODE_SHOWN);
+    expect(html).toContain('Account number');
+    expect(html).toContain(UK_ACCOUNT_NUMBER);
+    expect(html).toContain(HOLDER);
     expect(html).not.toContain('QR code');
     expect(html).not.toContain(IBAN);
+  });
+
+  it('offers a payment in a currency the teacher has no account for no method', async () => {
+    const res = await payPage(classIds.chf, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
     expect(html).toContain('Pay Paybank directly');
+    expect(html).not.toContain('How would you like to pay?');
+    expect(html).not.toContain(IBAN);
+    expect(html).not.toContain(SORT_CODE_SHOWN);
   });
 
   it('shows why the amount is what it is', async () => {

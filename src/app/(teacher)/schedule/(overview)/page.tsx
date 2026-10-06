@@ -38,9 +38,8 @@ export default async function SchedulePage() {
       where: { id: session.teacherId },
       select: {
         bio: true,
-        bankIban: true,
-        bankAccountName: true,
         currency: true,
+        bankAccounts: { select: { currency: true } },
         skippedOnboarding: true,
         pageSlug: true,
         firstName: true,
@@ -77,9 +76,7 @@ export default async function SchedulePage() {
 
   const onboardingInput = {
     bio: teacher.bio,
-    bankIban: teacher.bankIban,
-    bankAccountName: teacher.bankAccountName,
-    currency: teacher.currency,
+    bankAccountInCurrentCurrency: teacher.bankAccounts.some((a) => a.currency === teacher.currency),
     roomCount,
     classCount,
     skipped: teacher.skippedOnboarding,

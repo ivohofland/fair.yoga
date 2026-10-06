@@ -918,9 +918,13 @@ describe('POST /api/account/onboarding', () => {
     expect(teacher?.skippedOnboarding).not.toContain('share');
   });
 
-  /** A teacher with a bio, a room and a class, plus `own`, dismisses the completion card. */
-  async function expectShareAccepted(
-    own: { email: string; pageSlug: string } & Pick<Prisma.TeacherCreateInput, 'bankIban' | 'bankAccountName' | 'currency'>,
+  /**
+   * A teacher with a bio, a room and a class, plus `own`, asks to dismiss the
+   * completion card: `accepted` records it, `refused` is the unsettled 409.
+   */
+  async function expectShareAnswer(
+    own: { email: string; pageSlug: string } & Pick<Prisma.TeacherCreateInput, 'bankAccounts' | 'currency'>,
+    expected: 'accepted' | 'refused',
   ): Promise<void> {
     let accountId: string | undefined;
     let roomId: string | undefined;
@@ -970,13 +974,19 @@ describe('POST /api/account/onboarding', () => {
         headers: { 'Content-Type': 'application/json', ...cookie(token), ...freshIp() },
         body: JSON.stringify({ step: 'share' }),
       });
-      expect(res.status).toBe(200);
+      if (expected === 'accepted') {
+        expect(res.status).toBe(200);
+      } else {
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as { error?: { code?: string } };
+        expect(body.error?.code).toBe('ONBOARDING_NOT_SETTLED');
+      }
 
       const updated = await prisma.teacher.findUnique({
         where: { id: teacher.id },
         select: { skippedOnboarding: true },
       });
-      expect(updated?.skippedOnboarding).toContain('share');
+      expect(updated?.skippedOnboarding.includes('share')).toBe(expected === 'accepted');
     } finally {
       if (accountId) await prisma.session.deleteMany({ where: { accountId } });
       if (calendarEntryId) await prisma.class.deleteMany({ where: { calendarEntryId } });
@@ -989,22 +999,31 @@ describe('POST /api/account/onboarding', () => {
   }
 
   it('accepts step: share once every other step is settled', async () => {
-    await expectShareAccepted({
+    await expectShareAnswer({
       email: shareSettledEmail,
       pageSlug: shareSettledSlug,
-      bankIban: 'NL00BANK0123456789',
-      bankAccountName: 'Settled Teacher',
-    });
+      bankAccounts: { create: { currency: 'EUR', holderName: 'Settled Teacher', iban: 'NL91ABNA0417164300' } },
+    }, 'accepted');
   });
 
-  // No bank step is listed for a currency with no bank method, so the route
-  // settles without one, as the checklist does.
-  it('accepts step: share from a GBP teacher with no bank details', async () => {
-    await expectShareAccepted({
+  // The bank step is listed for every currency, and is done by an account in
+  // the teacher's current one.
+  it('accepts step: share from a GBP teacher with a GBP account', async () => {
+    await expectShareAnswer({
       email: `gbp-${shareSettledEmail}`,
       pageSlug: `${shareSettledSlug}-gbp`,
       currency: 'GBP',
-    });
+      bankAccounts: { create: { currency: 'GBP', holderName: 'Settled Teacher', sortCode: '123456', accountNumber: '12345678' } },
+    }, 'accepted');
+  });
+
+  it('refuses step: share from a GBP teacher whose only account is in euros', async () => {
+    await expectShareAnswer({
+      email: `gbp-eur-${shareSettledEmail}`,
+      pageSlug: `${shareSettledSlug}-gbp-eur`,
+      currency: 'GBP',
+      bankAccounts: { create: { currency: 'EUR', holderName: 'Settled Teacher', iban: 'NL91ABNA0417164300' } },
+    }, 'refused');
   });
 });
 

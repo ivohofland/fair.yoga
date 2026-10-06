@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 import { CURRENCIES, currencyLabel } from '@/lib/format';
-import { bankMethodsAvailable } from '@/lib/payment-methods';
 import type { CurrencySwitchResult } from '@/services/currency-switch';
 
 type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
@@ -26,8 +25,6 @@ export interface ProfileFormValues {
   pageSlug: string;
   currency: Currency;
   defaultTimezone: string;
-  bankIban: string | null;
-  bankAccountName: string | null;
 }
 
 /**
@@ -152,8 +149,6 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         pageSlug: form.pageSlug.trim(),
         ...(sentCurrency !== undefined ? { currency: sentCurrency } : {}),
         defaultTimezone: form.defaultTimezone,
-        bankIban: form.bankIban?.trim() || null,
-        bankAccountName: form.bankAccountName?.trim() || null,
       };
       const res = await fetch(`/api/teachers/${teacherId}`, {
         method: 'PUT',
@@ -257,27 +252,6 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
             </optgroup>
           ))}
         </Select>
-      </section>
-
-      {/* Payment */}
-      <section className="flex flex-col gap-4">
-        <h2 className="type-subtitle">Payment</h2>
-        <Input
-          label="Bank IBAN"
-          value={form.bankIban ?? ''}
-          onChange={(e) => update('bankIban', e.target.value || null)}
-          hint={
-            bankMethodsAvailable(form.currency)
-              ? undefined
-              : 'Students are shown your bank details only for euro payments.'
-          }
-        />
-        <Input
-          label="Account holder name"
-          value={form.bankAccountName ?? ''}
-          onChange={(e) => update('bankAccountName', e.target.value || null)}
-          hint="Exactly as your bank shows it — your students’ banks check this name."
-        />
       </section>
 
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}

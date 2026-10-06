@@ -203,29 +203,14 @@ describe('PUT /api/teachers/[id]', () => {
 });
 
 /**
- * Verification of Payee: a student's bank checks the payee name against the
- * IBAN, so an IBAN is only stored with its holder name. The check reads the
- * row as it would be after the save — the PUT is partial, so the body alone
- * cannot tell an IBAN-only save that pairs with a stored name from one that
- * does not.
+ * Bank details live in `TeacherBankAccount`, one row per currency; the
+ * profile PUT names none of them.
  */
-describe('PUT /api/teachers/[id] — an IBAN needs its holder name', () => {
-  const IBAN = 'NL91ABNA0417164300';
+describe('PUT /api/teachers/[id] — no bank fields', () => {
   const email = `holder-teacher-${suffix}@test.local`;
   let holderTeacherId = '';
   let holderAccountId = '';
   let holderToken = '';
-
-  async function setBank(bank: { bankIban: string | null; bankAccountName: string | null }): Promise<void> {
-    await prisma.teacher.update({ where: { id: holderTeacherId }, data: bank });
-  }
-
-  async function storedBank(): Promise<{ bankIban: string | null; bankAccountName: string | null }> {
-    return prisma.teacher.findUniqueOrThrow({
-      where: { id: holderTeacherId },
-      select: { bankIban: true, bankAccountName: true },
-    });
-  }
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -250,99 +235,58 @@ describe('PUT /api/teachers/[id] — an IBAN needs its holder name', () => {
     await prisma.$disconnect();
   });
 
-  it('refuses an IBAN with no holder name, and stores nothing', async () => {
-    await setBank({ bankIban: null, bankAccountName: null });
-    const res = await putTeacher(holderTeacherId, { bankIban: IBAN }, holderToken);
+  it('refuses a body naming the old bank fields with the schema’s 400, and stores no account', async () => {
+    const res = await putTeacher(
+      holderTeacherId,
+      { bankIban: 'NL91ABNA0417164300', bankAccountName: 'H. Teacher' },
+      holderToken,
+    );
     expect(res.status).toBe(400);
-    expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
+    expect(await prisma.teacherBankAccount.count({ where: { teacherId: holderTeacherId } })).toBe(0);
   });
 
-  it('refuses an IBAN whose holder name is only whitespace', async () => {
-    await setBank({ bankIban: null, bankAccountName: null });
-    const res = await putTeacher(holderTeacherId, { bankIban: IBAN, bankAccountName: '   ' }, holderToken);
-    expect(res.status).toBe(400);
-    expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
-  });
+  /**
+   * `TeacherBankAccount_scheme_check`: each currency sets exactly its
+   * scheme's columns, and the holder name is never blank.
+   */
+  describe('the database holds each currency to its scheme', () => {
+    const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+    type Row = { currency: 'EUR' | 'GBP' | 'USD' | 'CHF'; holderName: string } & Partial<Record<keyof typeof blank, string>>;
 
-  it('accepts the IBAN and holder name together', async () => {
-    await setBank({ bankIban: null, bankAccountName: null });
-    const res = await putTeacher(holderTeacherId, { bankIban: IBAN, bankAccountName: 'H. Teacher' }, holderToken);
-    expect(res.status).toBe(200);
-    expect(await storedBank()).toEqual({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
-  });
-
-  it('accepts a new holder name beside a stored IBAN', async () => {
-    await setBank({ bankIban: IBAN, bankAccountName: 'Old Name' });
-    const res = await putTeacher(holderTeacherId, { bankAccountName: 'H. Teacher' }, holderToken);
-    expect(res.status).toBe(200);
-    expect(await storedBank()).toEqual({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
-  });
-
-  it('accepts an IBAN added to a stored holder name', async () => {
-    await setBank({ bankIban: null, bankAccountName: 'H. Teacher' });
-    const res = await putTeacher(holderTeacherId, { bankIban: IBAN }, holderToken);
-    expect(res.status).toBe(200);
-    expect(await storedBank()).toEqual({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
-  });
-
-  it('refuses clearing the holder name while an IBAN is stored', async () => {
-    await setBank({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
-    const res = await putTeacher(holderTeacherId, { bankAccountName: null }, holderToken);
-    expect(res.status).toBe(400);
-    expect(await storedBank()).toEqual({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
-  });
-
-  it('accepts clearing both', async () => {
-    await setBank({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
-    const res = await putTeacher(holderTeacherId, { bankIban: null, bankAccountName: null }, holderToken);
-    expect(res.status).toBe(200);
-    expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
-  });
-
-  it('stores blank bank fields as null', async () => {
-    await setBank({ bankIban: null, bankAccountName: null });
-    const res = await putTeacher(holderTeacherId, { bankIban: '  ', bankAccountName: '' }, holderToken);
-    expect(res.status).toBe(200);
-    expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
-  });
-
-  it('accepts a holder name with no IBAN', async () => {
-    await setBank({ bankIban: null, bankAccountName: null });
-    const res = await putTeacher(holderTeacherId, { bankIban: null, bankAccountName: 'H. Teacher' }, holderToken);
-    expect(res.status).toBe(200);
-    expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: 'H. Teacher' });
-  });
-
-  // The database holds the rule too, for writes that do not come through
-  // this route and for a teacher racing their own two saves past its check.
-  describe('the database refuses an IBAN without its holder name', () => {
-    async function refusalOf(bank: { bankIban: string | null; bankAccountName: string | null }): Promise<unknown> {
-      await setBank({ bankIban: null, bankAccountName: null });
-      return setBank(bank).then(
+    async function store(row: Row): Promise<unknown> {
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId: holderTeacherId } });
+      return prisma.teacherBankAccount.create({ data: { teacherId: holderTeacherId, ...blank, ...row } }).then(
         () => 'stored',
         (err: unknown) => err,
       );
     }
 
-    it('refuses an IBAN with a null holder name', async () => {
-      const err = await refusalOf({ bankIban: IBAN, bankAccountName: null });
-      expect(isCheckViolationOn(err, 'Teacher_bank_holder_name_check')).toBe(true);
-      expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
+    it.each<[string, Row]>([
+      ['a EUR IBAN', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300' }],
+      ['a EUR IBAN with its BIC', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A' }],
+      ['a CHF IBAN', { currency: 'CHF', holderName: 'H. Teacher', iban: 'CH9300762011623852957' }],
+      ['a GBP sort code and account number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678' }],
+      ['a USD routing and account number', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567' }],
+    ])('stores %s', async (_label, row) => {
+      expect(await store(row)).toBe('stored');
     });
 
-    it('refuses an IBAN whose holder name is only spaces', async () => {
-      const err = await refusalOf({ bankIban: IBAN, bankAccountName: '   ' });
-      expect(isCheckViolationOn(err, 'Teacher_bank_holder_name_check')).toBe(true);
-      expect(await storedBank()).toEqual({ bankIban: null, bankAccountName: null });
-    });
-
-    it('refuses a blank IBAN', async () => {
-      const err = await refusalOf({ bankIban: '   ', bankAccountName: 'H. Teacher' });
-      expect(isCheckViolationOn(err, 'Teacher_bank_iban_not_blank_check')).toBe(true);
-    });
-
-    it('stores an IBAN with its holder name', async () => {
-      expect(await refusalOf({ bankIban: IBAN, bankAccountName: 'H. Teacher' })).toBe('stored');
+    it.each<[string, Row]>([
+      ['a holder name of only spaces', { currency: 'EUR', holderName: '   ', iban: 'NL91ABNA0417164300' }],
+      ['a EUR account with no IBAN', { currency: 'EUR', holderName: 'H. Teacher' }],
+      ['a EUR IBAN of only spaces', { currency: 'EUR', holderName: 'H. Teacher', iban: '   ' }],
+      ['a BIC of only spaces', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', bic: '  ' }],
+      ['a EUR account with a sort code', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', sortCode: '123456' }],
+      ['a GBP account with an IBAN', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', iban: 'GB29NWBK60161331926819' }],
+      ['a GBP account with a BIC', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', bic: 'NWBKGB2L' }],
+      ['a GBP account with no account number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456' }],
+      ['a GBP sort code of only spaces', { currency: 'GBP', holderName: 'H. Teacher', sortCode: ' ', accountNumber: '12345678' }],
+      ['a USD account with no routing number', { currency: 'USD', holderName: 'H. Teacher', accountNumber: '1234567' }],
+      ['a USD account with a sort code', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', sortCode: '123456' }],
+    ])('refuses %s', async (_label, row) => {
+      const err = await store(row);
+      expect(isCheckViolationOn(err, 'TeacherBankAccount_scheme_check')).toBe(true);
+      expect(await prisma.teacherBankAccount.count({ where: { teacherId: holderTeacherId } })).toBe(0);
     });
   });
 });

@@ -1,17 +1,24 @@
 import type { ComponentProps } from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, onTestFinished } from 'vitest';
 import { Currency } from '@prisma/client';
 import type { PaymentQr } from '@/components/student/payment-qr';
 import {
-  BANK_METHOD_CURRENCY,
+  EPC_QR_CURRENCY,
   PAYMENT_METHOD_COPY,
-  bankMethodsAvailable,
+  accountInCurrency,
   nonBlank,
   paymentMethodsFor,
   type PaymentMethod,
+  type StoredBankAccount,
 } from './payment-methods';
 
 const IBAN = 'NL91ABNA0417164300';
+const HOLDER = 'I. Hofland';
+const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+
+function account(fields: Partial<StoredBankAccount> & Pick<StoredBankAccount, 'currency'>): StoredBankAccount {
+  return { ...blank, holderName: HOLDER, ...fields };
+}
 
 describe('nonBlank', () => {
   it('trims a value', () => {
@@ -26,18 +33,14 @@ describe('nonBlank', () => {
   });
 });
 
-describe('bankMethodsAvailable', () => {
-  it.each(Object.values(Currency))('answers for %s whether it is the bank-method currency', (currency) => {
-    expect(bankMethodsAvailable(currency)).toBe(currency === 'EUR');
+describe('EPC_QR_CURRENCY', () => {
+  it('names the euro as the one currency an EPC QR carries', () => {
+    expect(EPC_QR_CURRENCY).toBe('EUR');
   });
 
-  it('names the euro as the bank-method currency', () => {
-    expect(BANK_METHOD_CURRENCY).toBe('EUR');
-  });
-
-  it('types a QR code and its component to the bank-method currency alone', () => {
+  it('types a QR code and its component to the euro alone', () => {
     // @ts-expect-error a QR method in another currency does not compile
-    const method: PaymentMethod = { kind: 'epc_qr', iban: IBAN, beneficiary: 'A', currency: 'GBP' };
+    const method: PaymentMethod = { kind: 'epc_qr', iban: IBAN, bic: null, beneficiary: 'A', currency: 'GBP' };
     // @ts-expect-error nor does a QR component asked for one
     const qrCurrency: ComponentProps<typeof PaymentQr>['currency'] = 'GBP';
     expect([method.kind, qrCurrency]).toEqual(['epc_qr', 'GBP']);
@@ -45,44 +48,65 @@ describe('bankMethodsAvailable', () => {
 });
 
 describe('paymentMethodsFor', () => {
-  it.each(Object.values(Currency).filter((c) => c !== 'EUR'))('offers nothing for %s', (currency) => {
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: 'A' }, currency)).toEqual([]);
+  it('offers nothing without an account', () => {
+    expect(paymentMethodsFor(null)).toEqual([]);
   });
 
-  it('offers a bank transfer then a QR code when the IBAN and its holder name are both set', () => {
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([
-      { kind: 'bank_transfer', iban: IBAN, beneficiary: 'I. Hofland' },
-      { kind: 'epc_qr', iban: IBAN, beneficiary: 'I. Hofland', currency: 'EUR' },
+  it('offers a euro account a bank transfer then a QR code, with a null BIC when none is stored', () => {
+    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN }))).toEqual([
+      { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'sepa', iban: IBAN, bic: null } },
+      { kind: 'epc_qr', beneficiary: HOLDER, iban: IBAN, bic: null, currency: 'EUR' },
     ]);
   });
 
-  it('offers nothing without an IBAN', () => {
-    expect(paymentMethodsFor({ bankIban: null, bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '   ', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
+  it('carries a stored BIC into both euro methods', () => {
+    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, bic: 'ABNANL2A' }))).toEqual([
+      { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'sepa', iban: IBAN, bic: 'ABNANL2A' } },
+      { kind: 'epc_qr', beneficiary: HOLDER, iban: IBAN, bic: 'ABNANL2A', currency: 'EUR' },
+    ]);
   });
 
-  // Verification of Payee: a student's bank checks the name against the IBAN,
-  // so a missing holder name is never stood in for by anything else.
-  it('offers nothing with an IBAN but no holder name', () => {
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: null }, 'EUR')).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '' }, 'EUR')).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '  ' }, 'EUR')).toEqual([]);
+  it('offers a pound account a sort-code transfer and no QR code', () => {
+    expect(paymentMethodsFor(account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' }))).toEqual([
+      { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'uk', sortCode: '123456', accountNumber: '12345678' } },
+    ]);
   });
 
-  // Any all-whitespace value is absent here, which is stricter than the
-  // database's bank CHECKs (`docs/data-model.md`, Teacher).
-  it('offers nothing for a tab-only or newline-only holder name or IBAN', () => {
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\t' }, 'EUR')).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\n' }, 'EUR')).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '\t', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '\n', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
+  it('offers a dollar account a routing-number transfer and no QR code', () => {
+    expect(paymentMethodsFor(account({ currency: 'USD', routingNumber: '021000021', accountNumber: '1234567' }))).toEqual([
+      { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'us', routingNumber: '021000021', accountNumber: '1234567' } },
+    ]);
+  });
+
+  it.each(['CHF', 'SEK', 'NOK', 'DKK'] as const)('offers a %s account an IBAN transfer and no QR code', (currency) => {
+    expect(paymentMethodsFor(account({ currency, iban: 'CH9300762011623852957' }))).toEqual([
+      { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'iban', iban: 'CH9300762011623852957', bic: null } },
+    ]);
   });
 
   // The trimmed name is the one a bank compares; a stray space must not become part of it.
-  it('trims the IBAN and the holder name it hands out', () => {
-    const [transfer] = paymentMethodsFor({ bankIban: ` ${IBAN} `, bankAccountName: '  I. Hofland  ' }, 'EUR');
-    expect(transfer).toEqual({ kind: 'bank_transfer', iban: IBAN, beneficiary: 'I. Hofland' });
+  it('trims the holder name it hands out', () => {
+    const [transfer] = paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  I. Hofland  ' }));
+    expect(transfer?.beneficiary).toBe(HOLDER);
+  });
+
+  it('offers nothing for, and logs, a row the CHECK should have made impossible', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    expect(paymentMethodsFor(account({ currency: 'GBP', iban: IBAN }))).toEqual([]);
+    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  ' }))).toEqual([]);
+    expect(error).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('accountInCurrency', () => {
+  it('picks the account in the asked currency, or none', () => {
+    const eur = account({ currency: 'EUR', iban: IBAN });
+    const gbp = account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' });
+    expect(accountInCurrency([gbp, eur], 'EUR')).toBe(eur);
+    expect(accountInCurrency([gbp, eur], 'GBP')).toBe(gbp);
+    expect(accountInCurrency([gbp, eur], 'CHF')).toBeNull();
+    expect(accountInCurrency([], Currency.EUR)).toBeNull();
   });
 });
 

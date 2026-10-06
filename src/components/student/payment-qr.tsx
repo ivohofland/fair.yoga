@@ -3,14 +3,16 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { formatMoney } from '@/lib/format';
-import type { BankMethodCurrency } from '@/lib/payment-methods';
+import type { EPC_QR_CURRENCY } from '@/lib/payment-methods';
 
 interface PaymentQrProps {
   iban: string;
+  /** Encoded when present (EPC version 001); without it the payload is version 002. */
+  bic: string | null;
   beneficiary: string;
   amount: number;
   /** The QR's currency, which the EPC format fixes. */
-  currency: BankMethodCurrency;
+  currency: typeof EPC_QR_CURRENCY;
   remittance: string;
 }
 
@@ -18,16 +20,16 @@ interface PaymentQrProps {
  * EPC QR (the "Girocode" EU banking apps scan): beneficiary, IBAN, amount,
  * and a remittance line. Generated client-side — no bank data leaves the page.
  */
-export function PaymentQr({ iban, beneficiary, amount, currency, remittance }: PaymentQrProps) {
+export function PaymentQr({ iban, bic, beneficiary, amount, currency, remittance }: PaymentQrProps) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const payload = [
       'BCD',
-      '002',
+      bic === null ? '002' : '001',
       '1',
       'SCT',
-      '', // BIC — optional since EPC v2
+      bic ?? '',
       beneficiary.slice(0, 70),
       iban.replace(/\s/g, ''),
       `${currency}${amount.toFixed(2)}`,
@@ -43,7 +45,7 @@ export function PaymentQr({ iban, beneficiary, amount, currency, remittance }: P
         console.error('[payment-qr] QR generation failed:', err);
         setDataUrl(null);
       });
-  }, [iban, beneficiary, amount, currency, remittance]);
+  }, [iban, bic, beneficiary, amount, currency, remittance]);
 
   if (!dataUrl) return null;
 

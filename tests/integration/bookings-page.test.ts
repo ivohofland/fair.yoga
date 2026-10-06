@@ -40,8 +40,7 @@ describe('GET /bookings (page) — payment status gate', () => {
         email: teacherEmail,
         bio: 'Bookings page fixture teacher',
         pageSlug: `bookings-teacher-${suffix}`,
-        bankIban: TEACHER_IBAN,
-        bankAccountName: 'Bookings Teacher',
+        bankAccounts: { create: { currency: 'EUR', holderName: 'Bookings Teacher', iban: TEACHER_IBAN } },
         account: { create: { email: teacherEmail } },
       },
       select: { id: true, accountId: true },
@@ -164,17 +163,21 @@ describe('GET /bookings (page) — payment status gate', () => {
     expect(html).not.toContain(TEACHER_IBAN);
   });
 
-  it('tells an unpaid student to pay directly when the teacher has no payment method', async () => {
+  // The class is in euros; an account in another currency is no method for it.
+  it('tells an unpaid student to pay directly when the teacher has no account in the class’s currency', async () => {
     await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', notChargedAt: null } });
-    await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+    await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
+    await prisma.teacherBankAccount.create({
+      data: { teacherId, currency: 'GBP', holderName: 'Bookings Teacher', sortCode: '123456', accountNumber: '12345678' },
+    });
     try {
       const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
       expect(html).toContain('Pay Bookings directly');
       expect(html).not.toContain(`href="/bookings/${classId}/pay"`);
     } finally {
-      await prisma.teacher.update({
-        where: { id: teacherId },
-        data: { bankIban: TEACHER_IBAN, bankAccountName: 'Bookings Teacher' },
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
+      await prisma.teacherBankAccount.create({
+        data: { teacherId, currency: 'EUR', holderName: 'Bookings Teacher', iban: TEACHER_IBAN },
       });
     }
   });
@@ -1078,8 +1081,7 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
         email: teacherEmail,
         bio: 'Breakdown fixture teacher',
         pageSlug: `breakdown-teacher-${suffixB}`,
-        bankIban: 'NL91ABNA0417164300',
-        bankAccountName: 'Breakdown Teacher',
+        bankAccounts: { create: { currency: 'EUR', holderName: 'Breakdown Teacher', iban: 'NL91ABNA0417164300' } },
         account: { create: { email: teacherEmail } },
       },
       select: { id: true, accountId: true },

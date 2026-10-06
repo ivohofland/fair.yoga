@@ -181,7 +181,8 @@ export function bankDetailsFromRow(
   row: { currency: Currency } & Required<{ [K in keyof BankDetailsInput]: string | null }>,
 ): BankDetails | null {
   const scheme = SCHEME_FOR_CURRENCY[row.currency];
-  const has = (v: string | null): v is string => v !== null && v !== '';
+  // Whitespace-only is absent, as the table's CHECK (`btrim(col) <> ''`) has it.
+  const has = (v: string | null): v is string => v !== null && v.trim() !== '';
   const only = (allowed: readonly (keyof BankDetailsInput)[]): boolean =>
     FIELDS.every((f) => allowed.includes(f) || row[f] === null);
   switch (scheme) {

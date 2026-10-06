@@ -167,6 +167,7 @@ async function main() {
   await prisma.student.deleteMany();
   await prisma.invitation.deleteMany();
   await prisma.teacherBlock.deleteMany();
+  await prisma.teacherBankAccount.deleteMany();
   await prisma.teacher.deleteMany();
   // Accounts last: Teacher.accountId RESTRICTs while a profile still points at one.
   await prisma.account.deleteMany();
@@ -186,8 +187,7 @@ async function main() {
       defaultTimezone: 'Europe/Amsterdam',
       classReminder: 'morning_of',
       paymentLevel: 'LEVEL_1',
-      bankIban: 'NL91ABNA0417164300',
-      bankAccountName: 'I. Hofland',
+      bankAccounts: { create: { currency: 'EUR', holderName: 'I. Hofland', iban: 'NL91ABNA0417164300' } },
     },
   });
 
@@ -203,8 +203,10 @@ async function main() {
       defaultTimezone: 'Europe/London',
       classReminder: 'evening_before',
       paymentLevel: 'LEVEL_1',
-      bankIban: 'GB29NWBK60161331926819',
-      bankAccountName: 'S. Mitchell',
+      // Sort code 12-34-56, stored as its digits.
+      bankAccounts: {
+        create: { currency: 'GBP', holderName: 'S. Mitchell', sortCode: '123456', accountNumber: '12345678' },
+      },
     },
   });
 
@@ -231,10 +233,9 @@ async function main() {
       defaultTimezone: 'America/Los_Angeles',
       classReminder: 'evening_before',
       paymentLevel: 'LEVEL_1',
-      // Null rather than a fabricated IBAN: she is in the US, and `bankIban`
-      // is nullable precisely because not every teacher has one.
-      bankIban: null,
-      bankAccountName: 'M. Chen',
+      bankAccounts: {
+        create: { currency: 'USD', holderName: 'M. Chen', routingNumber: '021000021', accountNumber: '1234567' },
+      },
     },
   });
 

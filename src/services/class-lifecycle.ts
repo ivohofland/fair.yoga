@@ -28,7 +28,7 @@ import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-windo
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
-import { paymentMethodsFor } from '@/lib/payment-methods';
+import { accountInCurrency, bankAccountSelect, paymentMethodsFor } from '@/lib/payment-methods';
 import { log } from '@/lib/log';
 
 export { ECONOMIC_FIELDS, type EconomicField };
@@ -741,7 +741,7 @@ export async function completeClass(
             startTime: true,
             durationMinutes: true,
             cancelledAt: true,
-            teacher: { select: { defaultTimezone: true, bankIban: true, bankAccountName: true } },
+            teacher: { select: { defaultTimezone: true, bankAccounts: { select: bankAccountSelect } } },
           },
         },
       },
@@ -850,7 +850,8 @@ export async function completeClass(
 
     // Payments exist — now tell people about them, in the same transaction.
     // In the Level 1 model this notification IS the payment request.
-    const teacherHasPaymentMethods = paymentMethodsFor(cls.calendarEntry.teacher, cls.currency).length > 0;
+    const teacherHasPaymentMethods =
+      paymentMethodsFor(accountInCurrency(cls.calendarEntry.teacher.bankAccounts, cls.currency)).length > 0;
     const notifications: CreateNotificationInput[] = pricing.students.map((s, i) => {
       const reg = chargedRegistrations[i]!;
       return {

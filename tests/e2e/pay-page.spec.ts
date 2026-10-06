@@ -46,8 +46,7 @@ test.describe('Pay page — the method chooser keeps one row open', () => {
         bio: 'Fixture for the pay page chooser e2e',
         pageSlug: `e2e-pay-${suffix}`,
         defaultTimezone: 'UTC',
-        bankIban: IBAN,
-        bankAccountName: HOLDER,
+        bankAccounts: { create: { currency: 'EUR', holderName: HOLDER, iban: IBAN } },
       },
     });
     teacherId = teacher.id;

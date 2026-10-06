@@ -330,12 +330,11 @@ describe('Payment Service (DB)', () => {
       where: { id: paymentId },
       data: { status: 'pending', method: null, paidAt: null, reminderSentAt: null },
     });
-    await prisma.teacher.update({
-      where: { id: teacherId },
-      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Teacher' },
+    await prisma.teacherBankAccount.create({
+      data: { teacherId, currency: 'EUR', holderName: 'P. Teacher', iban: 'NL91ABNA0417164300' },
     });
     onTestFinished(async () => {
-      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
     });
 
     paymentOf(await sendPaymentReminder(prisma, paymentId), 'applied');
@@ -348,9 +347,9 @@ describe('Payment Service (DB)', () => {
   });
 
   // The class's own currency, not the teacher's: a CHF payment under a EUR
-  // teacher with euro bank details is reminded in CHF, and told to pay the
-  // teacher directly because a bank method is euro-only.
-  it('sendPaymentReminder words a CHF payment in CHF, with no bank method, under a EUR teacher who has an IBAN', async () => {
+  // teacher with a euro account is reminded in CHF, and told to pay the
+  // teacher directly because the teacher holds no CHF account.
+  it('sendPaymentReminder words a CHF payment in CHF, with no bank method, under a EUR teacher who has only a euro account', async () => {
     const chf = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
@@ -368,7 +367,7 @@ describe('Payment Service (DB)', () => {
       currency: 'CHF',
     });
     onTestFinished(async () => {
-      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
       await prisma.notification.deleteMany({ where: { relatedClassId: chf.id } });
       await prisma.payment.deleteMany({ where: { registration: { classId: chf.id } } });
       await prisma.registration.deleteMany({ where: { classId: chf.id } });
@@ -380,9 +379,8 @@ describe('Payment Service (DB)', () => {
     const payment = await prisma.payment.create({
       data: { registrationId: registration.id, amount: 24.59, status: 'pending' },
     });
-    await prisma.teacher.update({
-      where: { id: teacherId },
-      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Teacher' },
+    await prisma.teacherBankAccount.create({
+      data: { teacherId, currency: 'EUR', holderName: 'P. Teacher', iban: 'NL91ABNA0417164300' },
     });
 
     paymentOf(await sendPaymentReminder(prisma, payment.id), 'applied');

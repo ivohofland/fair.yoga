@@ -1,5 +1,4 @@
-import type { Currency, OnboardingStep } from '@prisma/client';
-import { bankMethodsAvailable, paymentMethodsFor } from './payment-methods';
+import type { OnboardingStep } from '@prisma/client';
 
 /** Steps that gate retirement but carry no Skip control. */
 export type RequiredStepKey = 'room' | 'class';
@@ -10,9 +9,8 @@ export type StepState = 'done' | 'skipped' | 'todo';
 
 export interface StepInput {
   bio: string;
-  bankIban: string | null;
-  bankAccountName: string | null;
-  currency: Currency;
+  /** Whether the teacher holds a bank account in their current currency. */
+  bankAccountInCurrentCurrency: boolean;
   roomCount: number;
   classCount: number;
   skipped: OnboardingStep[];
@@ -30,31 +28,10 @@ export interface ResolvedStep {
 
 const ORDER: readonly StepKey[] = ['profile', 'bank', 'room', 'class'];
 
-/**
- * Whether the row is listed at all. The bank step is not, for a teacher whose
- * currency has no bank method: students are never shown the details, so
- * there is nothing for the step to set up.
- */
-function isApplicable(key: StepKey, input: StepInput): boolean {
-  switch (key) {
-    case 'bank': return bankMethodsAvailable(input.currency);
-    case 'profile':
-    case 'room':
-    case 'class':
-      return true;
-    default: {
-      // Adding a StepKey without an applicability answer fails to compile here.
-      const never: never = key;
-      return never;
-    }
-  }
-}
-
 function isDone(key: StepKey, input: StepInput): boolean {
   switch (key) {
     case 'profile': return input.bio !== '';
-    // Done exactly when `paymentMethodsFor` offers a method.
-    case 'bank': return paymentMethodsFor(input, input.currency).length > 0;
+    case 'bank': return input.bankAccountInCurrentCurrency;
     case 'room': return input.roomCount > 0;
     case 'class': return input.classCount > 0;
     default: {
@@ -105,7 +82,7 @@ function skippableKey(key: StepKey): OnboardingStep | null {
 }
 
 export function resolveSteps(input: StepInput): ResolvedStep[] {
-  return ORDER.filter((key) => isApplicable(key, input)).map((key) => {
+  return ORDER.map((key) => {
     const skipAs = skippableKey(key);
     const state: StepState = isDone(key, input)
       ? 'done'

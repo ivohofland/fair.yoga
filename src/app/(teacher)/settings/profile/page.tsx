@@ -35,8 +35,6 @@ export default async function ProfilePage() {
           pageSlug: teacher.pageSlug,
           currency: teacher.currency,
           defaultTimezone: teacher.defaultTimezone,
-          bankIban: teacher.bankIban,
-          bankAccountName: teacher.bankAccountName,
         }}
       />
 
