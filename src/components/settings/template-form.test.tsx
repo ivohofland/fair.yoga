@@ -296,6 +296,16 @@ describe('TemplateForm', () => {
    * differences a key-set pin can't see, which is exactly what this runtime
    * assertion adds.
    */
+  it('names the teacher’s currency in its money labels (#758)', async () => {
+    stubFetch();
+    render(<TemplateForm currency="CHF" mode="create" />);
+    await screen.findByLabelText('Room');
+    expect(screen.getByLabelText('Room cost (CHF)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Min rate (CHF)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Target rate (CHF)')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Room cost (€)')).toBeNull();
+  });
+
   it('sends the same thirteen fields when creating', async () => {
     stubFetch();
     render(<TemplateForm currency="EUR" mode="create" />);
