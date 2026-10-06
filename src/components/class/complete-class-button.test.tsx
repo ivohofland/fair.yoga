@@ -52,15 +52,25 @@ describe('CompleteClassButton', () => {
 
     it('sends this class\'s queued changes first, then finishes', async () => {
       await queue('r1');
+      await queue('rX', 'c-other');
+      await queue('rY', 'c-9', 'acct-2');
+      // Another class's change stays unsent, and another account's is never sent by this account's flush.
       answer(async (url) =>
-        new Response(JSON.stringify({ data: { id: url.split('/').pop(), status: 'attended' } }), { status: 200 }),
+        url === '/api/registrations/rX'
+          ? new Response(null, { status: 503 })
+          : new Response(JSON.stringify({ data: { id: url.split('/').pop(), status: 'attended' } }), { status: 200 }),
       );
       render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
 
       await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
-      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/api/registrations/r1', '/api/classes/c-9/complete']);
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        '/api/registrations/r1',
+        '/api/registrations/rX',
+        '/api/classes/c-9/complete',
+      ]);
+      expect(Object.keys(getOutbox().pending).sort()).toEqual(['rX', 'rY']);
       expect(screen.queryByText(/haven't synced|hasn't synced/)).not.toBeInTheDocument();
     });
 
