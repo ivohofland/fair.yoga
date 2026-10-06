@@ -1039,20 +1039,17 @@ Re-run for issue 46 on 2026-09-29 it returns 23 = the 22 above + 1:
 row — "The `Teacher` row is the photo upload's gate (#46)" below. Every other
 line sits in one of the files listed above.
 
-Re-run for issue 758 on 2026-10-06 it returns 25 = the 23 above + 2, both in
-`db-locks.ts`: `lockTeacherForNoKeyUpdate` and `lockTeacherForShare`, the
-`Teacher` first lock — "The `Teacher` row is the first lock (#758)" below.
-`deleteTeacherAccount` arms the bound through the first of them, and its own
-`setLockTimeout` line was already counted. Every other line sits in one of
-the files listed above.
-
-Re-run for issue 758's currency switch on 2026-10-06 it returns 22 = the 25
-above − 3. `createClassTemplate` and `createStudioClassTemplate` now arm the
-bound through `lockTeacherForShare`, their first statement, so their own
-`setLockTimeout` calls are gone, and with them `class-template-lifecycle.ts`'s
-`  setLockTimeout,` import line. The two one-off create routes and the
-currency switch arm it through the same helpers and add no line. Every other
-line sits in one of the files listed above.
+Re-run for issue 758 on 2026-10-06 it returns 22 = the 23 above + 2 − 3. The
+two added lines are in `db-locks.ts`: `lockTeacherForNoKeyUpdate` and
+`lockTeacherForShare`, the `Teacher` first lock — "The `Teacher` row is the
+first lock (#758)" below. The three removed are `createClassTemplate`'s and
+`createStudioClassTemplate`'s own `setLockTimeout` calls, and
+`class-template-lifecycle.ts`'s `  setLockTimeout,` import line: both creates
+now arm the bound through `lockTeacherForShare`, their first statement.
+`deleteTeacherAccount` arms it through `lockTeacherForNoKeyUpdate`, and its
+own `setLockTimeout` line was already counted; the two one-off create routes
+and the currency switch arm it through the same helpers and add no line.
+Every other line sits in one of the files listed above.
 
 ### Template creation's transaction budget (#758)
 
@@ -2062,8 +2059,8 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   stamps the currency it wrote, and a switch waits out a create and then
   relabels what it committed. Creators do not conflict with one another.
 - The photo upload (`saveTeacherPhoto`, `src/services/teacher-photo.ts`):
-  `lockLiveTeacher`, `FOR SHARE`, as its first and only lock. See the section
-  above.
+  `lockLiveTeacher`, `FOR SHARE`, as its first lock, and the only one on
+  `Teacher`. See the section above.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
@@ -2919,8 +2916,9 @@ as the other nine sites.
 
 Not a new node on the canonical `Student → Class → WaitlistEntry → …` ordering above.
 Since #229 `deleteTeacherAccount` takes `ClassTemplate` before `Class` —
-consistent with every other site — so these child locks are the transaction's
-first lock acquisition, ahead of `lockClassRowsOrdered`.
+consistent with every other site — so these child locks come after the
+`Teacher` lock ("The `Teacher` row is the first lock (#758)") and ahead of
+`lockClassRowsOrdered`.
 
 ## A CAS miss no re-read can classify answers `busy`, not a throw (issue 332)
 
