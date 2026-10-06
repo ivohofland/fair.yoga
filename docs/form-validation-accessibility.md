@@ -25,12 +25,12 @@ This document establishes the house standards for form validation error presenta
 
 | Form / Component | Location | Validation Type | Error Presentation | Clear-on-Change Mechanism |
 |---|---|---|---|---|
-| **Studio Class Create** | `src/app/(teacher)/studio-class/new/page.tsx` | Client pre-check (`handleSubmit`) | `<p role="alert" className="text-sm text-danger">` | `updateField()` wrapper calling `setError('')` on every input |
+| **Studio Class Create** | `src/app/(teacher)/studio-class/new/new-studio-class-form.tsx` | Client pre-check (`handleSubmit`) | `<p role="alert" className="text-sm text-danger">` | `updateField()` wrapper calling `setError('')` on every input |
 | **Studio Template Form** | `src/components/settings/studio-template-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `update()` calling `setError('')` & `setSuccess('')` |
 | **Studio Class Edit** | `src/components/studio-class/studio-class-edit-form.tsx` | Per-field (`validate`) & API banner | `<Input error={...} />` + `<span role="alert">` | `set()` calling `setError('')` & clearing `fieldErrors[key]` |
 | **Class Template Form** | `src/components/settings/template-form.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | `update()` & `handleRoomChange()` calling `setError('')` |
 | **Class Edit Form** | `src/components/class/class-edit-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `set()` calling `setError('')` |
-| **Class Create Wizard** | `src/app/(teacher)/class/new/page.tsx` | Multi-step client validation & API banner | `<Input error={...} />` + `<p role="alert">` | `updateField()` & `handleRoomChange()` clearing `submitError` and `errors[key]` |
+| **Class Create Wizard** | `src/app/(teacher)/class/new/new-class-form.tsx` | Multi-step client validation & API banner | `<Input error={...} />` + `<p role="alert">` | `updateField()` & `handleRoomChange()` clearing `submitError` and `errors[key]` |
 | **Edit Room Form** | `src/components/settings/edit-room-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `clearStatus()` on input changes |
 | **Edit Teacher Room Form** | `src/components/settings/edit-teacher-room-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `clearStatus()` on input changes |
 | **Teacher Profile Form** | `src/components/settings/profile-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `update()` calling `setError('')` |

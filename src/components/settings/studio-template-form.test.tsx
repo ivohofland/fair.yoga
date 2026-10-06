@@ -79,7 +79,7 @@ describe('StudioTemplateForm', () => {
    */
   it('sends the same six fields in both create and update modes', async () => {
     stubFetch();
-    const create = render(<StudioTemplateForm mode="create" />);
+    const create = render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     const created = await submit();
@@ -91,7 +91,7 @@ describe('StudioTemplateForm', () => {
     fetchMock.mockReset();
     stubFetch();
     render(
-      <StudioTemplateForm
+      <StudioTemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{
@@ -117,7 +117,7 @@ describe('StudioTemplateForm', () => {
    */
   it('trims classType and location before sending', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '  Vinyasa  ' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: '  Studio A  ' } });
     const created = await submit();
@@ -144,7 +144,7 @@ describe('StudioTemplateForm', () => {
    */
   it('refuses a blank class type before any request, with product copy and alert role', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
@@ -164,7 +164,7 @@ describe('StudioTemplateForm', () => {
 
   it('clears error banner when any input field is edited', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
     expect(screen.getByRole('alert')).toHaveTextContent(/^Class type is required\.$/);
 
@@ -178,7 +178,7 @@ describe('StudioTemplateForm', () => {
    */
   it('refuses a blank or invalid duration before any request, with product copy', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
 
@@ -207,17 +207,17 @@ describe('StudioTemplateForm', () => {
    */
   it('refuses a blank or negative hourly rate before any request, with product copy', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
 
-    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText('Enter an hourly rate — 0 if this class is unpaid.')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '-5' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '-5' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -228,8 +228,8 @@ describe('StudioTemplateForm', () => {
    */
   it('allows typing decimal hourly rate without snapping to 0', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
-    const rateInput = screen.getByLabelText('Hourly rate') as HTMLInputElement;
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
+    const rateInput = screen.getByLabelText(/^Hourly rate/) as HTMLInputElement;
 
     fireEvent.change(rateInput, { target: { value: '22.5' } });
     expect(rateInput.value).toBe('22.5');
@@ -237,10 +237,10 @@ describe('StudioTemplateForm', () => {
 
   it('allows 0 as an explicit hourly rate', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
-    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '0' } });
 
     const created = await submit();
     expect(created.body.hourlyRate).toBe(0);
@@ -257,7 +257,7 @@ describe('StudioTemplateForm', () => {
    */
   it('refuses a blank location with punctuated copy', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
@@ -271,9 +271,9 @@ describe('StudioTemplateForm', () => {
       stubFetch();
       render(
         mode === 'create' ? (
-          <StudioTemplateForm mode="create" />
+          <StudioTemplateForm currency="EUR" mode="create" />
         ) : (
-          <StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />
+          <StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />
         ),
       );
       // Create mode starts with blank text fields; edit mode is prefilled from
@@ -304,7 +304,7 @@ describe('StudioTemplateForm', () => {
   // G9
   it('cannot submit twice when the create push commits nothing', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
 
@@ -354,7 +354,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -405,7 +405,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -448,7 +448,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -502,7 +502,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -548,7 +548,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -576,7 +576,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -600,7 +600,7 @@ describe('StudioTemplateForm', () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     const createBtn = await screen.findByRole('button', { name: /create/i });
@@ -643,7 +643,7 @@ describe('StudioTemplateForm', () => {
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -667,7 +667,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
@@ -690,7 +690,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
@@ -710,7 +710,7 @@ describe('StudioTemplateForm', () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     const saveBtn = await screen.findByRole('button', { name: /save/i });
     fireEvent.click(saveBtn);
 
@@ -755,7 +755,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
@@ -789,7 +789,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -814,7 +814,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -850,7 +850,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -882,7 +882,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -910,7 +910,7 @@ describe('StudioTemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -929,7 +929,7 @@ describe('StudioTemplateForm', () => {
    */
   it('ignores a submit event dispatched at the form once created', async () => {
     stubFetch();
-    render(<StudioTemplateForm mode="create" />);
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     const location = screen.getByLabelText('Location');
     fireEvent.change(location, { target: { value: 'Studio A' } });

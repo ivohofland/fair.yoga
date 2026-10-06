@@ -40,6 +40,7 @@ describe('GET /bookings/[classId]/pay', () => {
     lateCancelWaived: '',
     chargedWithoutPayment: '',
     paidWithoutTimestamp: '',
+    gbp: '',
   };
   const overdueClass = { classType: `Pay Overdue ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') };
 
@@ -101,7 +102,7 @@ describe('GET /bookings/[classId]/pay', () => {
 
   async function completedClass(
     teacher: { id: string; teacherRoomId: string },
-    c: { classType: string; date: Date },
+    c: { classType: string; date: Date; currency?: 'EUR' | 'GBP' },
     studentId: string,
     registrationStatus: 'attended' | 'cancelled' | 'late_cancel' | 'no_show',
     payment: {
@@ -127,6 +128,7 @@ describe('GET /bookings/[classId]/pay', () => {
       effectiveTeacherRate: 10,
       totalStudents: 4,
       totalRevenue: 30,
+      ...(c.currency ? { currency: c.currency } : {}),
     });
     const registration = await prisma.registration.create({
       data: {
@@ -192,6 +194,8 @@ describe('GET /bookings/[classId]/pay', () => {
     classIds.chargedWithoutPayment = await completedClass(bankTeacher, { classType: `Pay Missing ${suffix}`, date: new Date('2026-06-08T00:00:00.000Z') }, student.id, 'attended', null);
     classIds.paidWithoutTimestamp = await completedClass(bankTeacher, { classType: `Pay Undated ${suffix}`, date: new Date('2026-06-09T00:00:00.000Z') }, student.id, 'attended', { amount: 6.5, status: 'paid', paidAt: null });
 
+    classIds.gbp = await completedClass(bankTeacher, { classType: `Pay Pounds ${suffix}`, date: new Date('2026-06-11T00:00:00.000Z'), currency: 'GBP' }, student.id, 'attended', { amount: 9.5, status: 'pending' });
+
     // Warm the route: `next dev` compiles a page lazily on its first request.
     await payPage(classIds.overdue, studentToken).catch(() => {});
   }, 30_000);
@@ -227,6 +231,20 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).toContain(HOLDER);
     expect(html).toContain('href="/bookings"');
     expect(html).not.toMatch(/<details[^>]*\sopen/);
+  });
+
+  // Bank methods exist only for euros until accounts are per currency, so a
+  // pound payment must not produce a euro transfer or QR.
+  it('shows a pound payment in pounds and offers no bank method for it', async () => {
+    const res = await payPage(classIds.gbp, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('£9.50');
+    expect(html).not.toContain('€');
+    expect(html).not.toContain('Bank transfer');
+    expect(html).not.toContain('QR code');
+    expect(html).not.toContain(IBAN);
+    expect(html).toContain('Pay Paybank directly');
   });
 
   it('shows why the amount is what it is', async () => {

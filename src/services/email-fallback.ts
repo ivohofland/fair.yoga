@@ -40,9 +40,12 @@ async function studentPaymentEmailHasMethods(
   if (!isPaymentNotification(notification.type) || notification.relatedClassId === null) return undefined;
   const cls = await db.class.findUnique({
     where: { id: notification.relatedClassId },
-    select: { calendarEntry: { select: { teacher: { select: { bankIban: true, bankAccountName: true } } } } },
+    select: {
+      currency: true,
+      calendarEntry: { select: { teacher: { select: { bankIban: true, bankAccountName: true } } } },
+    },
   });
-  return cls !== null && paymentMethodsFor(cls.calendarEntry.teacher).length > 0;
+  return cls !== null && paymentMethodsFor(cls.calendarEntry.teacher, cls.currency).length > 0;
 }
 
 /**

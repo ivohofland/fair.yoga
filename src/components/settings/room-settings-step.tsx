@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import type { z } from 'zod';
+import type { Currency } from '@prisma/client';
 import type { createTeacherRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { formatRoomLocation } from '@/lib/format';
+import { currencyLabel, formatRoomLocation } from '@/lib/format';
 
 /**
  * #136. This step's enumeration of the teacher-room link it posts. Beside its
@@ -40,11 +41,12 @@ void _linkHasNoExtras;
 
 interface RoomSettingsStepProps {
   selectedRoom: RoomResult;
+  currency: Currency;
   onSaved: () => void;
   onBack: () => void;
 }
 
-export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettingsStepProps) {
+export function RoomSettingsStep({ selectedRoom, currency, onSaved, onBack }: RoomSettingsStepProps) {
   const [capacityOverride, setCapacityOverride] = useState(String(selectedRoom.maxCapacity));
   const [rentalRate, setRentalRate] = useState('');
   const [equipmentNotes, setEquipmentNotes] = useState('');
@@ -118,7 +120,7 @@ export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettings
           onChange={(e) => { setCapacityOverride(e.target.value); if (settingsError) setSettingsError(''); }}
         />
         <Input
-          label="Rental rate"
+          label={`Rental rate (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
           value={rentalRate}

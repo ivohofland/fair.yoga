@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
+import { formatMoney } from '@/lib/format';
 
 interface PaymentQrProps {
   iban: string;
@@ -46,7 +47,7 @@ export function PaymentQr({ iban, beneficiary, amount, remittance }: PaymentQrPr
   return (
     <div className="mt-3">
       {/* eslint-disable-next-line @next/next/no-img-element -- data URL, no optimization needed */}
-      <img src={dataUrl} alt={`Payment QR: €${amount.toFixed(2)} to ${beneficiary}`} width={160} height={160} className="rounded-field border border-border" />
+      <img src={dataUrl} alt={`Payment QR: ${formatMoney(amount, 'EUR')} to ${beneficiary}`} width={160} height={160} className="rounded-field border border-border" />
       <p className="type-caption mt-1">Scan with your banking app</p>
     </div>
   );

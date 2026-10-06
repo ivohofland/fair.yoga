@@ -1,23 +1,25 @@
-import { formatDayHeader, formatCents } from '@/lib/format';
+import type { Currency } from '@prisma/client';
+import { formatDayHeader, formatMoneyCents } from '@/lib/format';
 import type { PaymentBreakdownLines } from '@/lib/payment-breakdown';
 
 interface PaymentBreakdownProps {
   lines: PaymentBreakdownLines;
   classType: string;
   date: Date;
+  currency: Currency;
 }
 
 /**
  * Where a student's payment for a completed class went. Renders
  * unconditionally; the caller decides whether a row shows it.
  */
-export function PaymentBreakdown({ lines, classType, date }: PaymentBreakdownProps) {
+export function PaymentBreakdown({ lines, classType, date, currency }: PaymentBreakdownProps) {
   const rows: ReadonlyArray<{ label: string; value: string; emphasis: boolean }> = [
-    { label: 'Room', value: formatCents(lines.roomCents), emphasis: false },
-    { label: 'Teacher', value: formatCents(lines.teacherCents), emphasis: false },
-    { label: 'Class total', value: formatCents(lines.totalCents), emphasis: false },
+    { label: 'Room', value: formatMoneyCents(lines.roomCents, currency), emphasis: false },
+    { label: 'Teacher', value: formatMoneyCents(lines.teacherCents, currency), emphasis: false },
+    { label: 'Class total', value: formatMoneyCents(lines.totalCents, currency), emphasis: false },
     { label: 'Students', value: String(lines.students), emphasis: false },
-    { label: 'Your share', value: formatCents(lines.shareCents), emphasis: true },
+    { label: 'Your share', value: formatMoneyCents(lines.shareCents, currency), emphasis: true },
   ];
 
   return (

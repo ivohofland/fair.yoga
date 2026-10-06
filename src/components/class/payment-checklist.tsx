@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import type { PaymentStatus } from '@prisma/client';
-import { paymentStateText, timeAgo } from '@/lib/format';
+import type { Currency, PaymentStatus } from '@prisma/client';
+import { formatMoney, paymentStateText, timeAgo } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
@@ -20,9 +20,11 @@ export interface PaymentItem {
 
 interface PaymentChecklistProps {
   items: PaymentItem[];
+  /** The class's currency; every item on one checklist belongs to one class. */
+  currency: Currency;
 }
 
-export function PaymentChecklist({ items }: PaymentChecklistProps) {
+export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
   const { paymentState, justMarked, updating, error, markPaid, undo } = usePaymentActions(
     Object.fromEntries(items.map((item) => [item.paymentId, item.status])),
   );
@@ -85,7 +87,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
 
               <div className="flex items-center gap-3 shrink-0">
                 <span className={`type-number ${outstanding ? 'text-brown' : ''}`}>
-                  &euro;{item.amount.toFixed(2)}
+                  {formatMoney(item.amount, currency)}
                 </span>
                 {outstanding && (
                   <SendReminderButton

@@ -25,7 +25,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const [teacher, roomCount, classCount] = await Promise.all([
       prisma.teacher.findUniqueOrThrow({
         where: { id: session.teacherId },
-        select: { bio: true, bankIban: true, bankAccountName: true, skippedOnboarding: true },
+        select: { bio: true, bankIban: true, bankAccountName: true, currency: true, skippedOnboarding: true },
       }),
       prisma.teacherRoom.count({ where: { teacherId: session.teacherId, isArchived: false } }),
       prisma.class.count({ where: { calendarEntry: { teacherId: session.teacherId } } }),
@@ -34,6 +34,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       bio: teacher.bio,
       bankIban: teacher.bankIban,
       bankAccountName: teacher.bankAccountName,
+      currency: teacher.currency,
       roomCount,
       classCount,
       skipped: teacher.skippedOnboarding,

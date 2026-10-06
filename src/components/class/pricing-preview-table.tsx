@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { formatEuro } from '@/lib/format';
+import type { Currency } from '@prisma/client';
+import { formatMoney } from '@/lib/format';
 import { calculateEffectiveTeacherRate } from '@/services/pricing';
 import { INCOME_TIERS, TIER_RATIOS } from '@/lib/tiers';
 
 interface PricingPreviewTableProps {
+  currency: Currency;
   roomCost: number;
   minRate: number;
   targetRate: number;
@@ -88,6 +90,7 @@ const TIER_LABELS = ['Tier 1', 'Tier 2', 'Tier 3', 'Tier 4', 'Tier 5'];
 // ---------------------------------------------------------------------------
 
 export function PricingPreviewTable({
+  currency,
   roomCost,
   minRate,
   targetRate,
@@ -183,16 +186,16 @@ export function PricingPreviewTable({
             <p className="type-label">You earn</p>
             <p className="type-caption">total for this class</p>
           </div>
-          <p className="type-number text-[28px] leading-[1.25]">{formatEuro(teacherRate)}</p>
+          <p className="type-number text-[28px] leading-[1.25]">{formatMoney(teacherRate, currency)}</p>
         </div>
         <div className="flex gap-6">
           <div>
             <p className="type-caption">Room cost</p>
-            <p className="text-sm font-medium text-ink tabular-nums">{formatEuro(roomCost)}</p>
+            <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(roomCost, currency)}</p>
           </div>
           <div>
             <p className="type-caption">Total class cost</p>
-            <p className="text-sm font-medium text-ink tabular-nums">{formatEuro(totalCost)}</p>
+            <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(totalCost, currency)}</p>
           </div>
           <div>
             <p className="type-caption">Rate progress</p>
@@ -251,7 +254,7 @@ export function PricingPreviewTable({
                 <span className="flex-1 text-base text-ink">{label}</span>
                 <span className="w-20 text-right text-sm text-brown tabular-nums">{count}</span>
                 <span className="w-20 text-right type-number text-sm">
-                  {formatEuro(prices[i]!)}
+                  {formatMoney(prices[i]!, currency)}
                 </span>
               </div>
             );

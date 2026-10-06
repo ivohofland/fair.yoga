@@ -12,8 +12,7 @@ import {
   formatStudentName,
   timeAgo,
   todayLocal,
-  formatCents,
-  formatEuro,
+  formatMoneyCents,
   formatMoney,
   currencyLabel,
 } from './format';
@@ -401,74 +400,74 @@ describe('todayLocal', () => {
   });
 });
 
-describe('formatCents', () => {
+describe('formatMoneyCents (EUR)', () => {
   it('formats positive whole cents', () => {
-    expect(formatCents(4000)).toBe('€40.00');
+    expect(formatMoneyCents(4000, 'EUR')).toBe('€40.00');
   });
 
   it('pads single-digit cents with leading zero', () => {
-    expect(formatCents(5)).toBe('€0.05');
+    expect(formatMoneyCents(5, 'EUR')).toBe('€0.05');
   });
 
   it('formats negative whole cents with minus sign (U+2212)', () => {
-    expect(formatCents(-400)).toBe('−€4.00');
-    expect(formatCents(-400).charCodeAt(0)).toBe(0x2212);
+    expect(formatMoneyCents(-400, 'EUR')).toBe('−€4.00');
+    expect(formatMoneyCents(-400, 'EUR').charCodeAt(0)).toBe(0x2212);
   });
 
   it('formats zero cents as positive zero', () => {
-    expect(formatCents(0)).toBe('€0.00');
+    expect(formatMoneyCents(0, 'EUR')).toBe('€0.00');
   });
 
   it('formats negative zero cents as positive zero', () => {
-    expect(formatCents(-0)).toBe('€0.00');
+    expect(formatMoneyCents(-0, 'EUR')).toBe('€0.00');
   });
 
   it('cancels near-zero float drift to zero', () => {
-    expect(formatCents(-7.1054e-15)).toBe('€0.00');
+    expect(formatMoneyCents(-7.1054e-15, 'EUR')).toBe('€0.00');
   });
 
   it('pads negative single-digit cents with leading zero', () => {
-    expect(formatCents(-5)).toBe('−€0.05');
+    expect(formatMoneyCents(-5, 'EUR')).toBe('−€0.05');
   });
 
   it('rounds negative sub-cent drift to positive zero or nearest cent', () => {
-    expect(formatCents(-0.4)).toBe('€0.00');
-    expect(formatCents(-0.6)).toBe('−€0.01');
+    expect(formatMoneyCents(-0.4, 'EUR')).toBe('€0.00');
+    expect(formatMoneyCents(-0.6, 'EUR')).toBe('−€0.01');
   });
 
   it('throws RangeError for non-finite amounts', () => {
-    expect(() => formatCents(NaN)).toThrow(RangeError);
-    expect(() => formatCents(Infinity)).toThrow(RangeError);
-    expect(() => formatCents(-Infinity)).toThrow(RangeError);
+    expect(() => formatMoneyCents(NaN, 'EUR')).toThrow(RangeError);
+    expect(() => formatMoneyCents(Infinity, 'EUR')).toThrow(RangeError);
+    expect(() => formatMoneyCents(-Infinity, 'EUR')).toThrow(RangeError);
   });
 });
 
-describe('formatEuro', () => {
+describe('formatMoney (EUR)', () => {
   it('formats positive decimal euro amount', () => {
-    expect(formatEuro(16.25)).toBe('€16.25');
+    expect(formatMoney(16.25, 'EUR')).toBe('€16.25');
   });
 
   it('formats negative euro amount with minus sign (U+2212)', () => {
-    expect(formatEuro(-4)).toBe('−€4.00');
-    expect(formatEuro(-4).charCodeAt(0)).toBe(0x2212);
+    expect(formatMoney(-4, 'EUR')).toBe('−€4.00');
+    expect(formatMoney(-4, 'EUR').charCodeAt(0)).toBe(0x2212);
   });
 
   it('formats zero euros as positive zero', () => {
-    expect(formatEuro(0)).toBe('€0.00');
+    expect(formatMoney(0, 'EUR')).toBe('€0.00');
   });
 
   it('formats negative zero euros as positive zero', () => {
-    expect(formatEuro(-0)).toBe('€0.00');
+    expect(formatMoney(-0, 'EUR')).toBe('€0.00');
   });
 
   it('cancels floating point drift to zero', () => {
-    expect(formatEuro((56.30 - 40.10) + (24.00 - 40.20))).toBe('€0.00');
+    expect(formatMoney((56.30 - 40.10) + (24.00 - 40.20), 'EUR')).toBe('€0.00');
   });
 
   it('throws RangeError for non-finite amounts', () => {
-    expect(() => formatEuro(NaN)).toThrow(RangeError);
-    expect(() => formatEuro(Infinity)).toThrow(RangeError);
-    expect(() => formatEuro(-Infinity)).toThrow(RangeError);
+    expect(() => formatMoney(NaN, 'EUR')).toThrow(RangeError);
+    expect(() => formatMoney(Infinity, 'EUR')).toThrow(RangeError);
+    expect(() => formatMoney(-Infinity, 'EUR')).toThrow(RangeError);
   });
 });
 

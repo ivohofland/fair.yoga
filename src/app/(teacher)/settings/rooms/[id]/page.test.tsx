@@ -11,8 +11,9 @@ import { render, screen } from '@testing-library/react';
 const TEACHER_ID = 'teacher-1';
 const OTHER_TEACHER_ID = 'teacher-2';
 
-const { findUnique, count, templateCount, requireTeacherSession, redirect } = vi.hoisted(() => ({
+const { findUnique, findTeacher, count, templateCount, requireTeacherSession, redirect } = vi.hoisted(() => ({
   findUnique: vi.fn(),
+  findTeacher: vi.fn(),
   count: vi.fn(),
   templateCount: vi.fn(),
   requireTeacherSession: vi.fn(),
@@ -20,7 +21,7 @@ const { findUnique, count, templateCount, requireTeacherSession, redirect } = vi
 }));
 
 vi.mock('@/lib/db', () => ({
-  prisma: { teacherRoom: { findUnique }, class: { count }, classTemplate: { count: templateCount } },
+  prisma: { teacher: { findUniqueOrThrow: findTeacher }, teacherRoom: { findUnique }, class: { count }, classTemplate: { count: templateCount } },
 }));
 vi.mock('@/lib/session', () => ({ requireTeacherSession }));
 vi.mock('next/navigation', () => ({
@@ -53,6 +54,7 @@ function renderPage(
   state: { isArchived?: boolean; classes?: number; templates?: number } = {},
 ) {
   requireTeacherSession.mockResolvedValue({ teacherId: TEACHER_ID });
+  findTeacher.mockResolvedValue({ currency: 'EUR' });
   count.mockResolvedValue(state.classes ?? 0);
   templateCount.mockResolvedValue(state.templates ?? 0);
   findUnique.mockResolvedValue({

@@ -31,7 +31,7 @@ describe('ReceivedPaymentRow', () => {
   it('shows the teacher’s day, not UTC’s, west of the meridian', () => {
     // 18:00 on 12 June in Los Angeles is 01:00 on 13 June UTC.
     render(
-      <ReceivedPaymentRow
+      <ReceivedPaymentRow currency="EUR"
         {...base}
         paidAt={new Date('2026-06-13T01:00:00.000Z')}
         timeZone="America/Los_Angeles"
@@ -45,7 +45,7 @@ describe('ReceivedPaymentRow', () => {
   it('shows the teacher’s day east of the meridian too', () => {
     // 20:00 on 12 June UTC is 01:30 on 13 June in Kolkata.
     render(
-      <ReceivedPaymentRow
+      <ReceivedPaymentRow currency="EUR"
         {...base}
         paidAt={new Date('2026-06-12T20:00:00.000Z')}
         timeZone="Asia/Kolkata"
@@ -60,7 +60,7 @@ describe('ReceivedPaymentRow', () => {
    * caption rather than an empty one — the `&&` guard the page already had.
    */
   it('renders no paid caption when paidAt is null', () => {
-    render(<ReceivedPaymentRow {...base} paidAt={null} timeZone="America/Los_Angeles" />);
+    render(<ReceivedPaymentRow currency="EUR" {...base} paidAt={null} timeZone="America/Los_Angeles" />);
 
     expect(screen.queryByText(/✓ paid/)).not.toBeInTheDocument();
     expect(screen.getByText(/Vinyasa · 12 Jun · 09:30/)).toBeInTheDocument();
@@ -71,7 +71,7 @@ describe('ReceivedPaymentRow', () => {
    * MarkUnpaidButton so the button has a distinct accessible name.
    */
   it('renders the mark-unpaid button with a disambiguated accessible name', () => {
-    render(<ReceivedPaymentRow {...base} paidAt={null} timeZone="America/Los_Angeles" />);
+    render(<ReceivedPaymentRow currency="EUR" {...base} paidAt={null} timeZone="America/Los_Angeles" />);
 
     expect(
       screen.getByRole('button', { name: 'Mark unpaid — Ana d., Vinyasa · 12 Jun · 09:30' }),

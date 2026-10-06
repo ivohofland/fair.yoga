@@ -1,17 +1,18 @@
-import type { TeacherRoom, Room } from '@prisma/client';
+import type { TeacherRoom, Room, Currency } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
 import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatRoomLocation } from '@/lib/format';
+import { formatMoney, formatRoomLocation } from '@/lib/format';
 
 type TeacherRoomWithRoom = TeacherRoom & { room: Room };
 
 interface RoomListProps {
   teacherRooms: TeacherRoomWithRoom[];
+  currency: Currency;
   emptyMessage?: string;
 }
 
-export function RoomList({ teacherRooms, emptyMessage = 'No rooms yet. Add your first room.' }: RoomListProps) {
+export function RoomList({ teacherRooms, currency, emptyMessage = 'No rooms yet. Add your first room.' }: RoomListProps) {
   if (teacherRooms.length === 0) {
     return <EmptyState title={emptyMessage} />;
   }
@@ -37,7 +38,7 @@ export function RoomList({ teacherRooms, emptyMessage = 'No rooms yet. Add your 
               {tr.capacityOverride} students
             </span>
             <span className="type-number text-[13px]">
-              &euro;{Number(tr.rentalRate).toFixed(2)}
+              {formatMoney(tr.rentalRate, currency)}
             </span>
           </div>
           <Icon name="chevron-right" size={20} className="text-brown-light" />

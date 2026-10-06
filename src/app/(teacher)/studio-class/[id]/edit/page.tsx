@@ -49,6 +49,7 @@ export default async function StudioClassEditPage({
       <StudioClassEditForm
         studioClassId={studioClass.id}
         dateEditable={verdict.dateEditable}
+        currency={studioClass.currency}
         initial={{
           classType: entry.classType,
           location: studioClass.location,

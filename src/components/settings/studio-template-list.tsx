@@ -1,3 +1,5 @@
+import type { Currency } from '@prisma/client';
+import { formatMoney } from '@/lib/format';
 import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import type { StudioClassTemplateWithSlot } from '@/services/studio-class-template-lifecycle';
@@ -6,6 +8,7 @@ export type StudioTemplateListItem = StudioClassTemplateWithSlot;
 
 interface StudioTemplateListProps {
   templates: StudioTemplateListItem[];
+  currency: Currency;
   emptyMessage?: string;
 }
 
@@ -15,6 +18,7 @@ const ROW_BASE = 'flex items-start justify-between gap-3 no-underline';
 
 interface StudioTemplateRowProps {
   template: StudioTemplateListItem;
+  currency: Currency;
   /** The row's opacity modifier; the active row carries none. */
   opacityClass?: 'opacity-60' | 'opacity-40';
   status: string;
@@ -36,7 +40,7 @@ interface StudioTemplateRowProps {
  * three people remembering; `studio-template-list.test.tsx` renders every
  * state through it and asserts they still do.
  */
-function StudioTemplateRow({ template, opacityClass, status, statusClass }: StudioTemplateRowProps) {
+function StudioTemplateRow({ template, currency, opacityClass, status, statusClass }: StudioTemplateRowProps) {
   return (
     <ListRow
       href={`/settings/studio-classes/${template.id}`}
@@ -49,7 +53,7 @@ function StudioTemplateRow({ template, opacityClass, status, statusClass }: Stud
           {DAY_LABELS[template.dayOfWeek]} {template.startTime} &middot; {template.durationMinutes} min
         </span>
         <span className="type-caption">
-          {template.location} &middot; &euro;{Number(template.hourlyRate).toFixed(2)}/hr
+          {template.location} &middot; {formatMoney(template.hourlyRate, currency)}/hr
         </span>
       </div>
       <span className={`${statusClass} pt-1`}>{status}</span>
@@ -57,7 +61,7 @@ function StudioTemplateRow({ template, opacityClass, status, statusClass }: Stud
   );
 }
 
-export function StudioTemplateList({ templates, emptyMessage = 'No studio classes yet.' }: StudioTemplateListProps) {
+export function StudioTemplateList({ templates, currency, emptyMessage = 'No studio classes yet.' }: StudioTemplateListProps) {
   if (templates.length === 0) {
     return <EmptyState title={emptyMessage} />;
   }
@@ -72,6 +76,7 @@ export function StudioTemplateList({ templates, emptyMessage = 'No studio classe
         <StudioTemplateRow
           key={t.id}
           template={t}
+          currency={currency}
           status="active"
           statusClass="text-[13px] text-teal"
         />
@@ -84,6 +89,7 @@ export function StudioTemplateList({ templates, emptyMessage = 'No studio classe
             <StudioTemplateRow
               key={t.id}
               template={t}
+              currency={currency}
               opacityClass="opacity-60"
               status="paused"
               statusClass="type-caption"
@@ -99,6 +105,7 @@ export function StudioTemplateList({ templates, emptyMessage = 'No studio classe
             <StudioTemplateRow
               key={t.id}
               template={t}
+              currency={currency}
               opacityClass="opacity-40"
               status="archived"
               statusClass="type-caption"

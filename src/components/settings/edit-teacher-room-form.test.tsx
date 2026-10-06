@@ -57,7 +57,7 @@ describe('EditTeacherRoomForm', () => {
 
   it('sends all three fields', async () => {
     stubFetch();
-    render(<EditTeacherRoomForm teacherRoomId="tr-1" initial={initial} />);
+    render(<EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={initial} />);
     const { url, method, body } = await submit();
     expect(url).toBe('/api/teacher-rooms/tr-1');
     expect(method).toBe('PUT');
@@ -71,7 +71,7 @@ describe('EditTeacherRoomForm', () => {
   it('trims equipmentNotes before sending', async () => {
     stubFetch();
     render(
-      <EditTeacherRoomForm
+      <EditTeacherRoomForm currency="EUR"
         teacherRoomId="tr-1"
         initial={{ ...initial, equipmentNotes: '  Bring your own mat  ' }}
       />,
@@ -83,7 +83,7 @@ describe('EditTeacherRoomForm', () => {
   it('sends a whitespace-only equipmentNotes as null', async () => {
     stubFetch();
     render(
-      <EditTeacherRoomForm teacherRoomId="tr-1" initial={{ ...initial, equipmentNotes: '   ' }} />,
+      <EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={{ ...initial, equipmentNotes: '   ' }} />,
     );
     const { body } = await submit();
     expect(body.equipmentNotes).toBeNull();
@@ -99,7 +99,7 @@ describe('EditTeacherRoomForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue(htmlResponse(502));
     vi.stubGlobal('fetch', fetchMock);
-    render(<EditTeacherRoomForm teacherRoomId="tr-1" initial={initial} />);
+    render(<EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -114,7 +114,7 @@ describe('EditTeacherRoomForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<EditTeacherRoomForm teacherRoomId="tr-1" initial={initial} />);
+    render(<EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 

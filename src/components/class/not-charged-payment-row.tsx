@@ -1,4 +1,5 @@
-import { formatClassContext, formatDateShort, paymentStateText } from '@/lib/format';
+import type { Currency } from '@prisma/client';
+import { formatClassContext, formatDateShort, formatMoney, paymentStateText } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
 import { ListRow } from '@/components/ui/list-row';
@@ -16,6 +17,7 @@ interface NotChargedPaymentRowProps {
   notChargedAt: Date | null;
   timeZone: string;
   amount: number;
+  currency: Currency;
 }
 
 /**
@@ -33,6 +35,7 @@ export function NotChargedPaymentRow({
   notChargedAt,
   timeZone,
   amount,
+  currency,
 }: NotChargedPaymentRowProps) {
   const classContext = formatClassContext(classType, classDate, startTime);
   const stateText = paymentStateText('not_charged');
@@ -47,7 +50,7 @@ export function NotChargedPaymentRow({
       </div>
       <div className="flex items-center gap-3 shrink-0">
         <span className={`type-caption ${stateText.className}`}>{stateText.label}</span>
-        <span className="type-number">€{amount.toFixed(2)}</span>
+        <span className="type-number">{formatMoney(amount, currency)}</span>
         <MarkUnpaidButton
           paymentId={paymentId}
           studentName={studentName}

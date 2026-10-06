@@ -39,7 +39,7 @@ describe('StudioClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
     return render(
-      <StudioClassEditForm studioClassId="sc-1" dateEditable={dateEditable} initial={initial} />,
+      <StudioClassEditForm currency="EUR" studioClassId="sc-1" dateEditable={dateEditable} initial={initial} />,
     );
   }
 
@@ -220,7 +220,7 @@ describe('StudioClassEditForm', () => {
       json: async () => ({ error: { message: refusal, code: 'STUDIO_CLASS_GENERATED_DATE' } }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<StudioClassEditForm studioClassId="sc-1" dateEditable initial={initial} />);
+    render(<StudioClassEditForm currency="EUR" studioClassId="sc-1" dateEditable initial={initial} />);
 
     save();
 

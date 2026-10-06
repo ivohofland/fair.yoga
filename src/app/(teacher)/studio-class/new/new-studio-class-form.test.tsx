@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import NewStudioClassPage from './page';
+import { NewStudioClassForm } from './new-studio-class-form';
 import { routerPush } from '../../../../../tests/setup/components';
 
 /**
@@ -48,7 +48,7 @@ describe('NewStudioClassPage', () => {
 
   it('sends exactly these six fields', async () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
@@ -85,14 +85,14 @@ describe('NewStudioClassPage', () => {
    */
   it('trims text fields and sends duration and rate as numbers', async () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '  Vinyasa  ' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: '  Studio A  ' } });
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
     fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '10:15' } });
     fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '75' } });
-    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '22.5' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '22.5' } });
 
     const button = screen.getByRole('button', { name: /log class/i });
     fireEvent.click(button);
@@ -136,7 +136,7 @@ describe('NewStudioClassPage', () => {
    */
   it('refuses a blank class type before any request, with product copy and alert role', () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     // `Class type` is deliberately left empty; everything else that gates the
     // request is filled so only the missing class type can be the reason.
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
@@ -162,7 +162,7 @@ describe('NewStudioClassPage', () => {
 
   it('clears error banner when any input field is edited', () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
     expect(screen.getByRole('alert')).toHaveTextContent('Class type is required.');
 
@@ -176,7 +176,7 @@ describe('NewStudioClassPage', () => {
    */
   it('refuses a blank or invalid duration before any request, with product copy', () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '' } });
@@ -200,7 +200,7 @@ describe('NewStudioClassPage', () => {
 
   it('refuses a cleared start time before any request, with product copy', () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '' } });
@@ -216,26 +216,26 @@ describe('NewStudioClassPage', () => {
    */
   it('refuses a blank or negative hourly rate before any request, with product copy', () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
-    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText('Enter an hourly rate — 0 if this class is unpaid.')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '-5' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '-5' } });
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('allows 0 as an explicit hourly rate', async () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
-    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '0' } });
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -257,7 +257,7 @@ describe('NewStudioClassPage', () => {
    */
   it('refuses a blank location, then a blank date, with punctuated copy', () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
 
@@ -282,7 +282,7 @@ describe('NewStudioClassPage', () => {
    */
   it('cannot submit twice when the create push commits nothing', async () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
@@ -310,7 +310,7 @@ describe('NewStudioClassPage', () => {
    */
   it('ignores a submit event dispatched at the form once created', async () => {
     stubFetch();
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
@@ -338,7 +338,7 @@ describe('NewStudioClassPage', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue(htmlResponse(502));
     vi.stubGlobal('fetch', fetchMock);
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
@@ -354,7 +354,7 @@ describe('NewStudioClassPage', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
@@ -375,7 +375,7 @@ describe('NewStudioClassPage', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     stubFetch();
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
@@ -400,7 +400,7 @@ describe('NewStudioClassPage', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue(htmlResponse(201));
     vi.stubGlobal('fetch', fetchMock);
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
@@ -425,7 +425,7 @@ describe('NewStudioClassPage', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<NewStudioClassPage />);
+    render(<NewStudioClassForm currency="EUR" />);
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));

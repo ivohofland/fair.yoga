@@ -229,7 +229,7 @@ export default async function ClassDetailPage({
           {!cancelled && cls.status === 'completed' && (
             <>
               <PricingBreakdown cls={cls} tierPrices={tierPrices} />
-              <PaymentChecklist items={paymentItems} />
+              <PaymentChecklist items={paymentItems} currency={cls.currency} />
             </>
           )}
 

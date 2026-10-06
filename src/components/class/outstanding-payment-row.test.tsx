@@ -57,6 +57,7 @@ describe('OutstandingPaymentRow', () => {
     classType: 'Vinyasa',
     classDate: new Date('2026-06-12T00:00:00.000Z'),
     amount: 18,
+    currency: 'EUR' as const,
     status: 'pending' as const,
     reminderSentAt: null,
   };
@@ -101,6 +102,7 @@ describe('OutstandingPaymentRow', () => {
     classDate: new Date('2026-09-02T00:00:00.000Z'),
     startTime: new Date('1970-01-01T18:00:00.000Z'),
     amount: 15,
+    currency: 'EUR' as const,
     status: 'pending' as const,
     reminderSentAt: null,
   };
@@ -611,5 +613,11 @@ describe('OutstandingPaymentRow', () => {
       'Could not mark as not charged. Try again.',
     );
     expect(screen.queryByText('Network error. Try again.')).not.toBeInTheDocument();
+  });
+
+  it('renders the amount in the prop currency, not euros', () => {
+    renderRow({ currency: 'CHF' });
+    expect(screen.getByText('CHF 15.00')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('€');
   });
 });

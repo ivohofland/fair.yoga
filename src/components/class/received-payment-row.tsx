@@ -1,4 +1,5 @@
-import { formatClassContext, formatDateShort } from '@/lib/format';
+import type { Currency } from '@prisma/client';
+import { formatClassContext, formatDateShort, formatMoney } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
 import { ListRow } from '@/components/ui/list-row';
@@ -22,6 +23,7 @@ interface ReceivedPaymentRowProps {
   paidAt: Date | null;
   timeZone: string;
   amount: number;
+  currency: Currency;
 }
 
 /**
@@ -39,6 +41,7 @@ export function ReceivedPaymentRow({
   paidAt,
   timeZone,
   amount,
+  currency,
 }: ReceivedPaymentRowProps) {
   const classContext = formatClassContext(classType, classDate, startTime);
   return (
@@ -62,7 +65,7 @@ export function ReceivedPaymentRow({
         </p>
       </div>
       <div className="flex items-center gap-3 shrink-0">
-        <span className="type-number">€{amount.toFixed(2)}</span>
+        <span className="type-number">{formatMoney(amount, currency)}</span>
         {/*
           #128. `studentName` and `classContext` are threaded through so every
           row's button has a distinct accessible name for screen readers.

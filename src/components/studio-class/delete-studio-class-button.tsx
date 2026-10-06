@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import type { Currency } from '@prisma/client';
 import { Button } from '@/components/ui/button';
+import { formatMoney } from '@/lib/format';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 
 interface DeleteStudioClassButtonProps {
@@ -20,6 +22,7 @@ interface DeleteStudioClassButtonProps {
    * in every one of those cases.
    */
   earningsAtRisk: number | null;
+  currency: Currency;
 }
 
 /**
@@ -48,6 +51,7 @@ interface DeleteStudioClassButtonProps {
 export function DeleteStudioClassButton({
   studioClassId,
   earningsAtRisk,
+  currency,
 }: DeleteStudioClassButtonProps) {
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -58,7 +62,7 @@ export function DeleteStudioClassButton({
   const confirmText =
     earningsAtRisk === null
       ? 'Remove this class? This cannot be undone.'
-      : `Remove this class? €${earningsAtRisk.toFixed(2)} will come off your reported earnings. This cannot be undone.`;
+      : `Remove this class? ${formatMoney(earningsAtRisk, currency)} will come off your reported earnings. This cannot be undone.`;
 
   async function handleRemove() {
     setRemoving(true);

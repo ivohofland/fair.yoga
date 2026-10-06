@@ -19,7 +19,7 @@ describe('NotChargedPaymentRow', () => {
   };
 
   it('shows the state, the amount and the reversal', () => {
-    render(<NotChargedPaymentRow {...baseProps} />);
+    render(<NotChargedPaymentRow currency="EUR" {...baseProps} />);
 
     expect(screen.getByText('⊘ Not charged')).toBeInTheDocument();
     expect(screen.getByText('€15.00')).toBeInTheDocument();
@@ -30,7 +30,7 @@ describe('NotChargedPaymentRow', () => {
     // 02:00 UTC on the 3rd is still the 2nd in Los Angeles. Without
     // startOfLocalDay this renders "3 Sep" — the #140 bug, in a new component.
     render(
-      <NotChargedPaymentRow
+      <NotChargedPaymentRow currency="EUR"
         {...baseProps}
         notChargedAt={new Date('2026-09-03T02:00:00Z')}
         timeZone="America/Los_Angeles"
@@ -41,7 +41,7 @@ describe('NotChargedPaymentRow', () => {
   });
 
   it('shows no date when the payment has none', () => {
-    render(<NotChargedPaymentRow {...baseProps} notChargedAt={null} />);
+    render(<NotChargedPaymentRow currency="EUR" {...baseProps} notChargedAt={null} />);
 
     expect(screen.getByText('Vinyasa · 2 Sep · 18:00')).toBeInTheDocument();
   });

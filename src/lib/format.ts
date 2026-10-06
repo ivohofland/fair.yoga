@@ -257,25 +257,3 @@ export function formatMoney(amount: number | Prisma.Decimal, currency: Currency)
 export function currencyLabel(currency: Currency): string {
   return CURRENCY_PREFIX[currency].trim();
 }
-
-/**
- * Euros from whole cents, without float drift.
- *
- * Formats positive amounts as `€X.XX`, negative amounts as `−€X.XX` (using U+2212
- * before the euro sign), and zero as `€0.00` (never `−€0.00` or `€-0.00`).
- *
- * Rejects non-finite numbers (NaN, Infinity) with a RangeError.
- */
-export function formatCents(cents: number): string {
-  return formatMoneyCents(cents, 'EUR');
-}
-
-/**
- * Euros from a decimal/float euro amount, rounding to nearest whole cent.
- *
- * Convenience helper wrapping `formatMoney(euros, 'EUR')`.
- */
-export function formatEuro(euros: number): string {
-  return formatMoney(euros, 'EUR');
-}
-

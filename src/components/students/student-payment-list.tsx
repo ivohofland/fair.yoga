@@ -1,8 +1,8 @@
 'use client';
 
-import type { PaymentStatus } from '@prisma/client';
+import type { Currency, PaymentStatus } from '@prisma/client';
 import { ListRow } from '@/components/ui/list-row';
-import { paymentStateText } from '@/lib/format';
+import { formatMoney, paymentStateText } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 
@@ -11,6 +11,7 @@ interface StudentPaymentItem {
   classType: string;
   classDate: string;
   amount: number;
+  currency: Currency;
   status: PaymentStatus;
 }
 
@@ -55,7 +56,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>&euro;{item.amount.toFixed(2)}</p>
+                <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>{formatMoney(item.amount, item.currency)}</p>
                 {outstanding && (
                   <button
                     type="button"

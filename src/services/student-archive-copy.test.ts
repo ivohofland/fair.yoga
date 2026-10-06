@@ -19,20 +19,26 @@ function owed(...amounts: string[]): OpenPayment[] {
 
 describe('owedPhrase', () => {
   it('names one payment in the singular', () => {
-    expect(owedPhrase(owed('12.50'))).toBe('€12.50 across 1 payment');
+    expect(owedPhrase(owed('12.50'), 'EUR')).toBe('€12.50 across 1 payment');
   });
 
   it('names several in the plural, summed', () => {
-    expect(owedPhrase(owed('12.50', '7.25'))).toBe('€19.75 across 2 payments');
+    expect(owedPhrase(owed('12.50', '7.25'), 'EUR')).toBe('€19.75 across 2 payments');
   });
 
   // 0.1 + 0.2 is 0.30000000000000004 as floats; the total still reads €0.30.
   it('sums as decimals: 0.10 + 0.20 is €0.30', () => {
-    expect(owedPhrase(owed('0.10', '0.20'))).toBe('€0.30 across 2 payments');
+    expect(owedPhrase(owed('0.10', '0.20'), 'EUR')).toBe('€0.30 across 2 payments');
   });
 
   it('keeps every cent of a large total', () => {
-    expect(owedPhrase(owed('99999999.99', '99999999.99', '0.01'))).toBe('€199999999.99 across 3 payments');
+    expect(owedPhrase(owed('99999999.99', '99999999.99', '0.01'), 'EUR')).toBe('€199999999.99 across 3 payments');
+  });
+});
+
+describe('owedPhrase currency', () => {
+  it('names the amount in the given currency', () => {
+    expect(owedPhrase(owed('12.50'), 'GBP')).toBe('£12.50 across 1 payment');
   });
 });
 
@@ -54,7 +60,7 @@ describe('unbilledRefusal', () => {
 
 describe('outstandingRefusal', () => {
   it('singular: tells the teacher how to waive it', () => {
-    expect(outstandingRefusal(owed('20.00'))).toEqual({
+    expect(outstandingRefusal(owed('20.00'), 'EUR')).toEqual({
       code: 'STUDENT_HAS_OUTSTANDING_PAYMENTS',
       status: 409,
       message: 'This student still owes €20.00 across 1 payment. Tap Archive student again to waive it and archive.',
@@ -62,7 +68,7 @@ describe('outstandingRefusal', () => {
   });
 
   it('plural', () => {
-    expect(outstandingRefusal(owed('20.00', '0.10', '0.20')).message).toBe(
+    expect(outstandingRefusal(owed('20.00', '0.10', '0.20'), 'EUR').message).toBe(
       'This student still owes €20.30 across 3 payments. Tap Archive student again to waive them and archive.',
     );
   });
@@ -70,7 +76,7 @@ describe('outstandingRefusal', () => {
 
 describe('outstandingChangedRefusal', () => {
   it('names the new total', () => {
-    expect(outstandingChangedRefusal(owed('30.00', '20.00'))).toEqual({
+    expect(outstandingChangedRefusal(owed('30.00', '20.00'), 'EUR')).toEqual({
       code: 'STUDENT_HAS_OUTSTANDING_PAYMENTS',
       status: 409,
       message: 'What this student owes has changed — now €50.00 across 2 payments. Check it and try again.',
@@ -78,13 +84,13 @@ describe('outstandingChangedRefusal', () => {
   });
 
   it('singular', () => {
-    expect(outstandingChangedRefusal(owed('30.00')).message).toBe(
+    expect(outstandingChangedRefusal(owed('30.00'), 'EUR').message).toBe(
       'What this student owes has changed — now €30.00 across 1 payment. Check it and try again.',
     );
   });
 
   it('the zero form, when everything named was settled meanwhile', () => {
-    expect(outstandingChangedRefusal([]).message).toBe(
+    expect(outstandingChangedRefusal([], 'EUR').message).toBe(
       'What this student owes has changed — nothing is outstanding now. Try again.',
     );
   });

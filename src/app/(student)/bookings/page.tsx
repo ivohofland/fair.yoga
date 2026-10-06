@@ -10,7 +10,7 @@ import { CancelBookingButton } from '@/components/student/cancel-booking-button'
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { ClassPriceLine } from '@/components/booking/price-range';
-import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
+import { formatRoomLocation, paymentStateText, formatDayHeader, formatMoney } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { getWaitlistWindow, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
@@ -247,6 +247,7 @@ export default async function StudentBookingsPage() {
                     registrations: cls.registrations,
                     viewer,
                   })}
+                  currency={cls.currency}
                   className="mt-1"
                 />
                 <Link
@@ -319,6 +320,7 @@ export default async function StudentBookingsPage() {
                           registrations: cls.registrations,
                           viewer,
                         })}
+                        currency={cls.currency}
                         className="mt-2"
                       />
                       <Link
@@ -388,7 +390,7 @@ export default async function StudentBookingsPage() {
                     payment && (
                       <div className="text-right shrink-0">
                         <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>
-                          €{Number(payment.amount).toFixed(2)}
+                          {formatMoney(payment.amount, cls.currency)}
                         </p>
                         {/* Payment state is text, never a badge */}
                         <p className={`type-caption ${paymentStateText(payment.status).className}`}>
@@ -399,7 +401,7 @@ export default async function StudentBookingsPage() {
                   )}
                 </div>
                 {payment && outstanding && (
-                  paymentMethodsFor(cls.calendarEntry.teacher).length > 0 ? (
+                  paymentMethodsFor(cls.calendarEntry.teacher, cls.currency).length > 0 ? (
                     <div className="mt-3">
                       <Link
                         href={payPagePath(cls.id)}
@@ -418,6 +420,7 @@ export default async function StudentBookingsPage() {
                     lines={breakdown.lines}
                     classType={cls.calendarEntry.classType}
                     date={cls.calendarEntry.date}
+                    currency={cls.currency}
                   />
                 )}
               </ListRow>

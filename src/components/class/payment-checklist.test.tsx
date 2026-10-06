@@ -46,7 +46,7 @@ describe('PaymentChecklist', () => {
     items: Array<Pick<PaymentItem, 'paymentId' | 'studentName' | 'status' | 'amount'> & Partial<PaymentItem>>,
   ) {
     render(
-      <PaymentChecklist
+      <PaymentChecklist currency="EUR"
         items={items.map((item, i) => ({
           studentId: `stu-${i}`,
           reminderSentAt: null,
@@ -63,8 +63,8 @@ describe('PaymentChecklist', () => {
   });
 
   it("renders a row that appeared after mount with its own status, not a fabricated 'pending'", () => {
-    const { rerender } = render(<PaymentChecklist items={[seeded]} />);
-    rerender(<PaymentChecklist items={[seeded, appeared]} />);
+    const { rerender } = render(<PaymentChecklist currency="EUR" items={[seeded]} />);
+    rerender(<PaymentChecklist currency="EUR" items={[seeded, appeared]} />);
 
     expect(screen.getByText('! Overdue')).toBeInTheDocument();
     expect(screen.queryByText('○ Unpaid')).not.toBeInTheDocument();
@@ -86,7 +86,7 @@ describe('PaymentChecklist', () => {
       status: 'pending',
       reminderSentAt: null,
     };
-    render(<PaymentChecklist items={[pendingItem]} />);
+    render(<PaymentChecklist currency="EUR" items={[pendingItem]} />);
 
     expect(
       screen.getByRole('button', { name: 'Mark paid — Clara Meijer' }),
@@ -114,7 +114,7 @@ describe('PaymentChecklist', () => {
       status: 'paid',
       reminderSentAt: null,
     };
-    render(<PaymentChecklist items={[pendingItem, paidItem]} />);
+    render(<PaymentChecklist currency="EUR" items={[pendingItem, paidItem]} />);
 
     const markPaid = screen.getAllByRole('button', { name: /^Mark paid/ });
     expect(markPaid).toHaveLength(1);
@@ -141,7 +141,7 @@ describe('PaymentChecklist', () => {
       status: 'pending',
       reminderSentAt: null,
     };
-    render(<PaymentChecklist items={[pendingItem]} />);
+    render(<PaymentChecklist currency="EUR" items={[pendingItem]} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark paid — Clara Meijer' }));
 

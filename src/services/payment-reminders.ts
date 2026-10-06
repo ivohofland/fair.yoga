@@ -62,6 +62,7 @@ function readDuePaymentPage(
           class: {
             select: {
               id: true,
+              currency: true,
               calendarEntry: {
                 select: {
                   classType: true,
@@ -131,7 +132,8 @@ export async function sendPaymentReminders(
           body: studentPaymentReminderBody(
             payment.registration.class.calendarEntry,
             Number(payment.amount),
-            paymentMethodsFor(payment.registration.class.calendarEntry.teacher).length > 0,
+            paymentMethodsFor(payment.registration.class.calendarEntry.teacher, payment.registration.class.currency).length > 0,
+            payment.registration.class.currency,
           ),
           relatedClassId: payment.registration.class.id,
         },

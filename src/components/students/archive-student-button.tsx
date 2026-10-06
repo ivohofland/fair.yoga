@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { Currency } from '@prisma/client';
 import { Button } from '@/components/ui/button';
-import { formatEuro } from '@/lib/format';
+import { formatMoney } from '@/lib/format';
 import { logRequestFailure, readError, readErrorMessage } from '@/lib/client-errors';
 
 interface ArchiveStudentButtonProps {
@@ -11,6 +12,7 @@ interface ArchiveStudentButtonProps {
   studentName: string;
   isArchived: boolean;
   outstanding: { ids: string[]; total: number };
+  currency: Currency;
 }
 
 /** No body for a plain archive/unarchive; a JSON `waivePaymentIds` body for a waive-and-archive. */
@@ -23,7 +25,7 @@ function archivePatch(studentId: string, state: 'archived' | 'unarchived', body?
   return fetch(`/api/students/${studentId}?state=${state}`, init);
 }
 
-export function ArchiveStudentButton({ studentId, studentName, isArchived, outstanding }: ArchiveStudentButtonProps) {
+export function ArchiveStudentButton({ studentId, studentName, isArchived, outstanding, currency }: ArchiveStudentButtonProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -126,7 +128,7 @@ export function ArchiveStudentButton({ studentId, studentName, isArchived, outst
     return (
       <div className="flex flex-col gap-2">
         <p className="text-sm text-brown">
-          {studentName} still owes {formatEuro(outstanding.total)} across {n} {n === 1 ? 'payment' : 'payments'}. Archiving waives {n === 1 ? 'it' : 'them'}.
+          {studentName} still owes {formatMoney(outstanding.total, currency)} across {n} {n === 1 ? 'payment' : 'payments'}. Archiving waives {n === 1 ? 'it' : 'them'}.
         </p>
         <div className="flex gap-3">
           <Button

@@ -1086,7 +1086,7 @@ describe('completeClass (DB)', () => {
         expect(notes[0]!.type).toBe('payment_request');
         expect(notes[0]!.title).toBe('Payment requested');
         expect(notes[0]!.body).toBe(
-          studentPaymentRequestBody(status, cls.calendarEntry, Number(reg.price), false),
+          studentPaymentRequestBody(status, cls.calendarEntry, Number(reg.price), false, cls.currency),
         );
       }
 

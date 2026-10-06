@@ -1,11 +1,13 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { PageHeader } from '@/components/layout/page-header';
 import { RoomList } from '@/components/settings/room-list';
 
 export default async function ArchivedRoomsPage() {
   const session = await requireTeacherSession();
 
+  const currency = await teacherCurrency(session.teacherId);
   const teacherRooms = await prisma.teacherRoom.findMany({
     where: { teacherId: session.teacherId, isArchived: true },
     include: { room: true },
@@ -15,7 +17,7 @@ export default async function ArchivedRoomsPage() {
   return (
     <>
       <PageHeader title="Archived rooms" backHref="/settings/rooms" backLabel="Rooms" />
-      <RoomList teacherRooms={teacherRooms} emptyMessage="No archived rooms." />
+      <RoomList teacherRooms={teacherRooms} currency={currency} emptyMessage="No archived rooms." />
     </>
   );
 }

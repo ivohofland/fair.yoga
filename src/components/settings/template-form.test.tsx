@@ -127,7 +127,7 @@ describe('TemplateForm', () => {
    */
   it('leaves the room out of an edit whose room field was not changed', async () => {
     stubFetch();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     const { url, method, body } = await submit();
     expect(url).toBe('/api/class-templates/tpl-1');
     expect(method).toBe('PUT');
@@ -136,7 +136,7 @@ describe('TemplateForm', () => {
 
   it('sends the room when the teacher changed it', async () => {
     stubFetchTwoRooms();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio B/ });
     fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
     const { body } = await submit();
@@ -145,7 +145,7 @@ describe('TemplateForm', () => {
 
   it('leaves the room out when the teacher changed it and changed it back', async () => {
     stubFetchTwoRooms();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio B/ });
     const select = screen.getByLabelText('Room');
     fireEvent.change(select, { target: { value: ROOM_B } });
@@ -160,10 +160,10 @@ describe('TemplateForm', () => {
   // read the prop, or the second save resends a room the server already holds.
   it('compares against the current initial prop, not the one it mounted with', async () => {
     stubFetchTwoRooms();
-    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio B/ });
     fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
-    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
     const { method, body } = await submit();
     expect(method).toBe('PUT');
     expect(body).not.toHaveProperty('teacherRoomId');
@@ -175,9 +175,9 @@ describe('TemplateForm', () => {
   // of sending the old one back.
   it('adopts a room the server moved while the field was untouched', async () => {
     stubFetchTwoRooms();
-    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio B/ });
-    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
     expect(screen.getByLabelText('Room')).toHaveValue(ROOM_B);
     const { method, body } = await submit();
     expect(method).toBe('PUT');
@@ -186,11 +186,11 @@ describe('TemplateForm', () => {
 
   it('keeps a room the teacher picked when the stored room moves underneath it', async () => {
     stubFetchTwoRooms();
-    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio B/ });
     fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
     rerender(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, teacherRoomId: ROOM_C }}
@@ -206,11 +206,11 @@ describe('TemplateForm', () => {
   // later server move is adopted like any other.
   it("adopts a server move that follows the teacher's own saved room change", async () => {
     stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B'), roomRow(ROOM_C, 'Studio C')]);
-    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio C/ });
     fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
-    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
-    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_C }} />);
+    rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_C }} />);
     expect(screen.getByLabelText('Room')).toHaveValue(ROOM_C);
     const { method, body } = await submit();
     expect(method).toBe('PUT');
@@ -221,12 +221,12 @@ describe('TemplateForm', () => {
   // select was never used: changed and changed back counts as untouched.
   it('adopts a server move after the teacher changed the room and changed it back', async () => {
     stubFetchTwoRooms();
-    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio B/ });
     const select = screen.getByLabelText('Room');
     fireEvent.change(select, { target: { value: ROOM_B } });
     fireEvent.change(select, { target: { value: ROOM_A } });
-    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
     expect(select).toHaveValue(ROOM_B);
     const { method, body } = await submit();
     expect(method).toBe('PUT');
@@ -238,9 +238,9 @@ describe('TemplateForm', () => {
   // rewrite of them here would change fields the teacher never touched.
   it("adopts the room without applying the new room's rate or capacity", async () => {
     stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B', { rentalRate: 35, capacityOverride: 8 })]);
-    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio B/ });
-    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
     const { method, body } = await submit();
     expect(method).toBe('PUT');
     expect(body).toEqual(EDIT_BODY_WITHOUT_ROOM);
@@ -255,9 +255,9 @@ describe('TemplateForm', () => {
       .mockResolvedValueOnce(roomsResponse([roomRow(ROOM_A, 'Studio A')]))
       .mockResolvedValue(roomsResponse([roomRow(ROOM_A, 'Studio A', { isArchived: true }), roomRow(ROOM_B, 'Studio B')]));
     vi.stubGlobal('fetch', fetchMock);
-    const { rerender } = render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     await screen.findByRole('option', { name: /Studio A/ });
-    rerender(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
+    rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, teacherRoomId: ROOM_B }} />);
     await screen.findByRole('option', { name: /Studio B/ });
     expect(screen.queryByRole('option', { name: /Studio A/ })).toBeNull();
     expect(screen.getByLabelText('Room')).toHaveValue(ROOM_B);
@@ -268,7 +268,7 @@ describe('TemplateForm', () => {
 
   it('trims classType and description before sending', async () => {
     stubFetch();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     const { body } = await submit();
     expect(body.classType).toBe('Vinyasa');
     expect(body.description).toBe('Bring a mat.');
@@ -277,7 +277,7 @@ describe('TemplateForm', () => {
   it('sends a whitespace-only description as null', async () => {
     stubFetch();
     render(
-      <TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, description: '   ' }} />,
+      <TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, description: '   ' }} />,
     );
     const { body } = await submit();
     expect(body.description).toBeNull();
@@ -298,7 +298,7 @@ describe('TemplateForm', () => {
    */
   it('sends the same thirteen fields when creating', async () => {
     stubFetch();
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -338,7 +338,7 @@ describe('TemplateForm', () => {
    */
   it('offers every cancellation deadline the schema accepts', async () => {
     stubFetch();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     const select = await screen.findByLabelText(/cancellation deadline/i);
     const values = Array.from(select.querySelectorAll('option')).map((o) => o.getAttribute('value'));
     expect(values.sort()).toEqual(['HOURS_12', 'HOURS_24', 'HOURS_48', 'HOURS_6']);
@@ -346,7 +346,7 @@ describe('TemplateForm', () => {
 
   it('offers every auto-cancel check the schema accepts', async () => {
     stubFetch();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     const select = await screen.findByLabelText(/auto-cancel check/i);
     const values = Array.from(select.querySelectorAll('option')).map((o) => o.getAttribute('value'));
     expect(values.sort()).toEqual(['HOURS_1', 'HOURS_2', 'HOURS_4']);
@@ -370,7 +370,7 @@ describe('TemplateForm', () => {
    */
   it('refuses a blank room before any request, with product copy and alert role', async () => {
     stubFetch();
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(screen.getByLabelText('Class type'), {
       target: { value: 'Vinyasa' },
@@ -414,7 +414,7 @@ describe('TemplateForm', () => {
    */
   it('refuses a blank class type before any request, with product copy and alert role', async () => {
     stubFetch();
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -449,9 +449,9 @@ describe('TemplateForm', () => {
       stubFetch();
       render(
         mode === 'create' ? (
-          <TemplateForm mode="create" />
+          <TemplateForm currency="EUR" mode="create" />
         ) : (
-          <TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />
+          <TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />
         ),
       );
       await screen.findByLabelText('Room');
@@ -495,9 +495,9 @@ describe('TemplateForm', () => {
     stubFetch();
     render(
       mode === 'create' ? (
-        <TemplateForm mode="create" />
+        <TemplateForm currency="EUR" mode="create" />
       ) : (
-        <TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />
+        <TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />
       ),
     );
     await screen.findByLabelText('Room');
@@ -526,7 +526,7 @@ describe('TemplateForm', () => {
       'refuses %s before any request, with product copy',
       async (_label, fieldName, value, copy) => {
         await renderReady(mode);
-        fireEvent.change(screen.getByLabelText(fieldName), { target: { value } });
+        fireEvent.change(screen.getByLabelText(new RegExp('^' + fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))), { target: { value } });
 
         const callsBefore = fetchMock.mock.calls.length;
         submitForm();
@@ -540,7 +540,7 @@ describe('TemplateForm', () => {
     it('sends every number field at its bound, with no alert', async () => {
       await renderReady(mode);
       fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '1' } });
-      fireEvent.change(screen.getByLabelText('Room cost'), { target: { value: '0' } });
+      fireEvent.change(screen.getByLabelText(/^Room cost/), { target: { value: '0' } });
       fireEvent.change(screen.getByLabelText('Min students'), { target: { value: '1' } });
       fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '1' } });
 
@@ -564,7 +564,7 @@ describe('TemplateForm', () => {
   it('rejects min students exceeding max students before any request is sent', async () => {
     stubFetch();
     render(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, minStudents: 10, maxStudents: 5 }}
@@ -590,7 +590,7 @@ describe('TemplateForm', () => {
   it('permits min students equal to max students before sending request', async () => {
     stubFetch();
     render(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, minStudents: 6, maxStudents: 6 }}
@@ -607,7 +607,7 @@ describe('TemplateForm', () => {
   /** #318. Select-all in Max students and type 20: the first keystroke is 2, which must not lower Min students. */
   it('does not drag min students down while max students is being typed', async () => {
     stubFetch();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={initial} />);
     const max = await screen.findByLabelText('Max students');
     fireEvent.change(max, { target: { value: '2' } });
     fireEvent.change(max, { target: { value: '20' } });
@@ -619,7 +619,7 @@ describe('TemplateForm', () => {
   /** #318. A room switch clamps Min students against the room, so a max typed below min does not drag it down. */
   it('does not drag min students down to a lowered max when the room changes', async () => {
     stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B', { capacityOverride: 8 })]);
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={initial} />);
     await screen.findByRole('option', { name: /Studio B/ });
     fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_B } });
@@ -631,7 +631,7 @@ describe('TemplateForm', () => {
   /** #318. Typing into Max students clamps against the class-size limit too, not just the room's capacity. */
   it('clamps a typed max students to the class size limit in a room with a larger capacity', async () => {
     stubRooms([roomRow(ROOM_A, 'Studio A', { capacityOverride: MAX_CLASS_SIZE + 50 })]);
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={initial} />);
     const max = await screen.findByLabelText('Max students');
     fireEvent.change(max, { target: { value: String(MAX_CLASS_SIZE + 10) } });
 
@@ -645,7 +645,7 @@ describe('TemplateForm', () => {
       roomRow(ROOM_B, 'Studio B', { capacityOverride: MAX_CLASS_SIZE + 50 }),
     ]);
     render(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, maxStudents: MAX_CLASS_SIZE + 20 }}
@@ -661,7 +661,7 @@ describe('TemplateForm', () => {
   it('clamps min students to the room capacity when the room changes', async () => {
     stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B', { capacityOverride: 8 })]);
     render(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, minStudents: 10, maxStudents: 12 }}
@@ -680,7 +680,7 @@ describe('TemplateForm', () => {
    */
   it('refuses a max typed below min students on submit, instead of lowering min', async () => {
     stubFetch();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={initial} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={initial} />);
     const max = await screen.findByLabelText('Max students');
     fireEvent.change(max, { target: { value: '2' } });
     const form = max.closest('form');
@@ -713,7 +713,7 @@ describe('TemplateForm', () => {
   it('rejects a min rate above target rate before any request is sent', async () => {
     stubFetch();
     render(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, minRate: 30, targetRate: 25 }}
@@ -734,7 +734,7 @@ describe('TemplateForm', () => {
    */
   it('rejects min rate subsidizing more than room cost on create before any request is sent', async () => {
     stubFetch();
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     // Pick room (roomCost becomes 20 from stubFetch rentalRate: 20)
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -743,7 +743,7 @@ describe('TemplateForm', () => {
       target: { value: 'Vinyasa' },
     });
     // Set minRate to -25 (below -roomCost of -20)
-    fireEvent.change(screen.getByLabelText('Min rate'), {
+    fireEvent.change(screen.getByLabelText(/^Min rate/), {
       target: { value: '-25' },
     });
 
@@ -763,7 +763,7 @@ describe('TemplateForm', () => {
    */
   it('permits min rate exactly matching negative room cost on create ($0 net)', async () => {
     stubFetch();
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -771,7 +771,7 @@ describe('TemplateForm', () => {
       target: { value: 'Vinyasa' },
     });
     // minRate exactly -roomCost (-20)
-    fireEvent.change(screen.getByLabelText('Min rate'), {
+    fireEvent.change(screen.getByLabelText(/^Min rate/), {
       target: { value: '-20' },
     });
 
@@ -793,7 +793,7 @@ describe('TemplateForm', () => {
   it('rejects min rate subsidizing more than room cost on edit before any request is sent', async () => {
     stubFetch();
     render(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, roomCost: 20, minRate: -25, targetRate: 25 }}
@@ -823,7 +823,7 @@ describe('TemplateForm', () => {
   // G8
   it('cannot submit twice when the create push commits nothing', async () => {
     stubFetch();
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
 
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
@@ -870,7 +870,7 @@ describe('TemplateForm', () => {
       return new Response('{}', { status: 200 });
     }));
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
 
     expect(await screen.findByRole('option', { name: /Live Venue/ })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /Archived Venue/ })).not.toBeInTheDocument();
@@ -891,7 +891,7 @@ describe('TemplateForm', () => {
     }));
 
     render(
-      <TemplateForm
+      <TemplateForm currency="EUR"
         mode="edit"
         templateId="tpl-1"
         initial={{ ...initial, teacherRoomId: 'tr-archived' }}
@@ -920,7 +920,7 @@ describe('TemplateForm', () => {
       return new Response('{}', { status: 200 });
     }));
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
 
     expect(await screen.findByText('All your rooms are archived.')).toBeInTheDocument();
     expect(screen.getByText('Unarchive one in Settings to schedule here.')).toBeInTheDocument();
@@ -938,7 +938,7 @@ describe('TemplateForm', () => {
   it('distinguishes a failed room load from an absence of rooms', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
 
     expect(await screen.findByText("Couldn't load your rooms.")).toBeInTheDocument();
     expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
@@ -947,7 +947,7 @@ describe('TemplateForm', () => {
   it('distinguishes a thrown room fetch from an absence of rooms', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
 
     expect(await screen.findByText("Couldn't load your rooms.")).toBeInTheDocument();
     expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
@@ -1001,7 +1001,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -1080,7 +1080,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -1155,7 +1155,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1219,7 +1219,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1295,7 +1295,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1344,7 +1344,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1393,7 +1393,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1438,7 +1438,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1488,7 +1488,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
@@ -1530,7 +1530,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
@@ -1569,7 +1569,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     const saveBtn = await screen.findByRole('button', { name: /save/i });
     fireEvent.click(saveBtn);
 
@@ -1625,7 +1625,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     // The whole string, not a prefix: a form that dropped the middle clause
@@ -1669,7 +1669,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -1722,7 +1722,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -1776,7 +1776,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -1823,7 +1823,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
     fireEvent.click(await screen.findByRole('button', { name: /save/i }));
 
     expect(
@@ -1848,7 +1848,7 @@ describe('TemplateForm', () => {
    */
   it('ignores a submit event dispatched at the form once created', async () => {
     stubFetch();
-    render(<TemplateForm mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" />);
 
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {

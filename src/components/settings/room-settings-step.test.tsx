@@ -41,8 +41,8 @@ describe('RoomSettingsStep', () => {
   });
 
   function submit(onSaved: () => void): void {
-    render(<RoomSettingsStep selectedRoom={selectedRoom} onSaved={onSaved} onBack={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText('Rental rate'), { target: { value: '15.5' } });
+    render(<RoomSettingsStep currency="EUR" selectedRoom={selectedRoom} onSaved={onSaved} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: '15.5' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add room' }));
   }
 

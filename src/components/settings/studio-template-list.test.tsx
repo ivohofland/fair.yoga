@@ -42,18 +42,18 @@ const STATES = [
 describe('StudioTemplateList — the three sections agree', () => {
   for (const { name, template } of STATES) {
     it(`titles a ${name} template with its class type`, () => {
-      render(<StudioTemplateList templates={[template]} />);
+      render(<StudioTemplateList currency="EUR" templates={[template]} />);
       expect(screen.getByText('Vinyasa')).toBeDefined();
     });
 
     it(`keeps the location in a ${name} template's caption`, () => {
-      render(<StudioTemplateList templates={[template]} />);
+      render(<StudioTemplateList currency="EUR" templates={[template]} />);
       expect(screen.getByText(/Yoga Studio Centrum · €45\.00\/hr/)).toBeDefined();
     });
   }
 
   it('titles with the location and keeps it in the caption when there is no class type', () => {
-    render(<StudioTemplateList templates={[{ ...base, classType: '' }]} />);
+    render(<StudioTemplateList currency="EUR" templates={[{ ...base, classType: '' }]} />);
     // With no class type, the title falls back to the location and the
     // caption still carries it — two distinct nodes. `getNodeText` matches
     // only direct child text nodes, so each `<span>` is addressable on its

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { PageHeader } from '@/components/layout/page-header';
 import { StudioTemplateList } from '@/components/settings/studio-template-list';
 import { withSlot } from '@/services/studio-class-template-lifecycle';
@@ -7,6 +8,7 @@ import { withSlot } from '@/services/studio-class-template-lifecycle';
 export default async function ArchivedStudioTemplatesPage() {
   const session = await requireTeacherSession();
 
+  const currency = await teacherCurrency(session.teacherId);
   const rows = await prisma.studioClassTemplate.findMany({
     where: { scheduleRule: { teacherId: session.teacherId, isArchived: true } },
     include: { scheduleRule: true },
@@ -17,7 +19,7 @@ export default async function ArchivedStudioTemplatesPage() {
   return (
     <>
       <PageHeader title="Archived studio classes" backHref="/settings/studio-classes" backLabel="Studio classes" />
-      <StudioTemplateList templates={templates} emptyMessage="No archived studio classes." />
+      <StudioTemplateList templates={templates} currency={currency} emptyMessage="No archived studio classes." />
     </>
   );
 }

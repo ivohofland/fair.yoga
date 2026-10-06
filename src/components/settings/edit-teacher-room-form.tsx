@@ -3,14 +3,17 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
+import type { Currency } from '@prisma/client';
 import type { updateTeacherRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { currencyLabel } from '@/lib/format';
 
 interface EditTeacherRoomFormProps {
   teacherRoomId: string;
+  currency: Currency;
   initial: {
     capacityOverride: number;
     rentalRate: number;
@@ -42,6 +45,7 @@ void _formHasNoExtras;
 
 export function EditTeacherRoomForm({
   teacherRoomId,
+  currency,
   initial,
 }: EditTeacherRoomFormProps) {
   const router = useRouter();
@@ -112,7 +116,7 @@ export function EditTeacherRoomForm({
         onChange={(e) => { setCapacityOverride(e.target.value); clearStatus(); }}
       />
       <Input
-        label="Rental rate"
+        label={`Rental rate (${currencyLabel(currency)})`}
         type="number"
         step="0.01"
         value={rentalRate}

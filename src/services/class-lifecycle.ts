@@ -26,7 +26,7 @@ import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-window';
 import { timeToHHmm } from '@/lib/time-of-day';
-import { formatDayHeader, formatEuro } from '@/lib/format';
+import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { paymentMethodsFor } from '@/lib/payment-methods';
 import { log } from '@/lib/log';
@@ -850,7 +850,7 @@ export async function completeClass(
 
     // Payments exist — now tell people about them, in the same transaction.
     // In the Level 1 model this notification IS the payment request.
-    const teacherHasPaymentMethods = paymentMethodsFor(cls.calendarEntry.teacher).length > 0;
+    const teacherHasPaymentMethods = paymentMethodsFor(cls.calendarEntry.teacher, cls.currency).length > 0;
     const notifications: CreateNotificationInput[] = pricing.students.map((s, i) => {
       const reg = chargedRegistrations[i]!;
       return {
@@ -858,7 +858,7 @@ export async function completeClass(
         recipientId: reg.studentId,
         type: 'payment_request' as const,
         title: 'Payment requested',
-        body: studentPaymentRequestBody(reg.status, cls.calendarEntry, s.price, teacherHasPaymentMethods),
+        body: studentPaymentRequestBody(reg.status, cls.calendarEntry, s.price, teacherHasPaymentMethods, cls.currency),
         relatedClassId: cls.id,
       };
     });
@@ -867,7 +867,7 @@ export async function completeClass(
       recipientId: cls.calendarEntry.teacherId,
       type: 'payment_request' as const,
       title: 'Class completed',
-      body: `${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} completed — ${formatEuro(pricing.totalCost - Number(cls.roomCost))} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
+      body: `${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} completed — ${formatMoney(pricing.totalCost - Number(cls.roomCost), cls.currency)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
       relatedClassId: cls.id,
     });
     await createBulkNotifications(tx, notifications);

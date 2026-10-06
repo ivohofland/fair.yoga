@@ -74,7 +74,7 @@ describe('AddRoomFlow', () => {
 
   it('sends both bodies — the new room, then the teacher-room link', async () => {
     stubFetch();
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     // Step 1: search. This is the only way to unlock "create new room".
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
@@ -120,7 +120,7 @@ describe('AddRoomFlow', () => {
 
     // Step 3: link the newly created room to the teacher.
     await screen.findByRole('button', { name: 'Add room' });
-    fireEvent.change(screen.getByLabelText('Rental rate'), { target: { value: '15.5' } });
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: '15.5' } });
     fireEvent.change(screen.getByLabelText('Notes (optional)'), { target: { value: '  Extra towels  ' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Add room' }));
@@ -143,7 +143,7 @@ describe('AddRoomFlow', () => {
   // this exists to catch, and `not.toBeChecked()` alone sails straight past it.
   it('posts isPublic false when the share checkbox is left alone', async () => {
     stubFetch();
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     // Reach the create step exactly as the existing test does.
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
@@ -190,7 +190,7 @@ describe('AddRoomFlow', () => {
   it('says the search failed, not that the network did, when the server refuses', async () => {
     fetchMock.mockImplementation(async () => ({ ok: false, json: async () => ({}) }));
     vi.stubGlobal('fetch', fetchMock);
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -206,7 +206,7 @@ describe('AddRoomFlow', () => {
   // other test here green while the search matches nothing in production.
   it('asks the search endpoint for the typed postcode and street', async () => {
     stubFetch();
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -225,7 +225,7 @@ describe('AddRoomFlow', () => {
   // to the commons, ticks the box, and silently gets a private room.
   it('posts isPublic true when the share checkbox is ticked', async () => {
     stubFetch();
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -269,7 +269,7 @@ describe('AddRoomFlow', () => {
    */
   it('keeps the search results and the half-filled form when stepping back', async () => {
     stubFetch();
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -300,7 +300,7 @@ describe('AddRoomFlow', () => {
   it('says the network failed when the request never lands', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -325,7 +325,7 @@ describe('AddRoomFlow', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -355,7 +355,7 @@ describe('AddRoomFlow', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -392,7 +392,7 @@ describe('AddRoomFlow', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
@@ -433,7 +433,7 @@ describe('AddRoomFlow', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<AddRoomFlow />);
+    render(<AddRoomFlow currency="EUR" />);
 
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });

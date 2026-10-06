@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { formatRoomLocation } from '@/lib/format';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
@@ -29,6 +30,7 @@ export default async function EditRoomPage({
   }
 
   const { room } = teacherRoom;
+  const currency = await teacherCurrency(session.teacherId);
   const canEditRoom = !room.isPublic && room.createdById === session.teacherId;
   // KNOWN-OPEN (issue 76): a server-render snapshot. These are the counts the
   // delete and unlink doors use (`room-deletion.ts`), taken at render. A class
@@ -63,6 +65,7 @@ export default async function EditRoomPage({
           <EditRoomForm
             roomId={room.id}
             teacherRoomId={teacherRoom.id}
+            currency={currency}
             initial={{
               venueName: room.venueName,
               roomName: room.roomName,
@@ -116,6 +119,7 @@ export default async function EditRoomPage({
           <h2 className="font-heading text-lg font-bold text-teal mb-3">Your settings</h2>
           <EditTeacherRoomForm
             teacherRoomId={teacherRoom.id}
+            currency={currency}
             initial={{
               capacityOverride: teacherRoom.capacityOverride,
               rentalRate: Number(teacherRoom.rentalRate),

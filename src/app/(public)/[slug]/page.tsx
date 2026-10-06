@@ -182,6 +182,7 @@ export default async function TeacherBookingPage({
                     registrations: cls.registrations,
                     viewer,
                   })}
+                  currency={cls.currency}
                   className={bookedClassIds.has(cls.id) || waitingClassIds.has(cls.id) ? 'mt-1' : 'mt-2'}
                 />
               </Link>
