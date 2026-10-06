@@ -359,6 +359,13 @@ test.describe('Visual regression', () => {
     await expect(page).toHaveScreenshot('login.png', { fullPage: true, stylePath: hideDevOverlay });
   });
 
+  test('landing', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await freezeDates(page);
+    await expect(page).toHaveScreenshot('landing.png', { fullPage: true, stylePath: hideDevOverlay });
+  });
+
   test('public teacher page', async ({ page }) => {
     await page.goto(`/${slug}`);
     await expect(page.getByText('Visual Vinyasa')).toBeVisible();

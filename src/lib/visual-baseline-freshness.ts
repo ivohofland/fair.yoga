@@ -55,6 +55,11 @@ export const ROUTE_BASELINES: readonly RouteBaseline[] = [
     baselineFiles: baselineFiles('login'),
   },
   {
+    name: 'landing',
+    sourceFiles: ['src/app/page.tsx'],
+    baselineFiles: baselineFiles('landing'),
+  },
+  {
     name: 'public-page',
     sourceFiles: ['src/app/(public)/[slug]/page.tsx'],
     baselineFiles: baselineFiles('public-page'),
