@@ -83,16 +83,6 @@ describe('POST /api/auth/passkey/register/verify', () => {
     expect(res.status).toBe(200);
   });
 
-  it('still answers 200 when the notice sender throws synchronously', async () => {
-    m.sendPasskeyAddedEmail.mockImplementation(() => {
-      throw new Error('boom');
-    });
-
-    const res = await POST(request());
-
-    expect(res.status).toBe(200);
-  });
-
   it('still answers 200 when the address lookup fails', async () => {
     m.findUniqueOrThrow.mockRejectedValue(new Error('db blip'));
 

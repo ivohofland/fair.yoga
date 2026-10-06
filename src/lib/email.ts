@@ -89,14 +89,13 @@ export async function sendInvitationEmail(
 }
 
 /**
- * Sends the passkey-added notice (`deliverPasskeyAddedNotice`,
- * services/passkey-notice.ts). Like `sendInvitationEmail`, a missing key
- * degrades to a logged dry-run rather than throwing: the registration it
- * reports has already committed and its caller does not wait for this.
+ * Sends the passkey-added notice. Like `sendInvitationEmail`, a missing key
+ * degrades to a logged dry-run rather than throwing. The line logs no
+ * address: a notice about a credential is not worth a PII entry.
  */
 export async function sendPasskeyAddedEmail(to: string, addedAt: Date): Promise<void> {
   if (emailDryRun()) {
-    log.info({ to }, 'passkey-added email dry-run');
+    log.info({}, 'passkey-added email dry-run');
     return;
   }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail, sendPasskeyAddedEmail } from './email';
 import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail } from './email-templates';
+import { log } from '@/lib/log';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 
 const sendMock = vi.hoisted(() => vi.fn());
@@ -234,6 +235,17 @@ describe('sendPasskeyAddedEmail', () => {
     await expect(sendPasskeyAddedEmail('a@test.local', ADDED_AT)).resolves.toBeUndefined();
 
     expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the address out of the dry-run log line', async () => {
+    delete process.env.EMAIL_DRY_RUN;
+    delete process.env.RESEND_API_KEY;
+    vi.mocked(log.info).mockClear();
+
+    await sendPasskeyAddedEmail('a@test.local', ADDED_AT);
+
+    expect(vi.mocked(log.info)).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(vi.mocked(log.info).mock.calls)).not.toContain('a@test.local');
   });
 
   describe('with a key configured', () => {
