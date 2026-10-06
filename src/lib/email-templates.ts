@@ -245,6 +245,31 @@ export function renderInvitationEmail(
   return { subject, html };
 }
 
+/**
+ * The notice sent after a passkey is added: what happened, when, and where to
+ * undo it. No link and no token — a message about a credential being added is
+ * exactly what a forged copy would imitate, so the way out is named in words
+ * for the reader to navigate to themselves.
+ */
+export function renderPasskeyAddedEmail(addedAt: Date): { subject: string; html: string } {
+  const when = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(addedAt);
+  const subject = 'A passkey was added to your fair.yoga account';
+  const html = wrapEmail(
+    'A passkey was added',
+    `<p style="margin:0 0 16px;">A passkey was added to your fair.yoga account on ${escapeHtml(when)} UTC. It can now sign in to your account.</p>
+     <p style="margin:0;">If that was you, there is nothing to do. If it was not, sign in, open Settings, remove the passkey and choose sign out everywhere.</p>`,
+  );
+  return { subject, html };
+}
+
 export interface DegradationDigestEntry {
   code: string;
   description: string;

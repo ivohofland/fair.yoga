@@ -1,0 +1,64 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
+import { log } from '@/lib/log';
+
+const sendPasskeyAddedEmail = vi.hoisted(() => vi.fn<(to: string, addedAt: Date) => Promise<void>>());
+vi.mock('@/lib/email', () => ({ sendPasskeyAddedEmail }));
+vi.mock('@/lib/log', () => ({
+  log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+const { deliverPasskeyAddedNotice } = await import('./passkey-notice');
+
+const findUniqueOrThrow = vi.fn<(args: unknown) => Promise<{ email: string }>>();
+const db = { account: { findUniqueOrThrow } } as unknown as PrismaClient;
+const input = { accountId: 'acct-1', addedAt: new Date('2026-10-06T14:03:00Z') };
+
+beforeEach(() => {
+  sendPasskeyAddedEmail.mockReset();
+  findUniqueOrThrow.mockReset();
+  findUniqueOrThrow.mockResolvedValue({ email: 'a@test.local' });
+  vi.mocked(log.error).mockReset();
+});
+
+describe('deliverPasskeyAddedNotice', () => {
+  it('sends the notice to the account address', async () => {
+    sendPasskeyAddedEmail.mockResolvedValue(undefined);
+
+    deliverPasskeyAddedNotice(db, input);
+
+    await vi.waitFor(() => expect(sendPasskeyAddedEmail).toHaveBeenCalledWith('a@test.local', input.addedAt));
+    expect(findUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'acct-1' } }));
+  });
+
+  it('returns before a slow sender settles — the caller never waits for it', () => {
+    sendPasskeyAddedEmail.mockReturnValue(new Promise<void>(() => {}));
+
+    const result: unknown = deliverPasskeyAddedNotice(db, input);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('owns a rejecting sender: logs it and leaves no unhandled rejection', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    sendPasskeyAddedEmail.mockRejectedValue(new Error('resend down'));
+
+    deliverPasskeyAddedNotice(db, input);
+
+    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(log.error).mock.calls[0]?.[0]).toMatchObject({ accountId: 'acct-1' });
+    await new Promise((r) => setTimeout(r, 10));
+    process.off('unhandledRejection', unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+
+  it('owns a failing address lookup and sends nothing', async () => {
+    findUniqueOrThrow.mockRejectedValue(new Error('db down'));
+
+    expect(() => deliverPasskeyAddedNotice(db, input)).not.toThrow();
+
+    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
+    expect(sendPasskeyAddedEmail).not.toHaveBeenCalled();
+  });
+});

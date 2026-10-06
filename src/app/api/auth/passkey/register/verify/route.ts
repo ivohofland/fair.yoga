@@ -4,6 +4,7 @@ import {
   respondOk,
   respondError,
   requireSession,
+  requireRecentAuth,
   isErrorResponse,
   parseBody,
   withErrorHandler,
@@ -11,10 +12,16 @@ import {
 import { prisma } from '@/lib/db';
 import type { RegistrationResponseJSON } from '@simplewebauthn/types';
 import { passkeyRegisterVerifySchema } from '@/lib/schemas';
+import { deliverPasskeyAddedNotice } from '@/services/passkey-notice';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
+
+  // Before the challenge is consumed: a session that aged out between the two
+  // steps is refused with the challenge still standing.
+  const stale = await requireRecentAuth(session);
+  if (stale) return stale;
 
   const parsed = await parseBody(request, passkeyRegisterVerifySchema);
   if ('error' in parsed) return parsed.error;
@@ -41,7 +48,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  await prisma.passkeyCredential.create({
+  const credential = await prisma.passkeyCredential.create({
     data: {
       id: result.credentialId,
       accountId: session.accountId,
@@ -49,6 +56,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       counter: result.counter,
       transports: result.transports,
     },
+    select: { createdAt: true },
+  });
+
+  deliverPasskeyAddedNotice(prisma, {
+    accountId: session.accountId,
+    addedAt: credential.createdAt,
   });
 
   return respondOk({ credentialId: result.credentialId });

@@ -6,6 +6,7 @@ import {
   renderNotificationEmail,
   renderMagicLinkEmail,
   renderInvitationEmail,
+  renderPasskeyAddedEmail,
   renderDegradationDigestEmail,
 } from './email-templates';
 import { STUDENT_INVITATION_PATH, STUDENT_BOOKINGS_PATH, TEACHER_INVITATION_PATH } from './notification-links';
@@ -387,5 +388,22 @@ describe('renderDegradationDigestEmail', () => {
     expect(html).not.toContain('<script>x</script>');
     expect(html).not.toContain('<img src=x>');
     expect(html).toContain('&lt;script&gt;');
+  });
+  describe('passkey-added email', () => {
+    const addedAt = new Date('2026-10-06T14:03:00Z');
+
+    it('says a passkey was added, when, and where to revoke it', () => {
+      const { subject, html } = renderPasskeyAddedEmail(addedAt);
+      expect(subject).toContain('passkey');
+      expect(html).toContain('6 Oct 2026, 14:03 UTC');
+      expect(html).toContain('sign out everywhere');
+      expect(html).toContain('remove');
+    });
+
+    it('carries no link, so there is no token to forward or phish with', () => {
+      const { html } = renderPasskeyAddedEmail(addedAt);
+      expect(html).not.toContain('<a ');
+      expect(html).not.toContain('href');
+    });
   });
 });
