@@ -17,6 +17,11 @@ vi.mock('next/navigation', () => ({
   redirect,
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
+vi.mock('@/components/account/sign-out-button', () => ({
+  SignOutButton: ({ accountId }: { accountId: string | null }) => (
+    <span data-testid="sign-out" data-account-id={String(accountId)} />
+  ),
+}));
 
 import StudentSettingsPage from './page';
 
@@ -50,6 +55,15 @@ describe('StudentSettingsPage', () => {
     expect(screen.getByRole('link', { name: /notifications/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /privacy/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /data & deletion/i })).toBeInTheDocument();
+  });
+
+  it('signs out as the session\'s account, so its queued attendance changes are sent', async () => {
+    getSession.mockResolvedValue({ accountId: 'acct-1', studentId: STUDENT_ID, teacherId: 'teacher-1' });
+    findUnique.mockResolvedValue({ id: STUDENT_ID, firstName: 'Anna', lastName: 'Smith' });
+
+    render(await StudentSettingsPage());
+
+    expect(screen.getByTestId('sign-out')).toHaveAttribute('data-account-id', 'acct-1');
   });
 
   it('redirects to /login when the student row is missing', async () => {

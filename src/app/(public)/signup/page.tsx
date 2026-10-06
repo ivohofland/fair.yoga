@@ -36,7 +36,7 @@ export default async function SignupPage() {
       where: { id: session.accountId },
       select: { email: true },
     });
-    return <AlreadyTeachingPanel email={account.email} />;
+    return <AlreadyTeachingPanel email={account.email} accountId={session.accountId} />;
   }
   if (session) redirect('/signup/profile');
 

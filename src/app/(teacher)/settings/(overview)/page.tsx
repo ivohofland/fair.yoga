@@ -37,7 +37,7 @@ export default async function SettingsPage() {
         <InstallAppRow />
       </div>
       <div className="mt-8">
-        <SignOutButton />
+        <SignOutButton accountId={session?.accountId ?? null} />
       </div>
     </div>
   );

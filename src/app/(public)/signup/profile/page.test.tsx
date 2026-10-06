@@ -38,6 +38,8 @@ describe('ProfileSetupPage identity precedence', () => {
     expect(json).toContain('signed-in@test.local');
     expect(json).not.toContain('someone-else@test.local');
     expect(json).toContain('"mode":"session"');
+    // The form's sign-out sends this account's queued attendance changes.
+    expect(json).toContain('"accountId":"a1"');
     expect(peekSignupTicket).not.toHaveBeenCalled();
   });
 
@@ -78,5 +80,6 @@ describe('ProfileSetupPage identity precedence', () => {
 
     expect(json).toContain('ticket-holder@test.local');
     expect(json).toContain('"mode":"ticket"');
+    expect(json).toContain('"accountId":null');
   });
 });

@@ -91,7 +91,7 @@ export default async function StudentSettingsPage() {
         <h2 className="type-subtitle mb-3">Sign-in</h2>
         <AddPasskey />
         <div className="mt-5">
-          <SignOutButton />
+          <SignOutButton accountId={session.accountId} />
         </div>
       </section>
     </div>

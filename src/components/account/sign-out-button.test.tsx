@@ -50,7 +50,7 @@ describe('SignOutButton', () => {
   it('DELETEs the session, then pushes and refreshes', async () => {
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton />);
+    render(<SignOutButton accountId="owner-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
@@ -65,7 +65,7 @@ describe('SignOutButton', () => {
   it('re-enables when the push and refresh commit nothing', async () => {
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton />);
+    render(<SignOutButton accountId="owner-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
@@ -79,7 +79,7 @@ describe('SignOutButton', () => {
     const offline = new Error('offline');
     fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton />);
+    render(<SignOutButton accountId="owner-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
@@ -104,7 +104,7 @@ describe('SignOutButton', () => {
       return { ok: true };
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton />);
+    render(<SignOutButton accountId="owner-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
@@ -130,7 +130,7 @@ describe('SignOutButton', () => {
     });
     routerPush.mockImplementation(() => order.push('push'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton />);
+    render(<SignOutButton accountId="owner-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
@@ -147,7 +147,7 @@ describe('SignOutButton', () => {
     vi.stubGlobal('fetch', fetchMock);
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button'));
       await vi.advanceTimersByTimeAsync(2_999);
@@ -172,7 +172,7 @@ describe('SignOutButton', () => {
     vi.stubGlobal('fetch', fetchMock);
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button'));
       await vi.advanceTimersByTimeAsync(0);
@@ -196,7 +196,7 @@ describe('SignOutButton', () => {
     vi.stubGlobal('fetch', fetchMock);
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button'));
 
@@ -220,7 +220,7 @@ describe('SignOutButton', () => {
     vi.stubGlobal('fetch', fetchMock);
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button'));
 
@@ -243,7 +243,7 @@ describe('SignOutButton', () => {
   it('honours an explicit destination instead of the /login default', async () => {
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton redirectTo="/signup" />);
+    render(<SignOutButton accountId="owner-1" redirectTo="/signup" />);
 
     fireEvent.click(screen.getByRole('button'));
 
@@ -261,7 +261,7 @@ describe('SignOutButton', () => {
   it('shows a failure message when the DELETE responds not-ok, and still pushes and refreshes', async () => {
     fetchMock.mockResolvedValue({ ok: false });
     vi.stubGlobal('fetch', fetchMock);
-    render(<SignOutButton />);
+    render(<SignOutButton accountId="owner-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
@@ -302,7 +302,7 @@ describe('SignOutButton', () => {
 
     it('signs out at once when nothing is queued', async () => {
       stubFetch(() => Promise.reject(new Error('unused')));
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button'));
 
@@ -313,7 +313,7 @@ describe('SignOutButton', () => {
     it('signs out without a warning when the flush confirms every entry', async () => {
       await queue(2);
       stubFetch(confirmed);
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button'));
 
@@ -344,7 +344,7 @@ describe('SignOutButton', () => {
       );
       stubFetch(() => Promise.reject(new Error('offline')));
       vi.spyOn(console, 'error').mockImplementation(() => {});
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button'));
 
@@ -357,7 +357,7 @@ describe('SignOutButton', () => {
       await queue(2);
       stubFetch(() => Promise.reject(new Error('offline')));
       vi.spyOn(console, 'error').mockImplementation(() => {});
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
 
       fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 
@@ -369,13 +369,48 @@ describe('SignOutButton', () => {
       expect(screen.getByRole('button', { name: 'Sign out anyway' })).toBeInTheDocument();
     });
 
+    it('sends only the signed-in account\'s queued changes, and warns with every account\'s', async () => {
+      await queue(1);
+      await enqueueAttendance({
+        ownerId: 'owner-2',
+        registrationId: 'reg-other',
+        classId: 'class-2',
+        studentName: 'Someone Else',
+        status: 'no_show',
+      });
+      stubFetch(confirmed);
+      render(<SignOutButton accountId="owner-1" />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "1 attendance change hasn't synced yet. Signing out discards them.",
+      );
+      expect(fetchMock).toHaveBeenCalledWith('/api/registrations/reg-0', expect.anything());
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/registrations/reg-other', expect.anything());
+      expect(Object.keys(getOutbox().pending)).toEqual(['reg-other']);
+    });
+
+    it('with no signed-in account to send for, sends nothing and warns with every queued change', async () => {
+      await queue(2);
+      stubFetch(confirmed);
+      render(<SignOutButton accountId={null} />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "2 attendance changes haven't synced yet. Signing out discards them.",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('does not wait on a flush that never settles', async () => {
       vi.useFakeTimers();
       await queue(1);
       stubFetch(() => new Promise(() => {}));
       vi.spyOn(console, 'error').mockImplementation(() => {});
       try {
-        render(<SignOutButton />);
+        render(<SignOutButton accountId="owner-1" />);
 
         fireEvent.click(screen.getByRole('button'));
         await act(() => vi.advanceTimersByTimeAsync(2_999));
@@ -398,7 +433,7 @@ describe('SignOutButton', () => {
       );
       vi.stubGlobal('fetch', fetchMock);
       vi.spyOn(console, 'error').mockImplementation(() => {});
-      render(<SignOutButton />);
+      render(<SignOutButton accountId="owner-1" />);
       fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
       fireEvent.click(await screen.findByRole('button', { name: 'Sign out anyway' }));
 
