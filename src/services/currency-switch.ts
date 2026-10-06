@@ -14,14 +14,14 @@ import { studioClassDateIsPast } from './studio-class-editability';
  * the lock order is `docs/lock-order.md`, "The `Teacher` row is the first lock
  * (#758)".
  *
- * Framework-agnostic: `PUT /api/teachers/[id]` runs this inside its own
- * transaction and maps the answer to a response.
+ * Framework-agnostic: it answers a typed result and leaves the response to
+ * its caller.
  */
 
 /**
- * `kept` is every row of this teacher's still NOT in the new currency after
- * the relabel, grouped by the currency it shows, in `Currency` declaration
- * order, with no zero entries.
+ * `kept` counts every class and studio class of this teacher's that is still
+ * not in the new currency after the relabel, grouped by the currency it
+ * shows, in `CURRENCIES` order, with no zero entries.
  */
 export type CurrencySwitchResult = {
   relabelled: { classes: number; studioClasses: number };
@@ -29,8 +29,8 @@ export type CurrencySwitchResult = {
 };
 
 /**
- * Runs inside the caller's transaction, and takes that transaction's first
- * lock: the caller has locked nothing before it.
+ * Call this as the first statement of the transaction; it takes that
+ * transaction's first lock.
  *
  * `'teacher_gone'` when the teacher is absent or erased, read under the lock;
  * `'unchanged'` when `currency` is already the stored one. Neither writes.
@@ -44,10 +44,10 @@ export async function switchTeacherCurrency(
   if (teacher === null) return 'teacher_gone';
   if (teacher.currency === currency) return 'unchanged';
 
-  // The template families' lock node, class family first. A generation holds
-  // its template row `FOR UPDATE` across the insert of its classes, so this
-  // waits it out and the class lock below sees what it committed; one that
-  // starts later waits here and reads the new currency.
+  // The template families' lock node, class family first: it makes a
+  // generation in flight finish before the class lock below reads its
+  // classes (`docs/lock-order.md`, "The `Teacher` row is the first lock
+  // (#758)").
   await tx.$queryRaw`
     SELECT ct.id FROM "ClassTemplate" ct
       JOIN "ScheduleRule" r ON r.id = ct."scheduleRuleId"
@@ -61,9 +61,9 @@ export async function switchTeacherCurrency(
      ORDER BY sct.id
      FOR UPDATE OF sct`;
 
-  // VERDICT (#327): no `entries: true`. This transaction writes
-  // `Class.currency` and reads no entry column but `teacherId`, which no
-  // writer changes. Cancellation is read from `entryLive` on the locked row,
+  // VERDICT (#327): no `entries: true`. Of the class family this transaction
+  // writes only `Class.currency`, and it reads no entry column but
+  // `teacherId`. Cancellation is read from `entryLive` on the locked row,
   // and `settingsLocked` and `status` are the row's own, so a first booking
   // or a completion that lands while this waits is re-checked under the lock
   // and drops the row from the set.

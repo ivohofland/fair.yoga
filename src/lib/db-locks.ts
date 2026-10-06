@@ -423,13 +423,12 @@ export async function lockLiveTeacher(
  * Answers the live teacher's currency and timezone, read under the lock, or
  * `null` when the row is absent or erased.
  *
- * `FOR NO KEY UPDATE`, not `FOR UPDATE`: an insert into any table referencing
- * `Teacher` takes `FOR KEY SHARE` on the teacher in its foreign-key check, and
- * the generator does that while holding its template row. `FOR UPDATE` would
- * conflict with that check and close a cycle against a caller that goes on to
- * lock templates; this mode does not, and still conflicts with `FOR SHARE`
- * and with itself. `docs/lock-order.md`, "The `Teacher` row is the first lock
- * (#758)".
+ * `FOR NO KEY UPDATE`, not `FOR UPDATE`: any insert into a table referencing
+ * `Teacher` takes `FOR KEY SHARE` on the teacher in its foreign-key check.
+ * `FOR UPDATE` would conflict with that, and with sites that insert while
+ * holding a template or `Class` row; this mode does not, and still conflicts
+ * with `FOR SHARE` and with itself. `docs/lock-order.md`, "Why `FOR NO KEY
+ * UPDATE` and not `FOR UPDATE`".
  */
 export async function lockTeacherForNoKeyUpdate(
   tx: TransactionClientOnly,

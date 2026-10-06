@@ -709,10 +709,9 @@ export async function createStudioClassTemplate(
       // FIRST STATEMENT, per every sibling in this file: `lockTeacherForShare`
       // arms `setLockTimeout` before it locks. It is also the transaction's
       // first lock (`docs/lock-order.md`, "The `Teacher` row is the first
-      // lock (#758)"): a currency switch holds this row until it commits, so
-      // the first window generated below stamps the currency the switch
-      // wrote. A new write or lock in this transaction moves
-      // `CREATE_STUDIO_TEMPLATE_TIMEOUT_MS`.
+      // lock (#758)"), held while the first window generated below reads the
+      // teacher's currency and stamps it. A new write or lock in this
+      // transaction moves `CREATE_STUDIO_TEMPLATE_TIMEOUT_MS`.
       if (!(await lockTeacherForShare(tx, teacherId))) {
         return { ok: false as const, reason: 'teacher_gone' as const };
       }

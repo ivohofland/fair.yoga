@@ -1250,23 +1250,19 @@ export async function deleteTeacherAccount(
       // `freedClassIds` above.
       const skipped: string[] = [];
 
-      // The `Teacher` row, this transaction's first lock (#758): `Teacher`
-      // precedes the template families and `Class` in every transaction that
-      // takes it. `FOR NO KEY UPDATE` rather than `FOR UPDATE` because a
-      // generation holding its template row inserts entries whose foreign-key
-      // check takes `KEY SHARE` on this row. `docs/lock-order.md`, "The
-      // `Teacher` row is the first lock (#758)".
+      // The `Teacher` row, this transaction's first lock (#758), ahead of the
+      // template and `Class` locks below. The reason for the mode and the
+      // order is `docs/lock-order.md`, "The `Teacher` row is the first lock
+      // (#758)".
       //
       // Its answer is not consulted: an erased or absent teacher is refused
       // by the `teacher.updateMany` count check at the end of this
       // transaction.
       await lockTeacherForNoKeyUpdate(tx, teacherId);
 
-      // Template child rows locked next, ordered by id (#229), ahead of every
-      // `Class` lock. `ClassTemplate` before `Class`
-      // is the canonical direction, and this function was the sole site
-      // taking the opposite one until #229 moved these locks ahead of
-      // `lockClassRowsOrdered` below. Which sites take that order is
+      // Template child rows locked next, ordered by id (#229), after the
+      // `Teacher` lock and ahead of every `Class` lock. `ClassTemplate` before
+      // `Class` is the canonical direction; which sites take that order is
       // `docs/lock-order.md`'s "Resolved: `{Class, ClassTemplate}` order
       // standardised (#229)".
       //
@@ -1514,11 +1510,6 @@ export async function deleteTeacherAccount(
         },
         data: { cancelledAt: new Date() },
       });
-
-      // ClassTemplate/StudioClassTemplate child row locks are taken near the
-      // top of this transaction (#229) — before the `Class` pre-lock — to
-      // resolve the `Class`-before-`ClassTemplate` inversion that
-      // `docs/lock-order.md` documented as a known violation.
 
       // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298), kept
       // as two statements — one per `kind` — mirroring the pre-split shape
