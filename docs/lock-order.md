@@ -1002,6 +1002,13 @@ Re-run for issue 46 on 2026-09-29 it returns 23 = the 22 above + 1:
 row — "The `Teacher` row is the photo upload's gate (#46)" below. Every other
 line sits in one of the files listed above.
 
+Re-run for issue 758 on 2026-10-06 it returns 25 = the 23 above + 2, both in
+`db-locks.ts`: `lockTeacherForNoKeyUpdate` and `lockTeacherForShare`, the
+`Teacher` first lock — "The `Teacher` row is the first lock (#758)" below.
+`deleteTeacherAccount` arms the bound through the first of them, and its own
+`setLockTimeout` line was already counted. Every other line sits in one of
+the files listed above.
+
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
 A slot key is a lock in every sense that matters here. Two transactions
@@ -1824,6 +1831,15 @@ commit. The two queue on the one row in either order:
   then reads the row with `deletedAt` set, and the upload refuses without
   writing.
 
+The erasure holds the row from its first statement, so an upload that arrives
+during an erasure waits out the whole erasure transaction: the cancel loop
+over every upcoming class, the notifications, the deletes. The upload's wait
+is bounded by the shared 2s `lock_timeout`. For a teacher whose erasure runs
+longer than that, the upload fails with `55P03` before it can read the row. It
+then answers as a transient failure (503, `classifyApiError`,
+`src/lib/api-errors.ts`) instead of `teacher-gone`. Either way it writes
+nothing.
+
 **The placement rule: the erasure's `teacherPhoto.deleteMany` goes after its
 `Teacher` lock, never before.** Before it, the upload-first order leaks: the
 delete finds nothing, the lock then waits out the upload, and the upload's row
@@ -1888,21 +1904,35 @@ releasing the holder:
 
 ## The `Teacher` row is the first lock (#758)
 
-`Teacher` comes before every other row a transaction locks:
+An EXPLICIT lock on the teacher's row — one of the helpers below — comes
+before every other row its transaction locks:
 
     Teacher → ClassTemplate → StudioClassTemplate → Class → …
 
-A transaction that locks the teacher's row does it as its first lock, before
-any template, `Class` or `CalendarEntry` row. The sites:
+A transaction that locks the teacher's row explicitly does it as its first
+lock, before any template, `Class` or `CalendarEntry` row. Two later
+acquisitions on the same row are not explicit locks and are not covered by
+that sentence: a foreign-key check's `FOR KEY SHARE` (below, "Why `FOR NO KEY
+UPDATE`"), and the erasure's own raise to `FOR UPDATE` at its closing
+`UPDATE`. The sites:
 
 - `deleteTeacherAccount` (`src/services/gdpr.ts`): `lockTeacherForNoKeyUpdate`,
   as the first statement of its closing transaction and ahead of the
-  `FOR UPDATE OF ct` / `FOR UPDATE OF sct` pre-locks. A duplicate erasure
-  waits there for the first one's commit, reads the row as erased, and aborts
-  before it takes anything else. Its closing `teacher.updateMany` writes a row
-  the transaction already holds. That `UPDATE` rewrites `email` and `pageSlug`,
-  so it raises the hold to `FOR UPDATE`. By then the transaction holds every
-  template and `Class` row it locks.
+  `FOR UPDATE OF ct` / `FOR UPDATE OF sct` pre-locks. Its answer is not
+  consulted. A duplicate erasure waits there for the first one's commit; the
+  helper's `"deletedAt" IS NULL` then fails on the re-checked row, so the
+  duplicate locks nothing there and runs on until its closing
+  `teacher.updateMany` matches no row and throws `AlreadyErasedError`. A
+  transaction that holds no `Teacher` lock owes this order nothing. A live
+  teacher's closing `teacher.updateMany` writes a row the transaction already
+  holds. That `UPDATE` rewrites `email` and `pageSlug`, so it raises the hold
+  to `FOR UPDATE`. By then the transaction holds every template and `Class`
+  row it locks.
+- `PUT /api/teachers/[id]` (`src/app/api/teachers/[id]/route.ts`) takes no
+  explicit lock, but its `teacher.updateMany` waits on an erasure's hold and,
+  scoped to `deletedAt: null`, writes nothing once the erasure commits. It
+  answers 404. Without that scope it re-matched the anonymised row by `id` and
+  wrote the PUT's profile fields back onto it.
 - The photo upload (`saveTeacherPhoto`, `src/services/teacher-photo.ts`):
   `lockLiveTeacher`, `FOR SHARE`, as its first and only lock. See the section
   above.
