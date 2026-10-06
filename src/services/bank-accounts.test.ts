@@ -97,6 +97,16 @@ describe('saveBankAccount', () => {
     ]);
   });
 
+  it('clears a stored BIC when the replacing save has none', async () => {
+    const teacherId = await makeTeacher();
+    await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A' });
+    const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' });
+    expect(out.kind).toBe('saved');
+    expect(await storedAccounts(teacherId)).toEqual([
+      { currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null },
+    ]);
+  });
+
   it('answers teacher_gone for an erased teacher and stores nothing', async () => {
     const teacherId = await makeTeacher();
     await prisma.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });
