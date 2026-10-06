@@ -62,7 +62,7 @@ interface Slot {
   confirmed: ConfirmedEntry | undefined;
   refused: RefusedEntry | undefined;
 }
-/** A registration whose entries in this tab storage does not hold: `mine` is this tab's, `held` what storage held when the write was refused or held back. */
+/** A registration whose entries in this tab storage does not hold: `mine` is this tab's, `held` everything storage held for it, expired or not, when the write was refused or held back. */
 interface Override {
   mine: Slot;
   held: Slot;
@@ -89,8 +89,10 @@ interface Clears {
 const NO_CLEARS: Clears = Object.freeze({ all: '', owners: Object.freeze({}) });
 /** The clears as this tab last read or wrote them; null before the first read. */
 let seenClears: Clears | null = null;
-/** What storage holds, as of `cachedRaw`. */
+/** What storage holds, as of `cachedRaw`, without the entries a read prunes. */
 let stored: OutboxState = EMPTY_OUTBOX;
+/** Every well-formed entry storage holds, as of `cachedRaw`, including those a read prunes. */
+let storedAll: OutboxState = EMPTY_OUTBOX;
 /** The stored text `stored` was parsed from or written as. */
 let cachedRaw: string | null = null;
 /** This tab's outbox, as `view` builds it. */
@@ -257,28 +259,50 @@ function confirmedFresh(e: ConfirmedEntry, now: number): boolean {
 function refusedFresh(e: RefusedEntry, now: number): boolean {
   return now - e.refusedAt <= REFUSED_TTL_MS;
 }
-/** `slot` as a read at `now` would find it: expired entries gone. */
-function freshSlot(slot: Slot, now: number): Slot {
-  const { pending, confirmed, refused } = slot;
+/** `state` as a read at `now` finds it: expired confirmations and refusals gone, and confirmations stamped too far ahead. */
+function unexpired(state: OutboxState, now: number): OutboxState {
+  const keep = <T>(map: Readonly<Record<string, T>>, fresh: (e: T) => boolean): Record<string, T> => {
+    const out: Record<string, T> = Object.create(null);
+    for (const [key, entry] of Object.entries(map)) if (fresh(entry)) out[key] = entry;
+    return out;
+  };
   return {
-    pending,
-    confirmed: confirmed !== undefined && confirmedFresh(confirmed, now) ? confirmed : undefined,
-    refused: refused !== undefined && refusedFresh(refused, now) ? refused : undefined,
+    pending: state.pending,
+    confirmed: keep(state.confirmed, (e) => confirmedFresh(e, now)),
+    refused: keep(state.refused, (e) => refusedFresh(e, now)),
   };
 }
-/** Each registration whose entries in `next` differ from `held`'s, with both. Null when none does. */
-function overridesOf(next: OutboxState, held: OutboxState): ReadonlyMap<string, Override> | null {
+/**
+ * Each registration whose entries in `next` differ from `base`'s, with this
+ * tab's entries and everything `all` holds for it. `base` is `all` as a read
+ * finds it. Null when none differs.
+ */
+function overridesOf(next: OutboxState, base: OutboxState, all: OutboxState): ReadonlyMap<string, Override> | null {
   const ids = new Set<string>();
-  for (const state of [next, held]) {
+  for (const state of [next, base]) {
     for (const map of [state.pending, state.confirmed, state.refused]) Object.keys(map).forEach((id) => ids.add(id));
   }
   const out = new Map<string, Override>();
   for (const id of ids) {
     const mine = slotOf(next, id);
-    const was = slotOf(held, id);
-    if (!sameSlot(mine, was)) out.set(id, { mine, held: was });
+    if (!sameSlot(mine, slotOf(base, id))) out.set(id, { mine, held: slotOf(all, id) });
   }
   return out.size === 0 ? null : out;
+}
+/**
+ * Whether storage, holding `current` for a registration, has been written
+ * there since it held `held`. A refusal past its expiry counts as absent on
+ * both sides. A confirmation storage no longer holds is no change: a write
+ * leaves one out only when a read prunes it, past its expiry or stamped too
+ * far ahead of this device's clock, so its absence says nothing about when.
+ */
+function rewritten(current: Slot, held: Slot, now: number): boolean {
+  const live = (e: RefusedEntry | undefined): RefusedEntry | undefined => (e !== undefined && refusedFresh(e, now) ? e : undefined);
+  return (
+    !sameOrAbsent(current.pending, held.pending) ||
+    !sameOrAbsent(live(current.refused), live(held.refused)) ||
+    (current.confirmed !== undefined && !sameEntry(held.confirmed, current.confirmed))
+  );
 }
 /** The entries of `next` that `held` holds identically. */
 function agreed<T extends object>(next: Readonly<Record<string, T>>, held: Readonly<Record<string, T>>): Record<string, T> {
@@ -305,6 +329,7 @@ function persist(next: OutboxState): void {
   try {
     localStorage.setItem(KEY, value);
     stored = next;
+    storedAll = next;
     cachedRaw = value;
     overlay = null;
     detached = false;
@@ -326,12 +351,14 @@ function persist(next: OutboxState): void {
     if (entryCount(kept) === 0) {
       localStorage.removeItem(KEY);
       cachedRaw = null;
+      storedAll = EMPTY_OUTBOX;
     } else if (detached || entryCount(kept) !== entryCount(held)) {
       cachedRaw = JSON.stringify(kept);
       localStorage.setItem(KEY, cachedRaw);
+      storedAll = kept;
     }
     stored = kept;
-    overlay = overridesOf(next, kept);
+    overlay = overridesOf(next, kept, storedAll);
     detached = false;
   } catch (err) {
     console.warn('[attendance-outbox] storage refused even what it held; the stored copy is removed', {
@@ -339,19 +366,20 @@ function persist(next: OutboxState): void {
     });
     detached = !removeStored();
     stored = EMPTY_OUTBOX;
+    storedAll = EMPTY_OUTBOX;
     cachedRaw = null;
-    overlay = overridesOf(next, EMPTY_OUTBOX);
+    overlay = overridesOf(next, EMPTY_OUTBOX, EMPTY_OUTBOX);
   }
 }
 /**
- * Drops for good each registration in `overlay` whose stored entries are no
- * longer what storage held when this tab's write was refused or held back:
- * only another tab writes storage meanwhile, so that write is taken as the
- * newer. Run on every read of storage; an entry expiring is not a change.
+ * Drops for good each registration in `overlay` that storage has been
+ * `rewritten` for since this tab's write was refused or held back: only
+ * another tab writes storage meanwhile, so that write is taken as the newer.
+ * Run on every read of storage.
  */
 function reconcile(now: number): void {
   if (overlay === null || detached) return;
-  const kept = new Map([...overlay].filter(([id, o]) => sameSlot(slotOf(stored, id), freshSlot(o.held, now))));
+  const kept = new Map([...overlay].filter(([id, o]) => !rewritten(slotOf(storedAll, id), o.held, now)));
   overlay = kept.size === 0 ? null : kept;
 }
 /** This tab's outbox: `stored`, with each registration in `overlay` replaced by this tab's entries for it. */
@@ -373,16 +401,14 @@ function view(): OutboxState {
 }
 
 /**
- * Keeps the entries of `source` that `guard` accepts, `valid` approves and
- * `fresh` has not expired, into a null-prototype map, so a stored `__proto__`
- * key is an own entry rather than the map's prototype. Counts the entries that
- * failed `guard` or `valid` into `discarded`; expired ones are not counted.
+ * Keeps the entries of `source` that `guard` accepts and `valid` approves,
+ * into a null-prototype map, so a stored `__proto__` key is an own entry
+ * rather than the map's prototype. Counts the others into `discarded`.
  */
 function pick<T>(
   source: unknown,
   guard: (v: unknown) => T | null,
   valid: (entry: T, key: string) => boolean,
-  fresh: (entry: T) => boolean,
   discarded: { count: number },
 ): Record<string, T> {
   const out: Record<string, T> = Object.create(null);
@@ -390,7 +416,7 @@ function pick<T>(
   for (const [key, value] of Object.entries(source)) {
     const entry = guard(value);
     if (entry === null || !valid(entry, key)) discarded.count++;
-    else if (fresh(entry)) out[key] = entry;
+    else out[key] = entry;
   }
   return out;
 }
@@ -401,8 +427,8 @@ function warnDiscarded(raw: string, detail: { dropped: number } | { unreadable: 
   console.warn('[attendance-outbox] stored entries discarded', detail);
 }
 
-/** Parses what is stored, keeping only well-formed, unexpired entries. Never throws. */
-function parse(raw: string | null, now: number): OutboxState {
+/** Parses what is stored, keeping only well-formed entries, expired ones included (`unexpired` prunes those). Never throws. */
+function parse(raw: string | null): OutboxState {
   if (raw === null) return EMPTY_OUTBOX;
   let doc: unknown;
   try {
@@ -417,9 +443,9 @@ function parse(raw: string | null, now: number): OutboxState {
   const discarded = { count: 0 };
   const keyed = (e: PendingEntry, key: string): boolean => e.registrationId === key;
   const state: OutboxState = {
-    pending: pick(doc.pending, asPending, keyed, () => true, discarded),
-    confirmed: pick(doc.confirmed, asConfirmed, () => true, (e) => confirmedFresh(e, now), discarded),
-    refused: pick(doc.refused, asRefused, keyed, (e) => refusedFresh(e, now), discarded),
+    pending: pick(doc.pending, asPending, keyed, discarded),
+    confirmed: pick(doc.confirmed, asConfirmed, () => true, discarded),
+    refused: pick(doc.refused, asRefused, keyed, discarded),
   };
   if (discarded.count > 0) warnDiscarded(raw, { dropped: discarded.count });
   return state;
@@ -430,7 +456,8 @@ export function getOutbox(): OutboxState {
     if (!detached) {
       const now = Date.now();
       cachedRaw = readRaw();
-      stored = parse(cachedRaw, now);
+      storedAll = parse(cachedRaw);
+      stored = unexpired(storedAll, now);
       reconcile(now);
     }
     noticeClears();
@@ -457,7 +484,8 @@ export function readOutbox(): OutboxState {
   const dropped = noticeClears();
   if (cached !== null && raw === cachedRaw && !dropped) return cached;
   const now = Date.now();
-  stored = parse(raw, now);
+  storedAll = parse(raw);
+  stored = unexpired(storedAll, now);
   cachedRaw = raw;
   reconcile(now);
   cached = view();
@@ -478,7 +506,7 @@ function commit(next: OutboxState): void {
  * change after a read that works writes it.
  */
 function hold(next: OutboxState): void {
-  overlay = overridesOf(next, stored);
+  overlay = overridesOf(next, stored, storedAll);
   cached = next;
   notify();
 }
@@ -638,6 +666,7 @@ export async function clearOutbox(): Promise<void> {
     detached = !removeStored();
     overlay = null;
     stored = EMPTY_OUTBOX;
+    storedAll = EMPTY_OUTBOX;
     cached = EMPTY_OUTBOX;
     cachedRaw = null;
     writeClears({ all: newEntryId(), owners: {} });
@@ -693,6 +722,7 @@ export function resetOutboxForTests(): void {
   cached = null;
   cachedRaw = null;
   stored = EMPTY_OUTBOX;
+  storedAll = EMPTY_OUTBOX;
   overlay = null;
   detached = false;
   seenClears = null;
