@@ -71,7 +71,12 @@ relabelled by the switch, so a column on it could only ever repeat
 `PUT /api/teachers/[id]` with a `currency` different from the stored one runs
 one transaction:
 
-1. `Teacher` row `FOR UPDATE`.
+1. `Teacher` row `FOR NO KEY UPDATE` — not `FOR UPDATE`: every `CalendarEntry`
+   insert's foreign-key check takes `KEY SHARE` on its teacher, and the hourly
+   generator inserts entries while holding its template row, so a `FOR UPDATE`
+   taken before the templates deadlocks against it (measured, `40P01`).
+   `FOR NO KEY UPDATE` coexists with `KEY SHARE` and still excludes `FOR SHARE`
+   and itself.
 2. This teacher's `ClassTemplate` rows, then `StudioClassTemplate` rows,
    `FOR UPDATE` in id order — the template families' lock node (#315). A
    generation in flight holds its template row `FOR UPDATE` across its insert,
@@ -104,7 +109,8 @@ take `Teacher` `FOR SHARE` as their first lock, which the switch's
 `Teacher → ClassTemplate → StudioClassTemplate → Class → …`. Before this change
 `deleteTeacherAccount` (`gdpr.ts`) locked templates and classes and wrote
 `Teacher` last — the reverse edge, a deadlock against the switch. Erasure
-therefore takes `Teacher` `FOR UPDATE` as its first lock; its final
+therefore takes `Teacher` `FOR NO KEY UPDATE` as its first lock (the same
+mode, for the same foreign-key reason, as the switch); its final
 `teacher.updateMany` then writes a row it already holds. The photo upload's
 `FOR SHARE` (#46) was already first in its transaction. `docs/lock-order.md`
 records the new node and every site that takes it.
