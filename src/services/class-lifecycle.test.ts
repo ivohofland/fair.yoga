@@ -1106,9 +1106,8 @@ describe('completeClass (DB)', () => {
 
   it('leaves "Pay your teacher directly" out of the payment request when the teacher has a payment method', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    await prisma.teacher.update({
-      where: { id: teacherId },
-      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'L. Teacher' },
+    await prisma.teacherBankAccount.create({
+      data: { teacherId, currency: 'EUR', holderName: 'L. Teacher', iban: 'NL91ABNA0417164300' },
     });
     try {
       await prisma.registration.create({
@@ -1130,19 +1129,18 @@ describe('completeClass (DB)', () => {
       expect(noShow).toMatch(/^We missed you at .* If this isn't right, talk to your teacher\.$/);
       expect(noShow).not.toContain('Pay your teacher directly');
     } finally {
-      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     }
   });
 
   // The class's own currency, not the teacher's: a CHF class under a EUR
-  // teacher with euro bank details is priced in CHF, and its students are told
-  // to pay the teacher directly because a bank method is euro-only.
-  it('words a CHF class in CHF, with no bank method, under a EUR teacher who has an IBAN', async () => {
+  // teacher with a euro account is priced in CHF, and its students are told
+  // to pay the teacher directly because the teacher holds no CHF account.
+  it('words a CHF class in CHF, with no bank method, under a EUR teacher who has only a euro account', async () => {
     const cls = await makeClass({ status: 'in_progress', currency: 'CHF' });
-    await prisma.teacher.update({
-      where: { id: teacherId },
-      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'L. Teacher' },
+    await prisma.teacherBankAccount.create({
+      data: { teacherId, currency: 'EUR', holderName: 'L. Teacher', iban: 'NL91ABNA0417164300' },
     });
     try {
       await prisma.registration.create({
@@ -1169,7 +1167,7 @@ describe('completeClass (DB)', () => {
       expect(teacherNote.body).toMatch(/completed — CHF \d+\.\d{2} earnings, 2 payment requests sent\.$/);
       expect(teacherNote.body).not.toContain('€');
     } finally {
-      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     }
   });

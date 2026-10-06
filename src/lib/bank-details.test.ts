@@ -191,6 +191,17 @@ describe('bankDetailsFromRow', () => {
     expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000021' })).toBeNull();
   });
 
+  // The table's CHECK refuses a whitespace-only required column (`btrim(col) <> ''`); the parser agrees.
+  it('returns null for a whitespace-only required column', () => {
+    expect(bankDetailsFromRow({ ...blank, currency: 'EUR', iban: '   ' })).toBeNull();
+    expect(bankDetailsFromRow({ ...blank, currency: 'GBP', sortCode: '\t', accountNumber: '12345678' })).toBeNull();
+    expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000021', accountNumber: ' ' })).toBeNull();
+  });
+
+  it('reads a whitespace-only BIC as no BIC', () => {
+    expect(bankDetailsFromRow({ ...blank, currency: 'EUR', iban: 'NL91ABNA0417164300', bic: '  ' })).toEqual({ scheme: 'sepa', iban: 'NL91ABNA0417164300', bic: null });
+  });
+
   it('is structural: it applies no checksum and no BIC policy to a stored row', () => {
     expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000022', accountNumber: '1234567' })).toEqual({ scheme: 'us', routingNumber: '021000022', accountNumber: '1234567' });
     expect(bankDetailsFromRow({ ...blank, currency: 'EUR', iban: 'CH9300762011623852957' })).toEqual({ scheme: 'sepa', iban: 'CH9300762011623852957', bic: null });

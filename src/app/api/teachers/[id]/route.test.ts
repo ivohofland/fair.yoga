@@ -1,13 +1,10 @@
-import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
-import { log } from '@/lib/log';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { BANK_HOLDER_NAME_REQUIRED_MESSAGE } from '@/lib/schemas';
 
 /**
- * `PUT /api/teachers/[id]`'s bank-field branches that a request against the
- * running app cannot reach on demand: the teacher row gone between the session
- * check and the bank read, and the database refusing a pair the pre-check let
- * through. Prisma is mocked; the integration suite covers the rest.
+ * `PUT /api/teachers/[id]` with Prisma mocked: the bank fields the schema
+ * refuses, and the live-row scoping of the write. The integration suite
+ * covers the rest.
  */
 const TEACHER_ID = '5b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e';
 const findUniqueTeacher = vi.fn();
@@ -51,70 +48,22 @@ function put(body: Record<string, unknown>): Promise<Response> {
   );
 }
 
-/** The shape a typed Prisma call rejects with when Postgres raises 23514. */
-function checkViolation(constraint: string): Error {
-  return new Error(
-    `Invalid \`prisma.teacher.updateMany()\` invocation:\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \\"Teacher\\" violates check constraint \\"${constraint}\\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  );
-}
-
+// `updateTeacherSchema` names no bank field, and `.strict()` refuses one.
 describe('PUT /api/teachers/[id] — bank fields', () => {
   beforeEach(() => {
     findUniqueTeacher.mockReset();
     updateTeacher.mockReset();
   });
 
-  it('answers 404 when the teacher row is gone before the bank fields are read', async () => {
-    findUniqueTeacher.mockResolvedValueOnce(null);
+  it.each([{ bankIban: IBAN }, { bankAccountName: 'H. Teacher' }, { bio: 'x', bankIban: IBAN }])(
+    'refuses a body naming a bank field with the schema’s 400, writing nothing: %j',
+    async (body) => {
+      const res = await put(body);
 
-    const res = await put({ bankIban: IBAN, bankAccountName: 'H. Teacher' });
-
-    expect(res.status).toBe(404);
-    expect(updateTeacher).not.toHaveBeenCalled();
-  });
-
-  // The pre-check read a stored holder name; a concurrent save cleared it
-  // before this update landed, so the database is what refuses the pair.
-  it('answers the holder-name refusal when the database constraint refuses the pair', async () => {
-    findUniqueTeacher.mockResolvedValueOnce({ bankIban: null, bankAccountName: 'H. Teacher' });
-    updateTeacher.mockRejectedValueOnce(checkViolation('Teacher_bank_holder_name_check'));
-
-    const res = await put({ bankIban: IBAN });
-
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: { message?: string } };
-    expect(body.error?.message).toBe(BANK_HOLDER_NAME_REQUIRED_MESSAGE);
-  });
-
-  // The same refusal when the save also switches currency: the write runs
-  // inside the switch's transaction, whose rejection the same mapping answers.
-  it('answers the holder-name refusal when the constraint refuses the pair in a currency save', async () => {
-    findUniqueTeacher.mockResolvedValueOnce({ bankIban: null, bankAccountName: 'H. Teacher' });
-    updateTeacher.mockRejectedValueOnce(checkViolation('Teacher_bank_holder_name_check'));
-
-    const res = await put({ currency: 'GBP', bankIban: IBAN });
-
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: { message?: string } };
-    expect(body.error?.message).toBe(BANK_HOLDER_NAME_REQUIRED_MESSAGE);
-    expect(updateTeacher).toHaveBeenCalledWith({
-      where: { id: TEACHER_ID, deletedAt: null },
-      data: { bankIban: IBAN },
-    });
-  });
-
-  it('does not relabel a different check violation as the holder-name refusal', async () => {
-    // The unhandled error is logged by `withErrorHandler`; kept out of the test output.
-    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
-    onTestFinished(() => error.mockRestore());
-    findUniqueTeacher.mockResolvedValueOnce({ bankIban: null, bankAccountName: 'H. Teacher' });
-    updateTeacher.mockRejectedValueOnce(checkViolation('Some_other_check'));
-
-    const res = await put({ bankIban: IBAN });
-
-    expect(res.status).toBe(500);
-    expect(error).toHaveBeenCalled();
-  });
+      expect(res.status).toBe(400);
+      expect(updateTeacher).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('PUT /api/teachers/[id] — writes only a live row (#758)', () => {

@@ -31,8 +31,6 @@ describe('ProfilePage', () => {
       pageSlug: 'ada',
       defaultCurrency: 'EUR',
       defaultTimezone: 'Europe/Amsterdam',
-      bankIban: null,
-      bankAccountName: null,
       photo: null,
     });
 

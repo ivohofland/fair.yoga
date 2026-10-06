@@ -166,8 +166,7 @@ let studentAccountId: string;
         account: { create: { email: `gdpr-teacher-${uniqueSuffix}@test.local` } },
         bio: 'GDPR tests',
         pageSlug: `gdpr-teacher-${uniqueSuffix}`,
-        bankIban: 'NL00TEST0123456789',
-        bankAccountName: 'G. Teacher',
+        bankAccounts: { create: { currency: 'EUR', holderName: 'G. Teacher', iban: 'NL00TEST0123456789' } },
       },
     });
     teacherId = teacher.id;
@@ -466,7 +465,7 @@ let studentAccountId: string;
 
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(teacher.firstName).toBe('Deleted');
-    expect(teacher.bankIban).toBeNull();
+    expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
     expect(teacher.pageSlug).toBe(`deleted-${teacherId}`);
     expect(teacher.deletedAt).not.toBeNull();
 
@@ -3557,6 +3556,23 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     expect(exported.profile.photo).toEqual({ contentType: 'image/webp', base64: Buffer.from('face').toString('base64') });
     await expectErased(deleteTeacherAccount(prisma, teacherId));
     expect(await prisma.teacherPhoto.count({ where: { teacherId } })).toBe(0);
+  }, 20_000);
+
+  it('teacher erasure deletes every bank account and the export carried them', async () => {
+    const teacherId = await makeTeacher();
+    await prisma.teacherBankAccount.createMany({
+      data: [
+        { teacherId, currency: 'EUR', holderName: 'P. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A' },
+        { teacherId, currency: 'GBP', holderName: 'P. Teacher', sortCode: '123456', accountNumber: '12345678' },
+      ],
+    });
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.bankAccounts).toEqual([
+      { currency: 'EUR', holderName: 'P. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A', sortCode: null, accountNumber: null, routingNumber: null },
+      { currency: 'GBP', holderName: 'P. Teacher', iban: null, bic: null, sortCode: '123456', accountNumber: '12345678', routingNumber: null },
+    ]);
+    await expectErased(deleteTeacherAccount(prisma, teacherId));
+    expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
   }, 20_000);
 
   it('exports photo: null for a teacher without one', async () => {

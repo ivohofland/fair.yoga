@@ -11,10 +11,8 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import { updateTeacherSchema, PAGE_SLUG_TAKEN_MESSAGE, BANK_HOLDER_NAME_REQUIRED_MESSAGE } from '@/lib/schemas';
+import { updateTeacherSchema, PAGE_SLUG_TAKEN_MESSAGE } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
-import { isCheckViolationOn } from '@/lib/check-violation';
-import { nonBlank } from '@/lib/payment-methods';
 import { updateTeacherProfile, type TeacherProfileOutcome } from '@/services/teacher-profile';
 
 export const GET = withErrorHandler(async (
@@ -67,26 +65,6 @@ export const PUT = withErrorHandler(async (
     return respondError('No valid fields to update', 400);
   }
 
-  // The body is partial, so the rule is checked on the row as it would be
-  // after this save, and answered with copy the teacher can act on. Read and
-  // write are separate statements, so a teacher racing their own two saves
-  // can get past this check; `Teacher_bank_holder_name_check` refuses the
-  // pair in the database, and the catch below answers that with the same 400.
-  if (updateData.bankIban !== undefined || updateData.bankAccountName !== undefined) {
-    const stored = await prisma.teacher.findUnique({
-      where: { id },
-      select: { bankIban: true, bankAccountName: true },
-    });
-    if (!stored) return respondError('Teacher not found', 404);
-    const iban = nonBlank(updateData.bankIban !== undefined ? updateData.bankIban : stored.bankIban);
-    const holder = nonBlank(
-      updateData.bankAccountName !== undefined ? updateData.bankAccountName : stored.bankAccountName,
-    );
-    if (iban !== null && holder === null) {
-      return respondError(BANK_HOLDER_NAME_REQUIRED_MESSAGE, 400);
-    }
-  }
-
   const { currency, ...fields } = updateData;
   let outcome: TeacherProfileOutcome;
   try {
@@ -120,9 +98,6 @@ export const PUT = withErrorHandler(async (
 function refusalForWriteError(err: unknown): NextResponse | null {
   if (isUniqueConflictOn(err, ['pageSlug'])) {
     return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
-  }
-  if (isCheckViolationOn(err, 'Teacher_bank_holder_name_check')) {
-    return respondError(BANK_HOLDER_NAME_REQUIRED_MESSAGE, 400);
   }
   return null;
 }

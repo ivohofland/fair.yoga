@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import type { BankDetails } from '@/lib/bank-details';
 import { PaymentDetails } from './payment-details';
 
 describe('PaymentDetails', () => {
@@ -16,11 +17,15 @@ describe('PaymentDetails', () => {
   function renderDetails(): void {
     render(
       <PaymentDetails
-        iban="NL91 ABNA 0417 1643 00"
+        details={{ scheme: 'sepa', iban: 'NL91 ABNA 0417 1643 00', bic: null }}
         beneficiary="Ivo Hofland"
         reference="Vinyasa Saturday, 12 Sep"
       />,
     );
+  }
+
+  function renderScheme(details: BankDetails): void {
+    render(<PaymentDetails details={details} beneficiary="Ivo Hofland" reference="Vinyasa Saturday, 12 Sep" />);
   }
 
   it('shows the name, IBAN and reference a transfer needs', () => {
@@ -97,5 +102,49 @@ describe('PaymentDetails', () => {
         expect(['DT', 'DD'].includes(child.tagName)).toBe(true);
       });
     });
+  });
+
+  it('shows no BIC row without a BIC', () => {
+    renderScheme({ scheme: 'sepa', iban: 'NL91ABNA0417164300', bic: null });
+    expect(screen.queryByText('BIC')).not.toBeInTheDocument();
+  });
+
+  it.each(['sepa', 'iban'] as const)('shows and copies the BIC of a %s account that has one', async (scheme) => {
+    const writeText = stubClipboard(async () => {});
+    renderScheme({ scheme, iban: 'CH9300762011623852957', bic: 'UBSWCHZH80A' });
+    expect(screen.getByText('IBAN')).toBeInTheDocument();
+    expect(screen.getByText('CH9300762011623852957')).toBeInTheDocument();
+    expect(screen.getByText('BIC')).toBeInTheDocument();
+    expect(screen.getByText('UBSWCHZH80A')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy BIC' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('UBSWCHZH80A'));
+  });
+
+  it('shows a UK account as a sort code and an account number, each copyable, and no IBAN', async () => {
+    const writeText = stubClipboard(async () => {});
+    renderScheme({ scheme: 'uk', sortCode: '123456', accountNumber: '12345678' });
+    expect(screen.getByText('Sort code')).toBeInTheDocument();
+    expect(screen.getByText('12-34-56')).toBeInTheDocument();
+    expect(screen.getByText('Account number')).toBeInTheDocument();
+    expect(screen.getByText('12345678')).toBeInTheDocument();
+    expect(screen.queryByText('IBAN')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy sort code' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('123456'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy account number' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('12345678'));
+  });
+
+  it('shows a US account as a routing number and an account number, each copyable, and no IBAN', async () => {
+    const writeText = stubClipboard(async () => {});
+    renderScheme({ scheme: 'us', routingNumber: '021000021', accountNumber: '1234567' });
+    expect(screen.getByText('Routing number')).toBeInTheDocument();
+    expect(screen.getByText('021000021')).toBeInTheDocument();
+    expect(screen.getByText('Account number')).toBeInTheDocument();
+    expect(screen.getByText('1234567')).toBeInTheDocument();
+    expect(screen.queryByText('IBAN')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy routing number' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('021000021'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy account number' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('1234567'));
   });
 });

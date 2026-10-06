@@ -203,9 +203,8 @@ describe('payment reminders (DB)', () => {
   });
 
   it('leaves out "Pay your teacher directly" when the teacher has a payment method', async () => {
-    await prisma.teacher.update({
-      where: { id: teacherId },
-      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Rem' },
+    await prisma.teacherBankAccount.create({
+      data: { teacherId, currency: 'EUR', holderName: 'P. Rem', iban: 'NL91ABNA0417164300' },
     });
     try {
       const payment = await makePayment(new Date(now.getTime() - 9 * DAY), 'overdue');
@@ -221,17 +220,14 @@ describe('payment reminders (DB)', () => {
       });
       expect(note.body).toMatch(/^€12\.50 for PayRem Hatha class on .* at 09:00 is still open\.$/);
     } finally {
-      await prisma.teacher.update({
-        where: { id: teacherId },
-        data: { bankIban: null, bankAccountName: null },
-      });
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
     }
   });
 
   // The class's own currency, not the teacher's: a CHF payment under a EUR
-  // teacher with euro bank details is reminded in CHF, and told to pay the
-  // teacher directly because a bank method is euro-only.
-  it('reminds a CHF payment in CHF, with no bank method, under a EUR teacher who has an IBAN', async () => {
+  // teacher with a euro account is reminded in CHF, and told to pay the
+  // teacher directly because the teacher holds no CHF account.
+  it('reminds a CHF payment in CHF, with no bank method, under a EUR teacher who has only a euro account', async () => {
     const chf = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
@@ -248,9 +244,8 @@ describe('payment reminders (DB)', () => {
       currency: 'CHF',
     });
     chfClassId = chf.id;
-    await prisma.teacher.update({
-      where: { id: teacherId },
-      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Rem' },
+    await prisma.teacherBankAccount.create({
+      data: { teacherId, currency: 'EUR', holderName: 'P. Rem', iban: 'NL91ABNA0417164300' },
     });
     try {
       const payment = await makePayment(new Date(now.getTime() - 9 * DAY), 'overdue', null, chf.id);
@@ -266,10 +261,7 @@ describe('payment reminders (DB)', () => {
       });
       expect(note.body).toMatch(/^CHF 12\.50 for PayRem Franc class on .* at 09:00 is still open\. Pay your teacher directly\.$/);
     } finally {
-      await prisma.teacher.update({
-        where: { id: teacherId },
-        data: { bankIban: null, bankAccountName: null },
-      });
+      await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
     }
   });
 

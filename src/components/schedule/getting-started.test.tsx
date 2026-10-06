@@ -34,9 +34,7 @@ describe('GettingStarted', () => {
 
   const nothingDone: Props = {
     bio: '',
-    bankIban: null,
-    bankAccountName: null,
-    currency: 'EUR',
+    bankAccountInCurrentCurrency: false,
     roomCount: 0,
     classCount: 0,
     skipped: [],
@@ -55,19 +53,6 @@ describe('GettingStarted', () => {
         expect.stringContaining('Add a room'),
         expect.stringContaining('Create your first class'),
       ]);
-    });
-
-    it('leaves the bank row out for a teacher in a currency with no bank method', () => {
-      stubFetch();
-      render(<GettingStarted {...nothingDone} currency="GBP" />);
-
-      const links = screen.getAllByRole('link');
-      expect(links.map((l) => l.textContent)).toEqual([
-        expect.stringContaining('Complete your profile'),
-        expect.stringContaining('Add a room'),
-        expect.stringContaining('Create your first class'),
-      ]);
-      expect(screen.queryByText('Add your bank details')).toBeNull();
     });
 
     it('shows a Skip control on exactly the first two rows', () => {
@@ -149,9 +134,7 @@ describe('GettingStarted', () => {
   describe('the completion card', () => {
     const settled: Props = {
       bio: 'Yoga since 2009.',
-      bankIban: null,
-      bankAccountName: null,
-    currency: 'EUR',
+      bankAccountInCurrentCurrency: false,
       roomCount: 1,
       classCount: 1,
       skipped: ['bank'],
@@ -190,9 +173,7 @@ describe('GettingStarted', () => {
       const { container } = render(
         <GettingStarted
           bio="Yoga since 2009."
-          bankIban="NL00BANK0123456789"
-          bankAccountName="J. Doe"
-          currency="EUR"
+          bankAccountInCurrentCurrency
           roomCount={1}
           classCount={1}
           skipped={['bank', 'share']}
@@ -213,9 +194,7 @@ describe('GettingStarted', () => {
       const { container } = render(
         <GettingStarted
           bio=""
-          bankIban={null}
-          bankAccountName={null}
-          currency="EUR"
+          bankAccountInCurrentCurrency={false}
           roomCount={0}
           classCount={0}
           skipped={['share']}

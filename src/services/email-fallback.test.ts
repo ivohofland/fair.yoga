@@ -554,7 +554,7 @@ describe('processEmailFallback (DB)', () => {
     // The button follows the class's teacher and the class's own currency: a
     // euro class whose teacher has a payment method gets the student a Pay now
     // link to that class's pay page; a class whose teacher has none, or a GBP
-    // class under that same teacher (a bank method is euro-only), gets no pay
+    // class under that same teacher (who holds no GBP account), gets no pay
     // link at all.
     it('gives a student payment email a Pay now link only when the class teacher has a payment method', async () => {
       const bankEmail = `fallback-bank-${uniqueSuffix}@test.local`;
@@ -572,8 +572,8 @@ describe('processEmailFallback (DB)', () => {
             bio: 'Pay-link fixture',
             pageSlug: `fallback-bank-${uniqueSuffix}`,
             defaultTimezone: 'UTC',
-            bankIban: 'NL91ABNA0417164300',
-            bankAccountName: 'B. Teacher',
+            // Euro only: the pound class below finds no account in its currency.
+            bankAccounts: { create: { currency: 'EUR', holderName: 'B. Teacher', iban: 'NL91ABNA0417164300' } },
           },
         });
         bankTeacherId = bankTeacher.id;

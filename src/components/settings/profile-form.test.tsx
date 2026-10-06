@@ -14,8 +14,6 @@ const initial = {
   pageSlug: 'anna',
   currency: 'EUR' as Currency,
   defaultTimezone: 'Europe/Amsterdam',
-  bankIban: null,
-  bankAccountName: null,
 };
 
 describe('ProfileForm', () => {
@@ -218,13 +216,6 @@ describe('ProfileForm', () => {
     });
   });
 
-  it('tells the teacher the holder name must match their bank', () => {
-    renderForm();
-    expect(
-      screen.getByText('Exactly as your bank shows it — your students’ banks check this name.'),
-    ).toBeInTheDocument();
-  });
-
   /**
    * A tab opened before a switch elsewhere still holds the old currency; a
    * save from it that names that currency would switch the teacher back.
@@ -275,29 +266,17 @@ describe('ProfileForm', () => {
     expect([...options].map((o) => o.value)).toEqual(Object.values(Currency));
   });
 
-  describe('the euro-only bank details caption (#758)', () => {
-    const caption = 'Students are shown your bank details only for euro payments.';
+  // `updateTeacherSchema` names no bank field, so the form neither shows nor sends one.
+  it('neither shows nor sends bank fields', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderForm();
+    expect(screen.queryByLabelText('Bank IBAN')).toBeNull();
+    expect(screen.queryByText('Students are shown your bank details only for euro payments.')).toBeNull();
+    save();
 
-    it('is absent while the currency is EUR', () => {
-      renderForm();
-      expect(screen.queryByText(caption)).toBeNull();
-    });
-
-    // The field's own hint, placed and described like the account holder's.
-    it('appears as the IBAN field\'s hint once another currency is picked', () => {
-      renderForm();
-      fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'GBP' } });
-      const note = screen.getByText(caption);
-      const iban = screen.getByLabelText('Bank IBAN');
-      expect(note).toHaveClass('type-caption', 'text-brown-light');
-      expect(note.id).toBe(`${iban.id}-hint`);
-      expect(iban).toHaveAttribute('aria-describedby', note.id);
-      expect(note.compareDocumentPosition(iban) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    });
-
-    it('is shown for a teacher whose saved currency is not EUR', () => {
-      renderForm({ currency: 'USD' });
-      expect(screen.getByText(caption)).toBeInTheDocument();
-    });
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(sentBody()).not.toHaveProperty('bankIban');
+    expect(sentBody()).not.toHaveProperty('bankAccountName');
   });
 });

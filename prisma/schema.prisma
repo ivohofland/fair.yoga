@@ -200,25 +200,44 @@ model Teacher {
   pushInvitations       Boolean                     @default(false)
   skippedOnboarding     OnboardingStep[]            @default([])
   paymentLevel          PaymentLevel                @default(LEVEL_1)
-  bankIban              String?
-  bankAccountName       String?
   processorType         ProcessorType?
   processorAccountId    String?
   deletedAt             DateTime?
   createdAt             DateTime                    @default(now())
   updatedAt             DateTime                    @updatedAt
 
-  account         Account          @relation(fields: [accountId], references: [id])
+  account         Account              @relation(fields: [accountId], references: [id])
   teacherRooms    TeacherRoom[]
   calendarEntries CalendarEntry[]
   announcements   Announcement[]
   studentPrivacy  StudentPrivacy[]
-  createdRooms    Room[]           @relation("RoomCreator")
+  createdRooms    Room[]               @relation("RoomCreator")
   teacherStudents TeacherStudent[]
   invitations     Invitation[]
   teacherBlocks   TeacherBlock[]
   scheduleRules   ScheduleRule[]
   photo           TeacherPhoto?
+  bankAccounts    TeacherBankAccount[]
+}
+
+/// A teacher's bank account in one currency. The columns its currency's scheme
+/// requires are set and the rest are null: `TeacherBankAccount_scheme_check`,
+/// hand-written in the migration that creates this table.
+model TeacherBankAccount {
+  id            String   @id @default(uuid())
+  teacherId     String
+  currency      Currency
+  holderName    String
+  iban          String?
+  bic           String?
+  sortCode      String?
+  accountNumber String?
+  routingNumber String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  teacher       Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, currency])
 }
 
 /// A teacher's avatar, downscaled and re-encoded on upload. `id` is regenerated

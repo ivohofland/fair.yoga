@@ -13,7 +13,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
-import { paymentMethodsFor } from '@/lib/payment-methods';
+import { accountInCurrency, bankAccountSelect, paymentMethodsFor } from '@/lib/payment-methods';
 import { readInPages } from '@/lib/read-in-pages';
 
 export const OVERDUE_AFTER_DAYS = 7;
@@ -68,7 +68,7 @@ function readDuePaymentPage(
                   classType: true,
                   date: true,
                   startTime: true,
-                  teacher: { select: { bankIban: true, bankAccountName: true } },
+                  teacher: { select: { bankAccounts: { select: bankAccountSelect } } },
                 },
               },
             },
@@ -132,7 +132,9 @@ export async function sendPaymentReminders(
           body: studentPaymentReminderBody(
             payment.registration.class.calendarEntry,
             Number(payment.amount),
-            paymentMethodsFor(payment.registration.class.calendarEntry.teacher, payment.registration.class.currency).length > 0,
+            paymentMethodsFor(
+              accountInCurrency(payment.registration.class.calendarEntry.teacher.bankAccounts, payment.registration.class.currency),
+            ).length > 0,
             payment.registration.class.currency,
           ),
           relatedClassId: payment.registration.class.id,

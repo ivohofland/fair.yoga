@@ -13,7 +13,7 @@ import { formatDayHeader, formatMoney, paymentStateText } from '@/lib/format';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
 import { markedPaidLine, reportMissingPayment } from '@/lib/pay-page.server';
-import { PAYMENT_METHOD_COPY, paymentMethodsFor, type PaymentMethod } from '@/lib/payment-methods';
+import { PAYMENT_METHOD_COPY, accountInCurrency, bankAccountSelect, paymentMethodsFor, type PaymentMethod } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
 
 export const dynamic = 'force-dynamic';
@@ -37,13 +37,14 @@ function MethodPanel({
           <p className="type-body">
             Transfer <span className="type-number">{formatMoney(amount, currency)}</span> to:
           </p>
-          <PaymentDetails iban={method.iban} beneficiary={method.beneficiary} reference={reference} />
+          <PaymentDetails details={method.details} beneficiary={method.beneficiary} reference={reference} />
         </>
       );
     case 'epc_qr':
       return (
         <PaymentQr
           iban={method.iban}
+          bic={method.bic}
           beneficiary={method.beneficiary}
           amount={amount}
           currency={method.currency}
@@ -80,9 +81,10 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
                 select: {
                   firstName: true,
                   lastName: true,
-                  bankIban: true,
-                  bankAccountName: true,
                   defaultTimezone: true,
+                  // All of them: the one in the class's currency is picked
+                  // below, since this query cannot filter on a sibling column.
+                  bankAccounts: { select: bankAccountSelect },
                 },
               },
             },
@@ -108,7 +110,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const teacher = entry.teacher;
   const amount = Number(payment.amount);
   const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
-  const methods = paymentMethodsFor(teacher, cls.currency);
+  const methods = paymentMethodsFor(accountInCurrency(teacher.bankAccounts, cls.currency));
   const state = paymentStateText(payment.status);
   // A waived payment is not charged, so it gets no line saying it still is.
   const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);

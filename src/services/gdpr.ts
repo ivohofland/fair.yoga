@@ -32,6 +32,7 @@ import {
 } from '@/lib/db-locks';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { bankAccountSelect } from '@/lib/payment-methods';
 import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 import { startOfLocalDay } from '@/lib/timezone';
 import { withSlot as withClassSlot } from './class-template-lifecycle';
@@ -273,6 +274,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       },
       announcements: true,
       photo: { select: { bytes: true } },
+      bankAccounts: { select: bankAccountSelect, orderBy: { currency: 'asc' } },
     },
   });
 
@@ -299,13 +301,12 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       ...exportedTeacherPushPrefs(teacher),
       classReminder: teacher.classReminder,
       classReminderChannel: teacher.classReminderChannel,
-      bankIban: teacher.bankIban,
-      bankAccountName: teacher.bankAccountName,
       createdAt: teacher.createdAt,
       photo: teacher.photo
         ? { contentType: 'image/webp' as const, base64: Buffer.from(teacher.photo.bytes).toString('base64') }
         : null,
     },
+    bankAccounts: teacher.bankAccounts,
     rooms: teacher.teacherRooms.map((tr) => ({
       venue: tr.room.venueName,
       room: tr.room.roomName,
@@ -1614,8 +1615,6 @@ export async function deleteTeacherAccount(
           email: erasedAddress(teacherId),
           bio: '',
           pageSlug: `deleted-${teacherId}`,
-          bankIban: null,
-          bankAccountName: null,
           customDomain: null,
           processorType: null,
           processorAccountId: null,
@@ -1631,6 +1630,8 @@ export async function deleteTeacherAccount(
       // then sees the row that upload wrote.
       // `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate (#46)".
       await tx.teacherPhoto.deleteMany({ where: { teacherId } });
+      // Also after the `Teacher` lock: the erased teacher keeps no bank account.
+      await tx.teacherBankAccount.deleteMany({ where: { teacherId } });
 
       return skipped;
     },
