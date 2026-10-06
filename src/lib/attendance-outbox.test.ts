@@ -18,6 +18,7 @@ import {
   useOutboxVolatile,
   withLock,
   type OutboxState,
+  type PendingEntry,
   type QueuedStatus,
 } from '@/lib/attendance-outbox';
 
@@ -29,6 +30,19 @@ function VolatileProbe() {
 
 function input(status: QueuedStatus, registrationId = 'r1') {
   return { ownerId: 'a', registrationId, classId: 'c', studentName: 'Ada', status };
+}
+
+/** Storage that refuses any value longer than `limit()`, the way a full quota does. */
+function quota(limit: () => number) {
+  const realSetItem = Storage.prototype.setItem;
+  return vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+    if (value.length > limit()) throw new DOMException('quota', 'QuotaExceededError');
+    realSetItem.call(this, key, value);
+  });
+}
+
+function storedLength(): number {
+  return localStorage.getItem(KEY)?.length ?? 0;
 }
 
 describe('attendance outbox', () => {
@@ -245,7 +259,7 @@ describe('attendance outbox', () => {
     const second = await enqueueAttendance(input('no_show'));
     await settleEntry(second, { kind: 'confirmed', at: 2000 });
 
-    // The switch to memory leaves no stored copy older than memory behind.
+    // A failed write leaves no stored copy that contradicts memory.
     resetOutboxForTests();
     expect(getOutbox().pending.r1).toBeUndefined();
 
@@ -255,10 +269,160 @@ describe('attendance outbox', () => {
     resetOutboxForTests();
     expect(getOutbox()).toEqual(EMPTY_OUTBOX);
 
-    expect(warn).toHaveBeenCalledWith('[attendance-outbox] storage failed; the outbox is in memory for this tab', {
+    expect(warn).toHaveBeenCalledWith('[attendance-outbox] storage refused a write; what it could not hold is in memory for this tab', {
       error: 'QuotaExceededError',
     });
     expect(JSON.stringify(warn.mock.calls)).not.toContain('Ada');
+  });
+
+  it('a refused write that leaves only a confirmation in memory is not reported as volatile', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = renderHook(() => useOutboxVolatile());
+    const entry = await act(() => enqueueAttendance(input('attended')));
+    quota(() => 0);
+    await act(() => settleEntry(entry, { kind: 'confirmed', at: Date.now() }));
+    expect(getOutbox().confirmed.r1?.status).toBe('attended');
+    expect(result.current).toBe(false);
+  });
+
+  it('a failed write keeps every stored entry it agrees with, so a reload loses only what never fit', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const r of ['r1', 'r2', 'r3']) await enqueueAttendance(input('attended', r));
+    const fits = storedLength();
+    quota(() => fits);
+    await enqueueAttendance(input('attended', 'r4'));
+    expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2', 'r3', 'r4']);
+
+    resetOutboxForTests();
+    expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2', 'r3']);
+  });
+
+  it('after a failed write, a mark corrected or synced in memory never comes back from storage', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stored: PendingEntry[] = [];
+    for (const r of ['r1', 'r2', 'r3']) stored.push(await enqueueAttendance(input('attended', r)));
+    const fits = storedLength();
+    quota(() => fits);
+    await enqueueAttendance(input('attended', 'r4'));
+    await enqueueAttendance(input('no_show', 'r1'));
+    const r2 = stored[1];
+    if (r2 === undefined) throw new Error('expected r2');
+    await settleEntry(r2, { kind: 'confirmed', at: 1000 });
+    expect(getOutbox().pending.r1?.status).toBe('no_show');
+
+    resetOutboxForTests();
+    expect(Object.keys(getOutbox().pending)).toEqual(['r3']);
+  });
+
+  it('a read that throws removes nothing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await enqueueAttendance(input('attended'));
+    resetOutboxForTests();
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+      throw new DOMException('read', 'UnknownError');
+    });
+    getOutbox();
+    getItem.mockRestore();
+    expect(localStorage.getItem(KEY)).toContain('Ada');
+    resetOutboxForTests();
+    expect(getOutbox().pending.r1).toBeDefined();
+    expect(warn).toHaveBeenCalledWith('[attendance-outbox] storage could not be read; this tab keeps what it last read', {
+      error: 'UnknownError',
+    });
+  });
+
+  it('a failed write in one tab leaves another tab its entries, and later writes keep what that tab stored since', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribe = other.subscribeOutbox(() => {});
+    const bo = (registrationId: string) => ({ ...input('attended', registrationId), ownerId: 'b', studentName: 'Bo' });
+    try {
+      await other.enqueueAttendance(bo('y1'));
+      let fits = storedLength();
+      quota(() => fits);
+      await enqueueAttendance(input('attended', 'r1'));
+      window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+      expect(Object.keys(other.getOutbox().pending)).toEqual(['y1']);
+
+      fits = Number.MAX_SAFE_INTEGER;
+      await other.enqueueAttendance(bo('y2'));
+      fits = storedLength();
+      await enqueueAttendance(input('no_show', 'r1'));
+      window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+      expect(Object.keys(other.getOutbox().pending).sort()).toEqual(['y1', 'y2']);
+      expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'y1', 'y2']);
+      expect(getOutbox().pending.r1?.status).toBe('no_show');
+    } finally {
+      unsubscribe();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('an entry another tab stored since this tab’s refused write wins over this tab’s memory copy', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribeOther = other.subscribeOutbox(() => {});
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r2'));
+      let fits = storedLength();
+      quota(() => fits);
+      await enqueueAttendance(input('attended', 'r1'));
+      fits = Number.MAX_SAFE_INTEGER;
+      window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+      await other.enqueueAttendance(input('no_show', 'r1'));
+      window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+      expect(getOutbox().pending.r1?.status).toBe('no_show');
+    } finally {
+      unsubscribe();
+      unsubscribeOther();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('once a whole write succeeds again, storage holds everything and nothing is volatile', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = renderHook(() => useOutboxVolatile());
+    await act(() => enqueueAttendance(input('attended', 'r1')));
+    let fits = storedLength();
+    quota(() => fits);
+    await act(() => enqueueAttendance(input('attended', 'r2')));
+    expect(result.current).toBe(true);
+    fits = Number.MAX_SAFE_INTEGER;
+    await act(() => enqueueAttendance(input('attended', 'r3')));
+    expect(result.current).toBe(false);
+    resetOutboxForTests();
+    expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2', 'r3']);
+  });
+
+  it('when storage refuses even a removal, this tab stops reading what storage still holds', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await enqueueAttendance(input('attended', 'r1'));
+    await enqueueAttendance(input('attended', 'r2'));
+    quota(() => 0);
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new DOMException('remove', 'UnknownError');
+    });
+    await enqueueAttendance(input('no_show', 'r1'));
+    const unsubscribe = subscribeOutbox(() => {});
+    window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+    expect(readOutbox().pending.r1?.status).toBe('no_show');
+    unsubscribe();
+  });
+
+  it('when storage refuses even what it already held, the stored copy is removed and that is logged', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await enqueueAttendance(input('attended', 'r1'));
+    await enqueueAttendance(input('attended', 'r2'));
+    quota(() => 0);
+    await enqueueAttendance(input('no_show', 'r1'));
+    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(warn).toHaveBeenCalledWith('[attendance-outbox] storage refused even what it held; the stored copy is removed', {
+      error: 'QuotaExceededError',
+    });
+    expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2']);
   });
 
   it('logs the switch to memory once', async () => {
