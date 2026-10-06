@@ -167,6 +167,8 @@ export const LOCK_CONTENTION_TESTS = [
   // #758: the `teachers/[id]/route-lock-order.test.ts` shape, for the
   // currency switch and the creators it serialises with.
   'src/services/currency-switch-lock-order.test.ts',
+  // #758: the same shape, for the bank-account save's `Teacher` gate.
+  'src/app/api/teachers/[id]/bank-accounts/[currency]/route-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

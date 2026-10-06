@@ -2017,7 +2017,10 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   teacher's closing `teacher.updateMany` writes a row the transaction already
   holds. That `UPDATE` rewrites `email` and `pageSlug`, so it raises the hold
   to `FOR UPDATE`. By then the transaction holds every template and `Class`
-  row it locks.
+  row it locks. After that `UPDATE` it deletes the teacher's
+  `TeacherBankAccount` rows, under the `Teacher` lock it still holds, so a
+  bank-account save (below) either committed before the erasure took that
+  lock and is deleted here, or waits it out and writes nothing.
 - `PUT /api/teachers/[id]`'s save (`updateTeacherProfile`,
   `src/services/teacher-profile.ts`) without a `currency` takes no explicit
   lock, but its `teacher.updateMany` waits on an erasure's hold and, scoped to
@@ -2061,6 +2064,20 @@ and the same raise in a currency-switching save that also changes `pageSlug`
 - The photo upload (`saveTeacherPhoto`, `src/services/teacher-photo.ts`):
   `lockLiveTeacher`, `FOR SHARE`, as its first lock, and the only one on
   `Teacher`. See the section above.
+- The bank-account save and removal (`saveBankAccount` and
+  `removeBankAccount`, `src/services/bank-accounts.ts`, behind
+  `PUT`/`DELETE /api/teachers/[id]/bank-accounts/[currency]`):
+  `lockTeacherForShare` as the first and only lock, then an upsert or delete
+  of the one `TeacherBankAccount` row on `(teacherId, currency)`. An erasure
+  holds the row `FOR NO KEY UPDATE`, which conflicts with `FOR SHARE`, so a
+  save that arrives during one waits, finds the row erased and answers 404.
+  Without the lock the upsert's foreign-key `FOR KEY SHARE` is all that
+  touches the teacher row. It does not conflict with `FOR NO KEY UPDATE`, and
+  after the closing `UPDATE`'s raise it waits only for the erasure's commit
+  and then passes against the anonymised row, which the erasure keeps. Either
+  way the account it inserts outlives the erasure's delete.
+  `src/app/api/teachers/[id]/bank-accounts/[currency]/route-lock-order.test.ts`
+  pins this.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
@@ -2073,6 +2090,13 @@ new currency.
 Re-derive the sites with:
 
     grep -rn "lockTeacherForNoKeyUpdate\|lockTeacherForShare\|lockLiveTeacher" src | grep -v "\.test\."
+
+Run on 2026-10-06 after the bank-account sites landed, the lines that call a
+helper (not imports, comments or the definitions in `db-locks.ts`) were nine:
+`classes/route.ts`, `studio-classes/route.ts`, `class-template-lifecycle.ts`,
+`studio-class-template-lifecycle.ts`, `gdpr.ts`, `currency-switch.ts`,
+`teacher-photo.ts`, and `bank-accounts.ts` twice. Every one is named in an
+entry above.
 
 ### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`
 

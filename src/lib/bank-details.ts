@@ -202,3 +202,11 @@ export function bankDetailsFromRow(
     }
   }
 }
+
+/**
+ * A stored account's identifier, all but its last four characters masked:
+ * the IBAN, or the account number when there is no IBAN.
+ */
+export function maskedIdentifier(row: { iban: string | null; accountNumber: string | null }): string {
+  return `•••• ${(row.iban ?? row.accountNumber ?? '').slice(-4)}`;
+}
