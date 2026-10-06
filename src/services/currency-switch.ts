@@ -1,4 +1,5 @@
-import { Currency, Prisma } from '@prisma/client';
+import { Prisma, type Currency } from '@prisma/client';
+import { CURRENCIES } from '@/lib/format';
 import {
   CLASS_TO_ENTRY_JOIN,
   lockClassRowsOrdered,
@@ -99,7 +100,7 @@ export async function switchTeacherCurrency(
 
   await tx.teacher.update({ where: { id: teacherId }, data: { currency } });
 
-  const kept = Object.values(Currency)
+  const kept = CURRENCIES
     .map((c) => ({
       currency: c,
       classes: keptClasses.find((g) => g.currency === c)?._count._all ?? 0,

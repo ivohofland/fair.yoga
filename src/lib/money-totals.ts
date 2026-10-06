@@ -1,18 +1,12 @@
 import type { Currency, Prisma } from '@prisma/client';
-import { CURRENCY_PREFIX, formatMoneyCents } from '@/lib/format';
+import { CURRENCIES, formatMoneyCents } from '@/lib/format';
 
 /** One total per currency present, never across currencies. */
 export type MoneyTotals = ReadonlyArray<{ currency: Currency; cents: number }>;
 
-// `CURRENCY_PREFIX`'s keys in `Currency` declaration order, read without a
-// value import of `@prisma/client` (this module is reachable from client
-// components). Its `satisfies` fixes which keys exist; their order is pinned
-// by `money-totals.test.ts`.
-const DECLARATION_ORDER = Object.keys(CURRENCY_PREFIX) as Currency[];
-
 /**
  * Sums `items` per currency in whole cents. Order: `first` (the teacher's
- * current currency) when present, then the rest in `Currency` declaration order.
+ * current currency) when present, then the rest in `CURRENCIES` order.
  */
 export function totalsByCurrency(
   items: Iterable<{ currency: Currency; amount: number | Prisma.Decimal }>,
@@ -23,7 +17,7 @@ export function totalsByCurrency(
     const n = typeof amount === 'number' ? amount : amount.toNumber();
     sums.set(currency, (sums.get(currency) ?? 0) + Math.round(n * 100));
   }
-  const order = [first, ...DECLARATION_ORDER.filter((c) => c !== first)];
+  const order = [first, ...CURRENCIES.filter((c) => c !== first)];
   return order.flatMap((currency) => {
     const cents = sums.get(currency);
     return cents === undefined ? [] : [{ currency, cents }];

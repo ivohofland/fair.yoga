@@ -2,6 +2,7 @@ import type { PaymentStatus, Currency } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { timeToHHmm } from '@/lib/time-of-day';
 import type { BirthdayDayMonth } from '@/lib/birthday';
+import type { NoneOf } from '@/lib/type-pins';
 
 export function formatRoomLocation(roomName: string, venueName: string): string {
   return roomName ? `${roomName} at ${venueName}` : venueName;
@@ -233,6 +234,15 @@ export function todayLocal(): string {
 export function formatMonthLabel(year: number, monthIndex: number): string {
   return `${FULL_MONTHS[monthIndex] ?? ''} ${year}`;
 }
+
+/**
+ * Every `Currency`, in the order the app lists them. A member missing here
+ * fails the build at `_currenciesCoverEnum`; the order is held to the enum's
+ * declaration order by `money-totals.test.ts`.
+ */
+export const CURRENCIES = ['EUR', 'GBP', 'USD', 'CHF', 'SEK', 'NOK', 'DKK'] as const satisfies readonly Currency[];
+const _currenciesCoverEnum: NoneOf<Exclude<Currency, (typeof CURRENCIES)[number]>> = true;
+void _currenciesCoverEnum;
 
 export const CURRENCY_PREFIX = {
   EUR: '€', GBP: '£', USD: '$', CHF: 'CHF ', SEK: 'SEK ', NOK: 'NOK ', DKK: 'DKK ',
