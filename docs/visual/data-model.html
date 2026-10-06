@@ -248,7 +248,7 @@
         <div class="field"><span class="field-name">page_slug</span><span class="field-type">string, unique</span></div>
         <div class="field"><span class="field-name">custom_domain</span><span class="field-type">string, nullable</span></div>
         <div class="section-label">Defaults</div>
-        <div class="field"><span class="field-name">default_currency</span><span class="field-type">string, default 'EUR'</span></div>
+        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency, default EUR</span></div>
         <div class="field"><span class="field-name">default_timezone</span><span class="field-type">string, e.g. 'Europe/Amsterdam'</span></div>
         <div class="section-label">Notifications</div>
         <div class="field"><span class="field-name">class_reminder</span><span class="field-type">enum: evening_before, morning_of, one_hour_before, off, default morning_of</span></div>
@@ -391,6 +391,7 @@
         <div class="field"><span class="field-name">start_time</span><span class="field-type">time</span></div>
         <div class="field"><span class="field-name">duration_minutes</span><span class="field-type">int</span></div>
         <div class="section-label">Economics (locked after first registration)</div>
+        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency, snapshot of the teacher's</span></div>
         <div class="field"><span class="field-name">room_cost</span><span class="field-type">decimal</span></div>
         <div class="field"><span class="field-name">min_rate</span><span class="field-type">decimal</span></div>
         <div class="field"><span class="field-name">target_rate</span><span class="field-type">decimal</span></div>
@@ -422,6 +423,7 @@
         <div class="field"><span class="field-name">location</span><span class="field-type">string</span></div>
         <div class="field"><span class="field-name">student_count</span><span class="field-type">int, nullable</span></div>
         <div class="field"><span class="field-name">hourly_rate</span><span class="field-type">decimal</span></div>
+        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency, snapshot of the teacher's</span></div>
         <div class="field-note">No pricing engine. No individual registration. Just calendar + income tracking.</div>
       </div>
     </div>
