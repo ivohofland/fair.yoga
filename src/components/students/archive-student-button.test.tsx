@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ArchiveStudentButton } from './archive-student-button';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 
-const noneOutstanding = { ids: [], total: 0 };
+const noneOutstanding = { ids: [], totals: [] };
 
 /**
  * This button renders no confirmation on success, only a `router.push` — but
@@ -28,7 +28,7 @@ describe('ArchiveStudentButton', () => {
   it('sends state=archived with no body when nothing is outstanding', async () => {
     stubOk();
     render(
-      <ArchiveStudentButton currency="EUR"
+      <ArchiveStudentButton
         studentId="st-1"
         studentName="Dana"
         isArchived={false}
@@ -49,7 +49,7 @@ describe('ArchiveStudentButton', () => {
   it('sends state=unarchived when the student is archived', async () => {
     stubOk();
     render(
-      <ArchiveStudentButton currency="EUR"
+      <ArchiveStudentButton
         studentId="st-1"
         studentName="Dana"
         isArchived={true}
@@ -68,11 +68,11 @@ describe('ArchiveStudentButton', () => {
   });
 
   describe('something outstanding', () => {
-    const outstanding = { ids: ['p1', 'p2'], total: 45 };
+    const outstanding = { ids: ['p1', 'p2'], totals: [{ currency: 'EUR' as const, cents: 4500 }] };
 
     it('opens an inline confirm naming the total and count, sending no request yet', () => {
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -88,9 +88,32 @@ describe('ArchiveStudentButton', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('names one amount per currency owed, never their sum', () => {
+      render(
+        <ArchiveStudentButton
+          studentId="st-1"
+          studentName="Dana"
+          isArchived={false}
+          outstanding={{
+            ids: ['p1', 'p2', 'p3'],
+            totals: [
+              { currency: 'EUR', cents: 4000 },
+              { currency: 'GBP', cents: 1200 },
+            ],
+          }}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Archive student' }));
+
+      expect(
+        screen.getByText('Dana still owes €40.00 and £12.00 across 3 payments. Archiving waives them.'),
+      ).toBeInTheDocument();
+    });
+
     it('moves focus to Waive and archive when the confirm opens', () => {
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -105,11 +128,11 @@ describe('ArchiveStudentButton', () => {
 
     it('names a single payment in the singular', () => {
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
-          outstanding={{ ids: ['p1'], total: 20 }}
+          outstanding={{ ids: ['p1'], totals: [{ currency: 'EUR' as const, cents: 2000 }] }}
         />,
       );
 
@@ -122,7 +145,7 @@ describe('ArchiveStudentButton', () => {
 
     it('Cancel closes the confirm with no request, returning focus to the main button', () => {
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -141,7 +164,7 @@ describe('ArchiveStudentButton', () => {
     it('Waive and archive sends the waive ids and navigates on success', async () => {
       stubOk();
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -175,7 +198,7 @@ describe('ArchiveStudentButton', () => {
       });
       vi.stubGlobal('fetch', fetchMock);
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -211,7 +234,7 @@ describe('ArchiveStudentButton', () => {
       });
       vi.stubGlobal('fetch', fetchMock);
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -235,7 +258,7 @@ describe('ArchiveStudentButton', () => {
       fetchMock.mockRejectedValue(offline);
       vi.stubGlobal('fetch', fetchMock);
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -261,7 +284,7 @@ describe('ArchiveStudentButton', () => {
       fetchMock.mockReturnValue(new Promise((r) => { answer = r; }));
       vi.stubGlobal('fetch', fetchMock);
       render(
-        <ArchiveStudentButton currency="EUR"
+        <ArchiveStudentButton
           studentId="st-1"
           studentName="Dana"
           isArchived={false}
@@ -293,7 +316,7 @@ describe('ArchiveStudentButton', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ArchiveStudentButton currency="EUR"
+      <ArchiveStudentButton
         studentId="st-1"
         studentName="Dana"
         isArchived={false}
@@ -330,7 +353,7 @@ describe('ArchiveStudentButton', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ArchiveStudentButton currency="EUR"
+      <ArchiveStudentButton
         studentId="st-1"
         studentName="Dana"
         isArchived={false}
@@ -368,7 +391,7 @@ describe('ArchiveStudentButton', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ArchiveStudentButton currency="EUR"
+      <ArchiveStudentButton
         studentId="st-1"
         studentName="Dana"
         isArchived={false}
@@ -386,7 +409,7 @@ describe('ArchiveStudentButton', () => {
     fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ArchiveStudentButton currency="EUR"
+      <ArchiveStudentButton
         studentId="st-1"
         studentName="Dana"
         isArchived={true}
@@ -407,7 +430,7 @@ describe('ArchiveStudentButton', () => {
     fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ArchiveStudentButton currency="EUR"
+      <ArchiveStudentButton
         studentId="st-1"
         studentName="Dana"
         isArchived={false}

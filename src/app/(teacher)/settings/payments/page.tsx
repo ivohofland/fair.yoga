@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { teacherCurrency } from '@/lib/teacher-currency.server';
-import { formatMoney } from '@/lib/format';
+import { formatMoneyCents } from '@/lib/format';
+import { totalsByCurrency, orZero } from '@/lib/money-totals';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
@@ -41,8 +42,10 @@ export default async function PaymentsOverviewPage() {
   const receivedAll = payments.filter((p) => p.status === 'paid');
   const received = receivedAll.slice(0, 30);
   const notCharged = payments.filter((p) => p.status === 'not_charged').slice(0, 30);
-  const outstandingTotal = outstanding.reduce((sum, p) => sum + Number(p.amount), 0);
-  const receivedTotal = receivedAll.reduce((sum, p) => sum + Number(p.amount), 0);
+  const toItems = (rows: typeof payments) =>
+    rows.map((p) => ({ currency: p.registration.class.currency, amount: p.amount }));
+  const outstandingTotals = orZero(totalsByCurrency(toItems(outstanding), currency), currency);
+  const receivedTotals = orZero(totalsByCurrency(toItems(receivedAll), currency), currency);
 
   const studentName = (p: (typeof payments)[number]) =>
     teacherVisibleName(p.registration.student, session.teacherId);
@@ -54,18 +57,22 @@ export default async function PaymentsOverviewPage() {
       <div className="flex gap-3 mb-8">
         <div className="flex-1 bg-sand-soft border border-border rounded-card p-5">
           <p className="type-label">Outstanding</p>
-          <p className="type-number text-[28px] leading-[1.25] mt-1 text-brown">
-            {formatMoney(outstandingTotal, currency)}
-          </p>
+          {outstandingTotals.map((t) => (
+            <p key={t.currency} className="type-number text-[28px] leading-[1.25] mt-1 text-brown">
+              {formatMoneyCents(t.cents, t.currency)}
+            </p>
+          ))}
           <p className="type-caption mt-0.5">
             {outstanding.length} {outstanding.length === 1 ? 'payment' : 'payments'}
           </p>
         </div>
         <div className="flex-1 bg-teal-tint rounded-card p-5">
           <p className="type-label">Received</p>
-          <p className="type-number text-[28px] leading-[1.25] mt-1">
-            {formatMoney(receivedTotal, currency)}
-          </p>
+          {receivedTotals.map((t) => (
+            <p key={t.currency} className="type-number text-[28px] leading-[1.25] mt-1">
+              {formatMoneyCents(t.cents, t.currency)}
+            </p>
+          ))}
           <p className="type-caption mt-0.5">all time</p>
         </div>
       </div>

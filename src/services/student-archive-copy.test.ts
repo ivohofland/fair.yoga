@@ -14,7 +14,7 @@ import {
 } from './student-archive-copy';
 
 function owed(...amounts: string[]): OpenPayment[] {
-  return amounts.map((amount, i) => ({ id: `p${i}`, amount: new Prisma.Decimal(amount) }));
+  return amounts.map((amount, i) => ({ id: `p${i}`, amount: new Prisma.Decimal(amount), currency: 'EUR' }));
 }
 
 describe('owedPhrase', () => {
@@ -37,8 +37,19 @@ describe('owedPhrase', () => {
 });
 
 describe('owedPhrase currency', () => {
-  it('names the amount in the given currency', () => {
-    expect(owedPhrase(owed('12.50'), 'GBP')).toBe('£12.50 across 1 payment');
+  it("names the amount in the payment's own currency", () => {
+    const gbp: OpenPayment[] = [{ id: 'g', amount: new Prisma.Decimal('12.50'), currency: 'GBP' }];
+    expect(owedPhrase(gbp, 'EUR')).toBe('£12.50 across 1 payment');
+  });
+
+  it('never adds across currencies, the teacher currency first', () => {
+    const mixed: OpenPayment[] = [
+      { id: 'a', amount: new Prisma.Decimal('25'), currency: 'EUR' },
+      { id: 'b', amount: new Prisma.Decimal('12'), currency: 'GBP' },
+      { id: 'c', amount: new Prisma.Decimal('15'), currency: 'EUR' },
+    ];
+    expect(owedPhrase(mixed, 'EUR')).toBe('€40.00 and £12.00 across 3 payments');
+    expect(owedPhrase(mixed, 'GBP')).toBe('£12.00 and €40.00 across 3 payments');
   });
 });
 
