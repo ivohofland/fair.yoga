@@ -347,6 +347,57 @@ describe('Payment Service (DB)', () => {
     expect(notification.body).toMatch(/^€24\.59 for Hatha class on .* at 09:00 is still open\.$/);
   });
 
+  // The class's own currency, not the teacher's: a CHF payment under a EUR
+  // teacher with euro bank details is reminded in CHF, and told to pay the
+  // teacher directly because a bank method is euro-only.
+  it('sendPaymentReminder words a CHF payment in CHF, with no bank method, under a EUR teacher who has an IBAN', async () => {
+    let chfClassId: string | undefined;
+    onTestFinished(async () => {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+      if (chfClassId === undefined) return;
+      await prisma.notification.deleteMany({ where: { relatedClassId: chfClassId } });
+      await prisma.payment.deleteMany({ where: { registration: { classId: chfClassId } } });
+      await prisma.registration.deleteMany({ where: { classId: chfClassId } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: chfClassId } } } });
+    });
+    const chf = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Franc Hatha',
+      date: new Date('2026-06-02'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 35,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+      status: 'completed',
+      settingsLocked: true,
+      currency: 'CHF',
+    });
+    chfClassId = chf.id;
+    const registration = await prisma.registration.create({
+      data: { classId: chf.id, studentId, status: 'attended', tierAtBooking: 3, price: 24.59, tierRatio: 1.0 },
+    });
+    const payment = await prisma.payment.create({
+      data: { registrationId: registration.id, amount: 24.59, status: 'pending' },
+    });
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Teacher' },
+    });
+
+    paymentOf(await sendPaymentReminder(prisma, payment.id), 'applied');
+
+    const notification = await prisma.notification.findFirstOrThrow({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder', relatedClassId: chf.id },
+    });
+    expect(notification.body).toMatch(
+      /^CHF 24\.59 for Franc Hatha class on .* at 09:00 is still open\. Pay your teacher directly\.$/,
+    );
+  });
+
   /**
    * `teacherId` does two jobs in both queries below — it scopes the `where`,
    * and it selects which `StudentPrivacy` row the projection reads (see

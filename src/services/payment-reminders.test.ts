@@ -20,6 +20,7 @@ describe('payment reminders (DB)', () => {
   let teacherRoomId: string;
   let studentId: string;
   let classId: string;
+  let chfClassId: string | undefined;
   const paymentIds: string[] = [];
   const registrationIds: string[] = [];
 
@@ -27,6 +28,7 @@ describe('payment reminders (DB)', () => {
     createdAt: Date,
     status: 'pending' | 'overdue' | 'not_charged' = 'pending',
     reminderSentAt: Date | null = null,
+    onClassId: string = classId,
   ) {
     const student = await prisma.student.create({
       data: {
@@ -37,7 +39,7 @@ describe('payment reminders (DB)', () => {
       },
     });
     const reg = await prisma.registration.create({
-      data: { classId, studentId: student.id, status: 'attended', tierAtBooking: 3, price: 12.5 },
+      data: { classId: onClassId, studentId: student.id, status: 'attended', tierAtBooking: 3, price: 12.5 },
     });
     registrationIds.push(reg.id);
     const payment = await prisma.payment.create({
@@ -106,10 +108,11 @@ describe('payment reminders (DB)', () => {
   });
 
   afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    const classIds = chfClassId !== undefined ? [classId, chfClassId] : [classId];
+    await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
     await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
-    await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
+    await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     await prisma.student.deleteMany({ where: { email: { contains: `payrem-${uniqueSuffix}` } } });
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
@@ -217,6 +220,51 @@ describe('payment reminders (DB)', () => {
         where: { recipientId: reg.studentId, type: 'reminder', relatedClassId: classId },
       });
       expect(note.body).toMatch(/^€12\.50 for PayRem Hatha class on .* at 09:00 is still open\.$/);
+    } finally {
+      await prisma.teacher.update({
+        where: { id: teacherId },
+        data: { bankIban: null, bankAccountName: null },
+      });
+    }
+  });
+
+  // The class's own currency, not the teacher's: a CHF payment under a EUR
+  // teacher with euro bank details is reminded in CHF, and told to pay the
+  // teacher directly because a bank method is euro-only.
+  it('reminds a CHF payment in CHF, with no bank method, under a EUR teacher who has an IBAN', async () => {
+    const chf = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'PayRem Franc',
+      date: new Date('2026-06-02'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 12,
+      status: 'completed',
+      currency: 'CHF',
+    });
+    chfClassId = chf.id;
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'P. Rem' },
+    });
+    try {
+      const payment = await makePayment(new Date(now.getTime() - 9 * DAY), 'overdue', null, chf.id);
+      const scoped = scopeSweep(prisma, { Payment: { id: { in: [payment.id] } } });
+      expect(await sendPaymentReminders(scoped.db, now)).toBe(1);
+
+      const reg = await prisma.registration.findUniqueOrThrow({
+        where: { id: payment.registrationId },
+        select: { studentId: true },
+      });
+      const note = await prisma.notification.findFirstOrThrow({
+        where: { recipientId: reg.studentId, type: 'reminder', relatedClassId: chf.id },
+      });
+      expect(note.body).toMatch(/^CHF 12\.50 for PayRem Franc class on .* at 09:00 is still open\. Pay your teacher directly\.$/);
     } finally {
       await prisma.teacher.update({
         where: { id: teacherId },
