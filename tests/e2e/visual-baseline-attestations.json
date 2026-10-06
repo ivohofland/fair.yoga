@@ -1,20 +1,26 @@
 {
   "class-detail-open": {
-    "sourceSha256": "f50e5c2773cf9efdc7618e500163cbc7d6d7768c89477a916ac5d20faf5159a0",
+    "sourceSha256": "34cc2ed137e5f88736e207be83e5cfae444cf324e328917c917f4d052edcb61e",
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
     "verifiedAt": "2026-10-06",
-    "note": "Finish class now receives the session's accountId (ownerId prop); the page renders the same"
+    "note": "Checklist takes the class currency; EUR render is byte-identical"
   },
   "inbox": {
     "sourceSha256": "32b1ba66f9143e9bdd77423e8e8785820ac29da655838e5b854e3c9248cc52ac",
     "baselineSha256": "25574a7adbb8e27e5b53c32693adfcde7490676fd27e902b5bcea5dae3121a36",
     "verifiedAt": "2026-10-03"
   },
+  "public-page": {
+    "sourceSha256": "b837d640db11ad4a93441b52c65f2f57154a03fbd7b83111b2378a348231965c",
+    "baselineSha256": "c405c17f0442fd3639744797ccb1862397606368e1994c8ff757e793fc446be9",
+    "verifiedAt": "2026-10-06",
+    "note": "Currency threaded through ClassPriceLine; EUR output is byte-identical"
+  },
   "schedule": {
-    "sourceSha256": "7f6eb772947aab55dbc1c96a6ae12c69d287fc9062865e4709cd7cd613b28644",
+    "sourceSha256": "7fac4c5e3b539ac2f85bb3d12e93a84bf84ddfbf4935c4045561697c776b1f20",
     "baselineSha256": "89c0bb9171896fb2bd9911bbc7ba27ae90e412c35738711448550de0c9631da6",
-    "verifiedAt": "2026-10-04",
-    "note": "the select adds bankAccountName and the install card renders only on the client; the visual teacher has no IBAN, so the bank step is todo before and after"
+    "verifiedAt": "2026-10-06",
+    "note": "Onboarding input gains the teacher's currency; EUR render is byte-identical"
   },
   "settings": {
     "sourceSha256": "212265916e17d150cc6a8395323ad24bcf518c25a6e5a82b2805568b6aef0e9c",
