@@ -1,5 +1,15 @@
+import type { ComponentProps } from 'react';
 import { describe, it, expect } from 'vitest';
-import { PAYMENT_METHOD_COPY, nonBlank, paymentMethodsFor } from './payment-methods';
+import { Currency } from '@prisma/client';
+import type { PaymentQr } from '@/components/student/payment-qr';
+import {
+  BANK_METHOD_CURRENCY,
+  PAYMENT_METHOD_COPY,
+  bankMethodsAvailable,
+  nonBlank,
+  paymentMethodsFor,
+  type PaymentMethod,
+} from './payment-methods';
 
 const IBAN = 'NL91ABNA0417164300';
 
@@ -16,15 +26,33 @@ describe('nonBlank', () => {
   });
 });
 
+describe('bankMethodsAvailable', () => {
+  it.each(Object.values(Currency))('answers for %s whether it is the bank-method currency', (currency) => {
+    expect(bankMethodsAvailable(currency)).toBe(currency === 'EUR');
+  });
+
+  it('names the euro as the bank-method currency', () => {
+    expect(BANK_METHOD_CURRENCY).toBe('EUR');
+  });
+
+  it('types a QR code and its component to the bank-method currency alone', () => {
+    // @ts-expect-error a QR method in another currency does not compile
+    const method: PaymentMethod = { kind: 'epc_qr', iban: IBAN, beneficiary: 'A', currency: 'GBP' };
+    // @ts-expect-error nor does a QR component asked for one
+    const qrCurrency: ComponentProps<typeof PaymentQr>['currency'] = 'GBP';
+    expect([method.kind, qrCurrency]).toEqual(['epc_qr', 'GBP']);
+  });
+});
+
 describe('paymentMethodsFor', () => {
-  it.each(['GBP', 'USD', 'CHF', 'SEK', 'NOK', 'DKK'] as const)('offers nothing for %s until bank accounts are per currency', (currency) => {
+  it.each(Object.values(Currency).filter((c) => c !== 'EUR'))('offers nothing for %s', (currency) => {
     expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: 'A' }, currency)).toEqual([]);
   });
 
   it('offers a bank transfer then a QR code when the IBAN and its holder name are both set', () => {
     expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([
       { kind: 'bank_transfer', iban: IBAN, beneficiary: 'I. Hofland' },
-      { kind: 'epc_qr', iban: IBAN, beneficiary: 'I. Hofland' },
+      { kind: 'epc_qr', iban: IBAN, beneficiary: 'I. Hofland', currency: 'EUR' },
     ]);
   });
 

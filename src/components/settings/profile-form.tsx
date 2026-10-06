@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 import { currencyLabel } from '@/lib/format';
+import { bankMethodsAvailable } from '@/lib/payment-methods';
 import type { CurrencySwitchResult } from '@/services/currency-switch';
 
 type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
@@ -267,9 +268,9 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
             label="Bank IBAN"
             value={form.bankIban ?? ''}
             onChange={(e) => update('bankIban', e.target.value || null)}
-            aria-describedby={form.currency !== 'EUR' ? IBAN_CURRENCY_NOTE_ID : undefined}
+            aria-describedby={!bankMethodsAvailable(form.currency) ? IBAN_CURRENCY_NOTE_ID : undefined}
           />
-          {form.currency !== 'EUR' && (
+          {!bankMethodsAvailable(form.currency) && (
             <p id={IBAN_CURRENCY_NOTE_ID} className="type-caption">
               Students are shown your bank details only for euro payments, for now.
             </p>
