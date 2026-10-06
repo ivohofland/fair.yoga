@@ -105,8 +105,8 @@ async function appError(res: Response): Promise<{ code?: ApiErrorCode; message: 
   };
 }
 
-/** An answer the replay keeps retrying because it cannot read it as the app's; ids and statuses only. */
-function logUnreadAnswer(entry: PendingEntry, res: Response, err: unknown): void {
+/** An answer the replay keeps retrying; ids and statuses only. */
+function logRetriedAnswer(entry: PendingEntry, res: Response, err: unknown): void {
   logRequestFailure(
     'attendance-sync',
     {
@@ -137,23 +137,24 @@ async function classify(res: Response, entry: PendingEntry): Promise<Classified>
     try {
       body = await res.json();
     } catch (err) {
-      logUnreadAnswer(entry, res, err);
+      logRetriedAnswer(entry, res, err);
       return { outcome: { kind: 'retry' }, signedIn: false };
     }
     if (answersEntry(isRecord(body) ? body.data : undefined, entry)) {
       return { outcome: { kind: 'confirmed', at: serverTime(res) }, signedIn: true };
     }
-    logUnreadAnswer(entry, res, new Error('the 2xx answer does not match the write sent'));
+    logRetriedAnswer(entry, res, new Error('the 2xx answer does not match the write sent'));
     return { outcome: { kind: 'retry' }, signedIn: false };
   }
   if (res.status === 401) return { outcome: { kind: 'signed_out' }, signedIn: false };
   if (res.status === 408 || res.status === 429 || res.status >= 500) {
+    if (navigator.onLine) logRetriedAnswer(entry, res, new Error('a status the replay retries'));
     return { outcome: { kind: 'retry' }, signedIn: false };
   }
   const answer = await appError(res);
   if (answer === null) {
     // A proxy, portal or filter answered, not the app: the write never reached it.
-    logUnreadAnswer(entry, res, new Error('the answer is not the app\'s error body'));
+    logRetriedAnswer(entry, res, new Error('the answer is not the app\'s error body'));
     return { outcome: { kind: 'retry' }, signedIn: false };
   }
   if (res.status === 403) {
@@ -182,7 +183,8 @@ async function send(entry: PendingEntry): Promise<Classified & { unanswered: boo
     });
     return { ...(await classify(res, entry)), unanswered: false };
   } catch (err) {
-    if (!timeout.signal.aborted) {
+    // Offline, a request that runs out of time is the expected case.
+    if (!timeout.signal.aborted || navigator.onLine) {
       logRequestFailure(
         'attendance-sync',
         { registrationId: entry.registrationId, status: entry.status },
