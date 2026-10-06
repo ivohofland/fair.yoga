@@ -1,23 +1,23 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { normalSpread } from '@/lib/pricing-preview';
+import { normalSpread, emptyCounts, type TierCounts } from '@/lib/pricing-preview';
+import { isIncomeTier } from '@/lib/tiers';
 import { PricingPreviewResult, type PricingPreviewInputs } from './pricing-preview-result';
 
 // ---------------------------------------------------------------------------
 // Distribution logic
 // ---------------------------------------------------------------------------
 
-function shuffleMix(n: number): number[] {
-  const counts = [0, 0, 0, 0, 0];
+function shuffleMix(n: number): TierCounts {
+  const counts = emptyCounts();
   for (let i = 0; i < n; i++) {
-    // Box-Muller transform: N(μ=2, σ=1.2)
+    // Box-Muller transform: N(μ=3, σ=1.2) on the tier scale
     const u1 = Math.random();
     const u2 = Math.random();
     const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-    const value = Math.round(2 + 1.2 * z);
-    const clamped = Math.max(0, Math.min(4, value));
-    counts[clamped]!++;
+    const tier = Math.max(1, Math.min(5, Math.round(3 + 1.2 * z)));
+    if (isIncomeTier(tier)) counts[tier]++;
   }
   return counts;
 }
@@ -41,7 +41,7 @@ export function PricingPreviewTable({
     Math.round((effectiveMin + effectiveMax) / 2),
   );
   const [mode, setMode] = useState<'normal' | 'shuffle'>('normal');
-  const [distribution, setDistribution] = useState<number[]>(() =>
+  const [distribution, setDistribution] = useState<TierCounts>(() =>
     normalSpread(Math.round((effectiveMin + effectiveMax) / 2)),
   );
 
@@ -101,7 +101,6 @@ export function PricingPreviewTable({
         targetRate={targetRate}
         minStudents={effectiveMin}
         maxStudents={effectiveMax}
-        studentCount={studentCount}
         distribution={distribution}
         distributionControl={
           <div className="flex items-center gap-2 mb-4">
