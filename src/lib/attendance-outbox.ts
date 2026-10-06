@@ -100,12 +100,32 @@ function asRefused(v: unknown): RefusedEntry | null {
   return { ...base, message, refusedAt };
 }
 
+function removeStored(): void {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // Storage refuses even a removal; there is nothing further to try.
+  }
+}
+/**
+ * From here on this tab's outbox lives in memory. The stored copy is removed:
+ * memory moves on without it, so a reload would replay its superseded taps,
+ * and a clear that reaches only memory would leave its names on the device.
+ */
+function switchToMemory(err: unknown): void {
+  useMemory = true;
+  console.warn('[attendance-outbox] storage failed; the outbox is in memory for this tab', {
+    // A `DOMException` from another realm fails `instanceof Error`, so the name is read off the object.
+    error: isRecord(err) && typeof err.name === 'string' ? err.name : typeof err,
+  });
+  removeStored();
+}
 function readRaw(): string | null {
   if (useMemory) return memory;
   try {
     return localStorage.getItem(KEY);
-  } catch {
-    useMemory = true;
+  } catch (err) {
+    switchToMemory(err);
     return memory;
   }
 }
@@ -115,8 +135,8 @@ function writeRaw(value: string | null): void {
       if (value === null) localStorage.removeItem(KEY);
       else localStorage.setItem(KEY, value);
       return;
-    } catch {
-      useMemory = true;
+    } catch (err) {
+      switchToMemory(err);
     }
   }
   memory = value;
@@ -315,9 +335,11 @@ export async function dismissRefused(registrationId: string): Promise<void> {
   });
 }
 
+/** Empties this tab's outbox and, whichever of the two it lives in, the stored copy. */
 export async function clearOutbox(): Promise<void> {
   await withLock(LOCK, async () => {
     writeRaw(null);
+    removeStored();
     cached = EMPTY_OUTBOX;
     cachedRaw = null;
     notify();
