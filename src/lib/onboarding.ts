@@ -1,4 +1,4 @@
-import type { OnboardingStep } from '@prisma/client';
+import type { Currency, OnboardingStep } from '@prisma/client';
 import { paymentMethodsFor } from './payment-methods';
 
 /** Steps that gate retirement but carry no Skip control. */
@@ -12,6 +12,7 @@ export interface StepInput {
   bio: string;
   bankIban: string | null;
   bankAccountName: string | null;
+  currency: Currency;
   roomCount: number;
   classCount: number;
   skipped: OnboardingStep[];
@@ -33,7 +34,7 @@ function isDone(key: StepKey, input: StepInput): boolean {
   switch (key) {
     case 'profile': return input.bio !== '';
     // Done exactly when `paymentMethodsFor` offers a method.
-    case 'bank': return paymentMethodsFor(input).length > 0;
+    case 'bank': return paymentMethodsFor(input, input.currency).length > 0;
     case 'room': return input.roomCount > 0;
     case 'class': return input.classCount > 0;
     default: {

@@ -1,3 +1,5 @@
+import type { Currency } from '@prisma/client';
+
 /**
  * One way a student can pay a teacher. A new kind fails the build at
  * `PAYMENT_METHOD_COPY` until it has a label and hint.
@@ -26,11 +28,18 @@ export function nonBlank(value: string | null | undefined): string | null {
  * Bank methods need the holder name as well as the IBAN, with no stand-in:
  * the payer's bank checks the name against the IBAN (Verification of Payee),
  * and a name that is not the account's draws a mismatch warning.
+ *
+ * Only euro payments get a method: the stored IBAN is a euro account, and an
+ * EPC QR can only carry euros.
  */
-export function paymentMethodsFor(teacher: {
-  bankIban: string | null;
-  bankAccountName: string | null;
-}): PaymentMethod[] {
+export function paymentMethodsFor(
+  teacher: {
+    bankIban: string | null;
+    bankAccountName: string | null;
+  },
+  currency: Currency,
+): PaymentMethod[] {
+  if (currency !== 'EUR') return [];
   const iban = nonBlank(teacher.bankIban);
   const beneficiary = nonBlank(teacher.bankAccountName);
   if (iban === null || beneficiary === null) return [];

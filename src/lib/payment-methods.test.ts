@@ -17,39 +17,43 @@ describe('nonBlank', () => {
 });
 
 describe('paymentMethodsFor', () => {
+  it.each(['GBP', 'USD', 'CHF', 'SEK', 'NOK', 'DKK'] as const)('offers nothing for %s until bank accounts are per currency', (currency) => {
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: 'A' }, currency)).toEqual([]);
+  });
+
   it('offers a bank transfer then a QR code when the IBAN and its holder name are both set', () => {
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: 'I. Hofland' })).toEqual([
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([
       { kind: 'bank_transfer', iban: IBAN, beneficiary: 'I. Hofland' },
       { kind: 'epc_qr', iban: IBAN, beneficiary: 'I. Hofland' },
     ]);
   });
 
   it('offers nothing without an IBAN', () => {
-    expect(paymentMethodsFor({ bankIban: null, bankAccountName: 'I. Hofland' })).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '', bankAccountName: 'I. Hofland' })).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '   ', bankAccountName: 'I. Hofland' })).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: null, bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: '', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: '   ', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
   });
 
   // Verification of Payee: a student's bank checks the name against the IBAN,
   // so a missing holder name is never stood in for by anything else.
   it('offers nothing with an IBAN but no holder name', () => {
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: null })).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '' })).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '  ' })).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: null }, 'EUR')).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '' }, 'EUR')).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '  ' }, 'EUR')).toEqual([]);
   });
 
   // Any all-whitespace value is absent here, which is stricter than the
   // database's bank CHECKs (`docs/data-model.md`, Teacher).
   it('offers nothing for a tab-only or newline-only holder name or IBAN', () => {
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\t' })).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\n' })).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '\t', bankAccountName: 'I. Hofland' })).toEqual([]);
-    expect(paymentMethodsFor({ bankIban: '\n', bankAccountName: 'I. Hofland' })).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\t' }, 'EUR')).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: IBAN, bankAccountName: '\n' }, 'EUR')).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: '\t', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
+    expect(paymentMethodsFor({ bankIban: '\n', bankAccountName: 'I. Hofland' }, 'EUR')).toEqual([]);
   });
 
   // The trimmed name is the one a bank compares; a stray space must not become part of it.
   it('trims the IBAN and the holder name it hands out', () => {
-    const [transfer] = paymentMethodsFor({ bankIban: ` ${IBAN} `, bankAccountName: '  I. Hofland  ' });
+    const [transfer] = paymentMethodsFor({ bankIban: ` ${IBAN} `, bankAccountName: '  I. Hofland  ' }, 'EUR');
     expect(transfer).toEqual({ kind: 'bank_transfer', iban: IBAN, beneficiary: 'I. Hofland' });
   });
 });

@@ -2,9 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import type { Currency } from '@prisma/client';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
+import { formatMoney } from '@/lib/format';
 import { FREE_CANCEL_GRACE_MINUTES } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { PricingExplainer } from './pricing-explainer';
@@ -23,6 +25,8 @@ interface BookingFlowProps {
   studentId: string;
   /** Estimated price per tier 1..5 if the class ran with today's sign-ups plus you. */
   tierPrices: number[];
+  /** The class's currency, which `tierPrices` are in. */
+  currency: Currency;
   /**
    * The student has never chosen a tier themselves (tierSelectedAt is
    * null) — the documented income-selection moment. CRM-created
@@ -44,6 +48,7 @@ export function BookingFlow({
   currentTier,
   studentId,
   tierPrices,
+  currency,
   isFirstBooking,
   openPaymentsCount,
 }: BookingFlowProps) {
@@ -200,7 +205,7 @@ export function BookingFlow({
                       <div className="type-caption mt-0.5">{t.caption}</div>
                     </div>
                     <span className="type-number text-[18px]">
-                      €{tierPrices[t.tier - 1]!.toFixed(2)}
+                      {formatMoney(tierPrices[t.tier - 1]!, currency)}
                     </span>
                   </div>
                 </button>
@@ -251,7 +256,7 @@ export function BookingFlow({
               ? 'Join the waitlist'
               : tier === null
                 ? 'Book'
-                : `Book — around €${tierPrices[tier - 1]!.toFixed(2)}`}
+                : `Book — around ${formatMoney(tierPrices[tier - 1]!, currency)}`}
         </Button>
         {isFull && (
           <p className="type-caption mt-2">

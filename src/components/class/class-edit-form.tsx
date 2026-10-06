@@ -3,10 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
+import type { Currency } from '@prisma/client';
 import { MAX_CLASS_SIZE, type updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
+import { currencyLabel } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { Button } from '@/components/ui/button';
@@ -80,12 +82,13 @@ void _formHasNoExtras;
 interface ClassEditFormProps {
   classId: string;
   settingsLocked: boolean;
+  currency: Currency;
   initial: ClassEditInitial;
 }
 
 // Details always editable, the five economic fields only while unlocked.
 // Policies aren't part of the update schema, so they aren't part of this form.
-export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFormProps) {
+export function ClassEditForm({ classId, settingsLocked, currency, initial }: ClassEditFormProps) {
   const router = useRouter();
   // Client-only, so `undefined` for the server render and the hydration pass.
   const minDate = useTodayLocal();
@@ -254,21 +257,21 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
         )}
         <div className="grid grid-cols-3 gap-3">
           <Input
-            label="Room cost (€)"
+            label={`Room cost (${currencyLabel(currency)})`}
             type="number"
             value={String(form.roomCost)}
             disabled={settingsLocked}
             onChange={(e) => set('roomCost', Number(e.target.value))}
           />
           <Input
-            label="Min rate (€)"
+            label={`Min rate (${currencyLabel(currency)})`}
             type="number"
             value={String(form.minRate)}
             disabled={settingsLocked}
             onChange={(e) => set('minRate', Number(e.target.value))}
           />
           <Input
-            label="Target rate (€)"
+            label={`Target rate (${currencyLabel(currency)})`}
             type="number"
             value={String(form.targetRate)}
             disabled={settingsLocked}
@@ -293,6 +296,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
         </div>
         <div className="mt-4">
           <PricingPreviewTable
+            currency={currency}
             roomCost={form.roomCost}
             minRate={form.minRate}
             targetRate={form.targetRate}

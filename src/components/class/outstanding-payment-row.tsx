@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { PaymentStatus } from '@prisma/client';
-import { formatClassContext, paymentStateInlineText, paymentStateText, timeAgo } from '@/lib/format';
+import type { Currency, PaymentStatus } from '@prisma/client';
+import { formatClassContext, formatMoney, paymentStateInlineText, paymentStateText, timeAgo } from '@/lib/format';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { isOutstanding } from '@/lib/payment-status';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
@@ -17,6 +17,7 @@ interface OutstandingPaymentRowProps {
   classDate: Date;
   startTime: Date;
   amount: number;
+  currency: Currency;
   status: PaymentStatus;
   reminderSentAt: Date | null;
 }
@@ -39,6 +40,7 @@ export function OutstandingPaymentRow({
   classDate,
   startTime,
   amount,
+  currency,
   status,
   reminderSentAt,
 }: OutstandingPaymentRowProps) {
@@ -100,7 +102,7 @@ export function OutstandingPaymentRow({
           )}
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <span className="type-number text-brown">€{amount.toFixed(2)}</span>
+          <span className="type-number text-brown">{formatMoney(amount, currency)}</span>
           {isPaid ? (
             <span className="inline-flex items-center gap-2">
               <span className={`type-caption ${paymentStateText('paid').className}`}>

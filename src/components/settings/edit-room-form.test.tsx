@@ -44,7 +44,7 @@ describe('EditRoomForm', () => {
   };
 
   function renderForm() {
-    render(<EditRoomForm roomId="room-1" teacherRoomId="tr-1" initial={initial} />);
+    render(<EditRoomForm currency="EUR" roomId="room-1" teacherRoomId="tr-1" initial={initial} />);
   }
 
   it('shows the fallback and logs when the room refusal body is unreadable', async () => {

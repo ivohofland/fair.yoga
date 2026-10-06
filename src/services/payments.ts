@@ -433,6 +433,7 @@ export async function sendPaymentReminder(
             class: {
               select: {
                 id: true,
+                currency: true,
                 calendarEntry: {
                   select: {
                     classType: true,
@@ -457,7 +458,8 @@ export async function sendPaymentReminder(
         body: studentPaymentReminderBody(
           registration.class.calendarEntry,
           Number(payment.amount),
-          paymentMethodsFor(registration.class.calendarEntry.teacher).length > 0,
+          paymentMethodsFor(registration.class.calendarEntry.teacher, registration.class.currency).length > 0,
+          registration.class.currency,
         ),
         relatedClassId: registration.class.id,
       },

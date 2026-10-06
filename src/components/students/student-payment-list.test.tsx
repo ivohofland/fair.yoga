@@ -30,6 +30,7 @@ describe('StudentPaymentList', () => {
     classType: 'Vinyasa',
     classDate: '12 Jun 2026',
     amount: 18,
+    currency: 'EUR',
     status: 'paid',
   };
 
@@ -38,6 +39,7 @@ describe('StudentPaymentList', () => {
     classType: 'Yin',
     classDate: '19 Jun 2026',
     amount: 18,
+    currency: 'EUR',
     status: 'overdue',
   };
 
@@ -51,15 +53,15 @@ describe('StudentPaymentList', () => {
   });
 
   it('offers no mark-paid control on a not-charged payment', () => {
-    renderList([{ paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12 }]);
+    renderList([{ paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12, currency: 'EUR' }]);
     expect(screen.queryByRole('button', { name: /Mark paid/i })).not.toBeInTheDocument();
   });
 
   it('colors the amount brown only when still owed', () => {
     renderList([
-      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12 },
-      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 15 },
-      { paymentId: 'p3', classType: 'Hatha', classDate: 'Fri 5 Sep', status: 'paid', amount: 18 },
+      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12, currency: 'EUR' },
+      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 15, currency: 'EUR' },
+      { paymentId: 'p3', classType: 'Hatha', classDate: 'Fri 5 Sep', status: 'paid', amount: 18, currency: 'EUR' },
     ]);
     expect(screen.getByText('€12.00')).not.toHaveClass('text-brown');
     expect(screen.getByText('€15.00')).toHaveClass('text-brown');
@@ -68,8 +70,8 @@ describe('StudentPaymentList', () => {
 
   it('gives each mark-paid button a distinct accessible name', () => {
     renderList([
-      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12 },
-      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 10 },
+      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'EUR' },
+      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 10, currency: 'EUR' },
     ]);
     expect(screen.getByRole('button', { name: 'Mark paid — Vinyasa, Tue 2 Sep' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark paid — Yin, Thu 4 Sep' })).toBeInTheDocument();
@@ -94,7 +96,7 @@ describe('StudentPaymentList', () => {
       }),
     );
     renderList([
-      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12 },
+      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'EUR' },
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark paid — Vinyasa, Tue 2 Sep' }));

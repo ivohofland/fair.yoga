@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import CreateClassPage from './page';
+import { NewClassForm } from './new-class-form';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { routerPush } from '../../../../../tests/setup/components';
 
@@ -110,7 +110,7 @@ describe('NewClassPage', () => {
    * default; step 2 and step 3 defaults already validate), then submits.
    */
   async function fillAndSubmit(): Promise<{ url: string; method: string; body: Record<string, unknown> }> {
-    render(<CreateClassPage />);
+    render(<NewClassForm currency="EUR" />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -172,7 +172,7 @@ describe('NewClassPage', () => {
 
   it('sends description when entered and renders it in step 4 review', async () => {
     stubFetch();
-    render(<CreateClassPage />);
+    render(<NewClassForm currency="EUR" />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -200,7 +200,7 @@ describe('NewClassPage', () => {
 
   it('sends whitespace-only description as null', async () => {
     stubFetch();
-    render(<CreateClassPage />);
+    render(<NewClassForm currency="EUR" />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -227,7 +227,7 @@ describe('NewClassPage', () => {
 
   it('sends empty-string description as null', async () => {
     stubFetch();
-    render(<CreateClassPage />);
+    render(<NewClassForm currency="EUR" />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -254,7 +254,7 @@ describe('NewClassPage', () => {
 
   it('renders formatted date, time, and class summary on the step 4 review screen', async () => {
     stubFetch();
-    render(<CreateClassPage />);
+    render(<NewClassForm currency="EUR" />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -496,7 +496,7 @@ describe('NewClassPage', () => {
     vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
     try {
       stubFetch();
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
       const date = await screen.findByLabelText('Date');
       await waitFor(() => expect(date).toHaveAttribute('min', '2026-08-18'));
     } finally {
@@ -519,7 +519,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header while the rooms are loading', () => {
       fetchMock.mockImplementation(() => new Promise(() => {}));
       vi.stubGlobal('fetch', fetchMock);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(screen.getByText('Loading rooms...')).toBeInTheDocument();
       expectHeader();
@@ -528,7 +528,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header when the rooms fail to load', async () => {
       fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
       expectHeader();
@@ -537,7 +537,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header when the teacher has no rooms', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText('No rooms configured')).toBeInTheDocument();
       expectHeader();
@@ -546,7 +546,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header when every room is archived', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ ...ROOM, isArchived: true }] }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText('All your rooms are archived')).toBeInTheDocument();
       expectHeader();
@@ -562,7 +562,7 @@ describe('NewClassPage', () => {
    */
   it('offers both a recurring class and a studio class as alternatives to the wizard (#436)', async () => {
     stubFetch();
-    render(<CreateClassPage />);
+    render(<NewClassForm currency="EUR" />);
 
     fireEvent.click(await screen.findByRole('button', { name: /set up a recurring class/i }));
     expect(routerPush).toHaveBeenCalledWith('/settings/recurring/new');
@@ -594,7 +594,7 @@ describe('NewClassPage', () => {
 
     it('does not offer an archived room in the picker', async () => {
       stubRooms([LIVE, ARCHIVED]);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText(/Main Venue/)).toBeInTheDocument();
       expect(screen.queryByText(/Shelved Venue/)).not.toBeInTheDocument();
@@ -602,7 +602,7 @@ describe('NewClassPage', () => {
 
     it('tells a teacher whose rooms are all archived to unarchive, not to add one', async () => {
       stubRooms([ARCHIVED]);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText('All your rooms are archived')).toBeInTheDocument();
       expect(screen.queryByText('No rooms configured')).not.toBeInTheDocument();
@@ -610,7 +610,7 @@ describe('NewClassPage', () => {
 
     it('still tells a teacher with no rooms at all to add one', async () => {
       stubRooms([]);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText('No rooms configured')).toBeInTheDocument();
     });
@@ -620,7 +620,7 @@ describe('NewClassPage', () => {
     it('distinguishes a failed load from an absence of rooms', async () => {
       fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
       expect(screen.queryByText('No rooms configured')).not.toBeInTheDocument();
@@ -631,7 +631,7 @@ describe('NewClassPage', () => {
       const down = new Error('network down');
       fetchMock.mockRejectedValue(down);
       vi.stubGlobal('fetch', fetchMock);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
       expect(consoleError).toHaveBeenCalledWith('[class-new-rooms] request failed', {
@@ -643,7 +643,7 @@ describe('NewClassPage', () => {
   describe('step 1 validation (#318)', () => {
     async function renderAtStep1() {
       stubFetch();
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
       await screen.findByLabelText('Room');
     }
 
@@ -664,7 +664,7 @@ describe('NewClassPage', () => {
       expect(screen.getByLabelText('Date')).toHaveAccessibleDescription('Select a date');
       expect(screen.getByLabelText('Start time')).toHaveAccessibleDescription('Enter a start time');
       expect(screen.getByLabelText('Duration (minutes)')).toHaveAccessibleDescription('Duration must be positive');
-      expect(screen.queryByLabelText('Room cost')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^Room cost/)).not.toBeInTheDocument();
       expect(fetchMock.mock.calls.length).toBe(callsBefore);
     });
 
@@ -677,7 +677,7 @@ describe('NewClassPage', () => {
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
 
       expect(screen.getByLabelText('Class type')).toHaveAccessibleDescription('Enter a class type');
-      expect(screen.queryByLabelText('Room cost')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^Room cost/)).not.toBeInTheDocument();
     });
 
     it('refuses a duration that is not whole minutes', async () => {
@@ -690,7 +690,7 @@ describe('NewClassPage', () => {
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
 
       expect(screen.getByLabelText('Duration (minutes)')).toHaveAccessibleDescription('Duration must be whole minutes');
-      expect(screen.queryByLabelText('Room cost')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^Room cost/)).not.toBeInTheDocument();
     });
 
     it('clears a field message when that field is edited', async () => {
@@ -737,13 +737,13 @@ describe('NewClassPage', () => {
     /** Renders the wizard over `rooms` and fills step 1 validly with `roomId`, then presses Next. */
     async function renderAndPassStep1(rooms: readonly (typeof ROOM)[], roomId: string) {
       stubRooms(rooms);
-      render(<CreateClassPage />);
+      render(<NewClassForm currency="EUR" />);
       fireEvent.change(await screen.findByLabelText('Room'), { target: { value: roomId } });
       fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
       fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
       fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
-      await screen.findByLabelText('Room cost');
+      await screen.findByLabelText(/^Room cost/);
     }
 
     /** Step 1 filled validly with the 24-capacity room; defaults then read room cost 20, min rate 15, target 25, min 4, max 12. */
@@ -752,7 +752,7 @@ describe('NewClassPage', () => {
     }
 
     function set(label: string, value: string) {
-      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      fireEvent.change(screen.getByLabelText(new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))), { target: { value } });
     }
 
     function next() {
@@ -760,7 +760,7 @@ describe('NewClassPage', () => {
     }
 
     function expectStillOnStep2() {
-      expect(screen.getByLabelText('Room cost')).toBeInTheDocument();
+      expect(screen.getByLabelText(/^Room cost/)).toBeInTheDocument();
       expect(screen.queryByLabelText('Cancellation deadline')).not.toBeInTheDocument();
     }
 
@@ -768,7 +768,7 @@ describe('NewClassPage', () => {
       await renderAtStep2();
       set('Room cost', '-1');
       next();
-      expect(screen.getByLabelText('Room cost')).toHaveAccessibleDescription('Room cost cannot be negative');
+      expect(screen.getByLabelText(/^Room cost/)).toHaveAccessibleDescription('Room cost cannot be negative');
       expectStillOnStep2();
     });
 
@@ -860,7 +860,7 @@ describe('NewClassPage', () => {
       set('Min rate', '30');
       const callsBefore = fetchMock.mock.calls.length;
       next();
-      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription('Min rate cannot exceed target rate');
+      expect(screen.getByLabelText(/^Min rate/)).toHaveAccessibleDescription('Min rate cannot exceed target rate');
       expectStillOnStep2();
       expect(fetchMock.mock.calls.length).toBe(callsBefore);
     });
@@ -870,7 +870,7 @@ describe('NewClassPage', () => {
       set('Room cost', '10');
       set('Min rate', '-15');
       next();
-      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription(
+      expect(screen.getByLabelText(/^Min rate/)).toHaveAccessibleDescription(
         'Min rate cannot subsidize more than the room cost — prices would go negative',
       );
       expectStillOnStep2();
@@ -882,7 +882,7 @@ describe('NewClassPage', () => {
       set('Target rate', '-10');
       set('Min rate', '-8');
       next();
-      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription('Min rate cannot exceed target rate');
+      expect(screen.getByLabelText(/^Min rate/)).toHaveAccessibleDescription('Min rate cannot exceed target rate');
       expectStillOnStep2();
     });
 
@@ -961,7 +961,7 @@ describe('NewClassPage', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Back' }));
       fireEvent.change(screen.getByLabelText('Room'), { target: { value: SMALL_ROOM_ID } });
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
-      await screen.findByLabelText('Room cost');
+      await screen.findByLabelText(/^Room cost/);
 
       expect(screen.getByLabelText('Min students')).toHaveValue(10);
       expect(screen.getByLabelText('Max students')).toHaveValue(10);
@@ -980,9 +980,9 @@ describe('NewClassPage', () => {
       await renderAtStep2();
       set('Min rate', '30');
       next();
-      expect(screen.getByLabelText('Min rate')).toHaveAccessibleDescription('Min rate cannot exceed target rate');
+      expect(screen.getByLabelText(/^Min rate/)).toHaveAccessibleDescription('Min rate cannot exceed target rate');
       set('Target rate', '35');
-      expect(screen.getByLabelText('Min rate')).not.toHaveAccessibleDescription();
+      expect(screen.getByLabelText(/^Min rate/)).not.toHaveAccessibleDescription();
     });
 
     it('keeps a students-order refusal that is still true when room cost is edited', async () => {

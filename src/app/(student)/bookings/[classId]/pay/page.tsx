@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { PaymentStatus } from '@prisma/client';
+import type { Currency, PaymentStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
@@ -9,7 +9,7 @@ import { PaymentDetails } from '@/components/student/payment-details';
 import { PaymentQr } from '@/components/student/payment-qr';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
-import { formatDayHeader, paymentStateText } from '@/lib/format';
+import { formatDayHeader, formatMoney, paymentStateText } from '@/lib/format';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
 import { markedPaidLine, reportMissingPayment } from '@/lib/pay-page.server';
@@ -22,10 +22,12 @@ export const dynamic = 'force-dynamic';
 function MethodPanel({
   method,
   amount,
+  currency,
   reference,
 }: {
   method: PaymentMethod;
   amount: number;
+  currency: Currency;
   reference: string;
 }) {
   switch (method.kind) {
@@ -33,7 +35,7 @@ function MethodPanel({
       return (
         <>
           <p className="type-body">
-            Transfer <span className="type-number">€{amount.toFixed(2)}</span> to:
+            Transfer <span className="type-number">{formatMoney(amount, currency)}</span> to:
           </p>
           <PaymentDetails iban={method.iban} beneficiary={method.beneficiary} reference={reference} />
         </>
@@ -100,7 +102,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const teacher = entry.teacher;
   const amount = Number(payment.amount);
   const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
-  const methods = paymentMethodsFor(teacher);
+  const methods = paymentMethodsFor(teacher, cls.currency);
   const state = paymentStateText(payment.status);
   // A waived payment is not charged, so it gets no line saying it still is.
   const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);
@@ -130,7 +132,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
       </p>
       <div className="mb-6">
         <div className="flex items-baseline justify-between gap-3">
-          <p className={`type-number ${isOutstanding(payment.status) ? 'text-brown' : ''}`}>€{amount.toFixed(2)}</p>
+          <p className={`type-number ${isOutstanding(payment.status) ? 'text-brown' : ''}`}>{formatMoney(amount, cls.currency)}</p>
           <p className={`type-caption ${state.className}`}>{state.label}</p>
         </div>
         {chargeNote !== null && <p className="type-caption mt-1">{chargeNote}</p>}
@@ -139,6 +141,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         status={payment.status}
         methods={methods}
         amount={amount}
+        currency={cls.currency}
         reference={reference}
         teacherFirstName={teacher.firstName}
         paymentId={payment.id}
@@ -146,7 +149,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         timeZone={teacher.defaultTimezone}
       />
       {breakdown.kind === 'shown' && (
-        <PaymentBreakdown lines={breakdown.lines} classType={entry.classType} date={entry.date} />
+        <PaymentBreakdown lines={breakdown.lines} classType={entry.classType} date={entry.date} currency={cls.currency} />
       )}
     </div>
   );
@@ -156,6 +159,7 @@ function PayBody({
   status,
   methods,
   amount,
+  currency,
   reference,
   teacherFirstName,
   paymentId,
@@ -165,6 +169,7 @@ function PayBody({
   status: PaymentStatus;
   methods: PaymentMethod[];
   amount: number;
+  currency: Currency;
   reference: string;
   teacherFirstName: string;
   paymentId: string;
@@ -197,7 +202,7 @@ function PayBody({
                   <span className="block type-caption">{PAYMENT_METHOD_COPY[method.kind].hint}</span>
                 </summary>
                 <div className="pb-4">
-                  <MethodPanel method={method} amount={amount} reference={reference} />
+                  <MethodPanel method={method} amount={amount} currency={currency} reference={reference} />
                 </div>
               </details>
             ))}

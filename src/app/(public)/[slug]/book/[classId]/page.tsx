@@ -155,6 +155,7 @@ export default async function BookClassPage({
           registrations: cls.registrations,
           viewer: viewer ? { studentId: viewer.id, tier: viewer.tier, tierSelectedAt: viewer.tierSelectedAt } : null,
         })}
+        currency={cls.currency}
         className="mt-2 mb-6"
       />
 
@@ -166,6 +167,7 @@ export default async function BookClassPage({
           currentTier={viewer.tier}
           studentId={viewer.id}
           tierPrices={estimates}
+          currency={cls.currency}
           // The income-selection moment belongs to the student: the picker
           // shows until they have chosen a tier themselves, no matter what
           // registrations teachers created on their behalf.

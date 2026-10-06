@@ -1,12 +1,14 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { PageHeader } from '@/components/layout/page-header';
 import { RoomList } from '@/components/settings/room-list';
 
 export default async function RoomsPage() {
   const session = await requireTeacherSession();
 
+  const currency = await teacherCurrency(session.teacherId);
   const teacherRooms = await prisma.teacherRoom.findMany({
     where: { teacherId: session.teacherId, isArchived: false },
     include: { room: true },
@@ -19,7 +21,7 @@ export default async function RoomsPage() {
         title="Rooms"
         action={<Link href="/settings/rooms/new" className="type-label text-teal no-underline">+ Add room</Link>}
       />
-      <RoomList teacherRooms={teacherRooms} />
+      <RoomList teacherRooms={teacherRooms} currency={currency} />
       <div className="mt-6">
         <Link href="/settings/rooms/archived" className="type-caption no-underline">
           View archived rooms

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveSteps, isOnboardingComplete } from './onboarding';
 
 const nothingDone = {
-  bio: '', bankIban: null, bankAccountName: null, roomCount: 0, classCount: 0, skipped: [],
+  bio: '', bankIban: null, bankAccountName: null, currency: 'EUR' as const, roomCount: 0, classCount: 0, skipped: [],
 };
 
 describe('resolveSteps', () => {
@@ -52,6 +52,18 @@ describe('resolveSteps', () => {
   });
 });
 
+describe('the bank step', () => {
+  const withBank = { ...nothingDone, bankIban: 'NL91ABNA0417164300', bankAccountName: 'A' };
+
+  it('is done for a euro teacher with account details', () => {
+    expect(resolveSteps(withBank).find((s) => s.key === 'bank')?.state).toBe('done');
+  });
+
+  it('is not done for a teacher in another currency, whose account no method uses yet', () => {
+    expect(resolveSteps({ ...withBank, currency: 'GBP' }).find((s) => s.key === 'bank')?.state).toBe('todo');
+  });
+});
+
 describe('isOnboardingComplete', () => {
   it('is false while a required step is outstanding', () => {
     expect(isOnboardingComplete({ ...nothingDone, bio: 'x', skipped: ['bank'] })).toBe(false);
@@ -59,7 +71,7 @@ describe('isOnboardingComplete', () => {
 
   it('is true when every step is done or skipped and share is dismissed', () => {
     expect(isOnboardingComplete({
-      bio: 'x', bankIban: null, bankAccountName: null, roomCount: 1, classCount: 1, skipped: ['bank', 'share'],
+      bio: 'x', bankIban: null, bankAccountName: null, currency: 'EUR' as const, roomCount: 1, classCount: 1, skipped: ['bank', 'share'],
     })).toBe(true);
   });
 
@@ -67,7 +79,7 @@ describe('isOnboardingComplete', () => {
   // checklist has not retired.
   it('is false when every step is settled but share is not dismissed', () => {
     expect(isOnboardingComplete({
-      bio: 'x', bankIban: null, bankAccountName: null, roomCount: 1, classCount: 1, skipped: ['bank'],
+      bio: 'x', bankIban: null, bankAccountName: null, currency: 'EUR' as const, roomCount: 1, classCount: 1, skipped: ['bank'],
     })).toBe(false);
   });
 });

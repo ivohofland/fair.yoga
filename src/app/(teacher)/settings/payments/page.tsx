@@ -1,5 +1,7 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { teacherCurrency } from '@/lib/teacher-currency.server';
+import { formatMoney } from '@/lib/format';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
@@ -14,6 +16,7 @@ export const dynamic = 'force-dynamic';
 // Unpaid is brown — a fact, not an alarm.
 export default async function PaymentsOverviewPage() {
   const session = await requireTeacherSession();
+  const currency = await teacherCurrency(session.teacherId);
 
   const payments = await prisma.payment.findMany({
     where: { registration: { class: { calendarEntry: { teacherId: session.teacherId } } } },
@@ -25,6 +28,7 @@ export default async function PaymentsOverviewPage() {
           class: {
             select: {
               id: true,
+              currency: true,
               calendarEntry: { select: { classType: true, date: true, startTime: true } },
             },
           },
@@ -51,7 +55,7 @@ export default async function PaymentsOverviewPage() {
         <div className="flex-1 bg-sand-soft border border-border rounded-card p-5">
           <p className="type-label">Outstanding</p>
           <p className="type-number text-[28px] leading-[1.25] mt-1 text-brown">
-            €{outstandingTotal.toFixed(2)}
+            {formatMoney(outstandingTotal, currency)}
           </p>
           <p className="type-caption mt-0.5">
             {outstanding.length} {outstanding.length === 1 ? 'payment' : 'payments'}
@@ -60,7 +64,7 @@ export default async function PaymentsOverviewPage() {
         <div className="flex-1 bg-teal-tint rounded-card p-5">
           <p className="type-label">Received</p>
           <p className="type-number text-[28px] leading-[1.25] mt-1">
-            €{receivedTotal.toFixed(2)}
+            {formatMoney(receivedTotal, currency)}
           </p>
           <p className="type-caption mt-0.5">all time</p>
         </div>
@@ -81,6 +85,7 @@ export default async function PaymentsOverviewPage() {
               classDate={p.registration.class.calendarEntry.date}
               startTime={p.registration.class.calendarEntry.startTime}
               amount={Number(p.amount)}
+              currency={p.registration.class.currency}
               status={p.status}
               reminderSentAt={p.reminderSentAt}
             />
@@ -104,6 +109,7 @@ export default async function PaymentsOverviewPage() {
               paidAt={p.paidAt}
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}
+              currency={p.registration.class.currency}
             />
           ))
         )}
@@ -123,6 +129,7 @@ export default async function PaymentsOverviewPage() {
               notChargedAt={p.notChargedAt}
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}
+              currency={p.registration.class.currency}
             />
           ))}
         </section>

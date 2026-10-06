@@ -5,7 +5,7 @@
  * `docs/data-model.md` (TeacherStudent).
  */
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Currency, Prisma, PrismaClient } from '@prisma/client';
 import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
 import { setLockTimeout } from '@/lib/db-locks';
 import { CHARGED_STATUSES } from './class-lifecycle';
@@ -49,6 +49,12 @@ function readOpenPayments(db: Prisma.TransactionClient, { teacherId, studentId }
     },
     select: { id: true, amount: true },
   });
+}
+
+/** The teacher's current currency, which the refusal copy names what is owed in. */
+async function readTeacherCurrency(db: Prisma.TransactionClient, teacherId: string): Promise<Currency> {
+  const teacher = await db.teacher.findUniqueOrThrow({ where: { id: teacherId }, select: { currency: true } });
+  return teacher.currency;
 }
 
 /** True when `given`, de-duplicated, names exactly the ids in `open`. */
@@ -98,10 +104,10 @@ export async function archiveStudent(
       if (open.length > 0) {
         const openIds = open.map((p) => p.id);
         if (waivePaymentIds === undefined) {
-          return { kind: 'refused', refusal: outstandingRefusal(open) };
+          return { kind: 'refused', refusal: outstandingRefusal(open, await readTeacherCurrency(tx, teacherId)) };
         }
         if (!sameIdSet(waivePaymentIds, openIds)) {
-          return { kind: 'refused', refusal: outstandingChangedRefusal(open) };
+          return { kind: 'refused', refusal: outstandingChangedRefusal(open, await readTeacherCurrency(tx, teacherId)) };
         }
         // Status-filtered: a payment read open above can be settled before
         // this write lands — which payment writers skip the link lock is
@@ -124,7 +130,7 @@ export async function archiveStudent(
     return db.$transaction(async (tx): Promise<ArchiveOutcome> => {
       await setLockTimeout(tx);
       if (!(await lockTeacherStudentLink(tx, pair))) return { kind: 'not-linked' };
-      return { kind: 'refused', refusal: outstandingChangedRefusal(await readOpenPayments(tx, pair)) };
+      return { kind: 'refused', refusal: outstandingChangedRefusal(await readOpenPayments(tx, pair), await readTeacherCurrency(tx, teacherId)) };
     });
   }
 }

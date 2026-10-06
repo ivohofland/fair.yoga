@@ -1,5 +1,5 @@
-import type { RegistrationStatus } from '@prisma/client';
-import { formatDayHeader, formatEuro } from '@/lib/format';
+import type { Currency, RegistrationStatus } from '@prisma/client';
+import { formatDayHeader, formatMoney } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 
 export interface PaymentRequestClass {
@@ -34,9 +34,10 @@ export function studentPaymentRequestBody(
   cls: PaymentRequestClass,
   price: number,
   teacherHasPaymentMethods: boolean,
+  currency: Currency,
 ): string {
   const when = classPhrase(cls);
-  const amount = formatEuro(price);
+  const amount = formatMoney(price, currency);
   const tail = teacherHasPaymentMethods ? ASK : PAY_OR_ASK;
   switch (status) {
     case 'registered':
@@ -65,7 +66,8 @@ export function studentPaymentReminderBody(
   cls: PaymentRequestClass,
   amount: number,
   teacherHasPaymentMethods: boolean,
+  currency: Currency,
 ): string {
-  const open = `€${amount.toFixed(2)} for ${classPhrase(cls)} is still open.`;
+  const open = `${formatMoney(amount, currency)} for ${classPhrase(cls)} is still open.`;
   return teacherHasPaymentMethods ? open : `${open} Pay your teacher directly.`;
 }

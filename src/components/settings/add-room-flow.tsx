@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { Currency } from '@prisma/client';
 import type { RoomResult } from '@/lib/room-search';
 import { RoomSearchStep } from './room-search-step';
 import { RoomSettingsStep } from './room-settings-step';
@@ -66,7 +67,7 @@ const EMPTY_ROOM_FORM: NewRoomForm = {
  * pin in a file that no longer constructs the body compiles and certifies
  * nothing.
  */
-export function AddRoomFlow() {
+export function AddRoomFlow({ currency }: { currency: Currency }) {
   const router = useRouter();
 
   // Shared across steps
@@ -116,6 +117,7 @@ export function AddRoomFlow() {
       {step === 'settings' && selectedRoom && (
         <RoomSettingsStep
           selectedRoom={selectedRoom}
+          currency={currency}
           onSaved={() => router.push('/settings/rooms')}
           onBack={() => { setSelectedRoom(null); setStep('search'); }}
         />

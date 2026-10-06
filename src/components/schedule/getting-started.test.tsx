@@ -36,6 +36,7 @@ describe('GettingStarted', () => {
     bio: '',
     bankIban: null,
     bankAccountName: null,
+    currency: 'EUR',
     roomCount: 0,
     classCount: 0,
     skipped: [],
@@ -137,6 +138,7 @@ describe('GettingStarted', () => {
       bio: 'Yoga since 2009.',
       bankIban: null,
       bankAccountName: null,
+    currency: 'EUR',
       roomCount: 1,
       classCount: 1,
       skipped: ['bank'],
@@ -177,6 +179,7 @@ describe('GettingStarted', () => {
           bio="Yoga since 2009."
           bankIban="NL00BANK0123456789"
           bankAccountName="J. Doe"
+          currency="EUR"
           roomCount={1}
           classCount={1}
           skipped={['bank', 'share']}
@@ -199,6 +202,7 @@ describe('GettingStarted', () => {
           bio=""
           bankIban={null}
           bankAccountName={null}
+          currency="EUR"
           roomCount={0}
           classCount={0}
           skipped={['share']}

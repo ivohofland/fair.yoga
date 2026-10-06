@@ -11,7 +11,7 @@ import { RestoreStudioClassButton } from '@/components/studio-class/restore-stud
 import { studioClassDeletability } from '@/services/studio-class-deletion';
 import { studioClassEditability } from '@/services/studio-class-editability';
 import { startOfLocalDay } from '@/lib/timezone';
-import { formatDateWithYear } from '@/lib/format';
+import { formatDateWithYear, formatMoney } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
 import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
@@ -125,7 +125,7 @@ export default async function StudioClassDetailPage({
 
         <ListRow divider="after-each">
           <span className="type-label">Hourly rate</span>
-          <p className="text-base text-ink">&euro;{Number(studioClass.hourlyRate).toFixed(2)}</p>
+          <p className="text-base text-ink">{formatMoney(studioClass.hourlyRate, studioClass.currency)}</p>
         </ListRow>
 
         {template && (
@@ -164,6 +164,7 @@ export default async function StudioClassDetailPage({
             {deletable && (
               <DeleteStudioClassButton
                 studioClassId={studioClass.id}
+                currency={studioClass.currency}
                 earningsAtRisk={earningsAtRisk}
               />
             )}
@@ -201,6 +202,7 @@ export default async function StudioClassDetailPage({
             {deletable && (
               <DeleteStudioClassButton
                 studioClassId={studioClass.id}
+                currency={studioClass.currency}
                 earningsAtRisk={earningsAtRisk}
               />
             )}

@@ -3,7 +3,7 @@ import type { NoneOf } from '@/lib/type-pins';
 
 /**
  * The cancellation options a teacher is offered, and the single home for the
- * teacher-facing pickers: `template-form.tsx` and `class/new/page.tsx` both
+ * teacher-facing pickers: `template-form.tsx` and `class/new/new-class-form.tsx` both
  * read them from here, so the pins below guarantee every screen that renders
  * these choices *for teacher input*.
  *

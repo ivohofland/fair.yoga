@@ -20,7 +20,7 @@ export default async function EditTemplatePage({
     where: { id },
     include: {
       teacherRoom: { include: { room: true } },
-      scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } },
+      scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } },
     },
   });
 
@@ -37,6 +37,7 @@ export default async function EditTemplatePage({
       <TemplateForm
         mode="edit"
         templateId={template.id}
+        currency={scheduleRule.teacher.currency}
         initial={{
           teacherRoomId: template.teacherRoomId,
           classType: scheduleRule.classType,

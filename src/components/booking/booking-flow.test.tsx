@@ -34,6 +34,7 @@ describe('BookingFlow', () => {
         currentTier={3}
         studentId="student-1"
         tierPrices={tierPrices}
+        currency="EUR"
         isFirstBooking={false}
         openPaymentsCount={0}
         {...overrides}
@@ -49,6 +50,13 @@ describe('BookingFlow', () => {
       expect(radio).toHaveAttribute('aria-checked', 'false');
     }
     expect(screen.queryByText(/You're in Tier/)).not.toBeInTheDocument();
+  });
+
+  it('shows tier prices in the class currency', () => {
+    stubFetch();
+    renderFlow({ currentTier: null, isFirstBooking: false, currency: 'CHF' });
+    expect(screen.getAllByText(/CHF 1\d\.00/).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain('€');
   });
 
   it('keeps the spread explanation with the picker it explains', () => {

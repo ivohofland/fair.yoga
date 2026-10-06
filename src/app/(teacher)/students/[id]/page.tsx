@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { formatDateWithYear, formatDayMonth } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
@@ -18,6 +19,7 @@ export default async function StudentDetailPage({
 }) {
   const session = await requireTeacherSession();
   const { id } = await params;
+  const currency = await teacherCurrency(session.teacherId);
 
   const student = await prisma.student.findUnique({
     where: { id },
@@ -32,6 +34,7 @@ export default async function StudentDetailPage({
         include: {
           class: {
             select: {
+              currency: true,
               calendarEntry: { select: { classType: true, date: true, startTime: true } },
             },
           },
@@ -150,6 +153,7 @@ export default async function StudentDetailPage({
             classType: reg.class.calendarEntry.classType,
             classDate: formatDateWithYear(reg.class.calendarEntry.date),
             amount: Number(reg.payment!.amount),
+            currency: reg.class.currency,
             status: reg.payment!.status,
           }))}
         />
@@ -161,6 +165,7 @@ export default async function StudentDetailPage({
           studentName={displayName}
           isArchived={isArchived}
           outstanding={outstanding}
+          currency={currency}
         />
       </section>
     </>

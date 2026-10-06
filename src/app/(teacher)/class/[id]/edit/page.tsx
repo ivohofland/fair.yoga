@@ -42,6 +42,7 @@ export default async function ClassEditPage({
       <ClassEditForm
         classId={cls.id}
         settingsLocked={cls.settingsLocked}
+        currency={cls.currency}
         initial={{
           classType: entry.classType,
           description: cls.description ?? '',

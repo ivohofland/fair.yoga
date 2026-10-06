@@ -1,5 +1,5 @@
 import type { Class, Registration } from '@prisma/client';
-import { formatEuro } from '@/lib/format';
+import { formatMoney } from '@/lib/format';
 import { calculateClassPricing } from '@/services/pricing';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';
@@ -82,14 +82,14 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
       <div className="bg-teal-tint rounded-card p-5 text-center">
         <span className="type-label">Estimated earnings</span>
         <p className="type-number text-[28px] leading-[1.25] mt-1">
-          {formatEuro(estimatedEarnings)}
+          {formatMoney(estimatedEarnings, cls.currency)}
         </p>
       </div>
 
       <div className="mt-4">
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Room cost</span>
-          <span className="tabular-nums text-brown">{formatEuro(Number(cls.roomCost))}</span>
+          <span className="tabular-nums text-brown">{formatMoney(Number(cls.roomCost), cls.currency)}</span>
         </div>
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Students</span>
@@ -98,7 +98,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Rate</span>
           <span className="tabular-nums text-ink">
-            {formatEuro(Number(cls.minRate))} &ndash; {formatEuro(Number(cls.targetRate))}
+            {formatMoney(Number(cls.minRate), cls.currency)} &ndash; {formatMoney(Number(cls.targetRate), cls.currency)}
           </span>
         </div>
       </div>
@@ -112,7 +112,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
               Tier {row.tier}
               <span className="type-caption ml-1.5">{row.count} {row.count === 1 ? 'student' : 'students'}</span>
             </span>
-            <span className="type-number">{formatEuro(row.price)}</span>
+            <span className="type-number">{formatMoney(row.price, cls.currency)}</span>
           </div>
         ))}
       </div>

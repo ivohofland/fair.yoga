@@ -77,7 +77,7 @@ const noServerSnapshot = () => undefined;
  * `.test.ts`, `components` globs `src/components` and `src/app`), so it would
  * silently never run. `class-edit-form.test.tsx` owns the server-render
  * assertion — the one that reddens if anyone inlines `todayLocal()` back into
- * a render — and `class/new/page.test.tsx` the client one.
+ * a render — and `class/new/new-class-form.test.tsx` the client one.
  */
 export function useTodayLocal(): string | undefined {
   return useSyncExternalStore(subscribeToNothing, todayLocal, noServerSnapshot);

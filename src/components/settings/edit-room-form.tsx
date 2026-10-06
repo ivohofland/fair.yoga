@@ -2,9 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { Currency } from '@prisma/client';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { currencyLabel } from '@/lib/format';
 
 const EQUIPMENT_OPTIONS = [
   { key: 'mats', label: 'Mats' },
@@ -18,6 +20,7 @@ const EQUIPMENT_OPTIONS = [
 interface EditRoomFormProps {
   roomId: string;
   teacherRoomId: string;
+  currency: Currency;
   initial: {
     venueName: string;
     roomName: string;
@@ -32,7 +35,7 @@ interface EditRoomFormProps {
   };
 }
 
-export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormProps) {
+export function EditRoomForm({ roomId, teacherRoomId, currency, initial }: EditRoomFormProps) {
   const router = useRouter();
   const [venueName, setVenueName] = useState(initial.venueName);
   const [roomName, setRoomName] = useState(initial.roomName);
@@ -141,7 +144,7 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
       <Input label="Postcode" value={postcode} onChange={(e) => { setPostcode(e.target.value); clearStatus(); }} />
       <Input label="Floor" value={floor} onChange={(e) => { setFloor(e.target.value); clearStatus(); }} placeholder="e.g. Ground, 1st" />
       <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => { setMaxCapacity(e.target.value); clearStatus(); }} />
-      <Input label="Rental rate" type="number" step="0.01" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
+      <Input label={`Rental rate (${currencyLabel(currency)})`} type="number" step="0.01" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
 
       <fieldset className="flex flex-col gap-1">
         <legend className="text-brown mb-2">Available props</legend>

@@ -3,10 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
+import type { Currency } from '@prisma/client';
 import type { updateStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { currencyLabel } from '@/lib/format';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
@@ -61,12 +63,12 @@ void _formHasNoExtras;
  * floating-point number — an emptied field, and every intermediate state of
  * typing `45.` on a `step="0.01"` field. Coercing per keystroke turns each of
  * those into `Number('') === 0`, and `hourlyRate` is
- * `z.number().nonnegative()`, so 0 is ACCEPTED: the rate silently becomes €0,
+ * `z.number().nonnegative()`, so 0 is ACCEPTED: the rate silently becomes 0,
  * the form says "Saved", and reporting counts the class as zero income.
  * `durationMinutes` is `.positive()` and merely rejects, loudly and in Zod's
  * own words.
  *
- * The create screen for this same entity (`studio-class/new/page.tsx`),
+ * The create screen for this same entity (`studio-class/new/new-studio-class-form.tsx`),
  * `StudentCountEditor` and `EditRoomForm` all hold strings and coerce at send.
  * This is that pattern, not a new one.
  */
@@ -77,6 +79,7 @@ type FieldErrors = Partial<FormState>;
 interface StudioClassEditFormProps {
   studioClassId: string;
   dateEditable: boolean;
+  currency: Currency;
   initial: StudioClassEditInitial;
 }
 
@@ -124,6 +127,7 @@ function validate(form: FormState, dateEditable: boolean): FieldErrors {
 export function StudioClassEditForm({
   studioClassId,
   dateEditable,
+  currency,
   initial,
 }: StudioClassEditFormProps) {
   const router = useRouter();
@@ -273,7 +277,7 @@ export function StudioClassEditForm({
             onChange={(e) => set('durationMinutes', e.target.value)}
           />
           <Input
-            label="Hourly rate (€)"
+            label={`Hourly rate (${currencyLabel(currency)})`}
             type="number"
             step="0.01"
             value={form.hourlyRate}

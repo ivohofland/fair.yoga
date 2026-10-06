@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
+import type { Currency } from '@prisma/client';
 import type { createStudioClassTemplateSchema, updateStudioClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { currencyLabel } from '@/lib/format';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
@@ -54,6 +56,7 @@ void _formHasNoExtras;
 interface StudioTemplateFormProps {
   mode: 'create' | 'edit';
   templateId?: string;
+  currency: Currency;
   initial?: StudioTemplateFormValues;
 }
 
@@ -94,7 +97,7 @@ function toFormState(initial?: StudioTemplateFormValues): FormState {
   };
 }
 
-export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplateFormProps) {
+export function StudioTemplateForm({ mode, templateId, currency, initial }: StudioTemplateFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<FormState>(() => toFormState(initial));
   const [error, setError] = useState('');
@@ -410,7 +413,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       />
 
       <Input
-        label="Hourly rate"
+        label={`Hourly rate (${currencyLabel(currency)})`}
         type="number"
         step="0.01"
         value={form.hourlyRate}

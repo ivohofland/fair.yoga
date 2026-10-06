@@ -32,7 +32,7 @@ describe('DeleteStudioClassButton', () => {
   const confirmRemove = () => fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
 
   it('names what the removal costs when the class counts toward earnings', () => {
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={45} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={45} />);
     openConfirm();
     expect(
       screen.getByText(
@@ -51,7 +51,7 @@ describe('DeleteStudioClassButton', () => {
    */
   it('backs out on Keep without removing anything', () => {
     vi.stubGlobal('fetch', fetchMock);
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={45} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={45} />);
     openConfirm();
 
     fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
@@ -62,7 +62,7 @@ describe('DeleteStudioClassButton', () => {
   });
 
   it('claims no cost when the class is outside the reporting window', () => {
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={null} />);
     openConfirm();
     expect(
       screen.getByText('Remove this class? This cannot be undone.'),
@@ -74,7 +74,7 @@ describe('DeleteStudioClassButton', () => {
     const assign = stubLocation();
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={null} />);
 
     openConfirm();
     confirmRemove();
@@ -100,7 +100,7 @@ describe('DeleteStudioClassButton', () => {
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={null} />);
 
     openConfirm();
     confirmRemove();
@@ -119,7 +119,7 @@ describe('DeleteStudioClassButton', () => {
       json: async () => ({ error: { code: 'NOT_FOUND', message: 'That class is already gone.' } }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={null} />);
 
     openConfirm();
     confirmRemove();
@@ -136,7 +136,7 @@ describe('DeleteStudioClassButton', () => {
       json: async () => ({ error: { message: 'Access denied' } }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={null} />);
 
     openConfirm();
     confirmRemove();
@@ -150,7 +150,7 @@ describe('DeleteStudioClassButton', () => {
     const offline = new Error('offline');
     fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
-    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+    render(<DeleteStudioClassButton currency="EUR" studioClassId="sc-1" earningsAtRisk={null} />);
 
     openConfirm();
     confirmRemove();

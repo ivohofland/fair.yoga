@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassTemplateSchema, type updateClassTemplateSchema } from '@/lib/schemas';
-import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
+import type { CancelDeadline, AutoCancelCheck, Currency } from '@prisma/client';
 import type { NoneOf } from '@/lib/type-pins';
+import { currencyLabel } from '@/lib/format';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -90,6 +91,7 @@ void _formHasNoExtrasOnCreate;
 interface TemplateFormProps {
   mode: 'create' | 'edit';
   templateId?: string;
+  currency: Currency;
   initial?: TemplateFormValues;
 }
 
@@ -166,7 +168,7 @@ const INITIAL_VALUES: TemplateFormValues = {
   autoCancelCheck: 'HOURS_2',
 };
 
-export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
+export function TemplateForm({ mode, templateId, currency, initial }: TemplateFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial ?? INITIAL_VALUES);
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomOption[]>([]);
@@ -639,21 +641,21 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
 
       <div className="grid grid-cols-3 gap-3">
         <Input
-          label="Room cost"
+          label={`Room cost (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
           value={String(form.roomCost)}
           onChange={(e) => update('roomCost', Number(e.target.value))}
         />
         <Input
-          label="Min rate"
+          label={`Min rate (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
           value={String(form.minRate)}
           onChange={(e) => update('minRate', Number(e.target.value))}
         />
         <Input
-          label="Target rate"
+          label={`Target rate (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
           value={String(form.targetRate)}
@@ -682,6 +684,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       </div>
 
       <PricingPreviewTable
+        currency={currency}
         roomCost={form.roomCost}
         minRate={form.minRate}
         targetRate={form.targetRate}

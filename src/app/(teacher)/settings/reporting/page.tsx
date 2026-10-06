@@ -1,10 +1,11 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatMonthLabel, formatCents } from '@/lib/format';
+import { formatMonthLabel, formatMoneyCents } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +18,7 @@ function monthKey(date: Date): string {
 // shown to students — transparent, no charts, no growth talk.
 export default async function ReportingPage() {
   const session = await requireTeacherSession();
+  const currency = await teacherCurrency(session.teacherId);
   const now = new Date();
   // #101. `CalendarEntry.date` is a `@db.Date` calendar date; `new Date()` is an
   // instant. Comparing them directly meant that west of UTC, in the teacher's
@@ -130,7 +132,7 @@ export default async function ReportingPage() {
           <div className="bg-teal-tint rounded-card p-5 text-center">
             <p className="type-label">Total charged for teaching</p>
             <p className="type-number text-[28px] leading-[1.25] mt-1">
-              {formatCents(totalClassEarningsCents + totalStudioEarningsCents)}
+              {formatMoneyCents(totalClassEarningsCents + totalStudioEarningsCents, currency)}
             </p>
             <p className="type-caption mt-0.5">
               {completedClasses.length + completedStudioClasses.length} classes · {distinctStudents.length}{' '}
@@ -141,15 +143,15 @@ export default async function ReportingPage() {
           <div className="mt-4">
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Your classes</span>
-              <span className="type-number">{formatCents(totalClassEarningsCents)}</span>
+              <span className="type-number">{formatMoneyCents(totalClassEarningsCents, currency)}</span>
             </div>
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Studio classes</span>
-              <span className="type-number">{formatCents(totalStudioEarningsCents)}</span>
+              <span className="type-number">{formatMoneyCents(totalStudioEarningsCents, currency)}</span>
             </div>
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Room costs paid</span>
-              <span className="tabular-nums text-brown">{formatCents(totalRoomCostsCents)}</span>
+              <span className="tabular-nums text-brown">{formatMoneyCents(totalRoomCostsCents, currency)}</span>
             </div>
           </div>
 
@@ -170,7 +172,7 @@ export default async function ReportingPage() {
                   <span className="flex-1 text-base text-ink">{m.label}</span>
                   <span className="w-20 text-right text-sm text-brown tabular-nums">{m.classes}</span>
                   <span className="w-20 text-right text-sm text-brown tabular-nums">{m.students}</span>
-                  <span className="w-24 text-right type-number text-sm">{formatCents(m.earningsCents)}</span>
+                  <span className="w-24 text-right type-number text-sm">{formatMoneyCents(m.earningsCents, currency)}</span>
                 </div>
               ))}
             </section>

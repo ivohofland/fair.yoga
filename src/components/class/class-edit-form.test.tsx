@@ -57,7 +57,7 @@ describe('ClassEditForm', () => {
   async function saveWith(settingsLocked: boolean): Promise<Record<string, unknown>> {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [, options] = fetchMock.mock.calls[0] ?? [];
@@ -119,7 +119,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm
+      <ClassEditForm currency="EUR"
         classId="cls-1"
         settingsLocked={true}
         initial={{ ...initial, minRate: 30, targetRate: 25 }}
@@ -134,7 +134,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm
+      <ClassEditForm currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, description: '' }}
@@ -171,7 +171,7 @@ describe('ClassEditForm', () => {
     async (_label, fieldName, clearedValue, settingsLocked, copy) => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<ClassEditForm classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+      render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
 
       fireEvent.change(screen.getByLabelText(fieldName), { target: { value: clearedValue } });
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -213,7 +213,7 @@ describe('ClassEditForm', () => {
     async (_label, fieldName, value, settingsLocked, copy) => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<ClassEditForm classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+      render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
 
       fireEvent.change(screen.getByLabelText(fieldName), { target: { value } });
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -230,7 +230,7 @@ describe('ClassEditForm', () => {
   ] as const)('saves every number field at %s, with no alert', async (_label, edges) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={{ ...initial, ...edges }} />);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, ...edges }} />);
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -255,7 +255,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm
+      <ClassEditForm currency="EUR"
         classId="cls-1"
         settingsLocked={true}
         initial={{ ...initial, ...overrides }}
@@ -280,7 +280,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm
+      <ClassEditForm currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, minRate: 30, targetRate: 25 }}
@@ -301,7 +301,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm
+      <ClassEditForm currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, roomCost: 20, minRate: -25, targetRate: 25 }}
@@ -335,7 +335,7 @@ describe('ClassEditForm', () => {
     // as it would under UTC — while still reddening the instant anyone calls
     // a clock-reading formatter during render.
     const html = renderToStaticMarkup(
-      <ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />,
+      <ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
     );
     // Scoped to the date field's own tag rather than run over the whole
     // document, because this form legitimately server-renders another `min`:
@@ -367,7 +367,7 @@ describe('ClassEditForm', () => {
     // pins is the TRANSITION: absent in the server HTML, present after
     // hydration, on the same DOM node.
     const html = renderToString(
-      <ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />,
+      <ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
     );
     const container = document.createElement('div');
     container.innerHTML = html;
@@ -387,7 +387,7 @@ describe('ClassEditForm', () => {
       await act(async () => {
         root = hydrateRoot(
           container,
-          <ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />,
+          <ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
         );
       });
 
@@ -417,7 +417,7 @@ describe('ClassEditForm', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
     try {
-      render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+      render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
       expect(screen.getByLabelText('Date')).toHaveAttribute('min', '2026-08-18');
     } finally {
       vi.useRealTimers();
@@ -435,7 +435,7 @@ describe('ClassEditForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue(htmlResponse(502));
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -451,7 +451,7 @@ describe('ClassEditForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 

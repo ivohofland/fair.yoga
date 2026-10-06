@@ -18,7 +18,7 @@ export default async function EditStudioTemplatePage({
 
   const template = await prisma.studioClassTemplate.findUnique({
     where: { id },
-    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
   });
 
   if (!template || template.scheduleRule.teacherId !== session.teacherId) {
@@ -47,6 +47,7 @@ export default async function EditStudioTemplatePage({
       <StudioTemplateForm
         mode="edit"
         templateId={template.id}
+        currency={scheduleRule.teacher.currency}
         initial={initial}
       />
 
