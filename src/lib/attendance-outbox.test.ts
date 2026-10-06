@@ -230,6 +230,66 @@ describe('attendance outbox', () => {
     expect(result.current).toBe(true);
   });
 
+  it('after a failed write, neither a reload nor a clear brings back a superseded stored tap', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const realSetItem = Storage.prototype.setItem;
+    let writes = 0;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      writes++;
+      if (writes > 1) throw new DOMException('quota', 'QuotaExceededError');
+      realSetItem.call(this, key, value);
+    });
+    const first = await enqueueAttendance(input('attended'));
+    expect(localStorage.getItem(KEY)).toContain('Ada');
+    await settleEntry(first, { kind: 'confirmed', at: 1000 });
+    const second = await enqueueAttendance(input('no_show'));
+    await settleEntry(second, { kind: 'confirmed', at: 2000 });
+
+    // The switch to memory leaves no stored copy older than memory behind.
+    resetOutboxForTests();
+    expect(getOutbox().pending.r1).toBeUndefined();
+
+    await enqueueAttendance(input('attended'));
+    await clearOutbox();
+    expect(localStorage.getItem(KEY)).toBeNull();
+    resetOutboxForTests();
+    expect(getOutbox()).toEqual(EMPTY_OUTBOX);
+
+    expect(warn).toHaveBeenCalledWith('[attendance-outbox] storage failed; the outbox is in memory for this tab', {
+      error: 'QuotaExceededError',
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('Ada');
+  });
+
+  it('logs the switch to memory once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    await enqueueAttendance(input('attended', 'r1'));
+    await enqueueAttendance(input('attended', 'r2'));
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('clearOutbox in memory mode removes what another tab stored since', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    await enqueueAttendance(input('attended'));
+    setItem.mockRestore();
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        pending: { r2: { id: 'x', ownerId: 'b', registrationId: 'r2', classId: 'c', studentName: 'Bo', status: 'attended', recordedAt: 1 } },
+        confirmed: {},
+        refused: {},
+      }),
+    );
+    await clearOutbox();
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
   it('volatile storage reads false on the server', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('blocked');
