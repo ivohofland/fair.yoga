@@ -942,6 +942,83 @@ describe('attendance outbox', () => {
     unsubscribe();
   });
 
+  it.each([
+    ['a storage event', () => fireStorage()],
+    [
+      'the page being hidden',
+      () => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      },
+    ],
+    ['pagehide', () => window.dispatchEvent(new Event('pagehide'))],
+  ])('a tab that stopped reading storage retries nothing on %s, so another tab’s entry stored since survives and this tab keeps its own', async (_, trigger) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      const setItem = quota(() => 0);
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+        throw new DOMException('remove', 'UnknownError');
+      });
+      await enqueueAttendance(input('no_show', 'r1'));
+      setItem.mockRestore();
+      removeItem.mockRestore();
+      await other.enqueueAttendance({ ...input('attended', 'y1'), ownerId: 'b', studentName: 'Bo' });
+
+      trigger();
+      await settled();
+      expect(storedPendingIds()).toEqual(['r1', 'y1']);
+      expect(getOutbox().pending.r1?.status).toBe('no_show');
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState');
+      unsubscribe();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a retry that waited for the lock writes nothing once a change of this tab’s made before it stopped this tab reading storage', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let tail: Promise<unknown> = Promise.resolve();
+    const request = (_name: string, fn: () => Promise<unknown>): Promise<unknown> => {
+      const run = tail.then(fn);
+      tail = run.catch(() => undefined);
+      return run;
+    };
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true });
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      refuseWhere((value) => value.includes('"r2"') || value.includes('"no_show"'));
+      await enqueueAttendance(input('attended', 'r2'));
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+      const refuseRemoval = () => {
+        throw new DOMException('remove', 'UnknownError');
+      };
+      removeItem.mockImplementationOnce(refuseRemoval).mockImplementationOnce(refuseRemoval);
+
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const held = withLock('fy-outbox', () => gate);
+      const correction = enqueueAttendance(input('no_show', 'r1'));
+      const theirs = other.enqueueAttendance({ ...input('attended', 'y1'), ownerId: 'b', studentName: 'Bo' });
+      fireStorage();
+      release();
+      await Promise.all([held, correction, theirs]);
+      await settled();
+
+      expect(storedPendingIds()).toEqual(['r1', 'y1']);
+      expect(getOutbox().pending.r1?.status).toBe('no_show');
+    } finally {
+      unsubscribe();
+      other.resetOutboxForTests();
+    }
+  });
+
   it('when storage refuses even what it already held, the stored copy is removed and that is logged', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await enqueueAttendance(input('attended', 'r1'));

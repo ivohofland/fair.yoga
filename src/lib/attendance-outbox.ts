@@ -486,15 +486,18 @@ function hold(next: OutboxState): void {
  * Tries the whole write again while this tab holds entries storage refused,
  * since storage may have room by now; otherwise they are written only with
  * this tab's next change. Writes nothing once a clear another tab made has
- * taken them. Best-effort: a page being unloaded may not finish it.
+ * taken them, and nothing while `detached`: that write reads nothing first,
+ * so it would erase whatever another tab stored since, and reading first
+ * would drop this tab's entries against the copy storage refused to remove.
+ * Best-effort: a page being unloaded may not finish it.
  */
 function retryWrite(): void {
-  if (overlay === null) return;
+  if (overlay === null || detached) return;
   void withLock(LOCK, async () => {
     cached = null;
     const current = getOutbox();
     if (overlay === null) notify();
-    else apply(current);
+    else if (!detached) apply(current);
   });
 }
 function onStorage(e: StorageEvent): void {
