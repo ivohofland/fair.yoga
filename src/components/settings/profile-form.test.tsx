@@ -283,15 +283,16 @@ describe('ProfileForm', () => {
       expect(screen.queryByText(caption)).toBeNull();
     });
 
-    it('appears under the IBAN field once another currency is picked', () => {
+    // The field's own hint, placed and described like the account holder's.
+    it('appears as the IBAN field\'s hint once another currency is picked', () => {
       renderForm();
       fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'GBP' } });
       const note = screen.getByText(caption);
-      expect(note).toHaveClass('type-caption');
-      expect(screen.getByLabelText('Bank IBAN')).toHaveAttribute(
-        'aria-describedby',
-        expect.stringContaining(note.id),
-      );
+      const iban = screen.getByLabelText('Bank IBAN');
+      expect(note).toHaveClass('type-caption', 'text-brown-light');
+      expect(note.id).toBe(`${iban.id}-hint`);
+      expect(iban).toHaveAttribute('aria-describedby', note.id);
+      expect(note.compareDocumentPosition(iban) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it('is shown for a teacher whose saved currency is not EUR', () => {
