@@ -79,6 +79,14 @@ describe('PUT /api/teachers/[id]/bank-accounts/[currency]', () => {
     expect(body.error.message.startsWith('sortCode: ')).toBe(true);
   });
 
+  it('names, in words, a field the currency’s scheme does not use', async () => {
+    const t = await makeTeacher('GBP');
+    const res = await send('PUT', t.id, 'GBP', t.token, { holderName: 'A. Teacher', iban: 'GB82WEST12345698765432' });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('iban: Accounts in this currency don’t use an IBAN.');
+  });
+
   it('refuses another teacher with 403 and stores nothing', async () => {
     const owner = await makeTeacher();
     const other = await makeTeacher();
