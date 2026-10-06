@@ -723,7 +723,7 @@ by `tests/integration/pwa.test.ts`.
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **70** routes. **10** carry no session
+`find src/app/api -name route.ts` finds **75** routes. **10** carry no session
 guard; **6** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
 `passkey/authenticate/options`), leaving **4** with neither:
@@ -863,6 +863,40 @@ the head is the correct eviction victim under capacity pressure.
 ### Session Management
 
 Sessions are stored in the database (not JWTs) so they can be revoked. Session cookie points to a session record with `expires_at`. Middleware checks session validity on every authenticated request.
+
+**Lifetime.** A session slides: once fewer than 15 days of `expiresAt` remain, a
+request pushes it out to 30 days — but never past a 90-day ceiling measured from
+`createdAt` (`ABSOLUTE_LIFETIME_MS`, `src/lib/auth/session.ts`). The cookie's
+`Max-Age` is that ceiling; the server enforces the real expiry. The notification
+stream revalidates its session on every keepalive tick and closes when it is gone.
+
+**Recent authentication.** Adding a passkey is the one action that creates a new
+way into an account, so `POST /api/auth/passkey/register/options` and
+`.../register/verify` both refuse, `403 RECENT_AUTH_REQUIRED`, a session whose
+`createdAt` is more than 5 minutes old (`hasRecentAuth`,
+`src/lib/auth/recent-auth.ts`; `requireRecentAuth`, `src/lib/api-utils.ts`).
+`createdAt` is the time of last authentication because every sign-in door mints a
+new session (roster below) and a sliding extension only moves `expiresAt`. The
+check runs in `verify` before the challenge is consumed, so a refusal leaves the
+challenge standing. The way through is the ordinary emailed sign-in link, which
+mints a fresh session. Removing a passkey (`DELETE /api/auth/passkey/[id]`) and
+signing out everywhere (`DELETE /api/auth/session/all`) are not gated: both only
+take ways in away. A successful registration emails the account address
+(`deliverPasskeyAddedNotice`, `FireAndForget`: the registration has committed and
+its response must not depend on the provider).
+
+**Offline cache and `Clear-Site-Data`.** The service worker keeps visited pages
+for 24 hours so a teacher with no signal in a studio can still open them. Ending a
+session elsewhere is already handled without the header: local sign-out and
+account deletion call `clearOfflinePages()`, "sign out everywhere" does too on the
+device that performs it, and `public/sw.js` empties the page cache on any redirect
+response, which is what the next online page request of a revoked session gets.
+`Clear-Site-Data: "cache"` is not the fix: it clears the HTTP cache, while Cache
+Storage, where the worker keeps pages, is under `"storage"`, which also wipes
+IndexedDB and with it the unsynced offline check-in queue. A shared device that
+stays offline keeps up to 24 hours of pages, accepted because that window is the
+feature (`docs/superpowers/specs/2026-10-06-credentials-outlive-session-design.md`,
+premise table).
 
 ### Session-issuing doors
 
