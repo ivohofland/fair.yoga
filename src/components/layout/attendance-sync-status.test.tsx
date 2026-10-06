@@ -274,9 +274,11 @@ describe('AttendanceSyncStatus', () => {
   });
 
   it('gives each refusal its own accessible Dismiss and Open class names, outside any live region', async () => {
-    await refuse({ registrationId: 'reg-1', studentName: 'Asha' });
-    await refuse({ registrationId: 'reg-2', studentName: 'Ben' });
     renderRegion();
+    await act(async () => {
+      await refuse({ registrationId: 'reg-1', studentName: 'Asha' });
+      await refuse({ registrationId: 'reg-2', studentName: 'Ben' });
+    });
     const controls = [
       screen.getByRole('button', { name: /^Dismiss: Couldn't record Asha/ }),
       screen.getByRole('button', { name: /^Dismiss: Couldn't record Ben/ }),
@@ -319,6 +321,64 @@ describe('AttendanceSyncStatus', () => {
     await refuse();
     renderRegion(<Consumer classId="class-other" />);
     expect(screen.getByText(/Couldn't record Asha/)).toBeInTheDocument();
+  });
+
+  it('shows a refusal stored when the layout mounted without announcing it', async () => {
+    await refuse();
+    renderRegion();
+    expect(screen.getByText(/Couldn't record Asha/)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('announces a refusal that arrives after mount, and keeps that text as other things change', async () => {
+    renderRegion();
+    await act(async () => {
+      await refuse();
+    });
+    const region = screen.getByRole('status');
+    expect(region).toHaveTextContent(/^1 attendance change couldn't be recorded\.$/);
+    await act(async () => {
+      await enqueueAttendance(entry({ registrationId: 'reg-2' }));
+    });
+    expect(region).toHaveTextContent(/^1 attendance change couldn't be recorded\.$/);
+  });
+
+  it('does not re-announce the rest when one announced refusal leaves the summary', async () => {
+    const { rerender } = renderRegion();
+    const region = screen.getByRole('status');
+    await act(async () => {
+      await refuse({ registrationId: 'reg-1', classId: 'class-1' });
+      await refuse({ registrationId: 'reg-2', classId: 'class-2', studentName: 'Ben' });
+    });
+    expect(region).toHaveTextContent(/^2 attendance changes couldn't be recorded\.$/);
+    rerender(
+      <AttendanceSyncProvider ownerId="acct-1">
+        <Consumer classId="class-1" />
+        <AttendanceSyncStatus />
+      </AttendanceSyncProvider>,
+    );
+    expect(screen.getByText(/Couldn't record Ben/)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toBeEmptyDOMElement();
+  });
+
+  it('does not announce a refusal the class page showed, once the teacher leaves that page', async () => {
+    const { rerender } = renderRegion(<Consumer classId="class-1" />);
+    const region = screen.getByRole('status');
+    await act(async () => {
+      await refuse();
+    });
+    expect(screen.queryByText(/Couldn't record/)).toBeNull();
+    // The layout stays mounted across the navigation: same slot, same live region.
+    rerender(
+      <AttendanceSyncProvider ownerId="acct-1">
+        {null}
+        <AttendanceSyncStatus />
+      </AttendanceSyncProvider>,
+    );
+    expect(screen.getByText(/Couldn't record Asha/)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toBeEmptyDOMElement();
   });
 
   it('picks up a refusal that arrives after mount', async () => {
