@@ -58,7 +58,7 @@ export default async function PaymentsOverviewPage() {
         <div className="flex-1 bg-sand-soft border border-border rounded-card p-5">
           <p className="type-label">Outstanding</p>
           {outstandingTotals.map((t) => (
-            <p key={t.currency} className="type-number text-[28px] leading-[1.25] mt-1 text-brown">
+            <p key={t.currency} data-testid="outstanding-total" className="type-number text-[28px] leading-[1.25] mt-1 text-brown">
               {formatMoneyCents(t.cents, t.currency)}
             </p>
           ))}
@@ -69,7 +69,7 @@ export default async function PaymentsOverviewPage() {
         <div className="flex-1 bg-teal-tint rounded-card p-5">
           <p className="type-label">Received</p>
           {receivedTotals.map((t) => (
-            <p key={t.currency} className="type-number text-[28px] leading-[1.25] mt-1">
+            <p key={t.currency} data-testid="received-total" className="type-number text-[28px] leading-[1.25] mt-1">
               {formatMoneyCents(t.cents, t.currency)}
             </p>
           ))}
