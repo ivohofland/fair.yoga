@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient, Prisma, type Currency } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -10,7 +10,11 @@ const suffix = uniqueSuffix();
 /**
  * `/settings/reporting` groups every total by currency (#758): a teacher with
  * classes in two currencies sees one line per currency where a single total
- * stood, and never the numeric sum of the two.
+ * stood, and never the numeric sum of the two. The teacher's own currency
+ * leads, so the same mixed fixture is also seeded under a GBP teacher. A
+ * figure with nothing in it reads zero in the teacher's currency: a GBP
+ * teacher whose only completed class is a SEK studio class reads £0.00 for
+ * their own classes and room costs.
  */
 describe('GET /settings/reporting across currencies', () => {
   const teacherIds: string[] = [];
@@ -18,10 +22,12 @@ describe('GET /settings/reporting across currencies', () => {
   let roomId: string | undefined;
   let mixedToken: string;
   let singleToken: string;
+  let gbpMixedToken: string;
+  let gbpStudioToken: string;
 
   const page = (token: string) => fetch(`${BASE_URL}/settings/reporting`, { headers: cookie(token) });
 
-  async function makeTeacher(tag: string): Promise<{ id: string; token: string }> {
+  async function makeTeacher(tag: string, currency: Currency = 'EUR'): Promise<{ id: string; token: string }> {
     const email = `repcur-${tag}-${suffix}@test.local`;
     const teacher = await prisma.teacher.create({
       data: {
@@ -31,6 +37,7 @@ describe('GET /settings/reporting across currencies', () => {
         account: { create: { email } },
         bio: 'Reporting currency test',
         pageSlug: `repcur-${tag}-${suffix}`,
+        currency,
       },
     });
     teacherIds.push(teacher.id);
@@ -69,8 +76,12 @@ describe('GET /settings/reporting across currencies', () => {
     await prisma.$connect();
     const mixed = await makeTeacher('mixed');
     const single = await makeTeacher('single');
+    const gbpMixed = await makeTeacher('gbpmixed', 'GBP');
+    const gbpStudio = await makeTeacher('gbpstudio', 'GBP');
     mixedToken = mixed.token;
     singleToken = single.token;
+    gbpMixedToken = gbpMixed.token;
+    gbpStudioToken = gbpStudio.token;
 
     const room = await prisma.room.create({
       data: {
@@ -90,20 +101,38 @@ describe('GET /settings/reporting across currencies', () => {
     const singleRoom = await prisma.teacherRoom.create({
       data: { teacherId: single.id, roomId: room.id, capacityOverride: 15, rentalRate: 10 },
     });
+    const gbpMixedRoom = await prisma.teacherRoom.create({
+      data: { teacherId: gbpMixed.id, roomId: room.id, capacityOverride: 15, rentalRate: 10 },
+    });
 
     // EUR: 85.00 - 25.00 = 60.00 earned; GBP: 47.00 - 12.00 = 35.00 earned. Sum would be 95.00.
-    await completedClass(mixed.id, mixedRoom.id, 'EUR', '85.00', '25.00', 10);
-    await completedClass(mixed.id, mixedRoom.id, 'GBP', '47.00', '12.00', 11);
+    async function mixedFixture(teacherId: string, teacherRoomId: string) {
+      await completedClass(teacherId, teacherRoomId, 'EUR', '85.00', '25.00', 10);
+      await completedClass(teacherId, teacherRoomId, 'GBP', '47.00', '12.00', 11);
+      await createStudioClassFixture(prisma, {
+        teacherId,
+        classType: 'Studio GBP',
+        location: 'Somewhere',
+        date: new Date('2026-08-12T00:00:00.000Z'),
+        startTime: hhmmToTime('10:00'),
+        durationMinutes: 60,
+        hourlyRate: new Prisma.Decimal('20.00'),
+        studentCount: 3,
+        currency: 'GBP',
+      });
+    }
+    await mixedFixture(mixed.id, mixedRoom.id);
+    await mixedFixture(gbpMixed.id, gbpMixedRoom.id);
     await createStudioClassFixture(prisma, {
-      teacherId: mixed.id,
-      classType: 'Studio GBP',
+      teacherId: gbpStudio.id,
+      classType: 'Studio SEK',
       location: 'Somewhere',
       date: new Date('2026-08-12T00:00:00.000Z'),
       startTime: hhmmToTime('10:00'),
       durationMinutes: 60,
       hourlyRate: new Prisma.Decimal('20.00'),
       studentCount: 3,
-      currency: 'GBP',
+      currency: 'SEK',
     });
 
     await completedClass(single.id, singleRoom.id, 'EUR', '85.00', '25.00', 10);
@@ -145,6 +174,25 @@ describe('GET /settings/reporting across currencies', () => {
     const html = await (await page(mixedToken)).text();
     const lines = [...html.matchAll(/data-testid="report-total"[^>]*>([^<]*)</g)].map((m) => m[1]);
     expect(lines).toEqual(['€60.00', '£55.00']);
+  });
+
+  it('puts a GBP teacher\'s currency first in the headline total', async () => {
+    const html = await (await page(gbpMixedToken)).text();
+    const lines = [...html.matchAll(/data-testid="report-total"[^>]*>([^<]*)</g)].map((m) => m[1]);
+    expect(lines).toEqual(['£55.00', '€60.00']);
+  });
+
+  it('reads £0.00 for a GBP teacher\'s figure with nothing in it', async () => {
+    const html = (await (await page(gbpStudioToken)).text()).replaceAll('<!-- -->', '');
+    const figure = (label: string): string[] => {
+      const at = html.indexOf(`>${label}</span>`);
+      expect(at).toBeGreaterThan(-1);
+      const lines = html.slice(at).match(/^>[^<]*<\/span><span class="flex flex-col items-end">((?:<span[^>]*>[^<]*<\/span>)*)<\/span>/);
+      return [...(lines?.[1] ?? '').matchAll(/>([^<]*)</g)].map((m) => m[1] ?? '');
+    };
+    expect(figure('Your classes')).toEqual(['£0.00']);
+    expect(figure('Room costs paid')).toEqual(['£0.00']);
+    expect(figure('Studio classes')).toEqual(['SEK 20.00']);
   });
 
   it('renders exactly one headline total for a single-currency teacher', async () => {
