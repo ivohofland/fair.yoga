@@ -17,6 +17,7 @@ import {
 
 const db = new PrismaClient();
 const uniqueSuffix = Date.now();
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Test fixtures for each SessionUser profile variant.
 let teacherAccountId: string;
@@ -403,6 +404,54 @@ describe('validateSession', () => {
     expect(after.getTime()).toBe(original.getTime());
   });
 
+  it('does NOT extend a session whose expiry is still more than 15 days out, however old it is', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    const original = new Date(Date.now() + 20 * DAY_MS);
+    await db.session.update({
+      where: { id: sessionHash },
+      data: { createdAt: new Date(Date.now() - 40 * DAY_MS), expiresAt: original },
+    });
+
+    expect(await validateSession(db, token)).not.toBeNull();
+
+    const after = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
+    expect(after.getTime()).toBe(original.getTime());
+  });
+
+  it('caps an extension at 90 days from createdAt', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    const createdAt = new Date(Date.now() - 80 * DAY_MS);
+    await db.session.update({
+      where: { id: sessionHash },
+      data: { createdAt, expiresAt: new Date(Date.now() + 5 * DAY_MS) },
+    });
+
+    expect(await validateSession(db, token)).not.toBeNull();
+
+    const after = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
+    expect(after.getTime()).toBe(createdAt.getTime() + 90 * DAY_MS);
+  });
+
+  it('deletes and rejects a session past 90 days from createdAt even when expiresAt is still ahead', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    await db.session.update({
+      where: { id: sessionHash },
+      data: {
+        createdAt: new Date(Date.now() - 91 * DAY_MS),
+        expiresAt: new Date(Date.now() + 10 * DAY_MS),
+      },
+    });
+
+    expect(await validateSession(db, token)).toBeNull();
+    expect(await db.session.findUnique({ where: { id: sessionHash } })).toBeNull();
+  });
+
   it('returns null when session is deleted between read and extension update (#632)', async () => {
     const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
@@ -573,7 +622,7 @@ describe('setSessionCookie', () => {
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Lax');
     expect(cookie).toContain('Path=/');
-    expect(cookie).toContain('Max-Age=2592000');
+    expect(cookie).toContain('Max-Age=7776000');
   });
 });
 
