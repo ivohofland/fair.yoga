@@ -1,4 +1,5 @@
 export * from './session';
+export * from './recent-auth';
 export * from './magic-link';
 export * from './origin-nonce';
 export * from './handoff';

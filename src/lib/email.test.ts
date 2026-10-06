@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail } from './email';
-import { renderMagicLinkEmail, renderInvitationEmail } from './email-templates';
+import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail, sendPasskeyAddedEmail } from './email';
+import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail } from './email-templates';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 
 const sendMock = vi.hoisted(() => vi.fn());
@@ -217,6 +217,45 @@ describe('sendInvitationEmail', () => {
       await sendInvitationEmail('a@test.local', 'Teacher T', URL);
 
       expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'a@test.local', subject, html }),
+      );
+    });
+  });
+});
+
+describe('sendPasskeyAddedEmail', () => {
+  const ADDED_AT = new Date('2026-10-06T14:03:00Z');
+
+  it('logs instead of sending without a key', async () => {
+    delete process.env.EMAIL_DRY_RUN;
+    delete process.env.RESEND_API_KEY;
+
+    await expect(sendPasskeyAddedEmail('a@test.local', ADDED_AT)).resolves.toBeUndefined();
+
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  describe('with a key configured', () => {
+    beforeEach(() => {
+      delete process.env.EMAIL_DRY_RUN;
+      process.env.RESEND_API_KEY = 're_real_looking_key';
+    });
+
+    it('throws with the error message when Resend reports { error }', async () => {
+      sendMock.mockResolvedValue({ data: null, error: { message: 'rate limited' } });
+
+      await expect(sendPasskeyAddedEmail('a@test.local', ADDED_AT)).rejects.toThrow(
+        'Failed to send passkey-added email: rate limited',
+      );
+    });
+
+    it('sends the rendered subject and html', async () => {
+      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
+      const { subject, html } = renderPasskeyAddedEmail(ADDED_AT);
+
+      await sendPasskeyAddedEmail('a@test.local', ADDED_AT);
+
       expect(sendMock).toHaveBeenCalledWith(
         expect.objectContaining({ to: 'a@test.local', subject, html }),
       );

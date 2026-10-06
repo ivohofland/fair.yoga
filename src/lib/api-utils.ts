@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { validateSession, getSessionToken } from './auth';
+import { validateSession, getSessionToken, hasRecentAuth } from './auth';
 import { prisma } from './db';
 import { classifyApiError } from './api-errors';
 import type { ApiErrorCode, CodedRefusal, StatusOf } from './api-error-codes';
@@ -120,6 +120,20 @@ export async function requireSession(
   const session = await validateSession(prisma, token);
   if (!session) return respondError('Session expired', 401);
   return session;
+}
+
+/**
+ * Refuses a session that was not minted in the last few minutes
+ * (`hasRecentAuth`); null when it was. For actions that add a way into the
+ * account, where a copied cookie must not be enough.
+ */
+export async function requireRecentAuth(session: SessionUser): Promise<NextResponse | null> {
+  if (await hasRecentAuth(prisma, session.sessionId)) return null;
+  return respondError(
+    'For your security, please confirm it is you first: have a sign-in link emailed to you, open it, and try again.',
+    403,
+    'RECENT_AUTH_REQUIRED',
+  );
 }
 
 export async function requireTeacher(

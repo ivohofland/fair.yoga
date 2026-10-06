@@ -4,6 +4,7 @@ import {
   respondOk,
   respondError,
   requireSession,
+  requireRecentAuth,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
@@ -13,6 +14,9 @@ import { liveProfile } from '@/lib/live-profile';
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
+
+  const stale = await requireRecentAuth(session);
+  if (stale) return stale;
 
   // The passkey belongs to the account; name it after whichever LIVE profile
   // exists (teacher first — the account email is the same either way). The

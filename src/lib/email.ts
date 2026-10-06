@@ -1,5 +1,5 @@
 import { Resend } from 'resend';
-import { renderMagicLinkEmail, renderInvitationEmail } from '@/lib/email-templates';
+import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail } from '@/lib/email-templates';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 import { log } from '@/lib/log';
 
@@ -85,6 +85,31 @@ export async function sendInvitationEmail(
 
   if (error) {
     throw new Error(`Failed to send invitation email: ${error.message}`);
+  }
+}
+
+/**
+ * Sends the passkey-added notice (`deliverPasskeyAddedNotice`,
+ * services/passkey-notice.ts). Like `sendInvitationEmail`, a missing key
+ * degrades to a logged dry-run rather than throwing: the registration it
+ * reports has already committed and its caller does not wait for this.
+ */
+export async function sendPasskeyAddedEmail(to: string, addedAt: Date): Promise<void> {
+  if (emailDryRun()) {
+    log.info({ to }, 'passkey-added email dry-run');
+    return;
+  }
+
+  const { subject, html } = renderPasskeyAddedEmail(addedAt);
+  const { error } = await resend().emails.send({
+    from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
+    to,
+    subject,
+    html,
+  });
+
+  if (error) {
+    throw new Error(`Failed to send passkey-added email: ${error.message}`);
   }
 }
 
