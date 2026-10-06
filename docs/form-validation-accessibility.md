@@ -66,7 +66,7 @@ Every destructive action, transition button, or dialog refusal renders with `rol
 - `src/components/class/payment-checklist.tsx`
 - `src/components/class/outstanding-payment-row.tsx`
 - `src/components/account/data-and-deletion.tsx`
-- `src/components/account/add-passkey.tsx`
+- `src/components/account/account-security.tsx`
 - `src/components/student/cancel-booking-button.tsx`
 - `src/components/booking/booking-flow.tsx`
 - `src/components/booking/join-as-student.tsx`
