@@ -86,6 +86,20 @@ describe('GET /api/notifications/stream keepalive tick', () => {
     expect(globalThis.__fairYogaSseCounts?.get(SESSION.accountId)).toBeUndefined();
   });
 
+  it('stops revalidating once the stream has closed', async () => {
+    vi.useFakeTimers();
+    validateSession.mockResolvedValueOnce(SESSION).mockResolvedValue(null);
+    const stream = await open();
+
+    await vi.advanceTimersByTimeAsync(TICK_MS);
+    expect(stream.isDone()).toBe(true);
+    const callsAtClose = validateSession.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(TICK_MS * 5);
+
+    expect(validateSession).toHaveBeenCalledTimes(callsAtClose);
+  });
+
   it('keeps the stream and logs when revalidation throws, then revalidates again on the next tick', async () => {
     vi.useFakeTimers();
     const logError = vi.spyOn(log, 'error').mockImplementation(() => undefined);

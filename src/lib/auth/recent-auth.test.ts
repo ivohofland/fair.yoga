@@ -27,6 +27,18 @@ async function sessionAged(ageMs: number): Promise<string> {
 }
 
 describe('hasRecentAuth', () => {
+  it('pins the window at five minutes', () => {
+    expect(RECENT_AUTH_WINDOW_MS).toBe(300_000);
+  });
+
+  it('refuses a session exactly the window old (the window is open at its far end)', async () => {
+    const id = await sessionAged(0);
+    const row = await db.session.findUniqueOrThrow({ where: { id } });
+    const now = row.createdAt.getTime() + RECENT_AUTH_WINDOW_MS;
+    expect(await hasRecentAuth(db, id, now)).toBe(false);
+    expect(await hasRecentAuth(db, id, now - 1)).toBe(true);
+  });
+
   it('accepts a session created just now', async () => {
     expect(await hasRecentAuth(db, await sessionAged(0))).toBe(true);
   });

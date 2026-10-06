@@ -473,6 +473,76 @@ describe('validateSession', () => {
     expect(await db.session.findUnique({ where: { id: sessionHash } })).toBeNull();
   });
 
+  describe('at the exact boundaries (Date frozen)', () => {
+    const T = new Date('2026-10-06T12:00:00.000Z');
+
+    async function seeded(createdAt: Date, expiresAt: Date) {
+      const token = await createSession(db, teacherAccountId);
+      const sessionHash = hashToken(token);
+      await db.session.update({ where: { id: sessionHash }, data: { createdAt, expiresAt } });
+      return { token, sessionHash };
+    }
+
+    async function validateAt<R>(run: () => Promise<R>): Promise<R> {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(T);
+      try {
+        return await run();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    it('does not slide with exactly 15 days remaining', async () => {
+      const expiresAt = new Date(T.getTime() + 15 * DAY_MS);
+      const { token, sessionHash } = await seeded(new Date(T.getTime() - DAY_MS), expiresAt);
+
+      expect(await validateAt(() => validateSession(db, token))).not.toBeNull();
+
+      const after = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
+      expect(after.getTime()).toBe(expiresAt.getTime());
+    });
+
+    it('slides with 15 days minus one second remaining', async () => {
+      const expiresAt = new Date(T.getTime() + 15 * DAY_MS - 1000);
+      const { token, sessionHash } = await seeded(new Date(T.getTime() - DAY_MS), expiresAt);
+
+      expect(await validateAt(() => validateSession(db, token))).not.toBeNull();
+
+      const after = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
+      expect(after.getTime()).toBe(T.getTime() + 30 * DAY_MS);
+    });
+
+    it('rejects and deletes a session exactly 90 days old', async () => {
+      const { token, sessionHash } = await seeded(
+        new Date(T.getTime() - 90 * DAY_MS),
+        new Date(T.getTime() + 10 * DAY_MS),
+      );
+
+      expect(await validateAt(() => validateSession(db, token))).toBeNull();
+      expect(await db.session.findUnique({ where: { id: sessionHash } })).toBeNull();
+    });
+
+    it('accepts a session 90 days minus one second old', async () => {
+      const { token } = await seeded(
+        new Date(T.getTime() - 90 * DAY_MS + 1000),
+        new Date(T.getTime() + 10 * DAY_MS),
+      );
+
+      expect(await validateAt(() => validateSession(db, token))).not.toBeNull();
+    });
+
+    it('leaves an 80-day-old session with 25 days left alone', async () => {
+      const expiresAt = new Date(T.getTime() + 25 * DAY_MS);
+      const { token, sessionHash } = await seeded(new Date(T.getTime() - 80 * DAY_MS), expiresAt);
+
+      expect(await validateAt(() => validateSession(db, token))).not.toBeNull();
+
+      const after = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
+      expect(after.getTime()).toBe(expiresAt.getTime());
+    });
+  });
+
   it('returns null when session is deleted between read and extension update (#632)', async () => {
     const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
