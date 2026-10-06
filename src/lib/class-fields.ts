@@ -8,7 +8,7 @@
  * `services/class-lifecycle.ts` would fail `next build`, since that module
  * transitively imports `@/lib/log` (pino, server-only). This module has no
  * imports at all, which is what makes it safe from either side — the same
- * property that lets `pricing-preview-table.tsx` import `services/pricing.ts`.
+ * property that lets the client-side pricing preview import `services/pricing.ts`.
  */
 export const ECONOMIC_FIELDS = Object.freeze([
   'roomCost',

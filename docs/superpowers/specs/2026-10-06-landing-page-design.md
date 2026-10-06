@@ -66,14 +66,15 @@ room €20, minimum rate €40 at 4 students, class of 4–12. A caption names t
 - **Normal spread only**, no shuffle toggle: deterministic, so the server render
   and the first client render agree (shuffle uses `Math.random`).
 - Both sliders carry a visible `<label>` and an `aria-valuetext` ("7 students",
-  "€90").
+  "€90.00" — the same text the visible value shows).
 
 ## Decision 3: tier rows read "1 · Getting by"
 
 `PricingPreviewResult` labels each row with the tier number and its `TIER_INFO`
-label — everywhere, so the three teacher forms change from "Tier 1" too. This
-settles the teacher side of CLAUDE.md's open question on tier labels; that line
-is updated in the same PR.
+label, so the three teacher forms change from "Tier 1" too. The class-detail
+tables (`PricingPreview`, `PricingBreakdown`) are not built on
+`PricingPreviewResult` and keep "Tier N"; whether they follow is left open, and
+CLAUDE.md's open-question line says so.
 
 ## Decision 4: copy changes only where it overpromises
 
@@ -114,7 +115,7 @@ CTAs → the pill classes the current page uses.
    "1 · Getting by"; `aria-valuetext` on both.
 4. **The page.** Teacher → `/schedule`, student → `/bookings` (untested today);
    a visitor sees every section heading; every `href` is `/signup`, `/login`,
-   the repo URL or the `mailto:`.
+   `#pricing`, the repo URL or the `mailto:`.
 5. **Browser.** `/` added to `a11y.spec.ts` and to `visual.spec.ts` with a
    `ROUTE_BASELINES` entry and attestation; an e2e check for no horizontal
    scroll at 375px and the hero CTA reaching `/signup`. `FALLBACK_ROUTES` swaps

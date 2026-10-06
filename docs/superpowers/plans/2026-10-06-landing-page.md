@@ -599,7 +599,7 @@ The three callers (`class/new/page.tsx`, `template-form.tsx`, `class-edit-form.t
 Replace the line `- Tier labels — currently 1-5, naming deferred to UX copy phase` with:
 
 ```
-- Tier labels — teacher pricing previews show the number with its `TIER_INFO` label ("1 · Getting by") since #773; the wording of those labels is still the UX copy phase's
+- Tier labels — the class-form pricing preview and the landing demo (`PricingPreviewResult`) show the number with its `TIER_INFO` label ("1 · Getting by") since #773; the class-detail price tables (`PricingPreview`, `PricingBreakdown`) still read "Tier N". Whether those follow, and the labels' wording, are still the UX copy phase's
 ```
 
 - [ ] **Step 7: Run — expect PASS**
