@@ -5,8 +5,7 @@ import { switchTeacherCurrency, type CurrencySwitchResult } from './currency-swi
  * Saving a teacher's own profile fields, and with them a currency switch
  * (#758). Framework-agnostic: the caller validates the body and maps the
  * outcome to a response. A database refusal of a field (the `pageSlug` unique
- * key) is thrown, not returned, and rolls back
- * anything the same save wrote.
+ * key) is thrown, not returned, and rolls back anything the same save wrote.
  */
 
 /** The fields a save writes as given, every one optional. */
