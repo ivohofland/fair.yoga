@@ -57,6 +57,19 @@ describe('GettingStarted', () => {
       ]);
     });
 
+    it('leaves the bank row out for a teacher in a currency with no bank method', () => {
+      stubFetch();
+      render(<GettingStarted {...nothingDone} currency="GBP" />);
+
+      const links = screen.getAllByRole('link');
+      expect(links.map((l) => l.textContent)).toEqual([
+        expect.stringContaining('Complete your profile'),
+        expect.stringContaining('Add a room'),
+        expect.stringContaining('Create your first class'),
+      ]);
+      expect(screen.queryByText('Add your bank details')).toBeNull();
+    });
+
     it('shows a Skip control on exactly the first two rows', () => {
       stubFetch();
       render(<GettingStarted {...nothingDone} />);

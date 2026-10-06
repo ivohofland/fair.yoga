@@ -1,5 +1,5 @@
 import type { Currency, OnboardingStep } from '@prisma/client';
-import { paymentMethodsFor } from './payment-methods';
+import { bankMethodsAvailable, paymentMethodsFor } from './payment-methods';
 
 /** Steps that gate retirement but carry no Skip control. */
 export type RequiredStepKey = 'room' | 'class';
@@ -29,6 +29,26 @@ export interface ResolvedStep {
 }
 
 const ORDER: readonly StepKey[] = ['profile', 'bank', 'room', 'class'];
+
+/**
+ * Whether the row is listed at all. The bank step is not, for a teacher whose
+ * currency has no bank method: students are never shown the details, so
+ * there is nothing for the step to set up.
+ */
+function isApplicable(key: StepKey, input: StepInput): boolean {
+  switch (key) {
+    case 'bank': return bankMethodsAvailable(input.currency);
+    case 'profile':
+    case 'room':
+    case 'class':
+      return true;
+    default: {
+      // Adding a StepKey without an applicability answer fails to compile here.
+      const never: never = key;
+      return never;
+    }
+  }
+}
 
 function isDone(key: StepKey, input: StepInput): boolean {
   switch (key) {
@@ -85,7 +105,7 @@ function skippableKey(key: StepKey): OnboardingStep | null {
 }
 
 export function resolveSteps(input: StepInput): ResolvedStep[] {
-  return ORDER.map((key) => {
+  return ORDER.filter((key) => isApplicable(key, input)).map((key) => {
     const skipAs = skippableKey(key);
     const state: StepState = isDone(key, input)
       ? 'done'

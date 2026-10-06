@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { mintSignupTicket, generateMagicLinkToken, hashNonce, validateSession } from '@/lib/auth';
@@ -918,7 +918,10 @@ describe('POST /api/account/onboarding', () => {
     expect(teacher?.skippedOnboarding).not.toContain('share');
   });
 
-  it('accepts step: share once every other step is settled', async () => {
+  /** A teacher with a bio, a room and a class, plus `own`, dismisses the completion card. */
+  async function expectShareAccepted(
+    own: { email: string; pageSlug: string } & Pick<Prisma.TeacherCreateInput, 'bankIban' | 'bankAccountName' | 'currency'>,
+  ): Promise<void> {
     let accountId: string | undefined;
     let roomId: string | undefined;
     let teacherRoomId: string | undefined;
@@ -928,12 +931,9 @@ describe('POST /api/account/onboarding', () => {
         data: {
           firstName: 'Settled',
           lastName: 'Teacher',
-          email: shareSettledEmail,
           bio: 'Yoga since 2009.',
-          bankIban: 'NL00BANK0123456789',
-          bankAccountName: 'Settled Teacher',
-          pageSlug: shareSettledSlug,
-          account: { create: { email: shareSettledEmail } },
+          ...own,
+          account: { create: { email: own.email } },
         },
       });
       accountId = teacher.accountId;
@@ -986,6 +986,25 @@ describe('POST /api/account/onboarding', () => {
       if (accountId) await prisma.teacher.deleteMany({ where: { accountId } });
       if (accountId) await prisma.account.deleteMany({ where: { id: accountId } });
     }
+  }
+
+  it('accepts step: share once every other step is settled', async () => {
+    await expectShareAccepted({
+      email: shareSettledEmail,
+      pageSlug: shareSettledSlug,
+      bankIban: 'NL00BANK0123456789',
+      bankAccountName: 'Settled Teacher',
+    });
+  });
+
+  // No bank step is listed for a currency with no bank method, so the route
+  // settles without one, as the checklist does.
+  it('accepts step: share from a GBP teacher with no bank details', async () => {
+    await expectShareAccepted({
+      email: `gbp-${shareSettledEmail}`,
+      pageSlug: `${shareSettledSlug}-gbp`,
+      currency: 'GBP',
+    });
   });
 });
 
