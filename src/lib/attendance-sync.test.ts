@@ -140,6 +140,8 @@ describe('attendance sync', () => {
       ['407 from a proxy', async () => html(407), { kind: 'retry' }],
       ['404 from an intermediary', async () => html(404), { kind: 'retry' }],
       ['400 with other JSON', async () => json(400, { message: 'Bad request' }), { kind: 'retry' }],
+      ['403 with a gateway\'s JSON error', async () => json(403, { error: 'Forbidden' }), { kind: 'retry' }],
+      ['404 with an error object but no message', async () => json(404, { error: { code: 'NOT_FOUND' } }), { kind: 'retry' }],
       [
         '409 concurrent',
         async () => refusal(409, 'CONCURRENT_MODIFICATION', 'Someone else changed this.'),
@@ -163,6 +165,9 @@ describe('attendance sync', () => {
       ['408', async () => bare(408), { kind: 'retry' }],
       ['429', async () => bare(429), { kind: 'retry' }],
       ['503', async () => bare(503), { kind: 'retry' }],
+      ['the app\'s 503', async () => refusal(503, undefined, 'Busy'), { kind: 'retry' }],
+      ['the app\'s 500', async () => refusal(500, undefined, 'Internal server error'), { kind: 'retry' }],
+      ['an enveloped 429', async () => refusal(429, undefined, 'Too many requests'), { kind: 'retry' }],
       [
         'network',
         async () => {
@@ -611,6 +616,33 @@ describe('attendance sync', () => {
     const kept = last === 'acct-1' ? 'r2' : 'r3';
     expect(fetchMock.mock.calls.map(([input]) => urlOf(input)).slice(1)).toEqual([`/api/registrations/${sent}`]);
     expect(Object.keys(getOutbox().pending)).toEqual([kept]);
+  });
+
+  it('the backoff after a rerun for a new owner retries only that owner', async () => {
+    vi.useFakeTimers();
+    await enqueue('attended', 'r1', 'acct-1');
+    await enqueue('no_show', 'r2', 'acct-2');
+    let answerFirst: (res: Response) => void = () => {};
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            answerFirst = resolve;
+          }),
+      )
+      .mockImplementation(async () => bare(503));
+    onTestFinished(startAttendanceSync('acct-1'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    void flushAttendance('acct-2');
+    answerFirst(bare(503));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock.mock.calls.map(([input]) => urlOf(input))).toEqual([
+      '/api/registrations/r1',
+      '/api/registrations/r2',
+    ]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock.mock.calls.map(([input]) => urlOf(input)).slice(2)).toEqual(['/api/registrations/r2']);
   });
 
   it('a hung request times out and the entry is retried', async () => {
