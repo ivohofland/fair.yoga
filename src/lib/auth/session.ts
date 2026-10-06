@@ -159,6 +159,18 @@ export async function invalidateSession(
 }
 
 /**
+ * Delete every session the account holds, the caller's own included. Answers
+ * how many rows went; zero is a normal answer, not an error.
+ */
+export async function invalidateAccountSessions(
+  db: PrismaClient,
+  accountId: string,
+): Promise<number> {
+  const { count } = await db.session.deleteMany({ where: { accountId } });
+  return count;
+}
+
+/**
  * Revoke whatever session the request carries, if it carries one. For
  * endpoints that end a sign-in where the caller has an incoming `NextRequest`
  * rather than a raw token.
