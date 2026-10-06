@@ -463,7 +463,7 @@ describe('ClassEditForm', () => {
   });
 
   it('feeds the pricing preview from the rate fields as the teacher types', () => {
-    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     fireEvent.change(screen.getByLabelText('Target rate (€)'), { target: { value: '45' } });
 
     // 8 students on 4–12: 15 + (45 − 15) × 4 / 8 = 30, plus the €20 room
