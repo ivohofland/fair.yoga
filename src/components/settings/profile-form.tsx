@@ -35,14 +35,18 @@ export interface ProfileFormValues {
  * `NotificationPrefsBody`. Reverse: a key in `ProfileFormValues` the schema
  * dropped fails the build too — `.strict()` would 400 it at runtime; this
  * catches it at compile time. Both pins reach the wire body because
- * `handleSubmit` builds it as a `payload` literal typed `ProfileFormValues`
- * and stringifies that literal directly: the same excess-property check that
- * guards this alias guards the object actually sent.
+ * `handleSubmit` builds it as a `payload` literal typed `ProfileFormWire` —
+ * the same keys, `currency` optional — and stringifies that literal directly:
+ * the same excess-property check that guards this alias guards the object
+ * actually sent.
  */
 const _formCoversSchema: NoneOf<Exclude<Exclude<keyof UpdateTeacherWire, keyof NotificationPrefsBody>, keyof ProfileFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof ProfileFormValues, keyof UpdateTeacherWire>> = true;
 void _formCoversSchema;
 void _formHasNoExtras;
+
+/** The body a save sends: `currency` only when the teacher changed it. */
+type ProfileFormWire = Omit<ProfileFormValues, 'currency'> & { currency?: Currency };
 
 interface ProfileFormProps {
   teacherId: string;
@@ -51,15 +55,24 @@ interface ProfileFormProps {
   timeZoneOptions: TimeZoneOptions;
 }
 
-const CURRENCY_OPTIONS: ReadonlyArray<{ value: Currency; label: string }> = [
-  { value: 'EUR', label: 'EUR (€)' },
-  { value: 'GBP', label: 'GBP (£)' },
-  { value: 'USD', label: 'USD ($)' },
-  { value: 'CHF', label: 'CHF (Fr.)' },
-  { value: 'SEK', label: 'SEK (kr)' },
-  { value: 'NOK', label: 'NOK (kr)' },
-  { value: 'DKK', label: 'DKK (kr)' },
-];
+/** In `Currency` declaration order, which is the order the select offers them. */
+const CURRENCY_OPTION_LABELS = {
+  EUR: 'EUR (€)',
+  GBP: 'GBP (£)',
+  USD: 'USD ($)',
+  CHF: 'CHF (Fr.)',
+  SEK: 'SEK (kr)',
+  NOK: 'NOK (kr)',
+  DKK: 'DKK (kr)',
+} as const satisfies Record<Currency, string>;
+
+const CURRENCY_OPTIONS = Object.entries(CURRENCY_OPTION_LABELS) as ReadonlyArray<[Currency, string]>;
+
+function isCurrency(value: string): value is Currency {
+  return Object.hasOwn(CURRENCY_OPTION_LABELS, value);
+}
+
+const IBAN_CURRENCY_NOTE_ID = 'iban-currency-note';
 
 /**
  * What a currency switch did, in one line: the classes now in the new
@@ -97,6 +110,10 @@ export function currencySwitchLine(result: CurrencySwitchResult, to: Currency): 
 export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: ProfileFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
+  // The currency the server last confirmed. A save names `currency` only when
+  // the select differs from it, so a save from a tab opened before a switch
+  // made elsewhere leaves that switch standing.
+  const [savedCurrency, setSavedCurrency] = useState(initial.currency);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -127,12 +144,13 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
     setSuccess('');
 
     try {
-      const payload: ProfileFormValues = {
+      const sentCurrency = form.currency !== savedCurrency ? form.currency : undefined;
+      const payload: ProfileFormWire = {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         bio: form.bio.trim(),
         pageSlug: form.pageSlug.trim(),
-        currency: form.currency,
+        ...(sentCurrency !== undefined ? { currency: sentCurrency } : {}),
         defaultTimezone: form.defaultTimezone,
         bankIban: form.bankIban?.trim() || null,
         bankAccountName: form.bankAccountName?.trim() || null,
@@ -150,7 +168,8 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
 
       const saved = (await res.json()) as { data?: { currencySwitch?: CurrencySwitchResult } };
       const switched = saved.data?.currencySwitch;
-      setSuccess((switched && currencySwitchLine(switched, payload.currency)) || 'Saved');
+      if (sentCurrency !== undefined) setSavedCurrency(sentCurrency);
+      setSuccess((switched && sentCurrency !== undefined && currencySwitchLine(switched, sentCurrency)) || 'Saved');
       router.refresh();
     } catch (err) {
       logRequestFailure('profile-form', { teacherId }, err);
@@ -214,12 +233,11 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
           label="Currency"
           value={form.currency}
           onChange={(e) => {
-            const picked = CURRENCY_OPTIONS.find((opt) => opt.value === e.target.value);
-            if (picked) update('currency', picked.value);
+            if (isCurrency(e.target.value)) update('currency', e.target.value);
           }}
         >
-          {CURRENCY_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          {CURRENCY_OPTIONS.map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
           ))}
         </Select>
         <Select
@@ -244,11 +262,19 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       {/* Payment */}
       <section className="flex flex-col gap-4">
         <h2 className="type-subtitle">Payment</h2>
-        <Input
-          label="Bank IBAN"
-          value={form.bankIban ?? ''}
-          onChange={(e) => update('bankIban', e.target.value || null)}
-        />
+        <div className="flex flex-col gap-1">
+          <Input
+            label="Bank IBAN"
+            value={form.bankIban ?? ''}
+            onChange={(e) => update('bankIban', e.target.value || null)}
+            aria-describedby={form.currency !== 'EUR' ? IBAN_CURRENCY_NOTE_ID : undefined}
+          />
+          {form.currency !== 'EUR' && (
+            <p id={IBAN_CURRENCY_NOTE_ID} className="type-caption">
+              Students are shown your bank details only for euro payments, for now.
+            </p>
+          )}
+        </div>
         <Input
           label="Account holder name"
           value={form.bankAccountName ?? ''}
