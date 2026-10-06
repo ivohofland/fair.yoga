@@ -352,6 +352,59 @@ describe('attendance outbox', () => {
     });
   });
 
+  it('a read that throws during a change writes nothing, so another tab’s entry stored since survives', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      await other.enqueueAttendance({ ...input('attended', 'y1'), ownerId: 'b', studentName: 'Bo' });
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+        throw new DOMException('read', 'UnknownError');
+      });
+      await enqueueAttendance(input('attended', 'r2'));
+      expect(getOutbox().pending.r2?.status).toBe('attended');
+      expect(Object.keys(JSON.parse(localStorage.getItem(KEY) ?? '{}').pending).sort()).toEqual(['r1', 'y1']);
+
+      await enqueueAttendance(input('attended', 'r3'));
+      expect(Object.keys(JSON.parse(localStorage.getItem(KEY) ?? '{}').pending).sort()).toEqual(['r1', 'r2', 'r3', 'y1']);
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a mark settled while storage could not be read stays settled in this tab, and the next write stores that', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sent = await enqueueAttendance(input('attended', 'r1'));
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+      throw new DOMException('read', 'UnknownError');
+    });
+    await settleEntry(sent, { kind: 'confirmed', at: Date.now() });
+    expect(getOutbox().pending.r1).toBeUndefined();
+    expect(getOutbox().confirmed.r1?.status).toBe('attended');
+    expect(localStorage.getItem(KEY)).toContain('"pending":{"r1"');
+
+    await enqueueAttendance(input('attended', 'r2'));
+    resetOutboxForTests();
+    expect(Object.keys(getOutbox().pending)).toEqual(['r2']);
+    expect(getOutbox().confirmed.r1?.status).toBe('attended');
+  });
+
+  it('a refusal dismissed while storage could not be read stays dismissed in this tab', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sent = await enqueueAttendance(input('attended', 'r1'));
+    await settleEntry(sent, { kind: 'refused', message: 'Class is finished' });
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+      throw new DOMException('read', 'UnknownError');
+    });
+    await dismissRefused('r1');
+    expect(localStorage.getItem(KEY)).toContain('"refused":{"r1"');
+    const unsubscribe = subscribeOutbox(() => {});
+    fireStorage();
+    expect(getOutbox().refused.r1).toBeUndefined();
+    unsubscribe();
+  });
+
   it('a failed write in one tab leaves another tab its entries, and later writes keep what that tab stored since', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.resetModules();
