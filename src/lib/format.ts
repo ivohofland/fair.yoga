@@ -1,5 +1,4 @@
-import type { PaymentStatus, Currency } from '@prisma/client';
-import type { Prisma } from '@prisma/client';
+import type { PaymentStatus, Currency, Prisma } from '@prisma/client';
 import { timeToHHmm } from '@/lib/time-of-day';
 import type { BirthdayDayMonth } from '@/lib/birthday';
 import type { NoneOf } from '@/lib/type-pins';
@@ -244,10 +243,22 @@ export const CURRENCIES = ['EUR', 'GBP', 'USD', 'CHF', 'SEK', 'NOK', 'DKK'] as c
 const _currenciesCoverEnum: NoneOf<Exclude<Currency, (typeof CURRENCIES)[number]>> = true;
 void _currenciesCoverEnum;
 
+/**
+ * Each currency's prefix. Hand-written rather than `Intl`, whose output
+ * depends on the ICU build and so can differ between the server render and
+ * the browser. A code prefix carries its own trailing space, which
+ * `currencyLabel` trims.
+ */
 export const CURRENCY_PREFIX = {
   EUR: '€', GBP: '£', USD: '$', CHF: 'CHF ', SEK: 'SEK ', NOK: 'NOK ', DKK: 'DKK ',
 } as const satisfies Record<Currency, string>;
 
+/**
+ * Whole cents in `currency`: `€12.50`, `CHF 12.50`, and `−€12.50` for a
+ * negative (U+2212; a fraction of a cent is rounded first, so a rounded zero
+ * never prints a sign). No thousands separator. Throws `RangeError` on a
+ * non-finite number.
+ */
 export function formatMoneyCents(cents: number, currency: Currency): string {
   if (!Number.isFinite(cents)) {
     throw new RangeError(`formatMoneyCents: expected finite number, received ${cents}`);
@@ -259,11 +270,13 @@ export function formatMoneyCents(cents: number, currency: Currency): string {
   return `${rounded < 0 ? '−' : ''}${CURRENCY_PREFIX[currency]}${units}.${rest}`;
 }
 
+/** An amount in currency units, rounded to whole cents and formatted as `formatMoneyCents`. */
 export function formatMoney(amount: number | Prisma.Decimal, currency: Currency): string {
   const n = typeof amount === 'number' ? amount : amount.toNumber();
   return formatMoneyCents(Math.round(n * 100), currency);
 }
 
+/** The currency as a word in running text: `€`, `£`, `$`, or the code (`CHF`). */
 export function currencyLabel(currency: Currency): string {
   return CURRENCY_PREFIX[currency].trim();
 }
