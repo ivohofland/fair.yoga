@@ -62,10 +62,16 @@ interface Slot {
   confirmed: ConfirmedEntry | undefined;
   refused: RefusedEntry | undefined;
 }
-/** A registration whose entries in this tab storage does not hold: `mine` is this tab's, `held` everything storage held for it, expired or not, when the write was refused or held back. */
+/**
+ * A registration whose entries in this tab storage does not hold: `mine` is
+ * this tab's, `held` everything storage held for it, expired or not, when the
+ * write was refused or held back, and `heldAt` when this tab took that copy
+ * from storage.
+ */
 interface Override {
   mine: Slot;
   held: Slot;
+  heldAt: number;
 }
 /**
  * The registrations of this tab's outbox that storage does not hold, since it
@@ -93,6 +99,8 @@ let seenClears: Clears | null = null;
 let stored: OutboxState = EMPTY_OUTBOX;
 /** Every well-formed entry storage holds, as of `cachedRaw`, including those a read prunes. */
 let storedAll: OutboxState = EMPTY_OUTBOX;
+/** When this tab took `storedAll`: the time of the read that found it or the write that put it there. A read that throws takes nothing. */
+let storedAt = 0;
 /** The stored text `stored` was parsed from or written as. */
 let cachedRaw: string | null = null;
 /** This tab's outbox, as `view` builds it. */
@@ -274,10 +282,10 @@ function unexpired(state: OutboxState, now: number): OutboxState {
 }
 /**
  * Each registration whose entries in `next` differ from `base`'s, with this
- * tab's entries and everything `all` holds for it. `base` is `all` as a read
- * finds it. Null when none differs.
+ * tab's entries and everything `all` holds for it, taken from storage at
+ * `allAt`. `base` is `all` as a read finds it. Null when none differs.
  */
-function overridesOf(next: OutboxState, base: OutboxState, all: OutboxState): ReadonlyMap<string, Override> | null {
+function overridesOf(next: OutboxState, base: OutboxState, all: OutboxState, allAt: number): ReadonlyMap<string, Override> | null {
   const ids = new Set<string>();
   for (const state of [next, base]) {
     for (const map of [state.pending, state.confirmed, state.refused]) Object.keys(map).forEach((id) => ids.add(id));
@@ -285,23 +293,29 @@ function overridesOf(next: OutboxState, base: OutboxState, all: OutboxState): Re
   const out = new Map<string, Override>();
   for (const id of ids) {
     const mine = slotOf(next, id);
-    if (!sameSlot(mine, slotOf(base, id))) out.set(id, { mine, held: slotOf(all, id) });
+    if (!sameSlot(mine, slotOf(base, id))) out.set(id, { mine, held: slotOf(all, id), heldAt: allAt });
   }
   return out.size === 0 ? null : out;
 }
 /**
  * Whether storage, holding `current` for a registration, has been written
- * there since it held `held`. A refusal past its expiry counts as absent on
- * both sides. A confirmation storage no longer holds is no change: a write
- * leaves one out only when a read prunes it, past its expiry or stamped too
- * far ahead of this device's clock, so its absence says nothing about when.
+ * there since it held `held` at `heldAt`. A refusal past its expiry counts as
+ * absent on both sides. A held confirmation storage no longer holds is a
+ * change unless a read since `heldAt` may have pruned it, which is so only if
+ * it was already stamped too far ahead of this device's clock at `heldAt`, or
+ * is past its expiry now. Any other absence is a write, such as another tab's
+ * refused write leaving out a confirmation it no longer agrees with.
  */
-function rewritten(current: Slot, held: Slot, now: number): boolean {
+function rewritten(current: Slot, { held, heldAt }: Override, now: number): boolean {
   const live = (e: RefusedEntry | undefined): RefusedEntry | undefined => (e !== undefined && refusedFresh(e, now) ? e : undefined);
+  const mayBePruned = (e: ConfirmedEntry): boolean =>
+    e.confirmedAt - heldAt > CONFIRMED_FUTURE_SLACK_MS || now - e.confirmedAt > CONFIRMED_TTL_MS;
   return (
     !sameOrAbsent(current.pending, held.pending) ||
     !sameOrAbsent(live(current.refused), live(held.refused)) ||
-    (current.confirmed !== undefined && !sameEntry(held.confirmed, current.confirmed))
+    (current.confirmed === undefined
+      ? held.confirmed !== undefined && !mayBePruned(held.confirmed)
+      : !sameEntry(held.confirmed, current.confirmed))
   );
 }
 /** The entries of `next` that `held` holds identically. */
@@ -330,6 +344,7 @@ function persist(next: OutboxState): void {
     localStorage.setItem(KEY, value);
     stored = next;
     storedAll = next;
+    storedAt = Date.now();
     cachedRaw = value;
     overlay = null;
     detached = false;
@@ -352,13 +367,15 @@ function persist(next: OutboxState): void {
       localStorage.removeItem(KEY);
       cachedRaw = null;
       storedAll = EMPTY_OUTBOX;
+      storedAt = Date.now();
     } else if (detached || entryCount(kept) !== entryCount(held)) {
       cachedRaw = JSON.stringify(kept);
       localStorage.setItem(KEY, cachedRaw);
       storedAll = kept;
+      storedAt = Date.now();
     }
     stored = kept;
-    overlay = overridesOf(next, kept, storedAll);
+    overlay = overridesOf(next, kept, storedAll, storedAt);
     detached = false;
   } catch (err) {
     console.warn('[attendance-outbox] storage refused even what it held; the stored copy is removed', {
@@ -367,8 +384,9 @@ function persist(next: OutboxState): void {
     detached = !removeStored();
     stored = EMPTY_OUTBOX;
     storedAll = EMPTY_OUTBOX;
+    storedAt = Date.now();
     cachedRaw = null;
-    overlay = overridesOf(next, EMPTY_OUTBOX, EMPTY_OUTBOX);
+    overlay = overridesOf(next, EMPTY_OUTBOX, EMPTY_OUTBOX, storedAt);
   }
 }
 /**
@@ -379,7 +397,7 @@ function persist(next: OutboxState): void {
  */
 function reconcile(now: number): void {
   if (overlay === null || detached) return;
-  const kept = new Map([...overlay].filter(([id, o]) => !rewritten(slotOf(storedAll, id), o.held, now)));
+  const kept = new Map([...overlay].filter(([id, o]) => !rewritten(slotOf(storedAll, id), o, now)));
   overlay = kept.size === 0 ? null : kept;
 }
 /** This tab's outbox: `stored`, with each registration in `overlay` replaced by this tab's entries for it. */
@@ -457,6 +475,7 @@ export function getOutbox(): OutboxState {
       const now = Date.now();
       cachedRaw = readRaw();
       storedAll = parse(cachedRaw);
+      if (!lastReadFailed) storedAt = now;
       stored = unexpired(storedAll, now);
       reconcile(now);
     }
@@ -485,6 +504,7 @@ export function readOutbox(): OutboxState {
   if (cached !== null && raw === cachedRaw && !dropped) return cached;
   const now = Date.now();
   storedAll = parse(raw);
+  if (!lastReadFailed) storedAt = now;
   stored = unexpired(storedAll, now);
   cachedRaw = raw;
   reconcile(now);
@@ -506,7 +526,7 @@ function commit(next: OutboxState): void {
  * change after a read that works writes it.
  */
 function hold(next: OutboxState): void {
-  overlay = overridesOf(next, stored, storedAll);
+  overlay = overridesOf(next, stored, storedAll, storedAt);
   cached = next;
   notify();
 }
@@ -667,6 +687,7 @@ export async function clearOutbox(): Promise<void> {
     overlay = null;
     stored = EMPTY_OUTBOX;
     storedAll = EMPTY_OUTBOX;
+    storedAt = Date.now();
     cached = EMPTY_OUTBOX;
     cachedRaw = null;
     writeClears({ all: newEntryId(), owners: {} });
@@ -723,6 +744,7 @@ export function resetOutboxForTests(): void {
   cachedRaw = null;
   stored = EMPTY_OUTBOX;
   storedAll = EMPTY_OUTBOX;
+  storedAt = 0;
   overlay = null;
   detached = false;
   seenClears = null;
