@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { Currency } from '@prisma/client';
 import { routerRefresh } from '../../../tests/setup/components';
 import { ProfileForm } from './profile-form';
 import { timeZoneOptions, type TimeZoneOptions } from '@/lib/timezone-options';
@@ -11,7 +12,7 @@ const initial = {
   lastName: 'de Vries',
   bio: 'Slow flow on Tuesdays.',
   pageSlug: 'anna',
-  currency: 'EUR' as const,
+  currency: 'EUR' as Currency,
   defaultTimezone: 'Europe/Amsterdam',
   bankIban: null,
   bankAccountName: null,
@@ -222,5 +223,80 @@ describe('ProfileForm', () => {
     expect(
       screen.getByText('Exactly as your bank shows it — your students’ banks check this name.'),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * A tab opened before a switch elsewhere still holds the old currency; a
+   * save from it that names that currency would switch the teacher back.
+   */
+  describe('sends currency only when the teacher changed it (#758)', () => {
+    it('sends no currency key when only the bio changed', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Bio (max 250 characters)'), { target: { value: 'New bio.' } });
+      save();
+
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody().bio).toBe('New bio.');
+      expect(sentBody()).not.toHaveProperty('currency');
+    });
+
+    it('sends the currency the teacher picked', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'CHF' } });
+      save();
+
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody().currency).toBe('CHF');
+    });
+
+    it('does not resend a switched currency on the next save from the same form', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'GBP' } });
+      save();
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText('Bio (max 250 characters)'), { target: { value: 'Later bio.' } });
+      save();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      const second = JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+      expect(second).not.toHaveProperty('currency');
+    });
+  });
+
+  it('offers every Currency, in declaration order', () => {
+    renderForm();
+    const options = (screen.getByLabelText('Currency') as HTMLSelectElement).querySelectorAll('option');
+    expect([...options].map((o) => o.value)).toEqual(Object.values(Currency));
+  });
+
+  describe('the euro-only bank details caption (#758)', () => {
+    const caption = 'Students are shown your bank details only for euro payments, for now.';
+
+    it('is absent while the currency is EUR', () => {
+      renderForm();
+      expect(screen.queryByText(caption)).toBeNull();
+    });
+
+    it('appears under the IBAN field once another currency is picked', () => {
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'GBP' } });
+      const note = screen.getByText(caption);
+      expect(note).toHaveClass('type-caption');
+      expect(screen.getByLabelText('Bank IBAN')).toHaveAttribute(
+        'aria-describedby',
+        expect.stringContaining(note.id),
+      );
+    });
+
+    it('is shown for a teacher whose saved currency is not EUR', () => {
+      renderForm({ currency: 'USD' });
+      expect(screen.getByText(caption)).toBeInTheDocument();
+    });
   });
 });
