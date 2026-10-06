@@ -15,7 +15,7 @@ type FallbackKind = 'neutral' | 'none';
 // fallback it relies on. A new page fails the first test below until it gets
 // its own skeleton or an entry here (docs/design-brief.md, Loading states).
 const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
-  '(public)': 'none',
+  '': 'none',
   '(public)/[slug]': 'none',
   '(public)/[slug]/book/[classId]': 'none',
   '(public)/login': 'none',

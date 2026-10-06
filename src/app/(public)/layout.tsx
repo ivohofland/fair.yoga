@@ -1,3 +1,5 @@
+import { Wordmark } from '@/components/layout/wordmark';
+
 export default function PublicLayout({
   children,
 }: {
@@ -5,10 +7,7 @@ export default function PublicLayout({
 }) {
   return (
     <div className="flex flex-col flex-1">
-      {/* Wordmark: Georgia, ink, with the period at 125% in teal */}
-      <div className="font-heading text-[22px] leading-none text-ink mb-14">
-        fair<span className="text-teal text-[27px]">.</span>yoga
-      </div>
+      <Wordmark className="mb-14" />
       {children}
     </div>
   );
