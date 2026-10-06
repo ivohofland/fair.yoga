@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient, ClassStatus } from '@prisma/client';
+import { PrismaClient, ClassStatus, type Currency } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-window';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -795,7 +795,7 @@ describe('completeClass (DB)', () => {
   // deliberately: the wording this replaces named two, and the block has held
   // more than that for some time without anything noticing.
   let makeClassCounter = 0;
-  const makeClass = ({ status, durationMinutes = 75 }: { status: ClassStatus; durationMinutes?: number }) => {
+  const makeClass = ({ status, durationMinutes = 75, currency }: { status: ClassStatus; durationMinutes?: number; currency?: Currency }) => {
     makeClassCounter += 1;
     return createClassFixture(prisma, {
         teacherId,
@@ -817,6 +817,7 @@ describe('completeClass (DB)', () => {
         maxStudents: 12,
         status,
         settingsLocked: true,
+        ...(currency !== undefined ? { currency } : {}),
       });
   };
 
@@ -1128,6 +1129,45 @@ describe('completeClass (DB)', () => {
       const noShow = await bodyFor(studentIds[1]!);
       expect(noShow).toMatch(/^We missed you at .* If this isn't right, talk to your teacher\.$/);
       expect(noShow).not.toContain('Pay your teacher directly');
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    }
+  });
+
+  // The class's own currency, not the teacher's: a CHF class under a EUR
+  // teacher with euro bank details is priced in CHF, and its students are told
+  // to pay the teacher directly because a bank method is euro-only.
+  it('words a CHF class in CHF, with no bank method, under a EUR teacher who has an IBAN', async () => {
+    const cls = await makeClass({ status: 'in_progress', currency: 'CHF' });
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { bankIban: 'NL91ABNA0417164300', bankAccountName: 'L. Teacher' },
+    });
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[0]!, status: 'attended', tierAtBooking: 3 },
+      });
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[1]!, status: 'no_show', tierAtBooking: 3 },
+      });
+
+      const result = await completeClass(prisma, cls.id, { finishedEarly: true });
+      expect(result.ok).toBe(true);
+
+      const bodyFor = async (studentId: string) =>
+        (await prisma.notification.findFirstOrThrow({
+          where: { relatedClassId: cls.id, recipientType: 'student', recipientId: studentId },
+        })).body;
+      expect(await bodyFor(studentIds[0]!)).toMatch(/^Your price for .* is CHF \d+\.\d{2}\. Pay your teacher directly\.$/);
+      expect(await bodyFor(studentIds[1]!)).toMatch(
+        /^We missed you at .* CHF \d+\.\d{2}\. Pay your teacher directly — if this isn't right, talk to your teacher\.$/,
+      );
+      const teacherNote = await prisma.notification.findFirstOrThrow({
+        where: { relatedClassId: cls.id, recipientType: 'teacher', type: 'payment_request' },
+      });
+      expect(teacherNote.body).toMatch(/completed — CHF \d+\.\d{2} earnings, 2 payment requests sent\.$/);
+      expect(teacherNote.body).not.toContain('€');
     } finally {
       await prisma.teacher.update({ where: { id: teacherId }, data: { bankIban: null, bankAccountName: null } });
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
