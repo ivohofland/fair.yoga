@@ -2107,7 +2107,7 @@ describe('updateStudioClassTemplate (DB)', () => {
     const t = await makeTemplate(teacherId, 'Byte Identical');
     const withZone = await prisma.studioClassTemplate.findUniqueOrThrow({
       where: { id: t.id },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
     const generated = await generateStudioInstancesForTemplate(prisma, withZone);
     expect(generated.created).toBe(4);

@@ -126,6 +126,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // RESTRICTs the delete.
     if (!room) return { ok: false as const, reason: 'room_not_found' as const };
 
+    // The class is stamped with the teacher's currency as it stands in this
+    // transaction.
+    const { currency } = await tx.teacher.findUniqueOrThrow({
+      where: { id: session.teacherId },
+      select: { currency: true },
+    });
+
     // The ENTRY is inserted alone and first — it holds the slot constraint,
     // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
     // zero rows rather than deadlock against a concurrent conflicting insert
@@ -161,6 +168,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         // the room's actual current one rather than the Prisma default
         // (`false`).
         roomArchived: room.isArchived,
+        currency,
         description: body.description ?? null,
         roomCost: body.roomCost,
         minRate: body.minRate,

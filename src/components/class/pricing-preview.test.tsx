@@ -14,6 +14,7 @@ function makePreviewClass(overrides: Partial<PricingPreviewCls> = {}): PricingPr
     entryLive: true,
     roomArchived: false,
     description: null,
+    currency: 'EUR',
     roomCost: new Prisma.Decimal('40.00'),
     minRate: new Prisma.Decimal('20.00'),
     targetRate: new Prisma.Decimal('60.00'),

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
+import type { Currency } from '@prisma/client';
 import type { updateTeacherSchema } from '@/lib/schemas';
 import type { NotificationPrefsBody } from '@/components/settings/notification-prefs-form';
 import type { NoneOf } from '@/lib/type-pins';
@@ -20,7 +21,7 @@ export interface ProfileFormValues {
   lastName: string;
   bio: string;
   pageSlug: string;
-  defaultCurrency: string;
+  currency: Currency;
   defaultTimezone: string;
   bankIban: string | null;
   bankAccountName: string | null;
@@ -48,7 +49,7 @@ interface ProfileFormProps {
   timeZoneOptions: TimeZoneOptions;
 }
 
-const CURRENCY_OPTIONS = [
+const CURRENCY_OPTIONS: ReadonlyArray<{ value: Currency; label: string }> = [
   { value: 'EUR', label: 'EUR (€)' },
   { value: 'GBP', label: 'GBP (£)' },
   { value: 'USD', label: 'USD ($)' },
@@ -56,10 +57,6 @@ const CURRENCY_OPTIONS = [
   { value: 'SEK', label: 'SEK (kr)' },
   { value: 'NOK', label: 'NOK (kr)' },
   { value: 'DKK', label: 'DKK (kr)' },
-  { value: 'PLN', label: 'PLN (zł)' },
-  { value: 'CZK', label: 'CZK (Kč)' },
-  { value: 'CAD', label: 'CAD ($)' },
-  { value: 'AUD', label: 'AUD ($)' },
 ];
 
 export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: ProfileFormProps) {
@@ -100,7 +97,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         lastName: form.lastName.trim(),
         bio: form.bio.trim(),
         pageSlug: form.pageSlug.trim(),
-        defaultCurrency: form.defaultCurrency,
+        currency: form.currency,
         defaultTimezone: form.defaultTimezone,
         bankIban: form.bankIban?.trim() || null,
         bankAccountName: form.bankAccountName?.trim() || null,
@@ -178,8 +175,11 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         <Select
           id="currency"
           label="Currency"
-          value={form.defaultCurrency}
-          onChange={(e) => update('defaultCurrency', e.target.value)}
+          value={form.currency}
+          onChange={(e) => {
+            const picked = CURRENCY_OPTIONS.find((opt) => opt.value === e.target.value);
+            if (picked) update('currency', picked.value);
+          }}
         >
           {CURRENCY_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>

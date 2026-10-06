@@ -11,7 +11,7 @@ const initial = {
   lastName: 'de Vries',
   bio: 'Slow flow on Tuesdays.',
   pageSlug: 'anna',
-  defaultCurrency: 'EUR',
+  currency: 'EUR' as const,
   defaultTimezone: 'Europe/Amsterdam',
   bankIban: null,
   bankAccountName: null,

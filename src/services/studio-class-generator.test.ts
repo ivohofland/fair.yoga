@@ -152,7 +152,7 @@ describe('generateStudioClassInstances (DB)', () => {
     // runs. A leftover template this case asserts nothing about could redden it.
     const template = await prisma.studioClassTemplate.findUniqueOrThrow({
       where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
     await generateStudioInstancesForTemplate(prisma, template, from);
 
@@ -747,7 +747,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   const withZone = (id: string) =>
     prisma.studioClassTemplate.findUniqueOrThrow({
       where: { id },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
 
   const datesFor = (templateId: string) =>
@@ -1483,7 +1483,7 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
         // today's occurrence has already started; UTC keeps that decision
         // equal to plain instant comparison so it doesn't interact with this
         // test's own fixture dates.
-        teacher: { defaultTimezone: 'UTC' },
+        teacher: { defaultTimezone: 'UTC', currency: 'EUR' as const },
         // The claim's own re-check (`claimTemplateForGeneration`'s docblock,
         // class-generator.ts) reads these off this same fixture — omitting
         // them would make every claim in this test come back ineligible and

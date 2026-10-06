@@ -25,7 +25,7 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { ClassFamily, PrismaClient, ScheduleRule } from '@prisma/client';
+import type { ClassFamily, Currency, PrismaClient, ScheduleRule } from '@prisma/client';
 import { spansOverlap } from '@/lib/generation';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { probeOverlappingCandidates } from '@/lib/entry-conflict';
@@ -35,14 +35,14 @@ import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 /**
- * A `ScheduleRule` as every joined read in this module returns it: with the one
- * `Teacher` column the date boundaries need.
+ * A `ScheduleRule` as every joined read in this module returns it: with the
+ * `Teacher` columns the date boundaries and the children's currency stamp need.
  */
-export type JoinedRule = ScheduleRule & { teacher: { defaultTimezone: string } };
+export type JoinedRule = ScheduleRule & { teacher: { defaultTimezone: string; currency: Currency } };
 
 /**
- * A child template with the calendar identity its rule holds, plus the one
- * `Teacher` column the date boundaries below need.
+ * A child template with the calendar identity its rule holds, plus the
+ * `Teacher` columns the date boundaries and the currency stamp below need.
  */
 export type ChildWithRule<TChild> = TChild & {
   scheduleRuleId: string;

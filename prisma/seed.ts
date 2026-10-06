@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient, Prisma, type Currency } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
@@ -59,6 +59,19 @@ type EntrySchedule = {
   cancelledAt?: Date;
 };
 
+/** The child input without `currency`, which the creators below stamp from the teacher. */
+type ClassFields = Omit<Prisma.ClassUncheckedCreateWithoutCalendarEntryInput, 'currency'>;
+type StudioClassFields = Omit<Prisma.StudioClassUncheckedCreateWithoutCalendarEntryInput, 'currency'>;
+
+/** The teacher's currency, the one every class they create is stamped with. */
+async function teacherCurrency(teacherId: string): Promise<Currency> {
+  const { currency } = await prisma.teacher.findUniqueOrThrow({
+    where: { id: teacherId },
+    select: { currency: true },
+  });
+  return currency;
+}
+
 /**
  * A `CalendarEntry` and its one `Class`, in a single statement.
  *
@@ -68,10 +81,11 @@ type EntrySchedule = {
  */
 async function createClass(
   entry: EntrySchedule,
-  klass: Prisma.ClassUncheckedCreateWithoutCalendarEntryInput,
+  klass: ClassFields,
 ): Promise<{ id: string }> {
+  const currency = await teacherCurrency(entry.teacherId);
   const created = await prisma.calendarEntry.create({
-    data: { ...entry, kind: 'regular', classes: { create: klass } },
+    data: { ...entry, kind: 'regular', classes: { create: { ...klass, currency } } },
     include: { classes: true },
   });
   // Exactly one, by construction: the nested create above makes one and
@@ -98,7 +112,7 @@ async function createClass(
  */
 async function createCompletedClass(
   entry: EntrySchedule,
-  klass: Prisma.ClassUncheckedCreateWithoutCalendarEntryInput,
+  klass: ClassFields,
   totals: { effectiveTeacherRate: string; totalStudents: number; totalRevenue: string },
 ): Promise<{ id: string }> {
   const created = await createClass(entry, { ...klass, status: 'open' });
@@ -117,10 +131,11 @@ async function createCompletedClass(
 /** A `CalendarEntry` and its one `StudioClass`, in a single statement. */
 async function createStudioClass(
   entry: EntrySchedule,
-  studioClass: Prisma.StudioClassUncheckedCreateWithoutCalendarEntryInput,
+  studioClass: StudioClassFields,
 ): Promise<void> {
+  const currency = await teacherCurrency(entry.teacherId);
   await prisma.calendarEntry.create({
-    data: { ...entry, kind: 'studio', studioClasses: { create: studioClass } },
+    data: { ...entry, kind: 'studio', studioClasses: { create: { ...studioClass, currency } } },
   });
 }
 
@@ -167,7 +182,7 @@ async function main() {
       account: { create: { email: 'ivo@fairyoga.dev' } },
       bio: 'Vinyasa and Hatha teacher based in Amsterdam. Focused on accessible, ethical yoga for everyone.',
       pageSlug: 'ivo',
-      defaultCurrency: 'EUR',
+      currency: 'EUR',
       defaultTimezone: 'Europe/Amsterdam',
       classReminder: 'morning_of',
       paymentLevel: 'LEVEL_1',
@@ -184,7 +199,7 @@ async function main() {
       account: { create: { email: 'sarah@fairyoga.dev' } },
       bio: 'Yin and restorative yoga in London. Creating calm spaces for healing.',
       pageSlug: 'sarah',
-      defaultCurrency: 'GBP',
+      currency: 'GBP',
       defaultTimezone: 'Europe/London',
       classReminder: 'evening_before',
       paymentLevel: 'LEVEL_1',
@@ -212,7 +227,7 @@ async function main() {
       account: { create: { email: 'maya@fairyoga.dev' } },
       bio: 'Slow flow and breathwork in Portland. Small classes, sliding scale, no rush.',
       pageSlug: 'maya',
-      defaultCurrency: 'USD',
+      currency: 'USD',
       defaultTimezone: 'America/Los_Angeles',
       classReminder: 'evening_before',
       paymentLevel: 'LEVEL_1',

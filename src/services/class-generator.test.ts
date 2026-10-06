@@ -507,7 +507,7 @@ describe('generateClassInstances (DB)', () => {
           cancelDeadline: 'HOURS_24',
           autoCancelCheck: 'HOURS_2',
         },
-        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });
 
       try {
@@ -1139,7 +1139,7 @@ describe('generateClassInstances (DB)', () => {
   async function freshTemplate() {
     return prisma.classTemplate.findUniqueOrThrow({
       where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
   }
 
@@ -1372,7 +1372,7 @@ describe('generateClassInstances (per-template isolation)', () => {
         // reads these off this same fixture — omitting them would make every
         // claim in this test come back ineligible and defeat it.
         isActive: true, isArchived: false,
-        teacher: { defaultTimezone: 'UTC' },
+        teacher: { defaultTimezone: 'UTC', currency: 'EUR' as const },
       },
     };
   }

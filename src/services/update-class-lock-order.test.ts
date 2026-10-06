@@ -140,6 +140,7 @@ describe('updateClass against a completion that already holds the class', () => 
         classes: {
           create: {
             teacherRoomId: teacherRoom.id,
+            currency: 'EUR',
             roomCost: 20,
             minRate: 15,
             targetRate: 25,

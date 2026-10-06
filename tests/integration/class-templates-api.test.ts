@@ -321,7 +321,7 @@ describe('POST /api/class-templates', () => {
             // (HOURS_24 / HOURS_2) — the brief's numeric 120 predates that;
             // omitted here to compile against the current schema.
           },
-          include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+          include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
         });
         // Deterministic FK failure (P2003, not the swallowed P2002): bogus room.
         await generateInstancesForTemplate(tx, {
@@ -1630,7 +1630,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
 
     // The sweep as it runs today. Its four-occurrence window is entirely held
@@ -1752,7 +1752,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
 
     // The sweep, run from the week the probe passed over. It declines that
@@ -1844,7 +1844,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
 
     // The sweep as it runs today, over those same four weeks. Week one comes
@@ -1948,7 +1948,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
 
     // The sweep, run from week five's Monday and NOT from `predicted` — this

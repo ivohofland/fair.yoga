@@ -31,7 +31,7 @@ import { readInPages } from '@/lib/read-in-pages';
 // ---------------------------------------------------------------------------
 
 type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
-  include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
+  include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true; currency: true } } } } };
 }>;
 
 /**
@@ -50,7 +50,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
   readChildOrThrow: (tx, templateId) =>
     tx.classTemplate.findUniqueOrThrow({
       where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     }),
   createChildren: async (db, template, entries) => {
     await db.class.createMany({
@@ -64,6 +64,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         // cascades into it — so the archive cannot commit in between.
         roomArchived: template.roomArchived,
         description: template.description,
+        currency: template.scheduleRule.teacher.currency,
         roomCost: template.roomCost,
         minRate: template.minRate,
         targetRate: template.targetRate,

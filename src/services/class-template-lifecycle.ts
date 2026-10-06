@@ -593,7 +593,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
   readChild: (client, templateId) =>
     client.classTemplate.findUnique({
       where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     }),
   // Whole predicates, both of them: the shared archive passes each straight to
   // its statement and composes nothing onto it. So the charged-registration
@@ -1083,7 +1083,7 @@ export async function createClassTemplate(
           cancelDeadline: input.cancelDeadline,
           autoCancelCheck: input.autoCancelCheck,
         },
-        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });
       const generation = await generateInstancesForTemplate(tx, created);
       const { scheduleRule, ...bare } = created;

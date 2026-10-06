@@ -128,6 +128,7 @@ describe('transitionClass against a cancel that already holds the class', () => 
         classes: {
           create: {
             teacherRoomId: teacherRoom.id,
+            currency: 'EUR',
             roomCost: 20,
             minRate: 15,
             targetRate: 25,

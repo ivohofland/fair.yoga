@@ -57,6 +57,7 @@ async function makeClass(teacherRoomId: string, status: ClassStatus): Promise<st
     data: {
       calendarEntryId: entry.id,
       kind: 'regular',
+      currency: 'EUR',
       teacherRoomId,
       // COPIED, not defaulted — the mirror is one column of a foreign key, so
       // a fixture that assumed `false` could not build a class in an archived
@@ -200,6 +201,7 @@ describe('Class_live_needs_open_room', () => {
           calendarEntryId: entry.id,
           kind: 'regular',
           teacherRoomId: shelvedRoomId,
+          currency: 'EUR',
           roomArchived: false, // asserted, not copied — the bug this pins
           roomCost: 0, minRate: 0, targetRate: 0, minStudents: 1, maxStudents: 10,
           status: 'draft',

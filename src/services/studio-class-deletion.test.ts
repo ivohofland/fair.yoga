@@ -266,7 +266,7 @@ describe('a removed past generated class frees its week (issue 284)', () => {
     const withZone = () =>
       prisma.studioClassTemplate.findUniqueOrThrow({
         where: { id: template.id },
-        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });
 
     try {

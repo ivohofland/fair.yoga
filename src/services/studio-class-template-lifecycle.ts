@@ -578,7 +578,7 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, 'studio'> = {
   readChild: (client, templateId) =>
     client.studioClassTemplate.findUnique({
       where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     }),
   // Whole predicates, both of them: the shared archive passes each straight to
   // its statement and composes nothing onto it. This family spares nothing
@@ -732,7 +732,7 @@ export async function createStudioClassTemplate(
           location: input.location,
           hourlyRate: input.hourlyRate,
         },
-        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });
       const generation = await generateStudioInstancesForTemplate(tx, created);
       const { scheduleRule, ...bare } = created;

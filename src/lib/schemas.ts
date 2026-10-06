@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@prisma/client';
+import { Currency, OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
@@ -296,7 +296,7 @@ export const updateTeacherSchema = z.object({
   lastName: z.string().trim().min(1).optional(),
   bio: z.string().max(250).optional(),
   pageSlug: pageSlugField.optional(),
-  defaultCurrency: z.string().optional(),
+  currency: z.enum(Currency).optional(),
   defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').transform(modernTimeZone).optional(),
   classReminder: z.enum(ReminderTiming).optional(),
   classReminderChannel: z.enum(ReminderChannel).optional(),

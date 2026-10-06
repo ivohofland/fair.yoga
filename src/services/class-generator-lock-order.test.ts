@@ -213,7 +213,7 @@ describe('the class generator under staged lock contention (DB)', () => {
   async function freshTemplate() {
     return prisma.classTemplate.findUniqueOrThrow({
       where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     });
   }
 
