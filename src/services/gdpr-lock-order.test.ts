@@ -2907,10 +2907,10 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
 });
 
 /**
- * #758: `Teacher` is the first lock of every transaction that takes it
- * (`docs/lock-order.md`, "The `Teacher` row is the first lock (#758)"). A
- * transaction that takes `Teacher` and then template rows is the AB-BA partner
- * of an erasure that took them the other way round.
+ * #758: `deleteTeacherAccount` takes `Teacher` before the template pre-locks,
+ * so a transaction that takes `Teacher` first and then template rows cannot be
+ * its AB-BA partner (`docs/lock-order.md`, "The `Teacher` row is the first
+ * lock (#758)").
  */
 describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
   const prisma = new PrismaClient();

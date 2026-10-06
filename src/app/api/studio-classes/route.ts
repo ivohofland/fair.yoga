@@ -71,10 +71,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `timeout: 5000` — can surface that same 503.
   const outcome = await prisma.$transaction(async (tx) => {
     // The transaction's first lock (`docs/lock-order.md`, "The `Teacher` row
-    // is the first lock (#758)"). A currency switch holds this row
-    // `FOR NO KEY UPDATE` until it commits, so this waits it out and stamps
-    // the currency the switch wrote; a switch starting later waits for this
-    // class to commit and then relabels it.
+    // is the first lock (#758)"). The currency it reads under that lock is
+    // the one this class is stamped with.
     const teacher = await lockTeacherForShare(tx, session.teacherId);
     if (!teacher) return { ok: false as const, reason: 'teacher_gone' as const };
 
