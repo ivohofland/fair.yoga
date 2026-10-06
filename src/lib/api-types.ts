@@ -11,6 +11,7 @@
  * consume these types.
  */
 
+import type { RegistrationStatus } from '@prisma/client';
 import type { SkipCounts } from '@/lib/generation';
 import type { TemplateGenerationState } from '@/lib/template-selection';
 import type { NoneOf } from '@/lib/type-pins';
@@ -127,6 +128,12 @@ export interface AnnouncementSendResponse {
   duplicateSuppressed: boolean;
   alreadyNotified: number;
 }
+
+/**
+ * The `data` payload of `PUT /api/registrations/[id]`, applied or unchanged:
+ * the registration and the status it now holds.
+ */
+export type AttendanceBody = { id: string; status: RegistrationStatus };
 
 // Compile-time pins asserting that the class and studio toggle response types
 // remain mutually non-interchangeable via `templateKind` (#93, #119, #206, #207).

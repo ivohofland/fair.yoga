@@ -20,9 +20,7 @@ import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
-
-/** A PUT's response body, applied or unchanged. */
-type AttendanceBody = { id: string; status: RegistrationStatus };
+import type { AttendanceBody } from '@/lib/api-types';
 
 /** A DELETE's response body, applied or unchanged. */
 type CancelledBooking = { id: string; status: 'cancelled' | 'late_cancel' };
