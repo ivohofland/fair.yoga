@@ -4,8 +4,9 @@
  * races against a booking, a generation and a create are in
  * `currency-switch-lock-order.test.ts`.
  *
- * Every teacher here is in `UTC`: the studio rows sit one day either side of
- * the real today, and the service reads "today" from the teacher's zone.
+ * Every teacher here is in `UTC`, so the studio rows can sit one day either
+ * side of the real today, except in the case that pins "today" to the
+ * teacher's own zone, which uses two zones far from UTC.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
@@ -93,6 +94,26 @@ async function mixedTeacher() {
   const studioYesterday = await studioAt(f, -1);
   const studioTomorrow = await studioAt(f, 1);
   return { f, draft, openUnbooked, openBooked, completed, cancelled, studioYesterday, studioTomorrow };
+}
+
+/** The teacher's local calendar date at `now`, as midnight UTC of that date (a `@db.Date` value). */
+function localDay(now: Date, timeZone: string, offset = 0): Date {
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  const d = new Date(`${ymd}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + offset);
+  return d;
+}
+
+function studioOn(f: RoomFixture, date: Date) {
+  return createStudioClassFixture(prisma, {
+    teacherId: f.teacherId,
+    classType: 'Studio flow',
+    date,
+    startTime: hhmmToTime('19:00'),
+    durationMinutes: 60,
+    location: 'Gym',
+    hourlyRate: new Prisma.Decimal(40),
+  });
 }
 
 describe('switchTeacherCurrency (#758)', () => {
@@ -204,6 +225,31 @@ describe('switchTeacherCurrency (#758)', () => {
     expect(studio).toEqual({ ok: false, reason: 'teacher_gone' });
     expect(await prisma.scheduleRule.count({ where: { teacherId: f.teacherId } })).toBe(0);
   });
+
+  // "Today" is the teacher's, not UTC's. UTC+14 is a day ahead of UTC from
+  // 10:00 UTC and UTC-11 a day behind it until 11:00 UTC, so at any instant at
+  // least one of the two disagrees with UTC about which date is today.
+  it.each(['Pacific/Kiritimati', 'Pacific/Pago_Pago'])(
+    'relabels a studio class on the teacher\'s today and keeps one on their yesterday (%s)',
+    async (timeZone) => {
+      const f = await fx.makeFixture(prisma);
+      await prisma.teacher.update({ where: { id: f.teacherId }, data: { defaultTimezone: timeZone } });
+      const now = new Date();
+      const today = await studioOn(f, localDay(now, timeZone));
+      const yesterday = await studioOn(f, localDay(now, timeZone, -1));
+
+      const result = await prisma.$transaction((tx) => switchTeacherCurrency(tx, f.teacherId, 'GBP'));
+
+      expect(await currencies({ classes: [], studio: [today.id, yesterday.id] })).toEqual({
+        [today.id]: 'GBP',
+        [yesterday.id]: 'EUR',
+      });
+      expect(result).toEqual({
+        relabelled: { classes: 0, studioClasses: 1 },
+        kept: [{ currency: 'EUR', classes: 0, studioClasses: 1 }],
+      });
+    },
+  );
 
   // The cross-owner decoy (`docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`):
   // rows the owner conjuncts exclude and a widened predicate would reach.
