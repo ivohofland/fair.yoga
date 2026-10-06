@@ -7,6 +7,7 @@ import {
   type PendingEntry,
   type Settlement,
 } from '@/lib/attendance-outbox';
+import type { AttendanceBody } from '@/lib/api-types';
 import { readError, logRequestFailure } from '@/lib/client-errors';
 import { getConnectionStatus, subscribeConnectionStatus } from '@/lib/offline-status';
 
@@ -73,6 +74,17 @@ function serverTime(res: Response): number {
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
+/** Tethered to the PUT's answer type: a key added to or renamed in `AttendanceBody` fails to compile here until it is listed. */
+const ANSWER_KEYS = { id: true, status: true } satisfies Record<keyof AttendanceBody, true>;
+
+/** True when `data` is the PUT's answer to exactly the write `entry` sent, compared on every `ANSWER_KEYS` key. */
+function answersEntry(data: unknown, entry: PendingEntry): boolean {
+  if (!isRecord(data)) return false;
+  const sent: AttendanceBody = { id: entry.registrationId, status: entry.status };
+  const expected: Readonly<Record<string, unknown>> = sent;
+  return Object.keys(ANSWER_KEYS).every((key) => data[key] === expected[key]);
+}
+
 async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutcome> {
   if (res.ok) {
     let body: unknown;
@@ -81,8 +93,7 @@ async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutco
     } catch {
       return { kind: 'retry' };
     }
-    const data = isRecord(body) ? body.data : undefined;
-    if (isRecord(data) && data.id === entry.registrationId && data.status === entry.status) {
+    if (answersEntry(isRecord(body) ? body.data : undefined, entry)) {
       return { kind: 'confirmed', at: serverTime(res) };
     }
     return { kind: 'retry' };
