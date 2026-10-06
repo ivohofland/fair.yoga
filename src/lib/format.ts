@@ -1,4 +1,5 @@
-import type { PaymentStatus } from '@prisma/client';
+import type { PaymentStatus, Currency } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { timeToHHmm } from '@/lib/time-of-day';
 import type { BirthdayDayMonth } from '@/lib/birthday';
 
@@ -233,6 +234,30 @@ export function formatMonthLabel(year: number, monthIndex: number): string {
   return `${FULL_MONTHS[monthIndex] ?? ''} ${year}`;
 }
 
+export const CURRENCY_PREFIX = {
+  EUR: '€', GBP: '£', USD: '$', CHF: 'CHF ', SEK: 'SEK ', NOK: 'NOK ', DKK: 'DKK ',
+} as const satisfies Record<Currency, string>;
+
+export function formatMoneyCents(cents: number, currency: Currency): string {
+  if (!Number.isFinite(cents)) {
+    throw new RangeError(`formatMoneyCents: expected finite number, received ${cents}`);
+  }
+  const rounded = Math.round(cents);
+  const abs = Math.abs(rounded);
+  const units = Math.floor(abs / 100);
+  const rest = String(abs % 100).padStart(2, '0');
+  return `${rounded < 0 ? '−' : ''}${CURRENCY_PREFIX[currency]}${units}.${rest}`;
+}
+
+export function formatMoney(amount: number | Prisma.Decimal, currency: Currency): string {
+  const n = typeof amount === 'number' ? amount : amount.toNumber();
+  return formatMoneyCents(Math.round(n * 100), currency);
+}
+
+export function currencyLabel(currency: Currency): string {
+  return CURRENCY_PREFIX[currency].trim();
+}
+
 /**
  * Euros from whole cents, without float drift.
  *
@@ -242,22 +267,15 @@ export function formatMonthLabel(year: number, monthIndex: number): string {
  * Rejects non-finite numbers (NaN, Infinity) with a RangeError.
  */
 export function formatCents(cents: number): string {
-  if (!Number.isFinite(cents)) {
-    throw new RangeError(`formatCents: expected finite number, received ${cents}`);
-  }
-  const rounded = Math.round(cents);
-  const abs = Math.abs(rounded);
-  const euros = Math.floor(abs / 100);
-  const rest = String(abs % 100).padStart(2, '0');
-  return `${rounded < 0 ? '−' : ''}€${euros}.${rest}`;
+  return formatMoneyCents(cents, 'EUR');
 }
 
 /**
  * Euros from a decimal/float euro amount, rounding to nearest whole cent.
  *
- * Convenience helper wrapping `formatCents(Math.round(euros * 100))`.
+ * Convenience helper wrapping `formatMoney(euros, 'EUR')`.
  */
 export function formatEuro(euros: number): string {
-  return formatCents(Math.round(euros * 100));
+  return formatMoney(euros, 'EUR');
 }
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 import {
   formatDayHeader,
   formatDateWithYear,
@@ -13,6 +14,8 @@ import {
   todayLocal,
   formatCents,
   formatEuro,
+  formatMoney,
+  currencyLabel,
 } from './format';
 
 /**
@@ -466,5 +469,36 @@ describe('formatEuro', () => {
     expect(() => formatEuro(NaN)).toThrow(RangeError);
     expect(() => formatEuro(Infinity)).toThrow(RangeError);
     expect(() => formatEuro(-Infinity)).toThrow(RangeError);
+  });
+});
+
+describe('formatMoney', () => {
+  it.each([
+    ['EUR', 15.2, '€15.20'], ['GBP', 15.2, '£15.20'], ['USD', 15.2, '$15.20'],
+    ['CHF', 15.2, 'CHF 15.20'], ['SEK', 15.2, 'SEK 15.20'],
+    ['NOK', 15.2, 'NOK 15.20'], ['DKK', 15.2, 'DKK 15.20'],
+  ] as const)('%s', (currency, amount, expected) => {
+    expect(formatMoney(amount, currency)).toBe(expected);
+  });
+  it('puts the minus before the prefix', () => {
+    expect(formatMoney(-3.5, 'CHF')).toBe('−CHF 3.50');
+  });
+  it('never signs zero', () => {
+    expect(formatMoney(-0.004, 'GBP')).toBe('£0.00');
+  });
+  it('has no thousands separator', () => {
+    expect(formatMoney(1234.5, 'EUR')).toBe('€1234.50');
+  });
+  it('accepts a Decimal', () => {
+    expect(formatMoney(new Prisma.Decimal('7.05'), 'EUR')).toBe('€7.05');
+  });
+  it('rejects non-finite', () => {
+    expect(() => formatMoney(Number.NaN, 'EUR')).toThrow(RangeError);
+  });
+});
+describe('currencyLabel', () => {
+  it('trims the code prefixes', () => {
+    expect(currencyLabel('SEK')).toBe('SEK');
+    expect(currencyLabel('EUR')).toBe('€');
   });
 });
