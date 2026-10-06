@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { logRequestFailure } from '@/lib/client-errors';
 import { clearOutbox, readOutbox } from '@/lib/attendance-outbox';
-import { flushAttendance } from '@/lib/attendance-sync';
+import { flushWithinWait } from '@/lib/attendance-sync';
 import { clearOfflinePages } from '@/lib/offline-client';
 import { disablePush } from '@/lib/push-client';
 
@@ -22,8 +22,6 @@ interface SignOutButtonProps {
    */
   redirectTo?: '/login' | '/signup';
 }
-
-const FLUSH_WAIT_MS = 3_000;
 
 function pendingCount(): number {
   return Object.keys(readOutbox().pending).length;
@@ -50,16 +48,7 @@ export function SignOutButton({ accountId, redirectTo = '/login' }: SignOutButto
   async function handleSignOut() {
     setBusy(true);
     setUnsynced(0);
-    if (accountId !== null && pendingCount() > 0) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timedOut = new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, FLUSH_WAIT_MS);
-      });
-      const flushed = flushAttendance(accountId)
-        .catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'flush' }, err))
-        .finally(() => clearTimeout(timer));
-      await Promise.race([flushed, timedOut]);
-    }
+    if (accountId !== null && pendingCount() > 0) await flushWithinWait(accountId, 'sign-out-button');
     // Read after the flush, so a refusal it just produced is counted too.
     const remaining = unsyncedCount();
     if (remaining > 0) {

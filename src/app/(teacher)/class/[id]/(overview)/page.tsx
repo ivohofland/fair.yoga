@@ -272,7 +272,7 @@ export default async function ClassDetailPage({
           !cancelled && cls.status === 'draft'
             ? <PublishClassButton classId={cls.id} />
             : canFinish
-              ? <CompleteClassButton classId={cls.id} chargedCount={chargedCount} />
+              ? <CompleteClassButton classId={cls.id} chargedCount={chargedCount} ownerId={session.accountId} />
               : undefined
         }
       />
