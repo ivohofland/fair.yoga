@@ -268,6 +268,13 @@ every scheme, plus `epc_qr` for EUR only. `PaymentQr` encodes version `002`
 when `bic` is null and `001` with the BIC when present; the currency field
 stays `EUR` because the type admits nothing else.
 
+Part A named the euro-only rule `BANK_METHOD_CURRENCY` / `bankMethodsAvailable`
+(`src/lib/payment-methods.ts`) and typed `PaymentQr`'s currency to it. In Part B
+that rule narrows to the QR alone: the constant becomes `EPC_QR_CURRENCY`,
+`bankMethodsAvailable` is deleted (every currency has a scheme), and the
+`epc_qr` method keeps its currency typed to `EPC_QR_CURRENCY`, so a non-euro QR
+stays a compile error.
+
 Every consumer looks the account up by the **payment's class currency**:
 the pay page, the bookings page, `payment-reminders`, `payments.ts`,
 `email-fallback`, and the completion notification in `class-lifecycle`.
@@ -281,7 +288,37 @@ The bank block in the profile form edits the account for the teacher's
 currencies that still exist are listed beneath it, each with a remove control,
 so an old-currency payment stays payable until the teacher decides otherwise.
 Onboarding's "bank details set" means an account exists in the current
-currency.
+currency. Part A hides the bank step from a teacher whose currency has no bank
+method (`isApplicable` in `src/lib/onboarding.ts`); with a scheme for every
+currency that condition is gone, so the step is listed for every teacher again.
+The profile form's "students are shown your bank details only for euro
+payments" hint goes with it.
+
+The bank fields leave `Teacher`, and with them the bank half of Part A's
+`updateTeacherProfile` (`src/services/teacher-profile.ts`) and its holder-name
+check: the profile PUT stops accepting `bankIban`/`bankAccountName`
+(`updateTeacherSchema` drops them, so a client still sending them gets the
+schema's 400).
+
+### B6. API and locking
+
+- `PUT /api/teachers/[id]/bank-accounts/[currency]` — create or replace the
+  session teacher's account in that currency (upsert on
+  `(teacherId, currency)`); body is the scheme's fields plus `holderName`,
+  validated by `bank-details.ts` against the path's currency. 403 for another
+  teacher, 400 for invalid details (`BIC_REQUIRED` registered for the non-EEA
+  case), 200 with the stored account.
+- `DELETE /api/teachers/[id]/bank-accounts/[currency]` — removes it; an absent
+  account answers `respondUnchanged`. Outstanding payments in that currency
+  then show no methods, which is what removing the details means.
+- Both run in a transaction whose first lock is `lockTeacherForShare` (null →
+  404). An erasure holds the teacher `FOR NO KEY UPDATE` for its whole
+  transaction and deletes the accounts; without the gate, a save racing it
+  would commit bank details onto the erased teacher after the erasure's
+  delete — the race Part A closed for the profile PUT. `docs/lock-order.md`'s
+  "The `Teacher` row is the first lock (#758)" section gains these sites.
+- Erasure deletes the teacher's `TeacherBankAccount` rows inside its existing
+  transaction, after its `Teacher` lock.
 
 ### B5. Migration
 
