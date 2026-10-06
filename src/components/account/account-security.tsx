@@ -54,7 +54,7 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
   const [stepUp, setStepUp] = useState<StepUp>('none');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState(false);
+  const [removeError, setRemoveError] = useState<false | 'failed' | 'signed-out'>(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
 
@@ -140,16 +140,25 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
     setRemoveError(false);
     try {
       const res = await fetch(`/api/auth/passkey/${id}`, { method: 'DELETE' });
-      // 404: already removed (another tab, another device). The goal holds, so
-      // the list is refreshed rather than an error shown.
-      if (!res.ok && res.status !== 404) {
-        throw new RefusedError('remove', (await readError(res, 'remove')).code);
+      if (!res.ok) {
+        const { code } = await readError(res, 'remove');
+        // The route's own NOT_FOUND: already removed (another tab, another
+        // device), so the goal holds and the list is refreshed. A bare 404
+        // is some other layer's and stays an error.
+        if (code !== 'NOT_FOUND') {
+          if (res.status === 401) {
+            logRequestFailure('account-security', { step: 'remove', status: 401 }, new Error('session ended'));
+            setRemoveError('signed-out');
+            return;
+          }
+          throw new RefusedError('remove', code);
+        }
       }
       setConfirmingId(null);
       await loadPasskeys();
     } catch (err) {
       logRequestFailure('account-security', { step: 'remove' }, err);
-      setRemoveError(true);
+      setRemoveError('failed');
     } finally {
       setRemovingId(null);
     }
@@ -174,15 +183,22 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
         .finally(() => clearTimeout(timer));
       await Promise.race([pushDone, timedOut]);
       const res = await fetch('/api/auth/session/all', { method: 'DELETE' });
-      if (!res.ok) throw new RefusedError('sign-out-all', (await readError(res, 'sign-out-all')).code);
+      // 401: the session is already gone, which is what was asked for.
+      if (!res.ok && res.status !== 401) {
+        throw new RefusedError('sign-out-all', (await readError(res, 'sign-out-all')).code);
+      }
     } catch (err) {
       logRequestFailure('account-security', { step: 'sign-out-all' }, err);
       setSignOutError(true);
       setSigningOut(false);
       return;
     }
-    // The session is gone; the device's stored teacher pages belong to it.
-    await clearOfflinePages();
+    try {
+      // The session is gone; the device's stored teacher pages belong to it.
+      await clearOfflinePages();
+    } catch (err) {
+      logRequestFailure('account-security', { step: 'clear-offline' }, err);
+    }
     // A full navigation, so no cached authenticated shell survives.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- full navigation on purpose
     window.location.assign('/login');
@@ -238,7 +254,11 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
           </ul>
         )}
         {listError && <p role="alert" className="mb-3 text-[13px] text-danger">Could not load your passkeys.</p>}
-        {removeError && <p role="alert" className="mb-3 text-[13px] text-danger">Could not remove that passkey.</p>}
+        {removeError && (
+          <p role="alert" className="mb-3 text-[13px] text-danger">
+            {removeError === 'signed-out' ? 'Your session has ended — sign in again.' : 'Could not remove that passkey.'}
+          </p>
+        )}
 
         {addState === 'done' && (
           <p className="type-caption mb-2 text-teal">✓ Passkey added — next sign-in is one tap</p>

@@ -37,6 +37,11 @@ function refusal(status: number, code: string, message = 'refused'): Response {
   return { ok: false, status, url: 'x', json: async () => ({ error: { code, message } }) } as Response;
 }
 
+// A refusal that names no registered code, as a 401 from the auth gate does.
+function bare(status: number): Response {
+  return { ok: false, status, url: 'x', json: async () => ({ error: 'Authentication required' }) } as Response;
+}
+
 type Handler = (init: RequestInit | undefined) => Response | Promise<Response>;
 
 const order: string[] = [];
@@ -176,6 +181,35 @@ describe('AccountSecurity', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('a remove answered with a bare 404 (no registered code) is an error, not "already gone"', async () => {
+    arrange({
+      'GET /api/auth/passkey': () => ok([ROW_A]),
+      'DELETE /api/auth/passkey/pk-a': () =>
+        bare(404),
+    });
+    renderIt();
+    const row = await screen.findByRole('listitem');
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Yes, remove' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not remove that passkey.');
+  });
+
+  it('a remove answered 401 tells the person to sign in again', async () => {
+    arrange({
+      'GET /api/auth/passkey': () => ok([ROW_A]),
+      'DELETE /api/auth/passkey/pk-a': () => bare(401),
+    });
+    renderIt();
+    const row = await screen.findByRole('listitem');
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Yes, remove' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your session has ended — sign in again.');
+  });
+
   it('adding a passkey sends the attestation, confirms, and refreshes the list', async () => {
     let rows: Row[] = [];
     const fetchMock = arrange({
@@ -286,6 +320,23 @@ describe('AccountSecurity', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
+    it('the send-link button is disabled while the send is in flight', async () => {
+      let release: (r: Response) => void = () => {};
+      arrange({
+        'GET /api/auth/passkey': () => ok([]),
+        'POST /api/auth/passkey/register/options': () => refusal(403, 'RECENT_AUTH_REQUIRED'),
+        'POST /api/auth/magic-link/send': () => new Promise<Response>((resolve) => (release = resolve)),
+      });
+      renderIt();
+      fireEvent.click(await screen.findByRole('button', { name: 'Add a passkey' }));
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Email me a sign-in link' }));
+
+      expect(await screen.findByRole('button', { name: 'Sending…' })).toBeDisabled();
+      release(ok({ sent: true }));
+      expect(await screen.findByText(/Check ada@example\.test/)).toBeInTheDocument();
+    });
+
     it('a refused link send is an alert and is logged', async () => {
       arrange({
         'GET /api/auth/passkey': () => ok([]),
@@ -368,6 +419,67 @@ describe('AccountSecurity', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it('the DELETE is not sent before a slow push teardown settles', async () => {
+      let finishPush: () => void = () => {};
+      disablePush.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishPush = () => {
+              order.push('disablePush');
+              resolve('off');
+            };
+          }),
+      );
+      arrange({
+        'GET /api/auth/passkey': () => ok([]),
+        'DELETE /api/auth/session/all': () => ok({ signedOut: true }),
+      });
+      renderIt();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign out everywhere' }));
+      await waitFor(() => expect(disablePush).toHaveBeenCalled());
+      await new Promise((r) => setTimeout(r, 50));
+      expect(order).not.toContain('DELETE /api/auth/session/all');
+
+      finishPush();
+
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'));
+      expect(order.indexOf('disablePush')).toBeLessThan(order.indexOf('DELETE /api/auth/session/all'));
+    });
+
+    it('a 401 on the DELETE means the session is already gone: it still clears pages and navigates, with no alert', async () => {
+      arrange({
+        'GET /api/auth/passkey': () => ok([]),
+        'DELETE /api/auth/session/all': () => bare(401),
+      });
+      renderIt();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign out everywhere' }));
+
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'));
+      expect(order.slice(-4)).toEqual([
+        'disablePush',
+        'DELETE /api/auth/session/all',
+        'clearOfflinePages',
+        'navigate /login',
+      ]);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('navigates even when clearing the offline pages rejects', async () => {
+      clearOfflinePages.mockRejectedValue(new Error('cache api gone'));
+      arrange({
+        'GET /api/auth/passkey': () => ok([]),
+        'DELETE /api/auth/session/all': () => ok({ signedOut: true }),
+      });
+      renderIt();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign out everywhere' }));
+
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'));
+      expect(consoleError).toHaveBeenCalled();
     });
 
     it('a failed DELETE is an alert, leaves the pages alone and does not navigate', async () => {
