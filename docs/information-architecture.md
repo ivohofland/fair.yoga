@@ -207,7 +207,7 @@ Settings
 │
 ├── Payments
 │   ├── Payment overview (cross-class: Outstanding / Received, per-row reminders)
-│   ├── Bank details (Level 1: IBAN, account name; euro payments only) — planned
+│   ├── Bank details (Level 1: one account per currency, its fields following the currency's scheme) — planned
 │   ├── Payment processor (Level 2: connect Mollie/Stripe) — planned
 │   └── Payment level toggle — planned
 │
@@ -257,7 +257,7 @@ Each row takes the teacher to the real screen where they'll do this task in the 
 ```
 Sign up (magic link)
   → Profile setup (checklist row 1 — bio, skippable)
-    → Bank details (checklist row 2 — skippable; not listed when the teacher's currency has no bank method, `bankMethodsAvailable`)
+    → Bank details (checklist row 2 — skippable; done once an account exists in the teacher's current currency)
       → Add room (checklist row 3 — required)
         → Create class (checklist row 4 — required)
           → Completion card: share the booking page → Dismiss

@@ -2103,7 +2103,9 @@ entry above.
 An insert into any table with a foreign key to `Teacher` takes `FOR KEY SHARE`
 on the teacher's row in the foreign-key check. `CalendarEntry`, `ScheduleRule`,
 `TeacherStudent`, `TeacherRoom`, `Invitation`, `TeacherBlock`, `StudentPrivacy`,
-`TeacherPhoto` and `Announcement` all reference it (`prisma/schema.prisma`).
+`TeacherPhoto`, `TeacherBankAccount` and `Announcement` all reference it
+(`prisma/schema.prisma`). A `TeacherBankAccount` insert holds no template or
+`Class` row, so it closes no cycle.
 `FOR UPDATE` conflicts with `FOR KEY SHARE`, so a `Teacher` lock in that mode
 would add a wait edge to every site that inserts such a row while holding a
 template or `Class` row. Two of them close a cycle against a first lock in

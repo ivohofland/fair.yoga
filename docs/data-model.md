@@ -109,8 +109,7 @@ first; one row per device is identity enough for dispatch and cleanup.
 | push_invitations | boolean, default false | Push for an invitation from another teacher |
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
-| bank_iban | string, nullable | Level 1 only; `Teacher_bank_iban_not_blank_check` refuses an empty or spaces-only value (`btrim`, which strips spaces only) |
-| bank_account_name | string, nullable | Level 1 only; required whenever an IBAN is stored (Verification of Payee) — `Teacher_bank_holder_name_check` refuses an IBAN beside a null or spaces-only name, and `PUT /api/teachers/[id]` answers that case with a 400 before it reaches the database. The app is stricter than both CHECKs: `paymentMethodsFor` treats any all-whitespace value (tabs and newlines included) as absent, and students are shown bank methods only when both fields hold something else **and the payment is in EUR** — the one stored account is read as the euro account and an EPC QR can only carry euros, so `paymentMethodsFor` takes the payment's currency and returns no methods for any other (`bankMethodsAvailable`, `payment-methods.ts`) |
+| *bank accounts* | → TeacherBankAccount, one per currency | Level 1 only; the teacher's bank details live in `TeacherBankAccount` (below), not on this row. Students see bank methods only from the account in the payment's own currency |
 | processor_type | enum: mollie, stripe | Level 2 only |
 | processor_account_id | string, nullable | Level 2 only |
 | **Timestamps** | | |
@@ -130,6 +129,25 @@ Which `NotificationType`s each `push_*` group covers is owned by
 | created_at | datetime | |
 
 Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after the `Teacher` row's own `updateMany` — see `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate (#46)" for the race this ordering closes.
+
+### TeacherBankAccount (Level 1 payout details, one per currency, #758)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *teacher_id* (FK) | → Teacher, `onDelete: Cascade` | Unique with `currency`: at most one account per teacher and currency. Cascade because tests hard-delete `Teacher` rows; production erasure never deletes the teacher row, it anonymises it and deletes these rows itself (`deleteTeacherAccount`). |
+| currency | enum Currency | Which currency's payments this account receives. The scheme follows from it (`SCHEME_FOR_CURRENCY`, `src/lib/bank-details.ts`). |
+| holder_name | string | Never blank, whatever the scheme: the payer's bank checks it against the account (Verification of Payee), so it is also the beneficiary a student is shown. |
+| iban | string, nullable | SEPA and the IBAN-scheme currencies. Stored without spaces, uppercase. |
+| bic | string, nullable | Required for a SEPA account whose IBAN country is outside the EEA, optional elsewhere. A service rule (`EEA_COUNTRIES`), not a CHECK: the list is policy and a constraint naming it would need a migration per change. |
+| sort_code | string, nullable | UK scheme (GBP) only. |
+| account_number | string, nullable | UK and US schemes only. |
+| routing_number | string, nullable | US scheme (USD) only. |
+| created_at, updated_at | datetime | |
+
+`TeacherBankAccount_scheme_check` pins which columns each currency's scheme requires and which it leaves null; the migration that creates it states the exact column set per currency, and a currency it does not name is refused. `bankDetailsFromRow` (`src/lib/bank-details.ts`) is the one parser from a row to the typed scheme union, and `parseBankDetails` validates input for the path's currency (IBAN checksum and per-country length, BIC shape, sort code, ABA routing checksum).
+
+Students are shown bank methods from the account in the **payment's class currency** (`paymentMethodsFor`, `src/lib/payment-methods.ts`): a bank transfer for every scheme, plus an EPC QR when the scheme is SEPA, because an EPC QR can only carry euros (`EPC_QR_CURRENCY`). No account in that currency means no methods, and the pay page says to ask the teacher how to pay. Saving or removing an account is `PUT`/`DELETE /api/teachers/[id]/bank-accounts/[currency]` (`src/services/bank-accounts.ts`), gated by `lockTeacherForShare` (`docs/lock-order.md`, "The `Teacher` row is the first lock (#758)"). Onboarding's bank step is done when an account exists in the teacher's current currency. GDPR erasure deletes the rows; the teacher export lists them.
 
 ### Student (core)
 
@@ -914,6 +932,7 @@ No foreign keys, and no personal data by construction: the allowlist admits ids 
 - Account → has one Teacher (optional)
 - Account → has one Student (optional)
 - Teacher → has many TeacherRooms
+- Teacher → has many TeacherBankAccounts (at most one per currency)
 - Teacher → has many ScheduleRules
 - ScheduleRule → has one ClassTemplate (kind: regular) or one StudioClassTemplate (kind: studio)
 - Teacher → has many CalendarEntries
