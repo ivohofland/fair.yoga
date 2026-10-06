@@ -17,7 +17,7 @@ vi.mock('@/lib/offline-client', () => ({
 }));
 
 import { SignOutButton } from './sign-out-button';
-import { enqueueAttendance, getOutbox, resetOutboxForTests } from '@/lib/attendance-outbox';
+import { enqueueAttendance, getOutbox, resetOutboxForTests, settleEntry } from '@/lib/attendance-outbox';
 import { resetSyncForTests } from '@/lib/attendance-sync';
 
 /**
@@ -318,7 +318,7 @@ describe('SignOutButton', () => {
       fireEvent.click(screen.getByRole('button'));
 
       await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
-      expect(screen.queryByText(/haven't synced yet/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/haven't synced/)).not.toBeInTheDocument();
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
     });
 
@@ -349,7 +349,7 @@ describe('SignOutButton', () => {
       fireEvent.click(screen.getByRole('button'));
 
       expect(await screen.findByRole('alert')).toHaveTextContent(
-        "1 attendance change hasn't synced yet. Signing out discards them.",
+        "1 attendance change hasn't synced. Signing out discards them.",
       );
     });
 
@@ -362,7 +362,7 @@ describe('SignOutButton', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 
       const alert = await screen.findByRole('alert');
-      expect(alert).toHaveTextContent("2 attendance changes haven't synced yet. Signing out discards them.");
+      expect(alert).toHaveTextContent("2 attendance changes haven't synced. Signing out discards them.");
       expect(disablePushMock).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
       expect(routerPush).not.toHaveBeenCalled();
@@ -384,7 +384,7 @@ describe('SignOutButton', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 
       expect(await screen.findByRole('alert')).toHaveTextContent(
-        "1 attendance change hasn't synced yet. Signing out discards them.",
+        "1 attendance change hasn't synced. Signing out discards them.",
       );
       expect(fetchMock).toHaveBeenCalledWith('/api/registrations/reg-0', expect.anything());
       expect(fetchMock).not.toHaveBeenCalledWith('/api/registrations/reg-other', expect.anything());
@@ -399,9 +399,53 @@ describe('SignOutButton', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 
       expect(await screen.findByRole('alert')).toHaveTextContent(
-        "2 attendance changes haven't synced yet. Signing out discards them.",
+        "2 attendance changes haven't synced. Signing out discards them.",
       );
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('counts a refusal its own flush produced, and keeps it until the second tap', async () => {
+      await queue(1);
+      stubFetch(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: { code: 'REGISTRATION_CANCELLED', message: 'This booking was cancelled.' } }),
+            { status: 409, headers: { 'content-type': 'application/json' } },
+          ),
+        ),
+      );
+      render(<SignOutButton accountId="owner-1" />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "1 attendance change hasn't synced. Signing out discards them.",
+      );
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' });
+      expect(Object.keys(getOutbox().refused)).toEqual(['reg-0']);
+    });
+
+    it('counts a stored refusal with nothing pending, and a registration both pending and refused once', async () => {
+      const [first, second] = await queue(2);
+      if (first === undefined || second === undefined) throw new Error('expected two entries');
+      await settleEntry(first, { kind: 'refused', message: 'x' });
+      await settleEntry(second, { kind: 'refused', message: 'y' });
+      await enqueueAttendance({
+        ownerId: 'owner-1',
+        registrationId: 'reg-1',
+        classId: 'class-1',
+        studentName: 'Student 1',
+        status: 'no_show',
+      });
+      stubFetch(() => Promise.reject(new Error('offline')));
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<SignOutButton accountId="owner-1" />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "2 attendance changes haven't synced. Signing out discards them.",
+      );
     });
 
     it('does not wait on a flush that never settles', async () => {
@@ -417,7 +461,7 @@ describe('SignOutButton', () => {
         expect(screen.queryByRole('alert')).not.toBeInTheDocument();
         await act(() => vi.advanceTimersByTimeAsync(1));
 
-        expect(screen.getByRole('alert')).toHaveTextContent("1 attendance change hasn't synced yet.");
+        expect(screen.getByRole('alert')).toHaveTextContent("1 attendance change hasn't synced.");
       } finally {
         vi.useRealTimers();
       }
