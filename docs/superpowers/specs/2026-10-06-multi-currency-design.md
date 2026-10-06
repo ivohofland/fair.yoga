@@ -92,8 +92,13 @@ one transaction:
    timezone: `UPDATE ... SET currency`.
 6. `UPDATE Teacher SET currency`.
 
-The response carries `{ relabelled: { classes, studioClasses }, kept: { classes, studioClasses } }`
-so the form can say "12 upcoming classes now show £; 3 booked classes keep €".
+The response carries `{ relabelled: { classes, studioClasses }, kept }`, where
+`kept` is a `ReadonlyArray<{ currency, classes, studioClasses }>`: every row of
+this teacher's still not in the new currency after the relabel, grouped by the
+currency it shows (`CurrencySwitchResult`, `currency-switch.ts`). An earlier
+switch can leave rows in more than one old currency, so the form names each:
+"12 upcoming classes now show £. 3 classes keep €, 1 class keeps $, because
+they’re booked, finished or cancelled."
 Same currency as stored → `respondUnchanged` (CLAUDE.md: already-done answers 200).
 
 **The create race.** A class created while the switch runs could read the old
@@ -103,7 +108,7 @@ transactions that create a row under **no existing template** — the one-off
 `POST /api/classes` and `POST /api/studio-classes`, and template creation in
 both families (which generates its first window in the same transaction) —
 take `Teacher` `FOR SHARE` as their first lock, which the switch's
-`FOR UPDATE` excludes.
+`FOR NO KEY UPDATE` excludes.
 
 **Teacher is first, everywhere.** The resulting order is
 `Teacher → ClassTemplate → StudioClassTemplate → Class → …`. Before this change

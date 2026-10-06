@@ -395,9 +395,13 @@ Re-derive the three censuses with:
     grep -rnE 'studioClass\.(update|updateMany|delete|deleteMany|createMany)' \
       --include='*.ts' src/ | grep -v '\.test\.ts:' | grep -vE ':[0-9]+: *(\*|//)'
 
-    # (c) the cascade side — expect THREE `CalendarEntry` deleters: the studio
-    #     DELETE route, the studio archive, and the class archive (which is the
-    #     one with a pre-lock in front of it)
+    # (c) the cascade side — expect TWO `CalendarEntry` deleting statements:
+    #     the studio DELETE route's `delete` (`studio-classes/[id]/route.ts`)
+    #     and the one shared `deleteMany` in `rule-lifecycle.ts`'s
+    #     `archiveOrUnarchiveRule`, which serves both archives — the studio one
+    #     reached with `STUDIO_FAMILY`, and the class one, which is the one
+    #     with a pre-lock in front of it. Three deleting paths, two
+    #     statements. Re-run for #758 on 2026-10-06: two.
     grep -rnE 'calendarEntry\.(delete|deleteMany)\(' --include='*.ts' src/ \
       | grep -v '\.test\.ts:'
 
