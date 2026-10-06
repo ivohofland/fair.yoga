@@ -289,6 +289,8 @@ describe('ProfileSetupForm', () => {
   });
 
   it('shows the ALREADY_TEACHER state with a schedule link and sign-out in session mode', async () => {
+    resetOutboxForTests();
+    await enqueueAttendance({ ownerId: 'acct-1', registrationId: 'r1', classId: 'c1', studentName: 'Ada', status: 'attended' });
     // A dedicated mock, not `stubFetch`: that helper's catch-all would also
     // answer the sign-out button's own DELETE with the ALREADY_TEACHER
     // payload, which happens to still redirect (`SignOutButton` pushes in
@@ -312,6 +314,9 @@ describe('ProfileSetupForm', () => {
       }
       if (url === '/api/auth/session') {
         return Promise.resolve({ ok: true });
+      }
+      if (url === '/api/registrations/r1') {
+        return Promise.resolve(new Response(JSON.stringify({ data: { id: 'r1', status: 'attended' } }), { status: 200 }));
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -339,6 +344,9 @@ describe('ProfileSetupForm', () => {
       expect(mock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' }),
     );
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/signup'));
+    // The panel signs out as the session's account, so that account's queued attendance is sent first.
+    expect(mock).toHaveBeenCalledWith('/api/registrations/r1', expect.anything());
+    resetOutboxForTests();
   });
 
   it('shows a SLUG_TAKEN rejection keyed to the address it was about, and drops it once the address changes', async () => {
