@@ -80,6 +80,8 @@ let cachedRaw: string | null = null;
 /** This tab's outbox: `stored` with `overlay` beneath it. */
 let cached: OutboxState | null = null;
 let readFailureLogged = false;
+/** Whether the last read of storage threw. */
+let lastReadFailed = false;
 /** The last stored text whose discarded entries were reported, so one document warns once. */
 let warnedRaw: string | null = null;
 const listeners = new Set<() => void>();
@@ -136,8 +138,11 @@ function removeStored(): boolean {
 /** The stored text; when storage cannot be read, the text this tab last read or wrote, so a failed read changes nothing. */
 function readRaw(): string | null {
   try {
-    return localStorage.getItem(KEY);
+    const raw = localStorage.getItem(KEY);
+    lastReadFailed = false;
+    return raw;
   } catch (err) {
+    lastReadFailed = true;
     if (!readFailureLogged) {
       readFailureLogged = true;
       console.warn('[attendance-outbox] storage could not be read; this tab keeps what it last read', {
@@ -382,6 +387,16 @@ function commit(next: OutboxState): void {
   cached = next;
   notify();
 }
+/**
+ * Keeps `next` in memory without writing, after a read that threw: a write
+ * could overwrite what another tab stored since this tab last read. The next
+ * change after a read that works writes it.
+ */
+function hold(next: OutboxState): void {
+  overlay = overridesOf(next, stored);
+  cached = next;
+  notify();
+}
 function onStorage(e: StorageEvent): void {
   if (e.key !== KEY && e.key !== null) return;
   cached = null;
@@ -415,11 +430,13 @@ export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T
   return locks ? locks.request(name, fn) : fn();
 }
 
-/** Read-modify-write against a fresh read, so another tab's write is never lost. */
+/** Read-modify-write against a fresh read, so another tab's write is never lost; held in memory when that read throws. */
 async function update(change: (current: OutboxState) => OutboxState): Promise<void> {
   await withLock(LOCK, async () => {
     cached = null;
-    commit(change(getOutbox()));
+    const next = change(getOutbox());
+    if (lastReadFailed && !detached) hold(next);
+    else commit(next);
   });
 }
 
@@ -543,6 +560,7 @@ export function resetOutboxForTests(): void {
   detached = false;
   warnedRaw = null;
   readFailureLogged = false;
+  lastReadFailed = false;
   listeners.clear();
   if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
 }
