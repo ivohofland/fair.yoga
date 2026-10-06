@@ -42,6 +42,8 @@ export type Settlement =
   | { kind: 'dropped' };
 
 const KEY = 'fy-outbox-v1';
+/** Where clears are recorded for other tabs: `Clears`. */
+const CLEARS_KEY = 'fy-outbox-clears-v1';
 const LOCK = 'fy-outbox';
 const CONFIRMED_TTL_MS = 24 * 60 * 60 * 1000;
 const REFUSED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -74,6 +76,19 @@ interface Override {
 let overlay: ReadonlyMap<string, Override> | null = null;
 /** Storage refused even a removal, so its copy may contradict this tab's: none of it is read until a write succeeds. */
 let detached = false;
+/**
+ * The clears every tab has made, as tokens a clear replaces: `all` for one of
+ * the whole outbox, `owners` for one of an account's entries. A tab that finds
+ * a token changed since it last read them drops what it holds in memory for
+ * that clear, rather than write it back.
+ */
+interface Clears {
+  all: string;
+  owners: Readonly<Record<string, string>>;
+}
+const NO_CLEARS: Clears = Object.freeze({ all: '', owners: Object.freeze({}) });
+/** The clears as this tab last read or wrote them; null before the first read. */
+let seenClears: Clears | null = null;
 /** What storage holds, as of `cachedRaw`. */
 let stored: OutboxState = EMPTY_OUTBOX;
 /** The stored text `stored` was parsed from or written as. */
@@ -152,6 +167,67 @@ function readRaw(): string | null {
     }
     return cachedRaw;
   }
+}
+
+/** The recorded clears; null when storage cannot be read. A missing or malformed record reads as no clears. */
+function readClears(): Clears | null {
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(CLEARS_KEY);
+  } catch {
+    return null;
+  }
+  if (raw === null) return NO_CLEARS;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return NO_CLEARS;
+  }
+  if (!isRecord(doc) || typeof doc.all !== 'string' || !isRecord(doc.owners)) return NO_CLEARS;
+  const owners: Record<string, string> = Object.create(null);
+  for (const [ownerId, token] of Object.entries(doc.owners)) {
+    if (typeof token === 'string') owners[ownerId] = token;
+  }
+  return { all: doc.all, owners };
+}
+/**
+ * Records `clears` for other tabs. Called after the clear itself, so a removal
+ * has made room for it; logged when storage refuses it even so.
+ */
+function writeClears(clears: Clears): void {
+  seenClears = clears;
+  try {
+    localStorage.setItem(CLEARS_KEY, JSON.stringify(clears));
+  } catch (err) {
+    console.warn('[attendance-outbox] storage refused the record of a clear; another tab may write back what it held', {
+      error: errorName(err),
+    });
+  }
+}
+/**
+ * Drops from `overlay` what a clear made in another tab since this tab last
+ * read the record covers: everything for a clear of the whole outbox, the
+ * registrations whose entries here are that account's for a clear of one.
+ * Answers whether it dropped anything.
+ */
+function noticeClears(): boolean {
+  const current = readClears();
+  if (current === null) return false;
+  const seen = seenClears;
+  seenClears = current;
+  if (seen === null || overlay === null) return false;
+  if (current.all !== seen.all) {
+    overlay = null;
+    return true;
+  }
+  const cleared = new Set(Object.keys(current.owners).filter((ownerId) => current.owners[ownerId] !== own(seen.owners, ownerId)));
+  if (cleared.size === 0) return false;
+  const ownedBy = (e: PendingEntry | undefined): boolean => e !== undefined && cleared.has(e.ownerId);
+  const kept = new Map([...overlay].filter(([, { mine }]) => !ownedBy(mine.pending) && !ownedBy(mine.refused)));
+  if (kept.size === overlay.size) return false;
+  overlay = kept.size === 0 ? null : kept;
+  return true;
 }
 
 /** Compares every field either entry has, whatever order they were written in. */
@@ -357,6 +433,7 @@ export function getOutbox(): OutboxState {
       stored = parse(cachedRaw, now);
       reconcile(now);
     }
+    noticeClears();
     cached = view();
   }
   return cached;
@@ -368,10 +445,17 @@ export function getOutbox(): OutboxState {
  * a cache that existed; a read that fills an empty cache tells no one.
  */
 export function readOutbox(): OutboxState {
-  if (detached) return getOutbox();
-  const raw = readRaw();
-  if (cached !== null && raw === cachedRaw) return cached;
   const hadCache = cached !== null;
+  if (detached) {
+    if (noticeClears()) {
+      cached = view();
+      if (hadCache) notify();
+    }
+    return getOutbox();
+  }
+  const raw = readRaw();
+  const dropped = noticeClears();
+  if (cached !== null && raw === cachedRaw && !dropped) return cached;
   const now = Date.now();
   stored = parse(raw, now);
   cachedRaw = raw;
@@ -401,13 +485,20 @@ function hold(next: OutboxState): void {
 /**
  * Tries the whole write again while this tab holds entries storage refused,
  * since storage may have room by now; otherwise they are written only with
- * this tab's next change. Best-effort: a page being unloaded may not finish it.
+ * this tab's next change. Writes nothing once a clear another tab made has
+ * taken them. Best-effort: a page being unloaded may not finish it.
  */
 function retryWrite(): void {
-  if (overlay !== null) void update((s) => s);
+  if (overlay === null) return;
+  void withLock(LOCK, async () => {
+    cached = null;
+    const current = getOutbox();
+    if (overlay === null) notify();
+    else apply(current);
+  });
 }
 function onStorage(e: StorageEvent): void {
-  if (e.key !== KEY && e.key !== null) return;
+  if (e.key !== KEY && e.key !== CLEARS_KEY && e.key !== null) return;
   cached = null;
   notify();
   retryWrite();
@@ -460,14 +551,18 @@ export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T
   return locks ? locks.request(name, fn) : fn();
 }
 
-/** Read-modify-write against a fresh read, so another tab's write is never lost; held in memory when that read throws. */
-async function update(change: (current: OutboxState) => OutboxState): Promise<void> {
-  await withLock(LOCK, async () => {
-    cached = null;
-    const next = change(getOutbox());
-    if (lastReadFailed && !detached) hold(next);
-    else commit(next);
-  });
+/** Writes `next`, built on a read just made; held in memory when that read threw. */
+function apply(next: OutboxState): void {
+  if (lastReadFailed && !detached) hold(next);
+  else commit(next);
+}
+/** Read-modify-write against a fresh read, so another tab's write is never lost; held in memory when that read throws. Call under `LOCK`. */
+function change(fn: (current: OutboxState) => OutboxState): void {
+  cached = null;
+  apply(fn(getOutbox()));
+}
+async function update(fn: (current: OutboxState) => OutboxState): Promise<void> {
+  await withLock(LOCK, async () => change(fn));
 }
 
 /** `crypto.randomUUID` is missing outside a secure context and on older Safari; the id only has to differ from this registration's previous one. */
@@ -531,7 +626,10 @@ export async function dismissRefused(registrationId: string): Promise<void> {
   });
 }
 
-/** Empties this tab's outbox and the stored copy; if storage refuses the removal, this tab stops reading it. */
+/**
+ * Empties this tab's outbox and the stored copy, then records the clear for
+ * other tabs; if storage refuses the removal, this tab stops reading it.
+ */
 export async function clearOutbox(): Promise<void> {
   await withLock(LOCK, async () => {
     detached = !removeStored();
@@ -539,19 +637,25 @@ export async function clearOutbox(): Promise<void> {
     stored = EMPTY_OUTBOX;
     cached = EMPTY_OUTBOX;
     cachedRaw = null;
+    writeClears({ all: newEntryId(), owners: {} });
     notify();
   });
 }
 
 /**
- * Removes `ownerId`'s pending and refused entries. Every other owner's stay,
- * and so do the confirmations, which carry no owner and no name.
+ * Removes `ownerId`'s pending and refused entries, then records the clear for
+ * other tabs. Every other owner's stay, and so do the confirmations, which
+ * carry no owner and no name.
  */
 export async function clearOwnedOutbox(ownerId: string): Promise<void> {
-  await update((s) => {
-    const others = <T extends PendingEntry>(entries: Readonly<Record<string, T>>): Record<string, T> =>
-      Object.fromEntries(Object.entries(entries).filter(([, e]) => e.ownerId !== ownerId));
-    return { ...s, pending: others(s.pending), refused: others(s.refused) };
+  await withLock(LOCK, async () => {
+    change((s) => {
+      const others = <T extends PendingEntry>(entries: Readonly<Record<string, T>>): Record<string, T> =>
+        Object.fromEntries(Object.entries(entries).filter(([, e]) => e.ownerId !== ownerId));
+      return { ...s, pending: others(s.pending), refused: others(s.refused) };
+    });
+    const clears = readClears() ?? seenClears ?? NO_CLEARS;
+    writeClears({ all: clears.all, owners: { ...clears.owners, [ownerId]: newEntryId() } });
   });
 }
 
@@ -588,6 +692,7 @@ export function resetOutboxForTests(): void {
   stored = EMPTY_OUTBOX;
   overlay = null;
   detached = false;
+  seenClears = null;
   warnedRaw = null;
   readFailureLogged = false;
   lastReadFailed = false;
