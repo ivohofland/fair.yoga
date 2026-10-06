@@ -68,6 +68,20 @@ describe('StudentPaymentList', () => {
     expect(screen.getByText('€18.00')).not.toHaveClass('text-brown');
   });
 
+  it('shows each row in its own currency', () => {
+    const { container } = render(
+      <StudentPaymentList
+        items={[
+          { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'SEK' },
+          { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'paid', amount: 15, currency: 'GBP' },
+        ]}
+      />,
+    );
+    expect(screen.getByText('SEK 12.00')).toBeInTheDocument();
+    expect(screen.getByText('£15.00')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('€');
+  });
+
   it('gives each mark-paid button a distinct accessible name', () => {
     renderList([
       { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'EUR' },

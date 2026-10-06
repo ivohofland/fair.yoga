@@ -63,6 +63,19 @@ describe('PricingBreakdown', () => {
     expect(screen.getByText(/−€20\.00\s+–\s+€60\.00/)).toBeInTheDocument();
   });
 
+  it('renders every amount in the class currency', () => {
+    const { container } = render(
+      <PricingBreakdown cls={makeClass({ currency: 'NOK' })} tierPrices={[{ tier: 1, price: 10.0 }]} />,
+    );
+    // 90 revenue - 40 room = 50 earnings; rates 20 – 60; tier 1 at 10.
+    expect(screen.getByText('NOK 50.00')).toBeInTheDocument();
+    expect(screen.getByText('NOK 40.00')).toBeInTheDocument();
+    expect(screen.getByText(/NOK 20\.00\s+–\s+NOK 60\.00/)).toBeInTheDocument();
+    expect(screen.getByText('NOK 90.00')).toBeInTheDocument();
+    expect(screen.getByText('NOK 10.00')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('€');
+  });
+
   it('renders price per tier when tier prices exist', () => {
     render(
       <PricingBreakdown

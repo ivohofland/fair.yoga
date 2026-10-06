@@ -168,4 +168,19 @@ describe('PaymentChecklist', () => {
     expect(screen.getByText('€15.00')).toHaveClass('text-brown');
     expect(screen.getByText('€18.00')).not.toHaveClass('text-brown');
   });
+
+  it('shows the amounts in the class currency', () => {
+    const { container } = render(
+      <PaymentChecklist
+        currency="GBP"
+        items={[
+          { paymentId: 'p1', studentId: 'stu-1', studentName: 'Anna Smith', status: 'pending', amount: 15, reminderSentAt: null },
+          { paymentId: 'p2', studentId: 'stu-2', studentName: 'Bo Jansen', status: 'paid', amount: 18, reminderSentAt: null },
+        ]}
+      />,
+    );
+    expect(screen.getByText('£15.00')).toBeInTheDocument();
+    expect(screen.getByText('£18.00')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('€');
+  });
 });
