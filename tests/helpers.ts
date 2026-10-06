@@ -64,9 +64,10 @@ export const PROJECTED_STUDENT_KEYS = [
  *  fact `cookie()` and `sessionCookie()` must never drift apart on. */
 const SESSION_COOKIE_NAME = 'fair_yoga_session';
 
-/** Thirty days, so a seeded session sits outside `validateSession`'s sliding
- *  window and a request on it writes nothing. A shorter expiry makes the first
- *  request write the row, which blocks behind any transaction holding it. */
+/** A seeded session's lifetime. `validateSession` rewrites a row that is
+ *  inside its sliding window, and that write blocks behind any transaction
+ *  holding the row, so a fixture must sit outside it; the window is
+ *  `FIFTEEN_DAYS_MS` in `src/lib/auth/session.ts`. */
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**

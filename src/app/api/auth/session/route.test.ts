@@ -40,12 +40,11 @@ describe('GET /api/auth/session — session extension race (#632)', () => {
     const token = await seedSession(prisma, accountId);
     const sessionHash = hashToken(token);
 
-    // Make the session older than 15 days so validateSession triggers extension update
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    // Leave 14 days of expiry so validateSession triggers the extension update
     const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await prisma.session.update({
       where: { id: sessionHash },
-      data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
+      data: { expiresAt: originalExpiry },
     });
 
     const errorSpy = vi.spyOn(log, 'error');
@@ -87,7 +86,7 @@ describe('GET /api/auth/session — session extension race (#632)', () => {
     const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await prisma.session.update({
       where: { id: sessionHash },
-      data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
+      data: { expiresAt: originalExpiry },
     });
 
     const request = new NextRequest('http://localhost/api/auth/session', {

@@ -375,15 +375,15 @@ describe('validateSession', () => {
     expect(await validateSession(db, 'nonexistent-token-value')).toBeNull();
   });
 
-  it('extends session expiry when session is more than 15 days old', async () => {
+  it('extends session expiry once fewer than 15 days remain', async () => {
     const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
 
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    // 14 days of expiry left: inside the 15-day sliding window.
     const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await db.session.update({
       where: { id: sessionHash },
-      data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
+      data: { expiresAt: originalExpiry },
     });
 
     const beforeValidate = Date.now();
@@ -394,7 +394,7 @@ describe('validateSession', () => {
     expect(session!.expiresAt.getTime()).toBeGreaterThan(thirtyDaysFromNow - 5000);
   });
 
-  it('does NOT extend session expiry when session is less than 15 days old', async () => {
+  it('does NOT extend a freshly created session (30 days remain)', async () => {
     const token = await createSession(db, studentAccountId);
     const sessionHash = hashToken(token);
 
@@ -436,6 +436,27 @@ describe('validateSession', () => {
     expect(after.getTime()).toBe(createdAt.getTime() + 90 * DAY_MS);
   });
 
+  it('does not write when the stored expiry already sits at the 90-day ceiling', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    const createdAt = new Date(Date.now() - 80 * DAY_MS);
+    const atCeiling = new Date(createdAt.getTime() + 90 * DAY_MS);
+    await db.session.update({
+      where: { id: sessionHash },
+      data: { createdAt, expiresAt: atCeiling },
+    });
+
+    const updateSpy = vi.spyOn(db.session, 'update');
+    try {
+      expect(await validateSession(db, token)).not.toBeNull();
+      expect(await validateSession(db, token)).not.toBeNull();
+      expect(updateSpy).not.toHaveBeenCalled();
+    } finally {
+      updateSpy.mockRestore();
+    }
+  });
+
   it('deletes and rejects a session past 90 days from createdAt even when expiresAt is still ahead', async () => {
     const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
@@ -456,11 +477,11 @@ describe('validateSession', () => {
     const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
 
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    // 14 days of expiry left: inside the 15-day sliding window.
     const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await db.session.update({
       where: { id: sessionHash },
-      data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
+      data: { expiresAt: originalExpiry },
     });
 
     const realUpdate = db.session.update.bind(db.session);
@@ -485,11 +506,11 @@ describe('validateSession', () => {
     const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
 
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    // 14 days of expiry left: inside the 15-day sliding window.
     const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await db.session.update({
       where: { id: sessionHash },
-      data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
+      data: { expiresAt: originalExpiry },
     });
 
     const updateSpy = vi
