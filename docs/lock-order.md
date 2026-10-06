@@ -1073,6 +1073,34 @@ Re-derive by reading each create's transaction and `generateEntriesForRule`
 a write reached through a family descriptor from a read. A new one moves the
 budget by the lock timeout.
 
+### Currency save's transaction budget (#758)
+
+`CURRENCY_SAVE_TIMEOUT_MS` (`teacher-profile.ts`) is 15s: the statements in
+the currency save's transaction that can wait on a lock, times the 2s
+`lock_timeout` each wait may run to (armed by `lockTeacherForNoKeyUpdate`),
+plus 3s of headroom. As above, a plain read waits on no lock. Unlike the
+template creates, a write is left out of the sum when every row it touches is
+one the transaction already holds and it changes no key column, because it
+then has nothing to wait for. On 2026-10-06 the transaction had six:
+
+- `switchTeacherCurrency`'s `lockTeacherForNoKeyUpdate`, its
+  `FOR UPDATE OF ct` and `FOR UPDATE OF sct` statements, and its
+  `lockClassRowsOrdered`;
+- its `studioClass.updateMany`, whose rows nothing locked first;
+- the save's `teacher.updateMany` of the other fields, which writes the held
+  row but, when it changes `pageSlug`, waits on another transaction's
+  uncommitted claim of the same slug (the #197 race,
+  `src/app/api/teachers/[id]/route-lock-order.test.ts`).
+
+Left out: the switch's `class.updateMany`, over the rows `lockClassRowsOrdered`
+returned (its `UPDATE OF currency` trigger reads only the row), and its
+`teacher.update` of `currency`, a non-key column of the held row. 6 × 2s + 3s
+= 15s.
+
+Re-derive by reading `saveWithCurrency` (`teacher-profile.ts`) and
+`switchTeacherCurrency` (`currency-switch.ts`) for statements that write or
+lock, and checking each write's rows against the locks taken before it.
+
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
 A slot key is a lock in every sense that matters here. Two transactions
@@ -1993,13 +2021,14 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   holds. That `UPDATE` rewrites `email` and `pageSlug`, so it raises the hold
   to `FOR UPDATE`. By then the transaction holds every template and `Class`
   row it locks.
-- `PUT /api/teachers/[id]` (`src/app/api/teachers/[id]/route.ts`) without a
-  `currency` takes no explicit lock, but its `teacher.updateMany` waits on an
-  erasure's hold and, scoped to `deletedAt: null`, writes nothing once the
-  erasure commits. It answers 404. Without that scope it re-matched the
-  anonymised row by `id` and wrote the PUT's profile fields back onto it.
+- `PUT /api/teachers/[id]`'s save (`updateTeacherProfile`,
+  `src/services/teacher-profile.ts`) without a `currency` takes no explicit
+  lock, but its `teacher.updateMany` waits on an erasure's hold and, scoped to
+  `deletedAt: null`, writes nothing once the erasure commits. The PUT answers
+  404. Without that scope it re-matched the anonymised row by `id` and wrote
+  the PUT's profile fields back onto it.
 - The currency switch (`switchTeacherCurrency`,
-  `src/services/currency-switch.ts`), which the same PUT runs when its body
+  `src/services/currency-switch.ts`), which the same save runs when the body
   names a `currency`, in one transaction with the other fields:
   `lockTeacherForNoKeyUpdate` first, then this teacher's `ClassTemplate` rows
   and then its `StudioClassTemplate` rows `FOR UPDATE` in id order, then
@@ -2091,7 +2120,7 @@ on 2026-10-06 found the two lock helpers' callers above, a lock-free
 `COUNT(*)` in `db-provision.ts`, and the erasure's own `teacher.updateMany`.
 Re-run after the currency switch landed the same day, it also finds the
 switch's closing `teacher.update` (`currency-switch.ts`) and the currency
-PUT's `teacher.updateMany` of the other fields (`teachers/[id]/route.ts`),
+save's `teacher.updateMany` of the other fields (`teacher-profile.ts`),
 both writing a row their transaction took `FOR NO KEY UPDATE` as its first
 lock. No site holds a template or `Class` row and then explicitly locks or
 writes a `Teacher` row it does not already hold. The foreign-key `KEY SHARE` above is the only implicit edge, and
