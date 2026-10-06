@@ -41,6 +41,7 @@ async function sessionAged(accountId: string, ageMs: number): Promise<string> {
 const STALE_MS = RECENT_AUTH_WINDOW_MS + 60_000;
 
 afterAll(async () => {
+  await prisma.pushSubscription.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.passkeyCredential.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
@@ -191,6 +192,26 @@ describe('DELETE /api/auth/session/all', () => {
     expect(await prisma.session.count({ where: { accountId: other.accountId } })).toBe(1);
     const stillIn = await fetch(`${BASE_URL}/api/auth/session`, { headers: { ...cookie(otherToken), ...freshIp() } });
     expect(stillIn.status).toBe(200);
+  });
+
+  it('also removes the account\'s push subscriptions, and only that account\'s', async () => {
+    const me = await makeAccount('all-push-mine');
+    const other = await makeAccount('all-push-other');
+    const token = await seedSession(prisma, me.accountId);
+    const sub = (accountId: string, tag: string) => ({
+      accountId,
+      endpoint: `https://push.test/${tag}-${suffix}`,
+      p256dh: 'p',
+      auth: 'a',
+    });
+    await prisma.pushSubscription.createMany({
+      data: [sub(me.accountId, 'mine-1'), sub(me.accountId, 'mine-2'), sub(other.accountId, 'other-1')],
+    });
+
+    await expectApplied(await revokeAll(token));
+
+    expect(await prisma.pushSubscription.count({ where: { accountId: me.accountId } })).toBe(0);
+    expect(await prisma.pushSubscription.count({ where: { accountId: other.accountId } })).toBe(1);
   });
 
   it('is idempotent: a second call with the dead cookie is a plain 401, not a fault', async () => {

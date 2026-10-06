@@ -46,6 +46,10 @@ explicitly, by each of these:
   VAPID key the server no longer signs with, which runs the same
   `disablePush`;
 - sign-out, which runs the same `disablePush` before ending the session;
+- "Sign out everywhere" (`DELETE /api/auth/session/all`,
+  `signOutEverywhere`, `account-sign-out.ts`), which deletes every row of the
+  account in the same transaction as its sessions, and whose button runs
+  `disablePush` on the device that performs it;
 - the retention sweep (`reapStalePushSubscriptions`,
   `push-subscription-retention.ts`, run by the daily `daily-cleanup` job): a
   row whose `coalesce(last_used_at, created_at)` is older than

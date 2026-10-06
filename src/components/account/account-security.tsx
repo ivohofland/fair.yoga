@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
+import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import { formatDateWithYear } from '@/lib/format';
 import { clearOfflinePages } from '@/lib/offline-client';
+import { disablePush } from '@/lib/push-client';
 
 interface PasskeyRow {
   id: string;
@@ -138,7 +140,11 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
     setRemoveError(false);
     try {
       const res = await fetch(`/api/auth/passkey/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new RefusedError('remove', (await readError(res, 'remove')).code);
+      // 404: already removed (another tab, another device). The goal holds, so
+      // the list is refreshed rather than an error shown.
+      if (!res.ok && res.status !== 404) {
+        throw new RefusedError('remove', (await readError(res, 'remove')).code);
+      }
       setConfirmingId(null);
       await loadPasskeys();
     } catch (err) {
@@ -153,6 +159,20 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
     setSigningOut(true);
     setSignOutError(false);
     try {
+      // This device is about to lose its session; a subscription left on it
+      // would keep receiving the account's notifications. Waits at most 3
+      // seconds and a failure never skips the DELETE below.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          logRequestFailure('account-security', { step: 'push-timeout' }, new Error('push teardown exceeded 3s'));
+          resolve();
+        }, 3_000);
+      });
+      const pushDone = disablePush()
+        .catch((err: unknown) => logRequestFailure('account-security', { step: 'push' }, err))
+        .finally(() => clearTimeout(timer));
+      await Promise.race([pushDone, timedOut]);
       const res = await fetch('/api/auth/session/all', { method: 'DELETE' });
       if (!res.ok) throw new RefusedError('sign-out-all', (await readError(res, 'sign-out-all')).code);
     } catch (err) {
@@ -238,7 +258,10 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
         {stepUp !== 'none' && (
           <div className="mt-3 flex flex-col items-start gap-2 rounded-card border border-border bg-sand-soft p-4">
             {stepUp === 'sent' ? (
-              <p className="type-body">Check {email} for a sign-in link. It brings you back here to add the passkey.</p>
+              <>
+                <p className="type-body">Check {email} for a sign-in link. It brings you back here to add the passkey.</p>
+                <HandoffCodeEntry />
+              </>
             ) : (
               <>
                 <p className="type-body">
