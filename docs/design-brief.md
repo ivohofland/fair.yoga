@@ -52,7 +52,7 @@ Utilities `type-display` … `type-number` in globals.css. Headings Georgia bold
 | `type-caption` | sans 400 | 13 / 1.4 | brown-light | Timestamps, helper text |
 | `type-number` | sans 600 tabular | (sizeless) | teal | Prices & counts — compose with any `text-[..]` |
 
-Sentence case everywhere. Georgia never below 18px; sans never in heading slots. Money: always `€` + two decimals, ranges with en-dash, tabular figures.
+Sentence case everywhere. Georgia never below 18px; sans never in heading slots. Money: always the currency's symbol + two decimals (`formatMoney`, `src/lib/format.ts`), ranges with en-dash, tabular figures.
 
 ### Dates
 

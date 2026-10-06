@@ -207,7 +207,7 @@ Settings
 │
 ├── Payments
 │   ├── Payment overview (cross-class: Outstanding / Received, per-row reminders)
-│   ├── Bank details (Level 1: IBAN, account name) — planned
+│   ├── Bank details (Level 1: IBAN, account name; euro payments only) — planned
 │   ├── Payment processor (Level 2: connect Mollie/Stripe) — planned
 │   └── Payment level toggle — planned
 │

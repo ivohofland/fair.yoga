@@ -94,7 +94,7 @@ first; one row per device is identity enough for dispatch and cleanup.
 | page_slug | string, unique | Public booking page URL |
 | custom_domain | string, nullable | |
 | **Defaults** | | |
-| default_currency | string, default 'EUR' | |
+| currency | enum `Currency`, default EUR | The teacher's live currency: what rooms, templates and any new class are priced in. A `Class` or `StudioClass` carries its own snapshot (below), so changing this relabels only what is still editable. `PUT /api/teachers/[id]` runs `switchTeacherCurrency` (`src/services/currency-switch.ts`); the lock order is in `docs/lock-order.md` |
 | default_timezone | string | IANA identifier, e.g. 'Europe/Amsterdam'; V8's old spellings are stored renamed — see Design Notes |
 | **Notifications** | | |
 | class_reminder | enum: evening_before, morning_of, one_hour_before, off, default morning_of | When the teacher is reminded of each regular class they teach (studio classes get none) |
@@ -110,7 +110,7 @@ first; one row per device is identity enough for dispatch and cleanup.
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
 | bank_iban | string, nullable | Level 1 only; `Teacher_bank_iban_not_blank_check` refuses an empty or spaces-only value (`btrim`, which strips spaces only) |
-| bank_account_name | string, nullable | Level 1 only; required whenever an IBAN is stored (Verification of Payee) — `Teacher_bank_holder_name_check` refuses an IBAN beside a null or spaces-only name, and `PUT /api/teachers/[id]` answers that case with a 400 before it reaches the database. The app is stricter than both CHECKs: `paymentMethodsFor` treats any all-whitespace value (tabs and newlines included) as absent, and students are shown bank methods only when both fields hold something else |
+| bank_account_name | string, nullable | Level 1 only; required whenever an IBAN is stored (Verification of Payee) — `Teacher_bank_holder_name_check` refuses an IBAN beside a null or spaces-only name, and `PUT /api/teachers/[id]` answers that case with a 400 before it reaches the database. The app is stricter than both CHECKs: `paymentMethodsFor` treats any all-whitespace value (tabs and newlines included) as absent, and students are shown bank methods only when both fields hold something else **and the payment is in EUR** — the stored IBAN is a euro account and an EPC QR can only carry euros, so `paymentMethodsFor` takes the payment's currency and returns no methods for any other |
 | processor_type | enum: mollie, stripe | Level 2 only |
 | processor_account_id | string, nullable | Level 2 only |
 | **Timestamps** | | |
@@ -508,7 +508,7 @@ Base properties are read-only after creation. Changes via admin only. Duplicate 
 | *teacher_id* (FK) | → Teacher | |
 | *room_id* (FK) | → Room | |
 | capacity_override | int | Teacher's own cap (may be lower than venue max) |
-| rental_rate | decimal | Private to each teacher, never shared |
+| rental_rate | decimal | Private to each teacher, never shared. In the teacher's current currency (`Teacher.currency`); the row has no currency of its own |
 | equipment_notes | text, nullable | |
 | **Timestamps** | | |
 | created_at | datetime | |
@@ -558,7 +558,7 @@ calendar-shaped, through this row.
 | *teacher_room_id* (FK) | → TeacherRoom | |
 | description | text, nullable | |
 | **Economics** | | Copied to each instance at generation time — a later template edit does not re-copy (#194) |
-| room_cost | decimal | From TeacherRoom.rental_rate |
+| room_cost | decimal | From TeacherRoom.rental_rate. This and the two rates below are in the teacher's current currency; each generated class stamps that currency on itself |
 | min_rate | decimal | Minimum teacher earns per student |
 | target_rate | decimal | Ideal teacher earns per student |
 | min_students | int | Below this, class auto-cancels |
@@ -650,6 +650,7 @@ child, and the reverse does not.
 | *teacher_room_id* (FK) | → TeacherRoom | |
 | description | text, nullable | |
 | **Economics** | | Locked after first registration |
+| currency | enum `Currency`, not null | Snapshot of the teacher's currency, stamped by every writer of a class. `room_cost`, `min_rate`, `target_rate`, and every derived amount (`Registration.price`, `Payment.amount`, `total_revenue`) are denominated in it. Frozen — `class_currency_frozen_guard` refuses a change — once `settings_locked`, `completed`, or the entry is cancelled; before that a currency switch relabels it with the numbers unchanged |
 | room_cost | decimal | |
 | min_rate | decimal | |
 | target_rate | decimal | |
@@ -684,6 +685,7 @@ above. See Design Notes for what they enforce and why.
 | kind | enum: regular, studio | Always `studio` here, pinned by a `CHECK`; half of the composite FK above |
 | location | string | Free text (not linked to Room) |
 | student_count | int, nullable | |
+| currency | enum `Currency`, not null | Snapshot of the teacher's currency, stamped by every writer; `hourly_rate` is denominated in it. Frozen once the entry's date is before the teacher's today (the income-record rule) — `studio_class_currency_frozen_guard` is the database's coarser version, with a one-day margin because a trigger cannot read the teacher's timezone; a currency switch relabels today-or-later rows |
 | hourly_rate | decimal | Teacher's rate at this studio |
 | **Timestamps** | | |
 | created_at | datetime | |
@@ -832,7 +834,7 @@ The mechanism — lock modes, order, and which writers are not gated yet — is
 |---|---|---|
 | **id** (PK) | uuid | |
 | *registration_id* (FK) | → Registration | |
-| amount | decimal | |
+| amount | decimal | In the currency of the registration's class (`Class.currency`); the row carries no currency of its own, because `completeClass` writes it after that class is already frozen |
 | status | enum | pending → paid / overdue / not_charged; paid and not_charged both reopen to pending |
 | method | string, nullable | e.g. "cash", "bank_transfer", "mollie", "stripe" |
 | processor_ref | string, nullable | External transaction ID (Level 2) |
@@ -938,6 +940,7 @@ No foreign keys, and no personal data by construction: the allowlist admits ids 
 - **A `Teacher` hard-delete cascades through `ScheduleRule`, not directly to `ClassTemplate`/`StudioClassTemplate`** (#298) — one hop further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_roomArchived_fkey` is `ON DELETE RESTRICT`. Measured in a rolled-back transaction against the real constraints: a single `DELETE FROM "Teacher"` still succeeds cleanly and every dependent row goes, because PostgreSQL defers a `NOT DEFERRABLE` foreign-key check to the end of the enclosing statement, and by then the sibling `ON DELETE CASCADE` from `Teacher` through `ScheduleRule` has already removed the `ClassTemplate`/`StudioClassTemplate` row the RESTRICT check would otherwise block on. That deferral is a property of one statement, not of the transaction: nothing in `src/` issues a hard `teacher.delete` today (erasure soft-deletes, per `deleteTeacherAccount`), but wherever tests tear a teacher down by hand across separate `deleteMany` calls, `scheduleRule.deleteMany` must run before `teacherRoom.deleteMany` — reversed, the `teacherRoom.deleteMany` hits the still-live `ClassTemplate`/`StudioClassTemplate` row and fails on `ClassTemplate_teacherRoomId_roomArchived_fkey`, measured the same way.
 - **No production path deletes a `ClassTemplate` or `StudioClassTemplate` row** — archiving withdraws a template's future window and records what it withdrew (`archivedAt`/`withdrawnCount` on the rule), and a delete would destroy that record; `deleteTeacherAccount` archives rather than deletes for the same reason. The consequence lives one model out: `ScheduleRule` carries no foreign key back to either child, so a child deleted out from under an open transaction would leave an orphaned rule row that either shared compare-and-swap would still match — the archive's and the pause/resume's, `archiveOrUnarchiveRule` and `pauseOrResumeRule` (`rule-lifecycle.ts`), each serving both template families. That is why each of those takes the child row `FOR UPDATE` first and checks the returned row count rather than discarding it, and why `claimTemplateForGeneration` (`class-generator.ts`) may follow its lock with `findUniqueOrThrow`. Re-derive rather than trusting this sentence — `grep -rnE '(classTemplate|studioClassTemplate)\.(delete|deleteMany)\(' src --include='*.ts' | grep -v '\.test\.'` — no hits today; a first hit is the signal to revisit every site named here.
 - **tier_at_booking** on Registration captures the student's income tier at the moment they booked. The student's global tier on the Student table can change anytime, but pricing uses the tier at booking time. This also serves as income history — no separate tracking table needed.
+- **Currency lives where it can be frozen** (#758). A row carries its own `currency` only if it can be frozen while the teacher's currency moves: `Class` and `StudioClass`. `TeacherRoom` (`rental_rate`), `ClassTemplate` and `StudioClassTemplate` are always editable, so a switch always relabels them and they read `Teacher.currency`; `Registration.price` and `Payment.amount` read their `Class`. A sum across rows in different currencies is meaningless, so every cross-row total is grouped per currency (`src/lib/money-totals.ts`). The decision and the switch's steps: `docs/superpowers/specs/2026-10-06-multi-currency-design.md`.
 - **settings_locked** on Class flips to true when the first Registration is created. After that, economic fields (room_cost, min_rate, target_rate, min_students, max_students) are immutable.
 - **Terminal status is the second, wider freeze** (#247). Once a Class is `completed` or `cancelled`, `updateClass` refuses every field edit — the class, not a column list — and `PUT /api/classes/[id]` answers 409. It never lifts. The entry's schedule is additionally frozen in the database by `entry_frozen_schedule_guard`, because the waitlist retention sweep above deletes on a terminality-plus-date predicate and reads that column before it does; since #327 it covers `date`, `start_time` and `duration_minutes`, all three of which moved to `CalendarEntry` together. `entry_terminal_liveness_guard` freezes `cancelled_at` beside it, for regular entries only — a studio cancellation is reversible — and `entry_completion_marker_guard` makes `class_completed_at` write-once, which is what stops the freeze being walked around in two statements: every one of these is `BEFORE UPDATE OF <columns>` and `UPDATE OF` fires on a column's presence in the SET list, so a guard reading `OLD` is only as immovable as the columns its `OLD` depends on. All three are narrower than the service on purpose, so the two layers are not the same rule twice, and all three decide from the entry's own columns (`cancelled_at`, `class_completed_at`) rather than reaching back for `Class.status` — see `docs/lock-order.md` for why that direction matters.
 - **WaitlistEntry** is a separate entity from Registration to cleanly model the hybrid promotion rules. When promoted, a new Registration is created and linked via registration_id.

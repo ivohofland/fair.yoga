@@ -200,7 +200,7 @@ Four-layer communication model, same content, different delivery:
 
 **In-app notifications:** Real-time alerts for time-sensitive events (waitlist promotion, class cancellation, booking confirmation).
 
-**In-app inbox:** Chronological log of notifications, kept for a year, a few short-lived types for 30 days (`NOTIFICATION_RETENTION_DAYS`). Acts as a personal activity history — booking confirmations, payment requests, class updates. Always available regardless of email settings. Important for Level 1: a student's outstanding payment, with bank details, is shown on the class's pay page (`/bookings/[classId]/pay`), reached from `/bookings` and from payment notifications. Bank methods appear there only when the teacher's IBAN and account holder name are both set.
+**In-app inbox:** Chronological log of notifications, kept for a year, a few short-lived types for 30 days (`NOTIFICATION_RETENTION_DAYS`). Acts as a personal activity history — booking confirmations, payment requests, class updates. Always available regardless of email settings. Important for Level 1: a student's outstanding payment, with bank details, is shown on the class's pay page (`/bookings/[classId]/pay`), reached from `/bookings` and from payment notifications. Bank methods appear there only when the teacher's IBAN and account holder name are both set and the payment is in euros; a payment in any other currency shows its amount without them.
 
 **Email:** External fallback. The system sends in-app first; if the student hasn't seen it within a reasonable window, email follows. Student controls whether email notifications are on or off (on by default).
 
@@ -222,9 +222,9 @@ The platform is not a financial intermediary. It never holds or moves money. Ins
 
 The system calculates each student's price after class and displays it. The student pays the teacher directly using whichever method works for them. The platform provides multiple convenience options but does not process the payment:
 
-- Teacher's bank details displayed (IBAN, name, payment reference)
+- Teacher's bank details displayed (IBAN, name, payment reference) — for euro payments only
 - "Copy payment details" button for mobile users
-- EPC QR code for scanning with a banking app (useful when viewing on a different device than the one used for payment)
+- EPC QR code for scanning with a banking app (useful when viewing on a different device than the one used for payment); an EPC QR can only carry euros
 - Tikkie, cash, or any other method the teacher accepts
 
 The teacher manually tracks payments in the system — a simple per-class checklist showing each student, the amount owed, and paid/unpaid status. Zero fees, no payment processor needed.
