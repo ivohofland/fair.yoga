@@ -140,3 +140,55 @@ describe('PUT /api/teachers/[id] answers a slug claimed after its pre-check with
     }
   }, 20_000);
 });
+
+/**
+ * An erasure holds the teacher row from its first statement to its commit
+ * (`docs/lock-order.md`, "The `Teacher` row is the first lock (#758)"). A PUT
+ * arriving meanwhile waits on that row, and when the erasure commits its
+ * `UPDATE` re-checks the row. Matched by `id` alone it would still match, and
+ * write the PUT's profile fields onto the anonymised row.
+ */
+describe('PUT /api/teachers/[id] during an erasure writes nothing (#758)', () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('answers 404 and leaves the anonymised row as the erasure left it', async () => {
+    const subject = await makeTeacher('erased');
+    try {
+      const token = await seedSession(prisma, subject.accountId);
+      const { res, parked } = await raceBehindHolder(
+        // The erasure's shape on the teacher row: `FOR NO KEY UPDATE` first,
+        // the anonymising write with `deletedAt` later, commit at the end.
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${subject.id} FOR NO KEY UPDATE`;
+          await tx.teacher.update({
+            where: { id: subject.id },
+            data: { bio: '', firstName: 'Deleted', deletedAt: new Date() },
+          });
+        },
+        () => PUT(
+          new NextRequest(`http://localhost:3000/api/teachers/${subject.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...cookie(token) },
+            body: JSON.stringify({ bio: 'new PII bio' }),
+          }),
+          { params: Promise.resolve({ id: subject.id }) },
+        ),
+      );
+
+      expect(parked).toBe(true);
+      expect(res.status).toBe(404);
+      expect(
+        await prisma.teacher.findUniqueOrThrow({
+          where: { id: subject.id },
+          select: { bio: true, firstName: true },
+        }),
+      ).toEqual({ bio: '', firstName: 'Deleted' });
+    } finally {
+      await prisma.session.deleteMany({ where: { accountId: subject.accountId } });
+      await prisma.teacher.deleteMany({ where: { id: subject.id } });
+      await prisma.account.deleteMany({ where: { id: subject.accountId } });
+    }
+  }, 20_000);
+});

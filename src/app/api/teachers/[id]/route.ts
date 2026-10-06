@@ -83,12 +83,17 @@ export const PUT = withErrorHandler(async (
     }
   }
 
-  let teacher;
+  // Scoped to a live row. An erasure holds this row from its first statement
+  // to its commit, so this write can wait behind one; once it commits the
+  // row is re-checked, and matched by `id` alone it would still match and
+  // write these fields onto the anonymised row. `docs/lock-order.md`, "The
+  // `Teacher` row is the first lock (#758)".
   try {
-    teacher = await prisma.teacher.update({
-      where: { id },
+    const { count } = await prisma.teacher.updateMany({
+      where: { id, deletedAt: null },
       data: updateData,
     });
+    if (count === 0) return respondError('Teacher not found', 404);
   } catch (err) {
     if (isUniqueConflictOn(err, ['pageSlug'])) {
       return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
@@ -99,5 +104,7 @@ export const PUT = withErrorHandler(async (
     throw err;
   }
 
+  const teacher = await prisma.teacher.findUnique({ where: { id } });
+  if (!teacher) return respondError('Teacher not found', 404);
   return respondOk(teacher);
 });

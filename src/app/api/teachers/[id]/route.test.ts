@@ -21,7 +21,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     teacher: {
       findUnique: (...args: unknown[]) => findUniqueTeacher(...args),
-      update: (...args: unknown[]) => updateTeacher(...args),
+      updateMany: (...args: unknown[]) => updateTeacher(...args),
     },
   },
 }));
@@ -44,7 +44,7 @@ function put(body: Record<string, unknown>): Promise<Response> {
 /** The shape a typed Prisma call rejects with when Postgres raises 23514. */
 function checkViolation(constraint: string): Error {
   return new Error(
-    `Invalid \`prisma.teacher.update()\` invocation:\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \\"Teacher\\" violates check constraint \\"${constraint}\\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+    `Invalid \`prisma.teacher.updateMany()\` invocation:\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \\"Teacher\\" violates check constraint \\"${constraint}\\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
   );
 }
 
@@ -87,5 +87,36 @@ describe('PUT /api/teachers/[id] — bank fields', () => {
 
     expect(res.status).toBe(500);
     expect(error).toHaveBeenCalled();
+  });
+});
+
+describe('PUT /api/teachers/[id] — writes only a live row (#758)', () => {
+  beforeEach(() => {
+    findUniqueTeacher.mockReset();
+    updateTeacher.mockReset();
+  });
+
+  // The write is scoped to a live row; an erased one matches nothing.
+  it('answers 404 when the write matches no live row', async () => {
+    updateTeacher.mockResolvedValueOnce({ count: 0 });
+
+    const res = await put({ bio: 'new bio' });
+
+    expect(res.status).toBe(404);
+    expect(updateTeacher).toHaveBeenCalledWith({
+      where: { id: TEACHER_ID, deletedAt: null },
+      data: { bio: 'new bio' },
+    });
+    expect(findUniqueTeacher).not.toHaveBeenCalled();
+  });
+
+  it('answers with the row as written', async () => {
+    updateTeacher.mockResolvedValueOnce({ count: 1 });
+    findUniqueTeacher.mockResolvedValueOnce({ id: TEACHER_ID, bio: 'new bio' });
+
+    const res = await put({ bio: 'new bio' });
+
+    expect(res.status).toBe(200);
+    expect(findUniqueTeacher).toHaveBeenCalledWith({ where: { id: TEACHER_ID } });
   });
 });

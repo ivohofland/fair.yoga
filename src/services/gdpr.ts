@@ -1251,12 +1251,10 @@ export async function deleteTeacherAccount(
       // check takes `KEY SHARE` on this row. `docs/lock-order.md`, "The
       // `Teacher` row is the first lock (#758)".
       //
-      // A duplicate erasure waits here for the first one to commit and then
-      // reads the row as erased, so it aborts before contending for anything
-      // else.
-      if ((await lockTeacherForNoKeyUpdate(tx, teacherId)) === null) {
-        throw new AlreadyErasedError('teacher');
-      }
+      // Its answer is not consulted: an erased or absent teacher is refused
+      // by the `teacher.updateMany` count check at the end of this
+      // transaction.
+      await lockTeacherForNoKeyUpdate(tx, teacherId);
 
       // Template child rows locked next, ordered by id (#229), ahead of every
       // `Class` lock. `ClassTemplate` before `Class`
@@ -1578,23 +1576,20 @@ export async function deleteTeacherAccount(
       await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
 
       // Scoped and aborting, for the same reason the student erasure above
-      // is — see that write for the argument. A losing duplicate normally
-      // aborts earlier, at the `Teacher` lock at the top of this
-      // transaction; this write is what makes the row erased, and its count
-      // is the check that holds whatever reached it. The abort matters
-      // because the post-commit diagnostic loop below only runs once this
-      // transaction has committed, so it is what keeps a losing duplicate
-      // from logging a residual warn for a skip it never actually made. It
-      // also makes the two halves answer a repeated request the same way:
-      // the route reads each half's outcome separately, and a teacher half
-      // that silently re-erased while the student half reported
-      // already-erased would make that asymmetry look arbitrary to the next
-      // reader.
+      // is — see that write for the argument. It matters MORE here now:
+      // the post-commit diagnostic loop below only runs once this
+      // transaction has committed, so this abort is what keeps a losing
+      // duplicate from logging a residual warn for a skip it never
+      // actually made. Done anyway so the two halves answer a repeated
+      // request the same way: the route reads each half's outcome
+      // separately, and a teacher half that silently re-erased while the
+      // student half reported already-erased would make that asymmetry look
+      // arbitrary to the next reader.
       //
-      // What these aborts do NOT undo, stated so they are not mistaken for a
+      // What this abort does NOT undo, stated so it is not mistaken for a
       // whole-function guard: the `completeClass` loop at the top of this
       // function runs BEFORE this transaction opens and commits per class.
-      // A loser that reaches either throw has already been through that
+      // A loser that reaches this throw has already been through that
       // loop — but which of the two concurrent calls for a given class
       // wrote anything depends on which reached it first, not on which
       // later loses this CAS. When the winner's call reaches a class
