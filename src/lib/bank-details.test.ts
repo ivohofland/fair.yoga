@@ -6,6 +6,7 @@ import {
   maskedIdentifier,
   SCHEME_FOR_CURRENCY,
   EEA_COUNTRIES,
+  IBAN_LENGTHS,
   type BankDetails,
   type BankDetailsInput,
 } from '@/lib/bank-details';
@@ -168,6 +169,29 @@ describe('scheme tables', () => {
   it('holds exactly the EU member states plus IS, LI and NO', () => {
     const eu27 = ['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'];
     expect([...EEA_COUNTRIES].sort()).toEqual([...eu27, 'IS', 'LI', 'NO'].sort());
+  });
+
+  it('knows the IBAN length of every EEA country', () => {
+    const missing = [...EEA_COUNTRIES].filter((c) => !Object.hasOwn(IBAN_LENGTHS, c));
+    expect(missing).toEqual([]);
+  });
+
+  // Each is the example IBAN the SWIFT IBAN registry publishes for its country.
+  it.each([
+    'FR7630006000011234567890189',
+    'IT60X0542811101000000123456',
+    'ES9121000418450200051332',
+    'BE68539007547034',
+    'AT611904300234573201',
+    'IE29AIBK93115212345678',
+    'PT50000201231234567890154',
+    'PL61109010140000071219812874',
+    'SE4550000000058398257466',
+    'DK5000400440116243',
+    'FI2112345600000785',
+    'LU280019400644750000',
+  ])('accepts the registry example %s in euros', (iban) => {
+    expect(ok('EUR', { iban })).toEqual({ scheme: 'sepa', iban, bic: null });
   });
 
   it('holds the EEA members that matter for the BIC rule', () => {
