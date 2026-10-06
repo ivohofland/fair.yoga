@@ -1,0 +1,42 @@
+import type { Currency, Prisma } from '@prisma/client';
+import { CURRENCY_PREFIX, formatMoneyCents } from '@/lib/format';
+
+/** One total per currency present, never across currencies. */
+export type MoneyTotals = ReadonlyArray<{ currency: Currency; cents: number }>;
+
+// `CURRENCY_PREFIX` is tethered to the `Currency` enum by its `satisfies`, so
+// its key order is the declaration order without a value import of
+// `@prisma/client` here (this module is reachable from client components).
+const DECLARATION_ORDER = Object.keys(CURRENCY_PREFIX) as Currency[];
+
+/**
+ * Sums `items` per currency in whole cents. Order: `first` (the teacher's
+ * current currency) when present, then the rest in `Currency` declaration order.
+ */
+export function totalsByCurrency(
+  items: Iterable<{ currency: Currency; amount: number | Prisma.Decimal }>,
+  first: Currency,
+): MoneyTotals {
+  const sums = new Map<Currency, number>();
+  for (const { currency, amount } of items) {
+    const n = typeof amount === 'number' ? amount : amount.toNumber();
+    sums.set(currency, (sums.get(currency) ?? 0) + Math.round(n * 100));
+  }
+  const order = [first, ...DECLARATION_ORDER.filter((c) => c !== first)];
+  return order.flatMap((currency) => {
+    const cents = sums.get(currency);
+    return cents === undefined ? [] : [{ currency, cents }];
+  });
+}
+
+/** For a figure that always renders: no currency present reads as zero in `fallback`. */
+export function orZero(totals: MoneyTotals, fallback: Currency): MoneyTotals {
+  return totals.length > 0 ? totals : [{ currency: fallback, cents: 0 }];
+}
+
+/** "€40.00", or "€40.00 and £12.00", or "€1.00, £2.00 and $3.00"; "" for none. */
+export function formatTotals(totals: MoneyTotals): string {
+  const parts = totals.map((t) => formatMoneyCents(t.cents, t.currency));
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}

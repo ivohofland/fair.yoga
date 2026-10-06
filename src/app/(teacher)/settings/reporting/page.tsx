@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Currency, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { teacherCurrency } from '@/lib/teacher-currency.server';
@@ -6,12 +6,26 @@ import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatMonthLabel, formatMoneyCents } from '@/lib/format';
+import { orZero, totalsByCurrency, type MoneyTotals } from '@/lib/money-totals';
 
 export const dynamic = 'force-dynamic';
 
 function monthKey(date: Date): string {
   const d = new Date(date);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth()).padStart(2, '0')}`;
+}
+
+/** One line per currency, right-aligned, where a single figure used to stand. */
+function MoneyLines({ totals, className }: { totals: MoneyTotals; className: string }) {
+  return (
+    <span className="flex flex-col items-end">
+      {totals.map((t) => (
+        <span key={t.currency} className={className}>
+          {formatMoneyCents(t.cents, t.currency)}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 // Income overview: what teaching earned, shown the same way prices are
@@ -38,6 +52,7 @@ export default async function ReportingPage() {
     prisma.class.findMany({
       where: { calendarEntry: { teacherId: session.teacherId }, status: 'completed' },
       select: {
+        currency: true,
         totalRevenue: true,
         roomCost: true,
         totalStudents: true,
@@ -54,6 +69,7 @@ export default async function ReportingPage() {
         },
       },
       select: {
+        currency: true,
         hourlyRate: true,
         studentCount: true,
         calendarEntry: { select: { date: true, durationMinutes: true, startTime: true } },
@@ -85,26 +101,46 @@ export default async function ReportingPage() {
   const studioEarningsCents = (s: (typeof completedStudioClasses)[number]) =>
     Math.round((toCents(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60);
 
-  const totalClassEarningsCents = completedClasses.reduce((sum, c) => sum + classEarningsCents(c), 0);
-  const totalStudioEarningsCents = completedStudioClasses.reduce((sum, s) => sum + studioEarningsCents(s), 0);
-  const totalRoomCostsCents = completedClasses.reduce((sum, c) => sum + toCents(c.roomCost), 0);
+  // Every figure below is a list of per-currency totals: an amount is never
+  // added to one in another currency (`money-totals.ts`).
+  const classEarnings = completedClasses.map((c) => ({
+    currency: c.currency,
+    amount: classEarningsCents(c) / 100,
+  }));
+  const studioEarnings = completedStudioClasses.map((s) => ({
+    currency: s.currency,
+    amount: studioEarningsCents(s) / 100,
+  }));
+  const totalClassEarnings = orZero(totalsByCurrency(classEarnings, currency), currency);
+  const totalStudioEarnings = orZero(totalsByCurrency(studioEarnings, currency), currency);
+  const totalEarnings = orZero(totalsByCurrency([...classEarnings, ...studioEarnings], currency), currency);
+  const totalRoomCosts = orZero(
+    totalsByCurrency(
+      completedClasses.map((c) => ({ currency: c.currency, amount: toCents(c.roomCost) / 100 })),
+      currency,
+    ),
+    currency,
+  );
 
-  // Accumulate classes, students, and earnings in cents by month key (YYYY-MM)
-  const byMonth = new Map<string, { classes: number; students: number; earningsCents: number }>();
+  // Accumulate classes, students, and earnings by month key (YYYY-MM)
+  const byMonth = new Map<
+    string,
+    { classes: number; students: number; earnings: { currency: Currency; amount: number }[] }
+  >();
   for (const c of completedClasses) {
     const key = monthKey(c.calendarEntry.date);
-    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earningsCents: 0 };
+    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: [] };
     entry.classes += 1;
     entry.students += c.totalStudents ?? 0;
-    entry.earningsCents += classEarningsCents(c);
+    entry.earnings.push({ currency: c.currency, amount: classEarningsCents(c) / 100 });
     byMonth.set(key, entry);
   }
   for (const s of completedStudioClasses) {
     const key = monthKey(s.calendarEntry.date);
-    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earningsCents: 0 };
+    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: [] };
     entry.classes += 1;
     entry.students += s.studentCount ?? 0;
-    entry.earningsCents += studioEarningsCents(s);
+    entry.earnings.push({ currency: s.currency, amount: studioEarningsCents(s) / 100 });
     byMonth.set(key, entry);
   }
   // Last six calendar months, newest first
@@ -113,7 +149,12 @@ export default async function ReportingPage() {
     .slice(0, 6)
     .map(([key, v]) => {
       const [year, month] = key.split('-');
-      return { label: formatMonthLabel(Number(year), Number(month)), ...v };
+      return {
+        label: formatMonthLabel(Number(year), Number(month)),
+        classes: v.classes,
+        students: v.students,
+        earnings: orZero(totalsByCurrency(v.earnings, currency), currency),
+      };
     });
 
   const nothingYet = completedClasses.length === 0 && completedStudioClasses.length === 0;
@@ -131,9 +172,11 @@ export default async function ReportingPage() {
         <>
           <div className="bg-teal-tint rounded-card p-5 text-center">
             <p className="type-label">Total charged for teaching</p>
-            <p className="type-number text-[28px] leading-[1.25] mt-1">
-              {formatMoneyCents(totalClassEarningsCents + totalStudioEarningsCents, currency)}
-            </p>
+            {totalEarnings.map((t) => (
+              <p key={t.currency} data-testid="report-total" className="type-number text-[28px] leading-[1.25] mt-1">
+                {formatMoneyCents(t.cents, t.currency)}
+              </p>
+            ))}
             <p className="type-caption mt-0.5">
               {completedClasses.length + completedStudioClasses.length} classes · {distinctStudents.length}{' '}
               {distinctStudents.length === 1 ? 'student' : 'students'} reached
@@ -143,15 +186,15 @@ export default async function ReportingPage() {
           <div className="mt-4">
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Your classes</span>
-              <span className="type-number">{formatMoneyCents(totalClassEarningsCents, currency)}</span>
+              <MoneyLines totals={totalClassEarnings} className="type-number" />
             </div>
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Studio classes</span>
-              <span className="type-number">{formatMoneyCents(totalStudioEarningsCents, currency)}</span>
+              <MoneyLines totals={totalStudioEarnings} className="type-number" />
             </div>
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Room costs paid</span>
-              <span className="tabular-nums text-brown">{formatMoneyCents(totalRoomCostsCents, currency)}</span>
+              <MoneyLines totals={totalRoomCosts} className="tabular-nums text-brown" />
             </div>
           </div>
 
@@ -172,7 +215,7 @@ export default async function ReportingPage() {
                   <span className="flex-1 text-base text-ink">{m.label}</span>
                   <span className="w-20 text-right text-sm text-brown tabular-nums">{m.classes}</span>
                   <span className="w-20 text-right text-sm text-brown tabular-nums">{m.students}</span>
-                  <span className="w-24 text-right type-number text-sm">{formatMoneyCents(m.earningsCents, currency)}</span>
+                  <MoneyLines totals={m.earnings} className="w-24 text-right type-number text-sm" />
                 </div>
               ))}
             </section>

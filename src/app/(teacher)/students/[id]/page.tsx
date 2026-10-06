@@ -1,8 +1,8 @@
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { formatDateWithYear, formatDayMonth } from '@/lib/format';
+import { totalsByCurrency } from '@/lib/money-totals';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { isOutstanding } from '@/lib/payment-status';
@@ -56,11 +56,10 @@ export default async function StudentDetailPage({
   const outstandingRegistrations = paymentRegistrations.filter((reg) => isOutstanding(reg.payment!.status));
   const outstanding = {
     ids: outstandingRegistrations.map((reg) => reg.payment!.id),
-    // Summed as Prisma.Decimal so no cent is lost to float addition;
-    // converted to a number once, at the end, for the prop's type.
-    total: outstandingRegistrations
-      .reduce((sum, reg) => sum.plus(reg.payment!.amount), new Prisma.Decimal(0))
-      .toNumber(),
+    totals: totalsByCurrency(
+      outstandingRegistrations.map((reg) => ({ currency: reg.class.currency, amount: reg.payment!.amount })),
+      currency,
+    ),
   };
 
   return (
@@ -165,7 +164,6 @@ export default async function StudentDetailPage({
           studentName={displayName}
           isArchived={isArchived}
           outstanding={outstanding}
-          currency={currency}
         />
       </section>
     </>

@@ -41,17 +41,18 @@ type Pair = { teacherId: string; studentId: string };
 class OutstandingChangedError extends Error {}
 
 /** This pair's open payments: outstanding, on this student's registrations, on this teacher's classes. */
-function readOpenPayments(db: Prisma.TransactionClient, { teacherId, studentId }: Pair): Promise<OpenPayment[]> {
-  return db.payment.findMany({
+async function readOpenPayments(db: Prisma.TransactionClient, { teacherId, studentId }: Pair): Promise<OpenPayment[]> {
+  const rows = await db.payment.findMany({
     where: {
       status: { in: OUTSTANDING_STATUSES },
       registration: { studentId, class: { calendarEntry: { teacherId } } },
     },
-    select: { id: true, amount: true },
+    select: { id: true, amount: true, registration: { select: { class: { select: { currency: true } } } } },
   });
+  return rows.map((r) => ({ id: r.id, amount: r.amount, currency: r.registration.class.currency }));
 }
 
-/** The teacher's current currency, which the refusal copy names what is owed in. */
+/** The teacher's current currency, which the refusal copy lists first. */
 async function readTeacherCurrency(db: Prisma.TransactionClient, teacherId: string): Promise<Currency> {
   const teacher = await db.teacher.findUniqueOrThrow({ where: { id: teacherId }, select: { currency: true } });
   return teacher.currency;
