@@ -17,10 +17,10 @@
     "note": "Currency threaded through ClassPriceLine; EUR output is byte-identical"
   },
   "schedule": {
-    "sourceSha256": "10c3aa220bd1476d556acaf0a04f6ecf2a667fdc8ddc1cb0e62568684654d1b1",
+    "sourceSha256": "11631434164b18310a95f3d30d1a9fd59f74b5cc4698a2f380dcb5d963bbdc3c",
     "baselineSha256": "89c0bb9171896fb2bd9911bbc7ba27ae90e412c35738711448550de0c9631da6",
     "verifiedAt": "2026-10-06",
-    "note": "Onboarding reads bank accounts, not Teacher bank columns; renders the same"
+    "note": "The onboarding bank step reads a shared hasAccountInCurrency; renders the same"
   },
   "settings": {
     "sourceSha256": "212265916e17d150cc6a8395323ad24bcf518c25a6e5a82b2805568b6aef0e9c",
