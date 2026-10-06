@@ -104,14 +104,17 @@ export async function validateSession(
   }
 
   // Slide the expiry forward once fewer than 15 days remain, never past the
-  // absolute ceiling measured from createdAt.
-  if (session.expiresAt.getTime() - now < FIFTEEN_DAYS_MS) {
+  // absolute ceiling measured from createdAt, and only when that moves it
+  // later: a row already at the ceiling is left alone.
+  const slidTo = Math.min(now + THIRTY_DAYS_MS, ceiling);
+  if (
+    session.expiresAt.getTime() - now < FIFTEEN_DAYS_MS &&
+    slidTo > session.expiresAt.getTime()
+  ) {
     try {
       await db.session.update({
         where: { id: sessionHash },
-        data: {
-          expiresAt: new Date(Math.min(now + THIRTY_DAYS_MS, ceiling)),
-        },
+        data: { expiresAt: new Date(slidTo) },
       });
     } catch (err) {
       // Concurrently deleted between read and update (e.g. logout or GDPR erasure)
@@ -156,18 +159,6 @@ export async function invalidateSession(
     where: { id: sessionHash },
   });
   return count > 0;
-}
-
-/**
- * Delete every session the account holds, the caller's own included. Answers
- * how many rows went; zero is a normal answer, not an error.
- */
-export async function invalidateAccountSessions(
-  db: PrismaClient,
-  accountId: string,
-): Promise<number> {
-  const { count } = await db.session.deleteMany({ where: { accountId } });
-  return count;
 }
 
 /**
