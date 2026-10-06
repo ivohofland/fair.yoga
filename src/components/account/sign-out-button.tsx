@@ -29,11 +29,18 @@ function pendingCount(): number {
   return Object.keys(readOutbox().pending).length;
 }
 
+/** Registrations with a change on the device that the server does not hold: pending, refused, or both. */
+function unsyncedCount(): number {
+  const { pending, refused } = readOutbox();
+  return new Set([...Object.keys(pending), ...Object.keys(refused)]).size;
+}
+
 /** Ends the session and sends the browser to `redirectTo` either way —
  *  a failed DELETE surfaces a visible message but never blocks the leave.
  *  The signed-in account's queued attendance changes are sent first; any
- *  change still on the device after that, whichever account made it, is
- *  shown, and leaving then needs a second, explicit tap. */
+ *  change still on the device after that, pending or refused, whichever
+ *  account made it, is counted, and leaving then needs a second, explicit
+ *  tap. */
 export function SignOutButton({ accountId, redirectTo = '/login' }: SignOutButtonProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -43,23 +50,22 @@ export function SignOutButton({ accountId, redirectTo = '/login' }: SignOutButto
   async function handleSignOut() {
     setBusy(true);
     setUnsynced(0);
-    if (pendingCount() > 0) {
-      if (accountId !== null) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const timedOut = new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, FLUSH_WAIT_MS);
-        });
-        const flushed = flushAttendance(accountId)
-          .catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'flush' }, err))
-          .finally(() => clearTimeout(timer));
-        await Promise.race([flushed, timedOut]);
-      }
-      const remaining = pendingCount();
-      if (remaining > 0) {
-        setUnsynced(remaining);
-        setBusy(false);
-        return;
-      }
+    if (accountId !== null && pendingCount() > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, FLUSH_WAIT_MS);
+      });
+      const flushed = flushAttendance(accountId)
+        .catch((err: unknown) => logRequestFailure('sign-out-button', { step: 'flush' }, err))
+        .finally(() => clearTimeout(timer));
+      await Promise.race([flushed, timedOut]);
+    }
+    // Read after the flush, so a refusal it just produced is counted too.
+    const remaining = unsyncedCount();
+    if (remaining > 0) {
+      setUnsynced(remaining);
+      setBusy(false);
+      return;
     }
     await leave();
   }
@@ -124,8 +130,8 @@ export function SignOutButton({ accountId, redirectTo = '/login' }: SignOutButto
         <>
           <p role="alert" className="type-caption text-danger">
             {unsynced === 1
-              ? "1 attendance change hasn't synced yet."
-              : `${unsynced} attendance changes haven't synced yet.`}{' '}
+              ? "1 attendance change hasn't synced."
+              : `${unsynced} attendance changes haven't synced.`}{' '}
             Signing out discards them.
           </p>
           <button type="button" onClick={leave} disabled={busy} className="type-label text-teal disabled:opacity-50">
