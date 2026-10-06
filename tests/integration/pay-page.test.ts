@@ -9,6 +9,7 @@ import { formatInstantInZone } from '@/lib/timezone';
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 const IBAN = 'NL91ABNA0417164300';
+const BIC = 'ABNANL2A';
 const HOLDER = 'P. Paypage';
 const SORT_CODE_SHOWN = '40-47-84';
 const UK_ACCOUNT_NUMBER = '70872490';
@@ -52,7 +53,7 @@ describe('GET /bookings/[classId]/pay', () => {
     bank: {
       currency: 'EUR' | 'GBP';
       accounts: Array<
-        | { currency: 'EUR'; holderName: string; iban: string }
+        | { currency: 'EUR'; holderName: string; iban: string; bic: string }
         | { currency: 'GBP'; holderName: string; sortCode: string; accountNumber: string }
       >;
     } | null,
@@ -182,7 +183,7 @@ describe('GET /bookings/[classId]/pay', () => {
     const bankTeacher = await makeTeacher('bank', {
       currency: 'GBP',
       accounts: [
-        { currency: 'EUR', holderName: HOLDER, iban: IBAN },
+        { currency: 'EUR', holderName: HOLDER, iban: IBAN, bic: BIC },
         { currency: 'GBP', holderName: HOLDER, sortCode: SORT_CODE_SHOWN.replaceAll('-', ''), accountNumber: UK_ACCOUNT_NUMBER },
       ],
     });
@@ -249,6 +250,8 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).toContain('QR code');
     expect(html).toContain('name="pay-method"');
     expect(html).toContain(IBAN);
+    expect(html).toContain('>BIC<');
+    expect(html).toContain(BIC);
     expect(html).toContain(HOLDER);
     expect(html).not.toContain('Sort code');
     expect(html).not.toContain(SORT_CODE_SHOWN);
@@ -272,6 +275,7 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).toContain(HOLDER);
     expect(html).not.toContain('QR code');
     expect(html).not.toContain(IBAN);
+    expect(html).not.toContain(BIC);
   });
 
   it('offers a payment in a currency the teacher has no account for no method', async () => {
