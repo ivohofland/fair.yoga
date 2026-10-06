@@ -5,9 +5,8 @@ import type { NoneOf } from '@/lib/type-pins';
  * database enforces the same range through two CHECK constraints (see the
  * income_tier_range_check migration), so this union and the columns agree.
  *
- * This module must ship no runtime imports: `tier-form.tsx`, `booking-flow.tsx`,
- * and `pricing-preview-table.tsx` are all `'use client'` and value-import from
- * it, so any transitive reach to `@/lib/log` (pino) would fail `next build`.
+ * This module must ship no runtime imports: client components value-import
+ * from it, so any transitive reach to `@/lib/log` (pino) would fail `next build`.
  * The narrowing helper that logs lives in `tiers.server.ts` for
  * exactly that reason. A type-only import is safe here and is why the pins
  * below can import `NoneOf` from `type-pins.ts`: `import type` erases
@@ -20,9 +19,8 @@ export type IncomeTier = 1 | 2 | 3 | 4 | 5;
 export const INCOME_TIERS = [1, 2, 3, 4, 5] as const satisfies readonly IncomeTier[];
 
 // `satisfies` above proves every element IS a tier; these prove the list is
-// the whole union and nothing more. A missing tier silently shortens the
-// pricing tables that iterate this — `pricing-preview.tsx` and
-// `pricing-breakdown.tsx`.
+// the whole union and nothing more. A missing tier silently shortens every
+// pricing table that iterates this.
 const _tiersCoverTheUnion: NoneOf<Exclude<IncomeTier, (typeof INCOME_TIERS)[number]>> = true;
 void _tiersCoverTheUnion;
 const _tiersHasNoExtras: NoneOf<Exclude<(typeof INCOME_TIERS)[number], IncomeTier>> = true;
@@ -47,7 +45,7 @@ export const DEFAULT_INCOME_TIER: IncomeTier = 3;
  * Lives here rather than in `services/pricing.ts` so that a client component
  * can read the ratios from a module with no runtime imports — this file has
  * none (the `import type` above erases completely).
- * (`pricing-preview-table.tsx` also imports `calculateEffectiveTeacherRate`
+ * (The client-side pricing preview also imports `calculateEffectiveTeacherRate`
  * from `services/pricing.ts` directly, so the engine itself is in the browser
  * bundle regardless; that is not what living here buys.) See
  * `src/lib/class-fields.ts` for the same reasoning applied to ECONOMIC_FIELDS.

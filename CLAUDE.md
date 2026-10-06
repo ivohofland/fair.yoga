@@ -265,7 +265,7 @@ Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be go
 ## Open Questions
 
 - Level 2 failed payment retry policy (parked)
-- Tier labels — teacher pricing previews show the number with its `TIER_INFO` label ("1 · Getting by") since #773; the wording of those labels is still the UX copy phase's
+- Tier labels — the class-form pricing preview and the landing demo (`PricingPreviewResult`) show the number with its `TIER_INFO` label ("1 · Getting by") since #773; the class-detail price tables (`PricingPreview`, `PricingBreakdown`) still read "Tier N". Whether those follow, and the labels' wording, are still the UX copy phase's
 - Yogic quotes for tier selection — deferred to UX copy phase
 - Tier adjustment framing — deferred to UX copy phase
 - GDPR/legal review — parked for proper legal consultation

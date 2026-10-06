@@ -80,8 +80,8 @@ function Section({
 }
 
 /**
- * The public front door. A signed-in visitor never sees it: `/` used to be
- * the teacher home, and a bookmark of it should land on their own home.
+ * The public front door. A signed-in visitor is sent to their own home
+ * instead, so a bookmarked `/` still opens the app.
  */
 export default async function LandingPage() {
   const session = await getSession();
