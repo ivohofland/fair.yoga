@@ -611,6 +611,25 @@ describe('AttendanceList', () => {
     expect(row.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('moves focus to the next refusal\'s Dismiss, and after the last to the Attendance heading', async () => {
+    vi.stubGlobal('fetch', fetchMock);
+    await storeRefusal({ registrationId: 'reg-1' }, 'This class was cancelled.');
+    await storeRefusal({ registrationId: 'reg-2', studentName: 'Ada Lovelace' }, 'This booking was cancelled.');
+    renderList({ items: [untouched] });
+    const first = screen.getByRole('button', { name: /^Dismiss: Couldn't record Grace Hopper/ });
+    first.focus();
+    await act(async () => {
+      fireEvent.click(first);
+    });
+    const second = screen.getByRole('button', { name: /^Dismiss: Couldn't record Ada Lovelace/ });
+    expect(second).toHaveFocus();
+    await act(async () => {
+      fireEvent.click(second);
+    });
+    expect(screen.queryByRole('button', { name: /^Dismiss/ })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Attendance' })).toHaveFocus();
+  });
+
   it('shows a stored refusal without announcing it, and announces one that arrives, in the same mounted node', async () => {
     await storeRefusal({ registrationId: 'reg-old', studentName: 'Ada Lovelace' }, 'This booking was cancelled.');
     fetchMock.mockResolvedValue(refusal(409, 'CLASS_CANCELLED', 'This class was cancelled.'));

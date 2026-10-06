@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -135,6 +136,8 @@ export function AttendanceSyncStatus() {
     ctx?.registry.getSnapshot ?? getNoClasses,
     getNoClasses,
   );
+  const blockRef = useRef<HTMLDivElement>(null);
+  const dismissRefs = useRef(new Map<string, HTMLButtonElement>());
   if (!ctx) return null;
 
   const owned = ownedOutbox(outbox, ctx.ownerId);
@@ -142,7 +145,9 @@ export function AttendanceSyncStatus() {
   const refused = Object.values(owned.refused).filter((e) => !inline.has(e.classId));
 
   const waiting =
-    pending === 0 ? '' : `${changes(pending)} waiting to sync${needsSignIn ? ' — sign in to sync them' : ''}`;
+    pending === 0
+      ? ''
+      : `${changes(pending)} waiting to sync${needsSignIn ? ' — sign in to sync them' : ''}`;
   const unkept = pending > 0 && volatile ? "This device can't keep them if the page reloads." : '';
   const shownWaiting = unkept === '' ? waiting : `${waiting}. ${unkept}`;
   const announceWaiting = offline || retrying || needsSignIn;
@@ -152,36 +157,58 @@ export function AttendanceSyncStatus() {
     .map(stopped)
     .join(' ');
 
+  // Dismiss unmounts the focused button, so focus moves first: to the next refusal's Dismiss, else to the block.
+  function dismiss(index: number): void {
+    const entry = refused[index];
+    if (entry === undefined) return;
+    const next = refused[index + 1];
+    const target = next === undefined ? undefined : dismissRefs.current.get(next.registrationId);
+    (target ?? blockRef.current)?.focus();
+    void dismissRefused(entry.registrationId);
+  }
+
   return (
     <>
       <p role="status" className="sr-only">
         {summary}
       </p>
-      {(pending > 0 || refused.length > 0) && (
-        <div className="flex flex-col gap-2 py-2">
-          {pending > 0 && <p className="type-caption">{shownWaiting}</p>}
-          {refused.map((entry) => (
-            <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3">
-              <p className="type-caption text-danger">{refusalLine(entry)}</p>
-              <Link
-                href={`/class/${entry.classId}`}
-                aria-label={`Open class for ${entry.studentName}`}
-                className="type-label text-teal no-underline inline-flex items-center min-h-11"
-              >
-                Open class
-              </Link>
-              <button
-                type="button"
-                aria-label={`Dismiss: ${refusalLine(entry)}`}
-                className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
-                onClick={() => void dismissRefused(entry.registrationId)}
-              >
-                Dismiss
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <div
+        ref={blockRef}
+        role="group"
+        aria-label="Attendance sync"
+        tabIndex={-1}
+        className="focus:outline-none"
+      >
+        {(pending > 0 || refused.length > 0) && (
+          <div className="flex flex-col gap-2 py-2">
+            {pending > 0 && <p className="type-caption">{shownWaiting}</p>}
+            {refused.map((entry, index) => (
+              <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3">
+                <p className="type-caption text-danger">{refusalLine(entry)}</p>
+                <Link
+                  href={`/class/${entry.classId}`}
+                  aria-label={`Open class for ${entry.studentName}`}
+                  className="type-label text-teal no-underline inline-flex items-center min-h-11"
+                >
+                  Open class
+                </Link>
+                <button
+                  ref={(el) => {
+                    if (el === null) dismissRefs.current.delete(entry.registrationId);
+                    else dismissRefs.current.set(entry.registrationId, el);
+                  }}
+                  type="button"
+                  aria-label={`Dismiss: ${refusalLine(entry)}`}
+                  className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
+                  onClick={() => dismiss(index)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </>
   );
 }
