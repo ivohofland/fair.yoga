@@ -3,7 +3,7 @@
     "sourceSha256": "34cc2ed137e5f88736e207be83e5cfae444cf324e328917c917f4d052edcb61e",
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
     "verifiedAt": "2026-10-06",
-    "note": "Checklist takes the class currency; EUR render is byte-identical"
+    "note": "The page now hands PaymentChecklist the class's currency; the checklist renders only on a completed class, so an open class renders nothing that changed"
   },
   "inbox": {
     "sourceSha256": "32b1ba66f9143e9bdd77423e8e8785820ac29da655838e5b854e3c9248cc52ac",
