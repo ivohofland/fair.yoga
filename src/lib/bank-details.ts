@@ -18,7 +18,7 @@ export const EEA_COUNTRIES: ReadonlySet<string> = new Set([
 ]);
 
 // Total IBAN length per country, from the SWIFT IBAN registry.
-const IBAN_LENGTHS = {
+export const IBAN_LENGTHS = {
   AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16, BG: 22,
   BH: 22, BI: 27, BR: 29, BY: 28, CH: 21, CR: 22, CY: 28, CZ: 24,
   DE: 22, DJ: 27, DK: 18, DO: 28, EE: 20, EG: 29, ES: 24, FI: 18,
