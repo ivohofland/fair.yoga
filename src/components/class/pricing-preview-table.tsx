@@ -1,19 +1,8 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import type { Currency } from '@prisma/client';
-import { formatMoney } from '@/lib/format';
-import { calculateEffectiveTeacherRate } from '@/services/pricing';
-import { normalSpread, tierPrices, priceSpread } from '@/lib/pricing-preview';
-
-interface PricingPreviewTableProps {
-  currency: Currency;
-  roomCost: number;
-  minRate: number;
-  targetRate: number;
-  minStudents: number;
-  maxStudents: number;
-}
+import { normalSpread } from '@/lib/pricing-preview';
+import { PricingPreviewResult, type PricingPreviewInputs } from './pricing-preview-result';
 
 // ---------------------------------------------------------------------------
 // Distribution logic
@@ -33,8 +22,6 @@ function shuffleMix(n: number): number[] {
   return counts;
 }
 
-const TIER_LABELS = ['Tier 1', 'Tier 2', 'Tier 3', 'Tier 4', 'Tier 5'];
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -46,7 +33,7 @@ export function PricingPreviewTable({
   targetRate,
   minStudents,
   maxStudents,
-}: PricingPreviewTableProps) {
+}: PricingPreviewInputs) {
   const effectiveMin = Math.max(1, minStudents);
   const effectiveMax = Math.max(effectiveMin, maxStudents);
 
@@ -85,22 +72,6 @@ export function PricingPreviewTable({
     );
   }
 
-  const teacherRate = calculateEffectiveTeacherRate({
-    studentCount,
-    minStudents: effectiveMin,
-    maxStudents: effectiveMax,
-    minRate,
-    targetRate,
-  });
-
-  const totalCost = roomCost + teacherRate;
-  const rateRange = targetRate - minRate;
-  const rateProgress =
-    rateRange === 0 ? 100 : Math.round(((teacherRate - minRate) / rateRange) * 100);
-
-  const prices = tierPrices(totalCost, distribution);
-  const spread = priceSpread(prices, distribution);
-
   return (
     <div className="mt-6 flex flex-col gap-6">
       {/* Slider */}
@@ -123,97 +94,42 @@ export function PricingPreviewTable({
         </div>
       </div>
 
-      {/* You earn card */}
-      <div className="bg-teal-tint rounded-card p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <p className="type-label">You earn</p>
-            <p className="type-caption">total for this class</p>
+      <PricingPreviewResult
+        currency={currency}
+        roomCost={roomCost}
+        minRate={minRate}
+        targetRate={targetRate}
+        minStudents={effectiveMin}
+        maxStudents={effectiveMax}
+        studentCount={studentCount}
+        distribution={distribution}
+        distributionControl={
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              type="button"
+              onClick={() => handleModeChange('normal')}
+              className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] ${
+                mode === 'normal'
+                  ? 'border-teal text-teal bg-teal-tint'
+                  : 'border-border text-brown'
+              }`}
+            >
+              Normal spread
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange('shuffle')}
+              className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] ${
+                mode === 'shuffle'
+                  ? 'border-teal text-teal bg-teal-tint'
+                  : 'border-border text-brown'
+              }`}
+            >
+              Shuffle mix
+            </button>
           </div>
-          <p className="type-number text-[28px] leading-[1.25]">{formatMoney(teacherRate, currency)}</p>
-        </div>
-        <div className="flex gap-6">
-          <div>
-            <p className="type-caption">Room cost</p>
-            <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(roomCost, currency)}</p>
-          </div>
-          <div>
-            <p className="type-caption">Total class cost</p>
-            <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(totalCost, currency)}</p>
-          </div>
-          <div>
-            <p className="type-caption">Rate progress</p>
-            <p className="text-sm font-medium text-ink tabular-nums">{rateProgress}%</p>
-          </div>
-        </div>
-      </div>
-
-      {/* What students pay */}
-      <div>
-        <p className="type-label text-ink mb-3">What students pay</p>
-
-        {/* Mode toggle */}
-        <div className="flex items-center gap-2 mb-4">
-          <button
-            type="button"
-            onClick={() => handleModeChange('normal')}
-            className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] ${
-              mode === 'normal'
-                ? 'border-teal text-teal bg-teal-tint'
-                : 'border-border text-brown'
-            }`}
-          >
-            Normal spread
-          </button>
-          <button
-            type="button"
-            onClick={() => handleModeChange('shuffle')}
-            className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] ${
-              mode === 'shuffle'
-                ? 'border-teal text-teal bg-teal-tint'
-                : 'border-border text-brown'
-            }`}
-          >
-            Shuffle mix
-          </button>
-        </div>
-
-        {/* Tier table — teal caption headers, tabular prices on the decimal */}
-        <div className="flex flex-col">
-          <div className="flex items-center justify-between py-2 border-b border-border text-[12px] font-medium text-teal">
-            <span className="flex-1">TIER</span>
-            <span className="w-20 text-right">STUDENTS</span>
-            <span className="w-20 text-right">PRICE</span>
-          </div>
-          {TIER_LABELS.map((label, i) => {
-            const count = distribution[i]!;
-            const isActive = count > 0;
-            return (
-              <div
-                key={label}
-                className={`flex items-center justify-between min-h-12 py-2 border-b border-border last:border-b-0 ${
-                  isActive ? '' : 'opacity-40'
-                }`}
-              >
-                <span className="flex-1 text-base text-ink">{label}</span>
-                <span className="w-20 text-right text-sm text-brown tabular-nums">{count}</span>
-                <span className="w-20 text-right type-number text-sm">
-                  {formatMoney(prices[i]!, currency)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Spread line — show the math */}
-        {spread && (
-          <div className="mt-4 text-center">
-            <span className="type-caption">
-              Highest pays {spread}&times; the lowest
-            </span>
-          </div>
-        )}
-      </div>
+        }
+      />
     </div>
   );
 }
