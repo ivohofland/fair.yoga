@@ -13,6 +13,8 @@ import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { switchTeacherCurrency } from './currency-switch';
+import { createClassTemplate } from './class-template-lifecycle';
+import { createStudioClassTemplate } from './studio-class-template-lifecycle';
 
 const prisma = new PrismaClient();
 const fx = fixtureRun('cursw');
@@ -104,7 +106,7 @@ describe('switchTeacherCurrency (#758)', () => {
 
     expect(result).toEqual({
       relabelled: { classes: 2, studioClasses: 1 },
-      kept: { classes: 3, studioClasses: 1 },
+      kept: [{ currency: 'EUR', classes: 3, studioClasses: 1 }],
     });
     expect(
       await currencies({
@@ -123,6 +125,37 @@ describe('switchTeacherCurrency (#758)', () => {
     expect(
       (await prisma.teacher.findUniqueOrThrow({ where: { id: t.f.teacherId }, select: { currency: true } })).currency,
     ).toBe('GBP');
+  });
+
+  it('names as kept only the rows still not in the new currency, by the currency they show', async () => {
+    const t = await mixedTeacher();
+    const toGbp = await prisma.$transaction((tx) => switchTeacherCurrency(tx, t.f.teacherId, 'GBP'));
+    expect(toGbp).toEqual({
+      relabelled: { classes: 2, studioClasses: 1 },
+      kept: [{ currency: 'EUR', classes: 3, studioClasses: 1 }],
+    });
+    expect(
+      (await prisma.teacher.findUniqueOrThrow({ where: { id: t.f.teacherId }, select: { currency: true } })).currency,
+    ).toBe('GBP');
+    // Booked in between: the draft is now a £ class the next switch keeps.
+    await prisma.class.update({ where: { id: t.draft.id }, data: { settingsLocked: true } });
+
+    const backToEur = await prisma.$transaction((tx) => switchTeacherCurrency(tx, t.f.teacherId, 'EUR'));
+
+    expect(backToEur).toEqual({
+      relabelled: { classes: 1, studioClasses: 1 },
+      kept: [{ currency: 'GBP', classes: 1, studioClasses: 0 }],
+    });
+    expect(
+      (await prisma.teacher.findUniqueOrThrow({ where: { id: t.f.teacherId }, select: { currency: true } })).currency,
+    ).toBe('EUR');
+    expect(
+      await currencies({ classes: [t.draft.id, t.openUnbooked.id], studio: [t.studioTomorrow.id] }),
+    ).toEqual({
+      [t.draft.id]: 'GBP',
+      [t.openUnbooked.id]: 'EUR',
+      [t.studioTomorrow.id]: 'EUR',
+    });
   });
 
   it('answers unchanged for the stored currency and writes nothing', async () => {
@@ -153,6 +186,23 @@ describe('switchTeacherCurrency (#758)', () => {
     expect(
       (await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, select: { currency: true } })).currency,
     ).toBe('EUR');
+  });
+
+  it('template creation answers teacher_gone for an erased teacher and creates nothing', async () => {
+    const f = await utcTeacher();
+    await prisma.teacher.update({ where: { id: f.teacherId }, data: { deletedAt: new Date() } });
+
+    const regular = await createClassTemplate(prisma, f.teacherId, {
+      teacherRoomId: f.linkId, classType: 'Hatha', dayOfWeek: 3, startTime: '18:00', durationMinutes: 60,
+      roomCost: 20, minRate: 15, targetRate: 25, minStudents: 2, maxStudents: 10,
+    });
+    const studio = await createStudioClassTemplate(prisma, f.teacherId, {
+      classType: 'Studio flow', dayOfWeek: 4, startTime: '18:00', durationMinutes: 60, location: 'Gym', hourlyRate: 40,
+    });
+
+    expect(regular).toEqual({ ok: false, reason: 'teacher_gone' });
+    expect(studio).toEqual({ ok: false, reason: 'teacher_gone' });
+    expect(await prisma.scheduleRule.count({ where: { teacherId: f.teacherId } })).toBe(0);
   });
 
   // The cross-owner decoy (`docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`):

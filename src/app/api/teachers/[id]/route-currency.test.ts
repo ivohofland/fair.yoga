@@ -84,7 +84,7 @@ describe('PUT /api/teachers/[id] with a currency (#758)', () => {
     expect(body.data.currency).toBe('GBP');
     expect(body.data.currencySwitch).toEqual({
       relabelled: { classes: 1, studioClasses: 0 },
-      kept: { classes: 0, studioClasses: 0 },
+      kept: [],
     });
     expect(
       (await prisma.class.findUniqueOrThrow({ where: { id: t.classId }, select: { currency: true } })).currency,
@@ -127,7 +127,7 @@ describe('PUT /api/teachers/[id] with a currency (#758)', () => {
     expect(body.data).toMatchObject({ currency: 'USD', bio: 'Moved' });
     expect(body.data.currencySwitch).toEqual({
       relabelled: { classes: 1, studioClasses: 0 },
-      kept: { classes: 0, studioClasses: 0 },
+      kept: [],
     });
   });
 

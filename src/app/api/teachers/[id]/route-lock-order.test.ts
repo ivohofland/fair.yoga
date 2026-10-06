@@ -192,7 +192,7 @@ describe('PUT /api/teachers/[id] during an erasure writes nothing (#758)', () =>
     }
   }, 20_000);
 
-  // The currency branch runs in its own transaction, whose first statement
+  // The currency branch runs in its own transaction, whose first lock
   // is the switch's `FOR NO KEY UPDATE` on this row: it parks behind the
   // erasure, then finds the row erased and answers the same 404.
   it('answers 404 to a currency switch and leaves the anonymised row as the erasure left it', async () => {

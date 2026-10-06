@@ -63,7 +63,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // The lock behavior for this create — what `setLockTimeout(tx)` bounds,
   // how many of `createStudioClassTemplate`'s own transaction's statements
-  // can wait on it, and what its 10s budget does and does not cover — is
+  // can wait on it, and what its budget does and does not cover — is
   // documented beside that transaction in `studio-class-template-lifecycle.ts`,
   // not here (issue 228).
   const result = await createStudioClassTemplate(prisma, session.teacherId, parsed.data);
@@ -82,6 +82,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       503,
       'STUDIO_TEMPLATE_BUSY',
     );
+  }
+  if (!result.ok && result.reason === 'teacher_gone') {
+    log.warn({ teacherId: session.teacherId }, 'recurring studio class create refused: the teacher was erased');
+    return respondError('Teacher not found', 404);
   }
   if (!result.ok) {
     // Exhaustiveness: a new CreateStudioTemplateResult arm becomes a compile

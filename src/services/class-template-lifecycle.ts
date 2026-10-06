@@ -1004,8 +1004,9 @@ export function pauseOrResumeTemplate(
 export type CreateClassTemplateInput = z.infer<typeof createClassTemplateSchema>;
 
 /**
- * A create either lands, loses the slot, or hits a transient database
- * failure a retry can eventually win. The `slot_conflict` arm carries
+ * A create lands, loses the slot, hits a transient database
+ * failure a retry can eventually win, or finds its teacher erased under the
+ * `Teacher` lock (`teacher_gone`). The `slot_conflict` arm carries
  * `heldBy` for the same reason
  * `ArchiveTemplateResult`'s does: one exclusion constraint spans both
  * families (issue 298) and cannot say which raised it, so a fresh probe
@@ -1020,7 +1021,16 @@ export type CreateClassTemplateInput = z.infer<typeof createClassTemplateSchema>
 export type CreateTemplateResult =
   | { ok: true; template: ClassTemplateWithSlot; generation: GenerationResult }
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
-  | { ok: false; reason: 'busy' };
+  | { ok: false; reason: 'busy' }
+  | { ok: false; reason: 'teacher_gone' };
+
+/**
+ * `createClassTemplate`'s transaction budget: each statement in it that can
+ * wait on a lock may wait the full `lock_timeout`, and this is their sum plus
+ * headroom. The sum is in `docs/lock-order.md`, "Template creation's
+ * transaction budget (#758)".
+ */
+const CREATE_TEMPLATE_TIMEOUT_MS = 12_000;
 
 export async function createClassTemplate(
   db: PrismaClient,
@@ -1029,7 +1039,7 @@ export async function createClassTemplate(
 ): Promise<CreateTemplateResult> {
   let outcome:
     | { ok: true; created: ClassTemplateWithSlot; generation: GenerationResult }
-    | { ok: false };
+    | { ok: false; reason: 'slot' | 'teacher_gone' };
   try {
     outcome = await db.$transaction(async (tx) => {
       // FIRST STATEMENT, per every sibling in this file: `lockTeacherForShare`
@@ -1037,19 +1047,10 @@ export async function createClassTemplate(
       // first lock (`docs/lock-order.md`, "The `Teacher` row is the first
       // lock (#758)"): a currency switch holds this row until it commits, so
       // the first window generated below stamps the currency the switch
-      // wrote. FIVE statements in this transaction can wait on a lock — this
-      // one, the rule insert, the template insert below, and generation's own
-      // two writes (`generateEntriesForRule`'s
-      // `calendarEntry.createManyAndReturn` and the `family.createChildren`
-      // call after it, which for this family is `class.createMany`). Every
-      // other statement that function issues is a plain read, and a read
-      // waits on no lock under READ COMMITTED — which is why none of them is
-      // in the sum, and why no roster of them is kept here: another read
-      // cannot move this budget and another WRITE must. So 5 x 2s sits inside
-      // the 12s budget with 2s of headroom; redo that sum before adding a
-      // sixth waiting statement (issue 228, docs/lock-order.md).
+      // wrote. A new write or lock in this transaction moves
+      // `CREATE_TEMPLATE_TIMEOUT_MS`.
       if (!(await lockTeacherForShare(tx, teacherId))) {
-        throw new Error(`createClassTemplate: teacher ${teacherId} is absent or erased`);
+        return { ok: false as const, reason: 'teacher_gone' as const };
       }
       const [rule] = await tx.scheduleRule.createManyAndReturn({
         data: [{
@@ -1065,7 +1066,7 @@ export async function createClassTemplate(
       // No row means a constraint refused it. WHICH one is not knowable here
       // — `ON CONFLICT DO NOTHING` carries no conflict target — so the probe
       // runs below, on `db`, after this transaction has closed.
-      if (!rule) return { ok: false as const };
+      if (!rule) return { ok: false as const, reason: 'slot' as const };
 
       // Unchecked shape (`teacherRoomId` scalar), not the nested `teacherRoom:
       // { connect: … }` write #298 forced on the route's old inline
@@ -1094,7 +1095,7 @@ export async function createClassTemplate(
       const generation = await generateInstancesForTemplate(tx, created);
       const { scheduleRule, ...bare } = created;
       return { ok: true as const, created: withSlot(bare, scheduleRule), generation };
-    }, { timeout: 12_000 });
+    }, { timeout: CREATE_TEMPLATE_TIMEOUT_MS });
   } catch (err) {
     // BEFORE any conflict check (`api-errors.ts`: `transientDbFailure` is
     // checked ahead of every other branch precisely so a non-matching check
@@ -1128,6 +1129,7 @@ export async function createClassTemplate(
     throw err;
   }
 
+  if (!outcome.ok && outcome.reason === 'teacher_gone') return { ok: false, reason: 'teacher_gone' };
   if (!outcome.ok) {
     const heldBy = await ruleSlotHolder(db, {
       teacherId,

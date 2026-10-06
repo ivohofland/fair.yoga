@@ -184,7 +184,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!outcome.ok) {
-    if (outcome.reason === 'teacher_gone') return respondError('Teacher not found', 404);
+    if (outcome.reason === 'teacher_gone') {
+      // LOGGED before responding, like every refusal below.
+      log.warn({ teacherId: session.teacherId }, 'class create refused: the teacher was erased');
+      return respondError('Teacher not found', 404);
+    }
     if (outcome.reason === 'room_not_found') {
       // The room existed at the ownership check above but is gone by the
       // time this transaction re-read it — the same failure the ownership
