@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerPush } from '../../../tests/setup/components';
 import { DataAndDeletion } from './data-and-deletion';
-import { enqueueAttendance, getOutbox, resetOutboxForTests } from '@/lib/attendance-outbox';
+import { enqueueAttendance, getOutbox, resetOutboxForTests, settleEntry } from '@/lib/attendance-outbox';
 
 const clearOfflinePages = vi.fn<() => Promise<void>>(async () => {});
 vi.mock('@/lib/offline-client', () => ({
@@ -15,7 +15,7 @@ vi.mock('@/lib/offline-client', () => ({
  */
 describe('DataAndDeletion', () => {
   it('tells a student that the email address behind a refusal is kept', () => {
-    render(<DataAndDeletion role="student" />);
+    render(<DataAndDeletion role="student" accountId="acct-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete account' }));
 
     expect(
@@ -24,7 +24,7 @@ describe('DataAndDeletion', () => {
   });
 
   it('keeps the refusal sentence out of the teacher copy', () => {
-    render(<DataAndDeletion role="teacher" />);
+    render(<DataAndDeletion role="teacher" accountId="acct-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete account' }));
 
     // Positive first: without it, the negative below would also pass on a
@@ -64,7 +64,7 @@ describe('DataAndDeletion', () => {
       const blob = new Blob(['{}']);
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => blob }));
       const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-      render(<DataAndDeletion role="teacher" />);
+      render(<DataAndDeletion role="teacher" accountId="acct-1" />);
 
       clickExport();
 
@@ -80,7 +80,7 @@ describe('DataAndDeletion', () => {
         'fetch',
         vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }),
       );
-      render(<DataAndDeletion role="teacher" />);
+      render(<DataAndDeletion role="teacher" accountId="acct-1" />);
 
       clickExport();
 
@@ -94,7 +94,7 @@ describe('DataAndDeletion', () => {
       const consoleError = arrange();
       const boom = new Error('offline');
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(boom));
-      render(<DataAndDeletion role="student" />);
+      render(<DataAndDeletion role="student" accountId="acct-1" />);
 
       clickExport();
 
@@ -116,7 +116,7 @@ describe('DataAndDeletion', () => {
         'fetch',
         vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['{}']) }),
       );
-      render(<DataAndDeletion role="teacher" />);
+      render(<DataAndDeletion role="teacher" accountId="acct-1" />);
 
       clickExport();
 
@@ -151,7 +151,7 @@ describe('DataAndDeletion, deleting the account', () => {
       order.push('cleared');
     });
     routerPush.mockImplementation(() => order.push('push'));
-    render(<DataAndDeletion role="teacher" />);
+    render(<DataAndDeletion role="teacher" accountId="acct-1" />);
 
     confirmDelete();
 
@@ -160,23 +160,23 @@ describe('DataAndDeletion, deleting the account', () => {
     routerPush.mockReset();
   });
 
-  it('clears the queued attendance once the account is deleted', async () => {
+  it('clears the deleted account\'s queued attendance, and keeps another account\'s for its own sign-out to count', async () => {
     localStorage.clear();
     resetOutboxForTests();
-    await enqueueAttendance({
-      ownerId: 'owner-1',
-      registrationId: 'reg-1',
-      classId: 'class-1',
-      studentName: 'Student',
-      status: 'attended',
-    });
+    const queue = (ownerId: string, registrationId: string) =>
+      enqueueAttendance({ ownerId, registrationId, classId: 'class-1', studentName: 'Student', status: 'attended' });
+    await queue('acct-1', 'reg-1');
+    await queue('acct-2', 'reg-2');
+    const refused = await queue('acct-1', 'reg-3');
+    await settleEntry(refused, { kind: 'refused', message: 'This booking was cancelled.' });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
-    render(<DataAndDeletion role="teacher" />);
+    render(<DataAndDeletion role="teacher" accountId="acct-1" />);
 
     confirmDelete();
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
-    expect(Object.keys(getOutbox().pending)).toEqual([]);
+    expect(Object.keys(getOutbox().pending)).toEqual(['reg-2']);
+    expect(getOutbox().refused).toEqual({});
     routerPush.mockReset();
   });
 
@@ -189,7 +189,7 @@ describe('DataAndDeletion, deleting the account', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      render(<DataAndDeletion role="teacher" />);
+      render(<DataAndDeletion role="teacher" accountId="acct-1" />);
 
       confirmDelete();
 
@@ -212,7 +212,7 @@ describe('DataAndDeletion, deleting the account', () => {
       'fetch',
       vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }),
     );
-    render(<DataAndDeletion role="teacher" />);
+    render(<DataAndDeletion role="teacher" accountId="acct-1" />);
 
     confirmDelete();
 

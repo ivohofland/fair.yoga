@@ -45,7 +45,7 @@ export default async function ProfilePage() {
         <AddPasskey />
       </section>
 
-      <DataAndDeletion role="teacher" />
+      <DataAndDeletion role="teacher" accountId={session.accountId} />
     </>
   );
 }

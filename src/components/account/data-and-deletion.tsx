@@ -4,18 +4,20 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
-import { clearOutbox } from '@/lib/attendance-outbox';
+import { clearOwnedOutbox } from '@/lib/attendance-outbox';
 import { clearOfflinePages } from '@/lib/offline-client';
 
 interface DataAndDeletionProps {
   /** 'student' | 'teacher' — only changes the consequence copy. */
   role: 'student' | 'teacher';
+  /** The signed-in account, whose queued attendance changes are discarded with it. */
+  accountId: string;
 }
 
 // GDPR section: export everything, or delete the account. Deletion is
 // anonymization — payment records the other party is entitled to keep
 // stay behind without any personal data attached.
-export function DataAndDeletion({ role }: DataAndDeletionProps) {
+export function DataAndDeletion({ role, accountId }: DataAndDeletionProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -65,7 +67,7 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
         // The device's stored teacher pages belong to the account just deleted.
         await clearOfflinePages();
         try {
-          await clearOutbox();
+          await clearOwnedOutbox(accountId);
         } catch (err) {
           // The account is gone either way; leaving its page must not wait on this.
           logRequestFailure('data-and-deletion-delete', { role, step: 'clear-outbox' }, err);
