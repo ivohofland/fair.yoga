@@ -430,6 +430,18 @@ export async function clearOutbox(): Promise<void> {
 }
 
 /**
+ * Removes `ownerId`'s pending and refused entries. Every other owner's stay,
+ * and so do the confirmations, which carry no owner and no name.
+ */
+export async function clearOwnedOutbox(ownerId: string): Promise<void> {
+  await update((s) => {
+    const others = <T extends PendingEntry>(entries: Readonly<Record<string, T>>): Record<string, T> =>
+      Object.fromEntries(Object.entries(entries).filter(([, e]) => e.ownerId !== ownerId));
+    return { ...s, pending: others(s.pending), refused: others(s.refused) };
+  });
+}
+
+/**
  * The part of `outbox` that belongs to `ownerId`: its pending and refused
  * entries. Confirmations carry no owner and are all kept. A null owner keeps
  * no pending or refused entry.

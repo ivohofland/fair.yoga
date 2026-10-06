@@ -20,7 +20,7 @@ export default async function DataSettingsPage() {
         Settings
       </Link>
       <h1 className="type-title mb-6">Data &amp; deletion</h1>
-      <DataAndDeletion role="student" />
+      <DataAndDeletion role="student" accountId={session.accountId} />
     </div>
   );
 }
