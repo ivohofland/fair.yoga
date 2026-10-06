@@ -35,6 +35,8 @@ import { createClassTemplate } from './class-template-lifecycle';
 import { createStudioClassTemplate } from './studio-class-template-lifecycle';
 import { POST as postClass } from '@/app/api/classes/route';
 import { POST as postStudioClass } from '@/app/api/studio-classes/route';
+import { POST as postClassTemplate } from '@/app/api/class-templates/route';
+import { POST as postStudioClassTemplate } from '@/app/api/studio-class-templates/route';
 
 const prisma = new PrismaClient();
 const fx = fixtureRun('curswl');
@@ -456,6 +458,78 @@ describe('a create under no existing template against a switch holding the teach
     });
     expect(rows.length).toBeGreaterThan(0);
     expect(new Set(rows.map((r) => r.currency))).toEqual(new Set(['GBP']));
+    expect(parked).toBe(true);
+  }, CASE_TIMEOUT_MS);
+});
+
+/**
+ * An erasure holds the teacher row `FOR NO KEY UPDATE` from its first
+ * statement to its commit. A create arriving meanwhile has already passed its
+ * session check, parks on its own `FOR SHARE` of that row, and then reads it
+ * erased: it answers 404 and writes nothing.
+ */
+describe('a create during an erasure writes nothing (#758)', () => {
+  async function holdErasing(tx: Prisma.TransactionClient, teacherId: string): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${teacherId} FOR NO KEY UPDATE`;
+    await tx.teacher.update({ where: { id: teacherId }, data: { firstName: 'Deleted', deletedAt: new Date() } });
+  }
+
+  function post(
+    handler: (req: NextRequest) => Promise<Response>,
+    path: string,
+    token: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> {
+    return handler(new NextRequest(`http://localhost:3000${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  async function writtenFor(teacherId: string) {
+    return {
+      entries: await prisma.calendarEntry.count({ where: { teacherId } }),
+      rules: await prisma.scheduleRule.count({ where: { teacherId } }),
+    };
+  }
+
+  const regular = (f: RoomFixture) => ({
+    teacherRoomId: f.linkId,
+    classType: 'Hatha',
+    startTime: '18:00',
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 2,
+    maxStudents: 10,
+  });
+  const studio = { classType: 'Studio flow', startTime: '18:00', durationMinutes: 60, location: 'Gym', hourlyRate: 40 };
+
+  const cases: ReadonlyArray<{
+    name: string;
+    handler: (req: NextRequest) => Promise<Response>;
+    path: string;
+    body: (f: RoomFixture) => Record<string, unknown>;
+  }> = [
+    { name: 'POST /api/classes', handler: postClass, path: '/api/classes', body: (f) => ({ ...regular(f), date: isoDay(daysAhead(9)) }) },
+    { name: 'POST /api/studio-classes', handler: postStudioClass, path: '/api/studio-classes', body: () => ({ ...studio, date: isoDay(daysAhead(9)) }) },
+    { name: 'POST /api/class-templates', handler: postClassTemplate, path: '/api/class-templates', body: (f) => ({ ...regular(f), dayOfWeek: 3 }) },
+    { name: 'POST /api/studio-class-templates', handler: postStudioClassTemplate, path: '/api/studio-class-templates', body: () => ({ ...studio, dayOfWeek: 3 }) },
+  ];
+
+  it.each(cases)('$name answers 404 and creates nothing', async ({ handler, path, body }) => {
+    const f = await utcTeacher();
+    const token = await seedSession(prisma, f.accountId);
+
+    const { result: res, parked } = await raceBehindHolder(
+      (tx) => holdErasing(tx, f.teacherId),
+      () => post(handler, path, token, body(f)),
+    );
+
+    expect(res.status).toBe(404);
+    expect(await writtenFor(f.teacherId)).toEqual({ entries: 0, rules: 0 });
     expect(parked).toBe(true);
   }, CASE_TIMEOUT_MS);
 });
