@@ -45,11 +45,11 @@ describe('PricingPreviewTable', () => {
     expect(screen.getByText('€20.00')).toBeTruthy();
     expect(screen.getByText('€85.00')).toBeTruthy();
     expect(screen.getByText('50%')).toBeTruthy();
-    expect(row('Tier 1')).toEqual(['1', '€7.22']);
-    expect(row('Tier 2')).toEqual(['2', '€8.89']);
-    expect(row('Tier 3')).toEqual(['3', '€11.11']);
-    expect(row('Tier 4')).toEqual(['2', '€13.33']);
-    expect(row('Tier 5')).toEqual(['0', '€15.00']);
+    expect(row('1 · Getting by')).toEqual(['1', '€7.22']);
+    expect(row('2 · Managing')).toEqual(['2', '€8.89']);
+    expect(row('3 · Comfortable')).toEqual(['3', '€11.11']);
+    expect(row('4 · Doing well')).toEqual(['2', '€13.33']);
+    expect(row('5 · Plenty to share')).toEqual(['0', '€15.00']);
     expect(screen.getByText('Highest pays 1.8× the lowest')).toBeTruthy();
   });
 
@@ -61,11 +61,11 @@ describe('PricingPreviewTable', () => {
     expect(screen.getByText('€90.00')).toBeTruthy();
     expect(screen.getByText('€110.00')).toBeTruthy();
     expect(screen.getByText('100%')).toBeTruthy();
-    expect(row('Tier 1')).toEqual(['1', '€5.96']);
-    expect(row('Tier 2')).toEqual(['3', '€7.33']);
-    expect(row('Tier 3')).toEqual(['4', '€9.17']);
-    expect(row('Tier 4')).toEqual(['3', '€11.00']);
-    expect(row('Tier 5')).toEqual(['1', '€12.38']);
+    expect(row('1 · Getting by')).toEqual(['1', '€5.96']);
+    expect(row('2 · Managing')).toEqual(['3', '€7.33']);
+    expect(row('3 · Comfortable')).toEqual(['4', '€9.17']);
+    expect(row('4 · Doing well')).toEqual(['3', '€11.00']);
+    expect(row('5 · Plenty to share')).toEqual(['1', '€12.38']);
     expect(screen.getByText('Highest pays 2.1× the lowest')).toBeTruthy();
   });
 
@@ -76,8 +76,8 @@ describe('PricingPreviewTable', () => {
     expect(screen.getByText('€40.00')).toBeTruthy();
     expect(screen.getByText('€60.00')).toBeTruthy();
     expect(screen.getByText('0%')).toBeTruthy();
-    expect(row('Tier 1')).toEqual(['0', '€9.75']);
-    expect(row('Tier 5')).toEqual(['0', '€20.25']);
+    expect(row('1 · Getting by')).toEqual(['0', '€9.75']);
+    expect(row('5 · Plenty to share')).toEqual(['0', '€20.25']);
     expect(screen.getByText('Highest pays 1.5× the lowest')).toBeTruthy();
   });
 
@@ -91,7 +91,7 @@ describe('PricingPreviewTable', () => {
     render(<PricingPreviewTable {...EXAMPLE} />);
     fireEvent.click(screen.getByRole('button', { name: 'Shuffle mix' }));
 
-    const counts = ['Tier 1', 'Tier 2', 'Tier 3', 'Tier 4', 'Tier 5'].map((l) => Number(row(l)[0]));
+    const counts = ['1 · Getting by', '2 · Managing', '3 · Comfortable', '4 · Doing well', '5 · Plenty to share'].map((l) => Number(row(l)[0]));
     expect(counts.reduce((a, b) => a + b, 0)).toBe(8);
   });
 });

@@ -265,7 +265,7 @@ Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be go
 ## Open Questions
 
 - Level 2 failed payment retry policy (parked)
-- Tier labels — currently 1-5, naming deferred to UX copy phase
+- Tier labels — teacher pricing previews show the number with its `TIER_INFO` label ("1 · Getting by") since #773; the wording of those labels is still the UX copy phase's
 - Yogic quotes for tier selection — deferred to UX copy phase
 - Tier adjustment framing — deferred to UX copy phase
 - GDPR/legal review — parked for proper legal consultation
