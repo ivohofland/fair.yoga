@@ -113,9 +113,9 @@ export default async function LandingPage() {
           <Link href="/signup" className={PRIMARY_LINK}>
             Set up your first class
           </Link>
-          <a href="#pricing" className="type-body text-center sm:text-left">
+          <Link href="#pricing" className="type-body text-center sm:text-left">
             See how the pricing works <span aria-hidden="true">↓</span>
-          </a>
+          </Link>
         </div>
         <p className="type-caption mt-4">Free forever · No commission · Bring your own students</p>
       </header>

@@ -18,6 +18,20 @@ test.describe('Landing page', () => {
     await expect(page).toHaveURL(/\/signup$/);
   });
 
+  test('back from signup returns to the pricing the visitor was reading', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('link', { name: /See how the pricing works/ }).click();
+    await expect(page).toHaveURL(/\/#pricing$/);
+    await expect(page.locator('#pricing')).toBeInViewport();
+
+    await page.getByRole('link', { name: 'Get started — it’s free' }).click();
+    await expect(page).toHaveURL(/\/signup$/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/#pricing$/);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^Look around the room\./);
+  });
+
   test('the demo answers its sliders', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('slider', { name: 'Students registered' }).fill('3');
