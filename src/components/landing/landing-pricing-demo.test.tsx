@@ -54,12 +54,23 @@ describe('LandingPricingDemo', () => {
     expect(screen.getByText('Highest pays 2.1× the lowest')).toBeTruthy();
   });
 
-  it('goes ahead at exactly the minimum', () => {
+  it('goes ahead at exactly the minimum, re-spreading the smaller class', () => {
     render(<LandingPricingDemo />);
     fireEvent.change(students(), { target: { value: '4' } });
 
     expect(screen.queryByText(BELOW_MINIMUM)).toBeNull();
     expect(screen.getByText('€40.00')).toBeTruthy();
+    // 4 students spread 0,1,2,1,0 over a €60.00 class
+    expect(row('1 · Getting by')).toEqual(['0', '€9.75']);
+    expect(row('3 · Comfortable')).toEqual(['2', '€15.00']);
+    expect(screen.getByText('Highest pays 1.5× the lowest')).toBeTruthy();
+  });
+
+  it('moves the registration bar with the student slider', () => {
+    render(<LandingPricingDemo />);
+    fireEvent.change(students(), { target: { value: '10' } });
+
+    expect(screen.getByText('/ 4–12').previousElementSibling?.textContent).toBe('10');
   });
 
   it('shows the cancellation instead of prices below the minimum', () => {
