@@ -7,6 +7,12 @@ vi.mock('@simplewebauthn/browser', () => ({ startRegistration }));
 const clearOfflinePages = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/offline-client', () => ({ clearOfflinePages }));
 
+const disablePush = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/push-client', () => ({
+  disablePush,
+  recordPushDeviceBeforeNavigation: vi.fn(async () => {}),
+}));
+
 import { AccountSecurity } from './account-security';
 
 function domError(name: string): Error {
@@ -63,6 +69,10 @@ describe('AccountSecurity', () => {
     clearOfflinePages.mockImplementation(async () => {
       order.push('clearOfflinePages');
     });
+    disablePush.mockImplementation(async () => {
+      order.push('disablePush');
+      return 'off';
+    });
     assign.mockImplementation((url: string) => {
       order.push(`navigate ${url}`);
     });
@@ -72,6 +82,7 @@ describe('AccountSecurity', () => {
   afterEach(() => {
     startRegistration.mockReset();
     clearOfflinePages.mockReset();
+    disablePush.mockReset();
     assign.mockReset();
     Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
     vi.unstubAllGlobals();
@@ -143,6 +154,26 @@ describe('AccountSecurity', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not remove that passkey.');
     expect(consoleError).toHaveBeenCalled();
+  });
+
+  it('a remove answered 404 (already gone in another tab) refreshes the list with no alert', async () => {
+    let rows = [ROW_A, ROW_B];
+    arrange({
+      'GET /api/auth/passkey': () => ok(rows),
+      'DELETE /api/auth/passkey/pk-a': () => {
+        rows = [ROW_B];
+        return refusal(404, 'NOT_FOUND', 'gone');
+      },
+    });
+    renderIt();
+    const [first] = await screen.findAllByRole('listitem');
+    if (!first) throw new Error('no row');
+
+    fireEvent.click(within(first).getByRole('button', { name: 'Remove' }));
+    fireEvent.click(within(first).getByRole('button', { name: 'Yes, remove' }));
+
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(1));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('adding a passkey sends the attestation, confirms, and refreshes the list', async () => {
@@ -230,6 +261,8 @@ describe('AccountSecurity', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
 
       expect(await screen.findByText(/Check ada@example\.test/)).toBeInTheDocument();
+      // A link opened on another device shows a code; this is where it is typed.
+      expect(screen.getByLabelText('Code')).toBeInTheDocument();
       const send = fetchMock.mock.calls.find(([u]) => u === '/api/auth/magic-link/send');
       expect(send?.[1]?.method).toBe('POST');
       expect(JSON.parse(String(send?.[1]?.body))).toEqual({
@@ -293,11 +326,48 @@ describe('AccountSecurity', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Sign out everywhere' }));
 
       await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'));
-      expect(order.slice(-3)).toEqual([
+      expect(order.slice(-4)).toEqual([
+        'disablePush',
         'DELETE /api/auth/session/all',
         'clearOfflinePages',
         'navigate /login',
       ]);
+    });
+
+    it('a failed push teardown is logged and the DELETE still goes', async () => {
+      disablePush.mockRejectedValue(new Error('sw gone'));
+      arrange({
+        'GET /api/auth/passkey': () => ok([]),
+        'DELETE /api/auth/session/all': () => ok({ signedOut: true }),
+      });
+      renderIt();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign out everywhere' }));
+
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'));
+      expect(order).toContain('DELETE /api/auth/session/all');
+      expect(consoleError).toHaveBeenCalled();
+    });
+
+    it('a push teardown stuck past 3 seconds does not hold back the DELETE', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        disablePush.mockImplementation(() => new Promise(() => {}));
+        arrange({
+          'GET /api/auth/passkey': () => ok([]),
+          'DELETE /api/auth/session/all': () => ok({ signedOut: true }),
+        });
+        renderIt();
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Sign out everywhere' }));
+        expect(order).not.toContain('DELETE /api/auth/session/all');
+        await vi.advanceTimersByTimeAsync(3_100);
+
+        await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'));
+        expect(order).toContain('DELETE /api/auth/session/all');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('a failed DELETE is an alert, leaves the pages alone and does not navigate', async () => {

@@ -881,7 +881,10 @@ check runs in `verify` before the challenge is consumed, so a refusal leaves the
 challenge standing. The way through is the ordinary emailed sign-in link, which
 mints a fresh session. Removing a passkey (`DELETE /api/auth/passkey/[id]`) and
 signing out everywhere (`DELETE /api/auth/session/all`) are not gated: both only
-take ways in away. A successful registration emails the account address
+take ways in away. Signing out everywhere ends the account's sessions and its push
+subscriptions in one transaction (`signOutEverywhere`,
+`src/services/account-sign-out.ts`), because a subscription is keyed by account,
+not session, and would otherwise keep delivering to a device that was signed out. A successful registration emails the account address
 (`deliverPasskeyAddedNotice`, `FireAndForget`: the registration has committed and
 its response must not depend on the provider).
 
