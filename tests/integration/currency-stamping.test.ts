@@ -56,11 +56,14 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-  await prisma.scheduleRule.deleteMany({ where: { teacherId } });
-  await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-  await prisma.room.deleteMany({ where: { id: roomId } });
-  await teardownTeacher(prisma, teacherId, accountId);
+  // An unset id would reach Prisma as `undefined`, which is no filter at all.
+  if (teacherId) {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+    await teardownTeacher(prisma, teacherId, accountId);
+  }
   await prisma.$disconnect();
 });
 
@@ -144,6 +147,8 @@ describe('currency snapshots are stamped from the teacher', () => {
   it('PUT /api/teachers/[id] refuses a currency outside the enum', async () => {
     const res = await send('PUT', `/api/teachers/${teacherId}`, { currency: 'XYZ' });
     expect(res.status).toBe(400);
+    const t = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(t.currency).toBe('GBP');
   });
 
   it('PUT /api/teachers/[id] accepts a currency in the enum', async () => {
