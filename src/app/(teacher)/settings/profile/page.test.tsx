@@ -63,8 +63,24 @@ describe('ProfilePage', () => {
     expect(props).toEqual({
       currency: 'GBP',
       teacherId: 'teacher-1',
+      hasAccount: true,
       initial: { holderName: 'Ada Lovelace', iban: '', bic: '', sortCode: '123456', accountNumber: '12345678', routingNumber: '' },
       others: [{ currency: 'EUR', masked: '•••• 4300' }],
     });
+  });
+
+  it('says there is no current-currency account to remove when only another currency has one', async () => {
+    requireTeacherSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
+    const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+    findUniqueOrThrow.mockResolvedValue({
+      id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
+      currency: 'GBP', defaultTimezone: 'Europe/London', photo: null,
+      bankAccounts: [{ ...none, currency: 'EUR', holderName: 'Ada L', iban: 'NL91ABNA0417164300' }],
+    });
+
+    render(await ProfilePage());
+
+    const props = JSON.parse(screen.getByTestId('bank-account-form').getAttribute('data-props') ?? '{}') as { hasAccount: boolean };
+    expect(props.hasAccount).toBe(false);
   });
 });
