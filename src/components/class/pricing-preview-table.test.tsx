@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PricingPreviewTable } from './pricing-preview-table';
 
@@ -93,5 +93,49 @@ describe('PricingPreviewTable', () => {
 
     const counts = ['1 · Getting by', '2 · Managing', '3 · Comfortable', '4 · Doing well', '5 · Plenty to share'].map((l) => Number(row(l)[0]));
     expect(counts.reduce((a, b) => a + b, 0)).toBe(8);
+  });
+
+  describe('with a fixed random source', () => {
+    // Math.random() = 0.5 puts every draw at z ≈ −1.18, which rounds to tier 2.
+    beforeEach(() => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('shuffles away from the normal spread, stays shuffled across a resize, and returns to normal', () => {
+      render(<PricingPreviewTable {...EXAMPLE} />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Shuffle mix' }));
+      expect(row('2 · Managing')[0]).toBe('8');
+      expect(row('3 · Comfortable')[0]).toBe('0');
+
+      setStudents(12);
+      expect(row('2 · Managing')[0]).toBe('12');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Normal spread' }));
+      expect(row('2 · Managing')[0]).toBe('3');
+      expect(row('3 · Comfortable')[0]).toBe('4');
+    });
+  });
+
+  it('follows the form when its rates change', () => {
+    const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+    rerender(<PricingPreviewTable {...EXAMPLE} targetRate={130} />);
+
+    // 8 students: 40 + 90 × (8 − 4) / (12 − 4)
+    expect(screen.getByText('€85.00')).toBeTruthy();
+    expect(screen.getByText('€105.00')).toBeTruthy();
+  });
+
+  it('treats a minimum below one as one, as while the field is being cleared', () => {
+    render(<PricingPreviewTable {...EXAMPLE} minStudents={0} />);
+
+    // range 1–12, opening at round(6.5) = 7: 40 + 50 × (7 − 1) / (12 − 1)
+    expect(screen.getByText('7 students')).toBeTruthy();
+    expect(screen.getByText('€67.27')).toBeTruthy();
+    expect(screen.getByText('1 min')).toBeTruthy();
+    expect(screen.getByText('12 max')).toBeTruthy();
   });
 });
