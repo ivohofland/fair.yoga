@@ -567,7 +567,7 @@ Full design and the alternatives it rejected: `docs/superpowers/specs/2026-10-04
 | 2xx with any other body, or none that parses | kept and logged (ids and statuses, no name); retried on the next trigger or the backoff |
 | 409 `CONCURRENT_MODIFICATION`, 408, 429, 5xx | kept; retried on the next trigger or the backoff |
 | timeout, network failure | kept, and the pass stops; retried on the next trigger or the backoff |
-| 401 | kept; the pass stops, and the status line adds "sign in to sync them" until a later pass gets a 2xx |
+| 401 | kept; the pass stops, and the status line adds "sign in to sync them" until a later pass in this tab gets a 2xx or any other app error answer (one with the JSON error body), or finds nothing pending for its account |
 | 403 with the app's JSON error body (`{ error: { message, code? } }`) | dropped, and logged with the registration id and status (no name): the signed-in account may not write this registration, and a refusal shown here could show one account's student to another |
 | any other 4xx with the app's JSON error body | refused, with the server's message; never retried |
 | a 4xx, 403 included, without the app's JSON error body (a proxy, captive portal or filter answered) | kept and logged; retried on the next trigger or the backoff |

@@ -459,6 +459,51 @@ describe('attendance sync', () => {
     expect(result.current.needsSignIn).toBe(true);
   });
 
+  it('needsSignIn clears when a pass finds nothing pending for its owner', async () => {
+    await enqueue('attended');
+    const { result } = renderHook(() => useSyncState());
+    fetchMock.mockResolvedValueOnce(bare(401));
+    await act(() => flushAttendance('acct-1'));
+    expect(result.current.needsSignIn).toBe(true);
+    // Another tab, signed in again, sent everything.
+    localStorage.removeItem('fy-outbox-v1');
+    await act(() => flushAttendance('acct-1'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.needsSignIn).toBe(false);
+  });
+
+  it.each([
+    ['a refusal', () => refusal(409, 'CLASS_CANCELLED', 'This class was cancelled.')],
+    ['a 409 CONCURRENT_MODIFICATION', () => refusal(409, 'CONCURRENT_MODIFICATION', 'Someone else changed this.')],
+    ['a 403', () => refusal(403, undefined, 'Not your class')],
+  ])('needsSignIn clears on %s from the app, though nothing was applied', async (_name, answer) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended', 'r1');
+    await enqueue('no_show', 'r2');
+    const { result } = renderHook(() => useSyncState());
+    fetchMock.mockResolvedValueOnce(bare(401));
+    await act(() => flushAttendance('acct-1'));
+    expect(result.current.needsSignIn).toBe(true);
+    fetchMock.mockImplementation(async (input) => {
+      if (urlOf(input) === '/api/registrations/r1') return answer();
+      throw new TypeError('Failed to fetch');
+    });
+    await act(() => flushAttendance('acct-1'));
+    expect(result.current.needsSignIn).toBe(false);
+  });
+
+  it('needsSignIn stays set through an answer that is not the app\'s', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended');
+    const { result } = renderHook(() => useSyncState());
+    fetchMock.mockResolvedValueOnce(bare(401)).mockResolvedValueOnce(html(403));
+    await act(() => flushAttendance('acct-1'));
+    await act(() => flushAttendance('acct-1'));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.needsSignIn).toBe(true);
+  });
+
   it('each pass reads the outbox past this tab\'s cache', async () => {
     const stale = await enqueue('attended');
     expect(getOutbox().pending.r1?.status).toBe('attended');

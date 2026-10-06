@@ -116,47 +116,54 @@ function logUnreadAnswer(entry: PendingEntry, res: Response, err: unknown): void
   );
 }
 
-async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutcome> {
+/** What an answer means for the entry, and what it says about the session. */
+interface Classified {
+  outcome: ReplayOutcome;
+  /** True for any 2xx, and for an app error answer other than a 401: the session was good. */
+  signedIn: boolean;
+}
+
+async function classify(res: Response, entry: PendingEntry): Promise<Classified> {
   if (res.ok) {
     let body: unknown;
     try {
       body = await res.json();
     } catch (err) {
       logUnreadAnswer(entry, res, err);
-      return { kind: 'retry' };
+      return { outcome: { kind: 'retry' }, signedIn: true };
     }
     if (answersEntry(isRecord(body) ? body.data : undefined, entry)) {
-      return { kind: 'confirmed', at: serverTime(res) };
+      return { outcome: { kind: 'confirmed', at: serverTime(res) }, signedIn: true };
     }
     logUnreadAnswer(entry, res, new Error('the 2xx answer does not match the write sent'));
-    return { kind: 'retry' };
+    return { outcome: { kind: 'retry' }, signedIn: true };
   }
-  if (res.status === 401) return { kind: 'signed_out' };
-  if (res.status === 408 || res.status === 429 || res.status >= 500) return { kind: 'retry' };
+  if (res.status === 401) return { outcome: { kind: 'signed_out' }, signedIn: false };
+  if (res.status === 408 || res.status === 429 || res.status >= 500) {
+    return { outcome: { kind: 'retry' }, signedIn: false };
+  }
   const answer = await appError(res);
   if (answer === null) {
     // A proxy, portal or filter answered, not the app: the write never reached it.
     logUnreadAnswer(entry, res, new Error('the answer is not the app\'s error body'));
-    return { kind: 'retry' };
+    return { outcome: { kind: 'retry' }, signedIn: false };
   }
   if (res.status === 403) {
     console.warn('[attendance-sync] write dropped: the server refused it to this account', {
       registrationId: entry.registrationId,
       status: entry.status,
     });
-    return { kind: 'dropped' };
+    return { outcome: { kind: 'dropped' }, signedIn: true };
   }
-  if (answer.code === 'CONCURRENT_MODIFICATION') return { kind: 'retry' };
-  return { kind: 'refused', message: answer.message };
+  if (answer.code === 'CONCURRENT_MODIFICATION') return { outcome: { kind: 'retry' }, signedIn: true };
+  return { outcome: { kind: 'refused', message: answer.message }, signedIn: true };
 }
 
 /**
- * One replay; whether the server answered it with a 2xx; and whether no answer
- * arrived at all (the request threw or timed out). Never throws.
+ * One replay, classified; and whether no answer arrived at all (the request
+ * threw or timed out). Never throws.
  */
-async function send(
-  entry: PendingEntry,
-): Promise<{ outcome: ReplayOutcome; succeeded: boolean; unanswered: boolean }> {
+async function send(entry: PendingEntry): Promise<Classified & { unanswered: boolean }> {
   const timeout = timeoutSignal(REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`/api/registrations/${entry.registrationId}`, {
@@ -165,7 +172,7 @@ async function send(
       body: JSON.stringify({ status: entry.status }),
       signal: timeout.signal,
     });
-    return { outcome: await classify(res, entry), succeeded: res.ok, unanswered: false };
+    return { ...(await classify(res, entry)), unanswered: false };
   } catch (err) {
     if (!timeout.signal.aborted) {
       logRequestFailure(
@@ -174,7 +181,7 @@ async function send(
         err,
       );
     }
-    return { outcome: { kind: 'retry' }, succeeded: false, unanswered: true };
+    return { outcome: { kind: 'retry' }, signedIn: false, unanswered: true };
   } finally {
     timeout.clear();
   }
@@ -194,9 +201,11 @@ function widen(requested: string | null | undefined, scope: string | null): stri
 async function pass(scope: string | null, gen: number): Promise<boolean> {
   return withLock(FLUSH_LOCK, async () => {
     let retried = false;
-    let succeeded = false;
+    let signedIn = false;
     // Fresh: another tab may have replaced or settled an entry since this tab last looked.
     const entries = Object.values(readOutbox().pending).sort((a, b) => a.recordedAt - b.recordedAt);
+    // Nothing of this scope's is waiting, so nothing is waiting on a sign-in either.
+    if (!entries.some((entry) => scope === null || entry.ownerId === scope)) signedIn = true;
     sending: for (const entry of entries) {
       if (gen !== generation) break;
       if (scope !== null && entry.ownerId !== scope) {
@@ -205,7 +214,7 @@ async function pass(scope: string | null, gen: number): Promise<boolean> {
       }
       const sent = await send(entry);
       if (gen !== generation) break;
-      succeeded ||= sent.succeeded;
+      signedIn ||= sent.signedIn;
       const outcome = sent.outcome;
       switch (outcome.kind) {
         case 'retry':
@@ -227,7 +236,7 @@ async function pass(scope: string | null, gen: number): Promise<boolean> {
         }
       }
     }
-    if (succeeded && gen === generation) setNeedsSignIn(false);
+    if (signedIn && gen === generation) setNeedsSignIn(false);
     return retried;
   });
 }
