@@ -1974,11 +1974,12 @@ before every other row its transaction locks:
     Teacher → ClassTemplate → StudioClassTemplate → Class → …
 
 A transaction that locks the teacher's row explicitly does it as its first
-lock, before any template, `Class` or `CalendarEntry` row. Two later
+lock, before any template, `Class` or `CalendarEntry` row. Later
 acquisitions on the same row are not explicit locks and are not covered by
 that sentence: a foreign-key check's `FOR KEY SHARE` (below, "Why `FOR NO KEY
-UPDATE`"), and the erasure's own raise to `FOR UPDATE` at its closing
-`UPDATE`. The sites:
+UPDATE`"), the erasure's own raise to `FOR UPDATE` at its closing `UPDATE`,
+and the same raise in a currency-switching save that also changes `pageSlug`
+(the switch's entry below). The sites:
 
 - `deleteTeacherAccount` (`src/services/gdpr.ts`): `lockTeacherForNoKeyUpdate`,
   as the first statement of its closing transaction and ahead of the
@@ -2004,11 +2005,22 @@ UPDATE`"), and the erasure's own raise to `FOR UPDATE` at its closing
   and then its `StudioClassTemplate` rows `FOR UPDATE` in id order, then
   `lockClassRowsOrdered` over its unbooked, unfinished, live classes, then
   `UPDATE`s of those classes, of its `StudioClass` rows dated from its today,
-  and of the teacher. The `Teacher` `UPDATE` writes a non-key column of a row
-  the transaction already holds `FOR NO KEY UPDATE`, so it raises nothing. An
-  erasure and a switch serialise on the first lock; the one that waits for an
-  erasure finds the row erased and answers 404. The other fields' write keeps
-  the `deletedAt: null` scope above.
+  and of the teacher. The switch's own `Teacher` `UPDATE` writes a non-key
+  column of a row the transaction already holds `FOR NO KEY UPDATE`, so it
+  raises nothing. The other fields' write that follows it in the same
+  transaction can: when it changes `pageSlug` (a unique column, so a key
+  column to PostgreSQL), that `UPDATE` raises the hold to `FOR UPDATE`, which
+  conflicts with a foreign-key check's `FOR KEY SHARE` and may wait for a
+  transaction that inserted a row referencing this teacher. No cycle forms,
+  because that holder never waits on a row the switch holds: the
+  `FOR KEY SHARE` takers that also lock a template or `Class` row — the
+  generator, `POST /api/registrations` (below, "Why `FOR NO KEY UPDATE`") —
+  take that row first and insert after, so either they queued behind the
+  switch on that row before reaching their insert, or the row is one the
+  switch did not lock. By the raise the switch holds every row it will lock.
+  An erasure and a switch serialise on the first lock; the one that waits
+  for an erasure finds the row erased and answers 404. The other fields'
+  write keeps the `deletedAt: null` scope above.
 - The transactions that create a row under no existing template:
   `lockTeacherForShare` as their first lock, stamping the currency it returns.
   `POST /api/classes` (`src/app/api/classes/route.ts`, ahead of its room's
