@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, expectTypeOf } from 'vitest';
 import type { Currency } from '@prisma/client';
+import type { z } from 'zod';
+import type { bankAccountSchema } from '@/lib/schemas';
 import {
   parseBankDetails,
   bankDetailsFromRow,
@@ -8,12 +10,13 @@ import {
   EEA_COUNTRIES,
   IBAN_LENGTHS,
   type BankDetails,
+  type BankDetailsFailure,
   type BankDetailsInput,
 } from '@/lib/bank-details';
 
 function ok(currency: Currency, input: BankDetailsInput): BankDetails {
   const r = parseBankDetails(currency, input);
-  if (!r.ok) throw new Error(`expected ok, got ${r.error} on ${r.field}`);
+  if (!r.ok) throw new Error(`expected ok, got ${r.failure.error} on ${r.failure.field}`);
   return r.details;
 }
 
@@ -38,7 +41,7 @@ describe('parseBankDetails', () => {
     });
 
     it('requires a BIC for a non-EEA IBAN', () => {
-      expect(parseBankDetails('EUR', { iban: 'CH9300762011623852957' })).toEqual({ ok: false, error: 'bic_required', field: 'bic' });
+      expect(parseBankDetails('EUR', { iban: 'CH9300762011623852957' })).toEqual({ ok: false, failure: { error: 'bic_required', field: 'bic' } });
     });
 
     it('accepts a Norwegian IBAN without a BIC because NO is in the EEA', () => {
@@ -46,18 +49,18 @@ describe('parseBankDetails', () => {
     });
 
     it('rejects a bad checksum and a bad length', () => {
-      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164301' })).toEqual({ ok: false, error: 'iban_invalid', field: 'iban' });
-      expect(parseBankDetails('EUR', { iban: 'NL91ABNA041716430' })).toEqual({ ok: false, error: 'iban_invalid', field: 'iban' });
+      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164301' })).toEqual({ ok: false, failure: { error: 'iban_invalid', field: 'iban' } });
+      expect(parseBankDetails('EUR', { iban: 'NL91ABNA041716430' })).toEqual({ ok: false, failure: { error: 'iban_invalid', field: 'iban' } });
     });
 
     it('rejects an unknown country and a missing IBAN', () => {
-      expect(parseBankDetails('EUR', { iban: 'ZZ91ABNA0417164300' })).toEqual({ ok: false, error: 'iban_invalid', field: 'iban' });
-      expect(parseBankDetails('EUR', {})).toEqual({ ok: false, error: 'iban_invalid', field: 'iban' });
-      expect(parseBankDetails('EUR', { iban: '   ' })).toEqual({ ok: false, error: 'iban_invalid', field: 'iban' });
+      expect(parseBankDetails('EUR', { iban: 'ZZ91ABNA0417164300' })).toEqual({ ok: false, failure: { error: 'iban_invalid', field: 'iban' } });
+      expect(parseBankDetails('EUR', {})).toEqual({ ok: false, failure: { error: 'iban_invalid', field: 'iban' } });
+      expect(parseBankDetails('EUR', { iban: '   ' })).toEqual({ ok: false, failure: { error: 'iban_invalid', field: 'iban' } });
     });
 
     it('rejects a malformed BIC', () => {
-      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', bic: 'DEUTDEF' })).toEqual({ ok: false, error: 'bic_invalid', field: 'bic' });
+      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', bic: 'DEUTDEF' })).toEqual({ ok: false, failure: { error: 'bic_invalid', field: 'bic' } });
     });
 
     it('normalises a BIC and treats a blank one as absent', () => {
@@ -66,9 +69,9 @@ describe('parseBankDetails', () => {
     });
 
     it('refuses fields from another scheme', () => {
-      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', sortCode: '123456' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'sortCode' });
-      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', accountNumber: '1' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'accountNumber' });
-      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', routingNumber: '021000021' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'routingNumber' });
+      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', sortCode: '123456' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'sortCode' } });
+      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', accountNumber: '1' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'accountNumber' } });
+      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', routingNumber: '021000021' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'routingNumber' } });
     });
   });
 
@@ -89,16 +92,16 @@ describe('parseBankDetails', () => {
     });
 
     it('requires a BIC for EUR with Montenegro, which is not in the EEA', () => {
-      expect(parseBankDetails('EUR', { iban: 'ME25505000012345678951' })).toEqual({ ok: false, error: 'bic_required', field: 'bic' });
+      expect(parseBankDetails('EUR', { iban: 'ME25505000012345678951' })).toEqual({ ok: false, failure: { error: 'bic_required', field: 'bic' } });
       expect(ok('EUR', { iban: 'ME25505000012345678951', bic: 'CKBCMEPG' })).toEqual({ scheme: 'sepa', iban: 'ME25505000012345678951', bic: 'CKBCMEPG' });
     });
 
     it('rejects an invalid IBAN', () => {
-      expect(parseBankDetails('CHF', { iban: 'CH9300762011623852958' })).toEqual({ ok: false, error: 'iban_invalid', field: 'iban' });
+      expect(parseBankDetails('CHF', { iban: 'CH9300762011623852958' })).toEqual({ ok: false, failure: { error: 'iban_invalid', field: 'iban' } });
     });
 
     it('refuses UK fields', () => {
-      expect(parseBankDetails('CHF', { iban: 'CH9300762011623852957', sortCode: '123456' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'sortCode' });
+      expect(parseBankDetails('CHF', { iban: 'CH9300762011623852957', sortCode: '123456' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'sortCode' } });
     });
   });
 
@@ -109,19 +112,19 @@ describe('parseBankDetails', () => {
     });
 
     it('rejects a short sort code and a bad account number', () => {
-      expect(parseBankDetails('GBP', { sortCode: '12345', accountNumber: '12345678' })).toEqual({ ok: false, error: 'sort_code_invalid', field: 'sortCode' });
-      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '1234567' })).toEqual({ ok: false, error: 'account_number_invalid', field: 'accountNumber' });
-      expect(parseBankDetails('GBP', { sortCode: '123456' })).toEqual({ ok: false, error: 'account_number_invalid', field: 'accountNumber' });
+      expect(parseBankDetails('GBP', { sortCode: '12345', accountNumber: '12345678' })).toEqual({ ok: false, failure: { error: 'sort_code_invalid', field: 'sortCode' } });
+      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '1234567' })).toEqual({ ok: false, failure: { error: 'account_number_invalid', field: 'accountNumber' } });
+      expect(parseBankDetails('GBP', { sortCode: '123456' })).toEqual({ ok: false, failure: { error: 'account_number_invalid', field: 'accountNumber' } });
     });
 
     it('refuses an IBAN', () => {
-      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', iban: 'GB82WEST12345698765432' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'iban' });
-      expect(parseBankDetails('GBP', { iban: 'GB82WEST12345698765432' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'iban' });
+      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', iban: 'GB82WEST12345698765432' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'iban' } });
+      expect(parseBankDetails('GBP', { iban: 'GB82WEST12345698765432' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'iban' } });
     });
 
     it('refuses a BIC and a routing number', () => {
-      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', bic: 'NWBKGB2L' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'bic' });
-      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', routingNumber: '021000021' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'routingNumber' });
+      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', bic: 'NWBKGB2L' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'bic' } });
+      expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', routingNumber: '021000021' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'routingNumber' } });
     });
 
     it('treats blank foreign fields as absent', () => {
@@ -138,16 +141,16 @@ describe('parseBankDetails', () => {
     });
 
     it('rejects a routing number with a bad checksum or length', () => {
-      expect(parseBankDetails('USD', { routingNumber: '021000022', accountNumber: '1234567' })).toEqual({ ok: false, error: 'routing_number_invalid', field: 'routingNumber' });
-      expect(parseBankDetails('USD', { routingNumber: '02100002', accountNumber: '1234567' })).toEqual({ ok: false, error: 'routing_number_invalid', field: 'routingNumber' });
+      expect(parseBankDetails('USD', { routingNumber: '021000022', accountNumber: '1234567' })).toEqual({ ok: false, failure: { error: 'routing_number_invalid', field: 'routingNumber' } });
+      expect(parseBankDetails('USD', { routingNumber: '02100002', accountNumber: '1234567' })).toEqual({ ok: false, failure: { error: 'routing_number_invalid', field: 'routingNumber' } });
     });
 
     it('bounds the account number to 4-17 digits', () => {
       expect(ok('USD', { routingNumber: '021000021', accountNumber: '1234' }).scheme).toBe('us');
       expect(ok('USD', { routingNumber: '021000021', accountNumber: '12345678901234567' }).scheme).toBe('us');
-      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '123' })).toEqual({ ok: false, error: 'account_number_invalid', field: 'accountNumber' });
-      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '123456789012345678' })).toEqual({ ok: false, error: 'account_number_invalid', field: 'accountNumber' });
-      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '12a4567' })).toEqual({ ok: false, error: 'account_number_invalid', field: 'accountNumber' });
+      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '123' })).toEqual({ ok: false, failure: { error: 'account_number_invalid', field: 'accountNumber' } });
+      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '123456789012345678' })).toEqual({ ok: false, failure: { error: 'account_number_invalid', field: 'accountNumber' } });
+      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '12a4567' })).toEqual({ ok: false, failure: { error: 'account_number_invalid', field: 'accountNumber' } });
     });
 
     it('strips dashes and spaces from the account number', () => {
@@ -155,9 +158,24 @@ describe('parseBankDetails', () => {
     });
 
     it('refuses an IBAN or sort code', () => {
-      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '1234567', iban: 'NL91ABNA0417164300' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'iban' });
-      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '1234567', sortCode: '123456' })).toEqual({ ok: false, error: 'field_not_in_scheme', field: 'sortCode' });
+      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '1234567', iban: 'NL91ABNA0417164300' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'iban' } });
+      expect(parseBankDetails('USD', { routingNumber: '021000021', accountNumber: '1234567', sortCode: '123456' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'sortCode' } });
     });
+  });
+});
+
+describe('BankDetailsFailure', () => {
+  it('pairs each refusal with the field it names', () => {
+    const paired: BankDetailsFailure = { error: 'sort_code_invalid', field: 'sortCode' };
+    // @ts-expect-error iban_invalid names the iban field, never another
+    const mispaired: BankDetailsFailure = { error: 'iban_invalid', field: 'sortCode' };
+    expect([paired, mispaired]).toHaveLength(2);
+  });
+});
+
+describe('BankDetailsInput', () => {
+  it('is the scheme half of the body bankAccountSchema accepts', () => {
+    expectTypeOf<Omit<z.infer<typeof bankAccountSchema>, 'holderName'>>().toEqualTypeOf<BankDetailsInput>();
   });
 });
 
@@ -216,7 +234,6 @@ describe('bankDetailsFromRow', () => {
     expect(bankDetailsFromRow({ ...blank, currency: 'USD', routingNumber: '021000021' })).toBeNull();
   });
 
-  // The table's CHECK refuses a whitespace-only required column (`btrim(col) <> ''`); the parser agrees.
   it('returns null for a whitespace-only required column', () => {
     expect(bankDetailsFromRow({ ...blank, currency: 'EUR', iban: '   ' })).toBeNull();
     expect(bankDetailsFromRow({ ...blank, currency: 'GBP', sortCode: '\t', accountNumber: '12345678' })).toBeNull();

@@ -40,18 +40,28 @@ export type BankDetailsInput = {
   accountNumber?: string | null;
   routingNumber?: string | null;
 };
-export type BankDetailsError =
-  | 'iban_invalid'
-  | 'bic_invalid'
-  | 'bic_required'
-  | 'sort_code_invalid'
-  | 'account_number_invalid'
-  | 'routing_number_invalid'
-  | 'field_not_in_scheme';
+/** Every scheme column of a stored account, `null` where the scheme does not use it. */
+export type BankAccountColumns = { [K in keyof BankDetailsInput]-?: string | null };
 
-type ParseResult =
+/** Each refusal, and the field it names. */
+type FieldFor = {
+  iban_invalid: 'iban';
+  bic_invalid: 'bic';
+  bic_required: 'bic';
+  sort_code_invalid: 'sortCode';
+  account_number_invalid: 'accountNumber';
+  routing_number_invalid: 'routingNumber';
+  field_not_in_scheme: keyof BankDetailsInput;
+};
+
+export type BankDetailsError = keyof FieldFor;
+
+/** A refusal paired with the field it names; no other pairing is representable. */
+export type BankDetailsFailure = { [E in BankDetailsError]: { error: E; field: FieldFor[E] } }[BankDetailsError];
+
+export type ParseResult =
   | { ok: true; details: BankDetails }
-  | { ok: false; error: BankDetailsError; field: keyof BankDetailsInput };
+  | { ok: false; failure: BankDetailsFailure };
 
 const FIELDS = ['iban', 'bic', 'sortCode', 'accountNumber', 'routingNumber'] as const satisfies readonly (keyof BankDetailsInput)[];
 
@@ -64,8 +74,8 @@ function present(value: string | null | undefined): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
-function fail(error: BankDetailsError, field: keyof BankDetailsInput): ParseResult {
-  return { ok: false, error, field };
+function fail(failure: BankDetailsFailure): ParseResult {
+  return { ok: false, failure };
 }
 
 function isKnownIbanCountry(country: string): country is keyof typeof IBAN_LENGTHS {
@@ -113,41 +123,41 @@ function firstForeignField(input: BankDetailsInput, allowed: readonly (keyof Ban
 
 function parseIbanScheme(scheme: 'sepa' | 'iban', input: BankDetailsInput): ParseResult {
   const foreign = firstForeignField(input, ['iban', 'bic']);
-  if (foreign) return fail('field_not_in_scheme', foreign);
+  if (foreign) return fail({ error: 'field_not_in_scheme', field: foreign });
 
   const rawIban = present(input.iban);
-  if (rawIban === null) return fail('iban_invalid', 'iban');
+  if (rawIban === null) return fail({ error: 'iban_invalid', field: 'iban' });
   const iban = normaliseIban(rawIban);
   const country = ibanCountry(iban);
-  if (country === null) return fail('iban_invalid', 'iban');
+  if (country === null) return fail({ error: 'iban_invalid', field: 'iban' });
 
   const bic = parseBic(present(input.bic));
-  if (!bic.ok) return fail('bic_invalid', 'bic');
-  if (scheme === 'sepa' && bic.bic === null && !EEA_COUNTRIES.has(country)) return fail('bic_required', 'bic');
+  if (!bic.ok) return fail({ error: 'bic_invalid', field: 'bic' });
+  if (scheme === 'sepa' && bic.bic === null && !EEA_COUNTRIES.has(country)) return fail({ error: 'bic_required', field: 'bic' });
 
   return { ok: true, details: { scheme, iban, bic: bic.bic } };
 }
 
 function parseUk(input: BankDetailsInput): ParseResult {
   const foreign = firstForeignField(input, ['sortCode', 'accountNumber']);
-  if (foreign) return fail('field_not_in_scheme', foreign);
+  if (foreign) return fail({ error: 'field_not_in_scheme', field: foreign });
 
   const sortCode = (present(input.sortCode) ?? '').replace(/[-\s]/g, '');
-  if (!/^[0-9]{6}$/.test(sortCode)) return fail('sort_code_invalid', 'sortCode');
+  if (!/^[0-9]{6}$/.test(sortCode)) return fail({ error: 'sort_code_invalid', field: 'sortCode' });
   const accountNumber = (present(input.accountNumber) ?? '').replace(/\s+/g, '');
-  if (!/^[0-9]{8}$/.test(accountNumber)) return fail('account_number_invalid', 'accountNumber');
+  if (!/^[0-9]{8}$/.test(accountNumber)) return fail({ error: 'account_number_invalid', field: 'accountNumber' });
 
   return { ok: true, details: { scheme: 'uk', sortCode, accountNumber } };
 }
 
 function parseUs(input: BankDetailsInput): ParseResult {
   const foreign = firstForeignField(input, ['routingNumber', 'accountNumber']);
-  if (foreign) return fail('field_not_in_scheme', foreign);
+  if (foreign) return fail({ error: 'field_not_in_scheme', field: foreign });
 
   const routingNumber = (present(input.routingNumber) ?? '').replace(/\s+/g, '');
-  if (!/^[0-9]{9}$/.test(routingNumber) || !abaChecksumHolds(routingNumber)) return fail('routing_number_invalid', 'routingNumber');
+  if (!/^[0-9]{9}$/.test(routingNumber) || !abaChecksumHolds(routingNumber)) return fail({ error: 'routing_number_invalid', field: 'routingNumber' });
   const accountNumber = (present(input.accountNumber) ?? '').replace(/[-\s]/g, '');
-  if (!/^[0-9]{4,17}$/.test(accountNumber)) return fail('account_number_invalid', 'accountNumber');
+  if (!/^[0-9]{4,17}$/.test(accountNumber)) return fail({ error: 'account_number_invalid', field: 'accountNumber' });
 
   return { ok: true, details: { scheme: 'us', routingNumber, accountNumber } };
 }
@@ -173,13 +183,11 @@ export function parseBankDetails(currency: Currency, input: BankDetailsInput): P
 /**
  * The one parser from a stored row to the union. Structural only: the scheme's
  * required columns are present and non-blank and every column outside the
- * scheme is null. No checksum, length table or BIC policy runs, because those
- * are rules that change, not what the table's CHECK holds. Null (caller logs)
- * is a row the CHECK should have made impossible.
+ * scheme is null; no checksum, length table or BIC policy runs. Null means the
+ * row is malformed, and the caller logs it (`docs/data-model.md`,
+ * TeacherBankAccount).
  */
-export function bankDetailsFromRow(
-  row: { currency: Currency } & Required<{ [K in keyof BankDetailsInput]: string | null }>,
-): BankDetails | null {
+export function bankDetailsFromRow(row: { currency: Currency } & BankAccountColumns): BankDetails | null {
   const scheme = SCHEME_FOR_CURRENCY[row.currency];
   // Blank or whitespace-only counts as absent.
   const has = (v: string | null): v is string => v !== null && v.trim() !== '';
@@ -204,7 +212,7 @@ export function bankDetailsFromRow(
 }
 
 /**
- * A stored account's identifier, all but its last four characters masked:
+ * A stored account's identifier as four bullets and its last four characters:
  * the IBAN, or the account number when there is no IBAN.
  */
 export function maskedIdentifier(row: { iban: string | null; accountNumber: string | null }): string {

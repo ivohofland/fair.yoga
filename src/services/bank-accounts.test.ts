@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient, type Currency } from '@prisma/client';
-import { saveBankAccount, removeBankAccount } from './bank-accounts';
+import { saveBankAccount, removeBankAccount, type BankAccountFailure } from './bank-accounts';
 import { updateTeacherProfile } from './teacher-profile';
 import { resolveSteps } from '@/lib/onboarding';
 import { uniqueSuffix } from '../../tests/helpers';
@@ -51,14 +51,14 @@ describe('saveBankAccount', () => {
   it('refuses a non-EEA IBAN in euros without a BIC, and stores nothing', async () => {
     const teacherId = await makeTeacher();
     const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'CH9300762011623852957' });
-    expect(out).toEqual({ kind: 'invalid', error: 'bic_required', field: 'bic' });
+    expect(out).toEqual({ kind: 'invalid', failure: { error: 'bic_required', field: 'bic' } });
     expect(await storedAccounts(teacherId)).toEqual([]);
   });
 
   it('refuses a blank holder name', async () => {
     const teacherId = await makeTeacher();
     const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: '   ', iban: 'NL91ABNA0417164300' });
-    expect(out).toEqual({ kind: 'invalid', error: 'holder_required', field: 'holderName' });
+    expect(out).toEqual({ kind: 'invalid', failure: { error: 'holder_required', field: 'holderName' } });
     expect(await storedAccounts(teacherId)).toEqual([]);
   });
 
@@ -103,6 +103,15 @@ describe('saveBankAccount', () => {
     const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' });
     expect(out).toEqual({ kind: 'teacher_gone' });
     expect(await storedAccounts(teacherId)).toEqual([]);
+  });
+});
+
+describe('BankAccountFailure', () => {
+  it('pairs holder_required with the holder name only', () => {
+    const paired: BankAccountFailure = { error: 'holder_required', field: 'holderName' };
+    // @ts-expect-error holder_required names the holder name, never a scheme field
+    const mispaired: BankAccountFailure = { error: 'holder_required', field: 'iban' };
+    expect([paired, mispaired]).toHaveLength(2);
   });
 });
 
