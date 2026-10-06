@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Currency, Prisma } from '@prisma/client';
+import { CURRENCY_PREFIX } from './format';
 import { totalsByCurrency, formatTotals, orZero } from './money-totals';
+
+describe('CURRENCY_PREFIX key order', () => {
+  // `totalsByCurrency` orders by these keys. `satisfies` checks which keys
+  // exist, not their order, so this is what holds the order to the enum's.
+  it('is the Currency declaration order', () => {
+    expect(Object.keys(CURRENCY_PREFIX)).toEqual(Object.values(Currency));
+  });
+});
 
 describe('totalsByCurrency', () => {
   it('sums per currency in cents without float drift', () => {

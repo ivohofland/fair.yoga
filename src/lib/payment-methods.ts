@@ -29,8 +29,9 @@ export function nonBlank(value: string | null | undefined): string | null {
  * the payer's bank checks the name against the IBAN (Verification of Payee),
  * and a name that is not the account's draws a mismatch warning.
  *
- * Only euro payments get a method: the stored IBAN is a euro account, and an
- * EPC QR can only carry euros.
+ * Only euro payments get a method: Part A treats the one stored account as
+ * the euro account (per-currency accounts arrive in Part B), and an EPC QR can
+ * only carry euros.
  */
 export function paymentMethodsFor(
   teacher: {
