@@ -1882,8 +1882,8 @@ describe('TemplateForm', () => {
 
   it('feeds the pricing preview from the rate fields as the teacher types', async () => {
     stubFetch();
-    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
-    fireEvent.change(await screen.findByLabelText('Target rate'), { target: { value: '45' } });
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    fireEvent.change(await screen.findByLabelText('Target rate (€)'), { target: { value: '45' } });
 
     // 8 students on 4–12: 15 + (45 − 15) × 4 / 8 = 30, plus the €20 room
     expect(screen.getByText('€30.00')).toBeTruthy();
