@@ -16,7 +16,7 @@ export type ReplayOutcome = Settlement | { kind: 'retry' } | { kind: 'signed_out
 
 export type SyncState = {
   needsSignIn: boolean;
-  /** The last flush in this tab ended with an entry it had tried and must try again. */
+  /** The last flush in this tab left something to try again: an entry it tried and must retry, or a pass that failed before trying any. */
   retrying: boolean;
 };
 
@@ -307,7 +307,7 @@ export function flushAttendance(ownerId: string): Promise<void> {
   return running;
 }
 
-/** How long an action that leaves queued changes behind (signing out, finishing a class) waits on a flush before it asks. */
+/** How long `flushWithinWait` waits on a flush before it settles anyway. */
 export const FLUSH_WAIT_MS = 3_000;
 
 /**

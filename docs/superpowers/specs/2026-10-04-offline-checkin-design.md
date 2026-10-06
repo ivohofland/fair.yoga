@@ -144,21 +144,21 @@ late replay is a correction; `recordedAt` is stored for display, not ordering.
 **D7. Bound to the account; sign-out flushes, then warns.** Entries carry the
 `ownerId` (`session.accountId`, the same id as `data-offline-owner`), which the
 teacher layout supplies by context. A flush sends only the current owner's
-entries and leaves other owners' untouched (they would 403). Sign-out flushes
-the signed-in account's entries (`SignOutButton` takes that account's id at
-each of its sites; at most 3 s, as push teardown is bounded today), then
-considers *every* entry on the device, whoever owns it: if entries remain it shows "N attendance changes haven't synced yet. Signing out
+entries and drops other owners' (they would 403). Sign-out considers *every*
+entry on the device, whoever owns it, so `SignOutButton` needs no owner id at
+any of its sites: it flushes (at most 3 s, as push teardown is bounded today);
+if entries remain it shows "N attendance changes haven't synced yet. Signing out
 discards them." and a "Sign out anyway" button. Signing out clears the outbox
 in the same `finally` as `clearOfflinePages()`, whatever the session DELETE
 returned — the teacher was told the entries would be discarded. Account
 deletion clears it too. Sign-in does not: the same teacher signing back in after
 a session expiry keeps their writes. *Rejected:* flush-only (sign-out offline
 would hang or lose silently); warn-only (a needless prompt online).
-**Residual:** a different account signing in on the device keeps the first
-account's unsynced writes, hidden and unsent, until that account signs in again
-or a sign-out (which counts them in its warning) discards them; but a tab still
-open on the first account's pages after the second signed in from another tab
-sends them under the second account's cookie, and the 403 drops them.
+**Residual:** a session that expires without a sign-out, followed by a
+*different* account signing in on the same device, drops the first account's
+unsynced writes; there was no sign-out to warn at.
+
+D6 and D7 record the design as decided; current behaviour is in `docs/technical-architecture.md` (Queued check-in (#726)).
 
 **D8. Payment-request wording: option 1, accepted (user's decision).** A
 status change after completion, online or replayed, changes the registration
