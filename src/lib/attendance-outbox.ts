@@ -54,12 +54,21 @@ const QUEUED_KEYS: ReadonlySet<string> = new Set(Object.keys(QUEUED));
 
 export const EMPTY_OUTBOX: OutboxState = Object.freeze({ pending: {}, confirmed: {}, refused: {} });
 
-/** Used when `localStorage` throws (private window, blocked storage): this tab only. */
-let memory: string | null = null;
-let useMemory = false;
-let cached: OutboxState | null = null;
-/** The stored text `cached` was parsed from or written as. */
+/**
+ * The entries of this tab's outbox that storage refused (a full quota, a
+ * private window, blocked storage): what a reload would lose. Null while
+ * storage holds all of it.
+ */
+let overlay: OutboxState | null = null;
+/** Storage refused even a removal, so its copy may contradict this tab's: none of it is read until a write succeeds. */
+let detached = false;
+/** What storage holds, as of `cachedRaw`. */
+let stored: OutboxState = EMPTY_OUTBOX;
+/** The stored text `stored` was parsed from or written as. */
 let cachedRaw: string | null = null;
+/** This tab's outbox: `stored` with `overlay` beneath it. */
+let cached: OutboxState | null = null;
+let readFailureLogged = false;
 /** The last stored text whose discarded entries were reported, so one document warns once. */
 let warnedRaw: string | null = null;
 const listeners = new Set<() => void>();
@@ -100,46 +109,116 @@ function asRefused(v: unknown): RefusedEntry | null {
   return { ...base, message, refusedAt };
 }
 
-function removeStored(): void {
+function errorName(err: unknown): string {
+  // A `DOMException` from another realm fails `instanceof Error`, so the name is read off the object.
+  return isRecord(err) && typeof err.name === 'string' ? err.name : typeof err;
+}
+/** Answers whether storage took the removal. */
+function removeStored(): boolean {
   try {
     localStorage.removeItem(KEY);
+    return true;
   } catch {
-    // Storage refuses even a removal; there is nothing further to try.
+    return false;
   }
 }
-/**
- * From here on this tab's outbox lives in memory. The stored copy is removed:
- * memory moves on without it, so a reload would replay its superseded taps,
- * and a clear that reaches only memory would leave its names on the device.
- */
-function switchToMemory(err: unknown): void {
-  useMemory = true;
-  console.warn('[attendance-outbox] storage failed; the outbox is in memory for this tab', {
-    // A `DOMException` from another realm fails `instanceof Error`, so the name is read off the object.
-    error: isRecord(err) && typeof err.name === 'string' ? err.name : typeof err,
-  });
-  removeStored();
-}
+/** The stored text; when storage cannot be read, the text this tab last read or wrote, so a failed read changes nothing. */
 function readRaw(): string | null {
-  if (useMemory) return memory;
   try {
     return localStorage.getItem(KEY);
   } catch (err) {
-    switchToMemory(err);
-    return memory;
+    if (!readFailureLogged) {
+      readFailureLogged = true;
+      console.warn('[attendance-outbox] storage could not be read; this tab keeps what it last read', {
+        error: errorName(err),
+      });
+    }
+    return cachedRaw;
   }
 }
-function writeRaw(value: string | null): void {
-  if (!useMemory) {
-    try {
-      if (value === null) localStorage.removeItem(KEY);
-      else localStorage.setItem(KEY, value);
-      return;
-    } catch (err) {
-      switchToMemory(err);
+
+/** Compares every field either entry has, whatever order they were written in. */
+function sameEntry(a: object | undefined, b: object): boolean {
+  return a !== undefined && JSON.stringify(a, Object.keys(a).sort()) === JSON.stringify(b, Object.keys(b).sort());
+}
+/** Splits `next` into the entries `held` holds identically and the rest. */
+function splitAgreed<T extends object>(
+  next: Readonly<Record<string, T>>,
+  held: Readonly<Record<string, T>>,
+): { agreed: Record<string, T>; rest: Record<string, T> } {
+  const agreed: Record<string, T> = Object.create(null);
+  const rest: Record<string, T> = Object.create(null);
+  for (const [key, entry] of Object.entries(next)) {
+    if (sameEntry(held[key], entry)) agreed[key] = entry;
+    else rest[key] = entry;
+  }
+  return { agreed, rest };
+}
+function entryCount(state: OutboxState): number {
+  return Object.keys(state.pending).length + Object.keys(state.confirmed).length + Object.keys(state.refused).length;
+}
+/**
+ * Writes `next`, this tab's whole outbox. When storage refuses it, storage
+ * keeps only the entries it already held that `next` holds identically, so
+ * its copy is no larger than one that fit, and may lag behind this tab's but
+ * never contradicts it: a mark corrected or settled here cannot come back on
+ * a reload. The rest stays in `overlay`. If storage refuses that too, its copy
+ * is removed; if it refuses even the removal, this tab stops reading it.
+ */
+function persist(next: OutboxState): void {
+  const value = JSON.stringify(next);
+  try {
+    localStorage.setItem(KEY, value);
+    stored = next;
+    cachedRaw = value;
+    overlay = null;
+    detached = false;
+    return;
+  } catch (err) {
+    if (overlay === null) {
+      console.warn('[attendance-outbox] storage refused a write; what it could not hold is in memory for this tab', {
+        error: errorName(err),
+      });
     }
   }
-  memory = value;
+  const held = detached ? EMPTY_OUTBOX : stored;
+  const pending = splitAgreed(next.pending, held.pending);
+  const confirmed = splitAgreed(next.confirmed, held.confirmed);
+  const refused = splitAgreed(next.refused, held.refused);
+  const kept: OutboxState = { pending: pending.agreed, confirmed: confirmed.agreed, refused: refused.agreed };
+  const rest: OutboxState = { pending: pending.rest, confirmed: confirmed.rest, refused: refused.rest };
+  try {
+    if (entryCount(kept) === 0) {
+      localStorage.removeItem(KEY);
+      cachedRaw = null;
+    } else if (detached || entryCount(kept) !== entryCount(held)) {
+      cachedRaw = JSON.stringify(kept);
+      localStorage.setItem(KEY, cachedRaw);
+    }
+    stored = kept;
+    overlay = entryCount(rest) === 0 ? null : rest;
+    detached = false;
+  } catch (err) {
+    console.warn('[attendance-outbox] storage refused even what it held; the stored copy is removed', {
+      error: errorName(err),
+    });
+    detached = !removeStored();
+    stored = EMPTY_OUTBOX;
+    cachedRaw = null;
+    overlay = next;
+  }
+}
+/** This tab's outbox. An entry storage holds wins: storage held none of `overlay`'s keys after this tab's write, so one there now is another tab's, and newer. */
+function view(): OutboxState {
+  if (overlay === null) return stored;
+  if (detached) return overlay;
+  const under = <T>(mine: Readonly<Record<string, T>>, theirs: Readonly<Record<string, T>>): Record<string, T> =>
+    Object.assign(Object.create(null), mine, theirs);
+  return {
+    pending: under(overlay.pending, stored.pending),
+    confirmed: under(overlay.confirmed, stored.confirmed),
+    refused: under(overlay.refused, stored.refused),
+  };
 }
 
 /**
@@ -203,8 +282,11 @@ function parse(raw: string | null, now: number): OutboxState {
 
 export function getOutbox(): OutboxState {
   if (cached === null) {
-    cachedRaw = readRaw();
-    cached = parse(cachedRaw, Date.now());
+    if (!detached) {
+      cachedRaw = readRaw();
+      stored = parse(cachedRaw, Date.now());
+    }
+    cached = view();
   }
   return cached;
 }
@@ -215,11 +297,13 @@ export function getOutbox(): OutboxState {
  * a cache that existed; a read that fills an empty cache tells no one.
  */
 export function readOutbox(): OutboxState {
+  if (detached) return getOutbox();
   const raw = readRaw();
   if (cached !== null && raw === cachedRaw) return cached;
   const hadCache = cached !== null;
-  cached = parse(raw, Date.now());
+  stored = parse(raw, Date.now());
   cachedRaw = raw;
+  cached = view();
   if (hadCache) notify();
   return cached;
 }
@@ -227,8 +311,7 @@ function notify(): void {
   listeners.forEach((l) => l());
 }
 function commit(next: OutboxState): void {
-  cachedRaw = JSON.stringify(next);
-  writeRaw(cachedRaw);
+  persist(next);
   cached = next;
   notify();
 }
@@ -250,12 +333,11 @@ export function useOutbox(): OutboxState {
 }
 
 function isOutboxVolatile(): boolean {
-  return useMemory;
+  return overlay !== null && Object.keys(overlay.pending).length > 0;
 }
 /**
- * True once this tab's outbox lives in memory because storage threw, so a
- * reload loses what is pending. A switch made by a write tells subscribers;
- * one made by a read shows at the next render. The server snapshot is `false`.
+ * True while this tab holds pending entries storage refused, so a reload
+ * would lose them. The server snapshot is `false`.
  */
 export function useOutboxVolatile(): boolean {
   return useSyncExternalStore(subscribeOutbox, isOutboxVolatile, () => false);
@@ -335,11 +417,12 @@ export async function dismissRefused(registrationId: string): Promise<void> {
   });
 }
 
-/** Empties this tab's outbox and, whichever of the two it lives in, the stored copy. */
+/** Empties this tab's outbox and the stored copy; if storage refuses the removal, this tab stops reading it. */
 export async function clearOutbox(): Promise<void> {
   await withLock(LOCK, async () => {
-    writeRaw(null);
-    removeStored();
+    detached = !removeStored();
+    overlay = null;
+    stored = EMPTY_OUTBOX;
     cached = EMPTY_OUTBOX;
     cachedRaw = null;
     notify();
@@ -376,9 +459,11 @@ export function shownStatus(
 export function resetOutboxForTests(): void {
   cached = null;
   cachedRaw = null;
+  stored = EMPTY_OUTBOX;
+  overlay = null;
+  detached = false;
   warnedRaw = null;
-  memory = null;
-  useMemory = false;
+  readFailureLogged = false;
   listeners.clear();
   if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
 }
