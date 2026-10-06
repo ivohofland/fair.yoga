@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveSteps, isOnboardingComplete } from './onboarding';
+import { resolveSteps, isOnboardingComplete, isSettled } from './onboarding';
 
 const nothingDone = {
   bio: '', bankIban: null, bankAccountName: null, currency: 'EUR' as const, roomCount: 0, classCount: 0, skipped: [],
@@ -59,8 +59,16 @@ describe('the bank step', () => {
     expect(resolveSteps(withBank).find((s) => s.key === 'bank')?.state).toBe('done');
   });
 
-  it('is not done for a teacher in another currency, whose account no method uses yet', () => {
-    expect(resolveSteps({ ...withBank, currency: 'GBP' }).find((s) => s.key === 'bank')?.state).toBe('todo');
+  // A currency with no bank method has no bank step to take: students are
+  // never shown the details, so the step is not listed at all.
+  it('is not listed for a teacher in another currency', () => {
+    expect(resolveSteps({ ...withBank, currency: 'GBP' }).map((s) => s.key)).toEqual(['profile', 'room', 'class']);
+    expect(resolveSteps({ ...nothingDone, currency: 'GBP' }).map((s) => s.key)).toEqual(['profile', 'room', 'class']);
+  });
+
+  it('does not hold back settling for a teacher in another currency', () => {
+    expect(isSettled({ ...nothingDone, currency: 'GBP', bio: 'x', roomCount: 1, classCount: 1 })).toBe(true);
+    expect(isSettled({ ...nothingDone, currency: 'EUR', bio: 'x', roomCount: 1, classCount: 1 })).toBe(false);
   });
 });
 
