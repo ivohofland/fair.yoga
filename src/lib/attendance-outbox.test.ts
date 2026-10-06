@@ -6,6 +6,7 @@ import { renderToString } from 'react-dom/server';
 import {
   EMPTY_OUTBOX,
   clearOutbox,
+  clearOwnedOutbox,
   dismissRefused,
   enqueueAttendance,
   getOutbox,
@@ -23,6 +24,7 @@ import {
 } from '@/lib/attendance-outbox';
 
 const KEY = 'fy-outbox-v1';
+const CLEARS_KEY = 'fy-outbox-clears-v1';
 
 function VolatileProbe() {
   return String(useOutboxVolatile('a'));
@@ -63,6 +65,31 @@ function pendingStatusIn(value: string, registrationId: string): unknown {
   const entry: unknown = Reflect.get(pending, registrationId);
   return typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'status') : undefined;
 }
+
+/** Storage that refuses any write that would take every stored value together past `limit()` characters, the way a full origin quota does. */
+function storageQuota(limit: () => number) {
+  const realSetItem = Storage.prototype.setItem;
+  return vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+    let used = value.length;
+    for (let i = 0; i < this.length; i++) {
+      const other = this.key(i);
+      if (other !== null && other !== key) used += this.getItem(other)?.length ?? 0;
+    }
+    if (used > limit()) throw new DOMException('quota', 'QuotaExceededError');
+    realSetItem.call(this, key, value);
+  });
+}
+
+/** The registration ids of the stored document's pending entries, sorted. */
+function storedPendingIds(): string[] {
+  const doc: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}');
+  if (typeof doc !== 'object' || doc === null || !('pending' in doc)) return [];
+  const pending: unknown = doc.pending;
+  return typeof pending === 'object' && pending !== null ? Object.keys(pending).sort() : [];
+}
+
+/** Lets a write started by an event handler, which waits on the lock, finish. */
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const fireStorage = () => window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
 
@@ -652,6 +679,195 @@ describe('attendance outbox', () => {
     } finally {
       Reflect.deleteProperty(document, 'visibilityState');
     }
+  });
+
+  it('another tab’s sign-out stays cleared: this tab drops its memory-only marks rather than writing them back into the room it freed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribeOther = other.subscribeOutbox(() => {});
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      await enqueueAttendance(input('attended', 'r2'));
+      const full = storedLength();
+      storageQuota(() => full);
+      await enqueueAttendance(input('attended', 'r7'));
+      expect(storedPendingIds()).toEqual(['r1', 'r2']);
+
+      await other.clearOutbox();
+      fireStorage();
+      await settled();
+      expect(localStorage.getItem(KEY)).toBeNull();
+      expect(Object.keys(readOutbox().pending)).toEqual([]);
+    } finally {
+      unsubscribe();
+      unsubscribeOther();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('another tab’s sign-out stays cleared when this tab slept through it and is then closed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      await enqueueAttendance(input('attended', 'r2'));
+      const full = storedLength();
+      storageQuota(() => full);
+      await enqueueAttendance(input('attended', 'r7'));
+
+      await other.clearOutbox();
+      window.dispatchEvent(new Event('pagehide'));
+      await settled();
+      expect(localStorage.getItem(KEY)).toBeNull();
+    } finally {
+      unsubscribe();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('another tab’s account deletion drops that account’s memory-only marks here, and only that account’s', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      const sent = await enqueueAttendance(input('attended', 'r6'));
+      let refusing = true;
+      refuseWhere((value) => refusing && (value.includes('"r7"') || value.includes('"r8"') || value.includes('"refused":{"r6"')));
+      await enqueueAttendance(input('attended', 'r7'));
+      await enqueueAttendance({ ...input('attended', 'r8'), ownerId: 'b', studentName: 'Bo' });
+      await settleEntry(sent, { kind: 'refused', message: 'Class is finished' });
+      expect(getOutbox().refused.r6?.message).toBe('Class is finished');
+      refusing = false;
+
+      await other.clearOwnedOutbox('a');
+      fireStorage();
+      await settled();
+      expect(storedPendingIds()).toEqual(['r8']);
+      expect(localStorage.getItem(KEY)).not.toContain('"r6"');
+      expect(Object.keys(readOutbox().pending)).toEqual(['r8']);
+      expect(readOutbox().refused).toEqual({});
+    } finally {
+      unsubscribe();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a clear another tab made reaches this tab’s next change, with no storage event in between', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      await enqueueAttendance(input('attended', 'r2'));
+      const full = storedLength();
+      storageQuota(() => full);
+      await enqueueAttendance(input('attended', 'r7'));
+
+      await other.clearOutbox();
+      await enqueueAttendance(input('attended', 'r9'));
+      expect(storedPendingIds()).toEqual(['r9']);
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a sync pass reading after another tab’s clear no longer sees this tab’s memory-only marks, though the stored text did not change', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      refuseWhere((value) => value.includes('"r7"'));
+      await enqueueAttendance(input('attended', 'r7'));
+      expect(localStorage.getItem(KEY)).toBeNull();
+      expect(readOutbox().pending.r7?.status).toBe('attended');
+
+      await other.clearOutbox();
+      expect(readOutbox().pending.r7).toBeUndefined();
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a storage event for the record of a clear alone refreshes this tab and tells its subscribers', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const listener = vi.fn();
+    const unsubscribe = subscribeOutbox(listener);
+    try {
+      refuseWhere((value) => value.includes('"r7"'));
+      await enqueueAttendance(input('attended', 'r7'));
+      expect(getOutbox().pending.r7?.status).toBe('attended');
+      await other.clearOutbox();
+      listener.mockClear();
+
+      window.dispatchEvent(new StorageEvent('storage', { key: CLEARS_KEY }));
+      expect(listener).toHaveBeenCalled();
+      expect(getOutbox().pending.r7).toBeUndefined();
+    } finally {
+      unsubscribe();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it.each([
+    ['a storage event', () => {
+      fireStorage();
+      return getOutbox();
+    }],
+    ['a sync pass read', () => readOutbox()],
+  ])('a tab that stopped reading storage drops its memory-only marks once another tab clears, seen through %s', async (_, look) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      await enqueueAttendance(input('attended', 'r2'));
+      const setItem = quota(() => 0);
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+        throw new DOMException('remove', 'UnknownError');
+      });
+      await enqueueAttendance(input('no_show', 'r1'));
+      setItem.mockRestore();
+      removeItem.mockRestore();
+      expect(localStorage.getItem(KEY)).toContain('"r1"');
+      expect(getOutbox().pending.r1?.status).toBe('no_show');
+
+      await other.clearOutbox();
+      expect(Object.keys(look().pending)).toEqual([]);
+    } finally {
+      unsubscribe();
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('the record of an account’s clear keeps no name, and a sign-out’s clear drops the account id', async () => {
+    await enqueueAttendance(input('attended', 'r1'));
+    await clearOwnedOutbox('a');
+    expect(localStorage.getItem(CLEARS_KEY)).toContain('"a"');
+    expect(localStorage.getItem(CLEARS_KEY)).not.toContain('Ada');
+    await clearOutbox();
+    expect(localStorage.getItem(CLEARS_KEY)).not.toContain('"a"');
+  });
+
+  it('a clear whose record storage refuses is logged', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await enqueueAttendance(input('attended', 'r1'));
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    await clearOutbox();
+    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(warn).toHaveBeenCalledWith('[attendance-outbox] storage refused the record of a clear; another tab may write back what it held', {
+      error: 'QuotaExceededError',
+    });
   });
 
   it('volatile counts only the given account’s entries, so another account’s memory-only marks do not make it true', async () => {
