@@ -170,11 +170,15 @@ describe('GET /bookings (page) — payment status gate', () => {
     await prisma.teacherBankAccount.create({
       data: { teacherId, currency: 'GBP', holderName: 'Bookings Teacher', sortCode: '123456', accountNumber: '12345678' },
     });
+    // The teacher's own currency is GBP, so a lookup by it would find that account.
+    const { currency: teacherCurrency } = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId }, select: { currency: true } });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { currency: 'GBP' } });
     try {
       const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
       expect(html).toContain('Pay Bookings directly');
       expect(html).not.toContain(`href="/bookings/${classId}/pay"`);
     } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { currency: teacherCurrency } });
       await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
       await prisma.teacherBankAccount.create({
         data: { teacherId, currency: 'EUR', holderName: 'Bookings Teacher', iban: TEACHER_IBAN },
