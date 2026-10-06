@@ -122,7 +122,12 @@ function logUnreadAnswer(entry: PendingEntry, res: Response, err: unknown): void
 /** What an answer means for the entry, and what it says about the session. */
 interface Classified {
   outcome: ReplayOutcome;
-  /** True for any 2xx, and for an app error answer other than a 401: the session was good. */
+  /**
+   * True only for the app's own answer to a request past the session check: a
+   * 2xx that answers the write sent, or the app's JSON error body on a 4xx
+   * other than 401, 408 and 429. A 5xx can come from the session check itself,
+   * and a 2xx the replay cannot confirm may not be the app's.
+   */
   signedIn: boolean;
 }
 
@@ -133,13 +138,13 @@ async function classify(res: Response, entry: PendingEntry): Promise<Classified>
       body = await res.json();
     } catch (err) {
       logUnreadAnswer(entry, res, err);
-      return { outcome: { kind: 'retry' }, signedIn: true };
+      return { outcome: { kind: 'retry' }, signedIn: false };
     }
     if (answersEntry(isRecord(body) ? body.data : undefined, entry)) {
       return { outcome: { kind: 'confirmed', at: serverTime(res) }, signedIn: true };
     }
     logUnreadAnswer(entry, res, new Error('the 2xx answer does not match the write sent'));
-    return { outcome: { kind: 'retry' }, signedIn: true };
+    return { outcome: { kind: 'retry' }, signedIn: false };
   }
   if (res.status === 401) return { outcome: { kind: 'signed_out' }, signedIn: false };
   if (res.status === 408 || res.status === 429 || res.status >= 500) {
