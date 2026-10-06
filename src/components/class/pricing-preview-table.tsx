@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import type { Currency } from '@prisma/client';
 import { formatMoney } from '@/lib/format';
 import { calculateEffectiveTeacherRate } from '@/services/pricing';
-import { INCOME_TIERS, TIER_RATIOS } from '@/lib/tiers';
+import { normalSpread, tierPrices, priceSpread } from '@/lib/pricing-preview';
 
 interface PricingPreviewTableProps {
   currency: Currency;
@@ -19,30 +19,6 @@ interface PricingPreviewTableProps {
 // Distribution logic
 // ---------------------------------------------------------------------------
 
-const NORMAL_WEIGHTS = [0.0895, 0.2242, 0.3726, 0.2242, 0.0895];
-
-function normalSpread(n: number): number[] {
-  const raw = NORMAL_WEIGHTS.map((w) => w * n);
-  const floored = raw.map(Math.floor);
-  let remaining = n - floored.reduce((a, b) => a + b, 0);
-
-  // Distribute remainders to tiers with largest fractional parts (center-first tiebreak)
-  const fractions = raw.map((v, i) => ({ i, frac: v - floored[i]! }));
-  fractions.sort((a, b) => {
-    if (b.frac !== a.frac) return b.frac - a.frac;
-    // Center-first tiebreak: closer to index 2 wins
-    return Math.abs(a.i - 2) - Math.abs(b.i - 2);
-  });
-
-  for (const { i } of fractions) {
-    if (remaining <= 0) break;
-    floored[i]!++;
-    remaining--;
-  }
-
-  return floored;
-}
-
 function shuffleMix(n: number): number[] {
   const counts = [0, 0, 0, 0, 0];
   for (let i = 0; i < n; i++) {
@@ -55,32 +31,6 @@ function shuffleMix(n: number): number[] {
     counts[clamped]!++;
   }
   return counts;
-}
-
-// ---------------------------------------------------------------------------
-// Pricing calculation
-// ---------------------------------------------------------------------------
-
-const TIER_RATIO_VALUES = INCOME_TIERS.map((t) => TIER_RATIOS[t]);
-
-function calculateTierPrices(
-  total: number,
-  distribution: number[],
-): { prices: number[]; weightedSum: number } {
-  const weightedSum = distribution.reduce(
-    (sum, count, i) => sum + count * TIER_RATIO_VALUES[i]!,
-    0,
-  );
-
-  if (weightedSum === 0) {
-    return { prices: [0, 0, 0, 0, 0], weightedSum: 0 };
-  }
-
-  const prices = TIER_RATIO_VALUES.map(
-    (ratio) => Math.round(((total / weightedSum) * ratio) * 100) / 100,
-  );
-
-  return { prices, weightedSum };
 }
 
 const TIER_LABELS = ['Tier 1', 'Tier 2', 'Tier 3', 'Tier 4', 'Tier 5'];
@@ -148,14 +98,8 @@ export function PricingPreviewTable({
   const rateProgress =
     rateRange === 0 ? 100 : Math.round(((teacherRate - minRate) / rateRange) * 100);
 
-  const { prices } = calculateTierPrices(totalCost, distribution);
-
-  // Spread: ratio of highest to lowest active tier price
-  const activePrices = prices.filter((_, i) => distribution[i]! > 0);
-  const spread =
-    activePrices.length >= 2
-      ? (Math.max(...activePrices) / Math.min(...activePrices)).toFixed(1)
-      : null;
+  const prices = tierPrices(totalCost, distribution);
+  const spread = priceSpread(prices, distribution);
 
   return (
     <div className="mt-6 flex flex-col gap-6">
