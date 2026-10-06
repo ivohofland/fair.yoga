@@ -265,7 +265,7 @@ export function renderPasskeyAddedEmail(addedAt: Date): { subject: string; html:
   const html = wrapEmail(
     'A passkey was added',
     `<p style="margin:0 0 16px;">A passkey was added to your fair.yoga account on ${escapeHtml(when)} UTC. It can now sign in to your account.</p>
-     <p style="margin:0;">If that was you, there is nothing to do. If it was not, sign in, open Settings, remove the passkey and choose sign out everywhere.</p>`,
+     <p style="margin:0;">If that was you, there is nothing to do. If it was not, sign in, find your passkeys under Settings → Profile if you teach (under Account if you are a student), remove the passkey and choose sign out everywhere.</p>`,
   );
   return { subject, html };
 }

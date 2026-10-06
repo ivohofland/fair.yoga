@@ -400,6 +400,13 @@ describe('renderDegradationDigestEmail', () => {
       expect(html).toContain('remove');
     });
 
+    it('points teachers to Settings → Profile and students to Account', () => {
+      const { html } = renderPasskeyAddedEmail(addedAt);
+      expect(html).toContain('Settings → Profile');
+      expect(html).toContain('Account');
+      expect(html).not.toContain('open Settings');
+    });
+
     it('carries no link, so there is no token to forward or phish with', () => {
       const { html } = renderPasskeyAddedEmail(addedAt);
       expect(html).not.toContain('<a ');
