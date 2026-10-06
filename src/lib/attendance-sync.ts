@@ -8,7 +8,8 @@ import {
   type Settlement,
 } from '@/lib/attendance-outbox';
 import type { AttendanceBody } from '@/lib/api-types';
-import { readError, logRequestFailure } from '@/lib/client-errors';
+import { isApiErrorCode, type ApiErrorCode } from '@/lib/api-error-codes';
+import { logRequestFailure } from '@/lib/client-errors';
 import { getConnectionStatus, subscribeConnectionStatus } from '@/lib/offline-status';
 
 export type ReplayOutcome = Settlement | { kind: 'retry' } | { kind: 'signed_out' };
@@ -85,6 +86,22 @@ function answersEntry(data: unknown, entry: PendingEntry): boolean {
   return Object.keys(ANSWER_KEYS).every((key) => data[key] === expected[key]);
 }
 
+/** The app's own error answer, `{ error: { message, code? } }`; null for any other body, an empty one included. */
+async function appError(res: Response): Promise<{ code?: ApiErrorCode; message: string } | null> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return null;
+  }
+  const error = isRecord(body) ? body.error : undefined;
+  if (!isRecord(error) || typeof error.message !== 'string') return null;
+  return {
+    code: isApiErrorCode(error.code) ? error.code : undefined,
+    message: error.message === '' ? 'Could not record attendance.' : error.message,
+  };
+}
+
 async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutcome> {
   if (res.ok) {
     let body: unknown;
@@ -99,11 +116,31 @@ async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutco
     return { kind: 'retry' };
   }
   if (res.status === 401) return { kind: 'signed_out' };
-  if (res.status === 403) return { kind: 'dropped' };
   if (res.status === 408 || res.status === 429 || res.status >= 500) return { kind: 'retry' };
-  const { code, message } = await readError(res, 'Could not record attendance.');
-  if (code === 'CONCURRENT_MODIFICATION') return { kind: 'retry' };
-  return { kind: 'refused', message };
+  const answer = await appError(res);
+  if (answer === null) {
+    // A proxy, portal or filter answered, not the app: the write never reached it.
+    logRequestFailure(
+      'attendance-sync',
+      {
+        registrationId: entry.registrationId,
+        status: entry.status,
+        httpStatus: res.status,
+        contentType: res.headers.get('content-type'),
+      },
+      new Error('the answer is not the app\'s error body'),
+    );
+    return { kind: 'retry' };
+  }
+  if (res.status === 403) {
+    console.warn('[attendance-sync] write dropped: the server refused it to this account', {
+      registrationId: entry.registrationId,
+      status: entry.status,
+    });
+    return { kind: 'dropped' };
+  }
+  if (answer.code === 'CONCURRENT_MODIFICATION') return { kind: 'retry' };
+  return { kind: 'refused', message: answer.message };
 }
 
 /**

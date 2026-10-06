@@ -55,6 +55,14 @@ function bare(status: number): Response {
   return new Response(null, { status });
 }
 
+function html(status: number): Response {
+  return new Response('<html><body>Blocked</body></html>', { status, headers: { 'content-type': 'text/html' } });
+}
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
 function setOffline(offline: boolean): void {
   conn.offline = offline;
   conn.listeners.forEach((listener) => listener());
@@ -126,7 +134,12 @@ describe('attendance sync', () => {
       ['no id', async () => ok({ status: 'attended' }), { kind: 'retry' }],
       ['not json', async () => new Response('not json', { status: 200 }), { kind: 'retry' }],
       ['401', async () => bare(401), { kind: 'signed_out' }],
-      ['403', async () => bare(403), { kind: 'dropped' }],
+      ['403', async () => refusal(403, undefined, 'Not your class'), { kind: 'dropped' }],
+      ['403 without a body', async () => bare(403), { kind: 'retry' }],
+      ['403 from an intermediary', async () => html(403), { kind: 'retry' }],
+      ['407 from a proxy', async () => html(407), { kind: 'retry' }],
+      ['404 from an intermediary', async () => html(404), { kind: 'retry' }],
+      ['400 with other JSON', async () => json(400, { message: 'Bad request' }), { kind: 'retry' }],
       [
         '409 concurrent',
         async () => refusal(409, 'CONCURRENT_MODIFICATION', 'Someone else changed this.'),
@@ -167,8 +180,55 @@ describe('attendance sync', () => {
     expect(url).toBe('/api/registrations/r1');
     expect(init?.method).toBe('PUT');
     expect(init?.body).toBe('{"status":"attended"}');
+    expect(errors).toHaveBeenCalledWith('[attendance-sync] request failed', {
+      registrationId: 'r1',
+      status: 'attended',
+      err: expect.any(TypeError),
+    });
+  });
+
+  it('logs an answer that is not the app\'s own, and an app 403 drop, naming no student', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const entry: PendingEntry = {
+      id: 'e1',
+      ownerId: 'acct-1',
+      registrationId: 'r1',
+      classId: 'c1',
+      studentName: 'Ada',
+      status: 'attended',
+      recordedAt: 1,
+    };
+    fetchMock.mockResolvedValueOnce(html(403));
+    await sendAttendance(entry);
     expect(errors).toHaveBeenCalledTimes(1);
-    expect(errors.mock.calls[0]?.[0]).toBe('[attendance-sync] request failed');
+    expect(errors).toHaveBeenCalledWith('[attendance-sync] request failed', {
+      registrationId: 'r1',
+      status: 'attended',
+      httpStatus: 403,
+      contentType: 'text/html',
+      err: expect.any(Error),
+    });
+    expect(warn).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(refusal(403, undefined, 'Not your class'));
+    await sendAttendance(entry);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[attendance-sync] write dropped: the server refused it to this account', {
+      registrationId: 'r1',
+      status: 'attended',
+    });
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify([errors.mock.calls, warn.mock.calls])).not.toContain('Ada');
+  });
+
+  it('an intermediary\'s 403 keeps the entry pending', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended');
+    fetchMock.mockResolvedValueOnce(html(403));
+    await flushAttendance('acct-1');
+    expect(getOutbox().pending.r1?.status).toBe('attended');
+    expect(getOutbox().refused).toEqual({});
   });
 
   it.each([
@@ -254,7 +314,9 @@ describe('attendance sync', () => {
     ['a 503', () => bare(503)],
     ['a 429', () => bare(429)],
     ['a 409 CONCURRENT_MODIFICATION', () => refusal(409, 'CONCURRENT_MODIFICATION', 'Someone else changed this.')],
+    ['an intermediary\'s 403', () => html(403)],
   ])('a pass carries on past %s', async (_name, answer) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     await enqueue('attended', 'r1');
     await enqueue('no_show', 'r2');
     fetchMock.mockImplementation(async () => answer());
@@ -318,7 +380,9 @@ describe('attendance sync', () => {
     await enqueue('no_show', 'r2', 'acct-B');
     expect(Object.keys(getOutbox().pending)).toEqual(['r1', 'r2']);
     fetchMock.mockImplementation(async (input) =>
-      urlOf(input) === '/api/registrations/r2' ? bare(403) : ok({ id: 'r1', status: 'attended' }),
+      urlOf(input) === '/api/registrations/r2'
+        ? refusal(403, undefined, 'Not your class')
+        : ok({ id: 'r1', status: 'attended' }),
     );
     await flushAttendance(null);
     expect(fetchMock.mock.calls.map(([input]) => urlOf(input))).toEqual([
