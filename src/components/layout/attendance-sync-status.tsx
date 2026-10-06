@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import Link from 'next/link';
-import { dismissRefused, ownedOutbox, useOutbox, useOutboxVolatile } from '@/lib/attendance-outbox';
+import { EMPTY_OUTBOX, dismissRefused, getOutbox, ownedOutbox, useOutbox, useOutboxVolatile } from '@/lib/attendance-outbox';
 import type { QueuedStatus, RefusedEntry } from '@/lib/attendance-outbox';
 import { startAttendanceSync, useSyncState } from '@/lib/attendance-sync';
 import { useConnectionStatus } from '@/lib/offline-status';
@@ -108,6 +108,39 @@ export function refusalLine(entry: RefusedEntry): string {
   return `Couldn't record ${entry.studentName} as ${statusWord(entry.status)}: ${entry.message}`;
 }
 
+const NO_IDS: ReadonlySet<string> = new Set();
+
+/** Which refusals the summary has heard of. */
+interface Heard {
+  /** Refusal ids it never announces. */
+  quiet: ReadonlySet<string>;
+  /** Refusal ids it counts now. */
+  counted: ReadonlySet<string>;
+}
+
+/**
+ * `prev` moved on to the refusals now stored, where `inline` holds the classes
+ * whose mounted list shows its own. One a list shows goes quiet; when one the
+ * summary counted leaves it, the others it counted go quiet too.
+ */
+function hear(prev: Heard, refused: readonly RefusedEntry[], inline: ReadonlySet<string>): Heard {
+  const quiet = new Set(prev.quiet);
+  for (const e of refused) if (inline.has(e.classId)) quiet.add(e.id);
+  const arrived = new Set(refused.filter((e) => !quiet.has(e.id)).map((e) => e.id));
+  if ([...prev.counted].some((id) => !arrived.has(id))) {
+    for (const id of prev.counted) quiet.add(id);
+  }
+  return { quiet, counted: new Set([...arrived].filter((id) => !quiet.has(id))) };
+}
+
+function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every((id) => b.has(id));
+}
+
+function sameHeard(a: Heard, b: Heard): boolean {
+  return sameIds(a.quiet, b.quiet) && sameIds(a.counted, b.counted);
+}
+
 function changes(n: number): string {
   return `${n} attendance ${n === 1 ? 'change' : 'changes'}`;
 }
@@ -119,11 +152,18 @@ function stopped(sentence: string): string {
 
 /**
  * The signed-in account's pending count and the refusals no mounted list
- * shows. Announced through a text-only `role="status"` that is always
- * mounted, empty when there is nothing to say; the visible block with its
- * controls sits outside it. The waiting count is announced only when it is
- * more than a round trip in progress: offline, after an attempt that must be
- * retried, or when a sign-in is needed.
+ * shows, as a visible block with its controls. What is announced goes through
+ * a separate text-only `role="status"`, always mounted, empty when there is
+ * nothing to say, holding one summary:
+ * - the waiting count, with "sign in to sync them" when a sign-in is needed
+ *   and "This device can't keep them if the page reloads." while storage
+ *   refused some of them, but only when it is more than a round trip in
+ *   progress: offline, after an attempt that must be retried, or when a
+ *   sign-in is needed;
+ * - how many refusals it shows that arrived while it was mounted, never one
+ *   stored when it mounted or one a mounted list showed first. When one of
+ *   those leaves the summary the rest go quiet, so a smaller count does not
+ *   announce them again.
  */
 export function AttendanceSyncStatus() {
   const ctx = useContext(SyncContext);
@@ -138,11 +178,22 @@ export function AttendanceSyncStatus() {
   );
   const blockRef = useRef<HTMLDivElement>(null);
   const dismissRefs = useRef(new Map<string, HTMLButtonElement>());
-  if (!ctx) return null;
+  // Seeded on the client's first render from the live store, since `outbox`
+  // is the empty server snapshot while hydrating.
+  const [heard, setHeard] = useState<Heard>(() => ({
+    quiet: new Set(typeof window === 'undefined' ? [] : Object.values(getOutbox().refused).map((e) => e.id)),
+    counted: NO_IDS,
+  }));
 
-  const owned = ownedOutbox(outbox, ctx.ownerId);
+  const owned = ownedOutbox(ctx ? outbox : EMPTY_OUTBOX, ctx?.ownerId ?? null);
   const pending = Object.keys(owned.pending).length;
   const refused = Object.values(owned.refused).filter((e) => !inline.has(e.classId));
+  const nextHeard = hear(heard, Object.values(owned.refused), inline);
+  // Adjusting state during render, as React allows for state derived from a change: it settles in one more pass.
+  if (!sameHeard(nextHeard, heard)) setHeard(nextHeard);
+  const announced = nextHeard.counted.size;
+
+  if (!ctx) return null;
 
   const waiting =
     pending === 0
@@ -151,7 +202,7 @@ export function AttendanceSyncStatus() {
   const unkept = pending > 0 && volatile ? "This device can't keep them if the page reloads." : '';
   const shownWaiting = unkept === '' ? waiting : `${waiting}. ${unkept}`;
   const announceWaiting = offline || retrying || needsSignIn;
-  const unrecorded = refused.length === 0 ? '' : `${changes(refused.length)} couldn't be recorded.`;
+  const unrecorded = announced === 0 ? '' : `${changes(announced)} couldn't be recorded.`;
   const summary = [announceWaiting ? waiting : '', announceWaiting ? unkept : '', unrecorded]
     .filter((sentence) => sentence !== '')
     .map(stopped)
