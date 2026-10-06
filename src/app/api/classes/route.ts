@@ -14,6 +14,7 @@ import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflic
 import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
+import { lockTeacherForShare } from '@/lib/db-locks';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -92,14 +93,20 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // where a `CalendarEntry` exists with no `Class`. It does not add a
   // lock-holding path.
   //
-  // No `setLockTimeout` here: issue 228 tracks that bound for the create
-  // paths, and adding it alone would turn a wait that usually succeeds into a
-  // generic 503 rather than a named one. An explicit `$transaction` also
-  // imports Prisma's interactive-transaction defaults — `maxWait: 2000`,
-  // `timeout: 5000` — that the implicit nested write it replaces did not
-  // carry, so contention here can already surface that same generic,
-  // code-less 503 before any `setLockTimeout` is added.
+  // `lockTeacherForShare` arms the shared 2s `lock_timeout` for the whole
+  // transaction, so every wait in it is bounded and an expiry answers the
+  // generic, code-less 503 (issue 228 tracks a named one for the create
+  // paths). Prisma's interactive-transaction defaults — `maxWait: 2000`,
+  // `timeout: 5000` — can surface that same 503.
   const outcome = await prisma.$transaction(async (tx) => {
+    // The transaction's first lock (`docs/lock-order.md`, "The `Teacher` row
+    // is the first lock (#758)"). A currency switch holds this row
+    // `FOR NO KEY UPDATE` until it commits, so this waits it out and stamps
+    // the currency the switch wrote; a switch starting later waits for this
+    // class to commit and then relabels it.
+    const teacher = await lockTeacherForShare(tx, session.teacherId);
+    if (!teacher) return { ok: false as const, reason: 'teacher_gone' as const };
+
     // The room's CURRENT `isArchived`, read inside the transaction and held.
     // `Class.roomArchived` is one column of a composite foreign key, so a
     // value that disagrees with the room is refused with `23503` rather than
@@ -125,13 +132,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // once any class exists, `Class_teacherRoomId_roomArchived_fkey`
     // RESTRICTs the delete.
     if (!room) return { ok: false as const, reason: 'room_not_found' as const };
-
-    // The class is stamped with the teacher's currency as it stands in this
-    // transaction.
-    const { currency } = await tx.teacher.findUniqueOrThrow({
-      where: { id: session.teacherId },
-      select: { currency: true },
-    });
 
     // The ENTRY is inserted alone and first — it holds the slot constraint,
     // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
@@ -168,7 +168,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         // the room's actual current one rather than the Prisma default
         // (`false`).
         roomArchived: room.isArchived,
-        currency,
+        currency: teacher.currency,
         description: body.description ?? null,
         roomCost: body.roomCost,
         minRate: body.minRate,
@@ -184,6 +184,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!outcome.ok) {
+    if (outcome.reason === 'teacher_gone') return respondError('Teacher not found', 404);
     if (outcome.reason === 'room_not_found') {
       // The room existed at the ownership check above but is gone by the
       // time this transaction re-read it — the same failure the ownership

@@ -155,6 +155,58 @@ describe('ProfileForm', () => {
     expect([...options].map((o) => o.textContent)).toEqual(['Only option']);
   });
 
+  describe('after a currency switch (#758)', () => {
+    function switched(
+      relabelled: { classes: number; studioClasses: number },
+      kept: { classes: number; studioClasses: number },
+    ): void {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { currency: 'GBP', currencySwitch: { relabelled, kept } } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'GBP' } });
+      save();
+    }
+
+    it('says how many classes now show the new currency and how many keep the old one', async () => {
+      switched({ classes: 10, studioClasses: 2 }, { classes: 2, studioClasses: 1 });
+      expect(
+        await screen.findByText(
+          '12 upcoming classes now show £. 3 classes keep €, because they’re booked or finished.',
+        ),
+      ).toBeInTheDocument();
+      expect(sentBody().currency).toBe('GBP');
+    });
+
+    it('omits the kept clause when nothing kept its currency', async () => {
+      switched({ classes: 4, studioClasses: 0 }, { classes: 0, studioClasses: 0 });
+      expect(await screen.findByText('4 upcoming classes now show £.')).toBeInTheDocument();
+    });
+
+    it('omits the relabelled clause when nothing was relabelled', async () => {
+      switched({ classes: 0, studioClasses: 0 }, { classes: 0, studioClasses: 3 });
+      expect(
+        await screen.findByText('3 classes keep €, because they’re booked or finished.'),
+      ).toBeInTheDocument();
+    });
+
+    it('speaks of one class in the singular', async () => {
+      switched({ classes: 0, studioClasses: 1 }, { classes: 1, studioClasses: 0 });
+      expect(
+        await screen.findByText(
+          '1 upcoming class now shows £. 1 class keeps €, because it’s booked or finished.',
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('says only Saved when the teacher had no classes to relabel or keep', async () => {
+      switched({ classes: 0, studioClasses: 0 }, { classes: 0, studioClasses: 0 });
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+    });
+  });
+
   it('tells the teacher the holder name must match their bank', () => {
     renderForm();
     expect(

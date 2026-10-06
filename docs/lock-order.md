@@ -127,6 +127,12 @@ multi-row form of that same lock, one per family. "The child row is the lock
 node for the template families" below is the section that names and explains
 the template-side three.
 
+Re-run for issue 758 on 2026-10-06 it returns eight: the six above, and the
+currency switch's ordered pre-lock (`switchTeacherCurrency`,
+`currency-switch.ts`), the same two-line shape as `deleteTeacherAccount`'s —
+`FOR UPDATE OF ct` then `FOR UPDATE OF sct` over every template of one
+teacher. `db-locks.ts` is still the only file locking `Class`.
+
 The regression this check exists to catch is a line locking `Class` or
 `CalendarEntry` from outside `db-locks.ts`, not a rising count by itself —
 which is why the ALIAS in that spliced statement is load-bearing. `c` is this
@@ -1008,6 +1014,14 @@ Re-run for issue 758 on 2026-10-06 it returns 25 = the 23 above + 2, both in
 `deleteTeacherAccount` arms the bound through the first of them, and its own
 `setLockTimeout` line was already counted. Every other line sits in one of
 the files listed above.
+
+Re-run for issue 758's currency switch on 2026-10-06 it returns 22 = the 25
+above − 3. `createClassTemplate` and `createStudioClassTemplate` now arm the
+bound through `lockTeacherForShare`, their first statement, so their own
+`setLockTimeout` calls are gone, and with them `class-template-lifecycle.ts`'s
+`  setLockTimeout,` import line. The two one-off create routes and the
+currency switch arm it through the same helpers and add no line. Every other
+line sits in one of the files listed above.
 
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
@@ -1928,17 +1942,45 @@ UPDATE`"), and the erasure's own raise to `FOR UPDATE` at its closing
   holds. That `UPDATE` rewrites `email` and `pageSlug`, so it raises the hold
   to `FOR UPDATE`. By then the transaction holds every template and `Class`
   row it locks.
-- `PUT /api/teachers/[id]` (`src/app/api/teachers/[id]/route.ts`) takes no
-  explicit lock, but its `teacher.updateMany` waits on an erasure's hold and,
-  scoped to `deletedAt: null`, writes nothing once the erasure commits. It
-  answers 404. Without that scope it re-matched the anonymised row by `id` and
-  wrote the PUT's profile fields back onto it.
+- `PUT /api/teachers/[id]` (`src/app/api/teachers/[id]/route.ts`) without a
+  `currency` takes no explicit lock, but its `teacher.updateMany` waits on an
+  erasure's hold and, scoped to `deletedAt: null`, writes nothing once the
+  erasure commits. It answers 404. Without that scope it re-matched the
+  anonymised row by `id` and wrote the PUT's profile fields back onto it.
+- The currency switch (`switchTeacherCurrency`,
+  `src/services/currency-switch.ts`), which the same PUT runs when its body
+  names a `currency`, in one transaction with the other fields:
+  `lockTeacherForNoKeyUpdate` first, then this teacher's `ClassTemplate` rows
+  and then its `StudioClassTemplate` rows `FOR UPDATE` in id order, then
+  `lockClassRowsOrdered` over its unbooked, unfinished, live classes, then
+  `UPDATE`s of those classes, of its `StudioClass` rows dated from its today,
+  and of the teacher. The `Teacher` `UPDATE` writes a non-key column of a row
+  the transaction already holds `FOR NO KEY UPDATE`, so it raises nothing. An
+  erasure and a switch serialise on the first lock; the one that waits for an
+  erasure finds the row erased and answers 404. The other fields' write keeps
+  the `deletedAt: null` scope above.
+- The transactions that create a row under no existing template:
+  `lockTeacherForShare` as their first lock, stamping the currency it returns.
+  `POST /api/classes` (`src/app/api/classes/route.ts`, ahead of its room's
+  `FOR KEY SHARE`), `POST /api/studio-classes`
+  (`src/app/api/studio-classes/route.ts`), and template creation in both
+  families (`createClassTemplate` in `class-template-lifecycle.ts`,
+  `createStudioClassTemplate` in `studio-class-template-lifecycle.ts`), which
+  generates its first window in the same transaction. `FOR SHARE` conflicts
+  with the switch's `FOR NO KEY UPDATE`, so a create waits out a switch and
+  stamps the currency it wrote, and a switch waits out a create and then
+  relabels what it committed. Creators do not conflict with one another.
 - The photo upload (`saveTeacherPhoto`, `src/services/teacher-photo.ts`):
   `lockLiveTeacher`, `FOR SHARE`, as its first and only lock. See the section
   above.
-- The currency switch takes `lockTeacherForNoKeyUpdate`, and the transactions
-  that create a row under no existing template take `lockTeacherForShare`.
-  Both arrive with #758 Task 6.
+
+A generated row needs no `Teacher` lock: the generator holds its template row
+`FOR UPDATE` across the insert and reads the teacher's currency under that
+lock (`claimRuleForGeneration`, `entry-generation.ts`). The switch takes every
+template row of the teacher before it reads a class, so it waits out a
+generation in flight and its class lock sees the rows that generation
+committed; a generation that starts later waits on its template and reads the
+new currency.
 
 Re-derive the sites with:
 
@@ -1972,7 +2014,7 @@ that mode:
 
 `FOR NO KEY UPDATE` does not conflict with `FOR KEY SHARE`, so neither insert
 waits. It does conflict with `FOR SHARE` (the photo gate, and the creators
-Task 6 adds) and with itself (erasure against the switch), and those are the
+above) and with itself (erasure against the switch), and those are the
 serialisations this node exists for. `src/lib/db-locks.test.ts`, "the Teacher
 first lock (#758)", probes each mode with `NOWAIT`.
 
@@ -1985,8 +2027,12 @@ nothing, so moving a weaker lock to the top adds no wait edge at the end.
 `grep -rn -e 'tx\.teacher\.\(update\|upsert\|delete\)' -e 'FROM "Teacher"' -e 'lockLiveTeacher(' src | grep -v '\.test\.'`
 on 2026-10-06 found the two lock helpers' callers above, a lock-free
 `COUNT(*)` in `db-provision.ts`, and the erasure's own `teacher.updateMany`.
-No site holds a template or `Class` row and then explicitly locks or writes
-`Teacher`. The foreign-key `KEY SHARE` above is the only implicit edge, and
+Re-run after the currency switch landed the same day, it also finds the
+switch's closing `teacher.update` (`currency-switch.ts`) and the currency
+PUT's `teacher.updateMany` of the other fields (`teachers/[id]/route.ts`),
+both writing a row their transaction took `FOR NO KEY UPDATE` as its first
+lock. No site holds a template or `Class` row and then explicitly locks or
+writes a `Teacher` row it does not already hold. The foreign-key `KEY SHARE` above is the only implicit edge, and
 `FOR NO KEY UPDATE` is chosen so that it does not conflict.
 
 ### How it is pinned
@@ -2004,6 +2050,23 @@ row first (#758)":
   mutation, the probe was refused instead of answering `free`.
 - "does not deadlock against a generation holding the template row and
   inserting an entry": the mode pin described above.
+
+`src/services/currency-switch-lock-order.test.ts` stages each of the switch's
+races with a second connection holding the other side's row until the request
+under test is parked behind it. Mutations measured on 2026-10-06, each
+restored afterwards:
+
+- Dropping `FOR UPDATE OF ct` from the switch made "relabels a class a
+  generation inserted while the switch waited on its template" fail with
+  `expected 'EUR' to be 'GBP'`; dropping `FOR UPDATE OF sct` did the same to
+  its studio twin.
+- Replacing `lockTeacherForShare` in `POST /api/classes` with a plain read made
+  "POST /api/classes waits for the switch and stamps its currency" fail with
+  `expected [ 'EUR' ] to deeply equal [ 'GBP' ]`.
+- Dropping `NOT c."settingsLocked"` from the switch's class lock made "keeps the
+  currency of a class booked while the switch waited on it" fail with the class
+  ending `GBP`. `src/services/currency-switch.test.ts`'s relabel-set case
+  failed under the same mutation, the booked class counted as relabelled.
 
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
@@ -2676,8 +2739,9 @@ needs that column on the rule, so keeping a copy of the lifecycle flags on the
 child would restore the two-sources-of-truth drift this extraction exists to
 remove.
 
-Nine call sites hold the child row `FOR UPDATE` today, across six
-statements: `deleteTeacherAccount`'s bulk archive takes one per family, the
+Ten call sites hold the child row `FOR UPDATE` today, across eight
+statements: `deleteTeacherAccount`'s bulk archive and the currency switch
+(#758) each take one per family, the
 two claim entry points share the one inside `claimRuleForGeneration`, the
 two archive entry points share the one inside `archiveOrUnarchiveRule`,
 the two pause entry points share the one inside `pauseOrResumeRule`, and
@@ -2694,6 +2758,7 @@ the two update entry points share the one inside `updateRule`:
 | `pauseOrResumeStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `archiveOrUnarchiveStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `deleteTeacherAccount` (bulk archive) | `gdpr.ts` | ordered, `FOR UPDATE OF ct` **and** `FOR UPDATE OF sct` |
+| `switchTeacherCurrency` (#758) | `currency-switch.ts` | ordered, `FOR UPDATE OF ct` **and** `FOR UPDATE OF sct` |
 
 **This is a convention enforced by a grep and a test, not by the database** —
 the same standing every other convention in this document has, and the same
@@ -2704,8 +2769,9 @@ added to the table above. The test is the load-bearing half: every row in the
 table above is independently proven necessary in
 `class-generator-lock-order.test.ts`, `studio-class-generator.test.ts`,
 `class-template-lifecycle-lock-order.test.ts`,
-`studio-class-template-lifecycle-lock-order.test.ts` and
-`gdpr-lock-order.test.ts` — each site's lock was removed in isolation and the
+`studio-class-template-lifecycle-lock-order.test.ts`,
+`gdpr-lock-order.test.ts` and, for the currency switch,
+`currency-switch-lock-order.test.ts` — each site's lock was removed in isolation and the
 specific case it protects was confirmed to redden, then restored (Task 3c
 report, `.superpowers/sdd/`).
 

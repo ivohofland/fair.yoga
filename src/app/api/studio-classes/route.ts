@@ -12,6 +12,7 @@ import { createStudioClassSchema } from '@/lib/schemas';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
+import { lockTeacherForShare } from '@/lib/db-locks';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -63,20 +64,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `CalendarEntry` exists with no `StudioClass`. It does not add a
   // lock-holding path.
   //
-  // No `setLockTimeout` here: issue 228 tracks that bound for the create
-  // paths, and adding it alone would turn a wait that usually succeeds into a
-  // generic 503 rather than a named one. An explicit `$transaction` also
-  // imports Prisma's interactive-transaction defaults — `maxWait: 2000`,
-  // `timeout: 5000` — that the implicit nested write it replaces did not
-  // carry, so contention here can already surface that same generic,
-  // code-less 503 before any `setLockTimeout` is added.
+  // `lockTeacherForShare` arms the shared 2s `lock_timeout` for the whole
+  // transaction, so every wait in it is bounded and an expiry answers the
+  // generic, code-less 503 (issue 228 tracks a named one for the create
+  // paths). Prisma's interactive-transaction defaults — `maxWait: 2000`,
+  // `timeout: 5000` — can surface that same 503.
   const outcome = await prisma.$transaction(async (tx) => {
-    // The class is stamped with the teacher's currency as it stands in this
-    // transaction.
-    const { currency } = await tx.teacher.findUniqueOrThrow({
-      where: { id: session.teacherId },
-      select: { currency: true },
-    });
+    // The transaction's first lock (`docs/lock-order.md`, "The `Teacher` row
+    // is the first lock (#758)"). A currency switch holds this row
+    // `FOR NO KEY UPDATE` until it commits, so this waits it out and stamps
+    // the currency the switch wrote; a switch starting later waits for this
+    // class to commit and then relabels it.
+    const teacher = await lockTeacherForShare(tx, session.teacherId);
+    if (!teacher) return { ok: false as const, reason: 'teacher_gone' as const };
 
     // The ENTRY is inserted alone and first — it holds the slot constraint,
     // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
@@ -102,14 +102,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       }],
       skipDuplicates: true,
     });
-    if (!entry) return { ok: false as const };
+    if (!entry) return { ok: false as const, reason: 'slot_conflict' as const };
 
     const studioClass = await tx.studioClass.create({
       data: {
         calendarEntryId: entry.id,
         kind: 'studio',
         location: body.location,
-        currency,
+        currency: teacher.currency,
         hourlyRate: body.hourlyRate,
       },
     });
@@ -117,6 +117,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!outcome.ok) {
+    if (outcome.reason === 'teacher_gone') return respondError('Teacher not found', 404);
     // WHICH entry, asked of the database, because a zero row count does not
     // say — and either family can be the answer, since both live in one
     // table now. On `prisma`, never on a transaction client: the one above

@@ -164,6 +164,9 @@ export const LOCK_CONTENTION_TESTS = [
   'src/services/teacher-photo-lock-order.test.ts',
   // #721: the same shape, for the class reminder's student claim.
   'src/services/class-reminders-lock-order.test.ts',
+  // #758: the `teachers/[id]/route-lock-order.test.ts` shape, for the
+  // currency switch and the creators it serialises with.
+  'src/services/currency-switch-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

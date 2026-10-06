@@ -191,4 +191,44 @@ describe('PUT /api/teachers/[id] during an erasure writes nothing (#758)', () =>
       await prisma.account.deleteMany({ where: { id: subject.accountId } });
     }
   }, 20_000);
+
+  // The currency branch runs in its own transaction, whose first statement
+  // is the switch's `FOR NO KEY UPDATE` on this row: it parks behind the
+  // erasure, then finds the row erased and answers the same 404.
+  it('answers 404 to a currency switch and leaves the anonymised row as the erasure left it', async () => {
+    const subject = await makeTeacher('erased-currency');
+    try {
+      const token = await seedSession(prisma, subject.accountId);
+      const { res, parked } = await raceBehindHolder(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${subject.id} FOR NO KEY UPDATE`;
+          await tx.teacher.update({
+            where: { id: subject.id },
+            data: { bio: '', firstName: 'Deleted', deletedAt: new Date() },
+          });
+        },
+        () => PUT(
+          new NextRequest(`http://localhost:3000/api/teachers/${subject.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...cookie(token) },
+            body: JSON.stringify({ currency: 'GBP', bio: 'new PII bio' }),
+          }),
+          { params: Promise.resolve({ id: subject.id }) },
+        ),
+      );
+
+      expect(parked).toBe(true);
+      expect(res.status).toBe(404);
+      expect(
+        await prisma.teacher.findUniqueOrThrow({
+          where: { id: subject.id },
+          select: { bio: true, firstName: true, currency: true },
+        }),
+      ).toEqual({ bio: '', firstName: 'Deleted', currency: 'EUR' });
+    } finally {
+      await prisma.session.deleteMany({ where: { accountId: subject.accountId } });
+      await prisma.teacher.deleteMany({ where: { id: subject.id } });
+      await prisma.account.deleteMany({ where: { id: subject.accountId } });
+    }
+  }, 20_000);
 });

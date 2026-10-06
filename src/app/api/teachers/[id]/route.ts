@@ -1,7 +1,10 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import type { Currency, Teacher } from '@prisma/client';
+import type { z } from 'zod';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
+  respondUnchanged,
   respondError,
   requireTeacher,
   parseBody,
@@ -12,6 +15,16 @@ import { updateTeacherSchema, PAGE_SLUG_TAKEN_MESSAGE, BANK_HOLDER_NAME_REQUIRED
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { nonBlank } from '@/lib/payment-methods';
+import { switchTeacherCurrency, type CurrencySwitchResult } from '@/services/currency-switch';
+
+type UpdateTeacherInput = z.infer<typeof updateTeacherSchema>;
+
+/**
+ * The switch locks the teacher, every template and every class it relabels,
+ * each wait bounded at 2s by `setLockTimeout`; Prisma's 5s default would cut
+ * a switch short behind a few contended rows with a code-less 503.
+ */
+const CURRENCY_SAVE_TIMEOUT_MS = 15_000;
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -83,6 +96,10 @@ export const PUT = withErrorHandler(async (
     }
   }
 
+  if (updateData.currency !== undefined) {
+    return putWithCurrency(id, updateData.currency, withoutCurrency(updateData));
+  }
+
   // Scoped to a live row. An erasure holds this row from its first statement
   // to its commit, so this write can wait behind one; once it commits the
   // row is re-checked, and matched by `id` alone it would still match and
@@ -95,12 +112,8 @@ export const PUT = withErrorHandler(async (
     });
     if (count === 0) return respondError('Teacher not found', 404);
   } catch (err) {
-    if (isUniqueConflictOn(err, ['pageSlug'])) {
-      return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
-    }
-    if (isCheckViolationOn(err, 'Teacher_bank_holder_name_check')) {
-      return respondError(BANK_HOLDER_NAME_REQUIRED_MESSAGE, 400);
-    }
+    const refusal = refusalForWriteError(err);
+    if (refusal) return refusal;
     throw err;
   }
 
@@ -108,3 +121,66 @@ export const PUT = withErrorHandler(async (
   if (!teacher) return respondError('Teacher not found', 404);
   return respondOk(teacher);
 });
+
+type TeacherFields = Omit<UpdateTeacherInput, 'currency'>;
+
+function withoutCurrency({ currency: _currency, ...rest }: UpdateTeacherInput): TeacherFields {
+  return rest;
+}
+
+/** The answer to a write the database refused for a reason the teacher can act on. */
+function refusalForWriteError(err: unknown): NextResponse | null {
+  if (isUniqueConflictOn(err, ['pageSlug'])) {
+    return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
+  }
+  if (isCheckViolationOn(err, 'Teacher_bank_holder_name_check')) {
+    return respondError(BANK_HOLDER_NAME_REQUIRED_MESSAGE, 400);
+  }
+  return null;
+}
+
+/**
+ * A save that names a currency: the switch and the other fields in one
+ * transaction, the switch first because its teacher lock is that
+ * transaction's first lock (`switchTeacherCurrency`). A refusal of another
+ * field rolls the switch back with it. The other fields' write keeps the
+ * live-row scope of the plain save above; holding the lock, it cannot miss.
+ */
+async function putWithCurrency(
+  id: string,
+  currency: Currency,
+  fields: TeacherFields,
+): Promise<NextResponse> {
+  const hasFields = Object.keys(fields).length > 0;
+  let outcome:
+    | { kind: 'gone' }
+    | { kind: 'unchanged'; teacher: Teacher }
+    | { kind: 'saved'; teacher: Teacher; currencySwitch: CurrencySwitchResult | null };
+  try {
+    outcome = await prisma.$transaction(async (tx) => {
+      const switched = await switchTeacherCurrency(tx, id, currency);
+      if (switched === 'teacher_gone') return { kind: 'gone' as const };
+      if (switched === 'unchanged' && !hasFields) {
+        return { kind: 'unchanged' as const, teacher: await tx.teacher.findUniqueOrThrow({ where: { id } }) };
+      }
+      if (hasFields) {
+        const { count } = await tx.teacher.updateMany({ where: { id, deletedAt: null }, data: fields });
+        if (count === 0) return { kind: 'gone' as const };
+      }
+      return {
+        kind: 'saved' as const,
+        teacher: await tx.teacher.findUniqueOrThrow({ where: { id } }),
+        currencySwitch: switched === 'unchanged' ? null : switched,
+      };
+    }, { timeout: CURRENCY_SAVE_TIMEOUT_MS });
+  } catch (err) {
+    const refusal = refusalForWriteError(err);
+    if (refusal) return refusal;
+    throw err;
+  }
+
+  if (outcome.kind === 'gone') return respondError('Teacher not found', 404);
+  if (outcome.kind === 'unchanged') return respondUnchanged<Teacher>(outcome.teacher);
+  if (outcome.currencySwitch === null) return respondOk(outcome.teacher);
+  return respondOk({ ...outcome.teacher, currencySwitch: outcome.currencySwitch });
+}
