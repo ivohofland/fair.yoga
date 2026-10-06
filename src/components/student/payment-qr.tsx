@@ -17,8 +17,9 @@ interface PaymentQrProps {
 }
 
 /**
- * EPC QR (the "Girocode" EU banking apps scan): beneficiary, IBAN, amount,
- * and a remittance line. Generated client-side — no bank data leaves the page.
+ * EPC QR (the "Girocode" EU banking apps scan): beneficiary, IBAN, the BIC
+ * when there is one, amount, and a remittance line. Generated client-side — no
+ * bank data leaves the page.
  */
 export function PaymentQr({ iban, bic, beneficiary, amount, currency, remittance }: PaymentQrProps) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);

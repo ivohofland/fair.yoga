@@ -233,7 +233,7 @@ A hand-authored CHECK pins the column set per currency (pattern:
 | CHF, SEK, NOK, DKK | IBAN | `iban`; `bic` optional | `sortCode`, `accountNumber`, `routingNumber` | transfer |
 
 `holderName` is non-blank in every row (it replaces the
-`teacher_bank_holder_name_check` pairing — Verification of Payee needs it for
+`Teacher_bank_holder_name_check` pairing — Verification of Payee needs it for
 every scheme).
 
 The EEA-country rule for the BIC is a service rule, not a CHECK: the EEA list is
@@ -253,18 +253,20 @@ change.
 
 The TS side is a discriminated union `BankDetails` keyed by scheme;
 `bankDetailsFromRow(row)` is the one parser from a row to the union and returns
-`null` for a row the CHECK should have made impossible, logged.
+`null` for a row the CHECK should have made impossible; `paymentMethodsFor`
+logs it.
 
 ### B3. Methods
 
 ```ts
 export type PaymentMethod =
   | { kind: 'bank_transfer'; beneficiary: string; details: BankDetails }
-  | { kind: 'epc_qr'; beneficiary: string; iban: string; bic: string | null };
+  | { kind: 'epc_qr'; beneficiary: string; iban: string; bic: string | null; currency: typeof EPC_QR_CURRENCY };
 ```
 
-`paymentMethodsFor(account: TeacherBankAccount | null)` returns transfer for
-every scheme, plus `epc_qr` for EUR only. `PaymentQr` encodes version `002`
+`paymentMethodsFor(account: StoredBankAccount | null)` (the row as
+`bankAccountSelect` reads it) returns transfer for every scheme, plus `epc_qr`
+for EUR only. `PaymentQr` encodes version `002`
 when `bic` is null and `001` with the BIC when present; the currency field
 stays `EUR` because the type admits nothing else.
 
@@ -324,7 +326,7 @@ schema's 400).
 ### B5. Migration
 
 `bankIban`/`bankAccountName` rows become `EUR` `TeacherBankAccount` rows (where
-both are set), then the two columns and `teacher_bank_holder_name_check` are
+both are set), then the two columns and `Teacher_bank_holder_name_check` are
 dropped. The seed is updated (the GBP teacher's account becomes a UK sort-code
 account). GDPR export includes the accounts; erasure deletes them.
 

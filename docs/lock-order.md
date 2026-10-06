@@ -2087,16 +2087,17 @@ generation in flight and its class lock sees the rows that generation
 committed; a generation that starts later waits on its template and reads the
 new currency.
 
-Re-derive the sites with:
+Re-derive the call sites with:
 
-    grep -rn "lockTeacherForNoKeyUpdate\|lockTeacherForShare\|lockLiveTeacher" src | grep -v "\.test\."
+    grep -rnE "(lockTeacherForNoKeyUpdate|lockTeacherForShare|lockLiveTeacher)\(" src | grep -v "\.test\." | grep -v "db-locks.ts" | grep -vE ":[0-9]+: *(\*|//)"
 
-Run on 2026-10-06 after the bank-account sites landed, the lines that call a
-helper (not imports, comments or the definitions in `db-locks.ts`) were nine:
-`classes/route.ts`, `studio-classes/route.ts`, `class-template-lifecycle.ts`,
+It prints call lines only: an import has no `(` after the name, and the last
+two filters drop the definitions and comment lines. Run on 2026-10-06 after the
+bank-account sites landed, it printed `classes/route.ts`,
+`studio-classes/route.ts`, `class-template-lifecycle.ts`,
 `studio-class-template-lifecycle.ts`, `gdpr.ts`, `currency-switch.ts`,
-`teacher-photo.ts`, and `bank-accounts.ts` twice. Every one is named in an
-entry above.
+`teacher-photo.ts`, and `bank-accounts.ts` (its save and its removal), each a
+site with an entry above. Re-derive the list rather than trusting it.
 
 ### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`
 
@@ -2126,11 +2127,11 @@ that mode:
   The generator test pins the same mechanism.
 
 A `TeacherBankAccount` insert holds no template or `Class` row, so it closes no
-cycle of this kind and waits on neither.
+cycle of this kind: it holds no row a template or `Class` lock waits on.
 
 `FOR NO KEY UPDATE` does not conflict with `FOR KEY SHARE`, so neither insert
-waits. It does conflict with `FOR SHARE` (the photo gate, and the creators
-above) and with itself (erasure against the switch), and those are the
+waits. It does conflict with `FOR SHARE` (every `lockTeacherForShare` and
+`lockLiveTeacher` site above) and with itself (erasure against the switch), and those are the
 serialisations this node exists for. `src/lib/db-locks.test.ts`, "the Teacher
 first lock (#758)", probes each mode with `NOWAIT`.
 
