@@ -1,10 +1,12 @@
 import type { Currency, PrismaClient, TeacherBankAccount } from '@prisma/client';
+import type { z } from 'zod';
 import { lockTeacherForShare } from '@/lib/db-locks';
+import type { bankAccountSchema } from '@/lib/schemas';
 import {
   parseBankDetails,
+  type BankAccountColumns,
   type BankDetails,
-  type BankDetailsError,
-  type BankDetailsInput,
+  type BankDetailsFailure,
 } from '@/lib/bank-details';
 
 /**
@@ -13,19 +15,21 @@ import {
  * outcome to a response.
  */
 
-export type BankAccountInput = BankDetailsInput & { holderName: string };
+/** The body `bankAccountSchema` accepts, so the route's parse and this input cannot drift. */
+export type BankAccountInput = z.infer<typeof bankAccountSchema>;
 
-export type BankAccountField = keyof BankAccountInput;
+/** A refusal and the field it names: a scheme field's, or the holder name's. */
+export type BankAccountFailure = BankDetailsFailure | { error: 'holder_required'; field: 'holderName' };
 
 export type SaveBankAccountOutcome =
   | { kind: 'saved'; account: TeacherBankAccount }
-  | { kind: 'invalid'; error: BankDetailsError | 'holder_required'; field: BankAccountField }
+  | { kind: 'invalid'; failure: BankAccountFailure }
   | { kind: 'teacher_gone' };
 
 export type RemoveBankAccountOutcome = { kind: 'removed' } | { kind: 'absent' } | { kind: 'teacher_gone' };
 
 /** Every scheme column, the ones `details`' scheme does not use set to null. */
-function columnsFor(details: BankDetails): Required<{ [K in keyof BankDetailsInput]: string | null }> {
+function columnsFor(details: BankDetails): BankAccountColumns {
   switch (details.scheme) {
     case 'sepa':
     case 'iban':
@@ -54,9 +58,9 @@ export async function saveBankAccount(
   input: BankAccountInput,
 ): Promise<SaveBankAccountOutcome> {
   const parsed = parseBankDetails(currency, input);
-  if (!parsed.ok) return { kind: 'invalid', error: parsed.error, field: parsed.field };
+  if (!parsed.ok) return { kind: 'invalid', failure: parsed.failure };
   const holderName = input.holderName.trim();
-  if (holderName === '') return { kind: 'invalid', error: 'holder_required', field: 'holderName' };
+  if (holderName === '') return { kind: 'invalid', failure: { error: 'holder_required', field: 'holderName' } };
   const columns = columnsFor(parsed.details);
 
   return db.$transaction(async (tx): Promise<SaveBankAccountOutcome> => {

@@ -8,8 +8,7 @@ import {
 } from '@/lib/api-utils';
 import { bankAccountSchema } from '@/lib/schemas';
 import { formatIssues } from '@/lib/validation-message';
-import type { BankDetailsError } from '@/lib/bank-details';
-import { saveBankAccount, removeBankAccount, type SaveBankAccountOutcome } from '@/services/bank-accounts';
+import { saveBankAccount, removeBankAccount, type BankAccountFailure } from '@/services/bank-accounts';
 
 type Params = { params: Promise<{ id: string; currency: string }> };
 
@@ -25,15 +24,15 @@ const INVALID_MESSAGES = {
   routing_number_invalid: 'Enter a valid nine-digit routing number',
   field_not_in_scheme: 'Accounts in this currency don’t use this field',
   holder_required: 'Enter the account holder’s name',
-} as const satisfies Record<BankDetailsError | 'holder_required', string>;
+} as const satisfies Record<BankAccountFailure['error'], string>;
 
 /**
  * The 400 for an invalid field, in `parseBody`'s `path: message` shape so a
  * client reads the field back the same way. `bic_required` carries its code.
  */
-function respondInvalid(outcome: Extract<SaveBankAccountOutcome, { kind: 'invalid' }>): NextResponse {
-  const message = formatIssues([{ path: [outcome.field], message: INVALID_MESSAGES[outcome.error] }]);
-  return outcome.error === 'bic_required'
+function respondInvalid({ error, field }: BankAccountFailure): NextResponse {
+  const message = formatIssues([{ path: [field], message: INVALID_MESSAGES[error] }]);
+  return error === 'bic_required'
     ? respondError(message, 400, 'BIC_REQUIRED')
     : respondError(message, 400);
 }
@@ -64,7 +63,7 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: Params
     case 'saved':
       return respondOk(outcome.account);
     case 'invalid':
-      return respondInvalid(outcome);
+      return respondInvalid(outcome.failure);
     case 'teacher_gone':
       log.info({ teacherId: target.id }, 'bank account save refused: the teacher was erased');
       return respondError('Teacher not found', 404);
