@@ -1002,4 +1002,21 @@ describe('NewClassPage', () => {
       expect(screen.getByLabelText('Min students')).toHaveAccessibleDescription('Min students must be at least 1');
     });
   });
+
+  it('feeds the pricing preview from the rate fields as the teacher types', async () => {
+    stubFetch();
+    render(<CreateClassPage />);
+    fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    fireEvent.change(await screen.findByLabelText('Target rate'), { target: { value: '45' } });
+
+    // the room's 30 places on a minimum of 4 open the preview at 17 students:
+    // 15 + (45 − 15) × 13 / 26 = 30, plus the room's €20
+    expect(screen.getByText('€30.00')).toBeTruthy();
+    expect(screen.getByText('€50.00')).toBeTruthy();
+  });
 });
