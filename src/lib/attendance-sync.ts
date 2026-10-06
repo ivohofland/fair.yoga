@@ -296,6 +296,25 @@ export function flushAttendance(ownerId: string): Promise<void> {
   return running;
 }
 
+/** How long an action that leaves queued changes behind (signing out, finishing a class) waits on a flush before it asks. */
+export const FLUSH_WAIT_MS = 3_000;
+
+/**
+ * Flushes `ownerId`'s entries, settling when the flush does or after
+ * `FLUSH_WAIT_MS`, whichever comes first. Never rejects: a failed flush is
+ * logged under `tag`.
+ */
+export async function flushWithinWait(ownerId: string, tag: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, FLUSH_WAIT_MS);
+  });
+  const flushed = flushAttendance(ownerId)
+    .catch((err: unknown) => logRequestFailure(tag, { step: 'flush' }, err))
+    .finally(() => clearTimeout(timer));
+  await Promise.race([flushed, timedOut]);
+}
+
 export function startAttendanceSync(ownerId: string): () => void {
   const flush = (): void => {
     void flushAttendance(ownerId);
