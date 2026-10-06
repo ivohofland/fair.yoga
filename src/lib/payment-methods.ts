@@ -1,12 +1,24 @@
 import type { Currency } from '@prisma/client';
 
 /**
+ * The one currency a bank method carries: the one stored account is read as a
+ * euro account, and an EPC QR can only carry euros.
+ */
+export const BANK_METHOD_CURRENCY = 'EUR' as const satisfies Currency;
+export type BankMethodCurrency = typeof BANK_METHOD_CURRENCY;
+
+/** Whether a payment in `currency` can be offered a bank method. */
+export function bankMethodsAvailable(currency: Currency): currency is BankMethodCurrency {
+  return currency === BANK_METHOD_CURRENCY;
+}
+
+/**
  * One way a student can pay a teacher. A new kind fails the build at
  * `PAYMENT_METHOD_COPY` until it has a label and hint.
  */
 export type PaymentMethod =
   | { kind: 'bank_transfer'; iban: string; beneficiary: string }
-  | { kind: 'epc_qr'; iban: string; beneficiary: string };
+  | { kind: 'epc_qr'; iban: string; beneficiary: string; currency: BankMethodCurrency };
 
 export type PaymentMethodKind = PaymentMethod['kind'];
 
@@ -29,9 +41,7 @@ export function nonBlank(value: string | null | undefined): string | null {
  * the payer's bank checks the name against the IBAN (Verification of Payee),
  * and a name that is not the account's draws a mismatch warning.
  *
- * Only euro payments get a method: Part A treats the one stored account as
- * the euro account (per-currency accounts arrive in Part B), and an EPC QR can
- * only carry euros.
+ * Only a payment in `BANK_METHOD_CURRENCY` gets a method.
  */
 export function paymentMethodsFor(
   teacher: {
@@ -40,12 +50,12 @@ export function paymentMethodsFor(
   },
   currency: Currency,
 ): PaymentMethod[] {
-  if (currency !== 'EUR') return [];
+  if (!bankMethodsAvailable(currency)) return [];
   const iban = nonBlank(teacher.bankIban);
   const beneficiary = nonBlank(teacher.bankAccountName);
   if (iban === null || beneficiary === null) return [];
   return [
     { kind: 'bank_transfer', iban, beneficiary },
-    { kind: 'epc_qr', iban, beneficiary },
+    { kind: 'epc_qr', iban, beneficiary, currency },
   ];
 }

@@ -3,11 +3,14 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { formatMoney } from '@/lib/format';
+import type { BankMethodCurrency } from '@/lib/payment-methods';
 
 interface PaymentQrProps {
   iban: string;
   beneficiary: string;
   amount: number;
+  /** The QR's currency, which the EPC format fixes. */
+  currency: BankMethodCurrency;
   remittance: string;
 }
 
@@ -15,7 +18,7 @@ interface PaymentQrProps {
  * EPC QR (the "Girocode" EU banking apps scan): beneficiary, IBAN, amount,
  * and a remittance line. Generated client-side — no bank data leaves the page.
  */
-export function PaymentQr({ iban, beneficiary, amount, remittance }: PaymentQrProps) {
+export function PaymentQr({ iban, beneficiary, amount, currency, remittance }: PaymentQrProps) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,7 +30,7 @@ export function PaymentQr({ iban, beneficiary, amount, remittance }: PaymentQrPr
       '', // BIC — optional since EPC v2
       beneficiary.slice(0, 70),
       iban.replace(/\s/g, ''),
-      `EUR${amount.toFixed(2)}`,
+      `${currency}${amount.toFixed(2)}`,
       '',
       '',
       remittance.slice(0, 140),
@@ -40,14 +43,14 @@ export function PaymentQr({ iban, beneficiary, amount, remittance }: PaymentQrPr
         console.error('[payment-qr] QR generation failed:', err);
         setDataUrl(null);
       });
-  }, [iban, beneficiary, amount, remittance]);
+  }, [iban, beneficiary, amount, currency, remittance]);
 
   if (!dataUrl) return null;
 
   return (
     <div className="mt-3">
       {/* eslint-disable-next-line @next/next/no-img-element -- data URL, no optimization needed */}
-      <img src={dataUrl} alt={`Payment QR: ${formatMoney(amount, 'EUR')} to ${beneficiary}`} width={160} height={160} className="rounded-field border border-border" />
+      <img src={dataUrl} alt={`Payment QR: ${formatMoney(amount, currency)} to ${beneficiary}`} width={160} height={160} className="rounded-field border border-border" />
       <p className="type-caption mt-1">Scan with your banking app</p>
     </div>
   );

@@ -42,7 +42,13 @@ function MethodPanel({
       );
     case 'epc_qr':
       return (
-        <PaymentQr iban={method.iban} beneficiary={method.beneficiary} amount={amount} remittance={reference} />
+        <PaymentQr
+          iban={method.iban}
+          beneficiary={method.beneficiary}
+          amount={amount}
+          currency={method.currency}
+          remittance={reference}
+        />
       );
     default: {
       // A kind added to `PaymentMethod` without a panel fails the build here.
