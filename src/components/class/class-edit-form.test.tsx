@@ -461,4 +461,13 @@ describe('ClassEditForm', () => {
     // its data is stale, so there is nothing here for #247's refresh to do.
     expect(routerRefresh).not.toHaveBeenCalled();
   });
+
+  it('feeds the pricing preview from the rate fields as the teacher types', () => {
+    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+    fireEvent.change(screen.getByLabelText('Target rate (€)'), { target: { value: '45' } });
+
+    // 8 students on 4–12: 15 + (45 − 15) × 4 / 8 = 30, plus the €20 room
+    expect(screen.getByText('€30.00')).toBeTruthy();
+    expect(screen.getByText('€50.00')).toBeTruthy();
+  });
 });
