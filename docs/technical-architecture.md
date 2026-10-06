@@ -567,8 +567,9 @@ Full design and the alternatives it rejected: `docs/superpowers/specs/2026-10-04
 | 2xx with any other body, 409 `CONCURRENT_MODIFICATION`, 408, 429, 5xx | kept; retried on the next trigger or the backoff |
 | timeout, network failure | kept, and the pass stops; retried on the next trigger or the backoff |
 | 401 | kept; the pass stops, and the status line adds "sign in to sync them" until a later pass gets a 2xx |
-| 403 | dropped silently: the UI reaches it only through one account's stored page tapped under another account's cookie, and a refusal would show the first account's student to the second |
-| any other 4xx | refused, with the server's message; never retried |
+| 403 with the app's JSON error body (`{ error: { message, code? } }`) | dropped, and logged with the registration id and status (no name): the signed-in account may not write this registration, and a refusal shown here could show one account's student to another |
+| any other 4xx with the app's JSON error body | refused, with the server's message; never retried |
+| a 4xx, 403 included, without the app's JSON error body (a proxy, captive portal or filter answered) | kept and logged; retried on the next trigger or the backoff |
 
 Refusals are matched to the mounted list by class, not by row: a refusal for the mounted list's class shows below the rows in its `role="alert"`, with a Dismiss button. One that arrives while the list is mounted also refreshes the page, so the next tap is judged against what is now true; one already stored when the list mounted does not, and a success refreshes nothing. Refusals for a class whose list is not mounted show in the layout's status line instead, with a link to the class. A refusal stays until it is dismissed, expires, or a later write for the same registration is confirmed; a retap alone leaves it, since the retry has proved nothing yet. The list and the status line both read the outbox through `ownedOutbox`, so each shows only the signed-in account's pending and refused entries.
 
