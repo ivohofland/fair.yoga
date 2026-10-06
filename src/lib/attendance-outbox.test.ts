@@ -599,6 +599,105 @@ describe('attendance outbox', () => {
     }
   });
 
+  it('a memory-only correction stays when a stored confirmation stamped ahead of this device’s clock comes into view', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = new Date('2026-10-04T12:00:00Z').getTime();
+    vi.setSystemTime(now);
+    await enqueueAttendance(input('attended', 'r1'));
+    const sent = await enqueueAttendance(input('attended', 'r5'));
+    await settleEntry(sent, { kind: 'confirmed', at: now + 6 * 60_000 });
+    refuseWhere((value) => pendingStatusIn(value, 'r5') === 'no_show');
+    await enqueueAttendance(input('no_show', 'r5'));
+    expect(getOutbox().confirmed.r5).toBeUndefined();
+
+    vi.setSystemTime(now + 2 * 60_000);
+    await enqueueAttendance(input('attended', 'r6'));
+    expect(readOutbox().pending.r5?.status).toBe('no_show');
+  });
+
+  it('a memory-only correction stays when another tab’s write prunes a stored confirmation stamped ahead of this device’s clock', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = new Date('2026-10-04T12:00:00Z').getTime();
+    vi.setSystemTime(now);
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      const sent = await enqueueAttendance(input('attended', 'r5'));
+      await settleEntry(sent, { kind: 'confirmed', at: now + 6 * 60_000 });
+      refuseWhere((value) => pendingStatusIn(value, 'r5') === 'no_show');
+      await enqueueAttendance(input('no_show', 'r5'));
+      expect(localStorage.getItem(KEY)).toContain('"confirmed":{"r5"');
+      vi.setSystemTime(now + 30_000);
+      await other.enqueueAttendance(input('attended', 'r9'));
+      expect(localStorage.getItem(KEY)).not.toContain('"confirmed":{"r5"');
+
+      expect(readOutbox().pending.r5?.status).toBe('no_show');
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
+  it('a correction held while storage could not be read stays when a stored confirmation stamped ahead comes into view', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = new Date('2026-10-04T12:00:00Z').getTime();
+    vi.setSystemTime(now);
+    await enqueueAttendance(input('attended', 'r1'));
+    const sent = await enqueueAttendance(input('attended', 'r5'));
+    await settleEntry(sent, { kind: 'confirmed', at: now + 6 * 60_000 });
+    getOutbox();
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+      throw new DOMException('read', 'UnknownError');
+    });
+    await enqueueAttendance(input('no_show', 'r5'));
+
+    vi.setSystemTime(now + 2 * 60_000);
+    await enqueueAttendance(input('attended', 'r6'));
+    expect(readOutbox().pending.r5?.status).toBe('no_show');
+  });
+
+  it('a correction whose refused write leaves storage empty stays in this tab on the next read', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unsubscribe = subscribeOutbox(() => {});
+    try {
+      await enqueueAttendance(input('attended', 'r1'));
+      quota(() => 0);
+      await enqueueAttendance(input('no_show', 'r1'));
+      expect(localStorage.getItem(KEY)).toBeNull();
+
+      fireStorage();
+      expect(getOutbox().pending.r1?.status).toBe('no_show');
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('a memory-only mark stays when the stored refusal beside it expires and another tab’s write prunes it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = new Date('2026-10-04T12:00:00Z').getTime();
+    vi.setSystemTime(now - 7 * 24 * 60 * 60 * 1000 + 60_000);
+    vi.resetModules();
+    const other = await import('@/lib/attendance-outbox');
+    try {
+      const sent = await enqueueAttendance(input('attended', 'r5'));
+      await settleEntry(sent, { kind: 'refused', message: 'Class is finished' });
+      vi.setSystemTime(now);
+      refuseWhere((value) => pendingStatusIn(value, 'r5') === 'no_show');
+      await enqueueAttendance(input('no_show', 'r5'));
+      vi.setSystemTime(now + 2 * 60_000);
+      await other.enqueueAttendance(input('attended', 'r9'));
+      expect(localStorage.getItem(KEY)).not.toContain('"refused":{"r5"');
+
+      expect(readOutbox().pending.r5?.status).toBe('no_show');
+    } finally {
+      other.resetOutboxForTests();
+    }
+  });
+
   it('once a whole write succeeds again, storage holds everything and nothing is volatile', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { result } = renderHook(() => useOutboxVolatile('a'));
