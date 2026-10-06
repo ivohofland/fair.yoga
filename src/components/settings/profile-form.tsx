@@ -38,8 +38,9 @@ export interface ProfileFormValues {
  * catches it at compile time. Both pins reach the wire body because
  * `handleSubmit` builds it as a `payload` literal typed `ProfileFormWire` —
  * the same keys, `currency` optional — and stringifies that literal directly:
- * the same excess-property check that guards this alias guards the object
- * actually sent.
+ * the excess-property check on that literal guards every key of the object
+ * actually sent but `currency`, which enters through a spread, where no such
+ * check applies; `ProfileFormWire` types its value.
  */
 const _formCoversSchema: NoneOf<Exclude<Exclude<keyof UpdateTeacherWire, keyof NotificationPrefsBody>, keyof ProfileFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof ProfileFormValues, keyof UpdateTeacherWire>> = true;
@@ -268,7 +269,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
           hint={
             bankMethodsAvailable(form.currency)
               ? undefined
-              : 'Students are shown your bank details only for euro payments, for now.'
+              : 'Students are shown your bank details only for euro payments.'
           }
         />
         <Input

@@ -276,7 +276,7 @@ describe('ProfileForm', () => {
   });
 
   describe('the euro-only bank details caption (#758)', () => {
-    const caption = 'Students are shown your bank details only for euro payments, for now.';
+    const caption = 'Students are shown your bank details only for euro payments.';
 
     it('is absent while the currency is EUR', () => {
       renderForm();
