@@ -11,7 +11,8 @@ export const SESSION_COOKIE_NAME = 'fair_yoga_session';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
-const THIRTY_DAYS_SECONDS = 30 * 24 * 60 * 60; // 2592000
+const ABSOLUTE_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
+const ABSOLUTE_LIFETIME_SECONDS = ABSOLUTE_LIFETIME_MS / 1000;
 
 function hashToken(token: string): string {
   const bytes = sha256(new TextEncoder().encode(token));
@@ -65,7 +66,9 @@ export async function validateSession(
     return null;
   }
 
-  if (session.expiresAt <= new Date()) {
+  const now = Date.now();
+  const ceiling = session.createdAt.getTime() + ABSOLUTE_LIFETIME_MS;
+  if (session.expiresAt.getTime() <= now || ceiling <= now) {
     // deleteMany is idempotent against concurrent deletions (no P2025 thrown
     // if the row was already deleted) while surfacing genuine database errors.
     await db.session.deleteMany({ where: { id: sessionHash } });
@@ -100,13 +103,15 @@ export async function validateSession(
     return null;
   }
 
-  // Extend session if more than 15 days old
-  const fifteenDaysAgo = new Date(Date.now() - FIFTEEN_DAYS_MS);
-  if (session.createdAt < fifteenDaysAgo) {
+  // Slide the expiry forward once fewer than 15 days remain, never past the
+  // absolute ceiling measured from createdAt.
+  if (session.expiresAt.getTime() - now < FIFTEEN_DAYS_MS) {
     try {
       await db.session.update({
         where: { id: sessionHash },
-        data: { expiresAt: new Date(Date.now() + THIRTY_DAYS_MS) },
+        data: {
+          expiresAt: new Date(Math.min(now + THIRTY_DAYS_MS, ceiling)),
+        },
       });
     } catch (err) {
       // Concurrently deleted between read and update (e.g. logout or GDPR erasure)
@@ -188,7 +193,7 @@ export function getSessionToken(request: NextRequest): string | null {
 }
 
 export function setSessionCookie(headers: Headers, token: string): void {
-  let cookie = `${SESSION_COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${THIRTY_DAYS_SECONDS}`;
+  let cookie = `${SESSION_COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ABSOLUTE_LIFETIME_SECONDS}`;
   if (process.env.NODE_ENV === 'production') {
     cookie += '; Secure';
   }
