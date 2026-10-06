@@ -551,9 +551,11 @@ describe('processEmailFallback (DB)', () => {
       }
     });
 
-    // The button follows the class's teacher: one with a payment method gets
-    // the student a Pay now link to that class's pay page, one without gets
-    // no pay link at all.
+    // The button follows the class's teacher and the class's own currency: a
+    // euro class whose teacher has a payment method gets the student a Pay now
+    // link to that class's pay page; a class whose teacher has none, or a GBP
+    // class under that same teacher (a bank method is euro-only), gets no pay
+    // link at all.
     it('gives a student payment email a Pay now link only when the class teacher has a payment method', async () => {
       const bankEmail = `fallback-bank-${uniqueSuffix}@test.local`;
       const studentEmail = `fallback-payer-${uniqueSuffix}@test.local`;
@@ -604,6 +606,22 @@ describe('processEmailFallback (DB)', () => {
           status: 'completed',
         });
         classIds.push(bankClass.id);
+        const poundClass = await createClassFixture(prisma, {
+          teacherId: bankTeacher.id,
+          teacherRoomId: teacherRoom.id,
+          classType: 'Vinyasa',
+          date: new Date('2026-06-02'),
+          startTime: hhmmToTime('09:00'),
+          durationMinutes: 60,
+          roomCost: 30,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents: 10,
+          status: 'completed',
+          currency: 'GBP',
+        });
+        classIds.push(poundClass.id);
 
         const student = await prisma.student.create({
           data: { firstName: 'Paying', lastName: 'Student', email: studentEmail },
@@ -626,14 +644,17 @@ describe('processEmailFallback (DB)', () => {
         const withoutMethods = await prisma.notification.create({
           data: { ...common, title: 'Priced without methods', relatedClassId: laterClassId },
         });
-        perTestNotificationIds.push(withMethods.id, withoutMethods.id);
+        const inPounds = await prisma.notification.create({
+          data: { ...common, title: 'Priced in pounds', relatedClassId: poundClass.id },
+        });
+        perTestNotificationIds.push(withMethods.id, withoutMethods.id, inPounds.id);
 
         const scoped = scopeSweep(prisma, {
-          Notification: { id: { in: [withMethods.id, withoutMethods.id] } },
+          Notification: { id: { in: [withMethods.id, withoutMethods.id, inPounds.id] } },
         });
         await processEmailFallback(scoped.db);
 
-        expect(sendsTo(studentEmail)).toBe(2);
+        expect(sendsTo(studentEmail)).toBe(3);
         const htmlFor = (subject: string): string => {
           const call = sendMock.mock.calls.find(([args]) => args.subject === subject);
           if (!call) throw new Error(`no email sent with subject "${subject}"`);
@@ -643,6 +664,8 @@ describe('processEmailFallback (DB)', () => {
         expect(htmlFor('Priced with methods')).toContain('Pay now');
         expect(htmlFor('Priced without methods')).not.toContain('/pay"');
         expect(htmlFor('Priced without methods')).not.toContain('Pay now');
+        expect(htmlFor('Priced in pounds')).not.toContain('/pay"');
+        expect(htmlFor('Priced in pounds')).not.toContain('Pay now');
       } finally {
         if (studentId !== undefined) {
           await prisma.notification.deleteMany({ where: { recipientId: studentId } });
