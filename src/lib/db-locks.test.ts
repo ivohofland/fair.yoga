@@ -24,6 +24,7 @@ import { claimTemplateForGeneration } from '@/services/class-generator';
 import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
 import { closeQueueOnStart, withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
 import { readSeatCount } from '@/services/capacity';
+import { switchTeacherCurrency } from '@/services/currency-switch';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -95,6 +96,11 @@ async function _theBrandRejectsABareClient(client: PrismaClient, lock: ClassLock
   await lockTeacherForNoKeyUpdate(client, 'never-called');
   // @ts-expect-error `SET LOCAL` then `FOR SHARE` on `Teacher` (#758).
   await lockTeacherForShare(client, 'never-called');
+  // @ts-expect-error `SET LOCAL` then `FOR SHARE` on `Teacher`, the photo upload's gate (#46).
+  await lockLiveTeacher(client, 'never-called');
+  // @ts-expect-error `FOR NO KEY UPDATE` on `Teacher`, then the template and
+  // `Class` locks and the relabelling writes they protect (#758).
+  await switchTeacherCurrency(client, 'never-called', 'EUR');
 }
 
 /**
