@@ -257,7 +257,7 @@ Each row takes the teacher to the real screen where they'll do this task in the 
 ```
 Sign up (magic link)
   → Profile setup (checklist row 1 — bio, skippable)
-    → Bank details (checklist row 2 — skippable)
+    → Bank details (checklist row 2 — skippable; not listed when the teacher's currency has no bank method, `bankMethodsAvailable`)
       → Add room (checklist row 3 — required)
         → Create class (checklist row 4 — required)
           → Completion card: share the booking page → Dismiss
