@@ -73,8 +73,6 @@ function isCurrency(value: string): value is Currency {
   return Object.hasOwn(CURRENCY_OPTION_LABELS, value);
 }
 
-const IBAN_CURRENCY_NOTE_ID = 'iban-currency-note';
-
 /**
  * What a currency switch did, in one line: the classes now in the new
  * currency, then, per currency, the ones that keep their own. Studio classes
@@ -263,19 +261,16 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       {/* Payment */}
       <section className="flex flex-col gap-4">
         <h2 className="type-subtitle">Payment</h2>
-        <div className="flex flex-col gap-1">
-          <Input
-            label="Bank IBAN"
-            value={form.bankIban ?? ''}
-            onChange={(e) => update('bankIban', e.target.value || null)}
-            aria-describedby={!bankMethodsAvailable(form.currency) ? IBAN_CURRENCY_NOTE_ID : undefined}
-          />
-          {!bankMethodsAvailable(form.currency) && (
-            <p id={IBAN_CURRENCY_NOTE_ID} className="type-caption">
-              Students are shown your bank details only for euro payments, for now.
-            </p>
-          )}
-        </div>
+        <Input
+          label="Bank IBAN"
+          value={form.bankIban ?? ''}
+          onChange={(e) => update('bankIban', e.target.value || null)}
+          hint={
+            bankMethodsAvailable(form.currency)
+              ? undefined
+              : 'Students are shown your bank details only for euro payments, for now.'
+          }
+        />
         <Input
           label="Account holder name"
           value={form.bankAccountName ?? ''}
