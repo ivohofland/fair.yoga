@@ -290,6 +290,24 @@ describe('AttendanceSyncStatus', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/^2 attendance changes couldn't be recorded\.$/);
   });
 
+  it('moves focus to the next refusal\'s Dismiss, and after the last to the block', async () => {
+    await refuse({ registrationId: 'reg-1', studentName: 'Asha' });
+    await refuse({ registrationId: 'reg-2', studentName: 'Ben' });
+    renderRegion();
+    const first = screen.getByRole('button', { name: /^Dismiss: Couldn't record Asha/ });
+    first.focus();
+    await act(async () => {
+      fireEvent.click(first);
+    });
+    const second = screen.getByRole('button', { name: /^Dismiss: Couldn't record Ben/ });
+    expect(second).toHaveFocus();
+    await act(async () => {
+      fireEvent.click(second);
+    });
+    expect(screen.queryByRole('button', { name: /^Dismiss/ })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Attendance sync' })).toHaveFocus();
+  });
+
   it('gives Open class and Dismiss full-height tap targets', async () => {
     await refuse();
     renderRegion();

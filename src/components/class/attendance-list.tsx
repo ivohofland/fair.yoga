@@ -130,6 +130,8 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
   // registration. Neither `outbox` nor `getOutbox()` holds them until it is
   // granted, and a second tap in that gap must toggle from the first one.
   const uncommitted = useRef(new Map<string, { status: QueuedStatus; tap: object }>());
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const dismissRefs = useRef(new Map<string, HTMLButtonElement>());
 
   async function toggleAttendance(owner: string, item: AttendanceItem) {
     const id = item.registrationId;
@@ -172,9 +174,21 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
   const waiting = Object.values(outbox.pending).filter((e) => e.classId === classId).length;
   const refused = Object.values(outbox.refused).filter((e) => e.classId === classId);
 
+  // Dismiss unmounts the focused button, so focus moves first: to the next refusal's Dismiss, else to the heading.
+  function dismiss(index: number): void {
+    const entry = refused[index];
+    if (entry === undefined) return;
+    const next = refused[index + 1];
+    const target = next === undefined ? undefined : dismissRefs.current.get(next.registrationId);
+    (target ?? headingRef.current)?.focus();
+    void dismissRefused(entry.registrationId);
+  }
+
   const heading = (
     <div className="flex items-baseline justify-between gap-4 mb-3">
-      <h2 className="type-subtitle">Attendance</h2>
+      <h2 ref={headingRef} tabIndex={-1} className="type-subtitle focus:outline-none">
+        Attendance
+      </h2>
       {waiting > 0 && <p className="type-caption">{waiting} waiting to sync</p>}
     </div>
   );
@@ -195,16 +209,20 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
     </p>
   );
 
-  const refusals = refused.map((entry) => {
+  const refusals = refused.map((entry, index) => {
     const line = refusalLine(entry);
     return (
       <div key={entry.registrationId} className="flex flex-wrap items-baseline gap-x-3 mt-3">
         <p className="type-caption text-danger">{line}</p>
         <button
+          ref={(el) => {
+            if (el === null) dismissRefs.current.delete(entry.registrationId);
+            else dismissRefs.current.set(entry.registrationId, el);
+          }}
           type="button"
           aria-label={`Dismiss: ${line}`}
           className="type-label text-brown-light hover:text-brown px-3 min-h-11 shrink-0"
-          onClick={() => void dismissRefused(entry.registrationId)}
+          onClick={() => dismiss(index)}
         >
           Dismiss
         </button>
