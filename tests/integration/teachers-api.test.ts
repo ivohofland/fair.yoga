@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Currency } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { expectRefusal } from '../api-assertions';
 import { isCheckViolationOn } from '@/lib/check-violation';
@@ -251,7 +251,7 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
    */
   describe('the database holds each currency to its scheme', () => {
     const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
-    type Row = { currency: 'EUR' | 'GBP' | 'USD' | 'CHF'; holderName: string } & Partial<Record<keyof typeof blank, string>>;
+    type Row = { currency: Currency; holderName: string } & Partial<Record<keyof typeof blank, string>>;
 
     async function store(row: Row): Promise<unknown> {
       await prisma.teacherBankAccount.deleteMany({ where: { teacherId: holderTeacherId } });
@@ -265,6 +265,9 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
       ['a EUR IBAN', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300' }],
       ['a EUR IBAN with its BIC', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A' }],
       ['a CHF IBAN', { currency: 'CHF', holderName: 'H. Teacher', iban: 'CH9300762011623852957' }],
+      ['a SEK IBAN', { currency: 'SEK', holderName: 'H. Teacher', iban: 'SE4550000000058398257466' }],
+      ['a NOK IBAN', { currency: 'NOK', holderName: 'H. Teacher', iban: 'NO9386011117947' }],
+      ['a DKK IBAN', { currency: 'DKK', holderName: 'H. Teacher', iban: 'DK5000400440116243' }],
       ['a GBP sort code and account number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678' }],
       ['a USD routing and account number', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567' }],
     ])('stores %s', async (_label, row) => {
@@ -277,12 +280,19 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
       ['a EUR IBAN of only spaces', { currency: 'EUR', holderName: 'H. Teacher', iban: '   ' }],
       ['a BIC of only spaces', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', bic: '  ' }],
       ['a EUR account with a sort code', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', sortCode: '123456' }],
+      ['a EUR account with an account number', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', accountNumber: '12345678' }],
+      ['a EUR account with a routing number', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', routingNumber: '021000021' }],
+      ['a CHF account with an account number', { currency: 'CHF', holderName: 'H. Teacher', iban: 'CH9300762011623852957', accountNumber: '12345678' }],
+      ['a CHF account with a routing number', { currency: 'CHF', holderName: 'H. Teacher', iban: 'CH9300762011623852957', routingNumber: '021000021' }],
       ['a GBP account with an IBAN', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', iban: 'GB29NWBK60161331926819' }],
       ['a GBP account with a BIC', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', bic: 'NWBKGB2L' }],
+      ['a GBP account with a routing number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', routingNumber: '021000021' }],
       ['a GBP account with no account number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456' }],
       ['a GBP sort code of only spaces', { currency: 'GBP', holderName: 'H. Teacher', sortCode: ' ', accountNumber: '12345678' }],
       ['a USD account with no routing number', { currency: 'USD', holderName: 'H. Teacher', accountNumber: '1234567' }],
       ['a USD account with a sort code', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', sortCode: '123456' }],
+      ['a USD account with an IBAN', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', iban: 'NL91ABNA0417164300' }],
+      ['a USD account with a BIC', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', bic: 'CHASUS33' }],
     ])('refuses %s', async (_label, row) => {
       const err = await store(row);
       expect(isCheckViolationOn(err, 'TeacherBankAccount_scheme_check')).toBe(true);
