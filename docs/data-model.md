@@ -109,7 +109,7 @@ first; one row per device is identity enough for dispatch and cleanup.
 | push_invitations | boolean, default false | Push for an invitation from another teacher |
 | **Payment settings** | | |
 | payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
-| *bank accounts* | → TeacherBankAccount, one per currency | Level 1 only; the teacher's bank details live in `TeacherBankAccount` (below), not on this row. Students see bank methods only from the account in the payment's own currency |
+| *bank accounts* | → TeacherBankAccount, one per currency | Not tied to the payment level: the teacher's bank details live in `TeacherBankAccount` (below), not on this row. Students see bank methods only from the account in the payment's own currency |
 | processor_type | enum: mollie, stripe | Level 2 only |
 | processor_account_id | string, nullable | Level 2 only |
 | **Timestamps** | | |
@@ -147,7 +147,7 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 
 `TeacherBankAccount_scheme_check` pins which columns each currency's scheme requires and which it leaves null; the migration that creates it states the exact column set per currency, and a currency it does not name is refused. `bankDetailsFromRow` (`src/lib/bank-details.ts`) is the one parser from a row to the typed scheme union, and `parseBankDetails` validates input for the path's currency (IBAN checksum and per-country length, BIC shape, sort code, ABA routing checksum).
 
-Students are shown bank methods from the account in the **payment's class currency** (`paymentMethodsFor`, `src/lib/payment-methods.ts`): a bank transfer for every scheme, plus an EPC QR when the scheme is SEPA, because an EPC QR can only carry euros (`EPC_QR_CURRENCY`). No account in that currency means no methods, and the pay page says to ask the teacher how to pay. Saving or removing an account is `PUT`/`DELETE /api/teachers/[id]/bank-accounts/[currency]` (`src/services/bank-accounts.ts`), gated by `lockTeacherForShare` (`docs/lock-order.md`, "The `Teacher` row is the first lock (#758)"). Onboarding's bank step is done when an account exists in the teacher's current currency. GDPR erasure deletes the rows; the teacher export lists them.
+Students are shown bank methods from the account in the **payment's class currency** (`paymentMethodsFor`, `src/lib/payment-methods.ts`): a bank transfer for every scheme, plus an EPC QR when the scheme is SEPA, because an EPC QR can only carry euros (`EPC_QR_CURRENCY`). No account in that currency means no methods, and the pay page tells the student to pay the teacher directly, "cash or transfer, whatever you two agreed", and that the teacher will mark it received. Saving or removing an account is `PUT`/`DELETE /api/teachers/[id]/bank-accounts/[currency]` (`src/services/bank-accounts.ts`), gated by `lockTeacherForShare` (`docs/lock-order.md`, "The `Teacher` row is the first lock (#758)"). Onboarding's bank step is done when an account exists in the teacher's current currency. GDPR erasure deletes the rows; the teacher export lists them.
 
 ### Student (core)
 

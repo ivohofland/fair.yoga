@@ -278,8 +278,9 @@ stays a compile error.
 Every consumer looks the account up by the **payment's class currency**:
 the pay page, the bookings page, `payment-reminders`, `payments.ts`,
 `email-fallback`, and the completion notification in `class-lifecycle`.
-No account in that currency → no methods; the pay page says to ask the teacher
-how to pay (existing no-methods copy).
+No account in that currency → no methods; the pay page tells the student to pay
+the teacher directly, cash or transfer, and that the teacher will mark it
+received (existing no-methods copy).
 
 ### B4. Settings
 

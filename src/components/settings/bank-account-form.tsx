@@ -63,17 +63,58 @@ interface BankAccountFormProps {
   /** The teacher's current currency: the account this block edits. */
   currency: Currency;
   initial: BankAccountValues;
+  /** Whether the current currency already has a stored account to remove. */
+  hasAccount: boolean;
   /** Accounts the teacher holds in other currencies, identifier masked. */
   others: readonly { currency: Currency; masked: string }[];
 }
 
-export function BankAccountForm({ teacherId, currency, initial, others }: BankAccountFormProps) {
+interface RemoveControlProps {
+  currency: Currency;
+  busy: boolean;
+  disabled: boolean;
+  confirming: boolean;
+  onAsk: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+/** Remove, then an inline confirmation in the page: nothing is sent on the first tap. */
+function RemoveControl({ currency, busy, disabled, confirming, onAsk, onCancel, onConfirm }: RemoveControlProps) {
+  if (!confirming) {
+    return (
+      <Button
+        type="button"
+        variant="destructive"
+        aria-label={`Remove ${currency} account`}
+        onClick={onAsk}
+        disabled={disabled}
+      >
+        {busy ? 'Removing...' : 'Remove'}
+      </Button>
+    );
+  }
+  return (
+    <div role="group" aria-label={`Remove ${currency} details`} className="flex flex-col gap-3">
+      <p className="type-caption">
+        Remove {currency} details? Students with unpaid {currency} classes will no longer see them.
+      </p>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Button type="button" variant="destructive" onClick={onConfirm} disabled={disabled}>Confirm</Button>
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={disabled}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
+export function BankAccountForm({ teacherId, currency, initial, hasAccount, others }: BankAccountFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<BankAccountValues>(initial);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<BankAccountField, string>>>({});
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState<'saving' | Currency | null>(null);
+  const [confirming, setConfirming] = useState<Currency | null>(null);
   const fields = SCHEME_FIELDS[SCHEME_FOR_CURRENCY[currency]];
   const shownFields: readonly BankAccountField[] = [...fields.map((f) => f.key), 'holderName'];
 
@@ -119,19 +160,24 @@ export function BankAccountForm({ teacherId, currency, initial, others }: BankAc
     }
   }
 
-  async function handleRemove(other: Currency) {
-    setBusy(other);
+  async function handleRemove(target: Currency) {
+    setConfirming(null);
+    setBusy(target);
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`/api/teachers/${teacherId}/bank-accounts/${other}`, { method: 'DELETE' });
+      const res = await fetch(`/api/teachers/${teacherId}/bank-accounts/${target}`, { method: 'DELETE' });
       if (!res.ok) {
         setError((await readError(res, 'Couldn’t remove that account')).message);
         return;
       }
+      if (target === currency) {
+        setForm(EMPTY_BANK_ACCOUNT);
+        setFieldErrors({});
+      }
       router.refresh();
     } catch (err) {
-      logRequestFailure('bank-account-form', { teacherId, currency: other }, err);
+      logRequestFailure('bank-account-form', { teacherId, currency: target }, err);
       setError('Network error. Please try again.');
     } finally {
       setBusy(null);
@@ -157,6 +203,7 @@ export function BankAccountForm({ teacherId, currency, initial, others }: BankAc
         <Input
           id="bank-holderName"
           label="Account holder name"
+          hint="Exactly as your bank shows it — your students’ banks check this name."
           value={form.holderName}
           error={fieldErrors.holderName}
           onChange={(e) => update('holderName', e.target.value)}
@@ -168,6 +215,18 @@ export function BankAccountForm({ teacherId, currency, initial, others }: BankAc
         </Button>
       </form>
 
+      {hasAccount && (
+        <RemoveControl
+          currency={currency}
+          busy={busy === currency}
+          disabled={busy !== null}
+          confirming={confirming === currency}
+          onAsk={() => setConfirming(currency)}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => handleRemove(currency)}
+        />
+      )}
+
       {others.length > 0 && (
         <div className="flex flex-col gap-2">
           <h3 className="type-label">Accounts in other currencies</h3>
@@ -177,15 +236,15 @@ export function BankAccountForm({ teacherId, currency, initial, others }: BankAc
                 <span className="type-body">
                   {other.currency} <span className="type-number">{other.masked}</span>
                 </span>
-                <button
-                  type="button"
-                  className="type-caption text-danger min-h-11 flex items-center"
-                  aria-label={`Remove ${other.currency} account`}
-                  onClick={() => handleRemove(other.currency)}
+                <RemoveControl
+                  currency={other.currency}
+                  busy={busy === other.currency}
                   disabled={busy !== null}
-                >
-                  {busy === other.currency ? 'Removing...' : 'Remove'}
-                </button>
+                  confirming={confirming === other.currency}
+                  onAsk={() => setConfirming(other.currency)}
+                  onCancel={() => setConfirming(null)}
+                  onConfirm={() => handleRemove(other.currency)}
+                />
               </li>
             ))}
           </ul>
