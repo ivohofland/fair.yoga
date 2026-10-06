@@ -55,6 +55,11 @@ export function nonBlank(value: string | null | undefined): string | null {
 export function accountInCurrency<A extends { currency: Currency }>(accounts: readonly A[], currency: Currency): A | null {
   return accounts.find((a) => a.currency === currency) ?? null;
 }
+
+/** Whether a teacher's accounts include one in `currency`. */
+export function hasAccountInCurrency(accounts: readonly { currency: Currency }[], currency: Currency): boolean {
+  return accountInCurrency(accounts, currency) !== null;
+}
 function isEpcQrCurrency(currency: Currency): currency is typeof EPC_QR_CURRENCY {
   return currency === EPC_QR_CURRENCY;
 }

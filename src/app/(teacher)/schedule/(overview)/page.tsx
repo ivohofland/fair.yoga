@@ -6,6 +6,7 @@ import { GettingStarted } from '@/components/schedule/getting-started';
 import { InstallCard } from '@/components/schedule/install-card';
 import { ScheduleHeader } from '@/components/schedule/schedule-header';
 import { isOnboardingComplete } from '@/lib/onboarding';
+import { hasAccountInCurrency } from '@/lib/payment-methods';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
@@ -76,7 +77,7 @@ export default async function SchedulePage() {
 
   const onboardingInput = {
     bio: teacher.bio,
-    bankAccountInCurrentCurrency: teacher.bankAccounts.some((a) => a.currency === teacher.currency),
+    bankAccountInCurrentCurrency: hasAccountInCurrency(teacher.bankAccounts, teacher.currency),
     roomCount,
     classCount,
     skipped: teacher.skippedOnboarding,

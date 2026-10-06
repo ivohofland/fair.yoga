@@ -3,6 +3,7 @@ import { PrismaClient, type Currency } from '@prisma/client';
 import { saveBankAccount, removeBankAccount, type BankAccountFailure } from './bank-accounts';
 import { updateTeacherProfile } from './teacher-profile';
 import { resolveSteps } from '@/lib/onboarding';
+import { hasAccountInCurrency } from '@/lib/payment-methods';
 import { uniqueSuffix } from '../../tests/helpers';
 
 const prisma = new PrismaClient();
@@ -154,7 +155,7 @@ describe('the onboarding bank step against stored accounts', () => {
     });
     const steps = resolveSteps({
       bio: '',
-      bankAccountInCurrentCurrency: teacher.bankAccounts.some((a) => a.currency === teacher.currency),
+      bankAccountInCurrentCurrency: hasAccountInCurrency(teacher.bankAccounts, teacher.currency),
       roomCount: 0,
       classCount: 0,
       skipped: [],

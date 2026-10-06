@@ -3,6 +3,7 @@ import { respondOk, respondError, parseBody, requireTeacher, isErrorResponse, wi
 import { prisma } from '@/lib/db';
 import { onboardingSkipSchema } from '@/lib/schemas';
 import { isSettled } from '@/lib/onboarding';
+import { hasAccountInCurrency } from '@/lib/payment-methods';
 
 /**
  * Records a skip (#385). Appends to `skippedOnboarding` idempotently.
@@ -32,7 +33,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     ]);
     const settled = isSettled({
       bio: teacher.bio,
-      bankAccountInCurrentCurrency: teacher.bankAccounts.some((a) => a.currency === teacher.currency),
+      bankAccountInCurrentCurrency: hasAccountInCurrency(teacher.bankAccounts, teacher.currency),
       roomCount,
       classCount,
       skipped: teacher.skippedOnboarding,
