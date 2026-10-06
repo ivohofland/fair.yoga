@@ -82,7 +82,6 @@ describe('GET /api/auth/session — session extension race (#632)', () => {
     const token = await seedSession(prisma, accountId);
     const sessionHash = hashToken(token);
 
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
     const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await prisma.session.update({
       where: { id: sessionHash },
