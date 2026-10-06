@@ -71,25 +71,40 @@ async function setClassCurrency(id: string) {
   return prisma.class.update({ where: { id }, data: { currency: 'GBP' } });
 }
 
+/**
+ * A refusal from one of the currency guards: SQLSTATE 23514, which Prisma
+ * surfaces only inside the driver message, and the guard's own wording.
+ */
+async function expectCurrencyRefusal(write: Promise<unknown>): Promise<void> {
+  const err: unknown = await write.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(Error);
+  const message = (err as Error).message;
+  expect(message).toContain('code: "23514"');
+  expect(message).toMatch(/cannot change its currency/);
+}
+
 describe('class_currency_frozen_guard', () => {
   it('refuses a currency change on a settingsLocked class', async () => {
     const f = await utcTeacher();
     const c = await classAt(f, 10, { settingsLocked: true });
-    await expect(setClassCurrency(c.id)).rejects.toThrow(/cannot change its currency/);
+    await expectCurrencyRefusal(setClassCurrency(c.id));
     expect((await prisma.class.findUniqueOrThrow({ where: { id: c.id } })).currency).toBe('EUR');
   });
 
   it('refuses a currency change on a completed class', async () => {
     const f = await utcTeacher();
     const c = await classAt(f, -3, { status: 'completed' });
-    await expect(setClassCurrency(c.id)).rejects.toThrow(/cannot change its currency/);
+    await expectCurrencyRefusal(setClassCurrency(c.id));
   });
 
   it('refuses a currency change on a cancelled class', async () => {
     const f = await utcTeacher();
     const c = await classAt(f, 11);
     await prisma.calendarEntry.update({ where: { id: c.calendarEntryId }, data: { cancelledAt: new Date() } });
-    await expect(setClassCurrency(c.id)).rejects.toThrow(/cannot change its currency/);
+    await expectCurrencyRefusal(setClassCurrency(c.id));
   });
 
   it('allows a currency change on an unlocked open class', async () => {
@@ -108,13 +123,49 @@ describe('class_currency_frozen_guard', () => {
 });
 
 describe('studio_class_currency_frozen_guard', () => {
+  /**
+   * The guard compares the entry date with the database's own `CURRENT_DATE`,
+   * so the boundary rows are dated from that rather than from this process's
+   * clock.
+   */
+  async function studioAtDbDay(f: RoomFixture, offset: number) {
+    const [{ today }] = await prisma.$queryRaw<{ today: Date }[]>`SELECT CURRENT_DATE AS today`;
+    const date = new Date(today);
+    date.setUTCDate(date.getUTCDate() + offset);
+    return createStudioClassFixture(prisma, {
+      teacherId: f.teacherId,
+      classType: 'Studio flow',
+      date,
+      startTime: hhmmToTime('19:00'),
+      durationMinutes: 60,
+      location: 'Gym',
+      hourlyRate: new Prisma.Decimal(40),
+    });
+  }
+
   it('refuses a currency change on a studio class dated three days ago', async () => {
     const f = await utcTeacher();
     const s = await studioAt(f, -3);
-    await expect(
+    await expectCurrencyRefusal(
       prisma.studioClass.update({ where: { id: s.id }, data: { currency: 'GBP' } }),
-    ).rejects.toThrow(/cannot change its currency/);
+    );
     expect((await prisma.studioClass.findUniqueOrThrow({ where: { id: s.id } })).currency).toBe('EUR');
+  });
+
+  it('refuses a currency change on a studio class dated two days before the database’s today', async () => {
+    const f = await utcTeacher();
+    const s = await studioAtDbDay(f, -2);
+    await expectCurrencyRefusal(
+      prisma.studioClass.update({ where: { id: s.id }, data: { currency: 'GBP' } }),
+    );
+    expect((await prisma.studioClass.findUniqueOrThrow({ where: { id: s.id } })).currency).toBe('EUR');
+  });
+
+  it('allows a currency change on a studio class dated the database’s yesterday — the one-day margin', async () => {
+    const f = await utcTeacher();
+    const s = await studioAtDbDay(f, -1);
+    const updated = await prisma.studioClass.update({ where: { id: s.id }, data: { currency: 'GBP' } });
+    expect(updated.currency).toBe('GBP');
   });
 
   it('allows a currency change on a studio class dated tomorrow', async () => {
