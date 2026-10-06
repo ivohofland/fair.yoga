@@ -60,14 +60,15 @@ interface Slot {
   confirmed: ConfirmedEntry | undefined;
   refused: RefusedEntry | undefined;
 }
-/** A registration storage refused this tab's entries for: `mine` is what this tab holds, `held` what storage held then. */
+/** A registration whose entries in this tab storage does not hold: `mine` is this tab's, `held` what storage held when the write was refused or held back. */
 interface Override {
   mine: Slot;
   held: Slot;
 }
 /**
- * The registrations of this tab's outbox that storage refused (a full quota,
- * a private window, blocked storage): what a reload would lose. Null while
+ * The registrations of this tab's outbox that storage does not hold, since it
+ * refused the write (a full quota, a private window, blocked storage) or a
+ * read that threw held the write back: what a reload would lose. Null while
  * storage holds all of it.
  */
 let overlay: ReadonlyMap<string, Override> | null = null;
@@ -77,7 +78,7 @@ let detached = false;
 let stored: OutboxState = EMPTY_OUTBOX;
 /** The stored text `stored` was parsed from or written as. */
 let cachedRaw: string | null = null;
-/** This tab's outbox: `stored` with `overlay` beneath it. */
+/** This tab's outbox, as `view` builds it. */
 let cached: OutboxState | null = null;
 let readFailureLogged = false;
 /** Whether the last read of storage threw. */
@@ -268,9 +269,9 @@ function persist(next: OutboxState): void {
 }
 /**
  * Drops for good each registration in `overlay` whose stored entries are no
- * longer what storage held when this tab's write was refused: only another
- * tab writes storage meanwhile, so that write is the newer. Run on every read
- * of storage; an entry expiring is not a change.
+ * longer what storage held when this tab's write was refused or held back:
+ * only another tab writes storage meanwhile, so that write is taken as the
+ * newer. Run on every read of storage; an entry expiring is not a change.
  */
 function reconcile(now: number): void {
   if (overlay === null || detached) return;

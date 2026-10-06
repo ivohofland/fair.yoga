@@ -156,8 +156,8 @@ function stopped(sentence: string): string {
  * a separate text-only `role="status"`, always mounted, empty when there is
  * nothing to say, holding one summary:
  * - the waiting count, with "sign in to sync them" when a sign-in is needed
- *   and "This device can't keep them if the page reloads." while storage
- *   refused some of them, but only when it is more than a round trip in
+ *   and "This device can't keep them if the page reloads." while this tab
+ *   holds some of them only in memory, but only when it is more than a round trip in
  *   progress: offline, after an attempt that must be retried, or when a
  *   sign-in is needed;
  * - how many refusals it shows that arrived while it was mounted, never one
