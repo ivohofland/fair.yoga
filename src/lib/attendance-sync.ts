@@ -102,17 +102,33 @@ async function appError(res: Response): Promise<{ code?: ApiErrorCode; message: 
   };
 }
 
+/** An answer the replay keeps retrying because it cannot read it as the app's; ids and statuses only. */
+function logUnreadAnswer(entry: PendingEntry, res: Response, err: unknown): void {
+  logRequestFailure(
+    'attendance-sync',
+    {
+      registrationId: entry.registrationId,
+      status: entry.status,
+      httpStatus: res.status,
+      contentType: res.headers.get('content-type'),
+    },
+    err,
+  );
+}
+
 async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutcome> {
   if (res.ok) {
     let body: unknown;
     try {
       body = await res.json();
-    } catch {
+    } catch (err) {
+      logUnreadAnswer(entry, res, err);
       return { kind: 'retry' };
     }
     if (answersEntry(isRecord(body) ? body.data : undefined, entry)) {
       return { kind: 'confirmed', at: serverTime(res) };
     }
+    logUnreadAnswer(entry, res, new Error('the 2xx answer does not match the write sent'));
     return { kind: 'retry' };
   }
   if (res.status === 401) return { kind: 'signed_out' };
@@ -120,16 +136,7 @@ async function classify(res: Response, entry: PendingEntry): Promise<ReplayOutco
   const answer = await appError(res);
   if (answer === null) {
     // A proxy, portal or filter answered, not the app: the write never reached it.
-    logRequestFailure(
-      'attendance-sync',
-      {
-        registrationId: entry.registrationId,
-        status: entry.status,
-        httpStatus: res.status,
-        contentType: res.headers.get('content-type'),
-      },
-      new Error('the answer is not the app\'s error body'),
-    );
+    logUnreadAnswer(entry, res, new Error('the answer is not the app\'s error body'));
     return { kind: 'retry' };
   }
   if (res.status === 403) {

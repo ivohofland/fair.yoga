@@ -564,7 +564,8 @@ Full design and the alternatives it rejected: `docs/superpowers/specs/2026-10-04
 | Answer | Outcome |
 |---|---|
 | 2xx whose `data` is `{id, status}` matching what was sent (applied or unchanged) | confirmed, at the `Date` header's instant (the device clock if it is missing or unreadable) |
-| 2xx with any other body, 409 `CONCURRENT_MODIFICATION`, 408, 429, 5xx | kept; retried on the next trigger or the backoff |
+| 2xx with any other body, or none that parses | kept and logged (ids and statuses, no name); retried on the next trigger or the backoff |
+| 409 `CONCURRENT_MODIFICATION`, 408, 429, 5xx | kept; retried on the next trigger or the backoff |
 | timeout, network failure | kept, and the pass stops; retried on the next trigger or the backoff |
 | 401 | kept; the pass stops, and the status line adds "sign in to sync them" until a later pass gets a 2xx |
 | 403 with the app's JSON error body (`{ error: { message, code? } }`) | dropped, and logged with the registration id and status (no name): the signed-in account may not write this registration, and a refusal shown here could show one account's student to another |

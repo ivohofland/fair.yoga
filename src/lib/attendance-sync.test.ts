@@ -222,6 +222,38 @@ describe('attendance sync', () => {
     expect(JSON.stringify([errors.mock.calls, warn.mock.calls])).not.toContain('Ada');
   });
 
+  it('logs a 2xx it cannot confirm, once per entry per pass, naming no student', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enqueue('attended', 'r1');
+    await enqueue('attended', 'r2');
+    fetchMock.mockImplementation(async (input) =>
+      urlOf(input) === '/api/registrations/r1'
+        ? new Response('<html>Welcome to the guest network</html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          })
+        : ok({ id: 'r2', status: 'no_show' }),
+    );
+    await flushAttendance('acct-1');
+    expect(errors).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveBeenCalledWith('[attendance-sync] request failed', {
+      registrationId: 'r1',
+      status: 'attended',
+      httpStatus: 200,
+      contentType: 'text/html',
+      err: expect.any(Error),
+    });
+    expect(errors).toHaveBeenCalledWith('[attendance-sync] request failed', {
+      registrationId: 'r2',
+      status: 'attended',
+      httpStatus: 200,
+      contentType: 'application/json',
+      err: expect.any(Error),
+    });
+    expect(JSON.stringify(errors.mock.calls)).not.toContain('Ada');
+    expect(Object.keys(getOutbox().pending).sort()).toEqual(['r1', 'r2']);
+  });
+
   it('an intermediary\'s 403 keeps the entry pending', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await enqueue('attended');
