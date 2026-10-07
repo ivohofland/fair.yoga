@@ -253,7 +253,7 @@ describe('AttendanceList', () => {
       refusal(
         409,
         'CLASS_NOT_STARTED',
-        'This student cancelled late. Attendance can be recorded once the class has started.',
+        'This student cancelled late. Once the class has started, you can mark them attended if they turned up.',
       ),
     );
     vi.stubGlobal('fetch', fetchMock);
@@ -262,7 +262,7 @@ describe('AttendanceList', () => {
     fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('once the class has started');
+    expect(alert.textContent).toContain('Once the class has started');
     expect(alert.textContent).not.toContain('try again');
     // Without this the teacher is stuck: the page's class status is a render-time
     // snapshot, so a refusal it no longer reflects would repeat forever.

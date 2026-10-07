@@ -142,8 +142,17 @@ describe('classPageClock', () => {
     expect(clock(ms(checkinAt, -60 * MINUTE), 'open').checkinAt.toISOString()).toBe(checkinAt.toISOString());
   });
 
-  it('shows check-in on an in_progress class whatever the time', () => {
+  it('shows check-in on an in_progress class from the same instant an open one does, and not before', () => {
     expect(clock(ms(start, 5 * MINUTE), 'in_progress').showCheckin).toBe(true);
+    expect(clock(checkinAt, 'in_progress').showCheckin).toBe(true);
+    // An in_progress class whose schedule was moved later: the server refuses
+    // attendance until the window, so the page must not offer it.
+    expect(clock(ms(checkinAt, -1), 'in_progress').showCheckin).toBe(false);
+  });
+
+  it('re-renders an in_progress class that has not reached check-in at the check-in edge', () => {
+    const c = clock(ms(checkinAt, -60 * MINUTE), 'in_progress');
+    expect(iso(c.refreshInstants)).toEqual(iso([checkinAt, opensAt, autoAt]));
   });
 
   it('offers the finish from finishOpensAt, and not a millisecond before', () => {

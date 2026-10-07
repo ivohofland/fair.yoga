@@ -874,6 +874,39 @@ describe('transitionClass (DB)', () => {
     });
   });
 
+  it('refuses a manual start whose class start is unreadable, writing nothing', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as unknown as void);
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined as unknown as void);
+    try {
+      let transactions = 0;
+      const db = {
+        class: {
+          findUnique: async () => ({
+            status: 'open' as ClassStatus,
+            calendarEntry: {
+              date: new Date('2099-06-01T00:00:00.000Z'),
+              startTime: new Date('garbage'),
+              cancelledAt: null,
+              teacher: { defaultTimezone: 'UTC' },
+            },
+          }),
+        },
+        $transaction: async () => {
+          transactions += 1;
+          return true;
+        },
+      } as unknown as PrismaClient;
+
+      const result = await transitionClass(db, 'stub-class', 'in_progress');
+
+      expect(result).toMatchObject({ ok: false, reason: 'TOO_EARLY' });
+      expect(transactions).toBe(0);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
   it('still starts an open class whose time has come (#249)', async () => {
     // The target conjunct. `open -> in_progress` is a class starting, so its
     // start instant being in the past is not merely allowed, it is the whole

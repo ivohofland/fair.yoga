@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { expectRefusal, expectUnchanged } from '../../../../../tests/api-assertions';
 import { CHECKIN_OPENS_MINUTES } from '@/lib/finish-window';
+import { log } from '@/lib/log';
 
 /**
  * What PUT and DELETE answer when their scoped write matches nothing, decided
@@ -200,6 +201,62 @@ describe('PUT /api/registrations/[id] — an attendance write that missed', () =
       },
     );
 
+    it('logs the early refusal with the class and the start it judged', async () => {
+      const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+      try {
+        clockAt(new Date(opens.getTime() - 1));
+        findUnique.mockResolvedValueOnce(attendanceRead());
+
+        await mark('attended');
+
+        expect(info).toHaveBeenCalledWith(
+          {
+            registrationId: 'reg-1',
+            classId: 'class-1',
+            timeZone: 'UTC',
+            startInstant: CLASS_START.toISOString(),
+          },
+          'attendance refused: check-in not open yet',
+        );
+      } finally {
+        info.mockRestore();
+      }
+    });
+
+    it.each(['attended', 'no_show', 'late_cancel'] as const)(
+      'refuses %s when the start is unreadable, writing nothing',
+      async (status) => {
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+        try {
+          const read = attendanceRead();
+          read.class.calendarEntry.startTime = new Date('garbage');
+          findUnique.mockResolvedValueOnce(read);
+
+          await expectRefusal(await mark(status), 'CLASS_NOT_STARTED');
+          expect(updateMany).not.toHaveBeenCalled();
+        } finally {
+          warn.mockRestore();
+        }
+      },
+    );
+
+    it('answers a cancelled class and an already-matching row with the clock gate while the window is shut', async () => {
+      clockAt(new Date(opens.getTime() - 1));
+      // The write would be refused as CLASS_CANCELLED, or answered unchanged;
+      // neither read happens, because the clock gate comes first by design.
+      findUnique.mockResolvedValue({
+        status: 'attended',
+        cancelledAt: null,
+        class: { status: 'open', calendarEntry: { cancelledAt: new Date() } },
+      });
+      findUnique.mockResolvedValueOnce(attendanceRead());
+      await expectRefusal(await mark('attended'), 'CLASS_NOT_STARTED');
+
+      findUnique.mockResolvedValueOnce(attendanceRead());
+      await expectRefusal(await mark('attended'), 'CLASS_NOT_STARTED');
+      expect(updateMany).not.toHaveBeenCalled();
+    });
+
     it.each(['attended', 'no_show'] as const)('lets %s through exactly when check-in opens', async (status) => {
       clockAt(opens);
       findUnique.mockResolvedValueOnce(attendanceRead());
@@ -213,6 +270,23 @@ describe('PUT /api/registrations/[id] — an attendance write that missed', () =
   });
 
   describe('late_cancel is a restoration (#766)', () => {
+    it('tells a teacher marking a late-cancelled student on an open class that they cancelled late', async () => {
+      clockAt(opens);
+      findUnique.mockResolvedValueOnce(attendanceRead()).mockResolvedValueOnce({
+        status: 'late_cancel',
+        cancelledAt: new Date(),
+        class: { status: 'open', calendarEntry: { cancelledAt: null } },
+      });
+
+      const res = await mark('attended');
+
+      await expectRefusal(res.clone(), 'CLASS_NOT_STARTED');
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toBe(
+        'This student cancelled late. Once the class has started, you can mark them attended if they turned up.',
+      );
+    });
+
     it('adds the once-late-cancelled condition to the write for late_cancel only', async () => {
       clockAt(opens);
       findUnique.mockResolvedValue(attendanceRead());

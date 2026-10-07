@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek, mondayOf, formatInstantInZone, type WeekKey } from './timezone';
+import { classStartInstant, startsInPast, isBeforeOpening, startOfLocalDay, startOfLocalWeek, mondayOf, formatInstantInZone, type WeekKey } from './timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -560,3 +560,21 @@ function _theBrandRejectsPlainNumber(n: number): WeekKey {
   // @ts-expect-error Plain number cannot be assigned to WeekKey
   return n;
 }
+
+describe('isBeforeOpening', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const opens = new Date('2026-06-01T09:45:00.000Z');
+
+  it('is true strictly before the instant and false from it on', () => {
+    expect(isBeforeOpening(opens, new Date(opens.getTime() - 1))).toBe(true);
+    expect(isBeforeOpening(opens, opens)).toBe(false);
+    expect(isBeforeOpening(opens, new Date(opens.getTime() + 1))).toBe(false);
+  });
+
+  it('fails closed on an unreadable instant and says so', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(isBeforeOpening(new Date('garbage'), new Date())).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
