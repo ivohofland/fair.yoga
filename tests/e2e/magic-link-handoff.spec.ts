@@ -151,6 +151,7 @@ test.describe('Magic link device handoff', () => {
   test.afterAll(async () => {
     const allEmails = [teacherEmail, teacherSignupEmail, returningStudentEmail, newStudentEmail];
     await prisma.magicLinkToken.deleteMany({ where: { email: { in: allEmails } } });
+    await prisma.handoffAttemptBudget.deleteMany({ where: { email: { in: allEmails } } });
 
     const accounts = await prisma.account.findMany({
       where: { email: { in: allEmails } },

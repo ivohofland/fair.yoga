@@ -50,6 +50,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.magicLinkToken.deleteMany({ where: { email: { contains: suffix } } });
+  await prisma.handoffAttemptBudget.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.teacher.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.student.deleteMany({
     where: { id: { in: [takenStudentId, unclaimedStudentId] } },

@@ -243,6 +243,14 @@ describe('claimWithCode', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  // This describe's addresses all start `claim-` and end `@example.com`; no
+  // other suite shares that shape.
+  afterAll(async () => {
+    await db.handoffAttemptBudget.deleteMany({
+      where: { email: { startsWith: 'claim-', endsWith: '@example.com' } },
+    });
+  });
+
   it('signs in the browser that requested the link', async () => {
     const email = `claim-ok-${Date.now()}@example.com`;
     const code = await stampedToken(email, 'nonce-c1');
