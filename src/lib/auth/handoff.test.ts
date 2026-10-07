@@ -12,6 +12,7 @@ import {
   HANDOFF_EMAIL_WINDOW_MS,
 } from './handoff';
 import { asBrowserNonce } from './test-support';
+import { classifyApiError, isLockTimeout } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
 const db = new PrismaClient();
@@ -1025,6 +1026,51 @@ describe('the per-address comparison budget', () => {
     ).resolves.toBe(1);
   });
 
+  // The holder keeps the row past the reservation's lock timeout and well
+  // inside Prisma's own transaction timeout, so only the lock timeout can be
+  // what ends the claim's wait, and the claim must settle before the hold does.
+  it('a claim held past the lock timeout fails as a transient 503, and nothing is spent', async () => {
+    const email = address('lock-timeout');
+    const nonce = nonceFor('lock-timeout');
+    const { code, token } = await stamp(email, nonce);
+    await db.handoffAttemptBudget.create({ data: { email, attempts: 0, windowStartsAt: new Date() } });
+
+    const HOLD_MS = 4_000;
+    const holder = new PrismaClient();
+    try {
+      let onLocked!: () => void;
+      const locked = new Promise<void>((resolve) => (onLocked = resolve));
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      const holding = holder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "HandoffAttemptBudget" WHERE email = ${email} FOR UPDATE`;
+          onLocked();
+          await Promise.race([released, new Promise((resolve) => setTimeout(resolve, HOLD_MS))]);
+        },
+        { timeout: HOLD_MS + 5_000 },
+      );
+      await locked;
+
+      const started = Date.now();
+      const error: unknown = await claimWithCode(db, asBrowserNonce(nonce), code).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      const took = Date.now() - started;
+      release();
+      await holding;
+
+      expect(took).toBeLessThan(HOLD_MS);
+      expect(isLockTimeout(error)).toBe(true);
+      expect(classifyApiError(error).status).toBe(503);
+      expect((await budgetOf(email))?.attempts).toBe(0);
+      expect((await tokenRow(token))?.handoffAttempts).toBe(0);
+    } finally {
+      await holder.$disconnect();
+    }
+  }, 20_000);
+
   // Each claim below compares one candidate, the one under its own nonce, so
   // a budget charged after comparing would let every claim compare. The
   // budget row is held from a second connection until every claim is queued
@@ -1046,44 +1092,47 @@ describe('the per-address comparison budget', () => {
     await db.handoffAttemptBudget.create({ data: { email, attempts: 0, windowStartsAt: new Date() } });
 
     // Room for every claim's transaction at once. A smaller pool would queue
-    // some claims in the client, where they never reach the lock.
+    // some claims in the client, where they never reach the lock. Opened
+    // before the lock is taken, so connecting costs none of the time below.
     const url = new URL(process.env.DATABASE_URL!);
     url.searchParams.set('connection_limit', String(nonces.length + 5));
     const wide = new PrismaClient({ datasourceUrl: url.toString() });
+    await Promise.all(nonces.map(() => wide.$queryRaw`SELECT 1`));
     const holder = new PrismaClient();
-    let claims: Promise<Awaited<ReturnType<typeof claimWithCode>>[]> | undefined;
+    let claims: Promise<Awaited<ReturnType<typeof claimWithCode>>>[] = [];
     try {
       let waiting = 0;
-      await holder.$transaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT 1 FROM "HandoffAttemptBudget" WHERE email = ${email} FOR UPDATE`;
-          const [self] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
-          if (!self) throw new Error('no backend pid for the holder');
-          claims = Promise.all(nonces.map((n) => claimWithCode(wide, asBrowserNonce(n), '999999')));
-          const deadline = Date.now() + 20_000;
-          while (waiting < nonces.length && Date.now() < deadline) {
-            // Backends blocked by the holder, directly or through another
-            // waiter: only the first in line waits on the holder itself, and
-            // each later one waits on the queue ahead of it. Nothing else
-            // waiting on a lock in this database is counted.
-            const [row] = await db.$queryRaw<{ n: number }[]>`
-              WITH RECURSIVE blocked(pid) AS (
-                SELECT a.pid FROM pg_stat_activity a
-                WHERE pg_blocking_pids(a.pid) @> ARRAY[${self.pid}::int]
-                UNION
-                SELECT a.pid FROM pg_stat_activity a
-                JOIN blocked b ON pg_blocking_pids(a.pid) @> ARRAY[b.pid]
-              )
-              SELECT count(*)::int AS n FROM blocked`;
-            waiting = row?.n ?? 0;
-            if (waiting < nonces.length) await new Promise((resolve) => setTimeout(resolve, 50));
-          }
-        },
-        { timeout: 30_000 },
-      );
-      expect(waiting).toBe(nonces.length);
+      let elapsed = 0;
+      await holder.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "HandoffAttemptBudget" WHERE email = ${email} FOR UPDATE`;
+        const [self] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        if (!self) throw new Error('no backend pid for the holder');
+        const started = Date.now();
+        claims = nonces.map((n) => claimWithCode(wide, asBrowserNonce(n), '999999'));
+        // Released well inside the reservation's lock timeout: a waiter held
+        // past it fails with 55P03 instead of being granted.
+        while (waiting < nonces.length && Date.now() - started < 1_500) {
+          // Backends blocked by the holder, directly or through another
+          // waiter: only the first in line waits on the holder itself, and
+          // each later one waits on the queue ahead of it. Nothing else
+          // waiting on a lock in this database is counted.
+          const [row] = await db.$queryRaw<{ n: number }[]>`
+            WITH RECURSIVE blocked(pid) AS (
+              SELECT a.pid FROM pg_stat_activity a
+              WHERE pg_blocking_pids(a.pid) @> ARRAY[${self.pid}::int]
+              UNION
+              SELECT a.pid FROM pg_stat_activity a
+              JOIN blocked b ON pg_blocking_pids(a.pid) @> ARRAY[b.pid]
+            )
+            SELECT count(*)::int AS n FROM blocked`;
+          waiting = row?.n ?? 0;
+          if (waiting < nonces.length) await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        elapsed = Date.now() - started;
+      });
+      expect(waiting, `waiters counted after ${elapsed} ms`).toBe(nonces.length);
 
-      const results = await claims!;
+      const results = await Promise.all(claims);
       expect(results.every((r) => r.kind === 'invalid')).toBe(true);
 
       const rows = await db.magicLinkToken.findMany({ where: { email } });
@@ -1091,9 +1140,9 @@ describe('the per-address comparison budget', () => {
       expect(rows.reduce((sum, r) => sum + r.handoffAttempts, 0)).toBe(HANDOFF_EMAIL_MAX_ATTEMPTS);
       expect((await budgetOf(email))?.attempts).toBe(HANDOFF_EMAIL_MAX_ATTEMPTS);
     } finally {
-      // Settled before disconnecting, so a failed assertion above does not
-      // leave twenty claims rejecting against a closed client.
-      await claims?.catch(() => undefined);
+      // Every claim settled before disconnecting, so a failed assertion above
+      // does not leave claims running against a closed client.
+      await Promise.allSettled(claims);
       await wide.$disconnect();
       await holder.$disconnect();
     }
