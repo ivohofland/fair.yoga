@@ -86,6 +86,39 @@ never a `PushSubscription` field, which identifies a device rather than
 describing the subject. No user agent or device label is stored — privacy
 first; one row per device is identity enough for dispatch and cleanup.
 
+### HandoffAttemptBudget (handoff-code comparisons per address, #767)
+
+| Field | Type | Notes |
+|---|---|---|
+| **email** (PK) | string | The address the codes were stamped for, as on `MagicLinkToken.email`. Pinned lowercase by `HandoffAttemptBudget_email_lowercase_check`. |
+| window_starts_at | datetime | When the current window began. |
+| attempts | int | Comparisons granted in the current window. |
+
+A sign-in code typed on another device (`claimWithCode`, `src/lib/auth/handoff.ts`)
+is compared against the stamped tokens for an address only after this row has
+granted the comparisons. The unit is **one code compared**, not one claim: a
+claim compares the submitted code against each live stamped token for the
+address, and is granted one unit per token, newest first. The cap is
+`HANDOFF_EMAIL_MAX_ATTEMPTS` per `HANDOFF_EMAIL_WINDOW_MS`, a fixed window that
+restarts at the first reservation after it ends. It exists because the
+per-token limit (`HANDOFF_MAX_ATTEMPTS`) could be multiplied by minting more
+tokens and by concurrent guesses; one row per address, reserved under a row
+lock before any code is read, bounds every token and every nonce for that
+address together. The design and its availability trade-off are in
+`docs/superpowers/specs/2026-10-07-sign-in-oracles-design.md` §2.2. Opening a
+link on the browser that asked for it never touches this row.
+
+- **Retention:** the daily `cleanupExpiredAuth` sweep (`src/services/auth-cleanup.ts`)
+  deletes rows whose window has ended, so a row lives at most 48 hours after its
+  window started: the 24-hour window plus up to one sweep interval.
+- **Erasure:** `deleteStudentAccount` and `deleteTeacherAccount` (`src/services/gdpr.ts`)
+  delete the row for the erased address, beside its `MagicLinkToken` rows.
+- **Export:** not part of either GDPR export, on the same basis as
+  `MagicLinkToken`: it is short-lived security state about sign-in attempts,
+  not data the person provided. The address is stored plain, as on
+  `MagicLinkToken`, and erasure deletes the row rather than relying on a hash.
+- **Locks:** no `docs/lock-order.md` node; the spec section above says why.
+
 ### Teacher (core)
 
 | Field | Type | Notes |
@@ -1004,13 +1037,17 @@ No foreign keys, and no personal data by construction: the allowlist admits ids 
 - **The `20260916165852_live_profile_unique_per_account` migration's own header cites `20260811202634_teacher_slot_unique_indexes` as its precedent for `prisma migrate diff` not seeing a partial index** — correction recorded here because the migration file is immutable. That precedent no longer holds as stated: `20260811202634` declared six partial indexes, and the four SLOT ones among them are gone — folded into `ScheduleRule_teacher_slot_excl` (#298) and `CalendarEntry_teacher_slot_excl` (#327), see `docs/lock-order.md`. The live precedent is `Room_private_identity_unique` (#196, updated in #260 to `lower(trim(...))` expression keys) — one of the two `Room` identity indexes that migration also created, neither of which has since been dropped or folded into anything else.
 - **Both `accountId` columns lost their plain btree index when `Teacher_accountId_key`/`Student_accountId_key` were dropped for the partial indexes above.** `Teacher_account_live_unique`/`Student_account_live_unique` cover only `WHERE "deletedAt" IS NULL`, so a predicate on `accountId` without that clause seq-scans — including Postgres's own referential-integrity check when an `Account` row is hard-deleted. Production never hard-deletes an `Account`, and both `gdpr.ts` liveness reads carry the `deletedAt` filter, so the affected callers today are test teardowns and `prisma/seed.ts`.
 - **Status indexes are plain, never partial** (#224). `WaitlistEntry_status_idx` and `Class_status_idx` are ordinary btree indexes on `status`, for the every-minute sweeps. Measured on `reconcileWaitlists`'s opening `groupBy` (`services/waitlist-reconciliation.ts`) and `autoCompleteClasses` (`services/class-transitions.ts`); `autoTransitionToInProgress` and `autoCancelClasses` also filter `Class.status` and were not measured against the new index. A partial index (`WHERE status = 'waiting'`) looks like the better shape and serves no Prisma query: Prisma binds every enum value as `CAST($1::text AS "WaitlistStatus")`, Postgres never folds that cast to a constant, and so the planner cannot prove a partial predicate — even with `enable_seqscan = off` and a forced custom plan, where the same query written with a literal uses the index. Only raw SQL that writes the literal (`withdrawWaitingEntriesForTeacher`'s `w.status = 'waiting'`, say) can reach a partial status index such as `WaitlistEntry_waiting_position_key`. Measured 2026-09-24 as the median of five `EXPLAIN (ANALYZE, BUFFERS)` runs of the SQL Prisma emitted, on synthetic data (6 classes/week/teacher, 4-week open horizon, 5% draft, 3% cancelled; full shape, the S/M/L table and the partial candidates in PR #675): at 500 teachers × 3 years the reconciliation `groupBy` went from 25.3 ms to 14.0 ms with the `WaitlistEntry` index alone and to 25.5 ms with both (the `Class` index tempts the planner into a hash join over every open row), while `autoCompleteClasses` went from 40.5 ms to 0.03 ms — both kept for the net saving. What the reconciliation join still costs, and no status index removes, is its `Class`/`CalendarEntry` side (at 5,000 teachers, one key probe of each per waiting entry). `src/services/status-indexes.test.ts` pins both definitions exactly. A fixture-tie hazard this index introduced for forced-plan probes is in `docs/lock-order.md` (equal keys).
-- **Email is lowercase everywhere** (#170). All six email columns — Account,
-  Teacher, Student, MagicLinkToken, Invitation, TeacherBlock — carry a
-  `CHECK (email = lower(email))` constraint. `emailField` in `src/lib/schemas.ts`
+- **Email is lowercase everywhere** (#170). Every email column carries a
+  lowercase `CHECK` whose name ends in `_email_lowercase_check`. Re-derive the
+  columns and the constraints rather than trusting a list:
+  `grep -nE '^\s+[a-zA-Z]*[eE]mail\s+String' prisma/schema.prisma` and
+  `grep -rhoE '"[A-Za-z]+_[a-zA-Z_]*email_lowercase_check"' prisma/migrations | sort -u`.
+  `emailField` in `src/lib/schemas.ts`
   normalises everything arriving over HTTP; anything else (seed, GDPR
   anonymisation, psql) is rejected rather than rewritten. Before this, the plain
   btree unique keys under `en_US.utf8` made `Foo@x.com` and `foo@x.com` two
   distinct identities: sign-in silently missed, and signup could create a second
+  Account for one human.
 - **Invitation and TeacherBlock** (#166) exist because a teacher may not link a student unilaterally. `POST /api/students` creates only an Invitation; the TeacherStudent link forms when the invitee accepts it or books a class, or — the one exception — when the teacher walks them in at the door (Invitation → Walk-ins). Declining leaves the Invitation row itself as a tombstone against re-inviting, and both ways of saying no — declining, and unlinking after being linked — write a TeacherBlock as well, so the two "no" states are uniform. The two rows do different jobs: the Invitation row is what makes a re-invite answer DECLINED, the TeacherBlock is what makes one undeliverable, and only the block survives the subject's own erasure (#522 — see the TeacherBlock section above).
 - **Room identity is case- and whitespace-insensitive** (#260). PostgreSQL expression indexes `Room_public_identity_unique` (on `(lower(trim(address)), lower(trim(floor)), lower(trim(roomName))) WHERE isPublic = true`) and `Room_private_identity_unique` (on `(createdById, lower(trim(address)), lower(trim(floor)), lower(trim(roomName))) WHERE isPublic = false`) enforce uniqueness without modifying teacher-entered text in the database. Client-side predicate `sameRoomIdentity` (`src/lib/room-identity.ts`) mirrors this normalization using `normalizeRoomField`, and `isUniqueConflictOn` (`src/lib/unique-conflict.ts`) unwraps decompiled expression targets so route handlers continue matching standard column lists.
 - **`Class` and `ClassTemplate` each carry six economic `CHECK` constraints** (#221, `20260924190000_class_economics_checks`) — `_room_cost_check` (`roomCost >= 0`), `_min_students_range_check` (`minStudents BETWEEN 0 AND 200`), `_max_students_range_check` (`maxStudents BETWEEN 1 AND 200`), `_students_order_check` (`minStudents <= maxStudents`), `_rate_order_check` (`minRate <= targetRate`), `_room_subsidy_check` (`minRate >= -roomCost`). Re-derive rather than trusting this list: `grep -n "CHECK" prisma/migrations/*_class_economics_checks/migration.sql`.
