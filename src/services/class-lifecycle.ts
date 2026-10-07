@@ -23,7 +23,7 @@ import { isCheckViolationOn } from '@/lib/check-violation';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
-import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
+import { classStartInstant, startsInPast, isBeforeOpening, isoOrNull } from '@/lib/timezone';
 import {
   classEndInstant,
   autoFinishAt,
@@ -513,8 +513,9 @@ export async function transitionClass(
     }
   }
 
-  // #766. A manual start is refused before `walkInOpensAt`: starting closes
-  // the waitlist, so it must not reach a class that is still days away.
+  // #766. A manual start is refused before `walkInOpensAt`, so it cannot reach
+  // a class that is still days away. An unreadable start refuses too
+  // (`isBeforeOpening` fails closed).
   //
   // Falls through exactly as the publish guard above does: a missing row, a
   // cancelled class or a status the CAS would reject anyway keeps its own
@@ -545,7 +546,7 @@ export async function transitionClass(
     ) {
       const entry = cls.calendarEntry;
       const start = classStartInstant(entry, entry.teacher.defaultTimezone);
-      if (Date.now() < walkInOpensAt(start).getTime()) {
+      if (isBeforeOpening(walkInOpensAt(start), new Date())) {
         log.info(
           { classId, timeZone: entry.teacher.defaultTimezone, startInstant: isoOrNull(start) },
           'transitionClass refused: this class cannot be started yet',

@@ -19,7 +19,7 @@ import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
-import { classStartInstant } from '@/lib/timezone';
+import { classStartInstant, isBeforeOpening, isoOrNull } from '@/lib/timezone';
 import { CHECKIN_OPENS_MINUTES, checkinOpensAt } from '@/lib/finish-window';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
 import type { AttendanceBody } from '@/lib/api-types';
@@ -135,10 +135,23 @@ export const PUT = withErrorHandler(async (
   // Before the write, whatever the row holds: attendance is recorded from
   // `checkinOpensAt` (the instant the class page starts showing the list) and
   // never earlier. Refused ahead of the WHERE's own answers because no row
-  // state makes an early write acceptable.
+  // state makes an early write acceptable, so a cancelled class or a row
+  // already holding the requested status answers this too until the window
+  // opens. An unreadable start refuses as well (`isBeforeOpening` fails closed).
   const { calendarEntry } = registration.class;
   const start = classStartInstant(calendarEntry, calendarEntry.teacher.defaultTimezone);
-  if (Date.now() < checkinOpensAt(start).getTime()) {
+  if (isBeforeOpening(checkinOpensAt(start), new Date())) {
+    // `respondError` does not log, so without this the only record of the
+    // refusal is the 409 body.
+    log.info(
+      {
+        registrationId: id,
+        classId: registration.classId,
+        timeZone: calendarEntry.teacher.defaultTimezone,
+        startInstant: isoOrNull(start),
+      },
+      'attendance refused: check-in not open yet',
+    );
     return respondError(
       `Attendance can be recorded from ${CHECKIN_OPENS_MINUTES} minutes before the class starts.`,
       409,
@@ -146,10 +159,10 @@ export const PUT = withErrorHandler(async (
     );
   }
 
-  // #182. Every condition in the WHERE, none as a pre-check: this handler opens
-  // no transaction, so anything read above and tested here is a read-then-write
-  // that races. The DELETE branches below scope their writes for the same
-  // reason.
+  // #182. Every STATUS condition in the WHERE, none as a pre-check: this handler
+  // opens no transaction, so a status read above and tested here is a
+  // read-then-write that races. The DELETE branches below scope their writes
+  // for the same reason.
   //
   // What the scope closes: `autoCancelClasses` (`class-transitions.ts`) counts
   // registrations in `ACTIVE_REGISTRATION_STATUSES` under its row lock, then
@@ -180,8 +193,9 @@ export const PUT = withErrorHandler(async (
   // the completed class's "Edit attendance" (`attendance-list.tsx`, `locked`).
   //
   // Class TIME is guarded above, not in this WHERE: the clock only moves
-  // forward, so a check made before the write cannot go stale the way a status
-  // can.
+  // forward, so a check made before the write goes stale only through a
+  // schedule edit committed in the gap, where a status can change under any
+  // concurrent write.
   //
   // `late_cancel` as a TARGET is a restoration, not an action on a live
   // booking: DELETE writes `cancelledAt` with `late_cancel`, and this route
@@ -190,8 +204,7 @@ export const PUT = withErrorHandler(async (
   // `registered -> late_cancel` (or the two-step via `attended`) would charge a
   // student who never cancelled. The WHERE below excludes `cancelled` rows,
   // which also carry `cancelledAt` (a free cancel, an erasure), and re-booking
-  // clears it, pinned by the reactivation case in `waitlist.test.ts`
-  // (`reactivated.cancelledAt` is null).
+  // clears it (`activateRegistration`).
   //
   // A `Class` row lock would also close the race and is not used: this write
   // moves no money, and locking the hottest row in the app to protect a
@@ -249,7 +262,7 @@ export const PUT = withErrorHandler(async (
     switch (current.status) {
       case 'late_cancel':
         return respondError(
-          'This student cancelled late. Attendance can be recorded once the class has started.',
+          'This student cancelled late. Once the class has started, you can mark them attended if they turned up.',
           409,
           'CLASS_NOT_STARTED',
         );

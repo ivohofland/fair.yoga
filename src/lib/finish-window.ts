@@ -85,7 +85,11 @@ const SWEEP_RETRY_MS = 60_000;
 export interface ClassPageClock {
   /** Not cancelled, and `open` or `in_progress`. */
   live: boolean;
-  /** The attendance list: `in_progress`, or `open` from `CHECKIN_OPENS_MINUTES` before the start. */
+  /**
+   * The attendance list: a live class from `CHECKIN_OPENS_MINUTES` before its
+   * start, whatever its status. The clock alone, so the page offers exactly
+   * what the attendance write accepts (`checkinOpensAt`).
+   */
   showCheckin: boolean;
   /** Live, and at or past `finishOpensAt`. */
   canFinish: boolean;
@@ -97,7 +101,8 @@ export interface ClassPageClock {
   checkinAt: Date;
   /**
    * The instants at which what this function answers can change: the check-in
-   * edge (`open` only), `finishOpensAt` and `autoFinishAt` — some possibly
+   * edge (an `open` class always, an `in_progress` one while it is still ahead),
+   * `finishOpensAt` and `autoFinishAt` — some possibly
    * already past — and, once `autoFinishing`, a retry `SWEEP_RETRY_MS` after
    * `now`. Empty unless `live`. An unreadable edge is left out: its
    * `toISOString()` throws.
@@ -129,13 +134,13 @@ export function classPageClock({
 
   const open = !cancelled && status === 'open';
   const live = open || (!cancelled && status === 'in_progress');
-  const showCheckin = live && (status === 'in_progress' || t >= checkinAt.getTime());
+  const showCheckin = live && t >= checkinAt.getTime();
   const canFinish = live && t >= opensAt.getTime();
   const autoFinishing = live && t >= autoAt.getTime();
 
   const refreshInstants = live
     ? [
-        ...(open ? [checkinAt] : []),
+        ...(open || t < checkinAt.getTime() ? [checkinAt] : []),
         opensAt,
         autoAt,
         ...(autoFinishing ? [new Date(t + SWEEP_RETRY_MS)] : []),

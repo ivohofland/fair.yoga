@@ -423,3 +423,22 @@ export function startsInPast(
   }
   return start < now;
 }
+
+/**
+ * Whether `now` is before `opensAt`, the instant a write becomes acceptable
+ * (#766). Both callers use a `true` to refuse, so FAILS CLOSED like
+ * `startsInPast`, and for the same reason: `now < NaN` is `false`, so the bare
+ * comparison would wave a write through while appearing to have checked it.
+ * An unreadable `opensAt` is derived from an unreadable class start, which
+ * `classStartInstant` has already logged by name; this adds the refusal's own
+ * line.
+ *
+ * Strictly `<`: a write at the opening instant is on time.
+ */
+export function isBeforeOpening(opensAt: Date, now: Date): boolean {
+  if (Number.isNaN(opensAt.getTime())) {
+    log.warn('refusing write: the instant it opens is unreadable, so an early write cannot be ruled out');
+    return true;
+  }
+  return now < opensAt;
+}
