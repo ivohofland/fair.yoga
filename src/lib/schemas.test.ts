@@ -1357,6 +1357,10 @@ describe('text caps (#769)', () => {
     expect(fieldAt(s, 'location').safeParse('Studio.nl, Keizersgracht 1').success).toBe(true);
   });
 
+  it.each(['createRoomSchema', 'updateRoomSchema'] as const)('%s.address refuses a line break', (s) => {
+    expect(fieldAt(s, 'address').safeParse('Main\nStreet').success).toBe(false);
+  });
+
   it.each(LONG_TEXT_FIELDS)('%s.%s keeps a line break', (s, p) => {
     expect(fieldAt(s, p).safeParse('Line one\nLine two').success).toBe(true);
   });
@@ -1402,6 +1406,8 @@ const BOUNDED_FORMATS = new Set(['uuid', 'datetime']);
  * toward "unbounded": a `+` inside a character class also counts against it.
  */
 function isFixedShape(pattern: RegExp): boolean {
+  // Under `m`, `^` and `$` match at line breaks, so they anchor nothing.
+  if (pattern.multiline) return false;
   const src = pattern.source.replace(/\\./gu, 'x');
   if (!src.startsWith('^') || !src.endsWith('$')) return false;
   if (/[*+]|\{\d+,\}/u.test(src)) return false;
@@ -1509,5 +1515,6 @@ describe('every string and array leaf is bounded (#769)', () => {
     expect(isFixedShape(/^a|b$/u)).toBe(false);
     expect(isFixedShape(/^\d{2,}$/u)).toBe(false);
     expect(isFixedShape(/\d{4}/u)).toBe(false);
+    expect(isFixedShape(/^\d{4}$/mu)).toBe(false);
   });
 });
