@@ -1515,7 +1515,7 @@ function walkExports(): Walk {
   return out;
 }
 
-describe('every string and array leaf is bounded (#769)', () => {
+describe('every string, array and number leaf is bounded (#769)', () => {
   it('finds no unbounded leaf in any exported schema', () => {
     expect(walkExports().offenders).toEqual([]);
   });
