@@ -548,7 +548,7 @@ Why the two resolve in opposite directions, given #520 filed them as the same sh
 | room_name | string | |
 | max_capacity | int | Venue's stated capacity |
 | equipment | json[] | e.g. ["mats", "blocks", "straps"] |
-| notes | text, nullable | |
+| notes | text, nullable | Private to the teacher who created the room. Every API read of a room returns its shared projection (`src/lib/room-projection.ts`), so another teacher never receives it (#768) |
 | is_public | boolean | Visible to other teachers or private |
 | *created_by* (FK) | → Teacher | |
 | **Timestamps** | | |

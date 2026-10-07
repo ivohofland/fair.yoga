@@ -2,10 +2,9 @@ import type { Prisma } from '@prisma/client';
 import type { RoomResult } from '@/lib/room-search';
 
 /**
- * A room as any API read answers it: the shared search result plus its
- * `equipment`. Everything else on the row (`notes`, `createdById`, timestamps)
- * belongs to the teacher who wrote the room and is not part of what a shared
- * room is.
+ * A room's shared projection: its public identity (`RoomResult`) plus
+ * `equipment`. It leaves out `notes` and `createdById`, which are the creating
+ * teacher's own.
  */
 export interface SharedRoom extends RoomResult {
   equipment: Prisma.JsonValue;
