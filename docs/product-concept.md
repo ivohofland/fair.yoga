@@ -151,7 +151,7 @@ A shared library of teaching spaces, with teacher-specific overrides.
 - Absolute maximum capacity
 - Available equipment: mats, blocks, straps, bolsters, blankets, etc.
 - General amenities
-- Notes are the exception: private to the teacher who created the room. Every API read of a room returns its shared projection (`src/lib/room-projection.ts`), so another teacher never receives them (#768)
+- Notes are the exception: private to the teacher who created the room. API reads of a room return its shared projection (`src/lib/room-projection.ts`) or the narrower search result, neither of which carries them, so another teacher never receives them (#768)
 
 **Teacher-specific overrides:**
 Each teacher can customize room settings for their own practice:
