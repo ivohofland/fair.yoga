@@ -667,7 +667,8 @@ describe('a request-sized value parses in linear time (#769)', () => {
   );
 
   it('an over-long email reports its length only: the format check does not read it', () => {
-    const result = fieldAt('createInvitationSchema', 'email').safeParse(`${'a'.repeat(1_000_000)}@example.com`);
+    // Not email-shaped, so a format check that ran would add an issue of its own.
+    const result = fieldAt('createInvitationSchema', 'email').safeParse(`not an email ${'a'.repeat(EMAIL_MAX)}`);
     expect(result.error?.issues.map((issue) => issue.code)).toEqual(['too_big']);
   });
 
