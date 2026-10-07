@@ -154,8 +154,8 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
   // Keyed by address, not by `studentId` — a teacher can type an address into
   // their CRM before (or without) the owner ever holding a Student row, which
   // is the whole point of `Invitation` being a separate table. The match
-  // below needs no case-normalisation: every email column carries an
-  // `_email_lowercase_check` (#170).
+  // below needs no case-normalisation: addresses are stored lowercase
+  // (`docs/data-model.md`, "Email is lowercase everywhere").
   const subjectEmail = student.email;
   const invitations = await db.invitation.findMany({
     where: { email: subjectEmail },
@@ -703,8 +703,9 @@ export async function deleteStudentAccount(
 
     // Invitations are keyed by address, not by `studentId` — a teacher can
     // hold a CRM contact for someone with no Student row at all — so this
-    // matches on the address directly, with no normalisation needed: every
-    // email column carries an `_email_lowercase_check` (#170).
+    // matches on the address directly, with no normalisation needed: addresses
+    // are stored lowercase (`docs/data-model.md`, "Email is lowercase
+    // everywhere").
     //
     // Anonymised rather than deleted, and the reason is narrower than it
     // looks: what survives a scrub but not a delete is the teacher's own
