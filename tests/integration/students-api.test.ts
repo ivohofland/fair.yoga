@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, freshIp, uniqueSuffix, seedSession, waitFor, teardownStudent } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate } from '../class-fixtures';
+import { deleteStudentAccount } from '@/services/gdpr';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
@@ -1039,6 +1040,33 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
 
     expect(existing.status).toBe(unknown.status);
     expect(await existing.json()).toEqual(await unknown.json());
+  });
+
+  // A student the teacher had linked, then erased: the erasure removes the link,
+  // so the teacher's read has to match the unknown-id answer in status and body.
+  it('a linked teacher reading a student who has since been erased gets the unknown-id 404', async () => {
+    const erasedEmail = `stuapi-erased-${dualSuffix}@test.local`;
+    const erasedStudent = await prisma.student.create({
+      data: { firstName: 'Soon', lastName: 'Erased', email: erasedEmail },
+    });
+    try {
+      await prisma.teacherStudent.create({
+        data: { teacherId: dualTeacherId, studentId: erasedStudent.id },
+      });
+      const before = await as(dualToken, `/api/students/${erasedStudent.id}`);
+      expect(before.status).toBe(200);
+
+      expect(await deleteStudentAccount(prisma, erasedStudent.id)).toMatchObject({ erased: true });
+
+      const after = await as(dualToken, `/api/students/${erasedStudent.id}`);
+      const unknown = await as(dualToken, `/api/students/${crypto.randomUUID()}`);
+      expect(after.status).toBe(404);
+      expect(after.status).toBe(unknown.status);
+      expect(await after.json()).toEqual(await unknown.json());
+    } finally {
+      await prisma.teacherStudent.deleteMany({ where: { studentId: erasedStudent.id } });
+      await prisma.student.deleteMany({ where: { id: erasedStudent.id } });
+    }
   });
 
   // #167 mutation check: other list assertions elsewhere in this file read a
