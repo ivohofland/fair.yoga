@@ -1,6 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import * as bounds from './input-bounds';
-import { singleLineText, multiLineText, linkFreeText, COMMON_GENERIC_TLDS } from './input-bounds';
+import { z } from 'zod';
+import {
+  singleLineText,
+  multiLineText,
+  linkFreeText,
+  singleLineCharacters,
+  multiLineCharacters,
+  COMMON_GENERIC_TLDS,
+  NAME_MAX,
+  LONG_TEXT_MAX,
+  BANK_FIELD_MAX,
+} from './input-bounds';
+import {
+  ADVERSARIAL_MEGABYTE,
+  PARSE_BUDGET_MS,
+  TIMING_TEST_TIMEOUT_MS,
+  millisecondsToParse,
+} from './input-bounds-fixtures';
 
 /**
  * The values the design decided (spec §2.1). The schema cap tests measure
@@ -265,4 +282,63 @@ describe('link refusal', () => {
     expect(linkFree.safeParse(`evil.${tld}`).success).toBe(false);
     expect(linkFree.safeParse(`evil.${tld.toUpperCase()}`).success).toBe(false);
   });
+});
+
+describe('a request-sized value parses in linear time (#769)', () => {
+  const BUILDERS = {
+    'singleLineText': singleLineText(NAME_MAX),
+    'multiLineText': multiLineText(LONG_TEXT_MAX),
+    'linkFreeText': linkFreeText(NAME_MAX).min(1),
+    'singleLineCharacters': singleLineCharacters(z.string().trim(), BANK_FIELD_MAX).max(BANK_FIELD_MAX),
+    'multiLineCharacters': multiLineCharacters(z.string(), LONG_TEXT_MAX).max(LONG_TEXT_MAX),
+  } as const;
+
+  const cases = Object.entries(BUILDERS).flatMap(([name, schema]) =>
+    Object.entries(ADVERSARIAL_MEGABYTE).map(([shape, value]) => ({ name, schema, shape, value })),
+  );
+
+  it.each(cases)(
+    '$name refuses $shape within the budget',
+    ({ schema, value }) => {
+      const { ms, success } = millisecondsToParse(schema, value);
+      expect(success).toBe(false);
+      expect(ms).toBeLessThan(PARSE_BUDGET_MS);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+
+  // The early return, pinned apart from the timing: an over-long value that
+  // also breaks the character rule and the link rule reports its length only,
+  // which it can only do if neither rule read it.
+  it.each([
+    ['singleLineText', singleLineText(NAME_MAX), NAME_MAX],
+    ['multiLineText', multiLineText(LONG_TEXT_MAX), LONG_TEXT_MAX],
+    ['linkFreeText', linkFreeText(NAME_MAX), NAME_MAX],
+    ['singleLineCharacters', singleLineCharacters(z.string(), BANK_FIELD_MAX).max(BANK_FIELD_MAX), BANK_FIELD_MAX],
+    ['multiLineCharacters', multiLineCharacters(z.string(), LONG_TEXT_MAX).max(LONG_TEXT_MAX), LONG_TEXT_MAX],
+  ] as const)('%s does not run its rules on a value past its cap', (_name, schema, max) => {
+    const value = `evil.com An\u0000na ${'a'.repeat(max)}`;
+    const result = schema.safeParse(value);
+    expect(result.error?.issues.map((issue) => issue.code)).toEqual(['too_big']);
+  });
+
+  // The link test on its own, with a cap as long as the value, so the early
+  // return never applies. At `NAME_MAX` the value is too short for a
+  // quadratic pattern to show, so the cap here is a constructed one.
+  const AT_CAP = {
+    'a × 50k': 'a'.repeat(50_000),
+    'ab- × 16,666': 'ab-'.repeat(16_666),
+    'a. × 25k': 'a.'.repeat(25_000),
+    'a@ × 25k': 'a@'.repeat(25_000),
+  } as const;
+
+  it.each(Object.entries(AT_CAP))(
+    'the link test reads %s at its cap within the budget',
+    (_shape, value) => {
+      const { ms, success } = millisecondsToParse(linkFreeText(value.length), value);
+      expect(success).toBe(true);
+      expect(ms).toBeLessThan(PARSE_BUDGET_MS);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 });

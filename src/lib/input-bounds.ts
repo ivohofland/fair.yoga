@@ -75,8 +75,17 @@ export const COMMON_GENERIC_TLDS = [
  * address's: a non-space character on each side and a dot later in the same
  * token. A spaced `@` (`Sunset Flow @ Vondelpark`) and a dotless one
  * (`Yoga@Work`) stay legal.
+ *
+ * The `@` branch means `\S@\S+\.\S`, written so its running time is linear in
+ * the value's length. It starts only at a token's first character and tests
+ * only the token's first `@` past that character: a later `@` in the same
+ * token has a subset of the first one's dots after it, so it can match only
+ * where the first already does. Each quantified class excludes the character
+ * that follows it (`[^\s@]*` before `@`, `[^\s.]*` before `.`), so a failed
+ * attempt never retries a shorter run. Unanchored, `\S+` rescanned the rest
+ * of the token from every `@`, which on `a@a@a@…` is quadratic.
  */
-const LINK_MARKER = /:\/\/|www\.|\S@\S+\.\S/iu;
+const LINK_MARKER = /:\/\/|www\.|(?<!\S)\S[^\s@]*@\S[^\s.]*\.\S/iu;
 
 /** Dots that render like `.` in a host name: U+3002, U+FF0E, U+FF61, U+2024. */
 const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
@@ -91,8 +100,14 @@ const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
  * A two-letter suffix counts only in one case, `nl` or `NL`, so a
  * capitalised given name after a title (`Mr.Li Wei`, `Dr.Oz`) stays legal.
  * A `COMMON_GENERIC_TLDS` member counts in any case.
+ *
+ * The label starts only where a run of label characters starts. A label
+ * cannot contain a `.`, so a host found anywhere inside a run is also found
+ * from the run's start, and the match set is the same. Without the
+ * lookbehind the engine tried the label from every position in the run and
+ * scanned to its end each time: quadratic on `aaaa…` or `ab-ab-…`.
  */
-const HOST_LABEL = '[\\p{L}\\p{N}-]{2,}\\.';
+const HOST_LABEL = '(?<![\\p{L}\\p{N}-])[\\p{L}\\p{N}-]{2,}\\.';
 // A combining mark continues the letter before it, so `An.le` + U+0301 reads
 // the same as precomposed `An.lé`.
 const SUFFIX_END = '(?![\\p{L}\\p{M}])';
@@ -137,13 +152,24 @@ function tooLongMessage(max: number): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * A refinement that passes, without reading the value, once the value is
+ * longer than `max`. Zod runs every check even after `.max` has failed, so
+ * without this a request body's megabyte would reach the regexes; the `.max`
+ * beside the refinement already refuses that value, so passing here hides
+ * nothing.
+ */
+function withinCap(max: number, rule: (value: string) => boolean): (value: string) => boolean {
+  return (value) => value.length > max || rule(value);
+}
+
+/**
  * One line of text: trimmed, then checked, then capped at `max`. The trim
  * runs first so a pasted name's stray edge newline or tab is stripped rather
  * than refused. `trim()` removes only whitespace, so an
  * invisible splitter or a control character at an edge is still refused.
  */
 export function singleLineText(max: number) {
-  return singleLineCharacters(z.string().trim()).max(max, tooLongMessage(max));
+  return singleLineCharacters(z.string().trim(), max).max(max, tooLongMessage(max));
 }
 
 /**
@@ -151,20 +177,21 @@ export function singleLineText(max: number) {
  * sent, so an edit form that resends it unchanged writes the same bytes.
  */
 export function multiLineText(max: number) {
-  return multiLineCharacters(z.string()).max(max, tooLongMessage(max));
+  return multiLineCharacters(z.string(), max).max(max, tooLongMessage(max));
 }
 
 /**
  * `singleLineText`'s character rule alone, for a field that keeps its own
- * trimming, cap and messages.
+ * trimming, cap and messages. `max` is that cap: the rule does not read a
+ * value longer than it, so the caller must chain `.max(max)` itself.
  */
-export function singleLineCharacters(schema: z.ZodString): z.ZodString {
-  return schema.refine((v) => !SINGLE_LINE_REFUSED.test(v), CONTROL_MESSAGE);
+export function singleLineCharacters(schema: z.ZodString, max: number): z.ZodString {
+  return schema.refine(withinCap(max, (v) => !SINGLE_LINE_REFUSED.test(v)), CONTROL_MESSAGE);
 }
 
 /** `multiLineText`'s character rule alone, as `singleLineCharacters` is the single-line one. */
-export function multiLineCharacters(schema: z.ZodString): z.ZodString {
-  return schema.refine((v) => !MULTI_LINE_REFUSED.test(v), CONTROL_MESSAGE);
+export function multiLineCharacters(schema: z.ZodString, max: number): z.ZodString {
+  return schema.refine(withinCap(max, (v) => !MULTI_LINE_REFUSED.test(v)), CONTROL_MESSAGE);
 }
 
 /**
@@ -172,5 +199,5 @@ export function multiLineCharacters(schema: z.ZodString): z.ZodString {
  * reach an address which never signed up.
  */
 export function linkFreeText(max: number) {
-  return singleLineText(max).refine((v) => !looksLikeLink(v), LINK_MESSAGE);
+  return singleLineText(max).refine(withinCap(max, (v) => !looksLikeLink(v)), LINK_MESSAGE);
 }
