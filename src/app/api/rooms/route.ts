@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
-  respondOk,
   respondTyped,
   respondError,
   requireTeacher,
@@ -12,6 +11,7 @@ import {
 import { createRoomSchema, roomSearchQuerySchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import type { RoomResult } from '@/lib/room-search';
+import { SHARED_ROOM_SELECT, type SharedRoom } from '@/lib/room-projection';
 
 /**
  * The columns the shared-room search returns: exactly `RoomResult`'s keys.
@@ -67,9 +67,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       OR: [{ isPublic: true }, { createdById: session.teacherId }],
     },
     orderBy: { createdAt: 'desc' },
+    select: SHARED_ROOM_SELECT,
   });
 
-  return respondOk(rooms);
+  return respondTyped<SharedRoom[]>(rooms);
 });
 
 export const POST = withErrorHandler(async (request: NextRequest) => {

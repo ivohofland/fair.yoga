@@ -13,6 +13,7 @@ import {
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
 import { createTeacherRoomSchema } from '@/lib/schemas';
+import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
 import { compareExistingLink, type RequestedLinkValues } from '@/services/teacher-room-attach';
 
 /**
@@ -49,7 +50,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const teacherRooms = await prisma.teacherRoom.findMany({
     where: { teacherId: session.teacherId },
-    include: { room: true },
+    include: { room: { select: SHARED_ROOM_SELECT } },
     orderBy: { createdAt: 'desc' },
   });
 

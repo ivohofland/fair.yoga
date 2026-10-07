@@ -11,6 +11,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateTeacherRoomSchema, archiveStateQuerySchema } from '@/lib/schemas';
+import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
 import { setTeacherRoomArchived, describeRoomBlockers } from '@/services/room-archive';
 import {
   countTeacherRoomDeleteBlockers,
@@ -36,7 +37,7 @@ export const GET = withErrorHandler(async (
 
   const teacherRoom = await prisma.teacherRoom.findUnique({
     where: { id },
-    include: { room: true },
+    include: { room: { select: SHARED_ROOM_SELECT } },
   });
 
   if (!teacherRoom) return respondError('Teacher-room not found', 404);
