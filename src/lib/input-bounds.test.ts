@@ -111,6 +111,18 @@ describe('control and format characters', () => {
     }
   });
 
+  it('accepts a soft hyphen (U+00AD), which text copied from a web page carries unseen', () => {
+    const description = 'Ont\u00ADspan\u00ADning en adem\u00ADwerk';
+    expect(single.safeParse(description).success).toBe(true);
+    expect(multi.safeParse(`${description}\nTweede regel`).success).toBe(true);
+    expect(linkFree.safeParse(description).success).toBe(true);
+  });
+
+  it('still refuses a host split by a soft hyphen, which renders as the host', () => {
+    expect(linkFree.safeParse('evil\u00AD.com').success).toBe(false);
+    expect(linkFree.safeParse('ev\u00ADil.com').success).toBe(false);
+  });
+
   it('accepts an emoji ZWJ sequence', () => {
     expect(single.safeParse('Yoga \u{1F9D8}\u200D♀\uFE0F').success).toBe(true);
     expect(linkFree.safeParse('Yoga \u{1F9D8}\u200D♀\uFE0F').success).toBe(true);
@@ -154,7 +166,7 @@ describe('link refusal', () => {
     'https://x',
     'www.x',
     'WWW.x',
-    'a@b',
+    'a@b.com',
     'evil\u3002com',
     'evil\uFF0Ecom',
     'evil\uFF61com',
@@ -171,6 +183,8 @@ describe('link refusal', () => {
     'evil.c\u034Fom',
     'Jose\u034F\u0301.de',
     'evil@x.com',
+    'evil@x.co',
+    'Flow.Live',
   ];
 
   const ACCEPTED = [
@@ -192,6 +206,9 @@ describe('link refusal', () => {
     'Ji.Wu',
     'Sunset Flow @ Vondelpark',
     'Flow @Vondelpark',
+    'Yoga@Work',
+    'Yoga@Home',
+    'a@b',
   ];
 
   it.each([
