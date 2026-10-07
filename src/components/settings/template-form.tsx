@@ -144,13 +144,14 @@ const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
 
 /**
- * #702. The number inputs store `Number(value)`, so a cleared one is `0`.
- * Where an input carries a native `min` or `max`, a browser stops an
- * out-of-range submit before this runs; this is the form's own copy for the
- * same rules, and the guard when the submit event is dispatched directly. The first number field out of range, in this form's
- * copy, or `undefined`. No class-size branch: the handlers that write
- * Max students clamp it to `MAX_CLASS_SIZE`, the Min students input clamps to
- * Max, and an edit's `initial` is a saved template.
+ * #702. The first number field out of range, in this form's copy, or
+ * `undefined`. The number inputs store `Number(value)`, so a cleared one is
+ * `0`. Where an input carries a native `min` or `max`, a browser stops an
+ * out-of-range submit before this runs; this states the same rules in the
+ * form's own words, and is the guard when the submit event is dispatched
+ * directly. No class-size branch: the handlers that write Max students clamp
+ * it to `MAX_CLASS_SIZE`, the Min students input clamps to Max, and an edit's
+ * `initial` is a saved template.
  */
 function numberFieldError(form: TemplateFormValues): string | undefined {
   if (form.durationMinutes <= 0) return 'Duration must be positive';

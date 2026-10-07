@@ -178,8 +178,8 @@ export function StudioClassEditForm({
       // gate 2.
       //
       // Trimmed client-side so a padded value never round-trips as a 400 the
-      // user has to decode — the wire schema trims too (`z.string().trim().min(1)`),
-      // so an untrimmed `'   '` would be refused, not stored.
+      // user has to decode — the wire schema trims too, so an untrimmed `'   '`
+      // would be refused, not stored.
       const payload: UpdateStudioClassWire = {
         classType: form.classType.trim(),
         location: form.location.trim(),
