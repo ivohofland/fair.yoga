@@ -91,7 +91,7 @@ describe('cleanupExpiredAuth', () => {
     }
   });
 
-  it('deletes expired sessions and tokens, keeps live ones', async () => {
+  it('deletes expired sessions, tokens and ended handoff budgets, keeps live ones', async () => {
     const scoped = scopeSweep(prisma, {
       Session: { id: { in: [liveSessionId, deadSessionId] } },
       MagicLinkToken: { tokenHash: { in: [liveTokenHash, deadTokenHash] } },
