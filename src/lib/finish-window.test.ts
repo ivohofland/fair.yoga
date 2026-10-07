@@ -4,6 +4,7 @@ import { log } from '@/lib/log';
 import {
   FINISH_GRACE_MINUTES,
   CHECKIN_OPENS_MINUTES,
+  checkinOpensAt,
   classEndInstant,
   finishOpensAt,
   autoFinishAt,
@@ -125,6 +126,10 @@ describe('classPageClock', () => {
   it('shows check-in on an open class from CHECKIN_OPENS_MINUTES before the start, and not a millisecond before', () => {
     expect(clock(ms(checkinAt, -1), 'open').showCheckin).toBe(false);
     expect(clock(checkinAt, 'open').showCheckin).toBe(true);
+  });
+
+  it('names the check-in instant of a start as exactly CHECKIN_OPENS_MINUTES before it', () => {
+    expect(checkinOpensAt(start).getTime()).toBe(start.getTime() - CHECKIN_OPENS_MINUTES * MINUTE);
   });
 
   it('answers the check-in instant as the start minus CHECKIN_OPENS_MINUTES', () => {

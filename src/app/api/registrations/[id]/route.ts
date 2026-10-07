@@ -19,6 +19,8 @@ import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
+import { classStartInstant } from '@/lib/timezone';
+import { CHECKIN_OPENS_MINUTES, checkinOpensAt } from '@/lib/finish-window';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
 import type { AttendanceBody } from '@/lib/api-types';
 
@@ -96,14 +98,29 @@ export const PUT = withErrorHandler(async (
 
   const { id } = await params;
 
-  // `teacherId` only, deliberately. Ownership is a fact about the class that
-  // this route cannot change and no concurrent writer moves, so reading it here
-  // is safe. The class's STATUS is not read: testing it here would be a
+  // Ownership and the start instant's inputs. Ownership is a fact about the
+  // class that this route cannot change and no concurrent writer moves, so
+  // reading it here is safe; the start moves only forward and only through
+  // `updateClass`, so a stale read can only be too early, never let a write
+  // through early. The class's STATUS is not read: testing it here would be a
   // read-then-write across `parseBody`'s await, so it belongs in the write's
   // own WHERE below and is deliberately absent from this select.
   const registration = await prisma.registration.findUnique({
     where: { id },
-    include: { class: { select: { calendarEntry: { select: { teacherId: true } } } } },
+    include: {
+      class: {
+        select: {
+          calendarEntry: {
+            select: {
+              teacherId: true,
+              date: true,
+              startTime: true,
+              teacher: { select: { defaultTimezone: true } },
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!registration) return respondError('This booking no longer exists.', 404, 'NOT_FOUND');
@@ -113,6 +130,20 @@ export const PUT = withErrorHandler(async (
 
   const parsed = await parseBody(request, updateRegistrationSchema);
   if ('error' in parsed) return parsed.error;
+
+  // Before the write, whatever the row holds: attendance is recorded from
+  // `checkinOpensAt` (the instant the class page starts showing the list) and
+  // never earlier. Refused ahead of the WHERE's own answers because no row
+  // state makes an early write acceptable.
+  const { calendarEntry } = registration.class;
+  const start = classStartInstant(calendarEntry, calendarEntry.teacher.defaultTimezone);
+  if (Date.now() < checkinOpensAt(start).getTime()) {
+    return respondError(
+      `Attendance can be recorded from ${CHECKIN_OPENS_MINUTES} minutes before the class starts.`,
+      409,
+      'CLASS_NOT_STARTED',
+    );
+  }
 
   // #182. Every condition in the WHERE, none as a pre-check: this handler opens
   // no transaction, so anything read above and tested here is a read-then-write
@@ -147,9 +178,15 @@ export const PUT = withErrorHandler(async (
   // test pinning this as a product requirement. A teacher reaches it through
   // the completed class's "Edit attendance" (`attendance-list.tsx`, `locked`).
   //
-  // No guard on class TIME either: check-in renders on an `open` class within
-  // 15 minutes of its start, so attendance before the class begins is the
-  // designed flow, not an anomaly.
+  // Class TIME is guarded above, not in this WHERE: the clock only moves
+  // forward, so a check made before the write cannot go stale the way a status
+  // can.
+  //
+  // `late_cancel` as a TARGET is a restoration, not an action on a live
+  // booking: DELETE writes `cancelledAt` with `late_cancel`, this route never
+  // clears it, and re-booking does. So `cancelledAt IS NOT NULL` says "this
+  // booking was once late-cancelled", and without it `registered -> late_cancel`
+  // (or the two-step via `attended`) would charge a student who never cancelled.
   //
   // A `Class` row lock would also close the race and is not used: this write
   // moves no money, and locking the hottest row in the app to protect a
@@ -167,6 +204,7 @@ export const PUT = withErrorHandler(async (
       // arm is a plain condition Prisma can compile without a nested relation
       // negation.
       OR: [{ status: { not: 'late_cancel' } }, { class: { status: { not: 'open' } } }],
+      ...(requested === 'late_cancel' ? { cancelledAt: { not: null } } : {}),
     },
     data: { status: requested },
   });
@@ -181,6 +219,7 @@ export const PUT = withErrorHandler(async (
       where: { id },
       select: {
         status: true,
+        cancelledAt: true,
         class: { select: { status: true, calendarEntry: { select: { cancelledAt: true } } } },
       },
     });
@@ -194,6 +233,13 @@ export const PUT = withErrorHandler(async (
     }
     if (current.status === requested) {
       return respondUnchanged<AttendanceBody>({ id, status: requested });
+    }
+    if (requested === 'late_cancel' && current.cancelledAt === null) {
+      return respondError(
+        'A booking can only return to a late cancellation if the student cancelled late.',
+        409,
+        'ILLEGAL_TRANSITION',
+      );
     }
     switch (current.status) {
       case 'late_cancel':
