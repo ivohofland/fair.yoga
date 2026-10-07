@@ -833,7 +833,7 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
     return { id: teacher.id, accountId: teacher.accountId, teacherRoomId: teacherRoom.id };
   }
 
-  /** A class of this teacher; `inProgress` puts it inside the walk-in window. */
+  /** A far-future class of this teacher; `inProgress` sets its status and leaves its start where it is. */
   async function seedClass(
     owner: { id: string; teacherRoomId: string },
     date: string,
@@ -865,6 +865,7 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
   async function seedClassStartingIn(
     owner: { id: string; teacherRoomId: string },
     minutes: number,
+    status: 'open' | 'in_progress' = 'open',
   ): Promise<string> {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: teacherTimezone,
@@ -885,7 +886,7 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
       roomCost: 25, minRate: 15, targetRate: 25,
       // 0: a class this close to its start must never read as below minimum.
       minStudents: 0, maxStudents: 8,
-      status: 'open',
+      status,
     });
     classIds.push(cls.id);
     return cls.id;
@@ -942,7 +943,10 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
     teacherStudentId = own.id;
     token = await seedSession(prisma, main.accountId);
 
-    inWindowId = await seedClass(main, '2099-09-01', true);
+    // The earliest of this teacher's near-now classes, so a later case's
+    // `seedClassStartingIn` never lands on its minute. In progress, and inside
+    // the walk-in window by the clock: the window takes no account of status.
+    inWindowId = await seedClassStartingIn(main, 2, 'in_progress');
     farOffId = await seedClass(main, '2099-09-08', false);
 
     const other = await seedTeacher('other');
@@ -1062,6 +1066,23 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
       await post(token, { classId: farOffId, newContact: { firstName: 'Far', email } }),
       'WALK_IN_WINDOW_CLOSED',
     );
+    expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
+  });
+
+  it('refuses a walk-in to a class in progress whose start is days away', async () => {
+    const classId = await seedClass(main, '2099-09-29', true);
+    const invitation = await invite(main.id, 'moved-invitee');
+    const email = address('moved-contact');
+
+    await expectRefusal(
+      await post(token, { classId, invitationId: invitation.id }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+    await expectRefusal(
+      await post(token, { classId, newContact: { firstName: 'Moved', email } }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+    expect(await prisma.registration.count({ where: { classId } })).toBe(0);
     expect(await rowsFor(email)).toEqual({ student: 0, invitation: 0, privacy: 0 });
   });
 
@@ -1263,7 +1284,7 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
   it('answers an invitee who already booked this class as unchanged, with no walk-in notice', async () => {
     const invitee = await seedClaimedStudent('self-booked', 3);
     const invitation = await invite(main.id, 'self-booked');
-    const classId = await seedClass(main, '2099-09-15', false);
+    const classId = await seedClassStartingIn(main, 3);
     expect((await post(invitee.token, { classId })).status).toBe(201);
     await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
 
@@ -1406,16 +1427,23 @@ describe('POST /api/registrations — self-booking against the class start (#766
   });
 
   afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
-    await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    await prisma.studentPrivacy.deleteMany({ where: { teacherId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.deleteMany({ where: { id: roomId } });
+    // `classId`, `teacherId` and `roomId` are assigned in `beforeAll`: Prisma
+    // drops an undefined filter, so each delete keyed on one is guarded and an
+    // unassigned id deletes nothing.
+    if (classId) {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+      await prisma.registration.deleteMany({ where: { classId } });
+    }
+    if (teacherId) {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+      await prisma.studentPrivacy.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    }
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
     await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
     await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
-    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    if (teacherId) await prisma.teacher.deleteMany({ where: { id: teacherId } });
     await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   });
 

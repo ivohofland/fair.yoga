@@ -223,40 +223,11 @@ async function makeClaimWindowClass(maxStudents: number, minutesUntilStart: numb
 }
 
 /**
- * A class the OWNER teacher can start by hand: it begins `minutesUntilStart`
- * from now, inside the manual-start window (#766), where `makeClass`'s 2099
- * classes are refused. The owner's zone is the schema default, so the wall
- * slot is read in `Europe/Amsterdam`. One minute long and one slot per
- * `minutesUntilStart`, for the overlap reason `makeLateCancelClass` states.
- */
-async function makeStartableClass(maxStudents: number, minutesUntilStart: number): Promise<string> {
-  const { date, startTime } = wallSlotAt(
-    new Date(Date.now() + minutesUntilStart * 60_000),
-    'Europe/Amsterdam',
-  );
-  const cls = await createClassFixture(prisma, {
-    teacherId: ownerId,
-    teacherRoomId,
-    classType: 'Reg API Startable',
-    date,
-    startTime,
-    durationMinutes: 1,
-    roomCost: 20,
-    minRate: 15,
-    targetRate: 25,
-    minStudents: 1,
-    maxStudents,
-    status: 'open',
-  });
-  classIds.push(cls.id);
-  return cls.id;
-}
-
-/**
- * A class an attendance write can reach: one the UTC claim-window teacher owns,
- * starting `minutesUntilStart` from now. The route refuses attendance before
- * `checkinOpensAt` (#766), so the 2099 classes `makeClass` builds cannot take
- * it. Inside the window (`1..CHECKIN_OPENS_MINUTES`) by default, and still
+ * A class the clock lets a write reach: one the UTC claim-window teacher owns,
+ * starting `minutesUntilStart` from now. Attendance is refused before
+ * `checkinOpensAt`, a manual start and a walk-in before `walkInOpensAt`
+ * (#766), so the 2099 classes `makeClass` builds cannot take any of them.
+ * Inside the windows (`1..CHECKIN_OPENS_MINUTES`) by default, and still
  * ahead of its start, so the start sweep leaves its status alone.
  *
  * Not `makeClaimWindowClass`'s 45/50 minutes: those classes are live in the
@@ -403,6 +374,9 @@ beforeAll(async () => {
     });
     studentIds.push(student.id);
     await prisma.teacherStudent.create({ data: { teacherId: ownerId, studentId: student.id } });
+    await prisma.teacherStudent.create({
+      data: { teacherId: claimWindowTeacherId, studentId: student.id },
+    });
     studentTokens.push(await seedSession(prisma, student.accountId!));
   }
   const unlinked = await prisma.student.create({
@@ -663,14 +637,14 @@ describe('POST /api/registrations', () => {
   });
 
   it('allows the owner to add a walk-in beyond capacity during class', async () => {
-    const classId = await makeClass(1);
+    const classId = await makeAttendanceClass(1);
     const fill = await post(studentTokens[0]!, { classId });
     expect(fill.status).toBe(201);
 
     // The class starts: walk-ins happen at the door.
     await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
 
-    const walkIn = await post(ownerToken, { classId, studentId: studentIds[1] });
+    const walkIn = await post(attendanceToken, { classId, studentId: studentIds[1] });
     expect(walkIn.status).toBe(201);
     const { data } = (await walkIn.json()) as { data: { id: string } };
 
@@ -678,7 +652,7 @@ describe('POST /api/registrations', () => {
     // still on the row, just no longer echoed back here. Confirm it via the
     // teacher-facing read instead, which still carries it.
     const read = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
-      headers: cookie(ownerToken),
+      headers: cookie(attendanceToken),
     });
     const readJson = (await read.json()) as { data: { isWalkIn: boolean } };
     expect(readJson.data.isWalkIn).toBe(true);
@@ -700,7 +674,7 @@ describe('POST /api/registrations', () => {
    * paid for.
    */
   it('walks in a queued student whose entry was closed by the class starting — resolves to claimed, not left expired', async () => {
-    const classId = await makeStartableClass(1, 10);
+    const classId = await makeAttendanceClass(1, 'open', 10);
     const fill = await post(studentTokens[0]!, { classId });
     expect(fill.status).toBe(201);
 
@@ -716,7 +690,7 @@ describe('POST /api/registrations', () => {
     // `completeClass` share.
     const transitioned = await fetch(`${BASE_URL}/api/classes/${classId}/transition`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      headers: { 'Content-Type': 'application/json', ...cookie(attendanceToken) },
       body: JSON.stringify({ status: 'in_progress' }),
     });
     expect(transitioned.status).toBe(200);
@@ -726,7 +700,7 @@ describe('POST /api/registrations', () => {
     expect(expired.status).toBe('expired');
 
     // Student 1 turns up at the door; the teacher walks them in.
-    const walkIn = await post(ownerToken, { classId, studentId: studentIds[1] });
+    const walkIn = await post(attendanceToken, { classId, studentId: studentIds[1] });
     expect(walkIn.status).toBe(201);
     const walkInJson = (await walkIn.json()) as { data: { id: string } };
 
@@ -736,6 +710,43 @@ describe('POST /api/registrations', () => {
     });
     expect(entry.status).toBe('claimed');
     expect(entry.registrationId).toBe(walkInJson.data.id);
+  });
+
+  /**
+   * The walk-in window is a fact about the clock, not about the status: a
+   * class started by hand and then moved days ahead is `in_progress` with a
+   * start nobody is waiting at, so it takes no one at the door.
+   */
+  it('refuses a walk-in of an unlinked address once a started class is rescheduled days ahead', async () => {
+    const classId = await makeAttendanceClass(2, 'open', 10);
+    const transitioned = await fetch(`${BASE_URL}/api/classes/${classId}/transition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(attendanceToken) },
+      body: JSON.stringify({ status: 'in_progress' }),
+    });
+    expect(transitioned.status).toBe(200);
+    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const moved = await fetch(`${BASE_URL}/api/classes/${classId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(attendanceToken) },
+      body: JSON.stringify({ date: nextWeek }),
+    });
+    expect(moved.status).toBe(200);
+    const email = `regapi-rescheduled-walkin-${suffix}@test.local`;
+    onTestFinished(async () => {
+      await prisma.invitation.deleteMany({ where: { email } });
+      await prisma.teacherStudent.deleteMany({ where: { student: { email } } });
+      await prisma.student.deleteMany({ where: { email } });
+    });
+
+    await expectRefusal(
+      await post(attendanceToken, { classId, newContact: { firstName: 'Late', email } }),
+      'WALK_IN_WINDOW_CLOSED',
+    );
+
+    expect(await prisma.registration.count({ where: { classId } })).toBe(0);
+    expect(await prisma.student.count({ where: { email } })).toBe(0);
+    expect(await prisma.invitation.count({ where: { email } })).toBe(0);
   });
 
   /**
@@ -754,7 +765,7 @@ describe('POST /api/registrations', () => {
    * rewritten to say they claimed a spot they had already given up.
    */
   it('walks in a student who had LEFT the queue without rewriting their removed entry', async () => {
-    const classId = await makeClass(1);
+    const classId = await makeAttendanceClass(1);
     const fill = await post(studentTokens[0]!, { classId });
     expect(fill.status).toBe(201);
 
@@ -763,7 +774,7 @@ describe('POST /api/registrations', () => {
     });
     await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
 
-    const walkIn = await post(ownerToken, { classId, studentId: studentIds[1] });
+    const walkIn = await post(attendanceToken, { classId, studentId: studentIds[1] });
     expect(walkIn.status).toBe(201);
 
     const entry = await prisma.waitlistEntry.findUniqueOrThrow({
@@ -1598,7 +1609,13 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
   it('409s marking a late-cancelled student attended while the class is still open', async () => {
     const classId = await makeAttendanceClass(4);
     const reg = await prisma.registration.create({
-      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'late_cancel',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
     });
     const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
       method: 'PUT',
@@ -1621,7 +1638,13 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
   it('409s marking a late-cancelled student a no-show while the class is still open', async () => {
     const classId = await makeAttendanceClass(4);
     const reg = await prisma.registration.create({
-      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'late_cancel',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
     });
     const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
       method: 'PUT',
@@ -1649,7 +1672,13 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
   it('allows a late-cancelled student to be marked attended once the class has started', async () => {
     const classId = await makeAttendanceClass(4);
     const reg = await prisma.registration.create({
-      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'late_cancel',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
     });
     await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
 
@@ -1844,7 +1873,13 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
   it('answers a late cancel re-marked as late cancel as unchanged while the class is open', async () => {
     const classId = await makeAttendanceClass(4);
     const reg = await prisma.registration.create({
-      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'late_cancel',
+        cancelledAt: new Date(),
+        tierAtBooking: 3,
+      },
     });
 
     const res = await putStatus(attendanceToken, reg.id, 'late_cancel');
@@ -1908,10 +1943,12 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
    * route's unit test, where the clock is held; here the distances are real.
    */
   describe('before check-in opens', () => {
-    const tooEarly = CHECKIN_OPENS_MINUTES + 1;
+    // Well past the edge, not one minute: a start is stored to the minute, so a
+    // fixture a minute past it can land on the edge when the clock is late in a minute.
+    const tooEarly = CHECKIN_OPENS_MINUTES + 5;
 
     it.each(['attended', 'no_show', 'late_cancel'] as const)(
-      'refuses %s a minute past the lead, and writes nothing',
+      'refuses %s before the lead, and writes nothing',
       async (status) => {
         const classId = await makeAttendanceClass(4, 'open', tooEarly);
         const reg = await prisma.registration.create({
