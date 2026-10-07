@@ -814,6 +814,7 @@ export async function deleteStudentAccount(
       }
     }
     await tx.magicLinkToken.deleteMany({ where: { email: student.email } });
+    await tx.handoffAttemptBudget.deleteMany({ where: { email: student.email } });
 
     // The teacher's "X booked …" notifications carry the student's first
     // name — scrub them for the classes this student booked. Matching by
@@ -1571,6 +1572,7 @@ export async function deleteTeacherAccount(
         }
       }
       await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
+      await tx.handoffAttemptBudget.deleteMany({ where: { email: teacher.email } });
 
       // Scoped and aborting, for the same reason the student erasure above
       // is — see that write for the argument. It matters MORE here now:

@@ -280,8 +280,31 @@ let studentAccountId: string;
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.handoffAttemptBudget.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.$disconnect();
   });
+
+  /** Sign-in state held under `email`: a link token and a handoff budget. */
+  async function seedSignInState(email: string) {
+    await prisma.magicLinkToken.create({
+      data: {
+        tokenHash: `gdpr-${email}`,
+        email,
+        expiresAt: new Date(Date.now() + 15 * 60_000),
+      },
+    });
+    await prisma.handoffAttemptBudget.create({
+      data: { email, attempts: 3, windowStartsAt: new Date() },
+    });
+  }
+
+  async function signInStateCount(email: string) {
+    return {
+      tokens: await prisma.magicLinkToken.count({ where: { email } }),
+      budgets: await prisma.handoffAttemptBudget.count({ where: { email } }),
+    };
+  }
 
   it('exports the student’s class reminder choice as stored (#721)', async () => {
     await prisma.student.update({
@@ -311,7 +334,14 @@ let studentAccountId: string;
   });
 
   it('student deletion anonymizes, cancels upcoming, and keeps financial rows', async () => {
+    const studentEmail = `gdpr-student-${uniqueSuffix}@test.local`;
+    await seedSignInState(studentEmail);
+    expect(await signInStateCount(studentEmail)).toEqual({ tokens: 1, budgets: 1 });
+
     await deleteStudentAccount(prisma, studentId);
+
+    // Sign-in state held under the erased address is gone.
+    expect(await signInStateCount(studentEmail)).toEqual({ tokens: 0, budgets: 0 });
 
     const student = await prisma.student.findUniqueOrThrow({ where: { id: studentId } });
     expect(student.firstName).toBe('Deleted');
@@ -461,7 +491,14 @@ let studentAccountId: string;
       data: { classId: openClassId, studentId: other.id, status: 'registered', tierAtBooking: 3 },
     });
 
+    const teacherEmail = `gdpr-teacher-${uniqueSuffix}@test.local`;
+    await seedSignInState(teacherEmail);
+    expect(await signInStateCount(teacherEmail)).toEqual({ tokens: 1, budgets: 1 });
+
     await deleteTeacherAccount(prisma, teacherId);
+
+    // Sign-in state held under the erased address is gone.
+    expect(await signInStateCount(teacherEmail)).toEqual({ tokens: 0, budgets: 0 });
 
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(teacher.firstName).toBe('Deleted');
