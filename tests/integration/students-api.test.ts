@@ -273,6 +273,21 @@ describe('POST /api/students', () => {
     expect(await prisma.teacherStudent.count({ where: { teacherId } })).toBe(linksBefore);
   });
 
+  it('creates a contact with an empty last name (#769)', async () => {
+    const email = `crm-no-last-${suffix}@test.local`;
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Solo', lastName: '', email }),
+    });
+    expect(res.status).toBe(201);
+    const invitation = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email } },
+      select: { firstName: true, lastName: true },
+    });
+    expect(invitation).toEqual({ firstName: 'Solo', lastName: '' });
+  });
+
   it('answers a repeat with the same names unchanged, and stamps nothing twice', async () => {
     const select = { id: true, firstName: true, lastName: true, lastNotifiedAt: true } as const;
     const before = await prisma.invitation.findUniqueOrThrow({
