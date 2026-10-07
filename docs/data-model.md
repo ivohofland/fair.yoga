@@ -421,7 +421,7 @@ A teacher running a class can register someone standing at the door who is not o
 
 1. Before the transaction, a new contact spends the teacher's student-write rate limit (`checkStudentWriteLimit`, 429), so it cannot become the way around the CRM's spam brake. An invitation spent it when it was created.
 2. `resolveWalkInStudent`, before any lock, on plain reads: an invitation that is not this teacher's → 404 `NOT_FOUND`; an erasure placeholder address → `INVITATION_ERASED` (the teacher already reads "Deleted Student" on that row); this teacher's invitation `declined` → `DECLINED`; a `TeacherBlock` on `(teacher, address)` → `WALK_IN_REFUSED`, which names no cause. Declined comes before blocked because every decline also writes a block (#522): block-first would answer a decline with the generic code, while the teacher already reads `declined` on their own Contacts row. Then the `Student` is found by address or created. This step runs before any lock because the create branch INSERTs `Student`, which heads the lock order (`docs/lock-order.md`), so a contact refusal is answered before anything about the class.
-3. The class, under its locks: `lockLiveStudent` (409 `STUDENT_ERASED`), then `lockClassRow`; a missing class 404; another teacher's class 403; a cancelled one `CLASS_CANCELLED`; a class not `open` or `in_progress` `CLASS_NOT_BOOKABLE`; outside the window `WALK_IN_WINDOW_CLOSED`; then the already-registered answer, `200 unchanged`. Capacity never refuses a walk-in. The status and window refusals precede the unchanged answer because each makes the goal moot — a class that has completed takes no one at the door, and outside the window the request is not a walk-in at all — so an address already booked in the class is refused there like any other and answers nothing about who it is. The window has no end once the clock has passed a class's start, so without the status refusal first every past class would answer that question.
+3. The class, under its locks: `lockLiveStudent` (409 `STUDENT_ERASED`), then `lockClassRow`; a missing class 404; another teacher's class 403; a cancelled one `CLASS_CANCELLED`; a class not bookable by this caller `CLASS_NOT_BOOKABLE` (not `open` or `in_progress` for a teacher; for a student, not `open` or already started); outside the window `WALK_IN_WINDOW_CLOSED`; then the already-registered answer, `200 unchanged`. Capacity never refuses a walk-in. The status and window refusals precede the unchanged answer because each makes the goal moot — a class that has completed takes no one at the door, and outside the window the request is not a walk-in at all — so an address already booked in the class is refused there like any other and answers nothing about who it is. The window has no end once the clock has passed a class's start, so without the status refusal first every past class would answer that question.
 4. After `Registration`, `completeWalkIn`: the privacy seed (create branch), the roster link, the invitation insert and its compare-and-set on `status: 'pending'` — a miss is re-read: `accepted` is what was asked for, `declined` (a decline that landed after step 2) → `DECLINED`, gone → `NOT_FOUND`, `pending` again (the row moved away and back between the two statements) → `CONCURRENT_MODIFICATION` — then a `TeacherBlock` re-read, then the notification. The re-read comes after the roster link and the compare-and-set, which is what lets it see a block committed after step 2's read (an unlink of an undelivered row leaves its invitation `pending` beside the block) → `WALK_IN_REFUSED`; and before the notification, because `createBulkNotifications` hands the payload to the live-update bus before the transaction commits.
 
 **Accepted residuals.**
@@ -726,7 +726,7 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | **id** (PK) | uuid | |
 | *class_id* (FK) | → Class | |
 | *student_id* (FK) | → Student | |
-| status | enum | registered → attended / no_show / late_cancel / cancelled |
+| status | enum | `registered` → `attended` / `no_show` / `cancelled` (or `late_cancel`, written by the student's own late cancel); `late_cancel` is reachable by a teacher's write only as a return from `attended` / `no_show` (see Attendance writes below) |
 | is_walk_in | boolean, default false | Added by teacher during class |
 | tier_at_booking | int (1-5) | Snapshot of student's tier at booking time. Used for pricing. Also serves as income history. |
 | **Calculated** | | Populated after class ends |
@@ -737,6 +737,24 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | cancelled_at | datetime, nullable | |
 | class_reminder_sent_at | datetime, nullable | Set when this booking's reminder is claimed, before it is delivered; a failed email leaves it set (at most once). Cleared when an earlier booking's row is reused for a new booking |
 | updated_at | datetime | |
+
+**Attendance writes (#766).** `PUT /api/registrations/[id]` records `attended`,
+`no_show` or `late_cancel` under three time and origin rules, each tested in
+`src/app/api/registrations/[id]/route.test.ts`:
+
+- *Clock gate.* Before `checkinOpensAt(start)` (`CHECKIN_OPENS_MINUTES` before
+  the class starts, `src/lib/finish-window.ts`) every attendance write answers
+  409 `CLASS_NOT_STARTED`, whatever the row holds. The gate is the first answer,
+  so a cancelled class and a row already holding the requested status answer it
+  too until the window opens. An unreadable start refuses as well. The class page
+  shows check-in from the same instant (`classPageClock`), so it offers what the
+  server accepts.
+- *`late_cancel` is a restoration.* It is accepted only on a booking that was
+  once late-cancelled (`cancelled_at` set, status not `cancelled`), so a teacher
+  cannot turn a live booking into a charged cancellation. A write that violates
+  it answers 409 `ILLEGAL_TRANSITION`. Re-booking clears `cancelled_at`.
+- *Self-booking cutoff.* A student can book only until the class starts; a
+  teacher's roster add after the start is a walk-in.
 
 **A booking that meets its student's erasure at the `Student` row is refused
 if the erasure took the row first (#625).** `POST /api/registrations` and
