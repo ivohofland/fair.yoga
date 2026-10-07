@@ -28,6 +28,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.magicLinkToken.deleteMany({ where: { email } });
+  await prisma.handoffAttemptBudget.deleteMany({ where: { email } });
   await teardownStudent(prisma, studentId, accountId);
   await prisma.$disconnect();
 });
@@ -166,6 +167,7 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
     expect(await prisma.account.findUnique({ where: { email: freshEmail } })).toBeNull();
 
     await prisma.magicLinkToken.deleteMany({ where: { email: freshEmail } });
+    await prisma.handoffAttemptBudget.deleteMany({ where: { email: freshEmail } });
   });
 
   it('refuses a wrong code without a session', async () => {
@@ -201,6 +203,7 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
     expect(claimRes.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
 
     await prisma.magicLinkToken.deleteMany({ where: { email: wrongEmail } });
+    await prisma.handoffAttemptBudget.deleteMany({ where: { email: wrongEmail } });
   });
 });
 
@@ -255,6 +258,9 @@ describe('POST /api/auth/magic-link/claim — teacher-signup destination for an 
 
   afterAll(async () => {
     await prisma.magicLinkToken.deleteMany({
+      where: { email: { in: [destTeacherEmail, destStudentEmail] } },
+    });
+    await prisma.handoffAttemptBudget.deleteMany({
       where: { email: { in: [destTeacherEmail, destStudentEmail] } },
     });
     await teardownTeacher(prisma, destTeacherId, destTeacherAccountId);
