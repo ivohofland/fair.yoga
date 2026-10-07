@@ -189,7 +189,6 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/account/teacher-profile/route.ts:150` | error | routine | failure, surfaced as an error (throws, 500) |
 | `src/app/api/account/teacher-profile/route.ts:172` | warn | routine | documented race; the loser is refused or retried (409) |
 | `src/app/api/account/teacher-profile/route.ts:188` | error | routine | failure, surfaced as an error (throws, 500) |
-| `src/app/api/auth/magic-link/send/route.ts:60` | error | routine | failure (an exception or outage), not impossible data; the uniform 200 is the enumeration guard |
 | `src/app/api/auth/magic-link/verify/route.ts:92` | error | routine | failure, surfaced as an error (400); reachable by an erasure racing the link |
 | `src/app/api/auth/passkey/authenticate/verify/route.ts:36` | warn | routine | refusal (4xx); nothing substituted |
 | `src/app/api/auth/student-signup/route.ts:25` | warn | routine | rate-limit throttle |
@@ -231,9 +230,10 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/teacher-rooms/[id]/route.ts:200` | warn | routine | documented race; the loser is refused or retried (FK backstop, 409) |
 | `src/app/api/teacher-rooms/route.ts:133` | error | routine | failure, surfaced as an error (throws, 500) |
 | `src/app/api/teachers/[id]/photo/route.ts:39` | warn | routine | bad upload (400); input, not stored data |
-| `src/lib/auth/handoff.ts:154` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
-| `src/lib/auth/handoff.ts:185` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
-| `src/lib/auth/handoff.ts:195` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/handoff.ts:222` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/handoff.ts:271` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/handoff.ts:281` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/link-delivery.ts:70` | error | routine | failure (an exception or outage), not impossible data; nothing awaits it, so the response cannot depend on it |
 | `src/lib/auth/passkey.ts:80` | warn | routine | rate-limit throttle (challenge store at capacity) |
 | `src/lib/auth/passkey.ts:256` | warn | routine | refusal (4xx); nothing substituted |
 | `src/lib/auth/profile-authorization.ts:110` | warn | routine | refusal (4xx); nothing substituted (foreign ticket ignored) |
