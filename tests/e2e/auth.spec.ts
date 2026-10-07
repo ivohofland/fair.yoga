@@ -225,6 +225,7 @@ test.describe('Magic link authentication', () => {
   test('unauthenticated user visiting protected route with redirect preserves destination through sign-in', async ({
     page,
   }) => {
+    const startedAt = new Date();
     await page.goto('/settings/rooms');
     await expect(page).toHaveURL(/\/login\?redirect=%2Fsettings%2Frooms/);
 
@@ -239,7 +240,7 @@ test.describe('Magic link authentication', () => {
     await expect
       .poll(async () => {
         const row = await prisma.magicLinkToken.findFirst({
-          where: { email: teacherEmail },
+          where: { email: teacherEmail, createdAt: { gte: startedAt } },
           orderBy: { createdAt: 'desc' },
         });
         return row?.redirectTo;
