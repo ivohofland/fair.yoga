@@ -1,12 +1,10 @@
 import { z } from 'zod';
 
 /**
- * Every limit a request body is held to, and the zod builders that apply the
- * text ones. Client-safe: forms import these constants for `maxLength` and
- * their own validators, so nothing here may import server-only code.
- *
- * The values and which field takes which builder are decided in
- * `docs/superpowers/specs/2026-10-07-input-bounds-design.md` (§2.1).
+ * The input limits decided in
+ * `docs/superpowers/specs/2026-10-07-input-bounds-design.md` (§2.1), and the
+ * zod builders that apply the text ones. Client-safe: it imports nothing but
+ * `zod`, so a client component can import it.
  */
 
 // ---------------------------------------------------------------------------
