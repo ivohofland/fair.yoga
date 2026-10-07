@@ -263,10 +263,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         isTeacher &&
         (cls.status === 'in_progress' || Date.now() >= walkInOpensAt(classStart).getTime());
 
-      // Students book open classes; the teacher can also add someone who
-      // shows up while the class is in progress.
+      // Students book open classes, and only until the class starts: the
+      // sweep that flips `open` to `in_progress` runs on its own schedule, so
+      // the status alone would keep a started class bookable until it does.
+      // The teacher can also add someone who shows up once it has started.
       const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
-      const bookable = allowedStatuses.includes(cls.status);
+      const bookable =
+        allowedStatuses.includes(cls.status) && (isTeacher || Date.now() < classStart.getTime());
 
       // An invitee or a new person is booked only with them at the door —
       // their presence is what stands for their acceptance. A roster student

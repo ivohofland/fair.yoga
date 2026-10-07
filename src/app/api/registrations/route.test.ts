@@ -11,7 +11,7 @@ import * as waitlistService from '@/services/waitlist';
 import * as rateLimit from '@/lib/rate-limit';
 import { erasedAddress } from '@/lib/erased-address';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
+import { expectApplied, expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
 
 /**
  * What this route hands `resolveInvitationOnLink` (#418), pinned where it can
@@ -1294,5 +1294,168 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
     const allowed = await post(token, { classId: inWindowId, invitationId: invitation.id });
     expect(allowed.status).toBe(201);
     expect(limit).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A student books their own seat only until the class starts (#766). The
+ * class here starts about an hour from the real clock, and each case moves
+ * `Date` to the instant it asks about — a start is stored to the minute, so
+ * the edge is read back from the row rather than computed from the clock.
+ */
+describe('POST /api/registrations — self-booking against the class start (#766)', () => {
+  const tag = `selfbook-time-${suffix}`;
+  let teacherId: string;
+  let roomId: string;
+  let classId: string;
+  let start: Date;
+  let teacherToken: string;
+  let rosterStudentId: string;
+  const accountIds: string[] = [];
+  const studentIds: string[] = [];
+
+  async function post(sessionToken: string, body: unknown): Promise<Response> {
+    return POST(new NextRequest('http://localhost:3000/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  async function seedStudent(label: string): Promise<{ id: string; token: string }> {
+    const email = `${tag}-${label}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Time', lastName: label,
+        email, incomeTier: 3, claimedAt: new Date(),
+        account: { create: { email } },
+      },
+      select: { id: true, accountId: true },
+    });
+    const accountId = student.accountId;
+    if (!accountId) throw new Error('fixture: the claimed student has no account');
+    accountIds.push(accountId);
+    studentIds.push(student.id);
+    return { id: student.id, token: await seedSession(prisma, accountId) };
+  }
+
+  /** `Date` only: the database client and its pool keep their real timers. */
+  function clockAt(instant: Date): void {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(instant);
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
+  beforeAll(async () => {
+    const email = `${tag}-teacher@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Time', lastName: 'Teacher',
+        email,
+        account: { create: { email } },
+        bio: '#766 self-booking clock fixture teacher',
+        pageSlug: tag,
+        defaultTimezone: 'UTC',
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountIds.push(teacher.accountId);
+    teacherToken = await seedSession(prisma, teacher.accountId);
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Time Studio', address: `${suffix} Time St`, city: 'Amsterdam',
+        postcode: '1234TM', floor: '1', roomName: 'Main', maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 20, rentalRate: 25 },
+      select: { id: true },
+    });
+
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    })
+      .formatToParts(new Date(Date.now() + 60 * 60 * 1000))
+      .reduce<Record<string, string>>((acc, { type, value }) => {
+        if (type !== 'literal') acc[type] = value;
+        return acc;
+      }, {});
+    start = new Date(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:00Z`);
+    const cls = await createClassFixture(prisma, {
+      teacherId, teacherRoomId: teacherRoom.id,
+      classType: 'Time Vinyasa',
+      date: new Date(`${parts.year}-${parts.month}-${parts.day}`),
+      startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
+      durationMinutes: 60,
+      roomCost: 25, minRate: 15, targetRate: 25,
+      minStudents: 0, maxStudents: 8,
+      status: 'open',
+    });
+    classId = cls.id;
+
+    rosterStudentId = (await seedStudent('roster')).id;
+    await prisma.teacherStudent.create({ data: { teacherId, studentId: rosterStudentId } });
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+    await prisma.studentPrivacy.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  it('books a student one second before the start', async () => {
+    const student = await seedStudent('before');
+    clockAt(new Date(start.getTime() - 1000));
+
+    await expectApplied(await post(student.token, { classId }), 201);
+
+    expect(await prisma.registration.count({ where: { classId, studentId: student.id } })).toBe(1);
+  });
+
+  it('refuses a student at the start, leaving no registration behind', async () => {
+    const student = await seedStudent('at-start');
+    clockAt(start);
+
+    await expectRefusal(await post(student.token, { classId }), 'CLASS_NOT_BOOKABLE');
+
+    expect(await prisma.registration.count({ where: { classId, studentId: student.id } })).toBe(0);
+  });
+
+  it('answers a student already booked as unchanged after the start', async () => {
+    const student = await seedStudent('held');
+    await prisma.registration.create({
+      data: { classId, studentId: student.id, status: 'registered', tierAtBooking: 3 },
+    });
+    clockAt(new Date(start.getTime() + 60 * 1000));
+
+    await expectUnchanged(await post(student.token, { classId }));
+  });
+
+  it('still adds a roster student after the start, as a walk-in', async () => {
+    clockAt(new Date(start.getTime() + 60 * 1000));
+
+    await expectApplied(await post(teacherToken, { classId, studentId: rosterStudentId }), 201);
+
+    const row = await prisma.registration.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: rosterStudentId } },
+      select: { isWalkIn: true },
+    });
+    expect(row.isWalkIn).toBe(true);
   });
 });
