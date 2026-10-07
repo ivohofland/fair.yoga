@@ -28,14 +28,17 @@ The premise is measured in `2026-10-07-input-bounds-census.md`, which sits besid
   - `\p{Zl}` and `\p{Zp}` (U+2028/9).
 - **`multiLineText(max)`:** the same refusals, except that `\n`, `\r` and `\t` are allowed. It does **not** trim. A description or message keeps its leading and trailing whitespace exactly as stored today, so the edit forms' resend stays byte-identical.
 - **`linkFreeText(max)`:** `singleLineText(max)`, plus the link refusal:
-  - `://`, `www.`, `@`;
+  - `://`, `www.`;
+  - an `@` in an email shape: a non-space character on each side (`\S@\S`). `a@b` and `evil@x.com` are refused; a spaced `@`, as in the class type `Sunset Flow @ Vondelpark`, is legal;
   - the look-alike dots U+3002, U+FF0E, U+FF61 and U+2024;
   - a **host-shaped token**:
     - a label of two or more letters/digits/hyphens, then a `.`;
     - then either two ASCII letters in a single case (`nl`, `NL`) or one of a short list of common generic TLDs (any case);
-    - then a non-letter or the end.
+    - then a character that is neither a letter nor a combining mark, or the end.
 
-    The token is Unicode-aware, and ZWJ/ZWNJ are stripped before the test, since between Latin letters they are invisible and could split a host.
+    The token is Unicode-aware. Every test reads the value as it renders: first every `\p{Default_Ignorable_Code_Point}` is stripped, then the result is NFC-normalised. The strip covers what `singleLineText` lets through and a reader cannot see, the exempt ZWJ/ZWNJ and marks such as the combining grapheme joiner (U+034F) and the variation selectors, any of which could split a host (`evil` U+034F `.com` renders as `evil.com`). NFC makes a decomposed `José.de` (`e` + U+0301) test as the precomposed one it looks like, so both forms are refused. The strip runs first because an invisible mark between a letter and its accent blocks composition.
+
+  The refusal reads "This can't contain a web or email address. If it's an abbreviation, add a space after the dot.", so a name the rule catches by mistake (`Th.de Vries`) has a stated way through (`Th. de Vries`).
 
   The label must be two or more characters. A two-letter suffix counts only in a single case, and longer suffixes only from the list. That keeps these legal:
   - `St.Clair`, `J.R.`;
@@ -57,6 +60,7 @@ The premise is measured in `2026-10-07-input-bounds-census.md`, which sits besid
 | `markPaid.method` | `singleLineText` | `PAYMENT_METHOD_MAX` = 64 |
 | every `emailField` | `.max` before the format check | `EMAIL_MAX` = 254 (RFC 5321's path limit) |
 | `pageSlugField` | `.max` | `PAGE_SLUG_MAX` = 60 |
+| bank `holderName`; each of `bankAccountSchema`'s bank-detail fields | `.max`, unchanged: these caps existed before as literals and moved into the module as named constants | `HOLDER_NAME_MAX` = 200, `BANK_FIELD_MAX` = 64 |
 
 The invitation `lastName`, which today has no `.trim()`, gets `linkFreeText`'s trim like every other name.
 
@@ -106,7 +110,7 @@ The invitation template already escapes HTML, and its subject goes through Resen
 ### 2.4 Forms mirror the limits
 
 - **Text inputs get `maxLength={CONSTANT}`.** It stops typing and silently truncates a paste, which is acceptable, because the server is the authority. The signup page-address field gets `maxLength={PAGE_SLUG_MAX}`. Its suggestion (`slugFromName`, which joins two name slugs) is truncated to `PAGE_SLUG_MAX` without a trailing `-`, since two 60-character names would otherwise pre-fill an invalid 121-character slug.
-- **Number inputs are capped in each form's own JS validator,** in that form's copy. `max=` on a number input only takes part in native validation on a real `<form>` submit, and the class edit, new-class and studio-class edit forms have no `<form>`. The validators are `class-edit-form`'s `numberFieldError`, `new-class-form`, `template-form`, `new-studio-class-form`, `studio-template-form` and `studio-class-edit-form`. Inputs also get `max`, and `min={-MONEY_MAX}` where negatives are allowed, as a hint.
+- **Number inputs are capped in each form's own JS validator,** in that form's copy. `max=` on a number input only takes part in native validation on a real `<form>` submit, and the class edit, new-class, studio-class edit and student-count forms have no `<form>`. The validators are `class-edit-form`'s `numberFieldError`, `new-class-form`, `template-form`, `new-studio-class-form`, `studio-template-form`, `studio-class-edit-form`, `student-count-editor` and `room-settings-step`. Inputs also get `max`, and `min={-MONEY_MAX}` where negatives are allowed. In a form that is a real `<form>` those native bounds enforce: a browser blocks an out-of-range submit with its own message before the JS validator runs. There the validator's copy is the guard for a directly dispatched submit, which is how the component tests reach it (`fireEvent.submit`); in the forms without a `<form>` it is what the user sees. The other room forms (`edit-room-form`, `edit-teacher-room-form`, `room-create-step`) carry the native `max` only.
 - **The schema caps carry a readable message** ("Keep this to 80 characters or fewer."). `parseBody` prefixes the field path, so a request that reaches the server unvalidated still names the field. The forms' own validators carry the field-specific copy.
 
 ## 3. Rejected
