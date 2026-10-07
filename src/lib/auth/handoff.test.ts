@@ -963,6 +963,41 @@ describe('the per-address comparison budget', () => {
     });
   });
 
+  // Live order is newest first across addresses: A's older token, then B's,
+  // then A's newest. Grouping by address puts both of A's tokens before B's,
+  // so the shared code must still resolve to B's token, the newer of the two
+  // that carry it.
+  it('a code two addresses share claims the newer token, whatever the address grouping', async () => {
+    const a = address('tie-a');
+    const b = address('tie-b');
+    const nonce = nonceFor('tie');
+    const shared = '424242';
+    const base = Date.now();
+    const row = (email: string, handoffCode: string, ageMs: number, redirectTo: string) => ({
+      tokenHash: hashToken(crypto.randomBytes(32).toString('hex')),
+      email,
+      redirectTo,
+      originBrowserHash: hashNonce(nonce),
+      handoffCode,
+      createdAt: new Date(base - ageMs),
+      expiresAt: new Date(base + 15 * 60_000),
+    });
+    await db.magicLinkToken.createMany({
+      data: [
+        row(a, '131313', 0, '/a-newest'),
+        row(b, shared, 60_000, '/b'),
+        row(a, shared, 120_000, '/a-older'),
+      ],
+    });
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), shared)).toEqual({
+      kind: 'verified',
+      email: b,
+      redirectTo: '/b',
+      purpose: 'sign_in',
+    });
+  });
+
   it('a spent budget leaves the same-browser path alone', async () => {
     const email = address('same-browser');
     const nonce = nonceFor('same-browser');
