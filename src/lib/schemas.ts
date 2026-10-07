@@ -97,7 +97,9 @@ const timeHHmm = z
  */
 const emailField = z
   .string()
-  .max(EMAIL_MAX, `Keep the address to ${EMAIL_MAX} characters or fewer.`)
+  // `abort` stops the format check reading an over-long value, as
+  // `input-bounds.ts`'s `withinCap` does for the text builders.
+  .max(EMAIL_MAX, { message: `Keep the address to ${EMAIL_MAX} characters or fewer.`, abort: true })
   .email()
   .transform((s) => s.toLowerCase());
 
@@ -268,7 +270,8 @@ const RESERVED_SLUGS = new Set([
 export const pageSlugField = z
   .string()
   .min(1)
-  .max(PAGE_SLUG_MAX, `Keep the page address to ${PAGE_SLUG_MAX} characters or fewer.`)
+  // `abort` stops the regex and the reserved-name lookup reading an over-long value.
+  .max(PAGE_SLUG_MAX, { message: `Keep the page address to ${PAGE_SLUG_MAX} characters or fewer.`, abort: true })
   .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
   .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved');
 
@@ -337,7 +340,7 @@ export const updateTeacherSchema = z.object({
 
 // Trimmed before the character rule so a pasted value's edge newline or tab
 // is stripped rather than refused.
-const bankField = singleLineCharacters(z.string().trim()).max(BANK_FIELD_MAX).nullable().optional();
+const bankField = singleLineCharacters(z.string().trim(), BANK_FIELD_MAX).max(BANK_FIELD_MAX).nullable().optional();
 
 /**
  * `PUT /api/teachers/[id]/bank-accounts/[currency]`'s wire shape: the shape
@@ -405,7 +408,7 @@ export const respondToInvitationSchema = z.object({
  */
 function optionalText(label: string, max: number, lines: 'single' | 'multi') {
   const characters = lines === 'single' ? singleLineCharacters : multiLineCharacters;
-  return characters(z.string().trim())
+  return characters(z.string().trim(), max)
     .max(max, `${label} must be ${max} characters or fewer`)
     .transform((v) => (v === '' ? null : v))
     .nullable()

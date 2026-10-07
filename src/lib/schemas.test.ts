@@ -30,6 +30,12 @@ import {
 } from './schemas';
 import type { NoneOf } from './type-pins';
 import {
+  ADVERSARIAL_MEGABYTE,
+  PARSE_BUDGET_MS,
+  TIMING_TEST_TIMEOUT_MS,
+  millisecondsToParse,
+} from './input-bounds-fixtures';
+import {
   NAME_MAX,
   CLASS_TYPE_MAX,
   LOCATION_MAX,
@@ -632,6 +638,42 @@ describe('pageSlugField', () => {
   // claimed it, because a static segment beats the [slug] dynamic one.
   it.each(['signup', 'login', 'schedule', 'api', 'start'])('rejects the reserved slug %s', (slug) => {
     expect(() => pageSlugField.parse(slug)).toThrow('This slug is reserved');
+  });
+});
+
+describe('a request-sized value parses in linear time (#769)', () => {
+  const FIELDS = {
+    'a person name': fieldAt('createInvitationSchema', 'firstName'),
+    'a class type': fieldAt('createClassSchema', 'classType'),
+    'an email': fieldAt('createInvitationSchema', 'email'),
+    'the page slug': pageSlugField,
+    'a bank field': fieldAt('bankAccountSchema', 'iban'),
+    'a phone': fieldAt('updateStudentSchema', 'phone'),
+    'an address': fieldAt('updateStudentSchema', 'address'),
+  } as const;
+
+  const cases = Object.entries(FIELDS).flatMap(([name, schema]) =>
+    Object.entries(ADVERSARIAL_MEGABYTE).map(([shape, value]) => ({ name, schema, shape, value })),
+  );
+
+  it.each(cases)(
+    '$name refuses $shape within the budget',
+    ({ schema, value }) => {
+      const { ms, success } = millisecondsToParse(schema, value);
+      expect(success).toBe(false);
+      expect(ms).toBeLessThan(PARSE_BUDGET_MS);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+
+  it('an over-long email reports its length only: the format check does not read it', () => {
+    const result = fieldAt('createInvitationSchema', 'email').safeParse(`${'a'.repeat(1_000_000)}@example.com`);
+    expect(result.error?.issues.map((issue) => issue.code)).toEqual(['too_big']);
+  });
+
+  it('an over-long page slug reports its length only: the pattern and reserved check do not read it', () => {
+    const result = pageSlugField.safeParse(`Not A Slug ${'a'.repeat(PAGE_SLUG_MAX)}`);
+    expect(result.error?.issues.map((issue) => issue.code)).toEqual(['too_big']);
   });
 });
 
@@ -1579,7 +1621,7 @@ describe('every string, array and number leaf is bounded, and every text leaf re
       single: singleLineText(5),
       multi: multiLineText(5),
       linkFree: linkFreeText(5),
-      checked: singleLineCharacters(z.string().trim()).max(5).nullable().optional(),
+      checked: singleLineCharacters(z.string().trim(), 5).max(5).nullable().optional(),
     }), out);
     expect(out.offenders).toEqual(['probe.bare: accepts a control or format character']);
   });
