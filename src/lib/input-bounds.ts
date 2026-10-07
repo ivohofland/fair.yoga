@@ -28,7 +28,7 @@ export const PAYMENT_METHOD_MAX = 64;
 /** RFC 5321's limit on a forward path. */
 export const EMAIL_MAX = 254;
 export const PAGE_SLUG_MAX = 60;
-/** One bank-detail field (IBAN, BIC, sort code, account or routing number). */
+/** One bank-detail field. */
 export const BANK_FIELD_MAX = 64;
 export const HOLDER_NAME_MAX = 200;
 
@@ -68,8 +68,12 @@ export const COMMON_GENERIC_TLDS = [
   'email', 'tech', 'cloud', 'page', 'pro', 'website', 'space',
 ] as const;
 
-/** A scheme separator, a `www.` prefix or an `@`. */
-const LINK_MARKER = /:\/\/|www\.|@/iu;
+/**
+ * A scheme separator, a `www.` prefix, or an `@` with a non-space character on
+ * each side, as an email address has. A spaced `@` (`Sunset Flow @ Vondelpark`)
+ * stays legal.
+ */
+const LINK_MARKER = /:\/\/|www\.|\S@\S/iu;
 
 /** Dots that render like `.` in a host name: U+3002, U+FF0E, U+FF61, U+2024. */
 const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
@@ -91,15 +95,22 @@ const SUFFIX_END = '(?![\\p{L}\\p{M}])';
 const HOST_COUNTRY_CODE = new RegExp(`${HOST_LABEL}(?:[a-z]{2}|[A-Z]{2})${SUFFIX_END}`, 'u');
 const HOST_GENERIC = new RegExp(`${HOST_LABEL}(?:${COMMON_GENERIC_TLDS.join('|')})${SUFFIX_END}`, 'iu');
 
-/** ZWNJ and ZWJ: legal in a name, invisible in a rendered host. */
-const JOINERS = /[\u200C\u200D]/gu;
+/**
+ * Code points that render as nothing. `singleLineText` lets some through: the
+ * joiners it exempts, and marks such as the combining grapheme joiner and the
+ * variation selectors. Any of them could sit invisibly inside a host.
+ */
+const INVISIBLE = /\p{Default_Ignorable_Code_Point}/gu;
 
 /**
- * Reads the value as it renders: with the joiners `singleLineText` lets
- * through removed, `evil\u200D.com` is the `evil.com` a reader sees.
+ * Reads the value as it renders: invisible code points removed, so
+ * `evil\u034F.com` is the `evil.com` a reader sees, then NFC-composed, so a
+ * decomposed `Jose\u0301.de` is tested as the `Jos\u00E9.de` it looks like. The
+ * strip runs first because an invisible mark between a letter and its accent
+ * blocks composition.
  */
 function looksLikeLink(value: string): boolean {
-  const rendered = value.replace(JOINERS, '');
+  const rendered = value.replace(INVISIBLE, '').normalize('NFC');
   return (
     LINK_MARKER.test(rendered) ||
     LOOKALIKE_DOT.test(rendered) ||
@@ -109,7 +120,8 @@ function looksLikeLink(value: string): boolean {
 }
 
 const CONTROL_MESSAGE = 'Remove the hidden or control characters.';
-const LINK_MESSAGE = "This can't contain a web or email address.";
+const LINK_MESSAGE =
+  "This can't contain a web or email address. If it's an abbreviation, add a space after the dot.";
 
 function tooLongMessage(max: number): string {
   return `Keep this to ${max} characters or fewer.`;
