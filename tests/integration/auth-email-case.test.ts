@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp, waitFor } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -47,7 +47,11 @@ describe('sign-in and signup are case-insensitive on email', () => {
 
     // The route answers 200 either way to prevent enumeration, so the response
     // body cannot distinguish success from silent failure. The token row is the
-    // only observable difference — assert on it, not on the message.
+    // only observable difference — assert on it, not on the message. The
+    // route does not wait for the send, so the row arrives after the response.
+    await waitFor(async () => (await prisma.magicLinkToken.count({ where: { email: studentEmail } })) > 0, {
+      description: 'token minted for the mixed-case address',
+    });
     const tokens = await prisma.magicLinkToken.findMany({
       where: { email: studentEmail },
     });

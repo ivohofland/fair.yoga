@@ -235,11 +235,20 @@ test.describe('Magic link authentication', () => {
       page.getByText('Check your inbox for the link.')
     ).toBeVisible();
 
+    // The route answers before the token is minted, so wait for the row.
+    await expect
+      .poll(async () => {
+        const row = await prisma.magicLinkToken.findFirst({
+          where: { email: teacherEmail },
+          orderBy: { createdAt: 'desc' },
+        });
+        return row?.redirectTo;
+      })
+      .toBe('/settings/rooms');
     const tokenRecord = await prisma.magicLinkToken.findFirst({
       where: { email: teacherEmail },
       orderBy: { createdAt: 'desc' },
     });
-    expect(tokenRecord?.redirectTo).toBe('/settings/rooms');
 
     const cookies = await page.context().cookies();
     const originCookie = cookies.find((c) => c.name === 'fair_yoga_origin');

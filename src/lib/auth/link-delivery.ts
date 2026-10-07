@@ -2,6 +2,9 @@ import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
 import { generateMagicLinkToken } from './magic-link';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
 import { sendMagicLinkEmail } from '@/lib/email';
+import { log } from '@/lib/log';
+import type { FireAndForget } from '@/lib/fire-and-forget';
+import type { Assert, Equals } from '@/lib/type-pins';
 
 declare const boundLinkBrand: unique symbol;
 
@@ -37,3 +40,42 @@ export async function deliverSignInLink(
   const link = `${baseUrl}/verify?token=${token}` as BoundSignInLink;
   await sendMagicLinkEmail(email, link);
 }
+
+/**
+ * Emails a sign-in link if `email` belongs to a teacher or a student, and
+ * does nothing otherwise.
+ *
+ * The response to the request that asked for it must not depend on whether
+ * the address is registered, so the caller awaits none of it: the lookup, the
+ * mint and the send each take a different time for a registered address than
+ * for an unknown one. Hence `FireAndForget`, with the rejection owned here
+ * (`docs/technical-architecture.md`, The Services Layer → Work that must not
+ * be awaited).
+ *
+ * Nothing sits before the IIFE: a statement there that threw would escape the
+ * `.catch` into the caller.
+ */
+export function deliverSignInLinkIfRegistered(
+  db: PrismaClient,
+  email: string,
+  nonce: BrowserNonce,
+  opts?: { redirectTo?: string },
+): FireAndForget {
+  void (async () => {
+    const teacher = await db.teacher.findUnique({ where: { email } });
+    const user = teacher ?? (await db.student.findUnique({ where: { email } }));
+    if (!user) return;
+    await deliverSignInLink(db, email, nonce, { redirectTo: opts?.redirectTo });
+  })().catch((err: unknown) => {
+    log.error({ err }, 'magic-link send: delivery failed');
+  });
+}
+
+/**
+ * This function's own use of the alias, pinned: a signature restored to
+ * `Promise<void>` fails the build instead of reopening the oracle.
+ */
+type _deliverSignInLinkIfRegisteredReturnsVoid = Assert<
+  Equals<ReturnType<typeof deliverSignInLinkIfRegistered>, void>
+>;
+void 0 as unknown as [_deliverSignInLinkIfRegisteredReturnsVoid];

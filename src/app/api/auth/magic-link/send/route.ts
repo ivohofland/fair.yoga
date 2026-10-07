@@ -1,10 +1,9 @@
 import { NextRequest } from 'next/server';
-import { ensureOriginNonce, deliverSignInLink } from '@/lib/auth';
+import { ensureOriginNonce, deliverSignInLinkIfRegistered } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { magicLinkSendSchema } from '@/lib/schemas';
 import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, RateLimitResult } from '@/lib/rate-limit';
-import { log } from '@/lib/log';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const PER_EMAIL_LIMIT = 3;
@@ -37,29 +36,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const emailCheck = checkRateLimit(rateLimitKey('magic-link:email', email), PER_EMAIL_LIMIT, WINDOW_MS);
   if (!emailCheck.allowed) return tooManyRequests(emailCheck);
 
-  // The nonce is established for EVERY accepted request, before the user
-  // lookup below. This route answers a uniform 200 either way so an anonymous
-  // caller cannot learn whether an address is registered; setting the cookie
-  // only inside `if (user)` would put that same fact back into `Set-Cookie`.
+  // The nonce is established for EVERY accepted request. This route answers
+  // a uniform 200 either way so an anonymous caller cannot learn whether an
+  // address is registered; setting the cookie only for a registered address
+  // would put that same fact back into `Set-Cookie`.
   const response = respondOk({ message: 'If an account exists, a magic link has been sent.' });
   const nonce = ensureOriginNonce(request, response.headers);
 
-  const teacher = await prisma.teacher.findUnique({ where: { email } });
-  const user = teacher ?? (await prisma.student.findUnique({ where: { email } }));
-
-  if (user) {
-    try {
-      await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect });
-    } catch (err) {
-      // The nonce cookie is already attached to `response` below — an
-      // exception here must not discard it, or a send failure for one
-      // specific registered address would answer differently (500, no
-      // cookie) than an unregistered address's identical-looking request,
-      // reopening the enumeration channel this route's uniform 200 exists
-      // to close.
-      log.error({ err }, 'magic-link send: deliverSignInLink failed');
-    }
-  }
+  deliverSignInLinkIfRegistered(prisma, email, nonce, { redirectTo: redirect });
 
   return response;
 });
