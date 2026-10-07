@@ -238,7 +238,10 @@ export async function claimWithCode(
   }
   if (compared.length === 0) return { kind: 'invalid' };
 
-  const match = compared.find((candidate) => candidate.handoffCode === code);
+  // Matched in `live`'s order, not `compared`'s, which is grouped by address:
+  // among granted candidates sharing a code, the newest still wins.
+  const comparedIds = new Set(compared.map((c) => c.id));
+  const match = live.find((c) => comparedIds.has(c.id) && c.handoffCode === code);
   if (!match) {
     // Atomic per row, and `updateMany` rather than `update` so a row a
     // concurrent caller already consumed is a no-op instead of a P2025 to
@@ -246,11 +249,11 @@ export async function claimWithCode(
     // whichever concurrent guess pushed a row over the line, the row dies.
     const ids = compared.map((c) => c.id);
     // Expected reap count, derived from THIS call's own snapshot of the
-    // compared candidates, taken before the increment below runs. A sibling call racing one of
-    // these same rows can move its true count between this snapshot and the
-    // writes below without this call ever seeing it (#504) — a mismatch
-    // below is that documented race, not proof of a bug on its own. Which
-    // interleaving produces which direction is derived in
+    // compared candidates, taken before the increment below runs. A sibling
+    // call racing one of these same rows can move its true count between
+    // this snapshot and the writes below without this call ever seeing it
+    // (#504) — a mismatch below is that documented race, not proof of a bug
+    // on its own. Which interleaving produces which direction is derived in
     // `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` §5.
     const expectedReaps = compared.filter((c) => c.handoffAttempts + 1 >= HANDOFF_MAX_ATTEMPTS).length;
 
