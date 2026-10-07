@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
+import { Currency } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import * as schemas from './schemas';
 import {
@@ -44,6 +45,9 @@ import {
   PAYMENT_METHOD_MAX,
   EMAIL_MAX,
   PAGE_SLUG_MAX,
+  DURATION_MAX_MINUTES,
+  MONEY_MAX,
+  CAPACITY_MAX,
 } from './input-bounds';
 
 /**
@@ -1420,9 +1424,41 @@ function isFixedShape(pattern: RegExp): boolean {
   return true;
 }
 
+/**
+ * Number leaves with a missing bound that are still safe, each with why. Same
+ * contract as `UNBOUNDED_STRING_ALLOWED`: an entry that gains both bounds, or
+ * stops being walked, fails the test below.
+ */
+const UNBOUNDED_NUMBER_ALLOWED: Record<string, string> = {
+  'updateStudentSchema.incomeTier': 'refine-bounded: isIncomeTier accepts only 1 to 5',
+};
+
+/** Zod 4's `.int()` seeds the bag with the safe-integer range, which is not a bound the product chose. */
+const SAFE_INT_LIMIT = Number.MAX_SAFE_INTEGER;
+
 interface Walk {
   offenders: string[];
   unboundedStrings: string[];
+  unboundedNumbers: string[];
+}
+
+function emptyWalk(): Walk {
+  return { offenders: [], unboundedStrings: [], unboundedNumbers: [] };
+}
+
+/** Which bounds a number schema carries, `.gt`/`.lt` included. */
+function numberBounds(schema: z.ZodType): { upper: boolean; lower: boolean } {
+  const bag = schema._zod.bag as {
+    minimum?: number;
+    maximum?: number;
+    exclusiveMinimum?: number;
+    exclusiveMaximum?: number;
+  };
+  const upper =
+    bag.exclusiveMaximum !== undefined || (bag.maximum !== undefined && bag.maximum < SAFE_INT_LIMIT);
+  const lower =
+    bag.exclusiveMinimum !== undefined || (bag.minimum !== undefined && bag.minimum > -SAFE_INT_LIMIT);
+  return { upper, lower };
 }
 
 function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
@@ -1450,20 +1486,27 @@ function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
       out.unboundedStrings.push(path);
       if (!(path in UNBOUNDED_STRING_ALLOWED)) out.offenders.push(`${path}: string with no max`);
     }
+  } else if (schema._zod.def.type === 'number') {
+    const { upper, lower } = numberBounds(schema);
+    if (!upper || !lower) {
+      out.unboundedNumbers.push(path);
+      if (!(path in UNBOUNDED_NUMBER_ALLOWED)) {
+        out.offenders.push(`${path}: number with no ${!upper && !lower ? 'upper or lower' : upper ? 'lower' : 'upper'} bound`);
+      }
+    }
   } else if (
-    schema instanceof z.ZodNumber ||
     schema instanceof z.ZodBoolean ||
     schema instanceof z.ZodEnum ||
     schema instanceof z.ZodLiteral
   ) {
-    // Bounded by type; a number's bounds are not read here.
+    // Bounded by type.
   } else {
     out.offenders.push(`${path}: unknown def type ${schema._zod.def.type}`);
   }
 }
 
 function walkExports(): Walk {
-  const out: Walk = { offenders: [], unboundedStrings: [] };
+  const out = emptyWalk();
   for (const [name, schema] of Object.entries(schemas)) {
     if (!(schema instanceof z.ZodType)) continue;
     if (FIELD_VALIDATOR_EXPORTS.has(name)) continue;
@@ -1481,8 +1524,36 @@ describe('every string and array leaf is bounded (#769)', () => {
     expect([...walkExports().unboundedStrings].sort()).toEqual(Object.keys(UNBOUNDED_STRING_ALLOWED).sort());
   });
 
+  it('allows exactly the listed one-sided numbers, each still one-sided and still reached', () => {
+    expect([...walkExports().unboundedNumbers].sort()).toEqual(Object.keys(UNBOUNDED_NUMBER_ALLOWED).sort());
+  });
+
+  it('reads a number in every shape it can be bounded, and fails one that is not', () => {
+    const out = emptyWalk();
+    walkLeaves('probe', z.object({
+      both: z.number().min(0).max(5),
+      intBoth: z.number().int().positive().max(5),
+      exclusive: z.number().gt(0).lt(5),
+      noUpper: z.number().nonnegative(),
+      noLower: z.number().max(5),
+      neither: z.number(),
+      intNeither: z.number().int(),
+      intPositiveOnly: z.number().int().positive(),
+      wrapped: z.number().min(0).max(5).nullable().optional(),
+      wrappedOpen: z.number().optional().default(1),
+    }), out);
+    expect([...out.offenders].sort()).toEqual([
+      'probe.intNeither: number with no upper or lower bound',
+      'probe.intPositiveOnly: number with no upper bound',
+      'probe.neither: number with no upper or lower bound',
+      'probe.noLower: number with no lower bound',
+      'probe.noUpper: number with no upper bound',
+      'probe.wrappedOpen: number with no upper or lower bound',
+    ]);
+  });
+
   it('reaches a nested, a union-member, a defaulted, a piped and an array-element leaf', () => {
-    const out: Walk = { offenders: [], unboundedStrings: [] };
+    const out = emptyWalk();
     walkLeaves('probe', z.object({
       nested: z.object({ s: z.string() }),
       u: z.union([z.object({ s: z.string() }), z.object({ n: z.number() })]),
@@ -1496,11 +1567,12 @@ describe('every string and array leaf is bounded (#769)', () => {
       'probe.nested.s: string with no max',
       'probe.p: string with no max',
       'probe.u|0.s: string with no max',
+      'probe.u|1.n: number with no upper or lower bound',
     ]);
   });
 
   it('fails an array with no max and a type it does not know', () => {
-    const out: Walk = { offenders: [], unboundedStrings: [] };
+    const out = emptyWalk();
     walkLeaves('probe', z.object({
       a: z.array(z.uuid()),
       r: z.record(z.string(), z.string()),
@@ -1516,5 +1588,129 @@ describe('every string and array leaf is bounded (#769)', () => {
     expect(isFixedShape(/^\d{2,}$/u)).toBe(false);
     expect(isFixedShape(/\d{4}/u)).toBe(false);
     expect(isFixedShape(/^\d{4}$/mu)).toBe(false);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Number caps
+// ---------------------------------------------------------------------------
+
+describe('number caps (#769)', () => {
+  /** [schema, field, lowest accepted, highest accepted] */
+  const FIELDS: ReadonlyArray<readonly [string, string, number, number]> = [
+    ...[
+      'createClassSchema',
+      'updateClassSchema',
+      'createClassTemplateSchema',
+      'updateClassTemplateSchema',
+      'createStudioClassTemplateSchema',
+      'updateStudioClassTemplateSchema',
+      'createStudioClassSchema',
+      'updateStudioClassSchema',
+    ].map((name) => [name, 'durationMinutes', 1, DURATION_MAX_MINUTES] as const),
+    ...[
+      'createClassSchema',
+      'updateClassSchema',
+      'createClassTemplateSchema',
+      'updateClassTemplateSchema',
+    ].flatMap((name) => [
+      [name, 'roomCost', 0, MONEY_MAX] as const,
+      [name, 'minRate', -MONEY_MAX, MONEY_MAX] as const,
+      [name, 'targetRate', -MONEY_MAX, MONEY_MAX] as const,
+    ]),
+    ...[
+      'createStudioClassTemplateSchema',
+      'updateStudioClassTemplateSchema',
+      'createStudioClassSchema',
+      'updateStudioClassSchema',
+    ].map((name) => [name, 'hourlyRate', 0, MONEY_MAX] as const),
+    ['createTeacherRoomSchema', 'rentalRate', 0, MONEY_MAX],
+    ['updateTeacherRoomSchema', 'rentalRate', 0, MONEY_MAX],
+    ['createRoomSchema', 'maxCapacity', 1, CAPACITY_MAX],
+    ['updateRoomSchema', 'maxCapacity', 1, CAPACITY_MAX],
+    ['createTeacherRoomSchema', 'capacityOverride', 1, CAPACITY_MAX],
+    ['updateTeacherRoomSchema', 'capacityOverride', 1, CAPACITY_MAX],
+    ['updateStudioClassSchema', 'studentCount', 0, CAPACITY_MAX],
+  ];
+
+  it.each(FIELDS)('%s.%s accepts %d and %d', (schema, field, lo, hi) => {
+    expect(fieldAt(schema, field).safeParse(lo).success).toBe(true);
+    expect(fieldAt(schema, field).safeParse(hi).success).toBe(true);
+  });
+
+  it.each(FIELDS)('%s.%s refuses one past either end of %d..%d', (schema, field, lo, hi) => {
+    expect(fieldAt(schema, field).safeParse(hi + 1).success).toBe(false);
+    expect(fieldAt(schema, field).safeParse(lo - 1).success).toBe(false);
+  });
+
+  it.each(FIELDS)('%s.%s refuses the value that overflowed its column', (schema, field) => {
+    expect(fieldAt(schema, field).safeParse(2 ** 31).success).toBe(false);
+    expect(fieldAt(schema, field).safeParse(1e12).success).toBe(false);
+  });
+
+  it.each(FIELDS)('%s.%s answers an over-cap value with a message that names the cap', (schema, field, _lo, hi) => {
+    const r = fieldAt(schema, field).safeParse(hi + 1);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.issues[0]?.message).toContain(hi.toLocaleString('en-US'));
+  });
+
+  it.each(['createClassSchema', 'createClassTemplateSchema', 'updateClassSchema', 'updateClassTemplateSchema'])(
+    '%s refuses a minRate below -MONEY_MAX on its own, with a message that names the floor',
+    (name) => {
+      const r = fieldAt(name, 'minRate').safeParse(-MONEY_MAX - 1);
+      expect(r.success).toBe(false);
+      if (r.success) return;
+      expect(r.error.issues[0]?.message).toContain((-MONEY_MAX).toLocaleString('en-US'));
+    },
+  );
+
+  it('refuses minRate -MONEY_MAX - 1 on the update schemas, where no superRefine runs', () => {
+    expect(schemas.updateClassSchema.safeParse({ minRate: -MONEY_MAX - 1 }).success).toBe(false);
+    expect(schemas.updateClassTemplateSchema.safeParse({ minRate: -MONEY_MAX - 1 }).success).toBe(false);
+    expect(schemas.updateClassSchema.safeParse({ minRate: -MONEY_MAX }).success).toBe(true);
+    expect(schemas.updateClassTemplateSchema.safeParse({ minRate: -MONEY_MAX }).success).toBe(true);
+  });
+
+  it('keeps the cross-field rules on create beside the caps', () => {
+    const base = {
+      teacherRoomId: '11111111-1111-4111-8111-111111111111',
+      classType: 'Hatha',
+      date: '2030-01-01',
+      startTime: '10:00',
+      durationMinutes: DURATION_MAX_MINUTES,
+      roomCost: MONEY_MAX,
+      minRate: -MONEY_MAX,
+      targetRate: MONEY_MAX,
+      minStudents: 1,
+      maxStudents: 10,
+    };
+    expect(createClassSchema.safeParse(base).success).toBe(true);
+    expect(createClassSchema.safeParse({ ...base, minRate: -MONEY_MAX - 1 }).success).toBe(false);
+    expect(createClassSchema.safeParse({ ...base, roomCost: 5, minRate: -6 }).success).toBe(false);
+  });
+
+  it('keeps the cap on a studio student count nullable and optional', () => {
+    expect(schemas.updateStudioClassSchema.safeParse({ studentCount: null }).success).toBe(true);
+    expect(schemas.updateStudioClassSchema.safeParse({}).success).toBe(true);
+    expect(schemas.updateStudioClassSchema.safeParse({ studentCount: CAPACITY_MAX + 1 }).success).toBe(false);
+  });
+});
+
+describe('what the money cap is decided against (#769)', () => {
+  /**
+   * The largest value a `Decimal(10,2)` column stores: eight integer digits
+   * and two decimals. A fact about the database column, so it lives here and
+   * not in `input-bounds.ts`, which has no use for it.
+   */
+  const DECIMAL_10_2_MAX = 99_999_999.99;
+
+  it('keeps a completed class total, roomCost + targetRate, inside Decimal(10,2)', () => {
+    expect(2 * MONEY_MAX).toBeLessThanOrEqual(DECIMAL_10_2_MAX);
+  });
+
+  it('pins the currencies MONEY_MAX was decided for, so a new one forces a re-decision', () => {
+    expect(Object.values(Currency).sort()).toEqual(['CHF', 'DKK', 'EUR', 'GBP', 'NOK', 'SEK', 'USD']);
   });
 });

@@ -24,6 +24,9 @@ import {
   PAYMENT_METHOD_MAX,
   EMAIL_MAX,
   PAGE_SLUG_MAX,
+  DURATION_MAX_MINUTES,
+  MONEY_MAX,
+  CAPACITY_MAX,
 } from '@/lib/input-bounds';
 
 // ---------------------------------------------------------------------------
@@ -455,6 +458,39 @@ export const updatePrivacySchema = z.object({
   receiveComms: z.boolean().optional(),
 }).strict();
 
+// ---------------------------------------------------------------------------
+// Number fields. Each carries both bounds itself, so no cross-field refine is
+// needed to keep a stored value inside its column.
+// ---------------------------------------------------------------------------
+
+const MONEY_MAX_TEXT = MONEY_MAX.toLocaleString('en-US');
+const DURATION_MAX_TEXT = DURATION_MAX_MINUTES.toLocaleString('en-US');
+const CAPACITY_MAX_TEXT = CAPACITY_MAX.toLocaleString('en-US');
+const CAPACITY_MESSAGE = `Keep this to ${CAPACITY_MAX_TEXT} or fewer.`;
+
+/** A class length in whole minutes. */
+const durationMinutesField = () =>
+  z
+    .number()
+    .int()
+    .positive()
+    .max(DURATION_MAX_MINUTES, `A class can last at most ${DURATION_MAX_MINUTES / 60} hours (${DURATION_MAX_TEXT} minutes).`);
+
+/** An amount that cannot be negative: a room cost, a rental rate, an hourly rate. */
+const moneyField = () =>
+  z.number().nonnegative().max(MONEY_MAX, `Keep this to ${MONEY_MAX_TEXT} or less.`);
+
+/** An amount that may be negative, as a teacher who subsidises the room has it. */
+const signedMoneyField = () =>
+  z
+    .number()
+    .min(-MONEY_MAX, `Keep this to -${MONEY_MAX_TEXT} or more.`)
+    .max(MONEY_MAX, `Keep this to ${MONEY_MAX_TEXT} or less.`);
+
+/** A seat count for a room or a room override. */
+const capacityField = () =>
+  z.number().int().positive().max(CAPACITY_MAX, CAPACITY_MESSAGE);
+
 // ============================================================================
 // ROOMS
 // ============================================================================
@@ -466,7 +502,7 @@ export const createRoomSchema = z.object({
   postcode: singleLineText(POSTCODE_MAX).min(1),
   floor: singleLineText(FLOOR_MAX).optional().default(''),
   roomName: singleLineText(ROOM_NAME_MAX).optional().default(''),
-  maxCapacity: z.number().int().positive(),
+  maxCapacity: capacityField(),
   equipment: z.array(singleLineText(EQUIPMENT_ITEM_MAX)).max(EQUIPMENT_ITEMS_MAX).optional().default([]),
   notes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   isPublic: z.boolean().optional().default(false),
@@ -479,7 +515,7 @@ export const updateRoomSchema = z.object({
   postcode: singleLineText(POSTCODE_MAX).min(1).optional(),
   floor: singleLineText(FLOOR_MAX).optional(),
   roomName: singleLineText(ROOM_NAME_MAX).optional(),
-  maxCapacity: z.number().int().positive().optional(),
+  maxCapacity: capacityField().optional(),
   equipment: z.array(singleLineText(EQUIPMENT_ITEM_MAX)).max(EQUIPMENT_ITEMS_MAX).optional(),
   notes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
 }).strict();
@@ -495,14 +531,14 @@ export const roomSearchQuerySchema = z.object({
 
 export const createTeacherRoomSchema = z.object({
   roomId: z.string().uuid(),
-  capacityOverride: z.number().int().positive(),
-  rentalRate: z.number().nonnegative(),
+  capacityOverride: capacityField(),
+  rentalRate: moneyField(),
   equipmentNotes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
 });
 
 export const updateTeacherRoomSchema = z.object({
-  capacityOverride: z.number().int().positive().optional(),
-  rentalRate: z.number().nonnegative().optional(),
+  capacityOverride: capacityField().optional(),
+  rentalRate: moneyField().optional(),
   equipmentNotes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
 }).strict();
 
@@ -520,10 +556,10 @@ export const createClassSchema = z.object({
   description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   date: isoDate,
   startTime: timeHHmm,
-  durationMinutes: z.number().int().positive(),
-  roomCost: z.number().nonnegative(),
-  minRate: z.number(), // can be negative (teacher subsidizes)
-  targetRate: z.number(),
+  durationMinutes: durationMinutesField(),
+  roomCost: moneyField(),
+  minRate: signedMoneyField(), // can be negative (teacher subsidizes)
+  targetRate: signedMoneyField(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
@@ -540,12 +576,12 @@ export const updateClassSchema = z.object({
   description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
-  durationMinutes: z.number().int().positive().optional(),
+  durationMinutes: durationMinutesField().optional(),
   // Economic fields — only accepted when settings not locked (enforced by
   // updateClass in src/services/class-lifecycle.ts)
-  roomCost: z.number().nonnegative().optional(),
-  minRate: z.number().optional(),
-  targetRate: z.number().optional(),
+  roomCost: moneyField().optional(),
+  minRate: signedMoneyField().optional(),
+  targetRate: signedMoneyField().optional(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
 }).strict();
@@ -575,10 +611,10 @@ export const createClassTemplateSchema = z.object({
   description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: timeHHmm,
-  durationMinutes: z.number().int().positive(),
-  roomCost: z.number().nonnegative(),
-  minRate: z.number(),
-  targetRate: z.number(),
+  durationMinutes: durationMinutesField(),
+  roomCost: moneyField(),
+  minRate: signedMoneyField(),
+  targetRate: signedMoneyField(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
@@ -596,10 +632,10 @@ export const updateClassTemplateSchema = z.object({
   teacherRoomId: z.string().uuid().optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
   startTime: timeHHmm.optional(),
-  durationMinutes: z.number().int().positive().optional(),
-  roomCost: z.number().nonnegative().optional(),
-  minRate: z.number().optional(),
-  targetRate: z.number().optional(),
+  durationMinutes: durationMinutesField().optional(),
+  roomCost: moneyField().optional(),
+  minRate: signedMoneyField().optional(),
+  targetRate: signedMoneyField().optional(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
@@ -615,18 +651,18 @@ export const createStudioClassTemplateSchema = z.object({
   classType: linkFreeText(CLASS_TYPE_MAX).min(1),
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: timeHHmm,
-  durationMinutes: z.number().int().positive(),
+  durationMinutes: durationMinutesField(),
   location: singleLineText(LOCATION_MAX).min(1),
-  hourlyRate: z.number().nonnegative(),
+  hourlyRate: moneyField(),
 });
 
 export const updateStudioClassTemplateSchema = z.object({
   classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
   startTime: timeHHmm.optional(),
-  durationMinutes: z.number().int().positive().optional(),
+  durationMinutes: durationMinutesField().optional(),
   location: singleLineText(LOCATION_MAX).min(1).optional(),
-  hourlyRate: z.number().nonnegative().optional(),
+  hourlyRate: moneyField().optional(),
 }).strict();
 
 // ============================================================================
@@ -637,19 +673,19 @@ export const createStudioClassSchema = z.object({
   classType: linkFreeText(CLASS_TYPE_MAX).min(1),
   date: isoDate,
   startTime: timeHHmm,
-  durationMinutes: z.number().int().positive(),
+  durationMinutes: durationMinutesField(),
   location: singleLineText(LOCATION_MAX).min(1),
-  hourlyRate: z.number().nonnegative(),
+  hourlyRate: moneyField(),
 });
 
 export const updateStudioClassSchema = z.object({
-  studentCount: z.number().int().nonnegative().nullable().optional(),
+  studentCount: z.number().int().nonnegative().max(CAPACITY_MAX, CAPACITY_MESSAGE).nullable().optional(),
   classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
   location: singleLineText(LOCATION_MAX).min(1).optional(),
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
-  durationMinutes: z.number().int().positive().optional(),
-  hourlyRate: z.number().nonnegative().optional(),
+  durationMinutes: durationMinutesField().optional(),
+  hourlyRate: moneyField().optional(),
   cancelledAt: z.string().datetime().nullable().optional(),
 }).strict();
 
