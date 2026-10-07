@@ -5,6 +5,7 @@ import { hydrateRoot } from 'react-dom/client';
 import { act } from 'react';
 import { todayLocal } from '@/lib/format';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
+import { DURATION_MAX_MINUTES, MONEY_MAX } from '@/lib/input-bounds';
 import { routerRefresh } from '../../../tests/setup/components';
 import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
 
@@ -208,6 +209,35 @@ describe('ClassEditForm', () => {
       false,
       new RegExp(`^Max students cannot exceed ${MAX_CLASS_SIZE}$`),
     ],
+    [
+      'a duration over a day',
+      'Duration (minutes)',
+      String(DURATION_MAX_MINUTES + 1),
+      false,
+      /^Duration cannot exceed 1,440 minutes \(24 hours\)$/,
+    ],
+    [
+      'a duration over a day, settings locked',
+      'Duration (minutes)',
+      String(DURATION_MAX_MINUTES + 1),
+      true,
+      /^Duration cannot exceed 1,440 minutes \(24 hours\)$/,
+    ],
+    ['a room cost over the limit', 'Room cost (€)', String(MONEY_MAX + 1), false, /^Room cost cannot exceed 100,000$/],
+    [
+      'a min rate below the limit',
+      'Min rate (€)',
+      String(-MONEY_MAX - 1),
+      false,
+      /^Min rate must be between -100,000 and 100,000$/,
+    ],
+    [
+      'a target rate over the limit',
+      'Target rate (€)',
+      String(MONEY_MAX + 1),
+      false,
+      /^Target rate must be between -100,000 and 100,000$/,
+    ],
   ] as const)(
     'refuses %s before any request, with product copy',
     async (_label, fieldName, value, settingsLocked, copy) => {
@@ -227,6 +257,10 @@ describe('ClassEditForm', () => {
   it.each([
     ['the lower edges', { durationMinutes: 1, roomCost: 0, minStudents: 1, maxStudents: 1 }],
     ['the class size limit', { maxStudents: MAX_CLASS_SIZE }],
+    [
+      'the duration and money limits',
+      { durationMinutes: DURATION_MAX_MINUTES, roomCost: MONEY_MAX, minRate: -MONEY_MAX, targetRate: MONEY_MAX },
+    ],
   ] as const)('saves every number field at %s, with no alert', async (_label, edges) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);

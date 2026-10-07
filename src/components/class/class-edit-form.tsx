@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { Currency } from '@prisma/client';
 import { MAX_CLASS_SIZE, type updateClassSchema } from '@/lib/schemas';
+import {
+  CLASS_TYPE_MAX,
+  DURATION_MAX_MINUTES,
+  LONG_TEXT_MAX,
+  MONEY_MAX,
+} from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
@@ -38,6 +44,9 @@ const ECONOMICS_COPY = {
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
 
+const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
+const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours)`;
+
 /**
  * #702. The number inputs store `Number(value)`, so a cleared one is `0`, and
  * nothing native bounds them: this form has no `<form>` element. The first
@@ -47,8 +56,12 @@ const ECONOMICS_COPY = {
 function numberFieldError(form: ClassEditInitial, settingsLocked: boolean): string | undefined {
   if (form.durationMinutes <= 0) return 'Duration must be positive';
   if (!Number.isInteger(form.durationMinutes)) return 'Duration must be whole minutes';
+  if (form.durationMinutes > DURATION_MAX_MINUTES) return DURATION_TOO_LONG;
   if (settingsLocked) return undefined;
   if (form.roomCost < 0) return 'Room cost cannot be negative';
+  if (form.roomCost > MONEY_MAX) return `Room cost cannot exceed ${MONEY_LIMIT}`;
+  if (Math.abs(form.minRate) > MONEY_MAX) return `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
+  if (Math.abs(form.targetRate) > MONEY_MAX) return `Target rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
   if (form.minStudents <= 0) return 'Min students must be at least 1';
   if (!Number.isInteger(form.minStudents)) return 'Min students must be a whole number';
   if (form.maxStudents <= 0) return 'Max students must be at least 1';
@@ -204,11 +217,13 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
         <Input
           label="Class type"
           value={form.classType}
+          maxLength={CLASS_TYPE_MAX}
           onChange={(e) => set('classType', e.target.value)}
         />
         <Textarea
           label="Description"
           value={form.description}
+          maxLength={LONG_TEXT_MAX}
           onChange={(e) => set('description', e.target.value)}
           rows={3}
         />
@@ -241,6 +256,7 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           <Input
             label="Duration (minutes)"
             type="number"
+            max={DURATION_MAX_MINUTES}
             value={String(form.durationMinutes)}
             onChange={(e) => set('durationMinutes', Number(e.target.value))}
           />
@@ -259,6 +275,7 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           <Input
             label={`Room cost (${currencyLabel(currency)})`}
             type="number"
+            max={MONEY_MAX}
             value={String(form.roomCost)}
             disabled={settingsLocked}
             onChange={(e) => set('roomCost', Number(e.target.value))}
@@ -266,6 +283,8 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           <Input
             label={`Min rate (${currencyLabel(currency)})`}
             type="number"
+            min={-MONEY_MAX}
+            max={MONEY_MAX}
             value={String(form.minRate)}
             disabled={settingsLocked}
             onChange={(e) => set('minRate', Number(e.target.value))}
@@ -273,6 +292,8 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           <Input
             label={`Target rate (${currencyLabel(currency)})`}
             type="number"
+            min={-MONEY_MAX}
+            max={MONEY_MAX}
             value={String(form.targetRate)}
             disabled={settingsLocked}
             onChange={(e) => set('targetRate', Number(e.target.value))}

@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { currencyLabel } from '@/lib/format';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
@@ -138,10 +139,18 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       setError('Enter how many minutes the class runs.');
       return;
     }
+    if (duration > DURATION_MAX_MINUTES) {
+      setError(`A class can run at most ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours).`);
+      return;
+    }
 
     const rate = Number(form.hourlyRate);
     if (!form.hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
       setError('Enter an hourly rate — 0 if this class is unpaid.');
+      return;
+    }
+    if (rate > MONEY_MAX) {
+      setError(`The hourly rate can be at most ${MONEY_MAX.toLocaleString('en-US')}.`);
       return;
     }
 
@@ -376,6 +385,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       <Input
         label="Class type"
         value={form.classType}
+        maxLength={CLASS_TYPE_MAX}
         onChange={(e) => update('classType', e.target.value)}
         placeholder="e.g. Vinyasa, Hatha, Yin"
       />
@@ -383,6 +393,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       <Input
         label="Location"
         value={form.location}
+        maxLength={LOCATION_MAX}
         onChange={(e) => update('location', e.target.value)}
         placeholder="e.g. Yoga Studio Centrum, Amsterdam"
       />
@@ -408,6 +419,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       <Input
         label="Duration (minutes)"
         type="number"
+        max={DURATION_MAX_MINUTES}
         value={form.durationMinutes}
         onChange={(e) => update('durationMinutes', e.target.value)}
       />
@@ -416,6 +428,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
         label={`Hourly rate (${currencyLabel(currency)})`}
         type="number"
         step="0.01"
+        max={MONEY_MAX}
         value={form.hourlyRate}
         onChange={(e) => update('hourlyRate', e.target.value)}
       />

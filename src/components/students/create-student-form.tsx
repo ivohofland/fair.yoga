@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { createInvitationSchema } from '@/lib/schemas';
+import { EMAIL_MAX, NAME_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -56,8 +57,12 @@ export function CreateStudentForm() {
   function validate(): boolean {
     const errs: FormErrors = {};
     if (!firstName.trim()) errs.firstName = 'First name is required';
+    else if (firstName.trim().length > NAME_MAX) errs.firstName = `First name can be at most ${NAME_MAX} characters`;
+    if (lastName.trim().length > NAME_MAX) errs.lastName = `Last name can be at most ${NAME_MAX} characters`;
     if (!email.trim()) {
       errs.email = 'Email is required';
+    } else if (email.trim().length > EMAIL_MAX) {
+      errs.email = `Email can be at most ${EMAIL_MAX} characters`;
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       errs.email = 'Enter a valid email';
     }
@@ -140,6 +145,7 @@ export function CreateStudentForm() {
       <Input
         label="First name"
         value={firstName}
+        maxLength={NAME_MAX}
         onChange={(e) => {
           setFirstName(e.target.value);
           setErrors((prev) => ({ ...prev, firstName: undefined }));
@@ -149,6 +155,7 @@ export function CreateStudentForm() {
       <Input
         label="Last name"
         value={lastName}
+        maxLength={NAME_MAX}
         onChange={(e) => {
           setLastName(e.target.value);
           setErrors((prev) => ({ ...prev, lastName: undefined }));
@@ -159,6 +166,7 @@ export function CreateStudentForm() {
         label="Email"
         type="email"
         value={email}
+        maxLength={EMAIL_MAX}
         onChange={(e) => {
           setEmail(e.target.value);
           setErrors((prev) => ({ ...prev, email: undefined }));

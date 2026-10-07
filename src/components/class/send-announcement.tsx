@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { LONG_TEXT_MAX } from '@/lib/input-bounds';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -51,6 +52,10 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
 
   async function handleSend() {
     if (!message.trim()) return;
+    if (message.trim().length > LONG_TEXT_MAX) {
+      setError(`Keep the announcement to ${LONG_TEXT_MAX.toLocaleString('en-US')} characters or fewer.`);
+      return;
+    }
     setSending(true);
     setError('');
 
@@ -186,6 +191,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
       <Textarea
         label={choosing ? `Announcement to ${chosen.length} selected` : `Announcement to ${recipientHint}`}
         value={message}
+        maxLength={LONG_TEXT_MAX}
         onChange={(e) => setMessage(e.target.value)}
         rows={3}
         placeholder="Bring a blanket on Sunday — we'll end with a long savasana."

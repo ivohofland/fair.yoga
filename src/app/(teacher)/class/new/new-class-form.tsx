@@ -5,6 +5,12 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassSchema } from '@/lib/schemas';
+import {
+  CLASS_TYPE_MAX,
+  DURATION_MAX_MINUTES,
+  LONG_TEXT_MAX,
+  MONEY_MAX,
+} from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Button } from '@/components/ui/button';
@@ -83,6 +89,9 @@ void _formCoversCreate;
 void _formHasNoExtras;
 
 type StepErrors = Record<string, string>;
+
+const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
+const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours)`;
 
 /** This form's own wording for each rule `economicsViolations` can report. */
 const ECONOMICS_COPY = {
@@ -271,10 +280,14 @@ export function NewClassForm({ currency }: { currency: Currency }) {
       if (!form.startTime) errs.startTime = 'Enter a start time';
       if (form.durationMinutes <= 0) errs.durationMinutes = 'Duration must be positive';
       else if (!Number.isInteger(form.durationMinutes)) errs.durationMinutes = 'Duration must be whole minutes';
+      else if (form.durationMinutes > DURATION_MAX_MINUTES) errs.durationMinutes = DURATION_TOO_LONG;
     }
 
     if (s === 2) {
       if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
+      else if (form.roomCost > MONEY_MAX) errs.roomCost = `Room cost cannot exceed ${MONEY_LIMIT}`;
+      if (Math.abs(form.minRate) > MONEY_MAX) errs.minRate = `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
+      if (Math.abs(form.targetRate) > MONEY_MAX) errs.targetRate = `Target rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
       if (form.minStudents <= 0) errs.minStudents = 'Min students must be at least 1';
       else if (!Number.isInteger(form.minStudents)) errs.minStudents = 'Min students must be a whole number';
       if (form.maxStudents <= 0) errs.maxStudents = 'Max students must be at least 1';
@@ -502,6 +515,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             label="Class type"
             placeholder="e.g. Vinyasa, Hatha, Yin"
             value={form.classType}
+            maxLength={CLASS_TYPE_MAX}
             onChange={(e) => updateField('classType', e.target.value)}
             error={errors.classType}
           />
@@ -510,6 +524,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             id="description"
             label="Description"
             value={form.description}
+            maxLength={LONG_TEXT_MAX}
             onChange={(e) => updateField('description', e.target.value)}
             rows={3}
           />
@@ -552,6 +567,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             id="durationMinutes"
             label="Duration (minutes)"
             type="number"
+            max={DURATION_MAX_MINUTES}
             value={String(form.durationMinutes)}
             onChange={(e) => updateField('durationMinutes', Number(e.target.value))}
             error={errors.durationMinutes}
@@ -568,6 +584,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
               label={`Room cost (${currencyLabel(currency)})`}
               type="number"
               step="0.01"
+              max={MONEY_MAX}
               value={String(form.roomCost)}
               onChange={(e) => updateField('roomCost', Number(e.target.value))}
               error={errors.roomCost}
@@ -577,6 +594,8 @@ export function NewClassForm({ currency }: { currency: Currency }) {
               label={`Min rate (${currencyLabel(currency)})`}
               type="number"
               step="0.01"
+              min={-MONEY_MAX}
+              max={MONEY_MAX}
               value={String(form.minRate)}
               onChange={(e) => updateField('minRate', Number(e.target.value))}
               error={errors.minRate}
@@ -586,6 +605,8 @@ export function NewClassForm({ currency }: { currency: Currency }) {
               label={`Target rate (${currencyLabel(currency)})`}
               type="number"
               step="0.01"
+              min={-MONEY_MAX}
+              max={MONEY_MAX}
               value={String(form.targetRate)}
               onChange={(e) => updateField('targetRate', Number(e.target.value))}
               error={errors.targetRate}

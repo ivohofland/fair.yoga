@@ -6,6 +6,7 @@ import {
 } from './studio-class-edit-form';
 import { routerRefresh } from '../../../tests/setup/components';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
 
 /**
  * The payload discipline is what this file exists to hold. The API refuses a
@@ -263,5 +264,24 @@ describe('StudioClassEditForm', () => {
     renderForm();
 
     expect(screen.getByLabelText('Date')).toHaveAttribute('min', expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it.each([
+    ['a duration over a day', 'Duration (minutes)', String(DURATION_MAX_MINUTES + 1), 'A class can run at most 1,440 minutes (24 hours).'],
+    ['an hourly rate over the limit', 'Hourly rate', String(MONEY_MAX + 1), 'The hourly rate can be at most 100,000.'],
+  ])('refuses %s with this form\'s own copy and sends nothing (#769)', async (_label, field, value, copy) => {
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText(new RegExp('^' + field.replace(/[()]/g, '\\$&'))), { target: { value } });
+    save();
+
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('limits the class type and location text (#769)', () => {
+    renderForm();
+    expect(screen.getByLabelText('Class type')).toHaveAttribute('maxlength', String(CLASS_TYPE_MAX));
+    expect(screen.getByLabelText('Location')).toHaveAttribute('maxlength', String(LOCATION_MAX));
   });
 });

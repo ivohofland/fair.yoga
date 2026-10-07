@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import type { Currency } from '@prisma/client';
 import type { updateTeacherSchema } from '@/lib/schemas';
 import type { NotificationPrefsBody } from '@/components/settings/notification-prefs-form';
+import { NAME_MAX, PAGE_SLUG_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -182,11 +183,13 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         <Input
           label="First name"
           value={form.firstName}
+          maxLength={NAME_MAX}
           onChange={(e) => update('firstName', e.target.value)}
         />
         <Input
           label="Last name"
           value={form.lastName}
+          maxLength={NAME_MAX}
           onChange={(e) => update('lastName', e.target.value)}
         />
         <div className="flex flex-col gap-1">
@@ -213,6 +216,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         <Input
           label="Page slug"
           value={form.pageSlug}
+          maxLength={PAGE_SLUG_MAX}
           onChange={(e) => update('pageSlug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
         />
         <p className="type-caption">

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { CAPACITY_MAX } from '@/lib/input-bounds';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface StudentCountEditorProps {
@@ -19,6 +20,11 @@ export function StudentCountEditor({ studioClassId, initialCount }: StudentCount
   const [error, setError] = useState('');
 
   async function handleSave() {
+    if (count !== '' && Number(count) > CAPACITY_MAX) {
+      setSuccess('');
+      setError(`A class can have at most ${CAPACITY_MAX.toLocaleString('en-US')} students.`);
+      return;
+    }
     setSaving(true);
     setSuccess('');
     setError('');
@@ -54,6 +60,7 @@ export function StudentCountEditor({ studioClassId, initialCount }: StudentCount
           label="Student count"
           type="number"
           min="0"
+          max={CAPACITY_MAX}
           value={count}
           onChange={(e) => { setCount(e.target.value); setSuccess(''); setError(''); }}
           placeholder="Enter after class"

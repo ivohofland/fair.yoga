@@ -27,6 +27,8 @@ import {
   DURATION_MAX_MINUTES,
   MONEY_MAX,
   CAPACITY_MAX,
+  BANK_FIELD_MAX,
+  HOLDER_NAME_MAX,
 } from '@/lib/input-bounds';
 
 // ---------------------------------------------------------------------------
@@ -331,7 +333,7 @@ export const updateTeacherSchema = z.object({
   pushInvitations: z.boolean().optional(),
 }).strict();
 
-const bankField = z.string().max(64).nullable().optional();
+const bankField = z.string().max(BANK_FIELD_MAX).nullable().optional();
 
 /**
  * `PUT /api/teachers/[id]/bank-accounts/[currency]`'s wire shape: the shape
@@ -339,7 +341,7 @@ const bankField = z.string().max(64).nullable().optional();
  * `parseBankDetails`' to check.
  */
 export const bankAccountSchema = z.object({
-  holderName: z.string().max(200),
+  holderName: z.string().max(HOLDER_NAME_MAX),
   iban: bankField,
   bic: bankField,
   sortCode: bankField,

@@ -10,6 +10,7 @@ import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { currencyLabel } from '@/lib/format';
+import { CAPACITY_MAX, LONG_TEXT_MAX, MONEY_MAX } from '@/lib/input-bounds';
 
 interface EditTeacherRoomFormProps {
   teacherRoomId: string;
@@ -112,6 +113,7 @@ export function EditTeacherRoomForm({
       <Input
         label="Capacity override"
         type="number"
+        max={CAPACITY_MAX}
         value={capacityOverride}
         onChange={(e) => { setCapacityOverride(e.target.value); clearStatus(); }}
       />
@@ -119,6 +121,7 @@ export function EditTeacherRoomForm({
         label={`Rental rate (${currencyLabel(currency)})`}
         type="number"
         step="0.01"
+        max={MONEY_MAX}
         value={rentalRate}
         onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }}
       />
@@ -127,6 +130,7 @@ export function EditTeacherRoomForm({
         <textarea
           id="equipmentNotes"
           value={equipmentNotes}
+          maxLength={LONG_TEXT_MAX}
           onChange={(e) => { setEquipmentNotes(e.target.value); clearStatus(); }}
           rows={3}
           className="bg-sand-soft border border-border rounded-field px-4 py-3 min-h-24 text-ink text-base focus:outline-none focus:shadow-focus w-full"

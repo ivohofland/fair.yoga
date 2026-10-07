@@ -7,6 +7,7 @@ import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { currencyLabel } from '@/lib/format';
+import { CAPACITY_MAX, CITY_MAX, FLOOR_MAX, LONG_TEXT_MAX, MONEY_MAX, POSTCODE_MAX, ROOM_ADDRESS_MAX, ROOM_NAME_MAX, VENUE_NAME_MAX } from '@/lib/input-bounds';
 
 const EQUIPMENT_OPTIONS = [
   { key: 'mats', label: 'Mats' },
@@ -137,14 +138,14 @@ export function EditRoomForm({ roomId, teacherRoomId, currency, initial }: EditR
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Input label="Venue name" value={venueName} onChange={(e) => { setVenueName(e.target.value); clearStatus(); }} />
-      <Input label="Room name" value={roomName} onChange={(e) => { setRoomName(e.target.value); clearStatus(); }} placeholder="e.g. Main Studio" />
-      <Input label="Address" value={address} onChange={(e) => { setAddress(e.target.value); clearStatus(); }} />
-      <Input label="City" value={city} onChange={(e) => { setCity(e.target.value); clearStatus(); }} />
-      <Input label="Postcode" value={postcode} onChange={(e) => { setPostcode(e.target.value); clearStatus(); }} />
-      <Input label="Floor" value={floor} onChange={(e) => { setFloor(e.target.value); clearStatus(); }} placeholder="e.g. Ground, 1st" />
-      <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => { setMaxCapacity(e.target.value); clearStatus(); }} />
-      <Input label={`Rental rate (${currencyLabel(currency)})`} type="number" step="0.01" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
+      <Input label="Venue name" maxLength={VENUE_NAME_MAX} value={venueName} onChange={(e) => { setVenueName(e.target.value); clearStatus(); }} />
+      <Input label="Room name" maxLength={ROOM_NAME_MAX} value={roomName} onChange={(e) => { setRoomName(e.target.value); clearStatus(); }} placeholder="e.g. Main Studio" />
+      <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={address} onChange={(e) => { setAddress(e.target.value); clearStatus(); }} />
+      <Input label="City" maxLength={CITY_MAX} value={city} onChange={(e) => { setCity(e.target.value); clearStatus(); }} />
+      <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => { setPostcode(e.target.value); clearStatus(); }} />
+      <Input label="Floor" maxLength={FLOOR_MAX} value={floor} onChange={(e) => { setFloor(e.target.value); clearStatus(); }} placeholder="e.g. Ground, 1st" />
+      <Input label="Max capacity" type="number" max={CAPACITY_MAX} value={maxCapacity} onChange={(e) => { setMaxCapacity(e.target.value); clearStatus(); }} />
+      <Input label={`Rental rate (${currencyLabel(currency)})`} type="number" step="0.01" max={MONEY_MAX} value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
 
       <fieldset className="flex flex-col gap-1">
         <legend className="text-brown mb-2">Available props</legend>
@@ -166,6 +167,7 @@ export function EditRoomForm({ roomId, teacherRoomId, currency, initial }: EditR
         <textarea
           id="room-notes"
           value={notes}
+          maxLength={LONG_TEXT_MAX}
           onChange={(e) => { setNotes(e.target.value); clearStatus(); }}
           rows={3}
           placeholder="e.g. key code for entrance, bring your own mat"

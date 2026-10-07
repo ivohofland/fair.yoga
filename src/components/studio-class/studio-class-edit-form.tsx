@@ -9,6 +9,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { currencyLabel } from '@/lib/format';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
@@ -112,6 +113,8 @@ function validate(form: FormState, dateEditable: boolean): FieldErrors {
   const duration = Number(form.durationMinutes);
   if (!form.durationMinutes.trim() || !Number.isInteger(duration) || duration <= 0) {
     errors.durationMinutes = 'Enter how many minutes the class runs.';
+  } else if (duration > DURATION_MAX_MINUTES) {
+    errors.durationMinutes = `A class can run at most ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours).`;
   }
 
   // Empty is rejected rather than read as 0. Sending 0 should be something a
@@ -119,6 +122,8 @@ function validate(form: FormState, dateEditable: boolean): FieldErrors {
   const rate = Number(form.hourlyRate);
   if (!form.hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
     errors.hourlyRate = 'Enter an hourly rate — 0 if this class is unpaid.';
+  } else if (rate > MONEY_MAX) {
+    errors.hourlyRate = `The hourly rate can be at most ${MONEY_MAX.toLocaleString('en-US')}.`;
   }
 
   return errors;
@@ -228,12 +233,14 @@ export function StudioClassEditForm({
         <Input
           label="Class type"
           value={form.classType}
+          maxLength={CLASS_TYPE_MAX}
           error={fieldErrors.classType}
           onChange={(e) => set('classType', e.target.value)}
         />
         <Input
           label="Location"
           value={form.location}
+          maxLength={LOCATION_MAX}
           error={fieldErrors.location}
           onChange={(e) => set('location', e.target.value)}
         />
@@ -272,6 +279,7 @@ export function StudioClassEditForm({
           <Input
             label="Duration (minutes)"
             type="number"
+            max={DURATION_MAX_MINUTES}
             value={form.durationMinutes}
             error={fieldErrors.durationMinutes}
             onChange={(e) => set('durationMinutes', e.target.value)}
@@ -280,6 +288,7 @@ export function StudioClassEditForm({
             label={`Hourly rate (${currencyLabel(currency)})`}
             type="number"
             step="0.01"
+            max={MONEY_MAX}
             value={form.hourlyRate}
             error={fieldErrors.hourlyRate}
             onChange={(e) => set('hourlyRate', e.target.value)}

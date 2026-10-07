@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { listRowClass } from '@/components/ui/list-row';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import { ISSUE_SEPARATOR } from '@/lib/validation-message';
+import { BANK_FIELD_MAX, HOLDER_NAME_MAX } from '@/lib/input-bounds';
 
 type BankAccountWire = z.infer<typeof bankAccountSchema>;
 type BankAccountField = keyof BankAccountWire;
@@ -311,6 +312,7 @@ export function BankAccountForm({ teacherId, currency, initial, hasAccount, othe
             id={`bank-${key}`}
             label={label}
             value={form[key]}
+            maxLength={BANK_FIELD_MAX}
             error={fieldErrors[key]}
             autoComplete="off"
             onChange={(e) => update(key, e.target.value)}
@@ -321,6 +323,7 @@ export function BankAccountForm({ teacherId, currency, initial, hasAccount, othe
           label="Account holder name"
           hint="Exactly as your bank shows it — your students’ banks check this name."
           value={form.holderName}
+          maxLength={HOLDER_NAME_MAX}
           error={fieldErrors.holderName}
           onChange={(e) => update('holderName', e.target.value)}
         />

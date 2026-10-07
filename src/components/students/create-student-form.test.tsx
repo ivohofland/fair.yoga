@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerPush } from '../../../tests/setup/components';
 import { CreateStudentForm } from './create-student-form';
+import { EMAIL_MAX, NAME_MAX } from '@/lib/input-bounds';
 
 /**
  * #136. This form's body was a one-line literal with `.trim()` on each
@@ -191,5 +192,24 @@ describe('CreateStudentForm', () => {
     await submit();
     expect(await screen.findByText('Failed to send the invitation')).toBeInTheDocument();
     vi.restoreAllMocks();
+  });
+
+  it('refuses a name or email over the limit before any request, in this form\'s copy (#769)', async () => {
+    stubFetch();
+    render(<CreateStudentForm />);
+    fillForm('A'.repeat(NAME_MAX + 1), 'B'.repeat(NAME_MAX + 1), 'a'.repeat(EMAIL_MAX) + '@example.com');
+    fireEvent.click(screen.getByRole('button', { name: /send invitation/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByText('First name can be at most 60 characters')).toBeInTheDocument();
+    expect(screen.getByText('Last name can be at most 60 characters')).toBeInTheDocument();
+    expect(screen.getByText('Email can be at most 254 characters')).toBeInTheDocument();
+  });
+
+  it('limits the typed name and email (#769)', () => {
+    render(<CreateStudentForm />);
+    expect(screen.getByLabelText('First name')).toHaveAttribute('maxlength', String(NAME_MAX));
+    expect(screen.getByLabelText('Last name')).toHaveAttribute('maxlength', String(NAME_MAX));
+    expect(screen.getByLabelText('Email')).toHaveAttribute('maxlength', String(EMAIL_MAX));
   });
 });
