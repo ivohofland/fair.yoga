@@ -8,6 +8,7 @@ import type { Currency } from '@prisma/client';
 import type { createStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { currencyLabel } from '@/lib/format';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -114,10 +115,18 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
       setError('Enter how many minutes the class runs.');
       return;
     }
+    if (duration > DURATION_MAX_MINUTES) {
+      setError(`A class can run at most ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours).`);
+      return;
+    }
 
     const rate = Number(hourlyRate);
     if (!hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
       setError('Enter an hourly rate — 0 if this class is unpaid.');
+      return;
+    }
+    if (rate > MONEY_MAX) {
+      setError(`The hourly rate can be at most ${MONEY_MAX.toLocaleString('en-US')}.`);
       return;
     }
 
@@ -196,12 +205,12 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
         and it logs itself.
       </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-        <Input label="Class type" value={classType} onChange={updateField(setClassType)} placeholder="e.g. Vinyasa, Hatha, Yin" />
-        <Input label="Location" value={location} onChange={updateField(setLocation)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
+        <Input label="Class type" value={classType} maxLength={CLASS_TYPE_MAX} onChange={updateField(setClassType)} placeholder="e.g. Vinyasa, Hatha, Yin" />
+        <Input label="Location" value={location} maxLength={LOCATION_MAX} onChange={updateField(setLocation)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
         <Input label="Date" type="date" value={date} onChange={updateField(setDate)} />
         <Input label="Start time" type="time" value={startTime} onChange={updateField(setStartTime)} />
-        <Input label="Duration (minutes)" type="number" value={durationMinutes} onChange={updateField(setDurationMinutes)} />
-        <Input label={`Hourly rate (${currencyLabel(currency)})`} type="number" step="0.01" value={hourlyRate} onChange={updateField(setHourlyRate)} />
+        <Input label="Duration (minutes)" type="number" max={DURATION_MAX_MINUTES} value={durationMinutes} onChange={updateField(setDurationMinutes)} />
+        <Input label={`Hourly rate (${currencyLabel(currency)})`} type="number" step="0.01" max={MONEY_MAX} value={hourlyRate} onChange={updateField(setHourlyRate)} />
 
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 

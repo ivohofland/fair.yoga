@@ -28,6 +28,8 @@ describe('limit values', () => {
       PAYMENT_METHOD_MAX: 64,
       EMAIL_MAX: 254,
       PAGE_SLUG_MAX: 60,
+      BANK_FIELD_MAX: 64,
+      HOLDER_NAME_MAX: 200,
       DURATION_MAX_MINUTES: 1440,
       MONEY_MAX: 100000,
       CAPACITY_MAX: 1000,

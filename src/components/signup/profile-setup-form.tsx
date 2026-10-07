@@ -12,6 +12,7 @@ import { AlreadyTeachingPanel } from './already-teaching-panel';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceBeforeNavigation } from '@/lib/push-client';
+import { NAME_MAX } from '@/lib/input-bounds';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 const BIO_MAX = 250;
@@ -394,12 +395,14 @@ export function ProfileSetupForm({ email, mode, accountId }: ProfileSetupFormPro
         <Input
           label="First name"
           value={form.firstName}
+          maxLength={NAME_MAX}
           onChange={(e) => updateNames(e.target.value, form.lastName)}
           required
         />
         <Input
           label="Last name"
           value={form.lastName}
+          maxLength={NAME_MAX}
           onChange={(e) => updateNames(form.firstName, e.target.value)}
           required
         />

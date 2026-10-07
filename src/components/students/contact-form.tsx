@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updateInvitationSchema } from '@/lib/schemas';
+import { EMAIL_MAX, NAME_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -87,17 +88,20 @@ export function ContactForm({
       <Input
         label="First name"
         value={firstName}
+        maxLength={NAME_MAX}
         onChange={(e) => setFirstName(e.target.value)}
       />
       <Input
         label="Last name"
         value={lastName}
+        maxLength={NAME_MAX}
         onChange={(e) => setLastName(e.target.value)}
       />
       <Input
         label="Email"
         type="email"
         value={email}
+        maxLength={EMAIL_MAX}
         onChange={(e) => setEmail(e.target.value)}
       />
 

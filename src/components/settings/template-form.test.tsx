@@ -4,6 +4,7 @@ import { TemplateForm } from './template-form';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { UNREADABLE_CONFIRMATION_MESSAGE } from './template-action-messages';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
+import { DURATION_MAX_MINUTES, MONEY_MAX } from '@/lib/input-bounds';
 
 /**
  * #85. This form enumerated its thirteen fields three times — the `initial`
@@ -492,6 +493,25 @@ describe('TemplateForm', () => {
     ['a negative duration', 'Duration (minutes)', '-5', /^Duration must be positive$/],
     ['a fractional duration', 'Duration (minutes)', '60.5', /^Duration must be whole minutes$/],
     ['a negative room cost', 'Room cost', '-5', /^Room cost cannot be negative$/],
+    [
+      'a duration over a day',
+      'Duration (minutes)',
+      String(DURATION_MAX_MINUTES + 1),
+      /^Duration cannot exceed 1,440 minutes \(24 hours\)$/,
+    ],
+    ['a room cost over the limit', 'Room cost', String(MONEY_MAX + 1), /^Room cost cannot exceed 100,000$/],
+    [
+      'a min rate below the limit',
+      'Min rate',
+      String(-MONEY_MAX - 1),
+      /^Min rate must be between -100,000 and 100,000$/,
+    ],
+    [
+      'a target rate over the limit',
+      'Target rate',
+      String(MONEY_MAX + 1),
+      /^Target rate must be between -100,000 and 100,000$/,
+    ],
     ['a cleared min students', 'Min students', '', /^Min students must be at least 1$/],
     ['a negative min students', 'Min students', '-5', /^Min students must be at least 1$/],
     ['a fractional min students', 'Min students', '2.5', /^Min students must be a whole number$/],

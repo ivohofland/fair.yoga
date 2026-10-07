@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { act, useState } from 'react';
 import { PageAddressField, slugFromName } from './page-address-field';
+import { PAGE_SLUG_MAX } from '@/lib/input-bounds';
+import { pageSlugField } from '@/lib/schemas';
 
 describe('slugFromName', () => {
   it('lowercases and hyphenates', () => {
@@ -17,6 +19,17 @@ describe('slugFromName', () => {
   // block, never emit a placeholder.
   it('returns empty for a name with no Latin characters', () => {
     expect(slugFromName('小林', '綾')).toBe('');
+  });
+
+  it('suggests at most PAGE_SLUG_MAX characters with no trailing hyphen, and the page-address validator accepts it', () => {
+    const suggestion = slugFromName('a'.repeat(60), 'b'.repeat(60));
+    expect(suggestion.length).toBeLessThanOrEqual(PAGE_SLUG_MAX);
+    expect(suggestion.endsWith('-')).toBe(false);
+    expect(pageSlugField.safeParse(suggestion).success).toBe(true);
+  });
+
+  it('drops the hyphen when the cut lands on the boundary between the names', () => {
+    expect(slugFromName('a'.repeat(PAGE_SLUG_MAX - 1), 'b'.repeat(20))).toBe('a'.repeat(PAGE_SLUG_MAX - 1));
   });
 });
 

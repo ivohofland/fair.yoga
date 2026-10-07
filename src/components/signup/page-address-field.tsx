@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { logRequestFailure } from '@/lib/client-errors';
+import { PAGE_SLUG_MAX } from '@/lib/input-bounds';
 import { pageSlugField } from '@/lib/schemas';
 
 /**
@@ -31,7 +32,9 @@ function slugPart(part: string): string {
  * a block and never a machine-made stand-in.
  */
 export function slugFromName(firstName: string, lastName: string): string {
-  return [slugPart(firstName), slugPart(lastName)].filter(Boolean).join('-');
+  const joined = [slugPart(firstName), slugPart(lastName)].filter(Boolean).join('-');
+  // Two long names would otherwise pre-fill an address `pageSlugField` refuses.
+  return joined.slice(0, PAGE_SLUG_MAX).replace(/-+$/, '');
 }
 
 /**
@@ -125,6 +128,7 @@ export function PageAddressField({ value, onChange, error }: PageAddressFieldPro
         value={value}
         onChange={(e) => onChange(e.target.value)}
         error={error ?? localError}
+        maxLength={PAGE_SLUG_MAX}
         placeholder="anna-devries"
         autoCapitalize="none"
         autoCorrect="off"

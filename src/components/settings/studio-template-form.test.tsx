@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StudioTemplateForm } from './studio-template-form';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { UNREADABLE_CONFIRMATION_MESSAGE } from './template-action-messages';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
 
 /**
  * #136. This form enumerated its six fields four times — the `initial` prop's
@@ -943,5 +944,34 @@ describe('StudioTemplateForm', () => {
 
     fireEvent.submit(form);
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+  });
+
+  describe('input limits (#769)', () => {
+    it.each([
+      ['a duration over a day', 'Duration (minutes)', String(DURATION_MAX_MINUTES + 1), 'A class can run at most 1,440 minutes (24 hours).'],
+      ['an hourly rate over the limit', 'Hourly rate', String(MONEY_MAX + 1), 'The hourly rate can be at most 100,000.'],
+    ])('refuses %s before any request, with product copy', async (_label, field, value, copy) => {
+      stubFetch();
+      render(<StudioTemplateForm currency="EUR" mode="create" />);
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+
+      const input = screen.getByLabelText(new RegExp('^' + field.replace(/[()]/g, '\\$&')));
+      fireEvent.change(input, { target: { value } });
+      // A submit event, not a click: jsdom's native `max` check would block the click.
+      const form = input.closest('form');
+      if (!form) throw new Error('expected the field to be inside a form');
+      fireEvent.submit(form);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(screen.getByText(copy)).toBeInTheDocument();
+    });
+
+    it('limits the class type and location text', () => {
+      stubFetch();
+      render(<StudioTemplateForm currency="EUR" mode="create" />);
+      expect(screen.getByLabelText('Class type')).toHaveAttribute('maxlength', String(CLASS_TYPE_MAX));
+      expect(screen.getByLabelText('Location')).toHaveAttribute('maxlength', String(LOCATION_MAX));
+    });
   });
 });

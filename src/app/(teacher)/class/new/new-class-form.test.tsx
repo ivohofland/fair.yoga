@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { NewClassForm } from './new-class-form';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LONG_TEXT_MAX, MONEY_MAX } from '@/lib/input-bounds';
 import { routerPush } from '../../../../../tests/setup/components';
 
 const ROOM_ID = '11111111-1111-4111-8111-111111111111';
@@ -693,6 +694,27 @@ describe('NewClassPage', () => {
       expect(screen.queryByLabelText(/^Room cost/)).not.toBeInTheDocument();
     });
 
+    it('refuses a duration over a day', async () => {
+      await renderAtStep1();
+      fireEvent.change(screen.getByLabelText('Room'), { target: { value: ROOM_ID } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+      fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: String(DURATION_MAX_MINUTES + 1) } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+      expect(screen.getByLabelText('Duration (minutes)')).toHaveAccessibleDescription(
+        'Duration cannot exceed 1,440 minutes (24 hours)',
+      );
+      expect(screen.queryByLabelText(/^Room cost/)).not.toBeInTheDocument();
+    });
+
+    it('limits the class type and description text', async () => {
+      await renderAtStep1();
+      expect(screen.getByLabelText('Class type')).toHaveAttribute('maxlength', String(CLASS_TYPE_MAX));
+      expect(screen.getByLabelText('Description')).toHaveAttribute('maxlength', String(LONG_TEXT_MAX));
+    });
+
     it('clears a field message when that field is edited', async () => {
       await renderAtStep1();
       fireEvent.click(screen.getByRole('button', { name: /next/i }));
@@ -769,6 +791,25 @@ describe('NewClassPage', () => {
       set('Room cost', '-1');
       next();
       expect(screen.getByLabelText(/^Room cost/)).toHaveAccessibleDescription('Room cost cannot be negative');
+      expectStillOnStep2();
+    });
+
+    it('refuses a room cost over the limit', async () => {
+      await renderAtStep2();
+      set('Room cost', String(MONEY_MAX + 1));
+      next();
+      expect(screen.getByLabelText(/^Room cost/)).toHaveAccessibleDescription('Room cost cannot exceed 100,000');
+      expectStillOnStep2();
+    });
+
+    it.each([
+      ['Min rate', String(-MONEY_MAX - 1), 'Min rate must be between -100,000 and 100,000'],
+      ['Target rate', String(MONEY_MAX + 1), 'Target rate must be between -100,000 and 100,000'],
+    ])('refuses a %s outside the limit', async (label, value, copy) => {
+      await renderAtStep2();
+      set(label, value);
+      next();
+      expect(screen.getByLabelText(new RegExp('^' + label))).toHaveAccessibleDescription(copy);
       expectStillOnStep2();
     });
 

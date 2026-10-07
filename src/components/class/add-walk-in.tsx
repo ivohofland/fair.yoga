@@ -1,5 +1,6 @@
 'use client';
 
+import { EMAIL_MAX, NAME_MAX } from '@/lib/input-bounds';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -277,17 +278,20 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       <Input
         label="First name"
         value={newFirstName}
+        maxLength={NAME_MAX}
         onChange={(e) => setNewFirstName(e.target.value)}
       />
       <Input
         label="Last name"
         value={newLastName}
+        maxLength={NAME_MAX}
         onChange={(e) => setNewLastName(e.target.value)}
       />
       <Input
         label="Email"
         type="email"
         value={newEmail}
+        maxLength={EMAIL_MAX}
         onChange={(e) => setNewEmail(e.target.value)}
       />
       <Button variant="secondary" onClick={handleAddNewPerson} disabled={newPersonDisabled}>

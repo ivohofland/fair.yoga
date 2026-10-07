@@ -1,5 +1,6 @@
 'use client';
 
+import { NAME_MAX } from '@/lib/input-bounds';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -141,12 +142,14 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
         <Input
           label="First name"
           value={firstName}
+          maxLength={NAME_MAX}
           onChange={(e) => { setFirstName(e.target.value); if (error) setError(''); }}
           required
         />
         <Input
           label="Last name"
           value={lastName}
+          maxLength={NAME_MAX}
           onChange={(e) => { setLastName(e.target.value); if (error) setError(''); }}
           required
         />

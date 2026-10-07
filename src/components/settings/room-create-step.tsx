@@ -10,6 +10,7 @@ import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PublicRoomNotice } from './public-room-notice';
+import { CAPACITY_MAX, CITY_MAX, FLOOR_MAX, LONG_TEXT_MAX, POSTCODE_MAX, ROOM_ADDRESS_MAX, ROOM_NAME_MAX, VENUE_NAME_MAX } from '@/lib/input-bounds';
 
 /**
  * #136. This step's enumeration of the room it posts.
@@ -160,13 +161,13 @@ export function RoomCreateStep({
 
   return (
     <form onSubmit={handleCreateRoom} className="flex flex-col gap-4">
-      <Input label="Venue name" value={venueName} onChange={(e) => set('venueName', e.target.value)} placeholder="e.g. De Yogaschool" />
-      <Input label="Address" value={street} onChange={(e) => { onStreetChange(e.target.value); if (createError) setCreateError(''); }} />
-      <Input label="City" value={city} onChange={(e) => set('city', e.target.value)} />
-      <Input label="Postcode" value={postcode} onChange={(e) => { onPostcodeChange(e.target.value); if (createError) setCreateError(''); }} />
-      <Input label="Floor" value={floor} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. Ground, 1st" />
-      <Input label="Room name" value={roomName} onChange={(e) => set('roomName', e.target.value)} placeholder="e.g. Main Studio" />
-      <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => set('maxCapacity', e.target.value)} />
+      <Input label="Venue name" maxLength={VENUE_NAME_MAX} value={venueName} onChange={(e) => set('venueName', e.target.value)} placeholder="e.g. De Yogaschool" />
+      <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={street} onChange={(e) => { onStreetChange(e.target.value); if (createError) setCreateError(''); }} />
+      <Input label="City" maxLength={CITY_MAX} value={city} onChange={(e) => set('city', e.target.value)} />
+      <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => { onPostcodeChange(e.target.value); if (createError) setCreateError(''); }} />
+      <Input label="Floor" maxLength={FLOOR_MAX} value={floor} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. Ground, 1st" />
+      <Input label="Room name" maxLength={ROOM_NAME_MAX} value={roomName} onChange={(e) => set('roomName', e.target.value)} placeholder="e.g. Main Studio" />
+      <Input label="Max capacity" type="number" max={CAPACITY_MAX} value={maxCapacity} onChange={(e) => set('maxCapacity', e.target.value)} />
       <fieldset className="flex flex-col gap-1">
         <legend className="text-brown mb-2">Available props</legend>
         {[
@@ -194,6 +195,7 @@ export function RoomCreateStep({
         <textarea
           id="room-notes"
           value={notes}
+          maxLength={LONG_TEXT_MAX}
           onChange={(e) => set('notes', e.target.value)}
           rows={3}
           placeholder="e.g. key code for entrance, bring your own mat"

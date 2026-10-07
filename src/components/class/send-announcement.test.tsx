@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SendAnnouncement } from './send-announcement';
+import { LONG_TEXT_MAX } from '@/lib/input-bounds';
 
 /**
  * #196. `POST /api/announcements` answers 200 with `duplicateSuppressed: true`
@@ -461,5 +462,32 @@ describe('SendAnnouncement audience choice', () => {
     const caption = await screen.findByText(/Not sent again/);
     expect(caption).toHaveTextContent('Not sent again — the same message reached 2 students moments ago.');
     expect(caption.textContent).not.toMatch(/already had it/);
+  });
+
+  it('refuses a message over the limit with its own copy and sends nothing (#769)', async () => {
+    const fetchMock = stubSend(201, { recipientCount: 1 });
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+
+    send('x'.repeat(LONG_TEXT_MAX + 1));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Keep the announcement to 2,000 characters or fewer.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends a message of exactly the limit (#769)', async () => {
+    const fetchMock = stubSend(201, { recipientCount: 1 });
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+
+    send('x'.repeat(LONG_TEXT_MAX));
+
+    await screen.findByText('Sent to 1 student');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('caps the typed message at the limit (#769)', () => {
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+    fireEvent.click(screen.getByText('Send announcement'));
+    expect(screen.getByRole('textbox')).toHaveAttribute('maxlength', String(LONG_TEXT_MAX));
   });
 });

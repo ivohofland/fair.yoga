@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassTemplateSchema, type updateClassTemplateSchema } from '@/lib/schemas';
 import type { CancelDeadline, AutoCancelCheck, Currency } from '@prisma/client';
+import {
+  CLASS_TYPE_MAX,
+  DURATION_MAX_MINUTES,
+  LONG_TEXT_MAX,
+  MONEY_MAX,
+} from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { currencyLabel } from '@/lib/format';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
@@ -134,6 +140,9 @@ const ECONOMICS_COPY = {
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
 
+const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
+const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours)`;
+
 /**
  * #702. The number inputs store `Number(value)`, so a cleared one is `0`, and
  * none carries a native `min`. The first number field out of range, in this
@@ -144,7 +153,11 @@ const ECONOMICS_COPY = {
 function numberFieldError(form: TemplateFormValues): string | undefined {
   if (form.durationMinutes <= 0) return 'Duration must be positive';
   if (!Number.isInteger(form.durationMinutes)) return 'Duration must be whole minutes';
+  if (form.durationMinutes > DURATION_MAX_MINUTES) return DURATION_TOO_LONG;
   if (form.roomCost < 0) return 'Room cost cannot be negative';
+  if (form.roomCost > MONEY_MAX) return `Room cost cannot exceed ${MONEY_LIMIT}`;
+  if (Math.abs(form.minRate) > MONEY_MAX) return `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
+  if (Math.abs(form.targetRate) > MONEY_MAX) return `Target rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
   if (form.minStudents <= 0) return 'Min students must be at least 1';
   if (!Number.isInteger(form.minStudents)) return 'Min students must be a whole number';
   if (form.maxStudents <= 0) return 'Max students must be at least 1';
@@ -584,6 +597,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
       <Input
         label="Class type"
         value={form.classType}
+        maxLength={CLASS_TYPE_MAX}
         onChange={(e) => update('classType', e.target.value)}
         placeholder="e.g. Vinyasa, Hatha, Yin"
       />
@@ -593,6 +607,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
         <textarea
           id="description"
           value={form.description}
+          maxLength={LONG_TEXT_MAX}
           onChange={(e) => update('description', e.target.value)}
           rows={3}
           placeholder="Optional class description"
@@ -635,6 +650,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
       <Input
         label="Duration (minutes)"
         type="number"
+        max={DURATION_MAX_MINUTES}
         value={String(form.durationMinutes)}
         onChange={(e) => update('durationMinutes', Number(e.target.value))}
       />
@@ -644,6 +660,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
           label={`Room cost (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
+          max={MONEY_MAX}
           value={String(form.roomCost)}
           onChange={(e) => update('roomCost', Number(e.target.value))}
         />
@@ -651,6 +668,8 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
           label={`Min rate (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
+          min={-MONEY_MAX}
+          max={MONEY_MAX}
           value={String(form.minRate)}
           onChange={(e) => update('minRate', Number(e.target.value))}
         />
@@ -658,6 +677,8 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
           label={`Target rate (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
+          min={-MONEY_MAX}
+          max={MONEY_MAX}
           value={String(form.targetRate)}
           onChange={(e) => update('targetRate', Number(e.target.value))}
         />

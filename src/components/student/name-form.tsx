@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updateStudentSchema } from '@/lib/schemas';
+import { NAME_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -101,6 +102,7 @@ export function NameForm({
         label="First name"
         id="firstName"
         value={firstName}
+        maxLength={NAME_MAX}
         onChange={(e) => {
           setFirstName(e.target.value);
           setError('');
@@ -111,6 +113,7 @@ export function NameForm({
         label="Last name"
         id="lastName"
         value={lastName}
+        maxLength={NAME_MAX}
         onChange={(e) => {
           setLastName(e.target.value);
           setError('');

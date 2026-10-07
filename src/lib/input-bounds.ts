@@ -28,6 +28,9 @@ export const PAYMENT_METHOD_MAX = 64;
 /** RFC 5321's limit on a forward path. */
 export const EMAIL_MAX = 254;
 export const PAGE_SLUG_MAX = 60;
+/** One bank-detail field (IBAN, BIC, sort code, account or routing number). */
+export const BANK_FIELD_MAX = 64;
+export const HOLDER_NAME_MAX = 200;
 
 // ---------------------------------------------------------------------------
 // Number limits.
