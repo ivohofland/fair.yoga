@@ -82,7 +82,9 @@ const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
  * A `COMMON_GENERIC_TLDS` member counts in any case.
  */
 const HOST_LABEL = '[\\p{L}\\p{N}-]{2,}\\.';
-const SUFFIX_END = '(?!\\p{L})';
+// A combining mark continues the letter before it, so `An.le` + U+0301 reads
+// the same as precomposed `An.lé`.
+const SUFFIX_END = '(?![\\p{L}\\p{M}])';
 const HOST_COUNTRY_CODE = new RegExp(`${HOST_LABEL}(?:[a-z]{2}|[A-Z]{2})${SUFFIX_END}`, 'u');
 const HOST_GENERIC = new RegExp(`${HOST_LABEL}(?:${COMMON_GENERIC_TLDS.join('|')})${SUFFIX_END}`, 'iu');
 

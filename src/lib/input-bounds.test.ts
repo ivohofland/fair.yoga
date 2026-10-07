@@ -184,6 +184,16 @@ describe('link refusal', () => {
     'Ji.Wu',
   ];
 
+  it.each([
+    ['An.l\u00E9 Smith', 'An.le\u0301 Smith'],
+    ['AN.L\u00C9 SMITH', 'AN.LE\u0301 SMITH'],
+    ['An.L\u00E9', 'An.Le\u0301'],
+  ])('treats NFC %j and NFD %j alike: both accepted', (nfc, nfd) => {
+    expect(nfc.normalize('NFD')).toBe(nfd);
+    expect(linkFree.safeParse(nfc).success).toBe(true);
+    expect(linkFree.safeParse(nfd).success).toBe(true);
+  });
+
   it.each(['evil.nl', 'EVIL.NL', 'verify.de', 'VERIFY.DE', 'Yoga.Live', 'Yoga.LIVE', 'evil.Com'])(
     'refuses %j: a one-case country code or a listed TLD in any case',
     (value) => {
