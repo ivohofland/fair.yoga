@@ -5,6 +5,26 @@ import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
 import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations } from '@/lib/class-economics';
+import {
+  singleLineText,
+  multiLineText,
+  linkFreeText,
+  NAME_MAX,
+  CLASS_TYPE_MAX,
+  LOCATION_MAX,
+  VENUE_NAME_MAX,
+  ROOM_NAME_MAX,
+  ROOM_ADDRESS_MAX,
+  CITY_MAX,
+  POSTCODE_MAX,
+  FLOOR_MAX,
+  EQUIPMENT_ITEM_MAX,
+  EQUIPMENT_ITEMS_MAX,
+  LONG_TEXT_MAX,
+  PAYMENT_METHOD_MAX,
+  EMAIL_MAX,
+  PAGE_SLUG_MAX,
+} from '@/lib/input-bounds';
 
 // ---------------------------------------------------------------------------
 // Shared field validators
@@ -68,7 +88,11 @@ const timeHHmm = z
  * refuse to guess, and nothing outside this file validates an email, so the
  * export bought nothing.
  */
-const emailField = z.string().email().transform((s) => s.toLowerCase());
+const emailField = z
+  .string()
+  .max(EMAIL_MAX, `Keep the address to ${EMAIL_MAX} characters or fewer.`)
+  .email()
+  .transform((s) => s.toLowerCase());
 
 /**
  * Assert what every caller already guarantees (#170).
@@ -237,6 +261,7 @@ const RESERVED_SLUGS = new Set([
 export const pageSlugField = z
   .string()
   .min(1)
+  .max(PAGE_SLUG_MAX, `Keep the page address to ${PAGE_SLUG_MAX} characters or fewer.`)
   .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
   .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved');
 
@@ -267,8 +292,8 @@ const detectedTimezoneField = z
  * be one the caller has proved they control.
  */
 export const teacherProfileSchema = z.object({
-  firstName: z.string().trim().min(1),
-  lastName: z.string().trim().min(1),
+  firstName: linkFreeText(NAME_MAX).min(1),
+  lastName: linkFreeText(NAME_MAX).min(1),
   bio: z.string().max(250),
   pageSlug: pageSlugField,
   defaultTimezone: detectedTimezoneField.optional(),
@@ -280,13 +305,13 @@ export const teacherProfileSchema = z.object({
  * consumed signup ticket, never from the body.
  */
 export const studentProfileSchema = z.object({
-  firstName: z.string().trim().min(1),
-  lastName: z.string().trim().min(1),
+  firstName: linkFreeText(NAME_MAX).min(1),
+  lastName: linkFreeText(NAME_MAX).min(1),
 }).strict();
 
 export const updateTeacherSchema = z.object({
-  firstName: z.string().trim().min(1).optional(),
-  lastName: z.string().trim().min(1).optional(),
+  firstName: linkFreeText(NAME_MAX).min(1).optional(),
+  lastName: linkFreeText(NAME_MAX).min(1).optional(),
   bio: z.string().max(250).optional(),
   pageSlug: pageSlugField.optional(),
   currency: z.enum(Currency).optional(),
@@ -338,8 +363,8 @@ export const onboardingSkipSchema = z.object({ step: z.enum(OnboardingStep) }).s
  * on someone else's email address.
  */
 export const createInvitationSchema = z.object({
-  firstName: z.string().trim().min(1),
-  lastName: z.string().optional().default(''),
+  firstName: linkFreeText(NAME_MAX).min(1),
+  lastName: linkFreeText(NAME_MAX).optional().default(''),
   email: emailField,
 }).strict();
 
@@ -349,8 +374,8 @@ export const createInvitationSchema = z.object({
  * create schema above: an unknown key here is a 400, not a silent drop.
  */
 export const updateInvitationSchema = z.object({
-  firstName: z.string().trim().min(1).optional(),
-  lastName: z.string().optional(),
+  firstName: linkFreeText(NAME_MAX).min(1).optional(),
+  lastName: linkFreeText(NAME_MAX).optional(),
   email: emailField.optional(),
 }).strict();
 
@@ -396,8 +421,8 @@ const birthdayField = z
   .optional();
 
 export const updateStudentSchema = z.object({
-  firstName: z.string().trim().min(1).optional(),
-  lastName: z.string().trim().min(1).optional(),
+  firstName: linkFreeText(NAME_MAX).min(1).optional(),
+  lastName: linkFreeText(NAME_MAX).min(1).optional(),
   phone: optionalText('Phone', PHONE_MAX),
   birthday: birthdayField,
   address: optionalText('Address', ADDRESS_MAX),
@@ -435,28 +460,28 @@ export const updatePrivacySchema = z.object({
 // ============================================================================
 
 export const createRoomSchema = z.object({
-  venueName: z.string().trim().min(1),
-  address: z.string().trim().min(1),
-  city: z.string().trim().min(1),
-  postcode: z.string().trim().min(1),
-  floor: z.string().trim().optional().default(''),
-  roomName: z.string().trim().optional().default(''),
+  venueName: singleLineText(VENUE_NAME_MAX).min(1),
+  address: singleLineText(ROOM_ADDRESS_MAX).min(1),
+  city: singleLineText(CITY_MAX).min(1),
+  postcode: singleLineText(POSTCODE_MAX).min(1),
+  floor: singleLineText(FLOOR_MAX).optional().default(''),
+  roomName: singleLineText(ROOM_NAME_MAX).optional().default(''),
   maxCapacity: z.number().int().positive(),
-  equipment: z.array(z.string()).optional().default([]),
-  notes: z.string().nullable().optional(),
+  equipment: z.array(singleLineText(EQUIPMENT_ITEM_MAX)).max(EQUIPMENT_ITEMS_MAX).optional().default([]),
+  notes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   isPublic: z.boolean().optional().default(false),
 });
 
 export const updateRoomSchema = z.object({
-  venueName: z.string().trim().min(1).optional(),
-  address: z.string().trim().min(1).optional(),
-  city: z.string().trim().min(1).optional(),
-  postcode: z.string().trim().min(1).optional(),
-  floor: z.string().trim().optional(),
-  roomName: z.string().trim().optional(),
+  venueName: singleLineText(VENUE_NAME_MAX).min(1).optional(),
+  address: singleLineText(ROOM_ADDRESS_MAX).min(1).optional(),
+  city: singleLineText(CITY_MAX).min(1).optional(),
+  postcode: singleLineText(POSTCODE_MAX).min(1).optional(),
+  floor: singleLineText(FLOOR_MAX).optional(),
+  roomName: singleLineText(ROOM_NAME_MAX).optional(),
   maxCapacity: z.number().int().positive().optional(),
-  equipment: z.array(z.string()).optional(),
-  notes: z.string().nullable().optional(),
+  equipment: z.array(singleLineText(EQUIPMENT_ITEM_MAX)).max(EQUIPMENT_ITEMS_MAX).optional(),
+  notes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
 }).strict();
 
 export const roomSearchQuerySchema = z.object({
@@ -472,13 +497,13 @@ export const createTeacherRoomSchema = z.object({
   roomId: z.string().uuid(),
   capacityOverride: z.number().int().positive(),
   rentalRate: z.number().nonnegative(),
-  equipmentNotes: z.string().nullable().optional(),
+  equipmentNotes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
 });
 
 export const updateTeacherRoomSchema = z.object({
   capacityOverride: z.number().int().positive().optional(),
   rentalRate: z.number().nonnegative().optional(),
-  equipmentNotes: z.string().nullable().optional(),
+  equipmentNotes: multiLineText(LONG_TEXT_MAX).nullable().optional(),
 }).strict();
 
 export const switchRoomSchema = z.object({
@@ -491,8 +516,8 @@ export const switchRoomSchema = z.object({
 
 export const createClassSchema = z.object({
   teacherRoomId: z.string().uuid(),
-  classType: z.string().trim().min(1),
-  description: z.string().nullable().optional(),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1),
+  description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   date: isoDate,
   startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
@@ -511,8 +536,8 @@ export const createClassSchema = z.object({
   });
 
 export const updateClassSchema = z.object({
-  classType: z.string().trim().min(1).optional(),
-  description: z.string().nullable().optional(),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
+  description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
@@ -546,8 +571,8 @@ export const transitionClassSchema = z.object({
 
 export const createClassTemplateSchema = z.object({
   teacherRoomId: z.string().uuid(),
-  classType: z.string().trim().min(1),
-  description: z.string().nullable().optional(),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1),
+  description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
@@ -566,8 +591,8 @@ export const createClassTemplateSchema = z.object({
   });
 
 export const updateClassTemplateSchema = z.object({
-  classType: z.string().trim().min(1).optional(),
-  description: z.string().nullable().optional(),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
+  description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
   teacherRoomId: z.string().uuid().optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
   startTime: timeHHmm.optional(),
@@ -587,20 +612,20 @@ export const updateClassTemplateSchema = z.object({
 // ============================================================================
 
 export const createStudioClassTemplateSchema = z.object({
-  classType: z.string().trim().min(1),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1),
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
-  location: z.string().trim().min(1),
+  location: singleLineText(LOCATION_MAX).min(1),
   hourlyRate: z.number().nonnegative(),
 });
 
 export const updateStudioClassTemplateSchema = z.object({
-  classType: z.string().trim().min(1).optional(),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
-  location: z.string().trim().min(1).optional(),
+  location: singleLineText(LOCATION_MAX).min(1).optional(),
   hourlyRate: z.number().nonnegative().optional(),
 }).strict();
 
@@ -609,18 +634,18 @@ export const updateStudioClassTemplateSchema = z.object({
 // ============================================================================
 
 export const createStudioClassSchema = z.object({
-  classType: z.string().trim().min(1),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1),
   date: isoDate,
   startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
-  location: z.string().trim().min(1),
+  location: singleLineText(LOCATION_MAX).min(1),
   hourlyRate: z.number().nonnegative(),
 });
 
 export const updateStudioClassSchema = z.object({
   studentCount: z.number().int().nonnegative().nullable().optional(),
-  classType: z.string().trim().min(1).optional(),
-  location: z.string().trim().min(1).optional(),
+  classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
+  location: singleLineText(LOCATION_MAX).min(1).optional(),
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
@@ -670,7 +695,7 @@ export const claimWaitlistSchema = z.object({
 // ============================================================================
 
 export const markPaidSchema = z.object({
-  method: z.string().trim().min(1),
+  method: singleLineText(PAYMENT_METHOD_MAX).min(1),
 });
 
 // ============================================================================
@@ -684,7 +709,7 @@ export const createAnnouncementSchema = z
   .object({
     classId: z.string().uuid().optional(),
     studentIds: z.array(z.string().uuid()).min(1).max(MAX_CUSTOM_AUDIENCE).optional(),
-    message: z.string().trim().min(1),
+    message: multiLineText(LONG_TEXT_MAX).trim().min(1),
   })
   .refine((body) => !(body.classId !== undefined && body.studentIds !== undefined), {
     message: 'Name one audience: a class or a list of students, not both.',

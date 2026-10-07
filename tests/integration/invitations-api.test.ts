@@ -476,6 +476,21 @@ describe('PUT /api/invitations/[id]', () => {
     expect(row.email).toBe(typed.toLowerCase());
   });
 
+  it('clears a last name to empty (#769)', async () => {
+    const row = await prisma.invitation.create({
+      data: { teacherId, email: `inv-put-clear-last-${suffix}@test.local`, firstName: 'Clear', lastName: 'Me' },
+      select: { id: true },
+    });
+    const res = await fetch(`${BASE_URL}/api/invitations/${row.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Clear', lastName: '' }),
+    });
+    expect(res.status).toBe(200);
+    const after = await prisma.invitation.findUniqueOrThrow({ where: { id: row.id }, select: { lastName: true } });
+    expect(after.lastName).toBe('');
+  });
+
   it('refuses an empty update rather than reporting a write it never made', async () => {
     const before = await prisma.invitation.findUniqueOrThrow({ where: { id: putTargetId } });
     const res = await fetch(`${BASE_URL}/api/invitations/${putTargetId}`, {

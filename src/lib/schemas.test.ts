@@ -28,6 +28,23 @@ import {
   pageSlugField,
 } from './schemas';
 import type { NoneOf } from './type-pins';
+import {
+  NAME_MAX,
+  CLASS_TYPE_MAX,
+  LOCATION_MAX,
+  VENUE_NAME_MAX,
+  ROOM_NAME_MAX,
+  ROOM_ADDRESS_MAX,
+  CITY_MAX,
+  POSTCODE_MAX,
+  FLOOR_MAX,
+  EQUIPMENT_ITEM_MAX,
+  EQUIPMENT_ITEMS_MAX,
+  LONG_TEXT_MAX,
+  PAYMENT_METHOD_MAX,
+  EMAIL_MAX,
+  PAGE_SLUG_MAX,
+} from './input-bounds';
 
 /**
  * The top-level shapes an exported schema accepts: its own, or each member's
@@ -1188,5 +1205,309 @@ describe('createAnnouncementSchema audience (#48)', () => {
 
   it('refuses a non-uuid entry', () => {
     expect(createAnnouncementSchema.safeParse({ message: 'hi', studentIds: ['nope'] }).success).toBe(false);
+  });
+});
+
+// ============================================================================
+// #769: text caps and the membership walk
+// ============================================================================
+
+/**
+ * The field schema at `path` inside an export: `.` steps into an object's
+ * shape, `|n` into a union's nth member, `[*]` into an array's element.
+ * Wrappers (optional, nullable, default) are stepped through.
+ */
+function fieldAt(schemaName: string, path: string): z.ZodType {
+  let node = (schemas as Record<string, unknown>)[schemaName] as z.ZodType;
+  for (const token of path.match(/\w+|\|\d+|\[\*\]/gu) ?? []) {
+    const inner = unwrapWrappers(node);
+    if (token === '[*]') node = (inner as z.ZodArray<z.ZodType>).element;
+    else if (token.startsWith('|')) node = (inner as z.ZodUnion<z.ZodType[]>).options[Number(token.slice(1))] as z.ZodType;
+    else node = (inner as z.ZodObject).shape[token] as z.ZodType;
+  }
+  return node;
+}
+
+function unwrapWrappers(schema: z.ZodType): z.ZodType {
+  let node = schema;
+  while (
+    node instanceof z.ZodOptional ||
+    node instanceof z.ZodNullable ||
+    node instanceof z.ZodDefault
+  ) {
+    node = node._zod.def.innerType as z.ZodType;
+  }
+  return node;
+}
+
+describe('text caps (#769)', () => {
+  const NAME_FIELDS = [
+    ['teacherProfileSchema', 'firstName'],
+    ['teacherProfileSchema', 'lastName'],
+    ['updateTeacherSchema', 'firstName'],
+    ['updateTeacherSchema', 'lastName'],
+    ['studentProfileSchema', 'firstName'],
+    ['studentProfileSchema', 'lastName'],
+    ['updateStudentSchema', 'firstName'],
+    ['updateStudentSchema', 'lastName'],
+    ['createInvitationSchema', 'firstName'],
+    ['createInvitationSchema', 'lastName'],
+    ['updateInvitationSchema', 'firstName'],
+    ['updateInvitationSchema', 'lastName'],
+    ['createRegistrationSchema', '|2.newContact.firstName'],
+    ['createRegistrationSchema', '|2.newContact.lastName'],
+  ] as const;
+
+  const CLASS_TYPE_SCHEMAS = [
+    'createClassSchema',
+    'updateClassSchema',
+    'createClassTemplateSchema',
+    'updateClassTemplateSchema',
+    'createStudioClassTemplateSchema',
+    'updateStudioClassTemplateSchema',
+    'createStudioClassSchema',
+    'updateStudioClassSchema',
+  ] as const;
+
+  const LOCATION_SCHEMAS = [
+    'createStudioClassTemplateSchema',
+    'updateStudioClassTemplateSchema',
+    'createStudioClassSchema',
+    'updateStudioClassSchema',
+  ] as const;
+
+  const ROOM_FIELDS = [
+    ['venueName', VENUE_NAME_MAX],
+    ['roomName', ROOM_NAME_MAX],
+    ['address', ROOM_ADDRESS_MAX],
+    ['city', CITY_MAX],
+    ['postcode', POSTCODE_MAX],
+    ['floor', FLOOR_MAX],
+  ] as const;
+
+  const LONG_TEXT_FIELDS = [
+    ['createClassSchema', 'description'],
+    ['updateClassSchema', 'description'],
+    ['createClassTemplateSchema', 'description'],
+    ['updateClassTemplateSchema', 'description'],
+    ['createAnnouncementSchema', 'message'],
+    ['createRoomSchema', 'notes'],
+    ['updateRoomSchema', 'notes'],
+    ['createTeacherRoomSchema', 'equipmentNotes'],
+    ['updateTeacherRoomSchema', 'equipmentNotes'],
+  ] as const;
+
+  type Case = readonly [label: string, field: z.ZodType, max: number];
+  const cases: Case[] = [
+    ...NAME_FIELDS.map(([s, p]): Case => [`${s}.${p}`, fieldAt(s, p), NAME_MAX]),
+    ...CLASS_TYPE_SCHEMAS.map((s): Case => [`${s}.classType`, fieldAt(s, 'classType'), CLASS_TYPE_MAX]),
+    ...LOCATION_SCHEMAS.map((s): Case => [`${s}.location`, fieldAt(s, 'location'), LOCATION_MAX]),
+    ...(['createRoomSchema', 'updateRoomSchema'] as const).flatMap((s) =>
+      ROOM_FIELDS.map(([p, max]): Case => [`${s}.${p}`, fieldAt(s, p), max]),
+    ),
+    ...(['createRoomSchema', 'updateRoomSchema'] as const).map(
+      (s): Case => [`${s}.equipment[*]`, fieldAt(s, 'equipment[*]'), EQUIPMENT_ITEM_MAX],
+    ),
+    ...LONG_TEXT_FIELDS.map(([s, p]): Case => [`${s}.${p}`, fieldAt(s, p), LONG_TEXT_MAX]),
+    ['markPaidSchema.method', fieldAt('markPaidSchema', 'method'), PAYMENT_METHOD_MAX],
+    ['pageSlugField', pageSlugField, PAGE_SLUG_MAX],
+    ['teacherProfileSchema.pageSlug', fieldAt('teacherProfileSchema', 'pageSlug'), PAGE_SLUG_MAX],
+    ['updateTeacherSchema.pageSlug', fieldAt('updateTeacherSchema', 'pageSlug'), PAGE_SLUG_MAX],
+  ];
+
+  it.each(cases)('%s accepts its limit and refuses one past it', (_label, field, max) => {
+    expect(field.safeParse('a'.repeat(max)).success).toBe(true);
+    expect(field.safeParse('a'.repeat(max + 1)).success).toBe(false);
+  });
+
+  const EMAIL_FIELDS = [
+    ['magicLinkSendSchema', 'email'],
+    ['studentSignupSchema', 'email'],
+    ['teacherSignupSchema', 'email'],
+    ['createInvitationSchema', 'email'],
+    ['updateInvitationSchema', 'email'],
+    ['createRegistrationSchema', '|2.newContact.email'],
+  ] as const;
+
+  it.each(EMAIL_FIELDS)('%s.%s accepts an EMAIL_MAX-character address and refuses one longer', (s, p) => {
+    const domain = '@example.com';
+    const field = fieldAt(s, p);
+    expect(field.safeParse('a'.repeat(EMAIL_MAX - domain.length) + domain).success).toBe(true);
+    expect(field.safeParse('a'.repeat(EMAIL_MAX - domain.length + 1) + domain).success).toBe(false);
+  });
+
+  it.each(['createRoomSchema', 'updateRoomSchema'] as const)(
+    '%s accepts EQUIPMENT_ITEMS_MAX equipment items and refuses one more',
+    (s) => {
+      const field = fieldAt(s, 'equipment');
+      expect(field.safeParse(Array.from({ length: EQUIPMENT_ITEMS_MAX }, () => 'mat')).success).toBe(true);
+      expect(field.safeParse(Array.from({ length: EQUIPMENT_ITEMS_MAX + 1 }, () => 'mat')).success).toBe(false);
+    },
+  );
+
+  it.each(NAME_FIELDS)('%s.%s refuses link-shaped text', (s, p) => {
+    expect(fieldAt(s, p).safeParse('evil.com').success).toBe(false);
+  });
+
+  it.each(CLASS_TYPE_SCHEMAS)('%s.classType refuses link-shaped text', (s) => {
+    expect(fieldAt(s, 'classType').safeParse('Yoga at evil.com').success).toBe(false);
+  });
+
+  it.each(LOCATION_SCHEMAS)('%s.location keeps a dotted place name', (s) => {
+    expect(fieldAt(s, 'location').safeParse('Studio.nl, Keizersgracht 1').success).toBe(true);
+  });
+
+  it.each(LONG_TEXT_FIELDS)('%s.%s keeps a line break', (s, p) => {
+    expect(fieldAt(s, p).safeParse('Line one\nLine two').success).toBe(true);
+  });
+
+  it('trims the invitation lastName like every other name', () => {
+    expect(fieldAt('createInvitationSchema', 'lastName').parse('  Smith  ')).toBe('Smith');
+    expect(fieldAt('updateInvitationSchema', 'lastName').parse('  Smith  ')).toBe('Smith');
+  });
+
+  it('still accepts an empty or absent invitation lastName', () => {
+    expect(fieldAt('createInvitationSchema', 'lastName').parse(undefined)).toBe('');
+    expect(fieldAt('createInvitationSchema', 'lastName').parse('')).toBe('');
+    expect(fieldAt('updateInvitationSchema', 'lastName').parse('')).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Membership: no unbounded leaf.
+// ---------------------------------------------------------------------------
+
+/**
+ * String leaves with no `.max()` that are still safe, each with why. A leaf
+ * here that gains a `.max()`, or stops being walked, fails the test below, so
+ * the list cannot outlive its entries.
+ */
+const UNBOUNDED_STRING_ALLOWED: Record<string, string> = {
+  'magicLinkVerifySchema.token': 'never persisted: hashed and looked up',
+  'passkeyAuthVerifySchema.challengeId': 'never persisted: a lookup key',
+  'roomSearchQuerySchema.postcode': 'never persisted: a search query parameter',
+  'roomSearchQuerySchema.street': 'never persisted: a search query parameter',
+  'pushSubscriptionSchema.keys.p256dh': 'refine-bounded: an exact decoded byte length',
+  'pushSubscriptionSchema.keys.auth': 'refine-bounded: an exact decoded byte length',
+  'updateStudentSchema.birthday': 'refine-bounded: parseBirthday accepts only a calendar date',
+  'teacherProfileSchema.defaultTimezone': 'refine-bounded: only a recognised IANA zone is kept',
+  'updateTeacherSchema.defaultTimezone': 'refine-bounded: only a recognised IANA zone is accepted',
+};
+
+const BOUNDED_FORMATS = new Set(['uuid', 'datetime']);
+
+/**
+ * A pattern that can only match a string of bounded length: anchored at both
+ * ends, with no unbounded quantifier and no top-level alternation. Errs
+ * toward "unbounded": a `+` inside a character class also counts against it.
+ */
+function isFixedShape(pattern: RegExp): boolean {
+  const src = pattern.source.replace(/\\./gu, 'x');
+  if (!src.startsWith('^') || !src.endsWith('$')) return false;
+  if (/[*+]|\{\d+,\}/u.test(src)) return false;
+  let depth = 0;
+  for (const ch of src) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    else if (ch === '|' && depth === 0) return false;
+  }
+  return true;
+}
+
+interface Walk {
+  offenders: string[];
+  unboundedStrings: string[];
+}
+
+function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
+  const bag = schema._zod.bag as { maximum?: number; format?: string; patterns?: Set<RegExp> };
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault) {
+    walkLeaves(path, schema._zod.def.innerType as z.ZodType, out);
+  } else if (schema instanceof z.ZodPipe) {
+    walkLeaves(path, schema._zod.def.in as z.ZodType, out);
+    if (!(schema._zod.def.out instanceof z.ZodTransform)) walkLeaves(path, schema._zod.def.out as z.ZodType, out);
+  } else if (schema instanceof z.ZodObject) {
+    for (const [k, v] of Object.entries(schema.shape)) walkLeaves(path ? `${path}.${k}` : k, v as z.ZodType, out);
+  } else if (schema instanceof z.ZodUnion) {
+    schema.options.forEach((o, i) => walkLeaves(`${path}|${i}`, o as z.ZodType, out));
+  } else if (schema instanceof z.ZodArray) {
+    if (bag.maximum === undefined) out.offenders.push(`${path}: array with no max`);
+    walkLeaves(`${path}[*]`, schema.element as z.ZodType, out);
+  } else if (schema._zod.def.type === 'string') {
+    // By def type, not `instanceof z.ZodString`: a top-level `z.uuid()` is a
+    // string format whose class does not extend `ZodString`.
+    const bounded =
+      bag.maximum !== undefined ||
+      (bag.format !== undefined && BOUNDED_FORMATS.has(bag.format)) ||
+      (bag.format === 'regex' && bag.patterns !== undefined && [...bag.patterns].every(isFixedShape));
+    if (!bounded) {
+      out.unboundedStrings.push(path);
+      if (!(path in UNBOUNDED_STRING_ALLOWED)) out.offenders.push(`${path}: string with no max`);
+    }
+  } else if (
+    schema instanceof z.ZodNumber ||
+    schema instanceof z.ZodBoolean ||
+    schema instanceof z.ZodEnum ||
+    schema instanceof z.ZodLiteral
+  ) {
+    // Bounded by type; a number's bounds are not read here.
+  } else {
+    out.offenders.push(`${path}: unknown def type ${schema._zod.def.type}`);
+  }
+}
+
+function walkExports(): Walk {
+  const out: Walk = { offenders: [], unboundedStrings: [] };
+  for (const [name, schema] of Object.entries(schemas)) {
+    if (!(schema instanceof z.ZodType)) continue;
+    if (FIELD_VALIDATOR_EXPORTS.has(name)) continue;
+    walkLeaves(name, schema, out);
+  }
+  return out;
+}
+
+describe('every string and array leaf is bounded (#769)', () => {
+  it('finds no unbounded leaf in any exported schema', () => {
+    expect(walkExports().offenders).toEqual([]);
+  });
+
+  it('allows exactly the listed unbounded strings, each still unbounded and still reached', () => {
+    expect([...walkExports().unboundedStrings].sort()).toEqual(Object.keys(UNBOUNDED_STRING_ALLOWED).sort());
+  });
+
+  it('reaches a nested, a union-member, a defaulted, a piped and an array-element leaf', () => {
+    const out: Walk = { offenders: [], unboundedStrings: [] };
+    walkLeaves('probe', z.object({
+      nested: z.object({ s: z.string() }),
+      u: z.union([z.object({ s: z.string() }), z.object({ n: z.number() })]),
+      a: z.array(z.string()).max(1),
+      d: z.string().optional().default(''),
+      p: z.string().transform((v) => v.length),
+    }), out);
+    expect([...out.offenders].sort()).toEqual([
+      'probe.a[*]: string with no max',
+      'probe.d: string with no max',
+      'probe.nested.s: string with no max',
+      'probe.p: string with no max',
+      'probe.u|0.s: string with no max',
+    ]);
+  });
+
+  it('fails an array with no max and a type it does not know', () => {
+    const out: Walk = { offenders: [], unboundedStrings: [] };
+    walkLeaves('probe', z.object({
+      a: z.array(z.uuid()),
+      r: z.record(z.string(), z.string()),
+    }), out);
+    expect(out.offenders).toEqual(['probe.a: array with no max', 'probe.r: unknown def type record']);
+  });
+
+  it('treats an anchored fixed-length pattern as bounded and an open one as not', () => {
+    expect(isFixedShape(/^\d{4}-\d{2}-\d{2}$/u)).toBe(true);
+    expect(isFixedShape(/^([01]\d|2[0-3]):[0-5]\d$/u)).toBe(true);
+    expect(isFixedShape(/^[a-z0-9-]+$/u)).toBe(false);
+    expect(isFixedShape(/^a|b$/u)).toBe(false);
+    expect(isFixedShape(/^\d{2,}$/u)).toBe(false);
+    expect(isFixedShape(/\d{4}/u)).toBe(false);
   });
 });

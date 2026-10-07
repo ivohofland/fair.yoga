@@ -712,6 +712,27 @@ describe('POST /api/registrations', () => {
     expect(entry.registrationId).toBe(walkInJson.data.id);
   });
 
+  it('walks in a new contact with an empty last name (#769)', async () => {
+    const classId = await makeAttendanceClass(2);
+    const email = `regapi-walkin-no-last-${suffix}@test.local`;
+    onTestFinished(async () => {
+      await prisma.registration.deleteMany({ where: { classId, student: { email } } });
+      await prisma.invitation.deleteMany({ where: { email } });
+      await prisma.teacherStudent.deleteMany({ where: { student: { email } } });
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+      await prisma.student.deleteMany({ where: { email } });
+    });
+
+    const res = await post(attendanceToken, { classId, newContact: { firstName: 'Solo', lastName: '', email } });
+    expect(res.status).toBe(201);
+
+    const student = await prisma.student.findUniqueOrThrow({
+      where: { email },
+      select: { firstName: true, lastName: true },
+    });
+    expect(student).toEqual({ firstName: 'Solo', lastName: '' });
+  });
+
   /**
    * The walk-in window is a fact about the clock, not about the status: a
    * class started by hand and then moved days ahead is `in_progress` with a
