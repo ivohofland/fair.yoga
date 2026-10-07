@@ -156,7 +156,9 @@ comparisons as that address has live candidates, and is **granted**
 granted number of that address's candidates, newest first. A grant of zero
 means none of that address's candidates is compared. If nothing at all was
 granted, the claim is `invalid`, with the same answer and message as any other
-failure. The per-token `handoffAttempts` charge on a miss applies to compared
+failure. The code is matched against the granted candidates in `live` order,
+not address by address, so when two addresses' granted candidates share a code
+the newest token wins, whatever the grouping. The per-token `handoffAttempts` charge on a miss applies to compared
 candidates only, because a candidate that was never compared was never guessed
 at.
 
@@ -167,22 +169,40 @@ partial grant only happens when the address is about to run out, and the next
 window compares everything again.
 
 The reservation is `reserveHandoffComparisons(db, email, wanted, now):
-Promise<number>`, one short interactive transaction:
+Promise<number>`, one interactive transaction with Prisma's default options:
 
-1. `INSERT … ON CONFLICT (email) DO NOTHING`, with `attempts = 0` and
-   `windowStartsAt = now`, so the row exists to lock. Concurrent first-ever
-   inserts are safe, because the loser of the speculative insert does nothing.
-2. `SELECT attempts, "windowStartsAt" … WHERE email = $1 FOR UPDATE`, which
-   locks the row. Concurrent claims for the address queue here.
-3. In TypeScript: if the window has ended, `used = 0` and the window restarts
+1. `setLockTimeout(tx)`, the repo's shared 2 s `SET LOCAL lock_timeout`, so a
+   wait on the row is bounded by the database rather than by Prisma's
+   transaction timeout, which cannot bound a blocked statement.
+2. A typed `createMany` with `skipDuplicates` (`INSERT … ON CONFLICT DO
+   NOTHING`), with `attempts = 0` and `windowStartsAt = now`, so the row exists
+   to lock. Concurrent first-ever inserts are safe, because the loser does
+   nothing.
+3. `SELECT attempts, "windowStartsAt" … WHERE email = $1 FOR UPDATE`, which
+   locks the row. Concurrent claims for the address queue here. If the row
+   existed at the insert and another writer deleted it before this read, the
+   read finds nothing: steps 2 and 3 run once more, and the second insert
+   creates the row. A row still missing after that second pass throws.
+4. In TypeScript: if the window has ended, `used = 0` and the window restarts
    at `now`; `granted = min(wanted, max − used)`.
-4. A typed Prisma `update` writes `attempts = used + granted` (and the
+5. A typed Prisma `update` writes `attempts = used + granted` (and the
    restarted window, if any), then the transaction commits.
 
-Binding is typed Prisma everywhere except the `FOR UPDATE` read, which binds
-only the address, so no `Date` passes through a raw parameter. A `Date` in raw
-SQL binds as `timestamptz` against this `timestamp(3)` column and would convert
-through the session time zone.
+Binding is typed Prisma except the `FOR UPDATE` read, which binds only the
+address, so no `Date` passes through a raw parameter. A `Date` in raw SQL binds
+as `timestamptz` against this `timestamp(3)` column and would convert through
+the session time zone.
+
+**A wait past the lock timeout answers 503, not the uniform 400.** The
+reservation fails with `55P03`, the route's error handler answers a transient
+503, nothing is granted for that address, and the claim is not compared. This
+is a ruling, not an oversight: the wait depends on a concurrent holder of the
+address's budget row (another claim for the address, or its erasure), not on the
+guessed code, so the status reveals nothing about the code. A claim spanning
+two addresses reserves them one transaction at a time, so if the second times
+out the first address's grant is already committed and is spent without a
+comparison. That is accepted: it costs a shared-browser legitimate user a
+comparison under contention and never helps an attacker.
 
 Why reserve before comparing, not charge after a miss:
 
@@ -219,7 +239,9 @@ Ask for a new link."
 **Shared browsers:** charging every live address under the nonce means one
 person's typo spends a stranded earlier user's comparison too. This is the same
 sharing that the 2026-09-08 attempt-budget spec §5 accepted per token, now per
-address. That stranded token expires within 15 minutes regardless.
+address. That stranded token expires within 15 minutes regardless. A multi-address claim
+whose second reservation times out also spends the first address's grant
+uncompared (§2.2).
 
 **Retention, erasure, export:**
 
@@ -240,11 +262,14 @@ address. That stranded token expires within 15 minutes regardless.
 **Locks:** reservations hold one budget row at a time, in a transaction that
 takes no other lock. Erasure deletes one budget row after its profile locks.
 The daily sweep's multi-row delete is autocommit and can wait on a row the
-erasure holds, but the erasure waits on none of the sweep's rows. No cycle
+erasure holds, and the erasure can wait on the one row both touch if the sweep
+already holds it; neither then waits on anything the other holds. No cycle
 forms, by the argument `docs/lock-order.md` makes for the notification
 retention sweep against erasure (#223). `docs/lock-order.md` has no node for
 `MagicLinkToken`, `Session` or `PasskeyCredential` either, because its census
-covers tables a transaction takes two of. So this table gets no node.
+covers tables a transaction takes two of. So this table gets no node. It appears in `docs/lock-order.md` only as a
+standing exception in the `FOR UPDATE` census and as one line in the
+`setLockTimeout` census.
 
 ### 2.3 `students/[id]` GET: one 404 for "not yours"
 
@@ -290,6 +315,9 @@ existence is observable before authorization fails.
 | a claim spends one unit per code compared | DB: three stamped tokens for one address under one nonce, one wrong claim → `attempts` is 3 | charge 1 per claim |
 | a partial grant compares newest first | DB: budget at 9, two stamped tokens under one nonce: the older one's correct code is `invalid`; on a fresh setup, the newer one's verifies | grant all-or-nothing, or compare oldest first |
 | reserve precedes compare | DB: 20 stamped tokens for one address, each under its **own** nonce, then 20 concurrent wrong claims, one per nonce. No token gets more than one increment, so none is reaped. Σ`handoffAttempts` = 10 and the budget's `attempts` = 10. Make sure the calls really overlap: hold the budget row's lock on a second connection while all 20 are issued | charge after the miss instead of reserving before → Σ = 20 |
+| a lock wait past the timeout fails closed | DB: a second client holds the budget row for longer than the lock timeout and shorter than Prisma's own: `a claim held past the lock timeout fails as a transient 503, and nothing is spent` asserts the claim settled inside the hold, the error is a lock timeout classified 503, and neither the budget nor the token's `handoffAttempts` moved | delete `setLockTimeout(tx)` → the claim waits out the hold and is granted |
+| a vanished row is recreated | DB: `grants from a fresh window when the row is deleted between the insert and the lock` stages a delete between the two statements | loop once instead of twice → `handoff: budget row missing after insert` |
+| the newest granted token wins across addresses | DB: `a code two addresses share claims the newer token, whatever the address grouping`: live order [A-newest, B, A-older] against grouped order [A-newest, A-older, B], the shared code verifies B | match in `compared`'s order instead of `live`'s → verifies A-older |
 | window resets | DB: a row whose window started more than 24 h ago (written through typed Prisma) grants again, and reads back with `attempts` = the new grant and `windowStartsAt` equal to the JS `now` | drop the window-ended branch |
 | the same-browser path ignores the budget | DB: budget spent, `verifyWithHandoff` with the matching nonce still verifies | — |
 | addresses are lowercase | DB: inserting an uppercase address is refused by the CHECK | drop the CHECK |
