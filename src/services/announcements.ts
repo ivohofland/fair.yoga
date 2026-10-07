@@ -80,9 +80,9 @@ function hash32(value: string): number {
  * milliseconds of needless serialisation and nothing else. That is the whole
  * reason this is a lock and not a unique index on a hashed column.
  * `Announcement.message` is `@db.Text` — indexable in principle, but a btree
- * entry cannot exceed roughly 2704 bytes and `createAnnouncementSchema`
- * (`lib/schemas.ts`) sets no maximum length, so a long announcement would fail
- * to index at insert time. An index-based design would therefore have to key
+ * entry cannot exceed roughly 2704 bytes, and a message's length cap counts
+ * characters, not bytes, so a message within it can still be too long to
+ * index at insert time. An index-based design would therefore have to key
  * on a hash, where a collision silently rejects a legitimate announcement
  * instead of merely serialising it. A time-bucketed index leaks differently
  * again — two sends straddling a bucket edge both pass.

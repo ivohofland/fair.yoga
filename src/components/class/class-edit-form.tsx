@@ -49,7 +49,8 @@ const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocal
 
 /**
  * #702. The number inputs store `Number(value)`, so a cleared one is `0`, and
- * nothing native bounds them: this form has no `<form>` element. The first
+ * their `min`/`max` attributes enforce nothing: the browser checks them only
+ * on a `<form>` submit, and this form has no `<form>` element. The first
  * number field out of range, in this form's copy, or `undefined`. Duration is
  * always sent. The rest are economics, sent only while unlocked.
  */
