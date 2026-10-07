@@ -1051,20 +1051,30 @@ describe('the per-address comparison budget', () => {
     url.searchParams.set('connection_limit', String(nonces.length + 5));
     const wide = new PrismaClient({ datasourceUrl: url.toString() });
     const holder = new PrismaClient();
+    let claims: Promise<Awaited<ReturnType<typeof claimWithCode>>[]> | undefined;
     try {
-      let claims: Promise<Awaited<ReturnType<typeof claimWithCode>>[]> | undefined;
       let waiting = 0;
       await holder.$transaction(
         async (tx) => {
           await tx.$queryRaw`SELECT 1 FROM "HandoffAttemptBudget" WHERE email = ${email} FOR UPDATE`;
+          const [self] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          if (!self) throw new Error('no backend pid for the holder');
           claims = Promise.all(nonces.map((n) => claimWithCode(wide, asBrowserNonce(n), '999999')));
           const deadline = Date.now() + 20_000;
           while (waiting < nonces.length && Date.now() < deadline) {
+            // Backends blocked by the holder, directly or through another
+            // waiter: only the first in line waits on the holder itself, and
+            // each later one waits on the queue ahead of it. Nothing else
+            // waiting on a lock in this database is counted.
             const [row] = await db.$queryRaw<{ n: number }[]>`
-              SELECT count(*)::int AS n FROM pg_stat_activity
-              WHERE datname = current_database()
-                AND wait_event_type = 'Lock'
-                AND query ILIKE '%HandoffAttemptBudget%'`;
+              WITH RECURSIVE blocked(pid) AS (
+                SELECT a.pid FROM pg_stat_activity a
+                WHERE pg_blocking_pids(a.pid) @> ARRAY[${self.pid}::int]
+                UNION
+                SELECT a.pid FROM pg_stat_activity a
+                JOIN blocked b ON pg_blocking_pids(a.pid) @> ARRAY[b.pid]
+              )
+              SELECT count(*)::int AS n FROM blocked`;
             waiting = row?.n ?? 0;
             if (waiting < nonces.length) await new Promise((resolve) => setTimeout(resolve, 50));
           }
@@ -1081,6 +1091,9 @@ describe('the per-address comparison budget', () => {
       expect(rows.reduce((sum, r) => sum + r.handoffAttempts, 0)).toBe(HANDOFF_EMAIL_MAX_ATTEMPTS);
       expect((await budgetOf(email))?.attempts).toBe(HANDOFF_EMAIL_MAX_ATTEMPTS);
     } finally {
+      // Settled before disconnecting, so a failed assertion above does not
+      // leave twenty claims rejecting against a closed client.
+      await claims?.catch(() => undefined);
       await wide.$disconnect();
       await holder.$disconnect();
     }

@@ -106,6 +106,12 @@ export const HANDOFF_EMAIL_MAX_ATTEMPTS = 10;
  *  previous window ended. */
 export const HANDOFF_EMAIL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** Above Prisma's defaults on purpose. The row lock can be held by a
+ *  transaction much longer than this one, and a reservation that times out
+ *  fails the claim with an error instead of answering it. The figures are
+ *  argued in `docs/data-model.md` (HandoffAttemptBudget). */
+const RESERVATION_TX_OPTIONS = { maxWait: 5_000, timeout: 25_000 } as const;
+
 /**
  * Reserves up to `wanted` code comparisons from `email`'s budget, and returns
  * how many were granted: `wanted` while the window has room, fewer as it runs
@@ -153,7 +159,7 @@ export async function reserveHandoffComparisons(
       data: { attempts: used + granted, ...(windowEnded ? { windowStartsAt: now } : {}) },
     });
     return granted;
-  });
+  }, RESERVATION_TX_OPTIONS);
 }
 
 /**

@@ -118,6 +118,15 @@ link on the browser that asked for it never touches this row.
   not data the person provided. The address is stored plain, as on
   `MagicLinkToken`, and erasure deletes the row rather than relying on a hash.
 - **Locks:** no `docs/lock-order.md` node; the spec section above says why.
+  A reservation waits on whatever holds the row: another reservation for the
+  address (three short statements), or an erasure, which holds the row from
+  its delete until it commits and allows its transaction up to 20 s
+  (`deleteStudentAccount`'s `timeout: 20_000`; `deleteTeacherAccount` allows
+  10 s). The reservation's transaction
+  therefore allows 25 s, and 5 s to get a pool connection, instead of Prisma's
+  5 s and 2 s defaults: a reservation that times out fails the claim with an
+  error rather than refusing it. If the erasing transaction deletes the row,
+  the waiting reservation finds no row and inserts a fresh one.
 
 ### Teacher (core)
 
