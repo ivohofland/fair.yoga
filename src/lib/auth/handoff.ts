@@ -89,13 +89,72 @@ export async function verifyWithHandoff(
 }
 
 /** A 6-digit code is 10⁶, brute-forceable inside the token's fifteen minutes.
- *  Per BROWSER, not per token: a wrong code submitted under one nonce is
- *  charged against every live token that nonce could be claiming, not just
- *  the one it was aimed at. A per-token budget
- *  is steerable by a caller who can mint tokens under the nonce, so this
- *  scoping is what makes it the guard that does not depend on the nonce
- *  staying secret. */
+ *  A wrong code submitted under one nonce is charged against every live token
+ *  it was compared with, not just the one it was aimed at, so a caller who can
+ *  mint tokens under the nonce cannot steer the charge onto a decoy. The bound
+ *  that does not depend on the nonce staying secret is the per-address budget,
+ *  `HANDOFF_EMAIL_MAX_ATTEMPTS`. */
 export const HANDOFF_MAX_ATTEMPTS = 5;
+
+/** Code comparisons one address may be granted per window, across every token
+ *  and every nonce. One unit is one code compared, not one claim: a claim
+ *  compares the submitted code against each of the address's live candidates.
+ *  See `docs/superpowers/specs/2026-10-07-sign-in-oracles-design.md` §2.2. */
+export const HANDOFF_EMAIL_MAX_ATTEMPTS = 10;
+
+/** A fixed window per address, starting at the first reservation after the
+ *  previous window ended. */
+export const HANDOFF_EMAIL_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Reserves up to `wanted` code comparisons from `email`'s budget, and returns
+ * how many were granted: `wanted` while the window has room, fewer as it runs
+ * out, 0 once it has.
+ *
+ * The grant is written before the caller compares anything. The row lock
+ * taken here queues concurrent reservations for one address, so however many
+ * claims arrive at once, the comparisons they are granted within one window
+ * never total more than `HANDOFF_EMAIL_MAX_ATTEMPTS`. Charging after a miss
+ * would let every concurrent claim compare first. Design: spec §2.2 (linked
+ * on `HANDOFF_EMAIL_MAX_ATTEMPTS`).
+ */
+export async function reserveHandoffComparisons(
+  db: PrismaClient,
+  email: string,
+  wanted: number,
+  now: Date = new Date(),
+): Promise<number> {
+  if (wanted <= 0) return 0;
+  return db.$transaction(async (tx) => {
+    let row: { attempts: number; windowStartsAt: Date } | undefined;
+    // Twice at most: a row that already existed, so the insert did nothing,
+    // can be deleted by the retention sweep or an erasure before the lock is
+    // taken. The second insert then finds no conflict and creates it.
+    for (let i = 0; i < 2 && !row; i++) {
+      // So the row exists to lock. A concurrent first insert loses the
+      // conflict and does nothing.
+      await tx.handoffAttemptBudget.createMany({
+        data: [{ email, attempts: 0, windowStartsAt: now }],
+        skipDuplicates: true,
+      });
+      // Raw only for `FOR UPDATE`, and only the address is bound: a `Date`
+      // bound raw arrives as `timestamptz` against this `timestamp(3)` column.
+      [row] = await tx.$queryRaw<{ attempts: number; windowStartsAt: Date }[]>`
+        SELECT attempts, "windowStartsAt" FROM "HandoffAttemptBudget" WHERE email = ${email} FOR UPDATE`;
+    }
+    if (!row) throw new Error('handoff: budget row missing after insert');
+
+    const windowEnded = row.windowStartsAt.getTime() <= now.getTime() - HANDOFF_EMAIL_WINDOW_MS;
+    const used = windowEnded ? 0 : row.attempts;
+    const granted = Math.max(0, Math.min(wanted, HANDOFF_EMAIL_MAX_ATTEMPTS - used));
+
+    await tx.handoffAttemptBudget.update({
+      where: { email },
+      data: { attempts: used + granted, ...(windowEnded ? { windowStartsAt: now } : {}) },
+    });
+    return granted;
+  });
+}
 
 /**
  * Trades a code for the token it was stamped on, for the browser that
@@ -107,12 +166,15 @@ export const HANDOFF_MAX_ATTEMPTS = 5;
  *
  * A resend legitimately leaves more than one live token sharing this
  * browser's nonce, and either can end up stamped with its own code if both
- * get opened elsewhere. The submitted code is compared against every live
- * candidate at once, so a match claims that specific token, and a code
- * matching none of them is one failed guess against ALL of them — charged to
- * all of them. Charging one chosen row instead undercounts, and lets a caller
- * who can mint tokens under this nonce steer the charge off the token being
- * guessed at.
+ * get opened elsewhere. Before the code is read, each address among the live
+ * candidates is granted comparisons from its budget
+ * (`reserveHandoffComparisons`), one per candidate, newest first, and only
+ * granted candidates are compared. A match claims that specific token, and a
+ * code matching none of them is one failed guess against every candidate it
+ * was compared with — charged to all of those, and to no candidate that was
+ * not compared. Charging one chosen row instead undercounts, and lets a
+ * caller who can mint tokens under this nonce steer the charge off the token
+ * being guessed at. Design: spec §2.2 (linked on `HANDOFF_EMAIL_MAX_ATTEMPTS`).
  */
 export async function claimWithCode(
   db: PrismaClient,
@@ -132,10 +194,9 @@ export async function claimWithCode(
       handoffCode: { not: null },
       expiresAt: { gt: new Date() },
     },
-    // Not load-bearing for the budget: a miss charges every live candidate.
-    // It settles the tie-break if two live candidates ever stamp the same
-    // code — the newest wins, rather than whatever order the database
-    // happened to return.
+    // Newest first. A partial grant compares an address's newest candidates,
+    // and if two live candidates ever stamp the same code the newest wins,
+    // rather than whatever order the database happened to return.
     orderBy: { createdAt: 'desc' },
   });
   if (candidates.length === 0) return { kind: 'invalid' };
@@ -161,13 +222,28 @@ export async function claimWithCode(
   const live = candidates.filter((c) => c.handoffAttempts < HANDOFF_MAX_ATTEMPTS);
   if (live.length === 0) return { kind: 'invalid' };
 
-  const match = live.find((candidate) => candidate.handoffCode === code);
+  // Grouped by address in `live`'s newest-first order, and reserved one
+  // address at a time, so this call never holds two budget rows at once.
+  const byAddress = new Map<string, typeof live>();
+  for (const candidate of live) {
+    const group = byAddress.get(candidate.email);
+    if (group) group.push(candidate);
+    else byAddress.set(candidate.email, [candidate]);
+  }
+  const compared: typeof live = [];
+  for (const [email, group] of byAddress) {
+    const granted = await reserveHandoffComparisons(db, email, group.length);
+    compared.push(...group.slice(0, granted));
+  }
+  if (compared.length === 0) return { kind: 'invalid' };
+
+  const match = compared.find((candidate) => candidate.handoffCode === code);
   if (!match) {
     // Atomic per row, and `updateMany` rather than `update` so a row a
     // concurrent caller already consumed is a no-op instead of a P2025 to
     // catch. The delete re-reads the counter inside its own statement, so
     // whichever concurrent guess pushed a row over the line, the row dies.
-    const ids = live.map((c) => c.id);
+    const ids = compared.map((c) => c.id);
     // Expected reap count, derived from THIS call's own `live` snapshot,
     // taken before the increment below runs. A sibling call racing one of
     // these same rows can move its true count between this snapshot and the
@@ -175,7 +251,7 @@ export async function claimWithCode(
     // below is that documented race, not proof of a bug on its own. Which
     // interleaving produces which direction is derived in
     // `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` §5.
-    const expectedReaps = live.filter((c) => c.handoffAttempts + 1 >= HANDOFF_MAX_ATTEMPTS).length;
+    const expectedReaps = compared.filter((c) => c.handoffAttempts + 1 >= HANDOFF_MAX_ATTEMPTS).length;
 
     const incremented = await db.magicLinkToken.updateMany({
       where: { id: { in: ids } },
