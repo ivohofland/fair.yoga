@@ -1018,9 +1018,27 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     expect(body.data.phone).toBeNull();
   });
 
-  it('a student-only session reading another student is denied', async () => {
+  it('a student-only session reading another student is answered 404', async () => {
     const res = await as(rosterToken, `/api/students/${dualOwnStudentId}`);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+  });
+
+  it('a teacher with no link to an existing student is answered 404', async () => {
+    const res = await as(sharedTeacherToken, `/api/students/${dualOwnStudentId}`);
+    expect(res.status).toBe(404);
+  });
+
+  // Status alone would let the two refusals differ in body; the whole response
+  // is what a caller could tell apart.
+  it.each([
+    ['a student-only session', () => rosterToken],
+    ['a teacher with no link', () => sharedTeacherToken],
+  ])('%s gets the same response for an existing student as for an unknown id', async (_label, token) => {
+    const existing = await as(token(), `/api/students/${dualOwnStudentId}`);
+    const unknown = await as(token(), `/api/students/${crypto.randomUUID()}`);
+
+    expect(existing.status).toBe(unknown.status);
+    expect(await existing.json()).toEqual(await unknown.json());
   });
 
   // #167 mutation check: other list assertions elsewhere in this file read a
