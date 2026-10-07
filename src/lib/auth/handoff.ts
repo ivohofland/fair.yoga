@@ -115,8 +115,8 @@ export const HANDOFF_EMAIL_WINDOW_MS = 24 * 60 * 60 * 1000;
  * taken here queues concurrent reservations for one address, so however many
  * claims arrive at once, the comparisons they are granted within one window
  * never total more than `HANDOFF_EMAIL_MAX_ATTEMPTS`. Charging after a miss
- * would let every concurrent claim compare first. Design: spec §2.2 (linked
- * on `HANDOFF_EMAIL_MAX_ATTEMPTS`).
+ * would let every concurrent claim compare first. Design:
+ * `docs/superpowers/specs/2026-10-07-sign-in-oracles-design.md` §2.2.
  */
 export async function reserveHandoffComparisons(
   db: PrismaClient,
@@ -128,8 +128,8 @@ export async function reserveHandoffComparisons(
   return db.$transaction(async (tx) => {
     let row: { attempts: number; windowStartsAt: Date } | undefined;
     // Twice at most: a row that already existed, so the insert did nothing,
-    // can be deleted by the retention sweep or an erasure before the lock is
-    // taken. The second insert then finds no conflict and creates it.
+    // can be deleted by another writer before the lock is taken. The second
+    // insert then finds no conflict and creates it.
     for (let i = 0; i < 2 && !row; i++) {
       // So the row exists to lock. A concurrent first insert loses the
       // conflict and does nothing.
@@ -174,7 +174,8 @@ export async function reserveHandoffComparisons(
  * was compared with — charged to all of those, and to no candidate that was
  * not compared. Charging one chosen row instead undercounts, and lets a
  * caller who can mint tokens under this nonce steer the charge off the token
- * being guessed at. Design: spec §2.2 (linked on `HANDOFF_EMAIL_MAX_ATTEMPTS`).
+ * being guessed at. The budget's design:
+ * `docs/superpowers/specs/2026-10-07-sign-in-oracles-design.md` §2.2.
  */
 export async function claimWithCode(
   db: PrismaClient,
@@ -244,8 +245,8 @@ export async function claimWithCode(
     // catch. The delete re-reads the counter inside its own statement, so
     // whichever concurrent guess pushed a row over the line, the row dies.
     const ids = compared.map((c) => c.id);
-    // Expected reap count, derived from THIS call's own `live` snapshot,
-    // taken before the increment below runs. A sibling call racing one of
+    // Expected reap count, derived from THIS call's own snapshot of the
+    // compared candidates, taken before the increment below runs. A sibling call racing one of
     // these same rows can move its true count between this snapshot and the
     // writes below without this call ever seeing it (#504) — a mismatch
     // below is that documented race, not proof of a bug on its own. Which
