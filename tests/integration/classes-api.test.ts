@@ -4,6 +4,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { economicsViolations, formatEconomicsViolations } from '@/lib/class-economics';
+import { MONEY_MAX } from '@/lib/input-bounds';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
@@ -458,6 +459,48 @@ describe('POST /api/classes/[id]/complete', () => {
       const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(after.status).toBe('completed');
       expect(after.updatedAt).toEqual(first.updatedAt);
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  // #769: the money cap exists so that roomCost + targetRate, written to
+  // `totalRevenue` and `effectiveTeacherRate` at completion, still fits a
+  // Decimal(10,2). Both fields at the cap is the largest total a class can have.
+  it('completes a class priced at the money cap and stores the sum', async () => {
+    const slot = wallSlotAt(new Date(Date.now() - 50 * 60_000), 'Europe/Amsterdam');
+    const cls = await createClassFixture(prisma, {
+      teacherId: ownerId,
+      teacherRoomId,
+      classType: 'Complete At Cap',
+      date: slot.date,
+      startTime: slot.startTime,
+      durationMinutes: 60,
+      roomCost: MONEY_MAX,
+      minRate: MONEY_MAX,
+      targetRate: MONEY_MAX,
+      minStudents: 1,
+      maxStudents: 4,
+      status: 'open',
+      cancelledAt: null,
+    });
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
+      });
+
+      expect(await expectApplied(await complete(ownerToken, cls.id))).toEqual({ ok: true, newStatus: 'completed' });
+
+      const after = await prisma.class.findUniqueOrThrow({
+        where: { id: cls.id },
+        include: { registrations: { include: { payment: true } } },
+      });
+      expect(after.status).toBe('completed');
+      expect(Number(after.effectiveTeacherRate)).toBe(MONEY_MAX);
+      expect(Number(after.totalRevenue)).toBe(2 * MONEY_MAX);
+      // The only student carries the whole class total.
+      expect(after.registrations.map((r) => Number(r.price))).toEqual([2 * MONEY_MAX]);
+      expect(after.registrations.map((r) => Number(r.payment?.amount))).toEqual([2 * MONEY_MAX]);
     } finally {
       await removeIsolatedClass(cls);
     }
@@ -1851,6 +1894,24 @@ describe('POST /api/classes', () => {
       expect(rows).toHaveLength(2);
       // Read off the ENTRY: the cancelled row keeps its `draft` status.
       expect(rows.find((r) => r.id === created.id)?.calendarEntry.cancelledAt).not.toBeNull();
+    });
+  });
+
+  // #769: a value no column can hold answers 400 at the door, not a 500 from
+  // the database.
+  describe('numbers past their cap on POST /api/classes (#769)', () => {
+    it.each([
+      ['roomCost', 1e12],
+      ['roomCost', MONEY_MAX + 1],
+      ['targetRate', 1e12],
+      ['minRate', -1e12],
+      ['durationMinutes', 2 ** 31],
+      ['durationMinutes', 1441],
+    ])('answers 400 for %s = %s and creates nothing', async (field, value) => {
+      const before = await prisma.calendarEntry.count({ where: { teacherId: ownerId } });
+      const res = await post(ownerToken, { ...baseBody(), date: '2099-08-20', [field]: value });
+      expect(res.status).toBe(400);
+      expect(await prisma.calendarEntry.count({ where: { teacherId: ownerId } })).toBe(before);
     });
   });
 
