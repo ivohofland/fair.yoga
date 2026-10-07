@@ -114,7 +114,7 @@ function validate(form: FormState, dateEditable: boolean): FieldErrors {
   if (!form.durationMinutes.trim() || !Number.isInteger(duration) || duration <= 0) {
     errors.durationMinutes = 'Enter how many minutes the class runs.';
   } else if (duration > DURATION_MAX_MINUTES) {
-    errors.durationMinutes = `A class can run at most ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours).`;
+    errors.durationMinutes = `A class can run at most ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours).`;
   }
 
   // Empty is rejected rather than read as 0. Sending 0 should be something a
