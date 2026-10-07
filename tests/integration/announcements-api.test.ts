@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/services/announcements';
-import { NO_RECIPIENTS_MESSAGE } from '@/app/api/announcements/shared';
+import { ANNOUNCEMENTS_PER_HOUR, NO_RECIPIENTS_MESSAGE } from '@/app/api/announcements/shared';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
@@ -877,8 +877,8 @@ describe('GET /api/announcements/audience (#48)', () => {
 describe('POST /api/announcements: the hourly send limit (#769)', () => {
   useWorld('throttle');
 
-  it('refuses the send after ten in an hour, and leaves another teacher unaffected', async () => {
-    for (let i = 1; i <= 10; i++) {
+  it('refuses the send after the hourly limit, and leaves another teacher unaffected', async () => {
+    for (let i = 1; i <= ANNOUNCEMENTS_PER_HOUR; i++) {
       const res = await sendAnnouncement({ message: `Within the limit ${i} ${suffix}` });
       expect(res.status).toBe(201);
     }

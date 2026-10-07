@@ -9,3 +9,6 @@ export const NO_RECIPIENTS_MESSAGE = {
   /** A chosen list: the same words whichever reason emptied it, so it is no oracle. */
   chosen: 'None of the students you chose can be reached.',
 } as const;
+
+/** How many sends `POST /api/announcements` allows one teacher per hour. */
+export const ANNOUNCEMENTS_PER_HOUR = 10;

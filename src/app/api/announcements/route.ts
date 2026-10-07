@@ -16,9 +16,8 @@ import { type CreateNotificationInput } from '@/services/notifications';
 import { checkRateLimit, rateLimitKey, respondRateLimited } from '@/lib/rate-limit';
 import { createAnnouncementSchema } from '@/lib/schemas';
 import { listAnnouncementAudience, sendAnnouncement } from '@/services/announcements';
-import { NO_RECIPIENTS_MESSAGE } from './shared';
+import { ANNOUNCEMENTS_PER_HOUR, NO_RECIPIENTS_MESSAGE } from './shared';
 
-const ANNOUNCEMENTS_PER_HOUR = 10;
 const ANNOUNCEMENT_WINDOW_MS = 60 * 60 * 1000;
 
 type CreatedResponse = Omit<Announcement, 'audienceStudentIds'> & AnnouncementSendResponse;
@@ -28,7 +27,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   // Before the body parse and the audience read, so a refused send costs no
-  // query. Every request spends budget, including one that is then refused.
+  // query. Every request spends budget, including one a later check refuses.
   const limit = checkRateLimit(
     rateLimitKey('announcements', session.teacherId),
     ANNOUNCEMENTS_PER_HOUR,
