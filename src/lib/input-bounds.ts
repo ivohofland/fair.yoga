@@ -54,8 +54,8 @@ const SINGLE_LINE_REFUSED = /\p{Cc}|(?![\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
 const MULTI_LINE_REFUSED = /(?![\n\r\t])\p{Cc}|(?![\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
 
 /**
- * Generic TLDs the host-shaped test refuses after a dot, beside any two
- * ASCII letters (which covers every country code). Deliberately short: a
+ * Generic TLDs the host-shaped test refuses after a dot, beside two ASCII
+ * letters in one case (which covers every country code). Deliberately short: a
  * complete list drifts, and a member that is also a common name particle
  * (`van`, `del`, `den`) would refuse real abbreviated names.
  */
@@ -72,15 +72,19 @@ const LINK_MARKER = /:\/\/|www\.|@/iu;
 const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
 
 /**
- * A label of two or more letters, digits or hyphens, a `.`, then two ASCII
- * letters or a `COMMON_GENERIC_TLDS` member, not followed by a letter. The
- * two-character label keeps `J.de Groot` and `J.R.` legal; the exact-length
- * suffix keeps `St.Clair`, `Th.van Dijk` and `Ma.del Carmen` legal.
+ * A host-shaped token: a label of two or more letters, digits or hyphens, a
+ * `.`, then a suffix not followed by a letter. The two-character label keeps
+ * `J.de Groot` and `J.R.` legal; the exact-length suffix keeps `St.Clair`,
+ * `Th.van Dijk` and `Ma.del Carmen` legal.
+ *
+ * A two-letter suffix counts only in one case, `nl` or `NL`, so a
+ * capitalised given name after a title (`Mr.Li Wei`, `Dr.Oz`) stays legal.
+ * A `COMMON_GENERIC_TLDS` member counts in any case.
  */
-const HOST_SHAPED = new RegExp(
-  `[\\p{L}\\p{N}-]{2,}\\.(?:[a-z]{2}|${COMMON_GENERIC_TLDS.join('|')})(?!\\p{L})`,
-  'iu',
-);
+const HOST_LABEL = '[\\p{L}\\p{N}-]{2,}\\.';
+const SUFFIX_END = '(?!\\p{L})';
+const HOST_COUNTRY_CODE = new RegExp(`${HOST_LABEL}(?:[a-z]{2}|[A-Z]{2})${SUFFIX_END}`, 'u');
+const HOST_GENERIC = new RegExp(`${HOST_LABEL}(?:${COMMON_GENERIC_TLDS.join('|')})${SUFFIX_END}`, 'iu');
 
 /** ZWNJ and ZWJ: legal in a name, invisible in a rendered host. */
 const JOINERS = /[\u200C\u200D]/gu;
@@ -91,7 +95,12 @@ const JOINERS = /[\u200C\u200D]/gu;
  */
 function looksLikeLink(value: string): boolean {
   const rendered = value.replace(JOINERS, '');
-  return LINK_MARKER.test(rendered) || LOOKALIKE_DOT.test(rendered) || HOST_SHAPED.test(rendered);
+  return (
+    LINK_MARKER.test(rendered) ||
+    LOOKALIKE_DOT.test(rendered) ||
+    HOST_COUNTRY_CODE.test(rendered) ||
+    HOST_GENERIC.test(rendered)
+  );
 }
 
 const CONTROL_MESSAGE = 'Remove the hidden or control characters.';
