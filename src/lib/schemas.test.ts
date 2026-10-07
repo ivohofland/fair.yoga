@@ -48,6 +48,10 @@ import {
   DURATION_MAX_MINUTES,
   MONEY_MAX,
   CAPACITY_MAX,
+  singleLineText,
+  multiLineText,
+  linkFreeText,
+  singleLineCharacters,
 } from './input-bounds';
 
 /**
@@ -583,6 +587,26 @@ describe('updateStudentSchema — contact fields (#714)', () => {
   ] as const)('birthday: %j gets the message for its own reason', (birthday, copy) => {
     const r = updateStudentSchema.safeParse({ birthday });
     expect(r.success ? '' : r.error.issues[0]?.message).toMatch(copy);
+  });
+});
+
+describe('the character rule on the profile, contact and bank fields (#769)', () => {
+  it('a bio keeps its line breaks and edge whitespace, and refuses a control character', () => {
+    expect(fieldAt('teacherProfileSchema', 'bio').parse(' Line one\nLine two ')).toBe(' Line one\nLine two ');
+    expect(fieldAt('updateTeacherSchema', 'bio').safeParse('a\u0000b').success).toBe(false);
+  });
+
+  it('phone refuses a line break; address keeps one; both refuse a bidi override', () => {
+    expect(updateStudentSchema.safeParse({ phone: '06\n1234' }).success).toBe(false);
+    expect(updateStudentSchema.safeParse({ phone: '06\u202E1234' }).success).toBe(false);
+    expect(updateStudentSchema.safeParse({ address: 'Straat 1\u202E' }).success).toBe(false);
+  });
+
+  it('bank fields strip a pasted edge newline and refuse a hidden character mid-value', () => {
+    const parsed = schemas.bankAccountSchema.parse({ holderName: ' A. Teacher\n', iban: 'NL91 ABNA 0417 1643 00\n' });
+    expect(parsed).toEqual({ holderName: 'A. Teacher', iban: 'NL91 ABNA 0417 1643 00' });
+    expect(schemas.bankAccountSchema.safeParse({ holderName: 'A.\u202ETeacher' }).success).toBe(false);
+    expect(schemas.bankAccountSchema.safeParse({ holderName: 'A', iban: 'NL91\u200BABNA' }).success).toBe(false);
   });
 });
 
@@ -1402,6 +1426,21 @@ const UNBOUNDED_STRING_ALLOWED: Record<string, string> = {
   'updateTeacherSchema.defaultTimezone': 'refine-bounded: only a recognised IANA zone is accepted',
 };
 
+/**
+ * String leaves that accept a control or format character, each with why.
+ * Same contract as `UNBOUNDED_STRING_ALLOWED`: an entry that starts refusing
+ * the probes, or stops being walked, fails the test below.
+ */
+const HIDDEN_CHARACTERS_ALLOWED: Record<string, string> = {
+  'magicLinkVerifySchema.token': 'never stored or shown: hashed and looked up',
+  'passkeyAuthVerifySchema.challengeId': 'never stored or shown: a lookup key',
+  'roomSearchQuerySchema.postcode': 'never stored or shown: a search query parameter',
+  'roomSearchQuerySchema.street': 'never stored or shown: a search query parameter',
+  'archiveStudentBodySchema.waivePaymentIds[*]': 'never stored or shown: matched against payment ids',
+  'updateStudentSchema.birthday': 'transform-checked: parseBirthday accepts only a calendar date',
+  'teacherProfileSchema.defaultTimezone': 'transform-checked: only a recognised IANA zone is kept',
+};
+
 const BOUNDED_FORMATS = new Set(['uuid', 'datetime']);
 
 /**
@@ -1440,11 +1479,16 @@ interface Walk {
   offenders: string[];
   unboundedStrings: string[];
   unboundedNumbers: string[];
+  /** String leaves that accept a value carrying a control or format character. */
+  acceptsHidden: string[];
 }
 
 function emptyWalk(): Walk {
-  return { offenders: [], unboundedStrings: [], unboundedNumbers: [] };
+  return { offenders: [], unboundedStrings: [], unboundedNumbers: [], acceptsHidden: [] };
 }
+
+/** One control and one format character, each mid-text so no trim removes it. */
+const HIDDEN_PROBES = ['a\u0000b', 'a\u202Eb'] as const;
 
 /** Which bounds a number schema carries, `.gt`/`.lt` included. */
 function numberBounds(schema: z.ZodType): { upper: boolean; lower: boolean } {
@@ -1486,6 +1530,10 @@ function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
       out.unboundedStrings.push(path);
       if (!(path in UNBOUNDED_STRING_ALLOWED)) out.offenders.push(`${path}: string with no max`);
     }
+    if (HIDDEN_PROBES.some((probe) => schema.safeParse(probe).success)) {
+      out.acceptsHidden.push(path);
+      if (!(path in HIDDEN_CHARACTERS_ALLOWED)) out.offenders.push(`${path}: accepts a control or format character`);
+    }
   } else if (schema._zod.def.type === 'number') {
     const { upper, lower } = numberBounds(schema);
     if (!upper || !lower) {
@@ -1515,9 +1563,25 @@ function walkExports(): Walk {
   return out;
 }
 
-describe('every string, array and number leaf is bounded (#769)', () => {
-  it('finds no unbounded leaf in any exported schema', () => {
+describe('every string, array and number leaf is bounded, and every text leaf refuses hidden characters (#769)', () => {
+  it('finds no unbounded leaf, and no string leaf that takes a hidden character, in any exported schema', () => {
     expect(walkExports().offenders).toEqual([]);
+  });
+
+  it('allows exactly the listed strings to take a hidden character, each still taking one and still reached', () => {
+    expect([...walkExports().acceptsHidden].sort()).toEqual(Object.keys(HIDDEN_CHARACTERS_ALLOWED).sort());
+  });
+
+  it('reads the character rule on every kind of text field, and fails a bounded string without it', () => {
+    const out = emptyWalk();
+    walkLeaves('probe', z.object({
+      bare: z.string().max(5),
+      single: singleLineText(5),
+      multi: multiLineText(5),
+      linkFree: linkFreeText(5),
+      checked: singleLineCharacters(z.string().trim()).max(5).nullable().optional(),
+    }), out);
+    expect(out.offenders).toEqual(['probe.bare: accepts a control or format character']);
   });
 
   it('allows exactly the listed unbounded strings, each still unbounded and still reached', () => {
@@ -1562,10 +1626,15 @@ describe('every string, array and number leaf is bounded (#769)', () => {
       p: z.string().transform((v) => v.length),
     }), out);
     expect([...out.offenders].sort()).toEqual([
+      'probe.a[*]: accepts a control or format character',
       'probe.a[*]: string with no max',
+      'probe.d: accepts a control or format character',
       'probe.d: string with no max',
+      'probe.nested.s: accepts a control or format character',
       'probe.nested.s: string with no max',
+      'probe.p: accepts a control or format character',
       'probe.p: string with no max',
+      'probe.u|0.s: accepts a control or format character',
       'probe.u|0.s: string with no max',
       'probe.u|1.n: number with no upper or lower bound',
     ]);
