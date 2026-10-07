@@ -223,7 +223,9 @@ and `lockClassRowsOrdered`'s two — plus six that are not `Class` or
   `TeacherStudent` link row (#265);
 - `src/lib/auth/handoff.ts:149`, `reserveHandoffComparisons`'s lock on one
   `HandoffAttemptBudget` row (#767), a standing exception: a single-row budget
-  lock, and no transaction takes it together with another table's row.
+  lock. The reservation's transaction holds only that row and waits on nothing
+  else, so the erasures that delete the same row after their profile locks
+  cannot form a cycle with it.
 
 Four of the six are false positives this command cannot suppress: the
 table name (`"ClassTemplate"` at `room-archive.ts:251` and `room-switch.ts:88`,
@@ -465,9 +467,11 @@ a call):
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
    **It returned four hits when this check was first written, and returned
    fourteen when re-derived for issue 259.** Re-run for issue 767 on
-   2026-10-07 it returns eighteen: those fourteen, plus `roster-link.ts:123`,
-   `currency-switch.ts:56` and `:62`, and `src/lib/auth/handoff.ts:149`, four
-   sites added after the reconciliation below was written. Of the original four, two were never `Class` locks at all — the
+   2026-10-07 it returns eighteen: the fourteen issue 259 reconciled, plus
+   `roster-link.ts:123`, `currency-switch.ts:56` and `:62`, and
+   `src/lib/auth/handoff.ts:149`.
+
+   Of the original four, two were never `Class` locks at all — the
    two generators' template claims, then written per family as
    `FOR UPDATE OF ct` / `FOR UPDATE OF sct` on a `ClassTemplate` /
    `StudioClassTemplate` row — so the claim above holds over them rather than
@@ -477,7 +481,7 @@ a call):
    (`entry-generation.ts`), whose single `FOR UPDATE OF tpl` splices its table
    name from the family descriptor and serves either family.
 
-   That accounts for three of today's fourteen: the two `db-locks.ts` `Class`
+   That accounts for three of the fourteen issue 259 reconciled: the two `db-locks.ts` `Class`
    helpers, plus the merged claim standing where two lines used to. The other
    eleven were added since, and are of four kinds. Five come from the split
    "The child row is the lock node for the template families" below describes:
@@ -498,9 +502,9 @@ a call):
    the same shape as the archive's, and its step-2 and step-3 locks on the
    private and the shared `TeacherRoom`. None of those four belongs to a
    convention on this page, and they are the four non-`Class` lines the
-   `Class`-scoped census above returns. Three plus five plus two plus one plus three is
-   the fourteen the command returns, and that sum is the only reconciliation
-   this paragraph offers. Cut a different way: eight of the fourteen lock a
+   `Class`-scoped census returned when issue 259 reconciled it. Three plus five plus two plus one plus three is
+   the fourteen the command returned then, and that sum is the only reconciliation
+   this paragraph offers. Cut a different way: eight of those fourteen lock a
    `ClassTemplate` or `StudioClassTemplate` row — the merged claim, the three
    single-id lifecycle locks, the two ordered bulk-archive locks, and the
    archive's and the switch's pre-locks — two lock a `TeacherRoom` row, and

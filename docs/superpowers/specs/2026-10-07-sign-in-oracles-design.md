@@ -259,17 +259,23 @@ uncompared (§2.2).
 - `gdpr.ts`'s comment listing the email columns by name and count is replaced
   with one that names the CHECK convention instead (Comment Discipline).
 
-**Locks:** reservations hold one budget row at a time, in a transaction that
-takes no other lock. Erasure deletes one budget row after its profile locks.
-The daily sweep's multi-row delete is autocommit and can wait on a row the
-erasure holds, and the erasure can wait on the one row both touch if the sweep
-already holds it; neither then waits on anything the other holds. No cycle
-forms, by the argument `docs/lock-order.md` makes for the notification
-retention sweep against erasure (#223). `docs/lock-order.md` has no node for
-`MagicLinkToken`, `Session` or `PasskeyCredential` either, because its census
-covers tables a transaction takes two of. So this table gets no node. It appears in `docs/lock-order.md` only as a
-standing exception in the `FOR UPDATE` census and as one line in the
-`setLockTimeout` census.
+**Locks:** no cycle forms among the three writers of a budget row:
+
+- a reservation holds one budget row and waits on nothing else;
+- an erasure deletes one budget row after its profile locks;
+- the daily sweep's multi-row delete is autocommit and can wait on a row an
+  erasure or a reservation holds, but neither of those waits on the sweep.
+
+`docs/lock-order.md` has no node for `MagicLinkToken`, `Session` or
+`PasskeyCredential` either, because its census covers tables a transaction
+takes two of, so this table gets no node. It appears in `docs/lock-order.md`
+in the `FOR UPDATE` census (as a standing exception and in the re-run
+sentence) and in the `setLockTimeout` census.
+
+**The erasure race, accepted:** a claim that already read its candidates and is
+reserving when an erasure commits can re-insert that address's budget row. The
+row lives up to the 48 h retention bound above, and no sign-in can follow from
+it, because the erasure has deleted the tokens.
 
 ### 2.3 `students/[id]` GET: one 404 for "not yours"
 
