@@ -84,8 +84,16 @@ const HOST_SHAPED = new RegExp(
   'iu',
 );
 
+/** ZWNJ and ZWJ: legal in a name, invisible in a rendered host. */
+const JOINERS = /[\u200C\u200D]/gu;
+
+/**
+ * Reads the value as it renders: with the joiners `singleLineText` lets
+ * through removed, `evil\u200D.com` is the `evil.com` a reader sees.
+ */
 function looksLikeLink(value: string): boolean {
-  return LINK_MARKER.test(value) || LOOKALIKE_DOT.test(value) || HOST_SHAPED.test(value);
+  const rendered = value.replace(JOINERS, '');
+  return LINK_MARKER.test(rendered) || LOOKALIKE_DOT.test(rendered) || HOST_SHAPED.test(rendered);
 }
 
 const CONTROL_MESSAGE = 'Remove the hidden or control characters.';
