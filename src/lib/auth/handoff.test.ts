@@ -243,16 +243,18 @@ describe('claimWithCode', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  // This describe's addresses all start `claim-` and end `@example.com`; no
-  // other suite shares that shape.
+  const created: string[] = [];
+  const track = (email: string) => {
+    created.push(email);
+    return email;
+  };
+
   afterAll(async () => {
-    await db.handoffAttemptBudget.deleteMany({
-      where: { email: { startsWith: 'claim-', endsWith: '@example.com' } },
-    });
+    await db.handoffAttemptBudget.deleteMany({ where: { email: { in: created } } });
   });
 
   it('signs in the browser that requested the link', async () => {
-    const email = `claim-ok-${Date.now()}@example.com`;
+    const email = track(`claim-ok-${Date.now()}@example.com`);
     const code = await stampedToken(email, 'nonce-c1');
 
     const out = await claimWithCode(db, asBrowserNonce('nonce-c1'), code);
@@ -262,7 +264,7 @@ describe('claimWithCode', () => {
   });
 
   it('refuses a correct code presented by a browser that did not ask', async () => {
-    const email = `claim-wrongbrowser-${Date.now()}@example.com`;
+    const email = track(`claim-wrongbrowser-${Date.now()}@example.com`);
     const code = await stampedToken(email, 'nonce-c2');
 
     expect(await claimWithCode(db, asBrowserNonce('someone-elses-browser'), code)).toEqual({
@@ -273,7 +275,7 @@ describe('claimWithCode', () => {
   });
 
   it('refuses a wrong code and counts the attempt', async () => {
-    const email = `claim-wrongcode-${Date.now()}@example.com`;
+    const email = track(`claim-wrongcode-${Date.now()}@example.com`);
     await stampedToken(email, 'nonce-c3');
 
     expect(await claimWithCode(db, asBrowserNonce('nonce-c3'), '000000')).toEqual({ kind: 'invalid' });
@@ -282,7 +284,7 @@ describe('claimWithCode', () => {
   });
 
   it('destroys the token once the attempt budget is spent', async () => {
-    const email = `claim-budget-${Date.now()}@example.com`;
+    const email = track(`claim-budget-${Date.now()}@example.com`);
     const code = await stampedToken(email, 'nonce-c4');
 
     for (let i = 0; i < HANDOFF_MAX_ATTEMPTS; i++) {
@@ -295,7 +297,7 @@ describe('claimWithCode', () => {
   });
 
   it('is invalid when the browser has no nonce at all', async () => {
-    const email = `claim-nononce-${Date.now()}@example.com`;
+    const email = track(`claim-nononce-${Date.now()}@example.com`);
     const code = await stampedToken(email, 'nonce-c5');
     expect(await claimWithCode(db, null, code)).toEqual({ kind: 'invalid' });
   });
@@ -305,7 +307,7 @@ describe('claimWithCode', () => {
   // must attribute a correct guess to the token it actually belongs to — not
   // merely the newest one.
   it('claims the specific token whose code was entered, not merely the newest one sharing the nonce', async () => {
-    const email = `claim-multi-${Date.now()}@example.com`;
+    const email = track(`claim-multi-${Date.now()}@example.com`);
     const nonce = 'nonce-multi';
 
     const olderCode = await stampedWithRedirect(email, nonce, '/older');
@@ -324,7 +326,7 @@ describe('claimWithCode', () => {
   // A submitted code is compared against every live candidate at once, so a
   // code matching none of them is one failed guess against all of them.
   it('charges every live candidate on a miss, not only the newest', async () => {
-    const email = `claim-chargeall-${Date.now()}@example.com`;
+    const email = track(`claim-chargeall-${Date.now()}@example.com`);
     const nonce = `nonce-chargeall-${Date.now()}`;
 
     const olderCode = await stampedWithRedirect(email, nonce, '/older');
@@ -347,7 +349,7 @@ describe('claimWithCode', () => {
   // it and leave it in the candidate list. The budget must not be steerable
   // onto that decoy — the token actually being guessed at has to die.
   it('a newer decoy cannot shield an older token from the attempt budget', async () => {
-    const email = `claim-decoy-${Date.now()}@example.com`;
+    const email = track(`claim-decoy-${Date.now()}@example.com`);
     const nonce = `nonce-decoy-${Date.now()}`;
 
     const targetCode = await stampedWithRedirect(email, nonce, '/target');
@@ -368,7 +370,7 @@ describe('claimWithCode', () => {
   // the reap that runs before matching would otherwise clear these rows on the
   // next call, hiding a miss path that never deleted them.
   it('a spent budget destroys every live candidate before any later call', async () => {
-    const email = `claim-reapall-${Date.now()}@example.com`;
+    const email = track(`claim-reapall-${Date.now()}@example.com`);
     const nonce = `nonce-reapall-${Date.now()}`;
 
     const firstCode = await stampedWithRedirect(email, nonce, '/first');
@@ -391,7 +393,7 @@ describe('claimWithCode', () => {
   // in this state the reap that runs before matching could never be shown to
   // do anything.
   it('an exhausted row is dead to its own correct code, and is reaped', async () => {
-    const email = `claim-exhausted-${Date.now()}@example.com`;
+    const email = track(`claim-exhausted-${Date.now()}@example.com`);
     const nonce = `nonce-exhausted-${Date.now()}`;
 
     const code = await stampedWithRedirect(email, nonce, '/exhausted');
@@ -405,7 +407,7 @@ describe('claimWithCode', () => {
   });
 
   it('reaps an already-exhausted sibling while still charging a live candidate in the same call', async () => {
-    const email = `claim-mixed-${Date.now()}@example.com`;
+    const email = track(`claim-mixed-${Date.now()}@example.com`);
     const nonce = `nonce-mixed-${Date.now()}`;
 
     const liveCode = await stampedWithRedirect(email, nonce, '/live');
@@ -432,7 +434,7 @@ describe('claimWithCode', () => {
   // scheduling stall unrelated to Postgres contention. See
   // `docs/superpowers/specs/2026-09-08-handoff-timeout-flake-design.md` (#512).
   it('counts both attempts when two wrong guesses race concurrently', async () => {
-    const email = `claim-race-${Date.now()}@example.com`;
+    const email = track(`claim-race-${Date.now()}@example.com`);
     const nonce = `nonce-race-${Date.now()}`;
     const code = await stampedToken(email, nonce);
     // Stay under HANDOFF_MAX_ATTEMPTS so the row survives to be inspected.
@@ -466,7 +468,7 @@ describe('claimWithCode', () => {
     // test's job, not this one's. `afterEach` restores it.
     vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     for (let i = 0; i < 8; i++) {
-      const email = `claim-race-throw-${Date.now()}-${i}@example.com`;
+      const email = track(`claim-race-throw-${Date.now()}-${i}@example.com`);
       const nonce = `nonce-race-throw-${Date.now()}-${i}`;
       const code = await stampedToken(email, nonce);
       const wrongGuesses = ['111111', '222222', '333333'].filter((g) => g !== code);
@@ -504,7 +506,7 @@ describe('claimWithCode', () => {
     {
       // One candidate one attempt short of the budget: both guesses push it
       // over, and whichever reap runs second finds it already taken.
-      const email = `claim-race-nearbudget-${Date.now()}@example.com`;
+      const email = track(`claim-race-nearbudget-${Date.now()}@example.com`);
       const nonce = `nonce-race-nearbudget-${Date.now()}`;
       const code = await stampedToken(email, nonce);
       await db.magicLinkToken.updateMany({
@@ -517,7 +519,7 @@ describe('claimWithCode', () => {
     {
       // One candidate already at the budget: both calls sweep it into their
       // own `spent` set before either deletes it.
-      const email = `claim-race-spent-${Date.now()}@example.com`;
+      const email = track(`claim-race-spent-${Date.now()}@example.com`);
       const nonce = `nonce-race-spent-${Date.now()}`;
       const code = await stampedToken(email, nonce);
       await db.magicLinkToken.updateMany({
@@ -530,7 +532,7 @@ describe('claimWithCode', () => {
     {
       // Two candidates at different distances from the budget — the staged
       // over-count fixture, run here by two real callers instead.
-      const email = `claim-race-overcount-${Date.now()}@example.com`;
+      const email = track(`claim-race-overcount-${Date.now()}@example.com`);
       const nonce = `nonce-race-overcount-${Date.now()}`;
       const codeA = await stampedWithRedirect(email, nonce, '/a');
       const codeB = await stampedWithRedirect(email, nonce, '/b');
@@ -555,7 +557,7 @@ describe('claimWithCode', () => {
   // to be gone by the time the increment runs — that gap is the race.
   it('warns when the matched row is consumed between the snapshot and the increment', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    const email = `claim-staged-underwrite-${Date.now()}@example.com`;
+    const email = track(`claim-staged-underwrite-${Date.now()}@example.com`);
     const nonce = `nonce-staged-underwrite-${Date.now()}`;
     const code = await stampedToken(email, nonce);
     const wrong = ['000000', '111111'].find((g) => g !== code)!;
@@ -606,7 +608,7 @@ describe('claimWithCode', () => {
   // plus an `updateMany` under-count, so only the count excludes it.
   it('warns when a sibling reaps the row this call was about to reap', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    const email = `claim-staged-underreap-${Date.now()}@example.com`;
+    const email = track(`claim-staged-underreap-${Date.now()}@example.com`);
     const nonce = `nonce-staged-underreap-${Date.now()}`;
     const code = await stampedToken(email, nonce);
     await db.magicLinkToken.updateMany({
@@ -651,7 +653,7 @@ describe('claimWithCode', () => {
   // `spent` set before either deletes it.
   it('warns when a sibling reaps the already-spent candidate first', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    const email = `claim-staged-spent-${Date.now()}@example.com`;
+    const email = track(`claim-staged-spent-${Date.now()}@example.com`);
     const nonce = `nonce-staged-spent-${Date.now()}`;
     await stampedToken(email, nonce);
     await db.magicLinkToken.updateMany({
@@ -693,7 +695,7 @@ describe('claimWithCode', () => {
 
   it('does not warn on an ordinary uncontested miss', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    const email = `claim-nowarn-${Date.now()}@example.com`;
+    const email = track(`claim-nowarn-${Date.now()}@example.com`);
     const nonce = `nonce-nowarn-${Date.now()}`;
     const code = await stampedToken(email, nonce);
     const wrong = ['000000', '111111'].find((g) => g !== code)!;
@@ -729,7 +731,7 @@ describe('claimWithCode', () => {
   // surviving real-concurrency test above covers the same fixture.
   it('warns on an over-count when a sibling increment lands before this call reaps', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    const email = `claim-staged-overcount-${Date.now()}@example.com`;
+    const email = track(`claim-staged-overcount-${Date.now()}@example.com`);
     const nonce = `nonce-staged-overcount-${Date.now()}`;
 
     const codeA = await stampedWithRedirect(email, nonce, '/a');
@@ -839,8 +841,8 @@ describe('the per-address comparison budget', () => {
   });
 
   // The row existed, so the insert did nothing, and is then deleted before
-  // the lock is taken — what the retention sweep or an erasure can do. The
-  // delete runs on the unhooked client, a connection of its own.
+  // the lock is taken. The delete runs on the unhooked client, a connection of
+  // its own.
   it('grants from a fresh window when the row is deleted between the insert and the lock', async () => {
     const email = address('vanishing');
     await spend(email, HANDOFF_EMAIL_MAX_ATTEMPTS);
@@ -972,6 +974,25 @@ describe('the per-address comparison budget', () => {
     });
   });
 
+  it('warns once, with counts and neither address nor code, when no address budget grants anything', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const email = address('exhausted-warn');
+    const nonce = nonceFor('exhausted-warn');
+    const { code } = await stamp(email, nonce);
+    await spend(email, HANDOFF_EMAIL_MAX_ATTEMPTS);
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), code)).toEqual({ kind: 'invalid' });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      { liveCandidates: 1, addresses: 1 },
+      'handoff: every address budget is exhausted; no candidate was compared',
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(email);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(code);
+    warn.mockRestore();
+  });
+
   // Live order is newest first across addresses: A's newest token, then B's,
   // then A's older one. Grouping by address puts both of A's tokens before
   // B's, so the shared code must still resolve to B's token, the newer of the
@@ -1034,9 +1055,9 @@ describe('the per-address comparison budget', () => {
     ).resolves.toBe(1);
   });
 
-  // The holder keeps the row past the reservation's lock timeout and well
-  // inside Prisma's own transaction timeout, so only the lock timeout can be
-  // what ends the claim's wait, and the claim must settle before the hold does.
+  // HOLD_MS (4 s) is past the 2 s lock timeout and under Prisma's default 5 s
+  // transaction timeout, so only the lock timeout can end the claim's wait, and
+  // the claim must settle before the hold does.
   it('a claim held past the lock timeout fails as a transient 503, and nothing is spent', async () => {
     const email = address('lock-timeout');
     const nonce = nonceFor('lock-timeout');
@@ -1117,8 +1138,8 @@ describe('the per-address comparison budget', () => {
         if (!self) throw new Error('no backend pid for the holder');
         const started = Date.now();
         claims = nonces.map((n) => claimWithCode(wide, asBrowserNonce(n), '999999'));
-        // Released well inside the reservation's lock timeout: a waiter held
-        // past it fails with 55P03 instead of being granted.
+        // Released within 1.5 s, under the 2 s lock timeout: a waiter held
+        // past that timeout fails with 55P03 instead of being granted.
         while (waiting < nonces.length && Date.now() - started < 1_500) {
           // Backends blocked by the holder, directly or through another
           // waiter: only the first in line waits on the holder itself, and

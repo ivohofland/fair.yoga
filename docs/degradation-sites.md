@@ -231,8 +231,9 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/teacher-rooms/route.ts:133` | error | routine | failure, surfaced as an error (throws, 500) |
 | `src/app/api/teachers/[id]/photo/route.ts:39` | warn | routine | bad upload (400); input, not stored data |
 | `src/lib/auth/handoff.ts:222` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
-| `src/lib/auth/handoff.ts:271` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
-| `src/lib/auth/handoff.ts:281` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/handoff.ts:247` | warn | routine | rate-limit throttle (every address budget exhausted; the claim is refused) |
+| `src/lib/auth/handoff.ts:278` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/handoff.ts:288` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
 | `src/lib/auth/link-delivery.ts:70` | error | routine | failure (an exception or outage), not impossible data; nothing awaits it, so the response cannot depend on it |
 | `src/lib/auth/passkey.ts:80` | warn | routine | rate-limit throttle (challenge store at capacity) |
 | `src/lib/auth/passkey.ts:256` | warn | routine | refusal (4xx); nothing substituted |
