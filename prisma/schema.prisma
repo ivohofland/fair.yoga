@@ -1231,6 +1231,14 @@ model MagicLinkToken {
   @@index([originBrowserHash])
 }
 
+/// One address's handoff-code comparisons in its current window. See
+/// docs/superpowers/specs/2026-10-07-sign-in-oracles-design.md §2.2.
+model HandoffAttemptBudget {
+  email          String   @id
+  windowStartsAt DateTime
+  attempts       Int
+}
+
 model PasskeyCredential {
   id         String   @id
   accountId  String
