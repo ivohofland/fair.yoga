@@ -254,14 +254,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // the teacher lets them in — those may exceed max_students (the teacher
       // rate stays capped at target; extra students lower prices). A teacher
       // adding a student well before class is a normal registration and
-      // respects capacity like everyone else.
+      // respects capacity like everyone else. The window is the clock alone:
+      // a started class can be moved ahead, and its status then says nothing
+      // about anyone being at the door.
       const classStart = classStartInstant(
         cls.calendarEntry,
         cls.calendarEntry.teacher.defaultTimezone,
       );
-      const isWalkIn =
-        isTeacher &&
-        (cls.status === 'in_progress' || Date.now() >= walkInOpensAt(classStart).getTime());
+      const isWalkIn = isTeacher && Date.now() >= walkInOpensAt(classStart).getTime();
 
       // Students book open classes, and only until the class starts: the
       // sweep that flips `open` to `in_progress` runs on its own schedule, so

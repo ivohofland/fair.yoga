@@ -89,6 +89,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         account: { create: { email: `flow-teacher-${suffix}@test.local` } },
         bio: 'Teacher for full flow integration test',
         pageSlug: `flow-teacher-${suffix}`,
+        defaultTimezone: 'UTC',
       },
     });
     teacherId = teacher.id;
@@ -170,9 +171,9 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         teacherRoomId,
         classType: 'Hatha',
         // Ten minutes out: far enough that Step 7 can still publish it, near
-        // enough that Step 12 may start it (#766). The teacher's zone is the
-        // schema default.
-        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'Europe/Amsterdam'),
+        // enough that Step 12 may start it (#766). The teacher's zone is UTC,
+        // so the slot names one instant on any night of the year.
+        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'UTC'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,

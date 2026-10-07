@@ -1005,7 +1005,8 @@ async function main() {
         price: entry.charged ? new Prisma.Decimal(tierPriceMap[tier]!) : null,
         tierRatio: entry.charged ? new Prisma.Decimal(tierRatioMap[tier]!) : null,
         registeredAt: daysAgo(10 - i),
-        cancelledAt: entry.status === 'cancelled' ? daysAgo(8) : null,
+        // DELETE stamps `cancelledAt` for a late cancel as well as a free one.
+        cancelledAt: entry.status === 'cancelled' || entry.status === 'late_cancel' ? daysAgo(8) : null,
       },
     });
     completedRegistrations.push(reg);

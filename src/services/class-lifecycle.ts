@@ -24,7 +24,13 @@ import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
-import { classEndInstant, autoFinishAt, finishOpensAt, walkInOpensAt } from '@/lib/finish-window';
+import {
+  classEndInstant,
+  autoFinishAt,
+  finishOpensAt,
+  walkInOpensAt,
+  WALK_IN_WINDOW_MINUTES,
+} from '@/lib/finish-window';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
@@ -188,25 +194,9 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  *
  * A SUPERSET over two functions, not a contract either one satisfies alone.
  * Both `transitionClass` and `completeClass` declare `TransitionDbResult`, so
- * each sees a type wider than its own range. Enumerated in full, by axis: the
- * two ranges are not mirror images of one another, so nothing shorter than
- * this describes them.
- *
- * - SHARED: `NOT_FOUND`, `ILLEGAL_TRANSITION` — both functions call
- *   `validateTransition`, `transitionClass` in the diagnostic read after a
- *   failed CAS — and `CANCELLED`, since #327 made cancellation a column on the
- *   entry rather than a status, so neither function's status check can see it
- *   any more and each has to ask the entry.
- * - `completeClass` only: `NOT_ENDED_YET`.
- * - `transitionClass` only: `CONCURRENT_MODIFICATION` (its CAS is the only one
- *   that reports losing a race this way), `STARTS_IN_PAST` (#249, and only
- *   for a `draft -> open` publish), `ROOM_ARCHIVED` (issue 76, also only
- *   for a `draft -> open` publish), and `TOO_EARLY` (#766, only for an
- *   `open -> in_progress` start).
- *
- * The looseness predates #249 and no member added since introduces it. A
- * caller that handles the full union pays a table row for the widening, not a
- * wrong answer.
+ * each sees a type wider than its own range. A caller that handles the full
+ * union pays a table row for the widening, not a wrong answer. Which members a
+ * function can return is read off the `reason:` values in its own body.
  */
 export type TransitionFailureReason =
   | 'NOT_FOUND'
@@ -332,7 +322,7 @@ export type TransitionDbResult<
 export const ROOM_ARCHIVED_MESSAGE = 'This room is archived. Unarchive it to publish classes here.';
 
 /** The sentence a teacher reads for `TOO_EARLY`, exported for the same reason. */
-export const TOO_EARLY_MESSAGE = 'This class can be started from 15 minutes before its start time.';
+export const TOO_EARLY_MESSAGE = `This class can be started from ${WALK_IN_WINDOW_MINUTES} minutes before its start time.`;
 
 /** The sentence a teacher reads for `STARTS_IN_PAST`, exported for the same reason. */
 export const STARTS_IN_PAST_MESSAGE = "This class's start time has already passed, so it can't be published.";

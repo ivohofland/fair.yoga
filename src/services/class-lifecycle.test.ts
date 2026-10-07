@@ -342,6 +342,8 @@ describe('transitionClass (DB)', () => {
   let teacherId: string;
   let roomId: string;
   let teacherRoomId: string;
+  let utcTeacherId: string;
+  let utcTeacherRoomId: string;
   let studentId: string;
 
   // Per-test classes for the queue-close tests below (#216) — a date none of
@@ -381,10 +383,10 @@ describe('transitionClass (DB)', () => {
   // so each is removed after its test.
   const nearNowEntryIds: string[] = [];
   const makeClassStartingAt = async (status: ClassStatus, start: Date) => {
-    const { date, startTime } = wallSlotAt(start, 'Europe/Amsterdam');
+    const { date, startTime } = wallSlotAt(start, 'UTC');
     const cls = await createClassFixture(prisma, {
-      teacherId,
-      teacherRoomId,
+      teacherId: utcTeacherId,
+      teacherRoomId: utcTeacherRoomId,
       classType: 'Vinyasa',
       date,
       startTime,
@@ -442,6 +444,27 @@ describe('transitionClass (DB)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
+    // Owner of the near-now classes `makeClassStartingAt` builds. UTC, so a
+    // wall slot names exactly one instant even on the night the Amsterdam
+    // clock repeats an hour; the Amsterdam teacher above stays for the cases
+    // that read the start in that zone.
+    const utcTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Transition',
+        lastName: 'Utc',
+        email: `transition-utc-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `transition-utc-teacher-${uniqueSuffix}@test.local` } },
+        bio: 'UTC test teacher for transition tests',
+        pageSlug: `transition-utc-teacher-${uniqueSuffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    utcTeacherId = utcTeacher.id;
+    const utcTeacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: utcTeacherId, roomId, capacityOverride: 15, rentalRate: 35 },
+    });
+    utcTeacherRoomId = utcTeacherRoom.id;
+
     // Needed by the queue-close tests below (#216), which put a waiting
     // WaitlistEntry under a class this block owns — hoisted here rather than
     // created inline, per this file's fixture rule.
@@ -467,13 +490,15 @@ describe('transitionClass (DB)', () => {
     // fail on the FK instead. Kept anyway: harmless, and mildly defensive.
     // Same shape as `completeClass (DB)`'s afterAll below and
     // `addToWaitlist + removeFromWaitlist (DB)`'s in waitlist.test.ts.
-    await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+    await prisma.waitlistEntry.deleteMany({
+      where: { class: { calendarEntry: { teacherId: { in: [teacherId, utcTeacherId] } } } },
+    });
     // Clean up all classes created during tests, then fixtures
-    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [teacherId, utcTeacherId] } } });
     await prisma.student.delete({ where: { id: studentId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [teacherId, utcTeacherId] } } });
     await prisma.room.delete({ where: { id: roomId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.teacher.deleteMany({ where: { id: { in: [teacherId, utcTeacherId] } } });
     await prisma.$disconnect();
   });
 
@@ -783,7 +808,7 @@ describe('transitionClass (DB)', () => {
     const fixedStart = () => new Date(Date.UTC(2031, 5, 10, 10, 0, 0));
 
     it('refuses a start before the walk-in window and writes nothing', async () => {
-      const early = await makeClassStartingAt('open', new Date(Date.now() + 16 * MINUTE));
+      const early = await makeClassStartingAt('open', new Date(Date.now() + 20 * MINUTE));
       const farAhead = await makeClassStartingAt('open', new Date(Date.now() + 3 * 24 * 60 * MINUTE));
 
       for (const cls of [early, farAhead]) {

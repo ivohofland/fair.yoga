@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
@@ -1026,12 +1026,23 @@ describe('POST /api/classes/[id]/transition', () => {
    * here cannot depend on it.
    */
   it('closes the waitlist when a teacher moves a class to in_progress', async () => {
+    // The owner reads their wall clock in the schema's default zone elsewhere in
+    // this file; for this class alone it is UTC, so the near-now slot below names
+    // one instant even on the night the Amsterdam clock repeats an hour.
+    const { defaultTimezone: ownerZone } = await prisma.teacher.findUniqueOrThrow({
+      where: { id: ownerId },
+      select: { defaultTimezone: true },
+    });
+    await prisma.teacher.update({ where: { id: ownerId }, data: { defaultTimezone: 'UTC' } });
+    onTestFinished(async () => {
+      await prisma.teacher.update({ where: { id: ownerId }, data: { defaultTimezone: ownerZone } });
+    });
     const cls = await createClassFixture(prisma, {
         teacherId: ownerId,
         teacherRoomId,
         classType: 'Queue Close',
         // Inside the manual-start window (#766): a class days away is refused.
-        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'Europe/Amsterdam'),
+        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'UTC'),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,

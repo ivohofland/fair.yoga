@@ -87,6 +87,7 @@ describe('transitionClass against a cancel that already holds the class', () => 
         email: `${suffix}@test.local`,
         bio: 'transitionClass lock-order fixture',
         pageSlug: suffix,
+        defaultTimezone: 'UTC',
         account: { create: { email: `${suffix}@test.local` } },
       },
       select: { id: true },
@@ -115,13 +116,13 @@ describe('transitionClass against a cancel that already holds the class', () => 
 
     // `open`, and starting inside the manual-start window, so the start guard
     // passes and the CAS decides this, which is what the case is about. The
-    // teacher's zone is the schema default.
+    // teacher's zone is UTC, so the slot names one instant on any night.
     const entry = await prisma.calendarEntry.create({
       data: {
         teacherId,
         kind: 'regular',
         classType: 'Lock order',
-        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'Europe/Amsterdam'),
+        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'UTC'),
         durationMinutes: 60,
         classes: {
           create: {

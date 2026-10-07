@@ -100,11 +100,12 @@ export const PUT = withErrorHandler(async (
 
   // Ownership and the start instant's inputs. Ownership is a fact about the
   // class that this route cannot change and no concurrent writer moves, so
-  // reading it here is safe. The start moves only through `updateClass`, so
-  // a read taken across `parseBody`'s await can be a moment out of date, which
-  // costs one write judged against the previous schedule. The class's STATUS is not read: testing it here would be a
-  // read-then-write across `parseBody`'s await, so it belongs in the write's
-  // own WHERE below and is deliberately absent from this select.
+  // reading it here is safe. The start can be edited, so a read taken across
+  // `parseBody`'s await can be a moment out of date, which costs one write
+  // judged against the previous schedule. The class's STATUS is not read:
+  // testing it here would be a read-then-write across `parseBody`'s await, so
+  // it belongs in the write's own WHERE below and is deliberately absent from
+  // this select.
   const registration = await prisma.registration.findUnique({
     where: { id },
     include: {
@@ -183,10 +184,14 @@ export const PUT = withErrorHandler(async (
   // can.
   //
   // `late_cancel` as a TARGET is a restoration, not an action on a live
-  // booking: DELETE writes `cancelledAt` with `late_cancel`, this route never
-  // clears it, and re-booking does. So `cancelledAt IS NOT NULL` says "this
-  // booking was once late-cancelled", and without it `registered -> late_cancel`
-  // (or the two-step via `attended`) would charge a student who never cancelled.
+  // booking: DELETE writes `cancelledAt` with `late_cancel`, and this route
+  // never clears it. So `cancelledAt IS NOT NULL` on a row that is not
+  // `cancelled` says "this booking was late-cancelled", and without it
+  // `registered -> late_cancel` (or the two-step via `attended`) would charge a
+  // student who never cancelled. The WHERE below excludes `cancelled` rows,
+  // which also carry `cancelledAt` (a free cancel, an erasure), and re-booking
+  // clears it, pinned by the reactivation case in `waitlist.test.ts`
+  // (`reactivated.cancelledAt` is null).
   //
   // A `Class` row lock would also close the race and is not used: this write
   // moves no money, and locking the hottest row in the app to protect a

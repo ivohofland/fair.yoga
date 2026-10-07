@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { BASE_URL, cookie, freshIp, seedSession, teardownStudent, uniqueSuffix } from '../helpers';
-import { createClassFixture, slotTime } from '../class-fixtures';
+import { createClassFixture, slotTime, wallSlotAt } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { expectApplied, expectRefusal } from '../api-assertions';
 
@@ -98,6 +98,7 @@ beforeAll(async () => {
       account: { create: { email: `archive-reactivate-teacher-${suffix}@test.local` } },
       bio: '#265 student-archive-reactivation fixture teacher',
       pageSlug: `archive-reactivate-teacher-${suffix}`,
+      defaultTimezone: 'UTC',
     },
   });
   teacherId = teacher.id;
@@ -175,10 +176,15 @@ describe('every act that makes something live un-archives the roster link (#265)
   it('a walk-in of an existing linked student un-archives the link', async () => {
     const { studentId, email, firstName, lastName } = await makeArchivedStudent();
     const classId = await makeClass(1);
-    // Walk-ins are a class-time phenomenon (`WALK_IN_WINDOW_MINUTES`) — flip straight to `in_progress` rather than
-    // waiting out the window, the same fixture shortcut
-    // `registrations-api.test.ts`'s "walk-in" tests use.
-    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+    // Walk-ins are a class-time phenomenon: move the class's start ten minutes
+    // ahead, inside `WALK_IN_WINDOW_MINUTES`. The teacher's zone is UTC, so the
+    // wall slot names one instant on any night.
+    const { date, startTime } = wallSlotAt(new Date(Date.now() + 10 * 60_000), 'UTC');
+    const { calendarEntryId } = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntryId: true },
+    });
+    await prisma.calendarEntry.update({ where: { id: calendarEntryId }, data: { date, startTime } });
 
     const res = await fetch(`${BASE_URL}/api/registrations`, {
       method: 'POST',
