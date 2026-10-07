@@ -24,19 +24,20 @@ The premise is measured in `2026-10-07-input-bounds-census.md`, which sits besid
 
 - **`singleLineText(max)`:** trim, then `.max(max)`. It checks the *trimmed* value, so surrounding whitespace, including a pasted tab or newline, is stripped as before, and only interior characters are refused. It refuses:
   - `\p{Cc}`;
-  - every `\p{Cf}` *except* U+200C and U+200D. ZWNJ and ZWJ are needed by Indic and Persian scripts and emoji sequences. Refusing the rest removes the bidi controls (U+200E/F, U+202A–E, U+2066–9, U+061C), U+FEFF, and invisible splitters such as ZWSP (U+200B) and the word joiner (U+2060), which can make `evil\u200B.com` render as `evil.com`;
+  - every `\p{Cf}` *except* U+00AD, U+200C and U+200D. ZWNJ and ZWJ are needed by Indic and Persian scripts and emoji sequences. The soft hyphen (U+00AD) is what an HTML `&shy;` becomes, so Dutch and German text copied from a web page carries it where nobody can see it to remove it; it cannot open a link bypass, because the link test strips it before reading the value. Refusing the rest removes the bidi controls (U+200E/F, U+202A–E, U+2066–9, U+061C), U+FEFF, and invisible splitters such as ZWSP (U+200B) and the word joiner (U+2060), which can make `evil\u200B.com` render as `evil.com`;
   - `\p{Zl}` and `\p{Zp}` (U+2028/9).
-- **`multiLineText(max)`:** the same refusals, except that `\n`, `\r` and `\t` are allowed. It does **not** trim. A description or message keeps its leading and trailing whitespace exactly as stored today, so the edit forms' resend stays byte-identical.
+- **`multiLineText(max)`:** the same refusals, except that `\n`, `\r` and `\t` are allowed. The builder does **not** trim, so a description, notes field or bio keeps its leading and trailing whitespace exactly as stored, and the edit forms' resend stays byte-identical. The announcement `message` is the exception: its schema chains `.trim().min(1)` after the builder, so a message is stored trimmed, and its `.max` counts the untrimmed value.
+- **`singleLineCharacters(schema)` / `multiLineCharacters(schema)`:** the two character rules on their own, for a field that keeps its own trimming, cap and messages: the bank-detail fields and the student contact fields `phone` (single-line) and `address` (multi-line).
 - **`linkFreeText(max)`:** `singleLineText(max)`, plus the link refusal:
   - `://`, `www.`;
-  - an `@` in an email shape: a non-space character on each side (`\S@\S`). `a@b` and `evil@x.com` are refused; a spaced `@`, as in the class type `Sunset Flow @ Vondelpark`, is legal;
+  - an `@` in an email shape: a non-space character on each side and a dot later in the same token (`\S@\S+\.\S`). `a@b.com`, `evil@x.co` and `evil@x.com` are refused. A spaced `@`, as in the class type `Sunset Flow @ Vondelpark`, is legal, and so is a dotless one, as in the brand-style class type `Yoga@Work`;
   - the look-alike dots U+3002, U+FF0E, U+FF61 and U+2024;
   - a **host-shaped token**:
     - a label of two or more letters/digits/hyphens, then a `.`;
     - then either two ASCII letters in a single case (`nl`, `NL`) or one of a short list of common generic TLDs (any case);
     - then a character that is neither a letter nor a combining mark, or the end.
 
-    The token is Unicode-aware. Every test reads the value as it renders: first every `\p{Default_Ignorable_Code_Point}` is stripped, then the result is NFC-normalised. The strip covers what `singleLineText` lets through and a reader cannot see, the exempt ZWJ/ZWNJ and marks such as the combining grapheme joiner (U+034F) and the variation selectors, any of which could split a host (`evil` U+034F `.com` renders as `evil.com`). NFC makes a decomposed `José.de` (`e` + U+0301) test as the precomposed one it looks like, so both forms are refused. The strip runs first because an invisible mark between a letter and its accent blocks composition.
+    The token is Unicode-aware. Every test reads the value as it renders: first every `\p{Default_Ignorable_Code_Point}` is stripped, then the result is NFC-normalised. The strip covers what `singleLineText` lets through and a reader cannot see, the exempt soft hyphen and ZWJ/ZWNJ and marks such as the combining grapheme joiner (U+034F) and the variation selectors, any of which could split a host (`evil` U+034F `.com` renders as `evil.com`). NFC makes a decomposed `José.de` (`e` + U+0301) test as the precomposed one it looks like, so both forms are refused. The strip runs first because an invisible mark between a letter and its accent blocks composition.
 
   The refusal reads "This can't contain a web or email address. If it's an abbreviation, add a space after the dot.", so a name the rule catches by mistake (`Th.de Vries`) has a stated way through (`Th. de Vries`).
 
@@ -60,7 +61,10 @@ The premise is measured in `2026-10-07-input-bounds-census.md`, which sits besid
 | `markPaid.method` | `singleLineText` | `PAYMENT_METHOD_MAX` = 64 |
 | every `emailField` | `.max` before the format check | `EMAIL_MAX` = 254 (RFC 5321's path limit) |
 | `pageSlugField` | `.max` | `PAGE_SLUG_MAX` = 60 |
-| bank `holderName`; each of `bankAccountSchema`'s bank-detail fields | `.max`, unchanged: these caps existed before as literals and moved into the module as named constants | `HOLDER_NAME_MAX` = 200, `BANK_FIELD_MAX` = 64 |
+| bank `holderName` | `singleLineText`; the cap existed before as a literal and moved into the module as a named constant | `HOLDER_NAME_MAX` = 200 |
+| each of `bankAccountSchema`'s bank-detail fields | trim, `singleLineCharacters`, `.max`; the cap existed before as a literal | `BANK_FIELD_MAX` = 64 |
+| teacher `bio` | `multiLineText`, the cap unchanged | 250 |
+| student contact `phone`, `address` | trim, `singleLineCharacters` / `multiLineCharacters`, `.max` with the field's own message; caps unchanged | `PHONE_MAX` = 40, `ADDRESS_MAX` = 300 (`src/lib/contact-details.ts`) |
 
 The invitation `lastName`, which today has no `.trim()`, gets `linkFreeText`'s trim like every other name.
 
@@ -128,9 +132,9 @@ The invitation template already escapes HTML, and its subject goes through Resen
 | Guard | Test | Mutation that must turn it red |
 |---|---|---|
 | each text cap | schema unit test: the limit passes and limit + 1 fails, one representative field per builder row of §2.1 | raise the constant, or drop `.max` |
-| membership: no unbounded leaf | a unit test walking every `ZodType` export of `schemas.ts`, using the existing export filter (`instanceof z.ZodType` minus the field-validator exports): <ul><li>every string leaf has `max_length`, is uuid/datetime, is an enum, or is on an allow-list of never-persisted fields, each with a reason;</li><li>every number leaf has an upper and a lower bound;</li><li>every array has a max;</li><li>an unknown def type fails</li></ul> | remove `.max` from any one field; add an unbounded `z.number()`; add a `z.record(...)` |
+| membership: no unbounded leaf | a unit test walking every `ZodType` export of `schemas.ts`, using the existing export filter (`instanceof z.ZodType` minus the field-validator exports): <ul><li>every string leaf has `max_length`, is uuid/datetime, is an enum, or is on an allow-list of never-persisted fields, each with a reason;</li><li>every string leaf refuses a value carrying `\u0000` and one carrying `\u202E`, or is on a second allow-list, each with a reason;</li><li>every number leaf has an upper and a lower bound;</li><li>every array has a max;</li><li>an unknown def type fails</li></ul> | remove `.max` from any one field; remove the character rule from any one field; add an unbounded `z.number()`; add a `z.record(...)` |
 | control and format characters | unit: `\u0000`, `\u202E`, `\u200B`, `\u2060`, `\uFEFF`, `\u2028` refused; `\n` refused single-line and allowed multi-line; a ZWJ Devanagari name and a ZWNJ Persian name accepted | drop the `u` flag; drop `\p{Cf}` |
-| link refusal | unit, both directions:<ul><li>refused: `evil.com`, `EVIL.COM`, `bank.nl`, `https://x`, `www.x`, `a@b`, `evil。com`, `verify.de`</li><li>accepted: `St.Clair`, `J.R. Smith`, `J.de Groot`, `Th.van Dijk`, `Ma.del Carmen`, `Anne-Marie O'Neil`, `d'Artagnan`, Arabic and CJK names</li></ul> | drop the host test; make it case-sensitive; drop the look-alike dots |
+| link refusal | unit, both directions:<ul><li>refused: `evil.com`, `EVIL.COM`, `bank.nl`, `https://x`, `www.x`, `a@b.com`, `evil。com`, `verify.de`</li><li>accepted: `St.Clair`, `J.R. Smith`, `J.de Groot`, `Th.van Dijk`, `Ma.del Carmen`, `Anne-Marie O'Neil`, `d'Artagnan`, `Yoga@Work`, Arabic and CJK names</li></ul> | drop the host test; make it case-sensitive; drop the look-alike dots |
 | optional last name | integration: a contact, a walk-in and a CRM edit with `lastName: ''` still succeed | apply a `.min(1)` to invitation `lastName` |
 | number caps | unit: each family at its bounds passes and one past fails. `minRate` at −MONEY_MAX − 1 is refused on the **update** schemas, where no `superRefine` already refuses it | raise or drop the constant |
 | completion cannot overflow | unit: `2 * MONEY_MAX <= DECIMAL_10_2_MAX`, naming the column maximum. Integration: one class at `roomCost = targetRate = MONEY_MAX` with one registration completes and stores the sum | (unit) raise `MONEY_MAX` |
