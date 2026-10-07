@@ -119,7 +119,7 @@ describe('RoomSettingsStep', () => {
     fireEvent.change(rate, { target: { value: String(MONEY_MAX) } });
     fireEvent.submit(form);
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).rentalRate).toBe(MONEY_MAX);
+    expect(JSON.parse(String(fetchMock.mock.calls.at(0)?.[1]?.body)).rentalRate).toBe(MONEY_MAX);
   });
 
   it('shows network copy and logs when the request itself fails', async () => {
