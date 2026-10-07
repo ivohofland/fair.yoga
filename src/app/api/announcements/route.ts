@@ -13,15 +13,28 @@ import {
 import type { AnnouncementSendResponse } from '@/lib/api-types';
 import { log } from '@/lib/log';
 import { type CreateNotificationInput } from '@/services/notifications';
+import { checkRateLimit, rateLimitKey, respondRateLimited } from '@/lib/rate-limit';
 import { createAnnouncementSchema } from '@/lib/schemas';
 import { listAnnouncementAudience, sendAnnouncement } from '@/services/announcements';
 import { NO_RECIPIENTS_MESSAGE } from './shared';
+
+const ANNOUNCEMENTS_PER_HOUR = 10;
+const ANNOUNCEMENT_WINDOW_MS = 60 * 60 * 1000;
 
 type CreatedResponse = Omit<Announcement, 'audienceStudentIds'> & AnnouncementSendResponse;
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
+
+  // Before the body parse and the audience read, so a refused send costs no
+  // query. Every request spends budget, including one that is then refused.
+  const limit = checkRateLimit(
+    rateLimitKey('announcements', session.teacherId),
+    ANNOUNCEMENTS_PER_HOUR,
+    ANNOUNCEMENT_WINDOW_MS,
+  );
+  if (!limit.allowed) return respondRateLimited(limit, 'Too many announcements.');
 
   const parsed = await parseBody(request, createAnnouncementSchema);
   if ('error' in parsed) return parsed.error;
