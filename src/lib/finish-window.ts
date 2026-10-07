@@ -74,6 +74,11 @@ export function formatClockInZone(instant: Date, timeZone: string): string {
  */
 export const CHECKIN_OPENS_MINUTES = 15;
 
+/** The instant an `open` class starts showing check-in: `CHECKIN_OPENS_MINUTES` before `start`. */
+export function checkinOpensAt(start: Date): Date {
+  return new Date(start.getTime() - CHECKIN_OPENS_MINUTES * 60_000);
+}
+
 /** How long a render that finds the class past `autoFinishAt` waits to ask again. */
 const SWEEP_RETRY_MS = 60_000;
 
@@ -118,7 +123,7 @@ export function classPageClock({
   cancelled: boolean;
 }): ClassPageClock {
   const t = now.getTime();
-  const checkinAt = new Date(start.getTime() - CHECKIN_OPENS_MINUTES * 60_000);
+  const checkinAt = checkinOpensAt(start);
   const opensAt = finishOpensAt({ start, end });
   const autoAt = autoFinishAt(end);
 
