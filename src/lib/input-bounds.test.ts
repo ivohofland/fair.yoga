@@ -54,8 +54,19 @@ const REFUSED_EMBEDDED = {
   'DEL (U+007F)': 'An\u007Fna',
 } as const;
 
-/** The same characters alone or at an edge, where a trim would otherwise swallow them. */
-const REFUSED_AT_EDGE = ['\uFEFF', 'Anna\u2028', '\u200BAnna', 'Anna\u0000'] as const;
+/** Characters at an edge that `trim()` does not remove, so the check still sees them. */
+const REFUSED_AT_EDGE = ['\u200BAnna', 'Anna\u200B', 'Anna\u0000', '\u0000Anna', 'Anna\u202E'] as const;
+
+/** Whitespace at an edge, which the trim strips before the check runs. */
+const TRIMMED_AT_EDGE = {
+  'Anna\n': 'Anna',
+  'Anna\t': 'Anna',
+  ' Anna\r\n': 'Anna',
+  ' Anna\t': 'Anna',
+  'Anna\u2028': 'Anna',
+  '\uFEFFAnna': 'Anna',
+  '\uFEFF': '',
+} as const;
 
 describe('control and format characters', () => {
   it.each(Object.entries(REFUSED_EMBEDDED))('single-line refuses %s', (_label, value) => {
@@ -66,8 +77,16 @@ describe('control and format characters', () => {
     expect(multi.safeParse(value).success).toBe(false);
   });
 
-  it.each(REFUSED_AT_EDGE)('single-line refuses %j before trimming could hide it', (value) => {
+  it.each(REFUSED_AT_EDGE)('single-line refuses %j, which no trim removes', (value) => {
     expect(single.safeParse(value).success).toBe(false);
+  });
+
+  it.each(Object.entries(TRIMMED_AT_EDGE))('single-line strips edge whitespace from %j', (value, stored) => {
+    expect(single.parse(value)).toBe(stored);
+  });
+
+  it('a lone byte-order mark trims to blank, which a required field refuses', () => {
+    expect(single.min(1).safeParse('\uFEFF').success).toBe(false);
   });
 
   it('single-line refuses a newline, a carriage return and a tab mid-text', () => {

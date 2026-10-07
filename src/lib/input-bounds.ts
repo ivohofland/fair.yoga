@@ -97,16 +97,20 @@ function tooLongMessage(max: number): string {
 
 // ---------------------------------------------------------------------------
 // Builders. Each returns a zod string the caller chains `.min(1)`,
-// `.optional()` or `.default('')` onto. The character test reads the raw
-// value, before any trim, so an edge character cannot slip past it.
+// `.optional()` or `.default('')` onto.
 // ---------------------------------------------------------------------------
 
-/** One line of text: trimmed, then capped at `max`. */
+/**
+ * One line of text: trimmed, then checked, then capped at `max`. The trim
+ * runs first so a pasted name's stray edge newline or tab is stripped, as it
+ * always was, rather than refused. `trim()` removes only whitespace, so an
+ * invisible splitter or a control character at an edge is still refused.
+ */
 export function singleLineText(max: number) {
   return z
     .string()
-    .refine((v) => !SINGLE_LINE_REFUSED.test(v), CONTROL_MESSAGE)
     .trim()
+    .refine((v) => !SINGLE_LINE_REFUSED.test(v), CONTROL_MESSAGE)
     .max(max, tooLongMessage(max));
 }
 
