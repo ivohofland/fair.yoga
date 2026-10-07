@@ -1,5 +1,7 @@
 # Class-time gates (#766) — plan
 
+> **As shipped:** beyond these tasks the PR added `isWalkIn` reading the clock alone, a seed fix, `showCheckin` reading the clock alone, `isBeforeOpening` (fail-closed opening gates), a `log.info` on the early attendance refusal, and the review-fix rounds; the spec's Design §4 records them. This plan is a record, not a spec.
+
 Spec: `docs/superpowers/specs/2026-10-07-class-time-gates-design.md`. Test-first throughout:
 write the failing test, see it fail for the stated reason, implement, see it pass.
 Tasks are independent except Task 2 creates the shared constant Task 3 does not need;

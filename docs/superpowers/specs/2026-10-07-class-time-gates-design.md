@@ -11,7 +11,7 @@ proposed fixes are corrected.
 | `PUT /api/registrations/{id}` accepts `late_cancel`/`attended`/`no_show` on an `open` class at any distance from its start | `updateRegistrationSchema` takes all three; the `updateMany` WHERE reads class *status* and liveness only; its docblock says "No guard on class TIME either: check-in renders on an `open` class within 15 minutes of its start" — the comment states the design, nothing enforces it | **Holds** |
 | "Refuse `late_cancel` from this route" | `attendance-list.tsx` `toggleAttendance` sends `late_cancel` as the **reverse** of a toggle: a student who late-cancelled and was marked `attended` returns to `late_cancel` on the next tap. Refusing the value outright breaks that | **Fix corrected** |
 | Manual `open → in_progress` has no time check | `transitionClass` guards only the `open` target. No UI control calls it (no `in_progress` transition caller under `src/components`); only the API route does | **Holds**, API-only |
-| `isWalkIn` is true whenever `status === 'in_progress'` | `registrations/route.ts` `isWalkIn = isTeacher && (status === 'in_progress' || now >= start − WALK_IN_WINDOW_MS)` | **Holds** |
+| `isWalkIn` is true whenever `status === 'in_progress'` | `registrations/route.ts` `isWalkIn = isTeacher && (status === 'in_progress' || now >= start − WALK_IN_WINDOW_MS)` | **Holds; second door found in review** (§4) |
 | Self-booking accepts a started class until the sweep flips it | `allowedStatuses = isTeacher ? ['open','in_progress'] : ['open']`, no clock | **Holds** |
 
 ## Design
@@ -56,9 +56,26 @@ where `!bookable` already sits, *after* the already-registered answer, so a
 student's own retry still answers `unchanged`. Refusal reuses `CLASS_NOT_BOOKABLE`.
 A teacher adding a roster student after the start is a walk-in and unchanged.
 
+### 4. The walk-in flag and the check-in list read the clock alone
+
+- `isWalkIn` on `POST /api/registrations` is `isTeacher && now >= walkInOpensAt(start)`:
+  the clock alone, with no `status === 'in_progress'` arm. A class moved to a later
+  date after it started would otherwise keep flagging roster adds as walk-ins.
+- `classPageClock`'s `showCheckin` is `live && now >= checkinOpensAt(start)`, again
+  without the `in_progress` arm, so an `in_progress` class whose schedule moved later
+  does not render the check-in list the attendance gate in §1 refuses. The check-in
+  edge joins `refreshInstants` for an `in_progress` class while it is still ahead.
+- Both unreadable-start cases fail closed through `isBeforeOpening` (`timezone.ts`):
+  the §1 clock gate and the §2 `TOO_EARLY` refuse when the opening instant is
+  unreadable, as `startsInPast` does.
+- Gate order in §1 is by design: before the window opens, a cancelled class and a row
+  already holding the requested status answer `CLASS_NOT_STARTED`, not
+  `CLASS_CANCELLED` or `unchanged`. Pinned in `[id]/route.test.ts`.
+
 ## Not changed
 
-Attendance after `completed` (billing unaffected, pinned product requirement);
+The class-page pricing preview and walk-in form stay gated on `showCheckin`, so an
+`in_progress` class not yet in its window shows neither. Attendance after `completed` (billing unaffected, pinned product requirement);
 the `class-transitions` sweep (its own CAS, not `transitionClass`); waitlist
 claim (already frozen at start); `#765` and sibling issues are unaffected.
 
