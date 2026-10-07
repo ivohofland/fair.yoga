@@ -208,6 +208,86 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
 });
 
 /**
+ * A claim that cannot get its address's budget row inside the lock timeout is
+ * a transient 503, not the uniform 400 "That code did not work".
+ */
+describe('POST /api/auth/magic-link/claim — a held budget row', () => {
+  const heldEmail = `claim-http-held-${suffix}@test.local`;
+  const HOLD_MS = 3_000;
+
+  afterAll(async () => {
+    await prisma.magicLinkToken.deleteMany({ where: { email: heldEmail } });
+    await prisma.handoffAttemptBudget.deleteMany({ where: { email: heldEmail } });
+  });
+
+  it('answers 503 once the lock timeout passes, before the holder lets go', async () => {
+    const sendRes = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email: heldEmail }),
+    });
+    const originCookie = /fair_yoga_origin=([^;]+)/.exec(
+      sendRes.headers.get('set-cookie') ?? '',
+    )?.[1];
+    expect(originCookie).toBeTruthy();
+
+    const token = await generateMagicLinkToken(prisma, heldEmail, {
+      originBrowserHash: hashNonce(originCookie!),
+    });
+    const verifyRes = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const { data } = (await verifyRes.json()) as { data: { handoffCode: string } };
+
+    await prisma.handoffAttemptBudget.create({
+      data: { email: heldEmail, attempts: 0, windowStartsAt: new Date() },
+    });
+
+    const holder = new PrismaClient();
+    let release: () => void = () => undefined;
+    try {
+      let onLocked: () => void = () => undefined;
+      const locked = new Promise<void>((resolve) => (onLocked = resolve));
+      const released = new Promise<void>((resolve) => (release = resolve));
+      const holding = holder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "HandoffAttemptBudget" WHERE email = ${heldEmail} FOR UPDATE`;
+          onLocked();
+          await Promise.race([released, new Promise((resolve) => setTimeout(resolve, HOLD_MS))]);
+        },
+        { timeout: HOLD_MS + 5_000 },
+      );
+      await locked;
+
+      const started = Date.now();
+      const claimRes = await fetch(`${BASE_URL}/api/auth/magic-link/claim`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `fair_yoga_origin=${originCookie}`,
+          ...freshIp(),
+        },
+        body: JSON.stringify({ code: data.handoffCode }),
+      });
+      const took = Date.now() - started;
+      release();
+      await holding;
+
+      expect(claimRes.status).toBe(503);
+      expect(claimRes.headers.get('set-cookie') ?? '').not.toMatch(/fair_yoga_session=(?!;)/);
+      // Settled by the 2 s lock timeout, not by the 3 s hold ending.
+      expect(took).toBeLessThan(HOLD_MS);
+    } finally {
+      release();
+      await holder.$disconnect();
+    }
+  }, 30_000);
+});
+
+/**
  * #431 via the device-handoff door. `magic-link/claim` redeems the same
  * token row `magic-link/verify` would have consumed directly (see
  * `claim/route.ts`'s own `signupTicket` comment) — so the
