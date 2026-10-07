@@ -113,6 +113,7 @@ describe('control and format characters', () => {
 
   it('accepts an emoji ZWJ sequence', () => {
     expect(single.safeParse('Yoga \u{1F9D8}\u200D♀\uFE0F').success).toBe(true);
+    expect(linkFree.safeParse('Yoga \u{1F9D8}\u200D♀\uFE0F').success).toBe(true);
   });
 });
 
@@ -165,6 +166,11 @@ describe('link refusal', () => {
     'evil\u200D.com',
     'evil.c\u200Dom',
     'evil.\u200Ccom',
+    'evil\u034F.com',
+    'evil\uFE0F.com',
+    'evil.c\u034Fom',
+    'Jose\u034F\u0301.de',
+    'evil@x.com',
   ];
 
   const ACCEPTED = [
@@ -184,6 +190,8 @@ describe('link refusal', () => {
     'Mr.Li Wei',
     'Dr.Oz',
     'Ji.Wu',
+    'Sunset Flow @ Vondelpark',
+    'Flow @Vondelpark',
   ];
 
   it.each([
@@ -194,6 +202,23 @@ describe('link refusal', () => {
     expect(nfc.normalize('NFD')).toBe(nfd);
     expect(linkFree.safeParse(nfc).success).toBe(true);
     expect(linkFree.safeParse(nfd).success).toBe(true);
+  });
+
+  it('treats NFC and NFD Jos\u00E9.de alike: both refused', () => {
+    const nfc = 'Jos\u00E9.de';
+    const nfd = 'Jose\u0301.de';
+    expect(nfc.normalize('NFD')).toBe(nfd);
+    expect(linkFree.safeParse(nfc).success).toBe(false);
+    expect(linkFree.safeParse(nfd).success).toBe(false);
+  });
+
+  it('tells the user how to fix a false positive', () => {
+    const result = linkFree.safeParse('Th.de Vries');
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(
+      "This can't contain a web or email address. If it's an abbreviation, add a space after the dot.",
+    );
+    expect(linkFree.safeParse('Th. de Vries').success).toBe(true);
   });
 
   it.each(['evil.nl', 'EVIL.NL', 'verify.de', 'VERIFY.DE', 'Yoga.Live', 'Yoga.LIVE', 'evil.Com'])(
