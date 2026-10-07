@@ -48,12 +48,12 @@ export const CAPACITY_MAX = 1000;
  * (U+200D), and the line and paragraph separators. ZWNJ and ZWJ stay legal
  * because Indic and Persian scripts and emoji sequences need them; every
  * other `\p{Cf}` is a bidi control, a byte-order mark or an invisible
- * splitter that can make `evil​.com` render as `evil.com`.
+ * splitter that can make `evil\u200B.com` render as `evil.com`.
  */
-const SINGLE_LINE_REFUSED = /\p{Cc}|(?![‌‍])\p{Cf}|[\p{Zl}\p{Zp}]/u;
+const SINGLE_LINE_REFUSED = /\p{Cc}|(?![\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
 
 /** `SINGLE_LINE_REFUSED`, less the newline, carriage return and tab. */
-const MULTI_LINE_REFUSED = /(?![\n\r\t])\p{Cc}|(?![‌‍])\p{Cf}|[\p{Zl}\p{Zp}]/u;
+const MULTI_LINE_REFUSED = /(?![\n\r\t])\p{Cc}|(?![\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
 
 /**
  * Generic TLDs the host-shaped test refuses after a dot, beside any two
@@ -71,7 +71,7 @@ export const COMMON_GENERIC_TLDS = [
 const LINK_MARKER = /:\/\/|www\.|@/iu;
 
 /** Dots that render like `.` in a host name: U+3002, U+FF0E, U+FF61, U+2024. */
-const LOOKALIKE_DOT = /[。．｡․]/u;
+const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
 
 /**
  * A label of two or more letters, digits or hyphens, a `.`, then two ASCII
