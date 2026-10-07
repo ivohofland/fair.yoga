@@ -963,10 +963,10 @@ describe('the per-address comparison budget', () => {
     });
   });
 
-  // Live order is newest first across addresses: A's older token, then B's,
-  // then A's newest. Grouping by address puts both of A's tokens before B's,
-  // so the shared code must still resolve to B's token, the newer of the two
-  // that carry it.
+  // Live order is newest first across addresses: A's newest token, then B's,
+  // then A's older one. Grouping by address puts both of A's tokens before
+  // B's, so the shared code must still resolve to B's token, the newer of the
+  // two that carry it.
   it('a code two addresses share claims the newer token, whatever the address grouping', async () => {
     const a = address('tie-a');
     const b = address('tie-b');
