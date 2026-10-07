@@ -9,6 +9,8 @@ import {
   singleLineText,
   multiLineText,
   linkFreeText,
+  singleLineCharacters,
+  multiLineCharacters,
   NAME_MAX,
   CLASS_TYPE_MAX,
   LOCATION_MAX,
@@ -299,7 +301,7 @@ const detectedTimezoneField = z
 export const teacherProfileSchema = z.object({
   firstName: linkFreeText(NAME_MAX).min(1),
   lastName: linkFreeText(NAME_MAX).min(1),
-  bio: z.string().max(250),
+  bio: multiLineText(250),
   pageSlug: pageSlugField,
   defaultTimezone: detectedTimezoneField.optional(),
 }).strict();
@@ -317,7 +319,7 @@ export const studentProfileSchema = z.object({
 export const updateTeacherSchema = z.object({
   firstName: linkFreeText(NAME_MAX).min(1).optional(),
   lastName: linkFreeText(NAME_MAX).min(1).optional(),
-  bio: z.string().max(250).optional(),
+  bio: multiLineText(250).optional(),
   pageSlug: pageSlugField.optional(),
   currency: z.enum(Currency).optional(),
   defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').transform(modernTimeZone).optional(),
@@ -333,7 +335,9 @@ export const updateTeacherSchema = z.object({
   pushInvitations: z.boolean().optional(),
 }).strict();
 
-const bankField = z.string().max(BANK_FIELD_MAX).nullable().optional();
+// Trimmed before the character rule so a pasted value's edge newline or tab
+// is stripped rather than refused.
+const bankField = singleLineCharacters(z.string().trim()).max(BANK_FIELD_MAX).nullable().optional();
 
 /**
  * `PUT /api/teachers/[id]/bank-accounts/[currency]`'s wire shape: the shape
@@ -341,7 +345,7 @@ const bankField = z.string().max(BANK_FIELD_MAX).nullable().optional();
  * `parseBankDetails`' to check.
  */
 export const bankAccountSchema = z.object({
-  holderName: z.string().max(HOLDER_NAME_MAX),
+  holderName: singleLineText(HOLDER_NAME_MAX),
   iban: bankField,
   bic: bankField,
   sortCode: bankField,
@@ -394,14 +398,14 @@ export const respondToInvitationSchema = z.object({
 }).strict();
 
 /**
- * Optional free text: trimmed, and "" stores null so a cleared input clears
- * the column. The transform must leave an absent key absent (never map
- * `undefined` to a value): `{}` parses to `{}`, pinned by "omits absent keys".
+ * Optional free text: trimmed, checked by the character rule for its kind of
+ * line, and "" stores null so a cleared input clears the column. The
+ * transform must leave an absent key absent (never map `undefined` to a
+ * value): `{}` parses to `{}`, pinned by "omits absent keys".
  */
-function optionalText(label: string, max: number) {
-  return z
-    .string()
-    .trim()
+function optionalText(label: string, max: number, lines: 'single' | 'multi') {
+  const characters = lines === 'single' ? singleLineCharacters : multiLineCharacters;
+  return characters(z.string().trim())
     .max(max, `${label} must be ${max} characters or fewer`)
     .transform((v) => (v === '' ? null : v))
     .nullable()
@@ -428,9 +432,9 @@ const birthdayField = z
 export const updateStudentSchema = z.object({
   firstName: linkFreeText(NAME_MAX).min(1).optional(),
   lastName: linkFreeText(NAME_MAX).min(1).optional(),
-  phone: optionalText('Phone', PHONE_MAX),
+  phone: optionalText('Phone', PHONE_MAX, 'single'),
   birthday: birthdayField,
-  address: optionalText('Address', ADDRESS_MAX),
+  address: optionalText('Address', ADDRESS_MAX, 'multi'),
   // `.refine` with a type predicate narrows the inferred type to IncomeTier
   // (verified by compiling both directions), so the wire type carries the
   // same constraint as the column and the engine. A literal union would
