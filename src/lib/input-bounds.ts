@@ -45,16 +45,18 @@ export const CAPACITY_MAX = 1000;
 // ---------------------------------------------------------------------------
 
 /**
- * Control characters, format characters other than ZWNJ (U+200C) and ZWJ
- * (U+200D), and the line and paragraph separators. ZWNJ and ZWJ stay legal
- * because Indic and Persian scripts and emoji sequences need them; every
- * other `\p{Cf}` is a bidi control, a byte-order mark or an invisible
+ * Control characters, format characters other than the soft hyphen (U+00AD),
+ * ZWNJ (U+200C) and ZWJ (U+200D), and the line and paragraph separators. ZWNJ
+ * and ZWJ stay legal because Indic and Persian scripts and emoji sequences
+ * need them, and the soft hyphen because text copied from a web page keeps
+ * the ones its `&shy;` put there, where nobody can see them to remove them.
+ * Every other `\p{Cf}` is a bidi control, a byte-order mark or an invisible
  * splitter that can make `evil\u200B.com` render as `evil.com`.
  */
-const SINGLE_LINE_REFUSED = /\p{Cc}|(?![\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
+const SINGLE_LINE_REFUSED = /\p{Cc}|(?![\u00AD\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
 
 /** `SINGLE_LINE_REFUSED`, less the newline, carriage return and tab. */
-const MULTI_LINE_REFUSED = /(?![\n\r\t])\p{Cc}|(?![\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
+const MULTI_LINE_REFUSED = /(?![\n\r\t])\p{Cc}|(?![\u00AD\u200C\u200D])\p{Cf}|[\p{Zl}\p{Zp}]/u;
 
 /**
  * Generic TLDs the host-shaped test refuses after a dot, beside two ASCII
@@ -69,11 +71,12 @@ export const COMMON_GENERIC_TLDS = [
 ] as const;
 
 /**
- * A scheme separator, a `www.` prefix, or an `@` with a non-space character on
- * each side, as an email address has. A spaced `@` (`Sunset Flow @ Vondelpark`)
- * stays legal.
+ * A scheme separator, a `www.` prefix, or an `@` shaped like an email
+ * address's: a non-space character on each side and a dot later in the same
+ * token. A spaced `@` (`Sunset Flow @ Vondelpark`) and a dotless one
+ * (`Yoga@Work`) stay legal.
  */
-const LINK_MARKER = /:\/\/|www\.|\S@\S/iu;
+const LINK_MARKER = /:\/\/|www\.|\S@\S+\.\S/iu;
 
 /** Dots that render like `.` in a host name: U+3002, U+FF0E, U+FF61, U+2024. */
 const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
@@ -81,8 +84,9 @@ const LOOKALIKE_DOT = /[\u3002\uFF0E\uFF61\u2024]/u;
 /**
  * A host-shaped token: a label of two or more letters, digits or hyphens, a
  * `.`, then a suffix not followed by a letter. The two-character label keeps
- * `J.de Groot` and `J.R.` legal; the exact-length suffix keeps `St.Clair`,
- * `Th.van Dijk` and `Ma.del Carmen` legal.
+ * `J.de Groot` and `J.R.` legal. A suffix must end where the word does, so a
+ * longer word that merely starts with a country code or a listed TLD
+ * (`St.Clair`) is not a host.
  *
  * A two-letter suffix counts only in one case, `nl` or `NL`, so a
  * capitalised given name after a title (`Mr.Li Wei`, `Dr.Oz`) stays legal.
@@ -134,16 +138,12 @@ function tooLongMessage(max: number): string {
 
 /**
  * One line of text: trimmed, then checked, then capped at `max`. The trim
- * runs first so a pasted name's stray edge newline or tab is stripped, as it
- * always was, rather than refused. `trim()` removes only whitespace, so an
+ * runs first so a pasted name's stray edge newline or tab is stripped rather
+ * than refused. `trim()` removes only whitespace, so an
  * invisible splitter or a control character at an edge is still refused.
  */
 export function singleLineText(max: number) {
-  return z
-    .string()
-    .trim()
-    .refine((v) => !SINGLE_LINE_REFUSED.test(v), CONTROL_MESSAGE)
-    .max(max, tooLongMessage(max));
+  return singleLineCharacters(z.string().trim()).max(max, tooLongMessage(max));
 }
 
 /**
@@ -151,15 +151,25 @@ export function singleLineText(max: number) {
  * sent, so an edit form that resends it unchanged writes the same bytes.
  */
 export function multiLineText(max: number) {
-  return z
-    .string()
-    .refine((v) => !MULTI_LINE_REFUSED.test(v), CONTROL_MESSAGE)
-    .max(max, tooLongMessage(max));
+  return multiLineCharacters(z.string()).max(max, tooLongMessage(max));
+}
+
+/**
+ * `singleLineText`'s character rule alone, for a field that keeps its own
+ * trimming, cap and messages.
+ */
+export function singleLineCharacters(schema: z.ZodString): z.ZodString {
+  return schema.refine((v) => !SINGLE_LINE_REFUSED.test(v), CONTROL_MESSAGE);
+}
+
+/** `multiLineText`'s character rule alone, as `singleLineCharacters` is the single-line one. */
+export function multiLineCharacters(schema: z.ZodString): z.ZodString {
+  return schema.refine((v) => !MULTI_LINE_REFUSED.test(v), CONTROL_MESSAGE);
 }
 
 /**
  * `singleLineText` that also refuses link-shaped text, for the strings that
- * reach an address which never signed up: a person's name and a class type.
+ * reach an address which never signed up.
  */
 export function linkFreeText(max: number) {
   return singleLineText(max).refine((v) => !looksLikeLink(v), LINK_MESSAGE);
