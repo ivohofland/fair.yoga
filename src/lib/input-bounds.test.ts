@@ -179,7 +179,17 @@ describe('link refusal', () => {
     '王小明',
     'Zoë Ångström-Ødegaard',
     'Vinyasa Flow 2.0',
+    'Mr.Li Wei',
+    'Dr.Oz',
+    'Ji.Wu',
   ];
+
+  it.each(['evil.nl', 'EVIL.NL', 'verify.de', 'VERIFY.DE', 'Yoga.Live', 'Yoga.LIVE', 'evil.Com'])(
+    'refuses %j: a one-case country code or a listed TLD in any case',
+    (value) => {
+      expect(linkFree.safeParse(value).success).toBe(false);
+    },
+  );
 
   it.each(REFUSED)('refuses %j', (value) => {
     expect(linkFree.safeParse(value).success).toBe(false);
