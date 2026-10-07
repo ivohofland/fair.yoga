@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, uniqueSuffix, freshIp, teardownStudent, teardownTeacher } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp, teardownStudent, teardownTeacher, waitFor } from '../helpers';
 import { generateMagicLinkToken } from '@/lib/auth/magic-link';
 import { hashNonce } from '@/lib/auth/origin-nonce';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
@@ -51,6 +51,12 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
       sendRes.headers.get('set-cookie') ?? '',
     )?.[1];
     expect(originCookie).toBeTruthy();
+
+    // /send does not wait for its delivery: let the token it mints land before
+    // this test mints its own, or the late insert could outlive the claim.
+    await waitFor(async () => (await prisma.magicLinkToken.count({ where: { email } })) > 0, {
+      description: 'token minted by /send for the registered address',
+    });
 
     // /send never echoes the raw token (that's the point — it's emailed).
     // Mint the token the same way deliverSignInLink would have, bound to the
@@ -267,6 +273,10 @@ describe('POST /api/auth/magic-link/claim — teacher-signup destination for an 
     )?.[1];
     expect(originCookie).toBeTruthy();
 
+    await waitFor(async () => (await prisma.magicLinkToken.count({ where: { email: destTeacherEmail } })) > 0, {
+      description: 'token minted by /send for the registered address',
+    });
+
     const token = await generateMagicLinkToken(prisma, destTeacherEmail, {
       purpose: 'sign_in',
       redirectTo: TEACHER_PROFILE_PATH,
@@ -308,6 +318,10 @@ describe('POST /api/auth/magic-link/claim — teacher-signup destination for an 
       sendRes.headers.get('set-cookie') ?? '',
     )?.[1];
     expect(originCookie).toBeTruthy();
+
+    await waitFor(async () => (await prisma.magicLinkToken.count({ where: { email: destStudentEmail } })) > 0, {
+      description: 'token minted by /send for the registered address',
+    });
 
     const token = await generateMagicLinkToken(prisma, destStudentEmail, {
       purpose: 'sign_in',
