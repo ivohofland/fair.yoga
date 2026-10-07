@@ -211,8 +211,8 @@ grep the section above prescribes, minus the template tables:
       | grep -vE ':[0-9]+: *(\*|//)' \
       | grep -vE 'OF (ct|sct|tpl)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
 
-**Expect NINE lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
-and `lockClassRowsOrdered`'s two — plus five that are not `Class` or
+**Expect TEN lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
+and `lockClassRowsOrdered`'s two — plus six that are not `Class` or
 `CalendarEntry` locks at all:**
 
 - `src/services/room-archive.ts:251` and `src/services/room-switch.ts:88`, the
@@ -220,18 +220,23 @@ and `lockClassRowsOrdered`'s two — plus five that are not `Class` or
 - `src/services/room-switch.ts:93` and `:138`, the switch's step-2 and step-3
   locks on the private and the shared `TeacherRoom` (#259);
 - `src/services/roster-link.ts:123`, `lockTeacherStudentLink`'s lock on one
-  `TeacherStudent` link row (#265).
+  `TeacherStudent` link row (#265);
+- `src/lib/auth/handoff.ts:149`, `reserveHandoffComparisons`'s lock on one
+  `HandoffAttemptBudget` row (#767), a standing exception: a single-row budget
+  lock, and no transaction takes it together with another table's row.
 
-Four of the five are false positives this command cannot suppress: the
+Four of the six are false positives this command cannot suppress: the
 table name (`"ClassTemplate"` at `room-archive.ts:251` and `room-switch.ts:88`,
 `"TeacherRoom"` at `room-switch.ts:138`, `"TeacherStudent"` at
 `roster-link.ts:123`) sits on a line ABOVE its `FOR UPDATE`, and every
-filter here matches line by line. The fifth, `room-switch.ts:93`, carries
-`"TeacherRoom"` on its own line and passes only because this command filters
-the template tables, not every table that is not `Class` or `CalendarEntry`.
-Both copies of this census share these lines, so both return nine; the
+filter here matches line by line. The other two, `room-switch.ts:93` and
+`handoff.ts:149`, carry their table name (`"TeacherRoom"`,
+`"HandoffAttemptBudget"`) on their own line and pass only because this command
+filters the template tables, not every table that is not `Class` or
+`CalendarEntry`.
+Both copies of this census share these lines, so both return ten; the
 four blind-spot lines cannot be "fixed" by tightening the filter, only by
-rewriting each statement onto one line, which nothing else wants. Any TENTH
+rewriting each statement onto one line, which nothing else wants. Any ELEVENTH
 line is the real signal — a site that took a `Class` or `CalendarEntry` row
 lock without going through either helper.
 
@@ -264,7 +269,7 @@ archive.
 
 The third filter is not optional, and leaving it off is how this check shipped
 broken. Drop it and the same command returns **99** lines across twenty-one files
-where it returns nine with it — this codebase discusses `FOR UPDATE` far more
+where it returns ten with it — this codebase discusses `FOR UPDATE` far more
 often than it issues it, so a reader running the unfiltered version concludes
 on first use that the convention is already abandoned. Caught by #239's
 review, which is to say: after it shipped. The two figures are the same command
@@ -458,9 +463,11 @@ a call):
    rather than inlining it.
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
-   **It returned four hits when this check was first written, and returns
-   fourteen when re-run today** — re-derived for issue 259, not carried
-   forward. Of the original four, two were never `Class` locks at all — the
+   **It returned four hits when this check was first written, and returned
+   fourteen when re-derived for issue 259.** Re-run for issue 767 on
+   2026-10-07 it returns eighteen: those fourteen, plus `roster-link.ts:123`,
+   `currency-switch.ts:56` and `:62`, and `src/lib/auth/handoff.ts:149`, four
+   sites added after the reconciliation below was written. Of the original four, two were never `Class` locks at all — the
    two generators' template claims, then written per family as
    `FOR UPDATE OF ct` / `FOR UPDATE OF sct` on a `ClassTemplate` /
    `StudioClassTemplate` row — so the claim above holds over them rather than
