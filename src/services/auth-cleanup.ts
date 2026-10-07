@@ -1,8 +1,7 @@
 /**
  * Auth-table hygiene: expired sessions and magic-link tokens serve no
- * purpose after their expiry (spent tokens are already deleted on use),
- * and a handoff budget serves none once its window has ended, but nothing
- * else removes them. A daily sweep keeps them bounded.
+ * purpose after their expiry, and a handoff budget serves none once its
+ * window has ended. A daily sweep keeps them bounded.
  */
 
 import type { PrismaClient } from '@prisma/client';
