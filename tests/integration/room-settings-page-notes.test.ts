@@ -11,6 +11,8 @@ const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 const SECRET = 'door code 4821';
 const OWN_NOTES = `my own props ${suffix}`;
+const PRIVATE_NOTES = `private room notes ${suffix}`;
+let privateRoomId = '';
 
 let creatorId = '';
 let creatorAccountId = '';
@@ -77,6 +79,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.teacherRoom.deleteMany({ where: { roomId } });
   await prisma.room.deleteMany({ where: { id: roomId } });
+  if (privateRoomId) {
+    await prisma.teacherRoom.deleteMany({ where: { roomId: privateRoomId } });
+    await prisma.room.deleteMany({ where: { id: privateRoomId } });
+  }
   await teardownTeacher(prisma, readerId, readerAccountId);
   await teardownTeacher(prisma, creatorId, creatorAccountId);
   await prisma.$disconnect();
@@ -100,5 +106,28 @@ describe('the room settings page keeps a shared room notes to their writer (#768
   it('the creator still sees their own notes', async () => {
     const html = await pageHtml(creatorToken, creatorLinkId);
     expect(html).toContain(SECRET);
+  });
+
+  it('the creator of a private room gets their notes as the edit form initial value', async () => {
+    const privateRoom = await prisma.room.create({
+      data: {
+        venueName: `Private Notes Studio ${suffix}`,
+        address: `${suffix} Private St`,
+        city: 'Testville',
+        postcode: '1234NP',
+        floor: '1',
+        maxCapacity: 10,
+        equipment: ['mats'],
+        notes: PRIVATE_NOTES,
+        isPublic: false,
+        createdById: creatorId,
+      },
+    });
+    privateRoomId = privateRoom.id;
+    const link = await prisma.teacherRoom.create({
+      data: { teacherId: creatorId, roomId: privateRoomId, capacityOverride: 10, rentalRate: 10 },
+    });
+    const html = await pageHtml(creatorToken, link.id);
+    expect(html).toContain(PRIVATE_NOTES);
   });
 });

@@ -1,7 +1,7 @@
 /**
- * Every API read of a room answers the shared projection (#768): the creator's
- * `notes`, `createdById` and timestamps never reach a teacher who did not
- * create the room, whichever read carries it.
+ * The room reads exercised below answer the shared projection (#768): the
+ * creator's `notes`, `createdById` and timestamps never reach a teacher who did
+ * not create the room.
  *
  * One fixture: teacher A writes a room with notes and shares it; teacher B
  * links it and has a class template on that link. Each case reads as B.
