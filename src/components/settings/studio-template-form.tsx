@@ -140,7 +140,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       return;
     }
     if (duration > DURATION_MAX_MINUTES) {
-      setError(`A class can run at most ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours).`);
+      setError(`A class can run at most ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours).`);
       return;
     }
 

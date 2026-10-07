@@ -91,7 +91,7 @@ void _formHasNoExtras;
 type StepErrors = Record<string, string>;
 
 const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
-const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (24 hours)`;
+const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
 
 /** This form's own wording for each rule `economicsViolations` can report. */
 const ECONOMICS_COPY = {
