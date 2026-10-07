@@ -24,7 +24,7 @@ The premise is measured in `2026-10-07-input-bounds-census.md`, which sits besid
 
 - **`singleLineText(max)`:** trim, then `.max(max)`. It checks the *trimmed* value, so surrounding whitespace, including a pasted tab or newline, is stripped as before, and only interior characters are refused. It refuses:
   - `\p{Cc}`;
-  - every `\p{Cf}` *except* U+200C and U+200D. ZWNJ and ZWJ are needed by Indic and Persian scripts and emoji sequences. Refusing the rest removes the bidi controls (U+200E/F, U+202A–E, U+2066–9, U+061C), U+FEFF, and invisible splitters such as ZWSP (U+200B) and the word joiner (U+2060), which can make `evil​.com` render as `evil.com`;
+  - every `\p{Cf}` *except* U+200C and U+200D. ZWNJ and ZWJ are needed by Indic and Persian scripts and emoji sequences. Refusing the rest removes the bidi controls (U+200E/F, U+202A–E, U+2066–9, U+061C), U+FEFF, and invisible splitters such as ZWSP (U+200B) and the word joiner (U+2060), which can make `evil\u200B.com` render as `evil.com`;
   - `\p{Zl}` and `\p{Zp}` (U+2028/9).
 - **`multiLineText(max)`:** the same refusals, except that `\n`, `\r` and `\t` are allowed. It does **not** trim. A description or message keeps its leading and trailing whitespace exactly as stored today, so the edit forms' resend stays byte-identical.
 - **`linkFreeText(max)`:** `singleLineText(max)`, plus the link refusal:
@@ -129,7 +129,7 @@ The invitation template already escapes HTML, and its subject goes through Resen
 |---|---|---|
 | each text cap | schema unit test: the limit passes and limit + 1 fails, one representative field per builder row of §2.1 | raise the constant, or drop `.max` |
 | membership: no unbounded leaf | a unit test walking every `ZodType` export of `schemas.ts`, using the existing export filter (`instanceof z.ZodType` minus the field-validator exports): <ul><li>every string leaf has `max_length`, is uuid/datetime, is an enum, or is on an allow-list of never-persisted fields, each with a reason;</li><li>every number leaf has an upper and a lower bound;</li><li>every array has a max;</li><li>an unknown def type fails</li></ul> | remove `.max` from any one field; add an unbounded `z.number()`; add a `z.record(...)` |
-| control and format characters | unit: `\u0000`, `‮`, `​`, `⁠`, `﻿`, ` ` refused; `\n` refused single-line and allowed multi-line; a ZWJ Devanagari name and a ZWNJ Persian name accepted | drop the `u` flag; drop `\p{Cf}` |
+| control and format characters | unit: `\u0000`, `\u202E`, `\u200B`, `\u2060`, `\uFEFF`, `\u2028` refused; `\n` refused single-line and allowed multi-line; a ZWJ Devanagari name and a ZWNJ Persian name accepted | drop the `u` flag; drop `\p{Cf}` |
 | link refusal | unit, both directions:<ul><li>refused: `evil.com`, `EVIL.COM`, `bank.nl`, `https://x`, `www.x`, `a@b`, `evil。com`, `verify.de`</li><li>accepted: `St.Clair`, `J.R. Smith`, `J.de Groot`, `Th.van Dijk`, `Ma.del Carmen`, `Anne-Marie O'Neil`, `d'Artagnan`, Arabic and CJK names</li></ul> | drop the host test; make it case-sensitive; drop the look-alike dots |
 | optional last name | integration: a contact, a walk-in and a CRM edit with `lastName: ''` still succeed | apply a `.min(1)` to invitation `lastName` |
 | number caps | unit: each family at its bounds passes and one past fails. `minRate` at −MONEY_MAX − 1 is refused on the **update** schemas, where no `superRefine` already refuses it | raise or drop the constant |
