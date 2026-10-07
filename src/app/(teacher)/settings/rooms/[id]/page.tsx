@@ -31,6 +31,8 @@ export default async function EditRoomPage({
 
   const { room } = teacherRoom;
   const currency = await teacherCurrency(session.teacherId);
+  // Room.notes are the creator's own; a shared room is read by teachers who did not write them.
+  const creatorNotes = room.createdById === session.teacherId ? room.notes : null;
   const canEditRoom = !room.isPublic && room.createdById === session.teacherId;
   // KNOWN-OPEN (issue 76): a server-render snapshot. These are the counts the
   // delete and unlink doors use (`room-deletion.ts`), taken at render. A class
@@ -75,7 +77,7 @@ export default async function EditRoomPage({
               floor: room.floor,
               maxCapacity: room.maxCapacity,
               equipment: equipmentKeys,
-              notes: room.notes ?? '',
+              notes: creatorNotes ?? '',
               rentalRate: Number(teacherRoom.rentalRate),
             }}
           />
@@ -103,10 +105,10 @@ export default async function EditRoomPage({
                 <p className="text-ink">{equipmentDisplay.join(', ')}</p>
               </div>
             )}
-            {room.notes && (
+            {creatorNotes && (
               <div>
                 <span className="text-sm text-brown">Notes</span>
-                <p className="text-ink">{room.notes}</p>
+                <p className="text-ink">{creatorNotes}</p>
               </div>
             )}
           </div>
