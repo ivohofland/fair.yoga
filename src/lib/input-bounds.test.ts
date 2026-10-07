@@ -42,20 +42,20 @@ const linkFree = linkFreeText(60);
 /** Each refused character embedded mid-word, so trimming cannot remove it. */
 const REFUSED_EMBEDDED = {
   'NUL (U+0000)': 'An\u0000na',
-  'right-to-left override (U+202E)': 'An‮na',
-  'zero-width space (U+200B)': 'evil​.com',
-  'word joiner (U+2060)': 'An⁠na',
-  'byte-order mark (U+FEFF)': 'An﻿na',
-  'line separator (U+2028)': 'An na',
-  'paragraph separator (U+2029)': 'An na',
-  'left-to-right mark (U+200E)': 'An‎na',
-  'Arabic letter mark (U+061C)': 'An؜na',
-  'first-strong isolate (U+2068)': 'An⁨na',
+  'right-to-left override (U+202E)': 'An\u202Ena',
+  'zero-width space (U+200B)': 'evil\u200B.com',
+  'word joiner (U+2060)': 'An\u2060na',
+  'byte-order mark (U+FEFF)': 'An\uFEFFna',
+  'line separator (U+2028)': 'An\u2028na',
+  'paragraph separator (U+2029)': 'An\u2029na',
+  'left-to-right mark (U+200E)': 'An\u200Ena',
+  'Arabic letter mark (U+061C)': 'An\u061Cna',
+  'first-strong isolate (U+2068)': 'An\u2068na',
   'DEL (U+007F)': 'An\u007Fna',
 } as const;
 
 /** The same characters alone or at an edge, where a trim would otherwise swallow them. */
-const REFUSED_AT_EDGE = ['﻿', 'Anna ', '​Anna', 'Anna\u0000'] as const;
+const REFUSED_AT_EDGE = ['\uFEFF', 'Anna\u2028', '\u200BAnna', 'Anna\u0000'] as const;
 
 describe('control and format characters', () => {
   it.each(Object.entries(REFUSED_EMBEDDED))('single-line refuses %s', (_label, value) => {
@@ -81,9 +81,9 @@ describe('control and format characters', () => {
   });
 
   it('accepts a Devanagari name joined with ZWJ and a Persian name with ZWNJ', () => {
-    // क्‍ष: KA + VIRAMA + ZWJ + SSA; می‌خواهم: the ZWNJ between می and خواهم.
-    const devanagari = 'क्‍ष्मा';
-    const persian = 'می‌خواهم';
+    // क्\u200Dष: KA + VIRAMA + ZWJ + SSA; می\u200Cخواهم: the ZWNJ between می and خواهم.
+    const devanagari = 'क्\u200Dष्मा';
+    const persian = 'می\u200Cخواهم';
     for (const schema of [single, multi, linkFree]) {
       expect(schema.safeParse(devanagari).success).toBe(true);
       expect(schema.safeParse(persian).success).toBe(true);
@@ -91,7 +91,7 @@ describe('control and format characters', () => {
   });
 
   it('accepts an emoji ZWJ sequence', () => {
-    expect(single.safeParse('Yoga \u{1F9D8}‍♀️').success).toBe(true);
+    expect(single.safeParse('Yoga \u{1F9D8}\u200D♀\uFE0F').success).toBe(true);
   });
 });
 
@@ -133,10 +133,10 @@ describe('link refusal', () => {
     'www.x',
     'WWW.x',
     'a@b',
-    'evil。com',
-    'evil．com',
-    'evil｡com',
-    'evil․com',
+    'evil\u3002com',
+    'evil\uFF0Ecom',
+    'evil\uFF61com',
+    'evil\u2024com',
     'Visit evil.com now',
     'Anna (bank.nl)',
     'my-bank.info',
