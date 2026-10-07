@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MONEY_MAX } from '@/lib/input-bounds';
 import { RoomSettingsStep } from './room-settings-step';
 
 const selectedRoom = {
@@ -95,6 +96,30 @@ describe('RoomSettingsStep', () => {
       expect.objectContaining({ status: 502 }),
     );
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  // `fireEvent.submit`, not a click: the input's native `max` would block a
+  // click-submit before the form's own copy runs.
+  it('refuses a rental rate one past the cap without posting, and posts the cap itself', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(201, { data: { id: 'tr-1' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSaved = vi.fn();
+    const { container } = render(
+      <RoomSettingsStep currency="EUR" selectedRoom={selectedRoom} onSaved={onSaved} onBack={vi.fn()} />,
+    );
+    const form = container.querySelector('form');
+    if (!form) throw new Error('form not rendered');
+    const rate = screen.getByLabelText(/^Rental rate/);
+
+    fireEvent.change(rate, { target: { value: String(MONEY_MAX + 1) } });
+    fireEvent.submit(form);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Rental rate cannot exceed 100,000');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(rate, { target: { value: String(MONEY_MAX) } });
+    fireEvent.submit(form);
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).rentalRate).toBe(MONEY_MAX);
   });
 
   it('shows network copy and logs when the request itself fails', async () => {

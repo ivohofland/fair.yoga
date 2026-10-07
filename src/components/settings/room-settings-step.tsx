@@ -10,6 +10,7 @@ import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { currencyLabel, formatRoomLocation } from '@/lib/format';
+import { LONG_TEXT_MAX, MONEY_MAX } from '@/lib/input-bounds';
 
 /**
  * #136. This step's enumeration of the teacher-room link it posts. Beside its
@@ -71,6 +72,10 @@ export function RoomSettingsStep({ selectedRoom, currency, onSaved, onBack }: Ro
       setSettingsError('Rental rate must be 0 or more');
       return;
     }
+    if (rate > MONEY_MAX) {
+      setSettingsError(`Rental rate cannot exceed ${MONEY_MAX.toLocaleString('en-US')}`);
+      return;
+    }
 
     setSaving(true);
     setSettingsError('');
@@ -123,11 +128,13 @@ export function RoomSettingsStep({ selectedRoom, currency, onSaved, onBack }: Ro
           label={`Rental rate (${currencyLabel(currency)})`}
           type="number"
           step="0.01"
+          max={MONEY_MAX}
           value={rentalRate}
           onChange={(e) => { setRentalRate(e.target.value); if (settingsError) setSettingsError(''); }}
         />
         <Input
           label="Notes (optional)"
+          maxLength={LONG_TEXT_MAX}
           value={equipmentNotes}
           onChange={(e) => { setEquipmentNotes(e.target.value); if (settingsError) setSettingsError(''); }}
         />
