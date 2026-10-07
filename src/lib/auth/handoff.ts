@@ -242,7 +242,14 @@ export async function claimWithCode(
     const granted = await reserveHandoffComparisons(db, email, group.length);
     compared.push(...group.slice(0, granted));
   }
-  if (compared.length === 0) return { kind: 'invalid' };
+  if (compared.length === 0) {
+    // Names no address and no code: the log is not a place for either.
+    log.warn(
+      { liveCandidates: live.length, addresses: byAddress.size },
+      'handoff: every address budget is exhausted; no candidate was compared',
+    );
+    return { kind: 'invalid' };
+  }
 
   // Matched in `live`'s order, not `compared`'s, which is grouped by address:
   // among granted candidates sharing a code, the newest still wins.
