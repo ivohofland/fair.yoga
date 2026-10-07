@@ -46,6 +46,7 @@ export type RateLimitPrefix =
   | 'teacher-signup:email'
   | 'slug-available'
   | 'teacher-photo'
+  | 'announcements'
   | 'push-subscriptions';
 
 export const PREFIX_CAPACITIES = {
@@ -60,6 +61,7 @@ export const PREFIX_CAPACITIES = {
   'teacher-signup:email': 2_000,
   'slug-available': 1_000,
   'teacher-photo': 1_000,
+  announcements: 1_000,
   'push-subscriptions': 2_000,
 } as const satisfies Record<RateLimitPrefix, number>;
 
