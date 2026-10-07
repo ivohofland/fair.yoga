@@ -17,6 +17,7 @@ import {
   transitionClass,
   ROOM_ARCHIVED_MESSAGE,
   STARTS_IN_PAST_MESSAGE,
+  TOO_EARLY_MESSAGE,
   type TransitionFailureReason,
 } from '@/services/class-lifecycle';
 import { transitionClassSchema } from '@/lib/schemas';
@@ -45,6 +46,7 @@ const TRANSITION_REFUSAL = {
     'This class was just changed elsewhere. Refresh and try again.',
   ),
   STARTS_IN_PAST: codedRefusal('CLASS_STARTS_IN_PAST', STARTS_IN_PAST_MESSAGE),
+  TOO_EARLY: codedRefusal('CLASS_NOT_STARTED', TOO_EARLY_MESSAGE),
   ROOM_ARCHIVED: codedRefusal('ROOM_ARCHIVED', ROOM_ARCHIVED_MESSAGE),
   NOT_ENDED_YET: CLASS_NOT_ENDED_YET,
 } as const satisfies Record<Exclude<TransitionFailureReason, 'ILLEGAL_TRANSITION'>, CodedRefusal>;

@@ -13,8 +13,7 @@ import { uniqueSuffix } from '../helpers';
 import { createSession, validateSession } from '@/lib/auth';
 import { transitionClass, completeClass } from '@/services/class-lifecycle';
 import { markPaymentPaid, getPaymentsForClass, getOutstandingPayments } from '@/services/payments';
-import { hhmmToTime } from '@/lib/time-of-day';
-import { createClassFixture } from '../class-fixtures';
+import { createClassFixture, wallSlotAt } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -170,8 +169,10 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
-        date: new Date('2099-07-01'),
-        startTime: hhmmToTime('09:00'),
+        // Ten minutes out: far enough that Step 7 can still publish it, near
+        // enough that Step 12 may start it (#766). The teacher's zone is the
+        // schema default.
+        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'Europe/Amsterdam'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,

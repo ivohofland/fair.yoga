@@ -24,7 +24,7 @@ import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
-import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-window';
+import { classEndInstant, autoFinishAt, finishOpensAt, walkInOpensAt } from '@/lib/finish-window';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
@@ -200,8 +200,9 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  * - `completeClass` only: `NOT_ENDED_YET`.
  * - `transitionClass` only: `CONCURRENT_MODIFICATION` (its CAS is the only one
  *   that reports losing a race this way), `STARTS_IN_PAST` (#249, and only
- *   for a `draft -> open` publish), and `ROOM_ARCHIVED` (issue 76, also only
- *   for a `draft -> open` publish).
+ *   for a `draft -> open` publish), `ROOM_ARCHIVED` (issue 76, also only
+ *   for a `draft -> open` publish), and `TOO_EARLY` (#766, only for an
+ *   `open -> in_progress` start).
  *
  * The looseness predates #249 and no member added since introduces it. A
  * caller that handles the full union pays a table row for the widening, not a
@@ -213,6 +214,7 @@ export type TransitionFailureReason =
   | 'NOT_ENDED_YET'
   | 'CONCURRENT_MODIFICATION'
   | 'STARTS_IN_PAST'
+  | 'TOO_EARLY'
   | 'ROOM_ARCHIVED'
   | 'CANCELLED';
 
@@ -329,6 +331,9 @@ export type TransitionDbResult<
  */
 export const ROOM_ARCHIVED_MESSAGE = 'This room is archived. Unarchive it to publish classes here.';
 
+/** The sentence a teacher reads for `TOO_EARLY`, exported for the same reason. */
+export const TOO_EARLY_MESSAGE = 'This class can be started from 15 minutes before its start time.';
+
 /** The sentence a teacher reads for `STARTS_IN_PAST`, exported for the same reason. */
 export const STARTS_IN_PAST_MESSAGE = "This class's start time has already passed, so it can't be published.";
 
@@ -380,6 +385,7 @@ export async function transitionClass(
     | 'ILLEGAL_TRANSITION'
     | 'CONCURRENT_MODIFICATION'
     | 'STARTS_IN_PAST'
+    | 'TOO_EARLY'
     | 'ROOM_ARCHIVED'
     | 'CANCELLED'
   >
@@ -514,6 +520,48 @@ export async function transitionClass(
         reason: 'STARTS_IN_PAST',
         error: STARTS_IN_PAST_MESSAGE,
       };
+    }
+  }
+
+  // #766. A manual start is refused before `walkInOpensAt`: starting closes
+  // the waitlist, so it must not reach a class that is still days away.
+  //
+  // Falls through exactly as the publish guard above does: a missing row, a
+  // cancelled class or a status the CAS would reject anyway keeps its own
+  // older reason, which the diagnostic read below answers.
+  //
+  // Read before the transaction. Time only moves forward, so staleness can
+  // only make this read early, and only by a schedule edit committed in the
+  // gap, the staleness the publish guard accepts for the same reason.
+  if (targetStatus === 'in_progress') {
+    const cls = await db.class.findUnique({
+      where: { id: classId },
+      select: {
+        status: true,
+        calendarEntry: {
+          select: {
+            date: true,
+            startTime: true,
+            cancelledAt: true,
+            teacher: { select: { defaultTimezone: true } },
+          },
+        },
+      },
+    });
+    if (
+      cls &&
+      cls.calendarEntry.cancelledAt === null &&
+      sourceStatesFor(targetStatus).includes(cls.status)
+    ) {
+      const entry = cls.calendarEntry;
+      const start = classStartInstant(entry, entry.teacher.defaultTimezone);
+      if (Date.now() < walkInOpensAt(start).getTime()) {
+        log.info(
+          { classId, timeZone: entry.teacher.defaultTimezone, startInstant: isoOrNull(start) },
+          'transitionClass refused: this class cannot be started yet',
+        );
+        return { ok: false, reason: 'TOO_EARLY', error: TOO_EARLY_MESSAGE };
+      }
     }
   }
 

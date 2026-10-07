@@ -4,7 +4,9 @@ import { log } from '@/lib/log';
 import {
   FINISH_GRACE_MINUTES,
   CHECKIN_OPENS_MINUTES,
+  WALK_IN_WINDOW_MINUTES,
   checkinOpensAt,
+  walkInOpensAt,
   classEndInstant,
   finishOpensAt,
   autoFinishAt,
@@ -130,6 +132,10 @@ describe('classPageClock', () => {
 
   it('names the check-in instant of a start as exactly CHECKIN_OPENS_MINUTES before it', () => {
     expect(checkinOpensAt(start).getTime()).toBe(start.getTime() - CHECKIN_OPENS_MINUTES * MINUTE);
+  });
+
+  it('names the walk-in instant of a start as exactly WALK_IN_WINDOW_MINUTES before it', () => {
+    expect(walkInOpensAt(start).getTime()).toBe(start.getTime() - WALK_IN_WINDOW_MINUTES * MINUTE);
   });
 
   it('answers the check-in instant as the start minus CHECKIN_OPENS_MINUTES', () => {

@@ -223,6 +223,36 @@ async function makeClaimWindowClass(maxStudents: number, minutesUntilStart: numb
 }
 
 /**
+ * A class the OWNER teacher can start by hand: it begins `minutesUntilStart`
+ * from now, inside the manual-start window (#766), where `makeClass`'s 2099
+ * classes are refused. The owner's zone is the schema default, so the wall
+ * slot is read in `Europe/Amsterdam`. One minute long and one slot per
+ * `minutesUntilStart`, for the overlap reason `makeLateCancelClass` states.
+ */
+async function makeStartableClass(maxStudents: number, minutesUntilStart: number): Promise<string> {
+  const { date, startTime } = wallSlotAt(
+    new Date(Date.now() + minutesUntilStart * 60_000),
+    'Europe/Amsterdam',
+  );
+  const cls = await createClassFixture(prisma, {
+    teacherId: ownerId,
+    teacherRoomId,
+    classType: 'Reg API Startable',
+    date,
+    startTime,
+    durationMinutes: 1,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 1,
+    maxStudents,
+    status: 'open',
+  });
+  classIds.push(cls.id);
+  return cls.id;
+}
+
+/**
  * A class an attendance write can reach: one the UTC claim-window teacher owns,
  * starting `minutesUntilStart` from now. The route refuses attendance before
  * `checkinOpensAt` (#766), so the 2099 classes `makeClass` builds cannot take
@@ -670,7 +700,7 @@ describe('POST /api/registrations', () => {
    * paid for.
    */
   it('walks in a queued student whose entry was closed by the class starting — resolves to claimed, not left expired', async () => {
-    const classId = await makeClass(1);
+    const classId = await makeStartableClass(1, 10);
     const fill = await post(studentTokens[0]!, { classId });
     expect(fill.status).toBe(201);
 
