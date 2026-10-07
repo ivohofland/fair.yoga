@@ -5,6 +5,7 @@ import { log } from '@/lib/log';
 import { isRecordNotFound } from '@/lib/api-errors';
 import {
   respondOk,
+  respondTyped,
   respondError,
   requireTeacher,
   parseBody,
@@ -12,6 +13,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateRoomSchema } from '@/lib/schemas';
+import { SHARED_ROOM_SELECT, type SharedRoom } from '@/lib/room-projection';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import {
   countRoomDeleteBlockers,
@@ -130,14 +132,22 @@ export const GET = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const room = await prisma.room.findUnique({ where: { id } });
-  if (!room) return respondError('Room not found', 404);
+  const access = await prisma.room.findUnique({
+    where: { id },
+    select: { isPublic: true, createdById: true },
+  });
+  if (!access) return respondError('Room not found', 404);
 
-  if (!room.isPublic && room.createdById !== session.teacherId) {
+  if (!access.isPublic && access.createdById !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
-  return respondOk(room);
+  // A second read, so the answer is the projection and never the row the
+  // check read. A room deleted between the two reads answers as the first does.
+  const room = await prisma.room.findUnique({ where: { id }, select: SHARED_ROOM_SELECT });
+  if (!room) return respondError('Room not found', 404);
+
+  return respondTyped<SharedRoom>(room);
 });
 
 export const PUT = withErrorHandler(async (

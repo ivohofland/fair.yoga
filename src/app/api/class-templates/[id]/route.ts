@@ -15,6 +15,7 @@ import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { log } from '@/lib/log';
 import { updateClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
 import { formatEconomicsViolations } from '@/lib/class-economics';
+import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
 import {
   updateClassTemplate,
   CLASS_TEMPLATE_ROOM_FK,
@@ -85,7 +86,7 @@ export const GET = withErrorHandler(async (
 
   const template = await prisma.classTemplate.findUnique({
     where: { id },
-    include: { teacherRoom: { include: { room: true } }, scheduleRule: true },
+    include: { teacherRoom: { include: { room: { select: SHARED_ROOM_SELECT } } }, scheduleRule: true },
   });
   if (!template) return respondError('Class template not found', 404);
 

@@ -13,6 +13,7 @@ import { isRestrictViolationOn } from '@/lib/api-errors';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { createClassTemplateSchema } from '@/lib/schemas';
+import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
 import {
   withSlot,
   createClassTemplate,
@@ -71,7 +72,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const templates = await prisma.classTemplate.findMany({
     where: { scheduleRule: { teacherId: session.teacherId } },
-    include: { teacherRoom: { include: { room: true } }, scheduleRule: true },
+    include: { teacherRoom: { include: { room: { select: SHARED_ROOM_SELECT } } }, scheduleRule: true },
     orderBy: { createdAt: 'desc' },
   });
 
