@@ -100,9 +100,9 @@ export const PUT = withErrorHandler(async (
 
   // Ownership and the start instant's inputs. Ownership is a fact about the
   // class that this route cannot change and no concurrent writer moves, so
-  // reading it here is safe; the start moves only forward and only through
-  // `updateClass`, so a stale read can only be too early, never let a write
-  // through early. The class's STATUS is not read: testing it here would be a
+  // reading it here is safe. The start moves only through `updateClass`, so
+  // a read taken across `parseBody`'s await can be a moment out of date, which
+  // costs one write judged against the previous schedule. The class's STATUS is not read: testing it here would be a
   // read-then-write across `parseBody`'s await, so it belongs in the write's
   // own WHERE below and is deliberately absent from this select.
   const registration = await prisma.registration.findUnique({
