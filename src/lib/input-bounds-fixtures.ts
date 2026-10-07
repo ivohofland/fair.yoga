@@ -2,8 +2,9 @@ import type { z } from 'zod';
 
 /**
  * Inputs for the timing guards in `input-bounds.test.ts` and
- * `schemas.test.ts`: about a megabyte each, the size of body nginx admits,
- * and each shaped to make a backtracking pattern rescan. `a…` and `ab-…` are
+ * `schemas.test.ts`: about a megabyte each (the body size that reaches the
+ * app; see docs/superpowers/specs/2026-10-07-input-bounds-census.md §F), and
+ * each shaped to make a backtracking pattern rescan. `a…` and `ab-…` are
  * one long run of host-label characters; `a.…` puts a dot after every
  * character; `a@…` puts an `@` after every character with no dot to end the
  * email-shaped search.
