@@ -1,5 +1,39 @@
 import { describe, it, expect } from 'vitest';
+import * as bounds from './input-bounds';
 import { singleLineText, multiLineText, linkFreeText, COMMON_GENERIC_TLDS } from './input-bounds';
+
+/**
+ * The values the design decided (spec §2.1). The schema cap tests measure
+ * each field against its constant, so they cannot see the constant itself
+ * move; this pin does.
+ */
+describe('limit values', () => {
+  it('are the decided ones', () => {
+    const numeric = Object.fromEntries(
+      Object.entries(bounds).filter(([, v]) => typeof v === 'number'),
+    );
+    expect(numeric).toEqual({
+      NAME_MAX: 60,
+      CLASS_TYPE_MAX: 80,
+      LOCATION_MAX: 200,
+      VENUE_NAME_MAX: 120,
+      ROOM_NAME_MAX: 80,
+      ROOM_ADDRESS_MAX: 200,
+      CITY_MAX: 100,
+      POSTCODE_MAX: 16,
+      FLOOR_MAX: 40,
+      EQUIPMENT_ITEM_MAX: 60,
+      EQUIPMENT_ITEMS_MAX: 30,
+      LONG_TEXT_MAX: 2000,
+      PAYMENT_METHOD_MAX: 64,
+      EMAIL_MAX: 254,
+      PAGE_SLUG_MAX: 60,
+      DURATION_MAX_MINUTES: 1440,
+      MONEY_MAX: 100000,
+      CAPACITY_MAX: 1000,
+    });
+  });
+});
 
 const single = singleLineText(60);
 const multi = multiLineText(2000);
