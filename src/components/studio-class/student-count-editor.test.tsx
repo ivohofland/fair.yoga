@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StudentCountEditor } from './student-count-editor';
+import { CAPACITY_MAX } from '@/lib/input-bounds';
 import { routerRefresh } from '../../../tests/setup/components';
 
 /**
@@ -62,6 +63,26 @@ describe('StudentCountEditor', () => {
     // the screen in the shape a successful one has.
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
     expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('refuses a count past CAPACITY_MAX without sending it, and sends the cap itself', async () => {
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<StudentCountEditor studioClassId="sc-1" initialCount={null} />);
+
+    type(String(CAPACITY_MAX + 1));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      `A class can have at most ${CAPACITY_MAX.toLocaleString('en-US')} students.`,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+
+    type(String(CAPACITY_MAX));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ body: JSON.stringify({ studentCount: CAPACITY_MAX }) });
   });
 
   it('says something when the request never reaches the server', async () => {
