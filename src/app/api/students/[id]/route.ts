@@ -27,24 +27,21 @@ export const GET = withErrorHandler(async (
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  const student = await prisma.student.findUnique({ where: { id } });
-  if (!student) return respondError('Student not found', 404);
-
   // Own student profile — return full data
   if (session.studentId === id) {
+    const student = await prisma.student.findUnique({ where: { id } });
+    if (!student) return respondError('Student not found', 404);
     return respondOk(student);
   }
 
   // Teacher accessing student profile — must be linked to the student,
   // then filtered by that student's per-teacher privacy settings.
   //
-  // The two checks answer different questions and neither replaces the other.
-  // Without the link check, any teacher holding a UUID reads a stranger — and
-  // a stranger has no `StudentPrivacy` row for this teacher, so the projection
-  // returns the maximum-privacy view rather than nothing: a truncated name,
-  // and the confirmation that this id is a student at all. That is the
-  // disclosure the link check exists to prevent. Once linked, the projection
-  // decides which of `TeacherVisibleStudent`'s gated fields come back.
+  // The link is looked up before any student row is read, and a missing link
+  // answers the same 404 as an id that is no student at all, so the response
+  // does not tell a caller whether an id they hold belongs to a student. Every
+  // other session gets that 404 too. Once linked, the projection decides which
+  // of `TeacherVisibleStudent`'s gated fields come back.
   //
   // Never income tiers: `incomeTier` is not in the teacher-facing shape
   // (#167), and `students-api.test.ts` pins that it stays out.
@@ -52,7 +49,7 @@ export const GET = withErrorHandler(async (
     const link = await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
     });
-    if (!link) return respondError('Student not in your contacts', 403);
+    if (!link) return respondError('Student not found', 404);
 
     const visible = await prisma.student.findUnique({
       where: { id },
@@ -63,7 +60,7 @@ export const GET = withErrorHandler(async (
     return respondOk(projectStudentForTeacher(visible, session.teacherId));
   }
 
-  return respondError('Access denied', 403);
+  return respondError('Student not found', 404);
 });
 
 export const PUT = withErrorHandler(async (
