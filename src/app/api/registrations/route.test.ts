@@ -1067,7 +1067,7 @@ describe('POST /api/registrations — walk-ins (#255)', () => {
 
   /**
    * The window's opening edge on an `open` class, the door case: each class
-   * starts several minutes to one side of `WALK_IN_WINDOW_MS`.
+   * starts several minutes to one side of `WALK_IN_WINDOW_MINUTES`.
    */
   it('walks in both subjects to an open class starting in about ten minutes', async () => {
     const classId = await seedClassStartingIn(main, 10);

@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { PrismaClient, ClassStatus, type Currency } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
-import { classEndInstant, autoFinishAt, finishOpensAt } from '@/lib/finish-window';
+import { classEndInstant, autoFinishAt, finishOpensAt, walkInOpensAt } from '@/lib/finish-window';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
@@ -20,7 +20,7 @@ import {
   type EconomicField,
 } from './class-lifecycle';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
-import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtures';
+import { createClassFixture, slotDate, slotTime, wallSlotAt } from '../../tests/class-fixtures';
 
 // We use string literals matching the Prisma ClassStatus enum values.
 // This keeps tests independent of the Prisma client being generated.
@@ -376,6 +376,35 @@ describe('transitionClass (DB)', () => {
       });
   };
 
+  // A class whose start sits at a chosen distance from now, for the manual-start
+  // window (#766). Every such class shares this teacher's overlapping slots,
+  // so each is removed after its test.
+  const nearNowEntryIds: string[] = [];
+  const makeClassStartingAt = async (status: ClassStatus, start: Date) => {
+    const { date, startTime } = wallSlotAt(start, 'Europe/Amsterdam');
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Vinyasa',
+      date,
+      startTime,
+      durationMinutes: 60,
+      roomCost: 35,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+      status,
+    });
+    nearNowEntryIds.push(cls.calendarEntryId);
+    return cls;
+  };
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await prisma.calendarEntry.deleteMany({ where: { id: { in: nearNowEntryIds.splice(0) } } });
+  });
+
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
       data: {
@@ -648,7 +677,7 @@ describe('transitionClass (DB)', () => {
   });
 
   it('closes the waitlist when it moves a class to in_progress', async () => {
-    const cls = await makeClass({ status: 'open' });
+    const cls = await makeClassStartingAt('open', new Date());
     const entry = await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId, position: 1, status: 'waiting' },
     });
@@ -733,6 +762,9 @@ describe('transitionClass (DB)', () => {
         maxStudents: 12,
         status: 'draft',
       });
+    // Half an hour ago is near now, so it would overlap the window tests'
+    // slots below.
+    nearNowEntryIds.push(cls.calendarEntryId);
 
     const result = await transitionClass(prisma, cls.id, 'open');
     expect(result.ok).toBe(false);
@@ -740,6 +772,81 @@ describe('transitionClass (DB)', () => {
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('draft');
+  });
+
+  describe('starting a class by hand (#766)', () => {
+    const MINUTE = 60_000;
+
+    // `wallSlotAt` truncates to the minute, so the start is an exact minute and
+    // the window's edge is exact too: fake only `Date`, which leaves the
+    // driver's timers alone.
+    const fixedStart = () => new Date(Date.UTC(2031, 5, 10, 10, 0, 0));
+
+    it('refuses a start before the walk-in window and writes nothing', async () => {
+      const early = await makeClassStartingAt('open', new Date(Date.now() + 16 * MINUTE));
+      const farAhead = await makeClassStartingAt('open', new Date(Date.now() + 3 * 24 * 60 * MINUTE));
+
+      for (const cls of [early, farAhead]) {
+        const result = await transitionClass(prisma, cls.id, 'in_progress');
+        expect(result).toMatchObject({
+          ok: false,
+          reason: 'TOO_EARLY',
+          error: 'This class can be started from 15 minutes before its start time.',
+        });
+        const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+        expect(after.status).toBe('open');
+      }
+    });
+
+    it('starts at the window edge, not a millisecond before it', async () => {
+      const start = fixedStart();
+      const cls = await makeClassStartingAt('open', start);
+      const edge = walkInOpensAt(start).getTime();
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(edge - 1);
+      const before = await transitionClass(prisma, cls.id, 'in_progress');
+      expect(before).toMatchObject({ ok: false, reason: 'TOO_EARLY' });
+
+      vi.setSystemTime(edge);
+      const at = await transitionClass(prisma, cls.id, 'in_progress');
+      expect(at.ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.status).toBe('in_progress');
+    });
+
+    it('lets the other refusals keep their own reasons for an early class', async () => {
+      const soon = new Date(Date.now() + 2 * 24 * 60 * MINUTE);
+
+      // draft -> in_progress is illegal whatever the clock says.
+      const draft = await makeClassStartingAt('draft', soon);
+      expect(await transitionClass(prisma, draft.id, 'in_progress')).toMatchObject({
+        ok: false,
+        reason: 'ILLEGAL_TRANSITION',
+      });
+
+      // A cancelled class answers CANCELLED, not TOO_EARLY.
+      const cancelled = await makeClassStartingAt('open', new Date(soon.getTime() + 4 * 60 * MINUTE));
+      await prisma.calendarEntry.update({
+        where: { id: cancelled.calendarEntryId },
+        data: { cancelledAt: new Date() },
+      });
+      expect(await transitionClass(prisma, cancelled.id, 'in_progress')).toMatchObject({
+        ok: false,
+        reason: 'CANCELLED',
+      });
+
+      // A missing row answers NOT_FOUND.
+      expect(await transitionClass(prisma, 'no-such-class-id', 'in_progress')).toMatchObject({
+        ok: false,
+        reason: 'NOT_FOUND',
+      });
+    });
+
+    it('does not apply the window to the open target', async () => {
+      const cls = await makeClassStartingAt('draft', new Date(Date.now() + 2 * 24 * 60 * MINUTE));
+      expect((await transitionClass(prisma, cls.id, 'open')).ok).toBe(true);
+    });
   });
 
   it('still starts an open class whose time has come (#249)', async () => {

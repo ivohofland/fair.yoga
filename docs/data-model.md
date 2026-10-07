@@ -415,7 +415,7 @@ A teacher running a class can register someone standing at the door who is not o
 
 **It never lifts a refusal.** `resolveInvitationOnLink` is never called on this path: it deletes the `TeacherBlock`, and #418's first bar — the act must be the student's own at this instant — is one a teacher's act cannot clear. So the walk-in resolves by its own hand (the roster census above), and only the `pending` → `accepted` half: a `declined` invitation refuses, and a block refuses.
 
-**The window bounds the exception.** The walk-in window is open while the class is `in_progress`, and from 15 minutes before its start (`WALK_IN_WINDOW_MS`, the registrations route). An invitee or new-contact walk-in outside it is refused with 409 `WALK_IN_WINDOW_CLOSED`. Without the person at the door there is no presence to stand for acceptance. A roster student may still be added ahead of time; that is an ordinary registration and links nobody new.
+**The window bounds the exception.** The walk-in window is open while the class is `in_progress`, and from 15 minutes before its start (`WALK_IN_WINDOW_MINUTES`, `src/lib/finish-window.ts`, which the registrations route and a manual start both read: `transitionClass` refuses `in_progress` before that instant, 409 `CLASS_NOT_STARTED`). An invitee or new-contact walk-in outside it is refused with 409 `WALK_IN_WINDOW_CLOSED`. Without the person at the door there is no presence to stand for acceptance. A roster student may still be added ahead of time; that is an ordinary registration and links nobody new.
 
 **Refusal order, and why.** `POST /api/registrations` answers a walk-in in this order, and every refusal after the first step rolls back the whole transaction, including a `Student` the resolve step created:
 

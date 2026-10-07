@@ -82,6 +82,7 @@ describe('POST /api/classes/[id]/transition — each service result', () => {
     ['CANCELLED', 'CLASS_CANCELLED'],
     ['CONCURRENT_MODIFICATION', 'CONCURRENT_MODIFICATION'],
     ['STARTS_IN_PAST', 'CLASS_STARTS_IN_PAST'],
+    ['TOO_EARLY', 'CLASS_NOT_STARTED'],
     ['ROOM_ARCHIVED', 'ROOM_ARCHIVED'],
     ['NOT_ENDED_YET', 'CLASS_NOT_ENDED_YET'],
   ] as const)('answers %s with %s', async (reason, code) => {

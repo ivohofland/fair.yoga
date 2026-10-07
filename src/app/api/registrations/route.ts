@@ -36,6 +36,7 @@ import { readSeatCount } from '@/services/capacity';
 import { lockClassRow, lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { walkInOpensAt } from '@/lib/finish-window';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
@@ -160,12 +161,6 @@ type BookingOutcome = {
   readonly booking: BookingBody;
 };
 
-/**
- * How long before a class starts a teacher-added registration counts as a
- * walk-in — someone showing up at the door — rather than a normal booking.
- */
-const WALK_IN_WINDOW_MS = 15 * 60 * 1000;
-
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
@@ -266,7 +261,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       );
       const isWalkIn =
         isTeacher &&
-        (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
+        (cls.status === 'in_progress' || Date.now() >= walkInOpensAt(classStart).getTime());
 
       // Students book open classes; the teacher can also add someone who
       // shows up while the class is in progress.

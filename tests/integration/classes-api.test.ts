@@ -1030,8 +1030,8 @@ describe('POST /api/classes/[id]/transition', () => {
         teacherId: ownerId,
         teacherRoomId,
         classType: 'Queue Close',
-        date: new Date('2099-01-01'),
-        startTime: hhmmToTime('10:00'),
+        // Inside the manual-start window (#766): a class days away is refused.
+        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'Europe/Amsterdam'),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,

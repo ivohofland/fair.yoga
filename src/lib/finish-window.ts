@@ -144,3 +144,14 @@ export function classPageClock({
 
   return { live, showCheckin, canFinish, autoFinishing, autoAt, checkinAt, refreshInstants };
 }
+
+/**
+ * How long before its start a class admits walk-ins and may be started by
+ * hand. Its own rule, not the check-in window: the two happen to share a length.
+ */
+export const WALK_IN_WINDOW_MINUTES = 15;
+
+/** The instant a class admits walk-ins and a manual start: `WALK_IN_WINDOW_MINUTES` before `start`. */
+export function walkInOpensAt(start: Date): Date {
+  return new Date(start.getTime() - WALK_IN_WINDOW_MINUTES * 60_000);
+}

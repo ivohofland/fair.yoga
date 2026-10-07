@@ -51,7 +51,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { hhmmToTime } from '@/lib/time-of-day';
+import { wallSlotAt } from '../../tests/class-fixtures';
 import { lockClassRow } from '@/lib/db-locks';
 import { transitionClass } from './class-lifecycle';
 
@@ -113,17 +113,15 @@ describe('transitionClass against a cancel that already holds the class', () => 
       select: { id: true },
     });
 
-    // `open`, and dated far in the future. `open -> in_progress` is a legal
-    // transition that reaches the CAS directly: the `targetStatus === 'open'`
-    // pre-reads at the top of `transitionClass` are skipped entirely, so
-    // nothing but the CAS decides this, which is what the case is about.
+    // `open`, and starting inside the manual-start window, so the start guard
+    // passes and the CAS decides this, which is what the case is about. The
+    // teacher's zone is the schema default.
     const entry = await prisma.calendarEntry.create({
       data: {
         teacherId,
         kind: 'regular',
         classType: 'Lock order',
-        date: new Date('2099-06-01'),
-        startTime: hhmmToTime('09:00'),
+        ...wallSlotAt(new Date(Date.now() + 10 * 60_000), 'Europe/Amsterdam'),
         durationMinutes: 60,
         classes: {
           create: {

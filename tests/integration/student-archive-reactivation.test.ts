@@ -175,8 +175,7 @@ describe('every act that makes something live un-archives the roster link (#265)
   it('a walk-in of an existing linked student un-archives the link', async () => {
     const { studentId, email, firstName, lastName } = await makeArchivedStudent();
     const classId = await makeClass(1);
-    // Walk-ins are a class-time phenomenon (`api/registrations/route.ts`'s
-    // `WALK_IN_WINDOW_MS`) — flip straight to `in_progress` rather than
+    // Walk-ins are a class-time phenomenon (`WALK_IN_WINDOW_MINUTES`) — flip straight to `in_progress` rather than
     // waiting out the window, the same fixture shortcut
     // `registrations-api.test.ts`'s "walk-in" tests use.
     await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
