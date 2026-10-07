@@ -3,6 +3,7 @@ import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
 import { hashToken, consumeTokenRow } from './magic-link';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
 import { log } from '@/lib/log';
+import { setLockTimeout } from '@/lib/db-locks';
 
 export type HandoffOutcome =
   | { kind: 'verified'; email: string; redirectTo: string | null; purpose: MagicLinkPurpose }
@@ -106,12 +107,6 @@ export const HANDOFF_EMAIL_MAX_ATTEMPTS = 10;
  *  previous window ended. */
 export const HANDOFF_EMAIL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Above Prisma's defaults on purpose. The row lock can be held by a
- *  transaction much longer than this one, and a reservation that times out
- *  fails the claim with an error instead of answering it. The figures are
- *  argued in `docs/data-model.md` (HandoffAttemptBudget). */
-const RESERVATION_TX_OPTIONS = { maxWait: 5_000, timeout: 25_000 } as const;
-
 /**
  * Reserves up to `wanted` code comparisons from `email`'s budget, and returns
  * how many were granted: `wanted` while the window has room, fewer as it runs
@@ -123,6 +118,10 @@ const RESERVATION_TX_OPTIONS = { maxWait: 5_000, timeout: 25_000 } as const;
  * never total more than `HANDOFF_EMAIL_MAX_ATTEMPTS`. Charging after a miss
  * would let every concurrent claim compare first. Design:
  * `docs/superpowers/specs/2026-10-07-sign-in-oracles-design.md` §2.2.
+ *
+ * A wait on the row is bounded by the shared lock timeout and fails with
+ * `55P03` past it, rather than holding a pooled connection for as long as
+ * another transaction holds the row.
  */
 export async function reserveHandoffComparisons(
   db: PrismaClient,
@@ -132,6 +131,7 @@ export async function reserveHandoffComparisons(
 ): Promise<number> {
   if (wanted <= 0) return 0;
   return db.$transaction(async (tx) => {
+    await setLockTimeout(tx);
     let row: { attempts: number; windowStartsAt: Date } | undefined;
     // Twice at most: a row that already existed, so the insert did nothing,
     // can be deleted by another writer before the lock is taken. The second
@@ -159,7 +159,7 @@ export async function reserveHandoffComparisons(
       data: { attempts: used + granted, ...(windowEnded ? { windowStartsAt: now } : {}) },
     });
     return granted;
-  }, RESERVATION_TX_OPTIONS);
+  });
 }
 
 /**

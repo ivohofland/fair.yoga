@@ -1051,6 +1051,13 @@ own `setLockTimeout` line was already counted; the two one-off create routes
 and the currency switch arm it through the same helpers and add no line.
 Every other line sits in one of the files listed above.
 
+Re-run for issue 767 on 2026-10-07 it returns 23 = the 22 above + 1:
+`reserveHandoffComparisons` (`src/lib/auth/handoff.ts`), the handoff-code
+budget reservation, which arms it before its `HandoffAttemptBudget` row lock.
+Pinned by `handoff.test.ts`'s "a claim held past the lock timeout fails as a
+transient 503" test, which holds the row past the bound and expects `55P03`
+inside the hold. Every other line sits in one of the files listed above.
+
 ### Template creation's transaction budget (#758)
 
 `CREATE_TEMPLATE_TIMEOUT_MS` (`class-template-lifecycle.ts`) and
