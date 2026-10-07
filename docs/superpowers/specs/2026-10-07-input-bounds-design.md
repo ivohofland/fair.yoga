@@ -22,7 +22,7 @@ The premise is measured in `2026-10-07-input-bounds-census.md`, which sits besid
 
 `src/lib/input-bounds.ts` is client-safe: no server imports, because the forms import it. It exports named limit constants and the zod builders below. Every regex uses the `u` flag: without it, `\p{…}` matches literal text.
 
-- **`singleLineText(max)`:** trim, then `.max(max)`. It refuses:
+- **`singleLineText(max)`:** trim, then `.max(max)`. It checks the *trimmed* value, so surrounding whitespace, including a pasted tab or newline, is stripped as before, and only interior characters are refused. It refuses:
   - `\p{Cc}`;
   - every `\p{Cf}` *except* U+200C and U+200D. ZWNJ and ZWJ are needed by Indic and Persian scripts and emoji sequences. Refusing the rest removes the bidi controls (U+200E/F, U+202A–E, U+2066–9, U+061C), U+FEFF, and invisible splitters such as ZWSP (U+200B) and the word joiner (U+2060), which can make `evil​.com` render as `evil.com`;
   - `\p{Zl}` and `\p{Zp}` (U+2028/9).
@@ -30,9 +30,19 @@ The premise is measured in `2026-10-07-input-bounds-census.md`, which sits besid
 - **`linkFreeText(max)`:** `singleLineText(max)`, plus the link refusal:
   - `://`, `www.`, `@`;
   - the look-alike dots U+3002, U+FF0E, U+FF61 and U+2024;
-  - a **host-shaped token**: a label of two or more letters/digits/hyphens, a `.`, then either any two ASCII letters or one of a short list of common generic TLDs, followed by a non-letter or the end. The match is case-insensitive and Unicode-aware.
+  - a **host-shaped token**:
+    - a label of two or more letters/digits/hyphens, then a `.`;
+    - then either two ASCII letters in a single case (`nl`, `NL`) or one of a short list of common generic TLDs (any case);
+    - then a non-letter or the end.
 
-  The label must be two or more characters, and the part after the dot must be exactly two letters or a listed TLD. That keeps `St.Clair`, `J.R.`, `J.de Groot`, `Th.van Dijk` and `Ma.del Carmen` legal while refusing `evil.com`, `EVIL.COM`, `bank.nl` and `verify.de`. The TLD list lives in the module as a named constant.
+    The token is Unicode-aware, and ZWJ/ZWNJ are stripped before the test, since between Latin letters they are invisible and could split a host.
+
+  The label must be two or more characters. A two-letter suffix counts only in a single case, and longer suffixes only from the list. That keeps these legal:
+  - `St.Clair`, `J.R.`;
+  - `J.de Groot`, `Th.van Dijk`, `Ma.del Carmen`;
+  - `Mr.Li Wei`, `Dr.Oz`.
+
+  It refuses `evil.com`, `EVIL.COM`, `bank.nl` and `verify.de`. The TLD list lives in the module as a named constant.
 
 **Which fields get which builder.** Each field keeps its current requiredness: every existing `.min(1)` stays, and every optional or `''`-defaulting field stays so.
 
@@ -97,7 +107,7 @@ The invitation template already escapes HTML, and its subject goes through Resen
 
 - **Text inputs get `maxLength={CONSTANT}`.** It stops typing and silently truncates a paste, which is acceptable, because the server is the authority. The signup page-address field gets `maxLength={PAGE_SLUG_MAX}`. Its suggestion (`slugFromName`, which joins two name slugs) is truncated to `PAGE_SLUG_MAX` without a trailing `-`, since two 60-character names would otherwise pre-fill an invalid 121-character slug.
 - **Number inputs are capped in each form's own JS validator,** in that form's copy. `max=` on a number input only takes part in native validation on a real `<form>` submit, and the class edit, new-class and studio-class edit forms have no `<form>`. The validators are `class-edit-form`'s `numberFieldError`, `new-class-form`, `template-form`, `new-studio-class-form`, `studio-template-form` and `studio-class-edit-form`. Inputs also get `max`, and `min={-MONEY_MAX}` where negatives are allowed, as a hint.
-- **The schema caps carry human messages** (e.g. "Keep the class type under 80 characters."), so a request that reaches the server unvalidated still reads well.
+- **The schema caps carry a readable message** ("Keep this to 80 characters or fewer."). `parseBody` prefixes the field path, so a request that reaches the server unvalidated still names the field. The forms' own validators carry the field-specific copy.
 
 ## 3. Rejected
 
