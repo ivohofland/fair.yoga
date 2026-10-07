@@ -160,6 +160,9 @@ describe('link refusal', () => {
     'Anna (bank.nl)',
     'my-bank.info',
     'shop2.io',
+    'evil\u200D.com',
+    'evil.c\u200Dom',
+    'evil.\u200Ccom',
   ];
 
   const ACCEPTED = [
