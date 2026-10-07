@@ -1,8 +1,16 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import crypto from 'crypto';
+import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
-import { generateMagicLinkToken } from './magic-link';
+import { generateMagicLinkToken, hashToken } from './magic-link';
 import { hashNonce } from './origin-nonce';
-import { verifyWithHandoff, claimWithCode, HANDOFF_MAX_ATTEMPTS } from './handoff';
+import {
+  verifyWithHandoff,
+  claimWithCode,
+  reserveHandoffComparisons,
+  HANDOFF_MAX_ATTEMPTS,
+  HANDOFF_EMAIL_MAX_ATTEMPTS,
+  HANDOFF_EMAIL_WINDOW_MS,
+} from './handoff';
 import { asBrowserNonce } from './test-support';
 import { log } from '@/lib/log';
 
@@ -756,4 +764,290 @@ describe('claimWithCode', () => {
       'handoff: deleteMany reaped a different number of exhausted candidates than expected',
     );
   });
+});
+
+describe('the per-address comparison budget', () => {
+  // Every address below carries this run's tag, so the teardown can find
+  // exactly this run's rows and nothing else.
+  const RUN = `budget-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let seq = 0;
+  const address = (label: string) => `${RUN}-${label}-${seq++}@example.com`;
+  const nonceFor = (label: string) => `${RUN}-nonce-${label}-${seq++}`;
+
+  afterAll(async () => {
+    await db.handoffAttemptBudget.deleteMany({ where: { email: { startsWith: RUN } } });
+    await db.magicLinkToken.deleteMany({ where: { email: { startsWith: RUN } } });
+  });
+
+  /** Mints a token under `nonce` and opens it from no browser, which stamps a
+   *  code on it. Returns the code and the raw token. */
+  async function stamp(email: string, nonce: string, redirectTo?: string) {
+    const token = await generateMagicLinkToken(db, email, {
+      originBrowserHash: hashNonce(nonce),
+      redirectTo,
+    });
+    const out = await verifyWithHandoff(db, token, null);
+    if (out.kind !== 'handoff') throw new Error('expected a handoff');
+    return { code: out.code, token };
+  }
+
+  /** A six-digit guess equal to none of `codes`. */
+  function wrongFor(...codes: string[]) {
+    return ['000000', '111111', '222222', '333333'].find((g) => !codes.includes(g))!;
+  }
+
+  async function budgetOf(email: string) {
+    return db.handoffAttemptBudget.findUnique({ where: { email } });
+  }
+
+  async function tokenRow(token: string) {
+    return db.magicLinkToken.findUnique({ where: { tokenHash: hashToken(token) } });
+  }
+
+  /** Sets the address's budget to `attempts` used, in a window that started now. */
+  async function spend(email: string, attempts: number) {
+    await db.handoffAttemptBudget.upsert({
+      where: { email },
+      create: { email, attempts, windowStartsAt: new Date() },
+      update: { attempts, windowStartsAt: new Date() },
+    });
+  }
+
+  it('grants up to the window maximum and nothing after it', async () => {
+    const email = address('grants');
+
+    const grants: number[] = [];
+    for (let i = 0; i < 4; i++) grants.push(await reserveHandoffComparisons(db, email, 3));
+    expect(grants).toEqual([3, 3, 3, 1]);
+    expect(await reserveHandoffComparisons(db, email, 3)).toBe(0);
+    expect((await budgetOf(email))?.attempts).toBe(HANDOFF_EMAIL_MAX_ATTEMPTS);
+  });
+
+  it('asks for nothing when nothing is wanted', async () => {
+    const email = address('nothing');
+    expect(await reserveHandoffComparisons(db, email, 0)).toBe(0);
+    expect(await budgetOf(email)).toBeNull();
+  });
+
+  // The row existed, so the insert did nothing, and is then deleted before
+  // the lock is taken — what the retention sweep or an erasure can do. The
+  // delete runs on the unhooked client, a connection of its own.
+  it('grants from a fresh window when the row is deleted between the insert and the lock', async () => {
+    const email = address('vanishing');
+    await spend(email, HANDOFF_EMAIL_MAX_ATTEMPTS);
+
+    let hookCalls = 0;
+    const racing = db.$extends({
+      query: {
+        handoffAttemptBudget: {
+          async createMany({ args, query }) {
+            hookCalls += 1;
+            const ours = await query(args);
+            if (hookCalls === 1) await db.handoffAttemptBudget.delete({ where: { email } });
+            return ours;
+          },
+        },
+      },
+      // Same cast as the hooks above: `$extends` drops `$on`.
+    }) as unknown as PrismaClient;
+
+    expect(await reserveHandoffComparisons(racing, email, 2)).toBe(2);
+    expect(hookCalls).toBe(2);
+    expect((await budgetOf(email))?.attempts).toBe(2);
+  });
+
+  it('a window that has ended grants again and restarts at the given now', async () => {
+    const email = address('window');
+    await reserveHandoffComparisons(db, email, HANDOFF_EMAIL_MAX_ATTEMPTS);
+    expect(await reserveHandoffComparisons(db, email, 1)).toBe(0);
+
+    const now = new Date();
+    // One millisecond short of a full window: still spent.
+    await db.handoffAttemptBudget.update({
+      where: { email },
+      data: { windowStartsAt: new Date(now.getTime() - HANDOFF_EMAIL_WINDOW_MS + 1) },
+    });
+    expect(await reserveHandoffComparisons(db, email, 4, now)).toBe(0);
+
+    // Exactly one window old: ended.
+    await db.handoffAttemptBudget.update({
+      where: { email },
+      data: { windowStartsAt: new Date(now.getTime() - HANDOFF_EMAIL_WINDOW_MS) },
+    });
+    expect(await reserveHandoffComparisons(db, email, 4, now)).toBe(4);
+
+    const row = await budgetOf(email);
+    expect(row?.attempts).toBe(4);
+    expect(row?.windowStartsAt.getTime()).toBe(now.getTime());
+  });
+
+  it('spans tokens and nonces: misses spread across them exhaust one budget', async () => {
+    const email = address('spans');
+    const [n1, n2, n3] = [nonceFor('1'), nonceFor('2'), nonceFor('3')];
+    const t1 = await stamp(email, n1);
+    const t2 = await stamp(email, n2);
+    const t3 = await stamp(email, n3);
+    const wrong = wrongFor(t1.code, t2.code, t3.code);
+
+    // No token reaches the per-token limit.
+    for (let i = 0; i < 4; i++) await claimWithCode(db, asBrowserNonce(n1), wrong);
+    for (let i = 0; i < 4; i++) await claimWithCode(db, asBrowserNonce(n2), wrong);
+    for (let i = 0; i < 2; i++) await claimWithCode(db, asBrowserNonce(n3), wrong);
+
+    expect(await claimWithCode(db, asBrowserNonce(n3), t3.code)).toEqual({ kind: 'invalid' });
+    expect((await tokenRow(t3.token))?.handoffAttempts).toBe(2);
+  });
+
+  it('a claim spends one unit per code compared, not one per claim', async () => {
+    const email = address('per-code');
+    const nonce = nonceFor('per-code');
+    const codes: string[] = [];
+    for (let i = 0; i < 3; i++) codes.push((await stamp(email, nonce)).code);
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), wrongFor(...codes))).toEqual({
+      kind: 'invalid',
+    });
+    expect((await budgetOf(email))?.attempts).toBe(3);
+  });
+
+  /** Two stamped tokens for one address under one nonce, the older one moved
+   *  a minute back so newest-first is unambiguous, and the budget one short of
+   *  spent. */
+  async function oneLeft(label: string) {
+    const email = address(label);
+    const nonce = nonceFor(label);
+    const older = await stamp(email, nonce, '/older');
+    const newer = await stamp(email, nonce, '/newer');
+    await db.magicLinkToken.update({
+      where: { tokenHash: hashToken(older.token) },
+      data: { createdAt: new Date(Date.now() - 60_000) },
+    });
+    await spend(email, HANDOFF_EMAIL_MAX_ATTEMPTS - 1);
+    return { email, nonce, older, newer };
+  }
+
+  it('a partial grant compares the newest candidate, so the older code is refused', async () => {
+    const { nonce, older, newer } = await oneLeft('partial-older');
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), older.code)).toEqual({ kind: 'invalid' });
+    // The miss is charged to the candidate that was compared, and only to it.
+    expect((await tokenRow(older.token))?.handoffAttempts).toBe(0);
+    expect((await tokenRow(newer.token))?.handoffAttempts).toBe(1);
+  });
+
+  it('a partial grant still lets the newest candidate verify', async () => {
+    const { email, nonce, newer } = await oneLeft('partial-newer');
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), newer.code)).toEqual({
+      kind: 'verified',
+      email,
+      redirectTo: '/newer',
+      purpose: 'sign_in',
+    });
+  });
+
+  it('only granted candidates are compared: a spent address cannot match, another one can', async () => {
+    const a = address('a');
+    const b = address('b');
+    const nonce = nonceFor('ab');
+    const aStamp = await stamp(a, nonce);
+    const bStamp = await stamp(b, nonce);
+    await spend(a, HANDOFF_EMAIL_MAX_ATTEMPTS);
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), aStamp.code)).toEqual({ kind: 'invalid' });
+    expect(await claimWithCode(db, asBrowserNonce(nonce), bStamp.code)).toEqual({
+      kind: 'verified',
+      email: b,
+      redirectTo: null,
+      purpose: 'sign_in',
+    });
+  });
+
+  it('a spent budget leaves the same-browser path alone', async () => {
+    const email = address('same-browser');
+    const nonce = nonceFor('same-browser');
+    const { token } = await stamp(email, nonce);
+    await spend(email, HANDOFF_EMAIL_MAX_ATTEMPTS);
+
+    expect(await verifyWithHandoff(db, token, asBrowserNonce(nonce))).toEqual({
+      kind: 'verified',
+      email,
+      redirectTo: null,
+      purpose: 'sign_in',
+    });
+  });
+
+  it('refuses an address that is not lowercase', async () => {
+    await expect(
+      db.$executeRaw`INSERT INTO "HandoffAttemptBudget" (email, "windowStartsAt", attempts)
+                     VALUES (${`${RUN}-Upper@Example.com`}, now(), 0)`,
+    ).rejects.toThrow(/HandoffAttemptBudget_email_lowercase_check/);
+    // The same statement with a lowercase address is accepted, so the refusal
+    // above is the CHECK and nothing else about the statement.
+    await expect(
+      db.$executeRaw`INSERT INTO "HandoffAttemptBudget" (email, "windowStartsAt", attempts)
+                     VALUES (${address('lower')}, now(), 0)`,
+    ).resolves.toBe(1);
+  });
+
+  // Each claim below compares one candidate, the one under its own nonce, so
+  // a budget charged after comparing would let every claim compare. The
+  // budget row is held from a second connection until every claim is queued
+  // on its lock, so the claims demonstrably overlap.
+  it('concurrent claims across many nonces compare no more than the budget allows', async () => {
+    const email = address('race');
+    const nonces = Array.from({ length: 20 }, (_, i) => nonceFor(`race-${i}`));
+    // Written directly rather than minted: no rate limit applies, and every
+    // code is known to differ from the guess.
+    await db.magicLinkToken.createMany({
+      data: nonces.map((n, i) => ({
+        tokenHash: hashToken(crypto.randomBytes(32).toString('hex')),
+        email,
+        originBrowserHash: hashNonce(n),
+        handoffCode: String(100_000 + i),
+        expiresAt: new Date(Date.now() + 15 * 60_000),
+      })),
+    });
+    await db.handoffAttemptBudget.create({ data: { email, attempts: 0, windowStartsAt: new Date() } });
+
+    // Room for every claim's transaction at once. A smaller pool would queue
+    // some claims in the client, where they never reach the lock.
+    const url = new URL(process.env.DATABASE_URL!);
+    url.searchParams.set('connection_limit', String(nonces.length + 5));
+    const wide = new PrismaClient({ datasourceUrl: url.toString() });
+    const holder = new PrismaClient();
+    try {
+      let claims: Promise<Awaited<ReturnType<typeof claimWithCode>>[]> | undefined;
+      let waiting = 0;
+      await holder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "HandoffAttemptBudget" WHERE email = ${email} FOR UPDATE`;
+          claims = Promise.all(nonces.map((n) => claimWithCode(wide, asBrowserNonce(n), '999999')));
+          const deadline = Date.now() + 20_000;
+          while (waiting < nonces.length && Date.now() < deadline) {
+            const [row] = await db.$queryRaw<{ n: number }[]>`
+              SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE datname = current_database()
+                AND wait_event_type = 'Lock'
+                AND query ILIKE '%HandoffAttemptBudget%'`;
+            waiting = row?.n ?? 0;
+            if (waiting < nonces.length) await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        },
+        { timeout: 30_000 },
+      );
+      expect(waiting).toBe(nonces.length);
+
+      const results = await claims!;
+      expect(results.every((r) => r.kind === 'invalid')).toBe(true);
+
+      const rows = await db.magicLinkToken.findMany({ where: { email } });
+      expect(rows).toHaveLength(nonces.length);
+      expect(rows.reduce((sum, r) => sum + r.handoffAttempts, 0)).toBe(HANDOFF_EMAIL_MAX_ATTEMPTS);
+      expect((await budgetOf(email))?.attempts).toBe(HANDOFF_EMAIL_MAX_ATTEMPTS);
+    } finally {
+      await wide.$disconnect();
+      await holder.$disconnect();
+    }
+  }, 60_000);
 });
