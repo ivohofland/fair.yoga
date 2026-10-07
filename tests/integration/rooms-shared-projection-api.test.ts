@@ -1,7 +1,7 @@
 /**
  * Every API read of a room answers the shared projection (#768): the creator's
  * `notes`, `createdById` and timestamps never reach a teacher who did not
- * create the room, whichever of the six reads carries it.
+ * create the room, whichever read carries it.
  *
  * One fixture: teacher A writes a room with notes and shares it; teacher B
  * links it and has a class template on that link. Each case reads as B.
@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, teardownTeacher } from '../helpers';
+import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
@@ -21,6 +22,8 @@ let readerId = '';
 let readerAccountId = '';
 let readerToken = '';
 let roomId = '';
+let privateRoomId = '';
+let creatorToken = '';
 let teacherRoomId = '';
 let templateId = '';
 
@@ -66,6 +69,24 @@ beforeAll(async () => {
   });
   roomId = room.id;
 
+  creatorToken = await seedSession(prisma, creator.accountId);
+  const privateRoom = await prisma.room.create({
+    data: {
+      venueName: `Private Studio ${suffix}`,
+      address: `${suffix} Private St`,
+      city: 'Testville',
+      postcode: '1234PR',
+      floor: '2',
+      roomName: 'Private',
+      maxCapacity: 6,
+      equipment: ['blocks'],
+      notes: SECRET,
+      isPublic: false,
+      createdById: creator.id,
+    },
+  });
+  privateRoomId = privateRoom.id;
+
   const link = await prisma.teacherRoom.create({
     data: { teacherId: reader.id, roomId, capacityOverride: 8, rentalRate: 15 },
   });
@@ -97,7 +118,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.scheduleRule.deleteMany({ where: { teacherId: readerId } });
   await prisma.teacherRoom.deleteMany({ where: { roomId } });
-  await prisma.room.deleteMany({ where: { id: roomId } });
+  await prisma.room.deleteMany({ where: { id: { in: [roomId, privateRoomId].filter(Boolean) } } });
   await teardownTeacher(prisma, readerId, readerAccountId);
   await teardownTeacher(prisma, creatorId, creatorAccountId);
   await prisma.$disconnect();
@@ -162,5 +183,27 @@ describe('a teacher who did not create a shared room reads only its shared proje
   it('GET /api/class-templates/[id]', async () => {
     const { text, data } = await readAsReader(`/api/class-templates/${templateId}`);
     expectProjection((data as { teacherRoom: { room: Record<string, unknown> } }).teacherRoom.room, text);
+  });
+});
+
+describe('GET /api/rooms/[id] access (#768)', () => {
+  it('refuses another teacher a private room and leaks none of it', async () => {
+    const res = await fetch(`${BASE_URL}/api/rooms/${privateRoomId}`, { headers: cookie(readerToken) });
+    expect(res.status).toBe(403);
+    expect(await res.text()).not.toContain(SECRET);
+  });
+
+  it('answers 404 for an unknown id', async () => {
+    const res = await fetch(`${BASE_URL}/api/rooms/${crypto.randomUUID()}`, { headers: cookie(readerToken) });
+    expect(res.status).toBe(404);
+  });
+
+  it("answers the creator's own private room with the projection only", async () => {
+    const res = await fetch(`${BASE_URL}/api/rooms/${privateRoomId}`, { headers: cookie(creatorToken) });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(SECRET);
+    const room = (JSON.parse(text) as { data: Record<string, unknown> }).data;
+    expect(Object.keys(room).sort()).toEqual(Object.keys(SHARED_ROOM_SELECT).sort());
   });
 });
