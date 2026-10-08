@@ -1,21 +1,62 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { requireCronAuth } from './cron-auth';
+import { requireCronAuth, hasCronSecret } from './cron-auth';
 
 /**
- * `requireCronAuth` is the shared guard on all five `/api/cron/*` routes, and
- * it is the only thing standing between a stranger and a sweep that generates
- * classes, sends email, or transitions class states.
+ * `requireCronAuth` and `hasCronSecret` guard all five `/api/cron/*` routes,
+ * standing between a stranger and sweeps that generate classes, send email, or
+ * transition class states. `hasCronSecret` performs constant-time comparison to
+ * prevent timing attacks; `requireCronAuth` wraps it and returns HTTP responses
+ * (null to allow, NextResponse to reject).
  *
  * Per `docs/technical-architecture.md`, a shared guard earns coverage **once**,
  * at the helper — not a ladder repeated across every route that calls it. The
  * five cron routes are otherwise a guard plus a service call whose sweeps are
  * already unit-tested, so this file is what #53 needed from them.
- *
- * Note it returns `null` to mean "allowed" and a `NextResponse` to mean
- * "rejected" — the inverse of the truthiness a reader might expect, which is
- * why each case asserts the shape rather than just falsiness.
  */
+
+const req = (authorization?: string) =>
+  new NextRequest('http://localhost:3000/api/cron/generate-classes', {
+    method: 'POST',
+    ...(authorization ? { headers: { authorization } } : {}),
+  });
+
+describe('hasCronSecret', () => {
+  const original = process.env.CRON_SECRET;
+  afterEach(() => {
+    if (original === undefined) delete process.env.CRON_SECRET;
+    else process.env.CRON_SECRET = original;
+  });
+
+  it('is true for the configured secret', () => {
+    process.env.CRON_SECRET = 'right-secret';
+    expect(hasCronSecret(req('Bearer right-secret'))).toBe(true);
+  });
+
+  it('is false for a wrong secret of the same length', () => {
+    process.env.CRON_SECRET = 'right-secret';
+    expect(hasCronSecret(req('Bearer wrong-secret'))).toBe(false);
+  });
+
+  it('is false for a wrong secret of another length, without throwing', () => {
+    process.env.CRON_SECRET = 'right-secret';
+    expect(hasCronSecret(req('Bearer x'))).toBe(false);
+    expect(hasCronSecret(req('Bearer right-secret-and-more'))).toBe(false);
+  });
+
+  it('is false with no header', () => {
+    process.env.CRON_SECRET = 'right-secret';
+    expect(hasCronSecret(req())).toBe(false);
+  });
+
+  it('is false when no secret is configured, or it is empty', () => {
+    delete process.env.CRON_SECRET;
+    expect(hasCronSecret(req('Bearer '))).toBe(false);
+    process.env.CRON_SECRET = '';
+    expect(hasCronSecret(req('Bearer '))).toBe(false);
+  });
+});
+
 describe('requireCronAuth', () => {
   const original = process.env.CRON_SECRET;
 
@@ -23,12 +64,6 @@ describe('requireCronAuth', () => {
     if (original === undefined) delete process.env.CRON_SECRET;
     else process.env.CRON_SECRET = original;
   });
-
-  const req = (authorization?: string) =>
-    new NextRequest('http://localhost:3000/api/cron/generate-classes', {
-      method: 'POST',
-      ...(authorization ? { headers: { authorization } } : {}),
-    });
 
   it('allows a request carrying the configured secret', () => {
     process.env.CRON_SECRET = 'right-secret';
