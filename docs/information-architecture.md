@@ -218,6 +218,9 @@ Settings
 ├── Add to Home Screen
 │   └── Only where this browser can install the app: iOS Safari, and a browser whose own install prompt is already used, get the steps in words; a live Chromium install prompt opens the browser's own dialog. Students have the same row on Account
 │
+├── Report a problem
+│   └── Opens CONTRIBUTING.md#teachers-and-students on GitHub in a new tab: the issue forms and hello@fair.yoga. Not the issue chooser, which sends a signed-out visitor to GitHub's sign-in. Students have the same row on Account
+│
 └── Personal page preview
     └── See what students see
 ```
