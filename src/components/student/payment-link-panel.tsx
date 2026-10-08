@@ -36,7 +36,8 @@ export function PaymentLinkPanel({ url, host, amount, currency, reference }: Pay
         rel="noopener noreferrer"
         className="mt-3 inline-flex items-center justify-center gap-2 rounded-pill px-6 min-h-12 text-base font-semibold w-full sm:w-auto focus:outline-none focus-visible:shadow-focus border-[1.5px] border-transparent bg-teal text-cream hover:bg-teal-hover active:bg-teal-pressed no-underline text-center break-all"
       >
-        Pay via {host}
+        Pay via {host}{' '}
+        <span className="sr-only">(opens in a new tab)</span>
       </a>
       <p className="type-caption mt-2">Your teacher marks it as received once it arrives.</p>
     </>

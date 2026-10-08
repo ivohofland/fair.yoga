@@ -22,7 +22,7 @@ describe('PaymentLinkPanel', () => {
 
   it('links to the teacher’s page in a new tab, labelled with where it goes', () => {
     renderPanel();
-    const link = screen.getByRole('link', { name: 'Pay via revolut.me' });
+    const link = screen.getByRole('link', { name: 'Pay via revolut.me (opens in a new tab)' });
     expect(link).toHaveAttribute('href', 'https://revolut.me/anna');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
