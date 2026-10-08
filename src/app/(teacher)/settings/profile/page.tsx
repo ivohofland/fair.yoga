@@ -7,6 +7,7 @@ import { ProfilePhotoField } from '@/components/settings/profile-photo-field';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
 import { AccountSecurity } from '@/components/account/account-security';
 import { BankAccountForm } from '@/components/settings/bank-account-form';
+import { PaymentLinkForm } from '@/components/settings/payment-link-form';
 import { bankAccountDataSelect, accountInCurrency } from '@/lib/payment-methods';
 import { maskedIdentifier } from '@/lib/bank-details';
 
@@ -60,6 +61,8 @@ export default async function ProfilePage() {
         hasAccount={current !== null}
         others={others}
       />
+
+      <PaymentLinkForm teacherId={teacher.id} initial={teacher.paymentLink ?? ''} hasLink={teacher.paymentLink !== null} />
 
       <section className="mt-10 pt-6 border-t border-border">
         <h2 className="type-subtitle mb-3">Sign-in</h2>

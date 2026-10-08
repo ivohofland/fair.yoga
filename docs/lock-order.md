@@ -2045,6 +2045,12 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   `deletedAt: null`, writes nothing once the erasure commits. The PUT answers
   404. Without that scope it re-matched the anonymised row by `id` and wrote
   the PUT's profile fields back onto it.
+- The payment-link save and removal (`savePaymentLink` and
+  `removePaymentLink`, `src/services/payment-link.ts`, behind
+  `PUT`/`DELETE /api/teachers/[id]/payment-link`) take no explicit lock. Each
+  writes with a `teacher.updateMany` scoped to `deletedAt: null`, which waits
+  on an erasure's hold and, once the erasure commits, matches nothing and
+  answers 404. `src/services/payment-link.test.ts`'s race test pins it.
 - The currency switch (`switchTeacherCurrency`,
   `src/services/currency-switch.ts`), which the same save runs when the body
   names a `currency`, in one transaction with the other fields:
