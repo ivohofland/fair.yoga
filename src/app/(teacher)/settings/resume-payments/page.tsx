@@ -175,7 +175,16 @@ export default async function ResumePaymentsPage() {
         </p>
       </section>
 
-      {blocked ? (
+      {blocked && review.passkeyRemoved ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="type-subtitle">Payments stay paused for now</h2>
+          {review.fallbackOpensAt !== null && (
+            <p className="type-body">
+              {`A passkey on this account was removed recently; resuming opens on ${when(review.fallbackOpensAt, timeZone)}.`}
+            </p>
+          )}
+        </section>
+      ) : blocked ? (
         <section className="flex flex-col gap-3">
           <h2 className="type-subtitle">Sign in with your passkey to resume</h2>
           <p className="type-body">

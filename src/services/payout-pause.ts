@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { signOutEverywhereTx } from '@/services/account-sign-out';
@@ -42,6 +42,25 @@ function tokenEventOrFloor(tokenEventAt: Date, paymentsResumedAt: Date | null, f
 /** A passkey created at or after this instant is not trusted to resume. */
 export function pausePasskeyCutoff(windowStart: Date): Date {
   return new Date(windowStart.getTime() - PAUSE_PASSKEY_LOOKBACK_DAYS * DAY_MS);
+}
+
+/**
+ * Whether the account holds a passkey created before `cutoff`, or removed one
+ * at or after `cutoff`: a removal inside the lookback must not lift the
+ * requirement the passkey would have set
+ * (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
+ * Decision 4). The standing passkeys are read first: `deletePasskey` deletes
+ * and records in one transaction, so a removal committing between the two
+ * reads moves its passkey from the first read's set into the second's, never
+ * out of both.
+ */
+async function heldPasskeyBefore(tx: Prisma.TransactionClient, accountId: string, cutoff: Date): Promise<boolean> {
+  const standing = await tx.passkeyCredential.count({ where: { accountId, createdAt: { lt: cutoff } } });
+  if (standing > 0) return true;
+  const removed = await tx.removedPasskey.count({
+    where: { accountId, credentialCreatedAt: { lt: cutoff }, removedAt: { gte: cutoff } },
+  });
+  return removed > 0;
 }
 
 /**
@@ -91,10 +110,10 @@ export async function pausePayments(db: PrismaClient, rawToken: string, now: Dat
     const cutoff = pausePasskeyCutoff(windowStart);
 
     if (teacher.paymentsPausedAt === null) {
-      const trusted = await tx.passkeyCredential.count({ where: { accountId: teacher.accountId, createdAt: { lt: cutoff } } });
+      const required = await heldPasskeyBefore(tx, teacher.accountId, cutoff);
       await tx.teacher.update({
         where: { id: token.teacherId },
-        data: { paymentsPausedAt: now, pauseWindowStart: windowStart, pausePasskeyCutoff: trusted > 0 ? cutoff : null },
+        data: { paymentsPausedAt: now, pauseWindowStart: windowStart, pausePasskeyCutoff: required ? cutoff : null },
       });
     }
 
@@ -104,6 +123,8 @@ export async function pausePayments(db: PrismaClient, rawToken: string, now: Dat
     // eligible to resume.
     const frozen = teacher.pausePasskeyCutoff;
     const removeFrom = frozen !== null && frozen > cutoff ? frozen : cutoff;
+    // No `RemovedPasskey` for these: each was created at or after a cutoff, so
+    // could never count toward one.
     await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId, createdAt: { gte: removeFrom } } });
     return { status: 'paused' };
   });

@@ -258,17 +258,20 @@ enum PayoutChangeKind {
 
 /// One change to where a teacher's students pay. `before`/`after` are masked
 /// strings only, never the stored value. `accountCurrency` names which bank
-/// account changed; it is not a frozen price.
+/// account changed; it is not a frozen price. `identifierChanged`, set on the
+/// two `_changed` kinds only, says whether the full account number or link
+/// differs, which equal masks cannot tell.
 model PayoutChangeEvent {
-  id              String             @id @default(uuid())
-  teacherId       String
-  kind            PayoutChangeKind
-  accountCurrency Currency?
-  before          String?
-  after           String?
-  createdAt       DateTime           @default(now())
-  teacher         Teacher            @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  pauseTokens     PayoutPauseToken[]
+  id                String             @id @default(uuid())
+  teacherId         String
+  kind              PayoutChangeKind
+  accountCurrency   Currency?
+  before            String?
+  after             String?
+  identifierChanged Boolean?
+  createdAt         DateTime           @default(now())
+  teacher           Teacher            @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  pauseTokens       PayoutPauseToken[]
 
   @@index([teacherId, createdAt])
 }
@@ -1297,6 +1300,19 @@ model PasskeyCredential {
   transports String[]
   createdAt  DateTime  @default(now())
   sessions   Session[]
+
+  @@index([accountId])
+}
+
+/// A passkey its owner removed: when the removed credential was created and
+/// when it went. A pause reads these so that removing the passkeys before
+/// pausing does not lift the passkey requirement
+/// (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`, Decision 4).
+model RemovedPasskey {
+  id                  String   @id @default(uuid())
+  accountId           String
+  credentialCreatedAt DateTime
+  removedAt           DateTime @default(now())
 
   @@index([accountId])
 }

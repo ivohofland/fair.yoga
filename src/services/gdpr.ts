@@ -812,6 +812,7 @@ export async function deleteStudentAccount(
       if (!teacherOnAccount) {
         await tx.session.deleteMany({ where: { accountId: student.accountId } });
         await tx.passkeyCredential.deleteMany({ where: { accountId: student.accountId } });
+        await tx.removedPasskey.deleteMany({ where: { accountId: student.accountId } });
         await tx.pushSubscription.deleteMany({ where: { accountId: student.accountId } });
         // Last live profile erased: the account email is PII too.
         await tx.account.update({
@@ -1570,6 +1571,7 @@ export async function deleteTeacherAccount(
         if (!studentOnAccount) {
           await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
           await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
+          await tx.removedPasskey.deleteMany({ where: { accountId: teacher.accountId } });
           await tx.pushSubscription.deleteMany({ where: { accountId: teacher.accountId } });
           // Last live profile erased: the account email is PII too.
           await tx.account.update({

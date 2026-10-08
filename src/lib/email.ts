@@ -3,6 +3,7 @@ import {
   renderMagicLinkEmail,
   renderInvitationEmail,
   renderPasskeyAddedEmail,
+  renderPasskeyRemovedEmail,
   renderPayoutChangedEmail,
   type PayoutChangedEmailInput,
 } from '@/lib/email-templates';
@@ -115,6 +116,26 @@ export async function sendPasskeyAddedEmail(to: string, addedAt: Date): Promise<
 
   if (error) {
     throw new Error(`Failed to send passkey-added email: ${error.message}`);
+  }
+}
+
+/** Sends the passkey-removed notice, the way `sendPasskeyAddedEmail` sends the added one. */
+export async function sendPasskeyRemovedEmail(to: string, removedAt: Date): Promise<void> {
+  if (emailDryRun()) {
+    log.info({}, 'passkey-removed email dry-run');
+    return;
+  }
+
+  const { subject, html } = renderPasskeyRemovedEmail(removedAt);
+  const { error } = await resend().emails.send({
+    from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
+    to,
+    subject,
+    html,
+  });
+
+  if (error) {
+    throw new Error(`Failed to send passkey-removed email: ${error.message}`);
   }
 }
 

@@ -118,6 +118,11 @@ export interface ResumeReview {
   fingerprint: string;
   passkeyRequired: boolean;
   sessionSatisfiesPasskey: boolean;
+  /**
+   * The requirement stands but no passkey created before the cutoff is left:
+   * it was set by a removed one, so only the fallback can open the resume.
+   */
+  passkeyRemoved: boolean;
   fallbackOpensAt: Date | null;
 }
 
@@ -217,6 +222,11 @@ export async function readResumeReview(
     readPayoutDetails(db, teacherId),
     passkeyGate(db, { ...teacher, paymentsPausedAt: pausedAt }, sessionId, now),
   ]);
+  const cutoff = teacher.pausePasskeyCutoff;
+  const passkeyRemoved =
+    gate.required &&
+    cutoff !== null &&
+    (await db.passkeyCredential.count({ where: { accountId: teacher.accountId, createdAt: { lt: cutoff } } })) === 0;
 
   return {
     pausedAt,
@@ -228,6 +238,7 @@ export async function readResumeReview(
     fingerprint: payoutFingerprint(details),
     passkeyRequired: gate.required,
     sessionSatisfiesPasskey: gate.satisfied,
+    passkeyRemoved,
     fallbackOpensAt: gate.fallbackOpensAt,
   };
 }
