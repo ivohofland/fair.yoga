@@ -686,7 +686,9 @@ prefetching it — without ever asking the user which one this is:
 3. Resend delivers email with link to /verify?token=xxx
 4. /verify checks the opening browser's nonce against the bound hash:
    - matching nonce: consumes the token, creates a session cookie (httpOnly,
-     secure, sameSite)
+     secure, sameSite). Writes are also refused cross-origin in
+     `withErrorHandler` (`src/lib/cross-origin.ts`), so SameSite=Lax is not
+     the only CSRF layer.
    - no cookie, or another browser's: consumes nothing — stamps a one-time
      6-digit code on the token instead and shows it, for the browser that
      actually asked for the link to redeem via POST /api/auth/magic-link/claim

@@ -531,6 +531,34 @@ function firstLoggedMerge(fn: typeof log.error): Record<string, unknown> {
 }
 
 describe('withErrorHandler', () => {
+  it('refuses a cross-origin write with CROSS_ORIGIN and never runs the handler', async () => {
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    const wrapped = withErrorHandler(handler);
+
+    const res = await wrapped(
+      makeRequest('http://localhost:3000/api/test', {
+        method: 'POST',
+        headers: { host: 'localhost:3000', origin: 'https://evil.example' },
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('CROSS_ORIGIN');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('runs the handler for a same-origin write', async () => {
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    const res = await withErrorHandler(handler)(
+      makeRequest('http://localhost:3000/api/test', {
+        method: 'POST',
+        headers: { host: 'localhost:3000', origin: 'http://localhost:3000' },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   beforeEach(() => {
     vi.mocked(log.error).mockClear();
     vi.mocked(log.warn).mockClear();
