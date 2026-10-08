@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient, Prisma, type PayoutChangeEvent } from '@prisma/client';
 import { savePaymentLink, removePaymentLink } from './payment-link';
 import { uniqueSuffix } from '../../tests/helpers';
 
@@ -44,27 +44,31 @@ function latch(): { promise: Promise<void>; open: () => void } {
 }
 
 /**
- * Polls until some backend waits on a lock `holderPid` holds. No deadline of
- * its own: a call that never parks ends the test at vitest's timeout.
+ * Polls until some backend waits on a lock `holderPid` holds, and answers the
+ * statement it waits in. No deadline of its own: a call that never parks ends
+ * the test at vitest's timeout.
  */
-async function waitForWaiter(holderPid: number, settled: () => boolean): Promise<boolean> {
+async function waitForWaiter(holderPid: number, settled: () => boolean): Promise<string | null> {
   while (!settled()) {
-    const [row] = await prisma.$queryRaw<Array<{ pid: number }>>`
-      SELECT pid FROM pg_stat_activity
+    const [row] = await prisma.$queryRaw<Array<{ query: string }>>`
+      SELECT query FROM pg_stat_activity
        WHERE wait_event_type = 'Lock'
          AND ${holderPid} = ANY(pg_blocking_pids(pid))
        LIMIT 1`;
-    if (row !== undefined) return true;
+    if (row !== undefined) return row.query;
     await new Promise((r) => setTimeout(r, 25));
   }
-  return false;
+  return null;
 }
 
 /**
- * Runs `call` while a second connection holds the teacher's row with an
- * uncommitted erasure, and commits that erasure once `call` is parked on it.
+ * Runs `call` while a second connection holds `hold`'s locks and writes
+ * uncommitted, and commits them once `call` is parked behind them.
  */
-async function raceBehindErasure<T>(teacherId: string, call: () => Promise<T>): Promise<{ result: T; parked: boolean }> {
+async function raceBehind<T>(
+  hold: (tx: Prisma.TransactionClient) => Promise<void>,
+  call: () => Promise<T>,
+): Promise<{ result: T; parked: boolean; waitedIn: string | null }> {
   const holder = new PrismaClient();
   const held = latch();
   const release = latch();
@@ -73,8 +77,7 @@ async function raceBehindErasure<T>(teacherId: string, call: () => Promise<T>): 
     const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
     if (row === undefined) throw new Error('pg_backend_pid returned no row');
     holderPid = row.pid;
-    await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${teacherId} FOR NO KEY UPDATE`;
-    await tx.$executeRaw`UPDATE "Teacher" SET "deletedAt" = now() WHERE id = ${teacherId}`;
+    await hold(tx);
     held.open();
     await release.promise;
   }, { timeout: 60_000 });
@@ -83,10 +86,10 @@ async function raceBehindErasure<T>(teacherId: string, call: () => Promise<T>): 
     let settled = false;
     const pending = call().finally(() => { settled = true; });
     void pending.catch(() => undefined);
-    const parked = await waitForWaiter(holderPid, () => settled);
+    const waitedIn = await waitForWaiter(holderPid, () => settled);
     release.open();
     await holding;
-    return { result: await pending, parked };
+    return { result: await pending, parked: waitedIn !== null, waitedIn };
   } finally {
     release.open();
     await holding.catch(() => undefined);
@@ -94,11 +97,46 @@ async function raceBehindErasure<T>(teacherId: string, call: () => Promise<T>): 
   }
 }
 
+/** Runs `call` behind an uncommitted erasure of the teacher's row. */
+function raceBehindErasure<T>(teacherId: string, call: () => Promise<T>): Promise<{ result: T; parked: boolean; waitedIn: string | null }> {
+  return raceBehind(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${teacherId} FOR NO KEY UPDATE`;
+    await tx.$executeRaw`UPDATE "Teacher" SET "deletedAt" = now() WHERE id = ${teacherId}`;
+  }, call);
+}
+
+/**
+ * Runs `call` while a second connection holds the teacher's row `FOR SHARE`,
+ * which conflicts with `FOR NO KEY UPDATE` and with no weaker first lock.
+ */
+function raceBehindShareHold<T>(teacherId: string, call: () => Promise<T>): Promise<{ result: T; parked: boolean; waitedIn: string | null }> {
+  return raceBehind(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${teacherId} FOR SHARE`;
+  }, call);
+}
+
+type EventRow = Pick<PayoutChangeEvent, 'id' | 'kind' | 'accountCurrency' | 'before' | 'after'>;
+
+async function events(teacherId: string): Promise<EventRow[]> {
+  return prisma.payoutChangeEvent.findMany({
+    where: { teacherId },
+    select: { id: true, kind: true, accountCurrency: true, before: true, after: true },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+/** Fails when any event column holds `secret` whole. */
+async function expectNoEventHolds(teacherId: string, secret: string): Promise<void> {
+  const rows = await prisma.payoutChangeEvent.findMany({ where: { teacherId } });
+  expect(rows.length).toBeGreaterThan(0);
+  expect(JSON.stringify(rows)).not.toContain(secret);
+}
+
 describe('savePaymentLink', () => {
   it('saves the parsed link', async () => {
     const teacherId = await makeTeacher();
     expect(await savePaymentLink(prisma, teacherId, '  https://revolut.me/anna\n')).toEqual({
-      kind: 'saved', paymentLink: 'https://revolut.me/anna',
+      kind: 'saved', paymentLink: 'https://revolut.me/anna', eventId: expect.any(String),
     });
     expect(await storedLink(teacherId)).toBe('https://revolut.me/anna');
   });
@@ -106,7 +144,7 @@ describe('savePaymentLink', () => {
   it('replaces a different stored link', async () => {
     const teacherId = await makeTeacher('https://revolut.me/old');
     expect(await savePaymentLink(prisma, teacherId, 'https://revolut.me/anna')).toEqual({
-      kind: 'saved', paymentLink: 'https://revolut.me/anna',
+      kind: 'saved', paymentLink: 'https://revolut.me/anna', eventId: expect.any(String),
     });
     expect(await storedLink(teacherId)).toBe('https://revolut.me/anna');
   });
@@ -116,6 +154,7 @@ describe('savePaymentLink', () => {
     expect(await savePaymentLink(prisma, teacherId, 'HTTPS://revolut.me/anna')).toEqual({
       kind: 'unchanged', paymentLink: 'https://revolut.me/anna',
     });
+    expect(await events(teacherId)).toEqual([]);
   });
 
   it('refuses a link that does not parse, and stores nothing', async () => {
@@ -129,6 +168,7 @@ describe('savePaymentLink', () => {
     await erase(teacherId);
     expect(await savePaymentLink(prisma, teacherId, 'https://revolut.me/anna')).toEqual({ kind: 'teacher_gone' });
     expect(await storedLink(teacherId)).toBe('https://revolut.me/old');
+    expect(await events(teacherId)).toEqual([]);
   });
 
   it('answers teacher_gone when it waited behind an erasure, and writes nothing', async () => {
@@ -136,19 +176,87 @@ describe('savePaymentLink', () => {
     const { result, parked } = await raceBehindErasure(teacherId, () => savePaymentLink(prisma, teacherId, 'https://revolut.me/anna'));
     expect({ parked, result }).toEqual({ parked: true, result: { kind: 'teacher_gone' } });
     expect(await storedLink(teacherId)).toBeNull();
+    expect(await events(teacherId)).toEqual([]);
   }, 20_000);
+
+  // The link writers take the teacher row `FOR NO KEY UPDATE` as their first
+  // statement (`docs/lock-order.md`, "The `Teacher` row is the first lock"),
+  // so a `FOR SHARE` holder parks them there, before they read. Their later
+  // `UPDATE` would park too, which is why the test names the statement.
+  it('waits in its first lock behind a FOR SHARE hold on the teacher row, then saves (#786)', async () => {
+    const teacherId = await makeTeacher();
+    const { result, waitedIn } = await raceBehindShareHold(teacherId, () => savePaymentLink(prisma, teacherId, 'https://revolut.me/annayoga'));
+    expect({ waitedInFirstLock: waitedIn?.includes('FOR NO KEY UPDATE') ?? false, kind: result.kind }).toEqual({ waitedInFirstLock: true, kind: 'saved' });
+  }, 20_000);
+
+  it('reads the link it replaces under its lock, so a save it waited behind is the before (#786)', async () => {
+    const teacherId = await makeTeacher('https://revolut.me/original');
+    const { result, parked } = await raceBehind(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${teacherId} FOR NO KEY UPDATE`;
+      await tx.$executeRaw`UPDATE "Teacher" SET "paymentLink" = 'https://monzo.me/racerlink' WHERE id = ${teacherId}`;
+    }, () => savePaymentLink(prisma, teacherId, 'https://paypal.me/annayoga'));
+    expect({ parked, kind: result.kind }).toEqual({ parked: true, kind: 'saved' });
+    expect(await events(teacherId)).toMatchObject([
+      { kind: 'payment_link_changed', before: 'monzo.me/…link', after: 'paypal.me/…yoga' },
+    ]);
+  }, 20_000);
+});
+
+describe('savePaymentLink records a payout-change event (#786)', () => {
+  it('records an add with no before and the masked link after, and returns its id', async () => {
+    const teacherId = await makeTeacher();
+    const out = await savePaymentLink(prisma, teacherId, 'https://revolut.me/annayoga');
+    if (out.kind !== 'saved') throw new Error(`expected saved, got ${out.kind}`);
+    expect(await events(teacherId)).toEqual([
+      { id: out.eventId, kind: 'payment_link_added', accountCurrency: null, before: null, after: 'revolut.me/…yoga' },
+    ]);
+    await expectNoEventHolds(teacherId, 'annayoga');
+  });
+
+  it('records a change with both links masked', async () => {
+    const teacherId = await makeTeacher('https://revolut.me/oldteacher');
+    const out = await savePaymentLink(prisma, teacherId, 'https://paypal.me/annayoga');
+    if (out.kind !== 'saved') throw new Error(`expected saved, got ${out.kind}`);
+    expect(await events(teacherId)).toEqual([
+      { id: out.eventId, kind: 'payment_link_changed', accountCurrency: null, before: 'revolut.me/…cher', after: 'paypal.me/…yoga' },
+    ]);
+    await expectNoEventHolds(teacherId, 'oldteacher');
+    await expectNoEventHolds(teacherId, 'annayoga');
+  });
+
+  // The column's CHECK admits any https value; the parser also refuses userinfo.
+  it('masks a stored link that no longer parses as an unreadable link', async () => {
+    const teacherId = await makeTeacher('https://revolut.me@evil.example/oldteacher');
+    const out = await savePaymentLink(prisma, teacherId, 'https://paypal.me/annayoga');
+    if (out.kind !== 'saved') throw new Error(`expected saved, got ${out.kind}`);
+    expect(await events(teacherId)).toMatchObject([
+      { kind: 'payment_link_changed', before: 'an unreadable link', after: 'paypal.me/…yoga' },
+    ]);
+    await expectNoEventHolds(teacherId, 'oldteacher');
+  });
 });
 
 describe('removePaymentLink', () => {
   it('removes a stored link', async () => {
     const teacherId = await makeTeacher('https://revolut.me/anna');
-    expect(await removePaymentLink(prisma, teacherId)).toEqual({ kind: 'removed' });
+    expect(await removePaymentLink(prisma, teacherId)).toEqual({ kind: 'removed', eventId: expect.any(String) });
     expect(await storedLink(teacherId)).toBeNull();
   });
 
-  it('answers absent when there is no link', async () => {
+  it('records the removal with the masked link before, and returns its id (#786)', async () => {
+    const teacherId = await makeTeacher('https://revolut.me/annayoga');
+    const out = await removePaymentLink(prisma, teacherId);
+    if (out.kind !== 'removed') throw new Error(`expected removed, got ${out.kind}`);
+    expect(await events(teacherId)).toEqual([
+      { id: out.eventId, kind: 'payment_link_removed', accountCurrency: null, before: 'revolut.me/…yoga', after: null },
+    ]);
+    await expectNoEventHolds(teacherId, 'annayoga');
+  });
+
+  it('answers absent when there is no link, and records nothing', async () => {
     const teacherId = await makeTeacher();
     expect(await removePaymentLink(prisma, teacherId)).toEqual({ kind: 'absent' });
+    expect(await events(teacherId)).toEqual([]);
   });
 
   it('answers teacher_gone for an erased teacher and leaves the column alone', async () => {
@@ -156,6 +264,7 @@ describe('removePaymentLink', () => {
     await erase(teacherId);
     expect(await removePaymentLink(prisma, teacherId)).toEqual({ kind: 'teacher_gone' });
     expect(await storedLink(teacherId)).toBe('https://revolut.me/anna');
+    expect(await events(teacherId)).toEqual([]);
   });
 
   it('answers teacher_gone when it waited behind an erasure, and removes nothing', async () => {
@@ -163,5 +272,12 @@ describe('removePaymentLink', () => {
     const { result, parked } = await raceBehindErasure(teacherId, () => removePaymentLink(prisma, teacherId));
     expect({ parked, result }).toEqual({ parked: true, result: { kind: 'teacher_gone' } });
     expect(await storedLink(teacherId)).toBe('https://revolut.me/anna');
+    expect(await events(teacherId)).toEqual([]);
+  }, 20_000);
+
+  it('waits in its first lock behind a FOR SHARE hold on the teacher row, then removes (#786)', async () => {
+    const teacherId = await makeTeacher('https://revolut.me/annayoga');
+    const { result, waitedIn } = await raceBehindShareHold(teacherId, () => removePaymentLink(prisma, teacherId));
+    expect({ waitedInFirstLock: waitedIn?.includes('FOR NO KEY UPDATE') ?? false, kind: result.kind }).toEqual({ waitedInFirstLock: true, kind: 'removed' });
   }, 20_000);
 });

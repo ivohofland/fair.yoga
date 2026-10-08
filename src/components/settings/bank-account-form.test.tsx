@@ -133,6 +133,22 @@ describe('BankAccountForm', () => {
     expect(screen.getByLabelText('BIC (needed for an IBAN outside the EEA)')).toHaveValue('');
   });
 
+  // A re-save of what is stored answers 200 with `outcome: 'unchanged'` and
+  // the stored row (#786): the form shows it exactly as it shows a save.
+  it('treats an unchanged answer as saved, showing the stored values', async () => {
+    const data = { id: 'a1', teacherId: 't1', currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ data, outcome: 'unchanged' }), { status: 200 }));
+    renderForm('EUR');
+    fireEvent.change(screen.getByLabelText('IBAN'), { target: { value: 'nl91 abna 0417 1643 00' } });
+    fireEvent.change(screen.getByLabelText('Account holder name'), { target: { value: 'A. Teacher' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save bank details' }));
+
+    await waitFor(() => expect(screen.getByText('Saved')).toBeInTheDocument());
+    expect(screen.getByLabelText('IBAN')).toHaveValue('NL91ABNA0417164300');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(routerRefresh).toHaveBeenCalled();
+  });
+
   it('marks the BIC field on a BIC_REQUIRED refusal', async () => {
     fetchMock.mockResolvedValue(new Response(
       JSON.stringify({ error: { code: 'BIC_REQUIRED', message: 'bic: Add the BIC. This IBAN is from outside the EEA.' } }),

@@ -43,3 +43,16 @@ export function paymentLinkFromColumn(stored: string | null): ParsedPaymentLink 
   const parsed = parsePaymentLink(stored);
   return parsed.ok ? { url: parsed.url, host: parsed.host } : null;
 }
+
+/**
+ * A stored link as its host and the last four characters of its path, the
+ * way `maskedIdentifier` shows a bank account: `revolut.me/…cher`. The query
+ * and fragment are left out; a link with no path shows its host alone. A
+ * value that does not parse shows none of itself.
+ */
+export function maskPaymentLink(raw: string): string {
+  const parsed = parsePaymentLink(raw);
+  if (!parsed.ok) return 'an unreadable link';
+  const path = new URL(parsed.url).pathname.replace(/^\/+|\/+$/g, '');
+  return path === '' ? parsed.host : `${parsed.host}/…${path.slice(-4)}`;
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePaymentLink, paymentLinkFromColumn, PAYMENT_LINK_MESSAGES } from './payment-link';
+import { parsePaymentLink, paymentLinkFromColumn, maskPaymentLink, PAYMENT_LINK_MESSAGES } from './payment-link';
 import { PAYMENT_LINK_MAX } from './input-bounds';
 
 describe('parsePaymentLink', () => {
@@ -57,5 +57,29 @@ describe('PAYMENT_LINK_MESSAGES', () => {
   it('names the scheme for the two failures a teacher fixes by adding it', () => {
     expect(PAYMENT_LINK_MESSAGES.invalid).toContain('https://');
     expect(PAYMENT_LINK_MESSAGES.not_https).toContain('https://');
+  });
+});
+
+describe('maskPaymentLink', () => {
+  it('shows the host and the last four characters of the path', () => {
+    expect(maskPaymentLink('https://revolut.me/teacher')).toBe('revolut.me/…cher');
+  });
+  it('drops a leading www and a trailing slash before taking the tail', () => {
+    expect(maskPaymentLink('https://www.paypal.me/annayoga/')).toBe('paypal.me/…yoga');
+  });
+  it('takes the tail of a nested path, never the whole of it', () => {
+    const masked = maskPaymentLink('https://tikkie.me/pay/Yoga/abcdef1234');
+    expect(masked).toBe('tikkie.me/…1234');
+    expect(masked).not.toContain('abcdef');
+  });
+  it('ignores the query and fragment', () => {
+    expect(maskPaymentLink('https://monzo.me/sarahjones?amount=10#x')).toBe('monzo.me/…ones');
+  });
+  it('shows the host alone when the link has no path', () => {
+    expect(maskPaymentLink('https://pay.example.com/')).toBe('pay.example.com');
+  });
+  it('reads an unparseable value as an unreadable link, echoing none of it', () => {
+    expect(maskPaymentLink('http://revolut.me/teacher')).toBe('an unreadable link');
+    expect(maskPaymentLink('not a link at all')).toBe('an unreadable link');
   });
 });

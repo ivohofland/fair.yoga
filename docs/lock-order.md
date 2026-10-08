@@ -2047,10 +2047,15 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   the PUT's profile fields back onto it.
 - The payment-link save and removal (`savePaymentLink` and
   `removePaymentLink`, `src/services/payment-link.ts`, behind
-  `PUT`/`DELETE /api/teachers/[id]/payment-link`) take no explicit lock. Each
-  writes with a `teacher.updateMany` scoped to `deletedAt: null`, which waits
-  on an erasure's hold and, once the erasure commits, matches nothing and
-  answers 404. `src/services/payment-link.test.ts`'s race test pins it.
+  `PUT`/`DELETE /api/teachers/[id]/payment-link`): `lockTeacherForNoKeyUpdate`
+  as the first statement (#786), then a read of the stored link, the
+  `Teacher` `UPDATE` of that non-key column, and an insert of the
+  `PayoutChangeEvent` that records it. Reading under the lock makes the event's
+  "before" the link the write replaces: two saves serialise, and the second
+  reads what the first committed. A write arriving during an erasure waits on
+  the lock, finds the row erased and answers 404 without inserting an event.
+  `src/services/payment-link.test.ts` pins both: its erasure race, and a
+  `FOR SHARE` holder parking each writer in its first statement.
 - The currency switch (`switchTeacherCurrency`,
   `src/services/currency-switch.ts`), which the same save runs when the body
   names a `currency`, in one transaction with the other fields:
@@ -2091,17 +2096,24 @@ and the same raise in a currency-switching save that also changes `pageSlug`
 - The bank-account save and removal (`saveBankAccount` and
   `removeBankAccount`, `src/services/bank-accounts.ts`, behind
   `PUT`/`DELETE /api/teachers/[id]/bank-accounts/[currency]`):
-  `lockTeacherForShare` as the first and only lock, then an upsert or delete
-  of the one `TeacherBankAccount` row on `(teacherId, currency)`. An erasure
-  holds the row `FOR NO KEY UPDATE`, which conflicts with `FOR SHARE`, so a
-  save that arrives during one waits, finds the row erased and answers 404.
-  Without the lock the upsert's foreign-key `FOR KEY SHARE` is all that
-  touches the teacher row. It does not conflict with `FOR NO KEY UPDATE`, and
-  after the closing `UPDATE`'s raise it waits only for the erasure's commit
-  and then passes against the anonymised row, which the erasure keeps. Either
-  way the account it inserts outlives the erasure's delete.
+  `lockTeacherForNoKeyUpdate` as the first lock (#786; `lockTeacherForShare`
+  before it), then a read of the one `TeacherBankAccount` row on
+  `(teacherId, currency)`, its upsert or delete, and an insert of the
+  `PayoutChangeEvent` that records the change. A save whose values are
+  already stored writes nothing and inserts no event. Under `FOR SHARE` two
+  saves could both read the same row as "before"; this mode conflicts with
+  itself, so they serialise. It also conflicts with
+  the `FOR SHARE` creators above, which these writers now wait out and which
+  wait them out; neither side holds another lock the other wants. An erasure
+  holds the row `FOR NO KEY UPDATE`, so a save that arrives during one waits,
+  finds the row erased and answers 404. Without the lock the upsert's
+  foreign-key `FOR KEY SHARE` is all that touches the teacher row. It does
+  not conflict with `FOR NO KEY UPDATE`, and after the closing `UPDATE`'s
+  raise it waits only for the erasure's commit and then passes against the
+  anonymised row, which the erasure keeps. Either way the account it inserts
+  outlives the erasure's delete.
   `src/app/api/teachers/[id]/bank-accounts/[currency]/route-lock-order.test.ts`
-  pins this.
+  pins this, and that a `FOR SHARE` holder parks both writers.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
@@ -2116,19 +2128,21 @@ Re-derive the call sites with:
     grep -rnE "(lockTeacherForNoKeyUpdate|lockTeacherForShare|lockLiveTeacher)\(" src | grep -v "\.test\." | grep -v "db-locks.ts" | grep -vE ":[0-9]+: *(\*|//)"
 
 It prints call lines only: an import has no `(` after the name, and the last
-two filters drop the definitions and comment lines. Run on 2026-10-06 after the
-bank-account sites landed, it printed `classes/route.ts`,
-`studio-classes/route.ts`, `class-template-lifecycle.ts`,
+two filters drop the definitions and comment lines. Run on 2026-10-08 after
+the payout writers moved to `lockTeacherForNoKeyUpdate` (#786), it printed
+`classes/route.ts`, `studio-classes/route.ts`, `class-template-lifecycle.ts`,
 `studio-class-template-lifecycle.ts`, `gdpr.ts`, `currency-switch.ts`,
-`teacher-photo.ts`, and `bank-accounts.ts` (its save and its removal), each a
-site with an entry above. Re-derive the list rather than trusting it.
+`teacher-photo.ts`, `bank-accounts.ts` (its save and its removal) and
+`payment-link.ts` (its save and its removal), each a site with an entry above.
+Re-derive the list rather than trusting it.
 
 ### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`
 
 An insert into any table with a foreign key to `Teacher` takes `FOR KEY SHARE`
 on the teacher's row in the foreign-key check. `CalendarEntry`, `ScheduleRule`,
 `TeacherStudent`, `TeacherRoom`, `Invitation`, `TeacherBlock`, `StudentPrivacy`,
-`TeacherPhoto`, `TeacherBankAccount` and `Announcement` all reference it
+`TeacherPhoto`, `TeacherBankAccount`, `Announcement`, `PayoutChangeEvent` and
+`PayoutPauseToken` all reference it
 (`prisma/schema.prisma`).
 `FOR UPDATE` conflicts with `FOR KEY SHARE`, so a `Teacher` lock in that mode
 would add a wait edge to every site that inserts such a row while holding a

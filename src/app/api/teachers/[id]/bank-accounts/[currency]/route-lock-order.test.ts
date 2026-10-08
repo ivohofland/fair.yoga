@@ -5,7 +5,10 @@
  * Lock noise from a neighbour in the parallel tier would stretch that wait
  * past the window the assertion allows.
  *
- * `PUT` is invoked directly against the test database, the technique
+ * The second suite holds the teacher row `FOR SHARE` instead and asserts the
+ * save and the removal both park behind it.
+ *
+ * `PUT` and `DELETE` are invoked directly against the test database, the technique
  * `src/app/api/teachers/[id]/route-lock-order.test.ts` uses.
  */
 import { describe, it, expect, afterAll } from 'vitest';
@@ -13,7 +16,7 @@ import { NextRequest } from 'next/server';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { cookie, seedSession } from '../../../../../../../tests/helpers';
-import { PUT } from './route';
+import { PUT, DELETE } from './route';
 
 const prisma = new PrismaClient();
 
@@ -130,5 +133,73 @@ describe('PUT /api/teachers/[id]/bank-accounts/[currency] during an erasure writ
       await prisma.teacher.deleteMany({ where: { id: subject.id } });
       await prisma.account.deleteMany({ where: { id: subject.accountId } });
     }
+  }, 20_000);
+});
+
+/**
+ * The bank writers take the teacher row `FOR NO KEY UPDATE` first
+ * (`docs/lock-order.md`, "The `Teacher` row is the first lock"), so two of
+ * them, or one and a pause or resume, serialise on it. A `FOR SHARE` first
+ * lock would let a `FOR SHARE` holder through; none of the writers' other
+ * statements touch the teacher row in a mode that conflicts with it.
+ */
+describe('the bank writers wait behind a FOR SHARE hold on the teacher row (#786)', () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function withTeacher(run: (subject: { id: string }, token: string) => Promise<void>): Promise<void> {
+    const suffix = `bank-share-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const subject = await prisma.teacher.create({
+      data: {
+        firstName: 'Bank', lastName: 'Share', email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Bank share fixture', pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    try {
+      await run(subject, await seedSession(prisma, subject.accountId));
+    } finally {
+      await prisma.session.deleteMany({ where: { accountId: subject.accountId } });
+      await prisma.teacher.deleteMany({ where: { id: subject.id } });
+      await prisma.account.deleteMany({ where: { id: subject.accountId } });
+    }
+  }
+
+  it('parks a save, which then saves', async () => {
+    await withTeacher(async (subject, token) => {
+      const { res, parked } = await raceBehindHolder(
+        async (tx) => { await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${subject.id} FOR SHARE`; },
+        () => PUT(
+          new NextRequest(`http://localhost:3000/api/teachers/${subject.id}/bank-accounts/EUR`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...cookie(token) },
+            body: JSON.stringify({ holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }),
+          }),
+          { params: Promise.resolve({ id: subject.id, currency: 'EUR' }) },
+        ),
+      );
+      expect({ parked, status: res.status }).toEqual({ parked: true, status: 200 });
+    });
+  }, 20_000);
+
+  it('parks a removal, which then removes', async () => {
+    await withTeacher(async (subject, token) => {
+      await prisma.teacherBankAccount.create({
+        data: { teacherId: subject.id, currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' },
+      });
+      const { res, parked } = await raceBehindHolder(
+        async (tx) => { await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${subject.id} FOR SHARE`; },
+        () => DELETE(
+          new NextRequest(`http://localhost:3000/api/teachers/${subject.id}/bank-accounts/EUR`, {
+            method: 'DELETE',
+            headers: cookie(token),
+          }),
+          { params: Promise.resolve({ id: subject.id, currency: 'EUR' }) },
+        ),
+      );
+      expect({ parked, status: res.status }).toEqual({ parked: true, status: 200 });
+    });
   }, 20_000);
 });
