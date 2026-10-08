@@ -46,7 +46,7 @@ function readDuePaymentPage(
       status: 'overdue',
       OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
       // Erased accounts end the dunning: a deleted student reads nothing,
-      // and a deleted teacher has no account details left to pay into.
+      // and a deleted teacher has no bank account or payment link left to pay into.
       registration: {
         student: { deletedAt: null },
         class: { calendarEntry: { teacher: { deletedAt: null } } },

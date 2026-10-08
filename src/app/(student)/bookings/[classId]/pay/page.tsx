@@ -93,7 +93,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
                   firstName: true,
                   lastName: true,
                   defaultTimezone: true,
-                  // Every account: the one in the class's currency is picked
+                  // Includes every bank account: the one in the class's currency is picked
                   // below, since this query cannot filter on a sibling column.
                   ...teacherPaymentSelect,
                 },
