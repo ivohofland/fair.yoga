@@ -170,6 +170,14 @@ Which `NotificationType`s each `push_*` group covers is owned by
 
 Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after the `Teacher` row's own `updateMany` — see `docs/lock-order.md`, "The `Teacher` row is the photo upload's gate (#46)" for the race this ordering closes.
 
+### Payout-change alert (#786)
+
+`Teacher` carries four nullable instants for the payments pause: `paymentsPausedAt` (set by a pause, cleared by a resume; a second pause keeps the earlier instant), `paymentsResumedAt` (set by a resume), `pausePasskeyCutoff` (cleared by a resume; a re-pause while paused keeps it) and `pauseWindowStart` (the pause's window start, kept because the resume screen may be read after the floor has moved; cleared by a resume, kept by a re-pause). `Session.passkeyCredentialId` names the passkey a session signed in with (null for a magic-link session) and is `onDelete: SetNull` against `PasskeyCredential`.
+
+`PayoutChangeEvent` (`PayoutChangeKind`: `bank_account_added`, `bank_account_changed`, `bank_account_removed`, `payment_link_added`, `payment_link_changed`, `payment_link_removed`) records one change to where a teacher's students pay: `teacher_id` (FK, `onDelete: Cascade`), `kind`, `account_currency` (nullable; names which bank account, not a frozen price, so it is not a `currency` column in the sense above), `before` and `after` (nullable masked strings, never the stored value) and `created_at`; indexed on `(teacher_id, created_at)`.
+
+`PayoutPauseToken` holds the hash of the secret in the alert email's "This wasn't me" link: `token_hash` (unique), `teacher_id` (FK, `onDelete: Cascade`), `event_id` (FK to `PayoutChangeEvent`, `onDelete: Cascade`), `expires_at`, `created_at`. Both tables cascade because tests hard-delete `Teacher` rows; production erasure never deletes the teacher row, so `deleteTeacherAccount` deletes the tokens and then the events itself. The teacher export lists the events (kind, account currency, before, after, created at). The daily auth cleanup (`cleanupExpiredAuth`) deletes expired tokens.
+
 ### TeacherBankAccount (Level 1 payout details, one per currency, #758)
 
 | Field | Type | Notes |
@@ -993,6 +1001,7 @@ No foreign keys, and no personal data by construction: the allowlist admits ids 
 - Account → has one Student (optional)
 - Teacher → has many TeacherRooms
 - Teacher → has many TeacherBankAccounts (at most one per currency)
+- Teacher → has many PayoutChangeEvents; each event has many PayoutPauseTokens
 - Teacher → has many ScheduleRules
 - ScheduleRule → has one ClassTemplate (kind: regular) or one StudioClassTemplate (kind: studio)
 - Teacher → has many CalendarEntries

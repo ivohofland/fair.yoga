@@ -204,21 +204,27 @@ model Teacher {
   processorType         ProcessorType?
   processorAccountId    String?
   deletedAt             DateTime?
+  paymentsPausedAt      DateTime?
+  paymentsResumedAt     DateTime?
+  pauseWindowStart      DateTime?
+  pausePasskeyCutoff    DateTime?
   createdAt             DateTime                    @default(now())
   updatedAt             DateTime                    @updatedAt
 
-  account         Account              @relation(fields: [accountId], references: [id])
-  teacherRooms    TeacherRoom[]
-  calendarEntries CalendarEntry[]
-  announcements   Announcement[]
-  studentPrivacy  StudentPrivacy[]
-  createdRooms    Room[]               @relation("RoomCreator")
-  teacherStudents TeacherStudent[]
-  invitations     Invitation[]
-  teacherBlocks   TeacherBlock[]
-  scheduleRules   ScheduleRule[]
-  photo           TeacherPhoto?
-  bankAccounts    TeacherBankAccount[]
+  account           Account              @relation(fields: [accountId], references: [id])
+  teacherRooms      TeacherRoom[]
+  calendarEntries   CalendarEntry[]
+  announcements     Announcement[]
+  studentPrivacy    StudentPrivacy[]
+  createdRooms      Room[]               @relation("RoomCreator")
+  teacherStudents   TeacherStudent[]
+  invitations       Invitation[]
+  teacherBlocks     TeacherBlock[]
+  scheduleRules     ScheduleRule[]
+  photo             TeacherPhoto?
+  bankAccounts      TeacherBankAccount[]
+  payoutChanges     PayoutChangeEvent[]
+  payoutPauseTokens PayoutPauseToken[]
 }
 
 /// A teacher's bank account in one currency. The columns its currency's scheme
@@ -239,6 +245,46 @@ model TeacherBankAccount {
   teacher       Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
   @@unique([teacherId, currency])
+}
+
+enum PayoutChangeKind {
+  bank_account_added
+  bank_account_changed
+  bank_account_removed
+  payment_link_added
+  payment_link_changed
+  payment_link_removed
+}
+
+/// One change to where a teacher's students pay. `before`/`after` are masked
+/// strings only, never the stored value. `accountCurrency` names which bank
+/// account changed; it is not a frozen price.
+model PayoutChangeEvent {
+  id              String             @id @default(uuid())
+  teacherId       String
+  kind            PayoutChangeKind
+  accountCurrency Currency?
+  before          String?
+  after           String?
+  createdAt       DateTime           @default(now())
+  teacher         Teacher            @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  pauseTokens     PayoutPauseToken[]
+
+  @@index([teacherId, createdAt])
+}
+
+/// The hash of the secret in a payout-change email's "This wasn't me" link.
+model PayoutPauseToken {
+  id        String            @id @default(uuid())
+  tokenHash String            @unique
+  teacherId String
+  eventId   String
+  expiresAt DateTime
+  createdAt DateTime          @default(now())
+  teacher   Teacher           @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  event     PayoutChangeEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([teacherId])
 }
 
 /// A teacher's avatar, downscaled and re-encoded on upload. `id` is regenerated
@@ -1208,10 +1254,13 @@ model Announcement {
 // ============================================================================
 
 model Session {
-  id        String   @id
-  accountId String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id                  String             @id
+  accountId           String
+  expiresAt           DateTime
+  createdAt           DateTime           @default(now())
+  /// The passkey this session signed in with; null for a magic-link session.
+  passkeyCredentialId String?
+  passkeyCredential   PasskeyCredential? @relation(fields: [passkeyCredentialId], references: [id], onDelete: SetNull)
 
   @@index([accountId])
 }
@@ -1241,12 +1290,13 @@ model HandoffAttemptBudget {
 }
 
 model PasskeyCredential {
-  id         String   @id
+  id         String    @id
   accountId  String
   publicKey  Bytes
   counter    BigInt
   transports String[]
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
+  sessions   Session[]
 
   @@index([accountId])
 }

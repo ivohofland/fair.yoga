@@ -274,6 +274,10 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       announcements: true,
       photo: { select: { bytes: true } },
       bankAccounts: { select: bankAccountDataSelect, orderBy: { currency: 'asc' } },
+      payoutChanges: {
+        select: { kind: true, accountCurrency: true, before: true, after: true, createdAt: true },
+        orderBy: { createdAt: 'asc' },
+      },
     },
   });
 
@@ -307,6 +311,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         : null,
     },
     bankAccounts: teacher.bankAccounts,
+    payoutChanges: teacher.payoutChanges,
     rooms: teacher.teacherRooms.map((tr) => ({
       venue: tr.room.venueName,
       room: tr.room.roomName,
@@ -1636,6 +1641,9 @@ export async function deleteTeacherAccount(
       await tx.teacherPhoto.deleteMany({ where: { teacherId } });
       // Also after the `Teacher` lock: the erased teacher keeps no bank account.
       await tx.teacherBankAccount.deleteMany({ where: { teacherId } });
+      // Tokens first: they reference the events.
+      await tx.payoutPauseToken.deleteMany({ where: { teacherId } });
+      await tx.payoutChangeEvent.deleteMany({ where: { teacherId } });
 
       return skipped;
     },
