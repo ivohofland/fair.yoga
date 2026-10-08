@@ -1,6 +1,6 @@
 import type { Currency, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
-import { paymentLinkFromColumn } from '@/lib/payment-link';
+import { parsePaymentLink, paymentLinkFromColumn } from '@/lib/payment-link';
 import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';
 
 /** The one currency an EPC QR can carry. */
@@ -82,11 +82,13 @@ export type PaymentSources = { teacherId: string; account: StoredBankAccount | n
  */
 export function paymentMethodsFor({ teacherId, account, paymentLink }: PaymentSources): PaymentMethod[] {
   const methods = account === null ? [] : bankMethodsFor(account);
-  const link = paymentLinkFromColumn(paymentLink);
-  if (link !== null) {
+  if (paymentLink === null) return methods;
+  const link = parsePaymentLink(paymentLink);
+  if (link.ok) {
     methods.push({ kind: 'payment_link', url: link.url, host: link.host });
-  } else if (paymentLink !== null) {
-    log.error({ teacherId }, 'stored payment link does not parse; offering no link');
+  } else {
+    // The reason and length, never the value: the link is the teacher's input.
+    log.error({ teacherId, reason: link.error, length: paymentLink.length }, 'stored payment link does not parse; offering no link');
   }
   return methods;
 }
@@ -97,7 +99,7 @@ function bankMethodsFor(account: StoredBankAccount): PaymentMethod[] {
   if (details === null || beneficiary === null) {
     log.error(
       { teacherId: account.teacherId, accountId: account.id, currency: account.currency },
-      'stored bank account does not parse; offering no method',
+      'stored bank account does not parse; offering no bank method',
     );
     return [];
   }
