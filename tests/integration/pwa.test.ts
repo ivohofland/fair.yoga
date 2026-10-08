@@ -81,7 +81,7 @@ afterAll(async () => {
 // Pathname AND search, so a signed-out redirect that picked up a ?redirect=
 // query fails this assertion rather than passing on the pathname alone — see
 // docs/technical-architecture.md (Authentication Flow → Installed app start
-// URL) for why /start must stay outside src/proxy.ts's requiresSession list.
+// URL) for why /start must stay outside SIGNED_IN_SECTIONS in src/proxy.ts.
 async function startDestination(token: string | null): Promise<string> {
   const res = await fetch(`${BASE_URL}/start`, {
     redirect: 'manual',
