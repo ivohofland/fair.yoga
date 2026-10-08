@@ -10,6 +10,7 @@ import { bankAccountSchema } from '@/lib/schemas';
 import { formatIssues } from '@/lib/validation-message';
 import type { BankDetailsInput } from '@/lib/bank-details';
 import { saveBankAccount, removeBankAccount, type BankAccountFailure } from '@/services/bank-accounts';
+import { deliverPayoutChangedNotice } from '@/services/payout-notice';
 
 type Params = { params: Promise<{ id: string; currency: string }> };
 
@@ -76,6 +77,7 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: Params
   const outcome = await saveBankAccount(prisma, target.id, target.currency, body.data);
   switch (outcome.kind) {
     case 'saved':
+      deliverPayoutChangedNotice(prisma, outcome.eventId);
       return respondOk(outcome.account);
     case 'unchanged':
       return respondUnchanged<TeacherBankAccount>(outcome.account);
@@ -98,6 +100,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Par
   const outcome = await removeBankAccount(prisma, target.id, target.currency);
   switch (outcome.kind) {
     case 'removed':
+      deliverPayoutChangedNotice(prisma, outcome.eventId);
       return respondOk({ currency: target.currency });
     case 'absent':
       return respondUnchanged<{ currency: Currency }>({ currency: target.currency });

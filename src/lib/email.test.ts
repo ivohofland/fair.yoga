@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail, sendPasskeyAddedEmail } from './email';
-import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail } from './email-templates';
+import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail, sendPasskeyAddedEmail, sendPayoutChangedEmail } from './email';
+import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail, renderPayoutChangedEmail } from './email-templates';
 import { log } from '@/lib/log';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 
@@ -271,6 +271,52 @@ describe('sendPasskeyAddedEmail', () => {
       expect(sendMock).toHaveBeenCalledWith(
         expect.objectContaining({ to: 'a@test.local', subject, html }),
       );
+    });
+  });
+});
+
+describe('sendPayoutChangedEmail', () => {
+  const input = {
+    kind: 'payment_link_added',
+    accountCurrency: null,
+    before: null,
+    after: 'pay.example',
+    at: new Date('2026-10-06T14:03:00Z'),
+    timezone: 'UTC',
+    pauseUrl: 'https://fair.yoga/payout-pause#t=secret-token',
+  } as const;
+
+  it('logs without the address or the pause link when no key is configured', async () => {
+    delete process.env.EMAIL_DRY_RUN;
+    delete process.env.RESEND_API_KEY;
+    vi.mocked(log.info).mockClear();
+
+    await expect(sendPayoutChangedEmail('a@test.local', input)).resolves.toBeUndefined();
+
+    expect(sendMock).not.toHaveBeenCalled();
+    const logged = JSON.stringify(vi.mocked(log.info).mock.calls);
+    expect(logged).not.toContain('a@test.local');
+    expect(logged).not.toContain('secret-token');
+  });
+
+  describe('with a key configured', () => {
+    beforeEach(() => {
+      delete process.env.EMAIL_DRY_RUN;
+      process.env.RESEND_API_KEY = 're_real_looking_key';
+    });
+
+    it('throws with the error message when Resend reports { error }', async () => {
+      sendMock.mockResolvedValue({ data: null, error: { message: 'rate limited' } });
+      await expect(sendPayoutChangedEmail('a@test.local', input)).rejects.toThrow(
+        'Failed to send payout-changed email: rate limited',
+      );
+    });
+
+    it('sends the rendered subject and html', async () => {
+      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
+      const { subject, html } = renderPayoutChangedEmail(input);
+      await sendPayoutChangedEmail('a@test.local', input);
+      expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ to: 'a@test.local', subject, html }));
     });
   });
 });
