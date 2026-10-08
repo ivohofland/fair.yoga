@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { NextRequest } from 'next/server';
-import { proxy, config } from './proxy';
+import { proxy, config, requiresSession, mintNonce } from './proxy';
 
 function makeRequest(path: string, options?: { cookies?: Record<string, string>; headers?: Record<string, string> }): NextRequest {
   const url = `http://localhost:3000${path}`;
@@ -112,18 +112,67 @@ describe('proxy', () => {
   });
 
   describe('config matcher', () => {
-    it('matches all protected route prefixes', () => {
-      expect(config.matcher).toEqual([
-        '/schedule/:path*',
-        '/studio-class/:path*',
-        '/students/:path*',
-        '/inbox/:path*',
-        '/settings/:path*',
-        '/class/:path*',
-        '/bookings/:path*',
-        '/account/:path*',
-        '/updates/:path*',
-      ]);
+    const [pattern] = config.matcher;
+    const matches = (path: string): boolean => new RegExp(`^${pattern}$`).test(path);
+
+    it('matches every page, public or protected', () => {
+      for (const p of ['/', '/login', '/start', '/schedule/2026-10-08', '/some-teacher-slug']) {
+        expect(matches(p)).toBe(true);
+      }
+    });
+
+    it('never matches /api/*, so a request body is not buffered ahead of its route', () => {
+      for (const p of ['/api/health', '/api/teacher/photo']) {
+        expect(matches(p)).toBe(false);
+      }
+    });
+
+    it('skips static assets', () => {
+      for (const p of ['/_next/static/chunks/a.js', '/favicon.ico', '/sw.js', '/manifest.webmanifest', '/icons/192.png']) {
+        expect(matches(p)).toBe(false);
+      }
+    });
+  });
+
+  describe('requiresSession', () => {
+    it('covers each protected section and its sub-paths', () => {
+      for (const p of ['/schedule', '/schedule/2026-10-08', '/settings/rooms', '/class/abc', '/updates']) {
+        expect(requiresSession(p)).toBe(true);
+      }
+    });
+
+    it('leaves public paths alone, including slugs that share a prefix', () => {
+      for (const p of ['/', '/login', '/verify', '/start', '/signup', '/schedulefoo', '/classroom-anna']) {
+        expect(requiresSession(p)).toBe(false);
+      }
+    });
+  });
+
+  describe('mintNonce', () => {
+    it('is 16 random bytes, base64, different each call', () => {
+      const a = mintNonce();
+      expect(atob(a)).toHaveLength(16);
+      expect(mintNonce()).not.toBe(a);
+    });
+  });
+
+  describe('public pages', () => {
+    it('are not redirected without a session', () => {
+      expect(proxy(makeRequest('/start')).status).toBe(200);
+    });
+
+    it('carry the same nonce CSP on the forwarded request and the response', () => {
+      const res = proxy(makeRequest('/start'));
+      const csp = res.headers.get('content-security-policy') ?? '';
+      expect(csp).toMatch(/'nonce-[A-Za-z0-9+/]+={0,2}'/);
+      // NextResponse.next({ request: { headers } }) forwards overridden request
+      // headers as x-middleware-request-<name>.
+      expect(res.headers.get('x-middleware-request-content-security-policy')).toBe(csp);
+    });
+
+    it('overwrite a client-supplied Content-Security-Policy request header', () => {
+      const res = proxy(makeRequest('/start', { headers: { 'content-security-policy': "script-src 'nonce-evil'" } }));
+      expect(res.headers.get('x-middleware-request-content-security-policy')).not.toContain('nonce-evil');
     });
   });
 });

@@ -716,10 +716,11 @@ person is reading their mail.
 `manifest.ts` `start_url`. It routes by profile — a teacher to `/schedule`, a
 student-only account to `/bookings`, a two-hat account to the teacher home,
 and a signed-out visitor to `/login` rather than the public pitch `/` shows —
-and it stays outside `src/proxy.ts`'s matcher deliberately: the matcher would
-turn the signed-out case into `/login?redirect=/start`, trading `/start`'s
-own per-profile routing for a fixed redirect target nobody asked for. Pinned
-by `tests/integration/pwa.test.ts`.
+and it stays outside `src/proxy.ts`'s `requiresSession` list deliberately: the
+proxy would turn the signed-out case into `/login?redirect=/start`, trading
+`/start`'s own per-profile routing for a fixed redirect target nobody asked
+for. (The proxy's matcher does cover it, since every page needs a CSP nonce.)
+Pinned by `tests/integration/pwa.test.ts`.
 
 ### Unauthenticated API routes
 

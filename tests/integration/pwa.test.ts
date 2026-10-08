@@ -81,7 +81,7 @@ afterAll(async () => {
 // Pathname AND search, so a signed-out redirect that picked up a ?redirect=
 // query fails this assertion rather than passing on the pathname alone — see
 // docs/technical-architecture.md (Authentication Flow → Installed app start
-// URL) for why /start must stay outside src/proxy.ts's matcher.
+// URL) for why /start must stay outside src/proxy.ts's requiresSession list.
 async function startDestination(token: string | null): Promise<string> {
   const res = await fetch(`${BASE_URL}/start`, {
     redirect: 'manual',
@@ -107,5 +107,10 @@ describe('GET /start', () => {
 
   it('sends a signed-out visitor to sign-in, not the public pitch', async () => {
     expect(await startDestination(null)).toBe('/login');
+  });
+
+  it('carries a nonce CSP even when signed out', async () => {
+    const res = await fetch(`${BASE_URL}/start`, { redirect: 'manual', headers: freshIp() });
+    expect(res.headers.get('content-security-policy')).toContain("'nonce-");
   });
 });
