@@ -185,6 +185,22 @@ describe('GET /bookings (page) — payment status gate', () => {
       });
     }
   });
+  it('offers Pay now, not pay directly, to a student whose teacher has only a payment link', async () => {
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', notChargedAt: null } });
+    await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: 'https://revolut.me/anna' } });
+    try {
+      const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+      expect(html).toContain('Pay now');
+      expect(html).toContain(`href="/bookings/${classId}/pay"`);
+      expect(html).not.toContain('Pay Bookings directly');
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: null } });
+      await prisma.teacherBankAccount.create({
+        data: { teacherId, currency: 'EUR', holderName: 'Bookings Teacher', iban: TEACHER_IBAN },
+      });
+    }
+  });
 });
 
 /**

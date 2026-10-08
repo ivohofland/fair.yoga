@@ -1,5 +1,6 @@
 import type { Currency, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
+import { paymentLinkFromColumn } from '@/lib/payment-link';
 import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';
 
 /** The one currency an EPC QR can carry. */
@@ -11,7 +12,8 @@ export const EPC_QR_CURRENCY = 'EUR' as const satisfies Currency;
  */
 export type PaymentMethod =
   | { kind: 'bank_transfer'; beneficiary: string; details: BankDetails }
-  | { kind: 'epc_qr'; beneficiary: string; iban: string; bic: string | null; currency: typeof EPC_QR_CURRENCY };
+  | { kind: 'epc_qr'; beneficiary: string; iban: string; bic: string | null; currency: typeof EPC_QR_CURRENCY }
+  | { kind: 'payment_link'; url: string; host: string };
 
 export type PaymentMethodKind = PaymentMethod['kind'];
 
@@ -19,6 +21,7 @@ export type PaymentMethodKind = PaymentMethod['kind'];
 export const PAYMENT_METHOD_COPY = {
   bank_transfer: { label: 'Bank transfer', hint: 'Copy the details into your banking app' },
   epc_qr: { label: 'QR code', hint: 'For a banking app on another device' },
+  payment_link: { label: 'Payment link', hint: 'Pay in the app the link opens' },
 } as const satisfies Record<PaymentMethodKind, { label: string; hint: string }>;
 
 /** A stored account's own data: its currency, holder name and every scheme column. */
@@ -64,15 +67,31 @@ function isEpcQrCurrency(currency: Currency): currency is typeof EPC_QR_CURRENCY
   return currency === EPC_QR_CURRENCY;
 }
 
+/** What a teacher's payment methods are read from: their account in the class's currency and their link. */
+export type PaymentSources = { teacherId: string; account: StoredBankAccount | null; paymentLink: string | null };
+
 /**
- * The methods a student may use to pay into `account`, in chooser order: a
- * transfer for every scheme, and an EPC QR for a SEPA account in euros.
+ * The methods a student may use to pay a teacher, in chooser order: a
+ * transfer into `account` for every scheme, an EPC QR for a SEPA account in
+ * euros, then the teacher's payment link. An account that does not parse
+ * offers no bank method and does not hide the link; a stored link that does
+ * not parse offers no link and does not hide the bank methods.
  *
  * The holder name is the beneficiary with no stand-in: the payer's bank checks
  * it against the account (Verification of Payee).
  */
-export function paymentMethodsFor(account: StoredBankAccount | null): PaymentMethod[] {
-  if (account === null) return [];
+export function paymentMethodsFor({ teacherId, account, paymentLink }: PaymentSources): PaymentMethod[] {
+  const methods = account === null ? [] : bankMethodsFor(account);
+  const link = paymentLinkFromColumn(paymentLink);
+  if (link !== null) {
+    methods.push({ kind: 'payment_link', url: link.url, host: link.host });
+  } else if (paymentLink !== null) {
+    log.error({ teacherId }, 'stored payment link does not parse; offering no link');
+  }
+  return methods;
+}
+
+function bankMethodsFor(account: StoredBankAccount): PaymentMethod[] {
   const details = bankDetailsFromRow(account);
   const beneficiary = nonBlank(account.holderName);
   if (details === null || beneficiary === null) {
@@ -88,4 +107,31 @@ export function paymentMethodsFor(account: StoredBankAccount | null): PaymentMet
     transfer,
     { kind: 'epc_qr', beneficiary, iban: details.iban, bic: details.bic, currency: account.currency },
   ];
+}
+
+/** The teacher columns `paymentMethodsForTeacher` reads, so one select serves every call site. */
+export const teacherPaymentSelect = {
+  id: true,
+  paymentLink: true,
+  bankAccounts: { select: bankAccountSelect },
+} as const satisfies Prisma.TeacherSelect;
+
+export type TeacherPaymentSources = Prisma.TeacherGetPayload<{ select: typeof teacherPaymentSelect }>;
+
+/** The methods for a teacher read with `teacherPaymentSelect`, using their account in `currency`. */
+export function paymentMethodsForTeacher(teacher: TeacherPaymentSources, currency: Currency): PaymentMethod[] {
+  return paymentMethodsFor({
+    teacherId: teacher.id,
+    account: accountInCurrency(teacher.bankAccounts, currency),
+    paymentLink: teacher.paymentLink,
+  });
+}
+
+/** Onboarding's `bank` step: an account in the current currency, or a link. */
+export function hasPayoutDetails(teacher: {
+  currency: Currency;
+  paymentLink: string | null;
+  bankAccounts: readonly { currency: Currency }[];
+}): boolean {
+  return hasAccountInCurrency(teacher.bankAccounts, teacher.currency) || paymentLinkFromColumn(teacher.paymentLink) !== null;
 }

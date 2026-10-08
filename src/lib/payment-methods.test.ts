@@ -9,8 +9,10 @@ import {
   PAYMENT_METHOD_COPY,
   accountInCurrency,
   hasAccountInCurrency,
+  hasPayoutDetails,
   nonBlank,
   paymentMethodsFor,
+  paymentMethodsForTeacher,
   type PaymentMethod,
   type StoredBankAccount,
 } from './payment-methods';
@@ -22,6 +24,14 @@ const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, rout
 
 function account(fields: Partial<StoredBankAccount> & Pick<StoredBankAccount, 'currency'>): StoredBankAccount {
   return { ...blank, id: `acct-${fields.currency}`, teacherId: TEACHER_ID, holderName: HOLDER, ...fields };
+}
+
+const LINK = 'https://revolut.me/anna';
+const LINK_METHOD = { kind: 'payment_link', url: LINK, host: 'revolut.me' } as const;
+
+/** The account alone, as the call sites before the payment link passed it. */
+function bankMethodsFor(stored: StoredBankAccount | null, paymentLink: string | null = null): PaymentMethod[] {
+  return paymentMethodsFor({ teacherId: TEACHER_ID, account: stored, paymentLink });
 }
 
 describe('nonBlank', () => {
@@ -60,56 +70,135 @@ describe('EPC_QR_CURRENCY', () => {
 
 describe('paymentMethodsFor', () => {
   it('offers nothing without an account', () => {
-    expect(paymentMethodsFor(null)).toEqual([]);
+    expect(bankMethodsFor(null)).toEqual([]);
   });
 
   it('offers a euro account a bank transfer then a QR code, with a null BIC when none is stored', () => {
-    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN }))).toEqual([
+    expect(bankMethodsFor(account({ currency: 'EUR', iban: IBAN }))).toEqual([
       { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'sepa', iban: IBAN, bic: null } },
       { kind: 'epc_qr', beneficiary: HOLDER, iban: IBAN, bic: null, currency: 'EUR' },
     ]);
   });
 
   it('carries a stored BIC into both euro methods', () => {
-    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, bic: 'ABNANL2A' }))).toEqual([
+    expect(bankMethodsFor(account({ currency: 'EUR', iban: IBAN, bic: 'ABNANL2A' }))).toEqual([
       { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'sepa', iban: IBAN, bic: 'ABNANL2A' } },
       { kind: 'epc_qr', beneficiary: HOLDER, iban: IBAN, bic: 'ABNANL2A', currency: 'EUR' },
     ]);
   });
 
   it('offers a pound account a sort-code transfer and no QR code', () => {
-    expect(paymentMethodsFor(account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' }))).toEqual([
+    expect(bankMethodsFor(account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' }))).toEqual([
       { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'uk', sortCode: '123456', accountNumber: '12345678' } },
     ]);
   });
 
   it('offers a dollar account a routing-number transfer and no QR code', () => {
-    expect(paymentMethodsFor(account({ currency: 'USD', routingNumber: '021000021', accountNumber: '1234567' }))).toEqual([
+    expect(bankMethodsFor(account({ currency: 'USD', routingNumber: '021000021', accountNumber: '1234567' }))).toEqual([
       { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'us', routingNumber: '021000021', accountNumber: '1234567' } },
     ]);
   });
 
   it.each(['CHF', 'SEK', 'NOK', 'DKK'] as const)('offers a %s account an IBAN transfer and no QR code', (currency) => {
-    expect(paymentMethodsFor(account({ currency, iban: 'CH9300762011623852957' }))).toEqual([
+    expect(bankMethodsFor(account({ currency, iban: 'CH9300762011623852957' }))).toEqual([
       { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'iban', iban: 'CH9300762011623852957', bic: null } },
     ]);
   });
 
   // The trimmed name is the one a bank compares; a stray space must not become part of it.
   it('trims the holder name it hands out', () => {
-    const [transfer] = paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  I. Hofland  ' }));
-    expect(transfer?.beneficiary).toBe(HOLDER);
+    const [transfer] = bankMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  I. Hofland  ' }));
+    expect(transfer).toMatchObject({ beneficiary: HOLDER });
   });
 
   it('offers nothing for, and logs with its teacher and row, a row the CHECK should have made impossible', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
     onTestFinished(() => error.mockRestore());
-    expect(paymentMethodsFor(account({ currency: 'GBP', iban: IBAN, id: 'acct-gbp' }))).toEqual([]);
-    expect(paymentMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  ', id: 'acct-eur' }))).toEqual([]);
+    expect(bankMethodsFor(account({ currency: 'GBP', iban: IBAN, id: 'acct-gbp' }))).toEqual([]);
+    expect(bankMethodsFor(account({ currency: 'EUR', iban: IBAN, holderName: '  ', id: 'acct-eur' }))).toEqual([]);
     expect(error.mock.calls.map(([context]) => context)).toEqual([
       { teacherId: TEACHER_ID, accountId: 'acct-gbp', currency: 'GBP' },
       { teacherId: TEACHER_ID, accountId: 'acct-eur', currency: 'EUR' },
     ]);
+  });
+
+  it('offers a link alone when there is no account', () => {
+    expect(bankMethodsFor(null, LINK)).toEqual([LINK_METHOD]);
+  });
+
+  it('puts the link after a euro account\'s transfer and QR code', () => {
+    expect(bankMethodsFor(account({ currency: 'EUR', iban: IBAN }), LINK).map((m) => m.kind)).toEqual([
+      'bank_transfer',
+      'epc_qr',
+      'payment_link',
+    ]);
+  });
+
+  it('puts the link after a pound account\'s transfer', () => {
+    const stored = account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' });
+    expect(bankMethodsFor(stored, LINK).map((m) => m.kind)).toEqual(['bank_transfer', 'payment_link']);
+  });
+
+  it('still offers the link beside an account that does not parse, and logs the account', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
+    onTestFinished(() => error.mockRestore());
+    expect(bankMethodsFor(account({ currency: 'GBP', iban: IBAN, id: 'acct-gbp' }), LINK)).toEqual([LINK_METHOD]);
+    expect(error.mock.calls.map(([context]) => context)).toEqual([
+      { teacherId: TEACHER_ID, accountId: 'acct-gbp', currency: 'GBP' },
+    ]);
+  });
+
+  it('offers the bank methods alone, and logs the teacher, when the stored link does not parse', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
+    onTestFinished(() => error.mockRestore());
+    expect(bankMethodsFor(account({ currency: 'EUR', iban: IBAN }), 'http://x').map((m) => m.kind)).toEqual([
+      'bank_transfer',
+      'epc_qr',
+    ]);
+    expect(error).toHaveBeenCalledWith({ teacherId: TEACHER_ID }, expect.stringContaining('payment link'));
+  });
+
+  it('offers nothing with neither an account nor a link', () => {
+    expect(bankMethodsFor(null, null)).toEqual([]);
+  });
+});
+
+describe('paymentMethodsForTeacher', () => {
+  it('picks the account in the given currency and includes the link', () => {
+    const eur = account({ currency: 'EUR', iban: IBAN });
+    const gbp = account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' });
+    const teacher = { id: TEACHER_ID, paymentLink: LINK, bankAccounts: [eur, gbp] };
+    expect(paymentMethodsForTeacher(teacher, 'GBP').map((m) => m.kind)).toEqual(['bank_transfer', 'payment_link']);
+    expect(paymentMethodsForTeacher(teacher, 'EUR').map((m) => m.kind)).toEqual([
+      'bank_transfer',
+      'epc_qr',
+      'payment_link',
+    ]);
+    expect(paymentMethodsForTeacher(teacher, 'CHF')).toEqual([LINK_METHOD]);
+  });
+});
+
+describe('hasPayoutDetails', () => {
+  const eur = { currency: Currency.EUR };
+
+  it('is true for an account in the current currency', () => {
+    expect(hasPayoutDetails({ currency: 'EUR', paymentLink: null, bankAccounts: [eur] })).toBe(true);
+  });
+
+  it('is true for a link alone', () => {
+    expect(hasPayoutDetails({ currency: 'EUR', paymentLink: LINK, bankAccounts: [] })).toBe(true);
+  });
+
+  it('is false for an account only in another currency and no link', () => {
+    expect(hasPayoutDetails({ currency: 'GBP', paymentLink: null, bankAccounts: [eur] })).toBe(false);
+  });
+
+  it('is false for neither', () => {
+    expect(hasPayoutDetails({ currency: 'EUR', paymentLink: null, bankAccounts: [] })).toBe(false);
+  });
+
+  it('counts a stored link that does not parse as no link', () => {
+    expect(hasPayoutDetails({ currency: 'EUR', paymentLink: 'http://x', bankAccounts: [] })).toBe(false);
   });
 });
 
@@ -143,6 +232,10 @@ describe('PAYMENT_METHOD_COPY', () => {
     expect(PAYMENT_METHOD_COPY.epc_qr).toEqual({
       label: 'QR code',
       hint: 'For a banking app on another device',
+    });
+    expect(PAYMENT_METHOD_COPY.payment_link).toEqual({
+      label: 'Payment link',
+      hint: 'Pay in the app the link opens',
     });
   });
 });

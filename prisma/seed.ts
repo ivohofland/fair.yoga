@@ -203,6 +203,7 @@ async function main() {
       defaultTimezone: 'Europe/London',
       classReminder: 'evening_before',
       paymentLevel: 'LEVEL_1',
+      paymentLink: 'https://monzo.me/sarahmitchell',
       // Sort code 12-34-56, stored as its digits.
       bankAccounts: {
         create: { currency: 'GBP', holderName: 'S. Mitchell', sortCode: '123456', accountNumber: '12345678' },

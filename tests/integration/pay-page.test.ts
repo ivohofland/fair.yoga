@@ -13,6 +13,7 @@ const BIC = 'ABNANL2A';
 const HOLDER = 'P. Paypage';
 const SORT_CODE_SHOWN = '40-47-84';
 const UK_ACCOUNT_NUMBER = '70872490';
+const LINK = 'https://revolut.me/anna';
 
 /**
  * `/bookings/[classId]/pay` — one class's payment, for the signed-in student.
@@ -45,6 +46,8 @@ describe('GET /bookings/[classId]/pay', () => {
     paidWithoutTimestamp: '',
     gbp: '',
     chf: '',
+    linkOnly: '',
+    linkAndBank: '',
   };
   const overdueClass = { classType: `Pay Overdue ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') };
 
@@ -57,6 +60,7 @@ describe('GET /bookings/[classId]/pay', () => {
         | { currency: 'GBP'; holderName: string; sortCode: string; accountNumber: string }
       >;
     } | null,
+    paymentLink: string | null = null,
   ): Promise<{ id: string; accountId: string; teacherRoomId: string }> {
     const email = `paypage-${key}-${suffix}@test.local`;
     const teacher = await prisma.teacher.create({
@@ -67,6 +71,7 @@ describe('GET /bookings/[classId]/pay', () => {
         bio: 'Pay page fixture',
         pageSlug: `paypage-${key}-${suffix}`,
         defaultTimezone: 'UTC',
+        paymentLink,
         ...(bank ? { currency: bank.currency, bankAccounts: { create: bank.accounts } } : {}),
         account: { create: { email } },
       },
@@ -188,6 +193,12 @@ describe('GET /bookings/[classId]/pay', () => {
       ],
     });
     const noBankTeacher = await makeTeacher('nobank', null);
+    const linkOnlyTeacher = await makeTeacher('linkonly', null, LINK);
+    const linkAndBankTeacher = await makeTeacher(
+      'linkbank',
+      { currency: 'EUR', accounts: [{ currency: 'EUR', holderName: HOLDER, iban: IBAN, bic: BIC }] },
+      LINK,
+    );
 
     const student = await makeStudent('main');
     studentToken = await seedSession(prisma, student.accountId);
@@ -214,6 +225,8 @@ describe('GET /bookings/[classId]/pay', () => {
 
     classIds.gbp = await completedClass(bankTeacher, { classType: `Pay Pounds ${suffix}`, date: new Date('2026-06-11T00:00:00.000Z'), currency: 'GBP' }, student.id, 'attended', { amount: 9.5, status: 'pending' });
     classIds.chf = await completedClass(bankTeacher, { classType: `Pay Francs ${suffix}`, date: new Date('2026-06-12T00:00:00.000Z'), currency: 'CHF' }, student.id, 'attended', { amount: 11, status: 'pending' });
+    classIds.linkOnly = await completedClass(linkOnlyTeacher, { classType: `Pay LinkOnly ${suffix}`, date: new Date('2026-06-13T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
+    classIds.linkAndBank = await completedClass(linkAndBankTeacher, { classType: `Pay LinkBank ${suffix}`, date: new Date('2026-06-14T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
 
     // Warm the route: `next dev` compiles a page lazily on its first request.
     await payPage(classIds.overdue, studentToken).catch(() => {});
@@ -299,6 +312,27 @@ describe('GET /bookings/[classId]/pay', () => {
     const html = await res.text();
     expect(html).toContain('Pay Paynobank directly');
     expect(html).not.toContain('How would you like to pay?');
+  });
+
+  it('offers a teacher with only a payment link that link, and no pay-directly fallback', async () => {
+    const res = await payPage(classIds.linkOnly, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Payment link');
+    expect(html).toContain(`href="${LINK}"`);
+    expect(html).toContain('Pay via ');
+    expect(html).toContain('revolut.me');
+    expect(html).not.toContain('Pay Paylinkonly directly');
+  });
+
+  it('lists the payment link after the bank transfer and the QR code', async () => {
+    const html = await (await payPage(classIds.linkAndBank, studentToken)).text();
+    const transfer = html.indexOf('Bank transfer');
+    const qr = html.indexOf('QR code');
+    const link = html.indexOf('Payment link');
+    expect(transfer).toBeGreaterThan(-1);
+    expect(qr).toBeGreaterThan(transfer);
+    expect(link).toBeGreaterThan(qr);
   });
 
   it('tells a late cancel why the class is still charged', async () => {
