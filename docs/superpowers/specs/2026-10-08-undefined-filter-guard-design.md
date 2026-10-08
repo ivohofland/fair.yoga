@@ -54,10 +54,13 @@ matches every row of the table. This happened twice in #669: once in an e2e
   arrays. That covers `AND`/`OR`/`NOT`, relation filters and `in: [...]`. It
   returns the path of every `undefined` it meets, e.g. `where.classId` or
   `where.id.in[0]`. A `where` key whose value is `undefined` counts too.
-  Non-plain objects such as `Date`, `Decimal`, `Buffer` and `Prisma.skip` are
-  leaves. Calling the method with no argument, or with no `where` key, is a
+  Non-plain objects such as `Date`, `Decimal`, `Buffer` and `Prisma.DbNull`
+  are leaves. `Prisma.skip` does not exist in this client, because the schema
+  does not enable `strictUndefinedChecks`. Calling the method with no argument, or with no `where` key, is a
   deliberate "all rows" and passes.
-- `undefinedFilterGuard`, built with `Prisma.defineExtension`, intercepts
+- `undefinedFilterGuard` is a plain extension object, typed only through
+  `import type` from `@prisma/client`. A runtime import would be circular
+  inside the vitest mock factory. It intercepts
   `deleteMany`, `updateMany` and `updateManyAndReturn` on `$allModels`. If any
   path is found, it throws **before** the query runs. The message names the
   model, the operation and the paths, and says why: Prisma drops the
@@ -75,9 +78,21 @@ matches every row of the table. This happened twice in #669: once in an e2e
   test code is returned extended with the guard. A client constructed by app
   code is returned plain. Test code means the first non-`node_modules` frame
   outside the setup module is a `*.test.ts(x)`/`*.spec.ts` file or lies under
-  `tests/`. App code's deliberate `undefined` filters therefore behave exactly
-  as in production, even while a unit test drives them. `components` has no
+  `tests/`. App code that writes through its own client (the `@/lib/db`
+  singleton) therefore keeps its deliberate `undefined` filters as in
+  production. An app module that takes a `PrismaClient` parameter and is
+  handed a test's client is guarded under test. That module's `undefined`
+  filter then throws in the suite, and the fix is an explicit filter in that
+  call, not a weaker guard. The plan review found no inline `?:` or `??` in
+  the app's bulk writes, so little of this is expected. `components` has no
   database and is left alone.
+- **The blind spot this leaves:** test cleanup written against the app
+  singleton (`import { prisma } from '@/lib/db'`) is not guarded, because
+  `src/lib/db.ts` built that client. `src/app/api/auth/session/route.test.ts`
+  had exactly the issue's hazard there: an unguarded `afterAll` deleting by a
+  hook-assigned `accountId`. It gets #782-style guards in this branch, and
+  the census reports any such write in a column of its own (`client: 'app'`),
+  so the class stays visible.
 - **Playwright** has no module mocking. The 20 e2e files switch to a
   `createGuardedPrismaClient()` factory exported by the guard module. An
   ESLint `no-restricted-syntax` rule on `tests/e2e/**` bans `new PrismaClient`

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- TypeScript `strict`, no `any`. A cast is acceptable only where the extended-client type genuinely differs from `PrismaClient`, and gets a one-line comment saying why the runtime shape is a superset.
+- TypeScript `strict`, no `any`. A cast is acceptable only where the extended-client type genuinely differs from `PrismaClient`, and gets a one-line comment saying that the extended client lacks `$on`/`$use`, which no test calls. It is not a superset: `const x: PrismaClient = client.$extends(ext)` fails with `TS2741: Property '$on' is missing`.
 - Comment Discipline (CLAUDE.md): no counts or member rosters in comments. Counts live in `docs/test-database.md` next to the command that re-derives them.
 - Never `git add -A` or `git add .`. Stage exact paths. Commit messages end with `(#783)` and the attribution trailer.
 - App code's behaviour is unchanged. Nothing under `src/` that is not a test or the census module changes.
@@ -23,7 +23,7 @@
 
 1. **Interactive transactions.** `guarded.$transaction(async (tx) => tx.x.deleteMany({ where: { id: undefined } }))` must reject, because the tx client inherits the extension. Pinned in Task 1.
 2. **Batch transactions.** `guarded.$transaction([guarded.x.deleteMany({ where: { id: undefined } })])` must reject without deleting. Pinned in Task 1.
-3. **Non-plain values.** `Prisma.skip`, `Date` and `Decimal` in a `where` must pass, not be walked into or mistaken for `undefined`. Pinned in Task 1 (walker cases).
+3. **Non-plain values.** `Prisma.DbNull`, `Date` and `Decimal` in a `where` must pass, not be walked into or mistaken for `undefined`. Pinned in Task 1 (walker cases).
 4. **A client constructed inside a hook or helper function in a test file**, not at module top level, is still guarded. Pinned in Task 2.
 5. **ESLint flat-config override.** The new `tests/e2e` block must keep the existing localhost-origin selector biting in e2e files. Pinned in Task 3 (mutation).
 
@@ -69,11 +69,11 @@ describe('findUndefinedFilterPaths', () => {
   it('treats an explicitly undefined where as a hazard', () => {
     expect(findUndefinedFilterPaths(undefined)).toEqual(['where']);
   });
-  it('passes a fully defined filter, Prisma.skip, Dates and Decimals', () => {
+  it('passes a fully defined filter, Prisma.DbNull, Dates and Decimals', () => {
     expect(
       findUndefinedFilterPaths({
         a: 'x',
-        b: Prisma.skip,
+        b: Prisma.DbNull,
         c: { gte: new Date(0) },
         d: new Prisma.Decimal(1),
         e: null,
@@ -88,13 +88,16 @@ describe('isTestCallSite', () => {
   const stack = (...files: string[]): string => ['Error', ...files.map(frame)].join('\n');
 
   it('is true when the first non-library frame is a test file', () => {
-    expect(isTestCallSite(stack('/repo/node_modules/x/y.js', setup, '/repo/src/app/api/a/route.test.ts'), [setup])).toBe(true);
+    expect(isTestCallSite(stack('/repo/node_modules/x/y.js', setup, '/repo/src/app/api/a/route.test.ts'), [setup], '/repo')).toBe(true);
   });
   it('is true for a module under tests/', () => {
-    expect(isTestCallSite(stack(setup, '/repo/tests/class-fixtures.ts'), [setup])).toBe(true);
+    expect(isTestCallSite(stack(setup, '/repo/tests/class-fixtures.ts'), [setup], '/repo')).toBe(true);
   });
   it('is false for app code', () => {
-    expect(isTestCallSite(stack(setup, '/repo/src/lib/db.ts', '/repo/src/app/api/a/route.test.ts'), [setup])).toBe(false);
+    expect(isTestCallSite(stack(setup, '/repo/src/lib/db.ts', '/repo/src/app/api/a/route.test.ts'), [setup], '/repo')).toBe(false);
+  });
+  it('is false for a tests/ directory outside the repo root', () => {
+    expect(isTestCallSite(stack(setup, '/elsewhere/tests/x.ts'), [setup], '/repo')).toBe(false);
   });
 });
 ```
@@ -106,7 +109,8 @@ Match the stack frame format that V8 actually produces under vitest. Before fina
 - [ ] **Step 3: Implement `tests/undefined-filter-guard.ts`.**
   - The walker recurses into arrays and **plain** objects only (`Object.getPrototypeOf(v) === Object.prototype || === null`). Everything else is a leaf. `undefined` at any position, including `where` itself, yields its path. Keys use `.key` and array elements use `[i]`.
   - The extension handler: `async deleteMany({ model, operation, args, query })`. If `'where' in args` and the walker finds paths, throw `new Error(\`${PREFIX} ${model}.${operation}: ${paths.join(', ')} is undefined. Prisma drops an undefined filter value and this write would match every row. Assign the binding, guard the write (if (id) …), or omit the key.\`)`. Otherwise `return query(args)`. Use the same body for `updateMany` and `updateManyAndReturn`. An `args` with no `where` key passes, because that is a deliberate all-rows call.
-  - `isTestCallSite`: parse each `at …(path:line:col)` or `at path:line:col` frame and strip `file://` and any `?query`. Skip `node:` frames, paths containing `/node_modules/`, and paths in `ignoreFiles`. The first remaining frame decides: true iff it matches `/\.(test|spec)\.tsx?$/` or contains `/tests/`. With no remaining frame, return false.
+  - `isTestCallSite`: parse each `at …(path:line:col)` or `at path:line:col` frame and strip `file://` and any `?query`. Skip `node:` frames, paths containing `/node_modules/`, and paths in `ignoreFiles`. The first remaining frame decides. Make it relative to the repo root first (a `repoRoot` parameter, so a checkout under any directory named `tests` is not misread). It is true iff the relative path matches `/\.(test|spec)\.tsx?$/` or starts with `tests/`. With no remaining frame, or a frame outside the repo root, return false. The signature becomes `isTestCallSite(stack: string, ignoreFiles: readonly string[], repoRoot: string): boolean`. Update the Step 1 cases to pass `'/repo'`, and add a case where `/elsewhere/tests/x.ts` with repo root `/repo` is false. The stack frames under vitest are plain absolute paths. The plan review measured this.
+  - The extension is a plain object typed with `import type` only, for example `satisfies Parameters<PrismaClient['$extends']>[0]` or whatever type-only form compiles. Never use `Prisma.defineExtension`, because a runtime import would be circular inside Task 2's mock factory.
   - Header docblock: why (`undefined` is dropped by Prisma), and that the installers are `tests/setup/undefined-filter-guard.ts` and `tests/e2e/prisma.ts`. Do not count them.
 
 - [ ] **Step 4: Run the tests and see them pass** (same command).
@@ -175,16 +179,18 @@ git commit -m "test: a Prisma extension refuses a bulk write whose filter holds 
 ```ts
 import { vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { isTestCallSite, undefinedFilterGuard } from '../undefined-filter-guard';
 
 const SELF = fileURLToPath(import.meta.url);
+const REPO_ROOT = path.resolve(path.dirname(SELF), '../..');
 
 vi.mock('@prisma/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@prisma/client')>();
   class GuardedPrismaClient extends actual.PrismaClient {
     constructor(...args: ConstructorParameters<typeof actual.PrismaClient>) {
       super(...args);
-      if (isTestCallSite(new Error().stack ?? '', [SELF])) {
+      if (isTestCallSite(new Error().stack ?? '', [SELF], REPO_ROOT)) {
         // (one-line comment on the cast, if one is needed)
         return this.$extends(undefinedFilterGuard) as unknown as GuardedPrismaClient;
       }
@@ -196,7 +202,7 @@ vi.mock('@prisma/client', async (importOriginal) => {
 
   Add a header comment stating what this file does: a client built by test code is guarded, a client built by app code is not, and why app code is exempt (its `undefined` filters are deliberate and must behave as in production). Link the spec. Verify that `SELF` matches the path form `isTestCallSite` sees. If V8 reports the setup file with a different path (a `?` suffix, for example), normalize both sides the same way.
 - [ ] **Step 4: Run the guard file. All pins pass.**
-- [ ] **Step 5: Run the whole suite under the guard.** Run `pnpm run worktree:up`, then `pnpm test`. Every rejection whose message carries the prefix is a test genuinely writing with an `undefined` filter. Fix the test, not the guard. Report each one with its file, line and fix. Any **other** new failure (a spy on an extended delegate, `instanceof`, etc.) is an installer defect. Stop and report it with the error text rather than working around it in the test.
+- [ ] **Step 5: Run the whole suite under the guard.** Run `pnpm run worktree:up`, then `pnpm test`. Every rejection whose message carries the prefix is a test genuinely writing with an `undefined` filter. Fix the test, not the guard. Report each one with its file, line and fix. This includes an app module that takes a `PrismaClient` parameter and receives the test's client: fix that call with an explicit filter, never by weakening the guard, and report it as a production-code change. Then give `src/app/api/auth/session/route.test.ts`'s `afterAll` #782-style guards (`if (accountId) …` around each write keyed on it). It cleans up through the `@/lib/db` singleton, which the guard deliberately leaves plain, so its `{ where: { accountId } }` is the issue's hazard unguarded. Any **other** new failure (a spy on an extended delegate, `instanceof`, etc.) is an installer defect. Stop and report it with the error text rather than working around it in the test.
 - [ ] **Step 6: Mutation proofs** (record exact text, restore):
   1. The setup file never extends (delete the `return`). Expected RED: the module-level and in-hook pins.
   2. The setup file always extends (drop the `isTestCallSite` check). Expected RED: the `@/lib/db` pin, with the guard's message.
@@ -218,7 +224,7 @@ git commit -m "test: every Prisma client vitest test code builds carries the und
 **Files:**
 - Create: `tests/e2e/prisma.ts`, exporting `createGuardedPrismaClient(): PrismaClient`, i.e. `new PrismaClient().$extends(undefinedFilterGuard)`, with the cast comment if the type needs it.
 - Modify: each file listed by `grep -rlE "new PrismaClient\(" tests/e2e`. Replace the construction with `createGuardedPrismaClient()`. Drop the `PrismaClient` import where it is no longer used, and keep it as `import type` where it is still a type.
-- Modify: `eslint.config.mjs`. Add a block `{ files: ['tests/e2e/**/*.ts'], ignores: ['tests/e2e/prisma.ts'], rules: { 'no-restricted-syntax': ['error', <the existing localhost selector object, copied>, { selector: "NewExpression[callee.name='PrismaClient']", message: 'Build e2e Prisma clients with createGuardedPrismaClient() from tests/e2e/prisma.ts; it refuses bulk writes whose filter holds undefined (#783).' }] } }` **after** the existing `tests/**` block. Flat config replaces a rule's options per matching block, so the localhost selector must be repeated here. Add a comment saying so.
+- Modify: `eslint.config.mjs`. Add a block `{ files: ['tests/e2e/**/*.ts'], ignores: ['tests/e2e/prisma.ts'], rules: { 'no-restricted-syntax': ['error', <the existing localhost selector object, hoisted into a shared const the way `teacherStudentWriteSelector` already is, and referenced from both blocks>, { selector: "NewExpression[callee.name='PrismaClient']", message: 'Build e2e Prisma clients with createGuardedPrismaClient() from tests/e2e/prisma.ts; it refuses bulk writes whose filter holds undefined (#783).' }] } }` **after** the existing `tests/**` block. Flat config replaces a rule's options per matching block, so the localhost selector must be repeated here. Add a comment saying so.
 
 - [ ] **Step 1: Make the failing lint check.** Add the ESLint block first and run `pnpm run lint`. Expected: one error per e2e file. Record the count against the grep above.
 - [ ] **Step 2: Create `tests/e2e/prisma.ts` and convert the files.**
@@ -257,6 +263,7 @@ export type HookFilterFinding = {
   call: string;          // e.g. 'prisma.class.deleteMany' or 'teardownTeacher'
   bindings: string[];    // possibly-undefined bindings it reads
   guarded: boolean;      // every binding is tested by an enclosing if / && / ?: inside the hook
+  client: 'test' | 'app'; // 'app' when the write's receiver resolves to an import from '@/lib/db' — the guard does not cover it
 };
 export function censusHookFilters(program: ts.Program, files: readonly string[], repoRoot: string): HookFilterFinding[];
 ```
@@ -278,7 +285,8 @@ export function censusHookFilters(program: ts.Program, files: readonly string[],
   - an indirect `teardownTeacher(prisma, teacherId)`;
   - `test.afterAll` (Playwright);
   - `afterEach`;
-  - a `deleteMany` outside any hook, which yields no finding.
+  - a `deleteMany` outside any hook, which yields no finding;
+  - a receiver imported as `import { prisma } from '@/lib/db'`, which yields `client: 'app'`, while a locally constructed one yields `'test'`. Print the column in the CLI, and in the docs section say that `app` rows are outside the guard's reach.
 - [ ] **Step 2: Run the file and see it fail.** Run `pnpm exec vitest run --project unit src/lib/hook-filter-census.test.ts`.
 - [ ] **Step 3: Implement the analyzer. Run the tests and see them pass.**
 - [ ] **Step 4: Write the CLI.** It collects files with `git ls-files` matching `*.test.ts`, `*.test.tsx`, `*.spec.ts` and `tests/**/*.ts`. It builds one program with the root `tsconfig.json` options, then prints each finding as `UNGUARDED|guarded  direct|indirect  file:line  call  [bindings]`, sorted by file and line. It ends with totals by `guarded × kind` and exits 0, because it is a report, not a gate. Run it and keep the output for the PR body.
