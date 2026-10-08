@@ -13,7 +13,7 @@
  * Full rules: `docs/technical-architecture.md` (The Services Layer → Error
  * responses).
  */
-export type ApiErrorStatus = 400 | 403 | 404 | 409 | 500 | 503;
+export type ApiErrorStatus = 400 | 403 | 404 | 409 | 415 | 500 | 503;
 
 export const API_ERROR_STATUS = {
   ACCOUNT_EXISTS: 409,
@@ -96,6 +96,7 @@ export const API_ERROR_STATUS = {
   TEMPLATE_INSTANCE_DATE_CONFLICT: 409,
   TEMPLATE_SLOT_CONFLICT: 409,
   UNIQUE_CONFLICT: 409,
+  UNSUPPORTED_MEDIA_TYPE: 415,
   WAITLIST_ENTRY_INACTIVE: 409,
   WAITLIST_FROZEN: 409,
   WALK_IN_REFUSED: 409,
