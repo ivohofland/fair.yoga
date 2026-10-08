@@ -12,8 +12,8 @@ const ROOT = '/virtual';
 
 const GLOBALS = `
 declare function beforeAll(fn: () => unknown): void;
-declare function afterAll(fn: () => unknown): void;
-declare function afterEach(fn: () => unknown): void;
+declare function afterAll(fn: () => unknown, timeout?: number): void;
+declare function afterEach(fn: () => unknown, timeout?: number): void;
 declare const test: { afterAll(fn: () => unknown): void; afterEach(fn: () => unknown): void };
 declare class FakeClient {
   class: {
@@ -384,6 +384,27 @@ afterEach(async () => {
       ]);
     });
 
+    it('reads a hook callback named by an identifier as the hook body, with or without a timeout argument', () => {
+      const findings = census(`${LOCAL}
+let classId: string;
+async function cleanup() {
+  await prisma.class.deleteMany({ where: { classId } });
+}
+const cleanupEach = async () => {
+  if (!classId) return;
+  await prisma.class.deleteMany({ where: { classId } });
+};
+afterAll(cleanup);
+afterAll(cleanup, 30_000);
+afterEach(cleanupEach);
+`);
+      expect(findings.map((f) => [f.hook, f.line, f.kind, f.guarded])).toEqual([
+        ['afterAll', 4, 'direct', false],
+        ['afterAll', 4, 'direct', false],
+        ['afterEach', 8, 'direct', true],
+      ]);
+    });
+
     it('does not follow a function from another file, nor a callee of a callee', () => {
       const findings = census(
         `${LOCAL}
@@ -453,6 +474,55 @@ afterAll(async () => {
       expect(findings.map((f) => [f.line, f.guarded])).toEqual([
         [6, true],
         [10, true],
+      ]);
+    });
+
+    it('counts an early exit on a nullish comparison in either operand order, and on an || with such a disjunct', () => {
+      const findings = census(`${LOCAL}
+let a: string | undefined;
+let b: string | undefined;
+let c: string | undefined;
+let d: string | undefined;
+let e: string | undefined;
+afterAll(async () => {
+  if (a == null) return;
+  if (undefined === b) return;
+  if ((c === undefined)) return;
+  if (null == d || !e) return;
+  await prisma.class.deleteMany({ where: { id: { in: [a, b, c, d, e] } } });
+});
+`);
+      expect(findings.map((f) => [f.bindings, f.guarded])).toEqual([[['a', 'b', 'c', 'd', 'e'], true]]);
+    });
+
+    it('does not count an early exit whose condition holds when the binding is present', () => {
+      const findings = census(`${LOCAL}
+let a: string;
+let b: string;
+let c: string;
+let d: string;
+afterAll(async () => {
+  if (a) return;
+  await prisma.class.deleteMany({ where: { id: a } });
+});
+afterAll(async () => {
+  if (b != null) return;
+  await prisma.class.deleteMany({ where: { id: b } });
+});
+afterAll(async () => {
+  if (!c && Math.random() > 1) return;
+  await prisma.class.deleteMany({ where: { id: c } });
+});
+afterAll(async () => {
+  if (d === 'x' || Math.random() > 1) return;
+  await prisma.class.deleteMany({ where: { id: d } });
+});
+`);
+      expect(findings.map((f) => [f.bindings, f.guarded])).toEqual([
+        [['a'], false],
+        [['b'], false],
+        [['c'], false],
+        [['d'], false],
       ]);
     });
 

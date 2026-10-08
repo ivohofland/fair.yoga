@@ -47,8 +47,12 @@ const APP_DB_FILE = path.join('src', 'lib', 'db.ts');
 
 type Hook = { name: 'afterAll' | 'afterEach'; callback: ts.FunctionLikeDeclaration };
 
-/** `afterAll(fn)`, `afterEach(fn)`, `test.afterAll(fn)`, `test.afterEach(fn)`. */
-function hookOf(node: ts.CallExpression): Hook | undefined {
+/**
+ * `afterAll(fn)`, `afterEach(fn)`, `test.afterAll(fn)`, `test.afterEach(fn)`.
+ * `fn` is an inline arrow or function expression, or the first argument when
+ * it is an identifier naming a function `sameFileFunction` resolves.
+ */
+function hookOf(checker: ts.TypeChecker, node: ts.CallExpression, source: ts.SourceFile): Hook | undefined {
   const callee = node.expression;
   let name: string | undefined;
   if (ts.isIdentifier(callee)) name = callee.text;
@@ -56,9 +60,12 @@ function hookOf(node: ts.CallExpression): Hook | undefined {
     name = callee.name.text;
   }
   if (name !== 'afterAll' && name !== 'afterEach') return undefined;
-  const callback = node.arguments.find(
+  const inline = node.arguments.find(
     (arg): arg is ts.ArrowFunction | ts.FunctionExpression => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg),
   );
+  const first = node.arguments[0];
+  const callback =
+    inline ?? (first !== undefined && ts.isIdentifier(first) ? sameFileFunction(checker, first, source, node) : undefined);
   return callback === undefined ? undefined : { name, callback };
 }
 
@@ -152,11 +159,55 @@ function exits(statement: ts.Statement): boolean {
   return only !== undefined && rest.length === 0 && exits(only);
 }
 
+function unparenthesized(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return current;
+}
+
+function readsSymbol(checker: ts.TypeChecker, expression: ts.Expression, symbol: ts.Symbol): boolean {
+  const bare = unparenthesized(expression);
+  return ts.isIdentifier(bare) && valueSymbolOf(checker, bare) === symbol;
+}
+
+function isNullish(expression: ts.Expression): boolean {
+  const bare = unparenthesized(expression);
+  return bare.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(bare) && bare.text === 'undefined');
+}
+
+const NULLISH_EQUALITY: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+]);
+
+/**
+ * `condition` holds only when `symbol` is falsy or nullish: `!x`, `x == null`,
+ * `x === undefined` (either operand order, `==` or `===`, `null` or
+ * `undefined`), or an `||` with such a disjunct.
+ */
+function establishesAbsent(checker: ts.TypeChecker, condition: ts.Expression, symbol: ts.Symbol): boolean {
+  const bare = unparenthesized(condition);
+  if (ts.isPrefixUnaryExpression(bare)) {
+    return bare.operator === ts.SyntaxKind.ExclamationToken && readsSymbol(checker, bare.operand, symbol);
+  }
+  if (!ts.isBinaryExpression(bare)) return false;
+  const operator = bare.operatorToken.kind;
+  if (operator === ts.SyntaxKind.BarBarToken) {
+    return establishesAbsent(checker, bare.left, symbol) || establishesAbsent(checker, bare.right, symbol);
+  }
+  if (!NULLISH_EQUALITY.has(operator)) return false;
+  return (
+    (readsSymbol(checker, bare.left, symbol) && isNullish(bare.right)) ||
+    (isNullish(bare.left) && readsSymbol(checker, bare.right, symbol))
+  );
+}
+
 /**
  * Between `node` and `boundary`, `node` sits in the then-branch of an `if`,
  * the right of an `&&` or the true branch of a `?:` whose condition mentions
  * `symbol`, or after an `if (…) return;`/`throw` in the same block whose
- * condition mentions it. "Mentions", not "tests": `if (!id) write(id)` counts.
+ * condition establishes it is absent (`establishesAbsent`). The branch forms
+ * are "mentions", not "tests": `if (!id) write(id)` counts.
  */
 function isGuarded(checker: ts.TypeChecker, node: ts.Node, boundary: ts.Node, symbol: ts.Symbol): boolean {
   let child: ts.Node = node;
@@ -174,7 +225,7 @@ function isGuarded(checker: ts.TypeChecker, node: ts.Node, boundary: ts.Node, sy
     if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isCaseOrDefaultClause(current)) {
       const index = current.statements.findIndex((statement) => statement === child);
       const earlier = index < 0 ? [] : current.statements.slice(0, index);
-      if (earlier.some((s) => ts.isIfStatement(s) && exits(s.thenStatement) && mentions(checker, s.expression, symbol))) {
+      if (earlier.some((s) => ts.isIfStatement(s) && exits(s.thenStatement) && establishesAbsent(checker, s.expression, symbol))) {
         return true;
       }
     }
@@ -182,15 +233,24 @@ function isGuarded(checker: ts.TypeChecker, node: ts.Node, boundary: ts.Node, sy
   return false;
 }
 
-/** The function declared in `source`, outside `hook`, that `call` invokes by name: a function declaration or a `const` bound to an arrow or function expression. */
+/** The function declared in `source`, outside `hook`, that `call` invokes by name. */
 function sameFileCallee(
   checker: ts.TypeChecker,
   call: ts.CallExpression,
   source: ts.SourceFile,
   hook: ts.Node,
 ): ts.FunctionLikeDeclaration | undefined {
-  if (!ts.isIdentifier(call.expression)) return undefined;
-  const declaration = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
+  return ts.isIdentifier(call.expression) ? sameFileFunction(checker, call.expression, source, hook) : undefined;
+}
+
+/** The function declared in `source`, outside `hook`, that `id` names: a function declaration or a `const` bound to an arrow or function expression. */
+function sameFileFunction(
+  checker: ts.TypeChecker,
+  id: ts.Identifier,
+  source: ts.SourceFile,
+  hook: ts.Node,
+): ts.FunctionLikeDeclaration | undefined {
+  const declaration = checker.getSymbolAtLocation(id)?.valueDeclaration;
   if (declaration === undefined || declaration.getSourceFile() !== source) return undefined;
   let fn: ts.FunctionLikeDeclaration | undefined;
   if (ts.isFunctionDeclaration(declaration)) fn = declaration;
@@ -300,7 +360,7 @@ export function censusHookFilters(program: ts.Program, files: readonly string[],
 
     const find = (n: ts.Node): void => {
       if (ts.isCallExpression(n)) {
-        const hook = hookOf(n);
+        const hook = hookOf(checker, n, source);
         if (hook !== undefined) {
           if (hook.callback.body !== undefined) inspect(hook, hook.callback.body, hook.callback, undefined);
           return;
