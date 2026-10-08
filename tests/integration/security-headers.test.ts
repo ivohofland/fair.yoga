@@ -95,6 +95,13 @@ describe('API CSP', () => {
   });
 });
 
+describe('API CSP scope', () => {
+  it('does not reach a static asset outside the API', async () => {
+    const res = await fetch(`${BASE_URL}/manifest.webmanifest`, { headers: freshIp() });
+    expect(res.headers.get('content-security-policy')).toBeNull();
+  });
+});
+
 describe('service worker CSP', () => {
   it('/sw.js carries exactly the same-origin policy', async () => {
     const res = await fetch(`${BASE_URL}/sw.js`, { headers: freshIp() });
