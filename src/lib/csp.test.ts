@@ -41,6 +41,14 @@ describe('buildPageCsp', () => {
       expect(csp.split('; ')).toContain(d);
     }
   });
+
+  it('reports violations to the report route, by report-uri only', () => {
+    for (const isDev of [true, false]) {
+      const csp = buildPageCsp('n', isDev);
+      expect(directive(csp, 'report-uri')).toBe('report-uri /api/csp-report');
+      expect(directive(csp, 'report-to')).toBeUndefined();
+    }
+  });
 });
 
 describe('API_CSP', () => {

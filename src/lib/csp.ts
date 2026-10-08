@@ -1,3 +1,5 @@
+import { CSP_REPORT_PATH } from './csp-report';
+
 /**
  * The Content-Security-Policy strings: one page policy built per request
  * around a nonce, and static ones for API and service-worker responses
@@ -6,6 +8,9 @@
  * `style-src` keeps 'unsafe-inline' for the app's `style={}` attributes;
  * style injection is not script execution. Development adds 'unsafe-eval'
  * and websockets for Fast Refresh.
+ *
+ * Violations are reported to `CSP_REPORT_PATH` by `report-uri`, not
+ * `report-to` (`docs/technical-architecture.md`, Content Security Policy).
  */
 export function buildPageCsp(nonce: string, isDev: boolean): string {
   return [
@@ -23,6 +28,7 @@ export function buildPageCsp(nonce: string, isDev: boolean): string {
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
+    `report-uri ${CSP_REPORT_PATH}`,
   ].join('; ');
 }
 
