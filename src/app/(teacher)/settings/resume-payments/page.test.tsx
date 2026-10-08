@@ -10,14 +10,17 @@ const { requireTeacherSession, readResumeReview, count } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/session', () => ({ requireTeacherSession }));
-vi.mock('@/lib/db', () => ({ prisma: { passkeyCredential: { count } } }));
+vi.mock('@/lib/db', () => ({
+  prisma: { passkeyCredential: { count }, account: { findUniqueOrThrow: async () => ({ email: 'anna@test.local' }) } },
+}));
 vi.mock('@/services/payout-resume', () => ({ readResumeReview }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 vi.mock('@/components/account/sign-out-button', () => ({
-  SignOutButton: () => <span data-testid="sign-out" />,
+  SignOutButton: ({ redirectTo }: { redirectTo?: string }) => <span data-testid="sign-out" data-redirect={redirectTo} />,
 }));
 
 import ResumePaymentsPage from './page';
+import { RESUME_SIGN_IN_PATH } from '@/components/settings/resume-payments-form';
 
 const SESSION = { sessionId: 's1', accountId: 'a1', teacherId: 't1', studentId: null, defaultTimezone: 'UTC' };
 
@@ -66,7 +69,8 @@ describe('the resume-payments page', () => {
     render(await ResumePaymentsPage());
 
     expect(screen.getByRole('heading', { name: 'Sign in with your passkey to resume' })).toBeInTheDocument();
-    expect(screen.getByTestId('sign-out')).toBeInTheDocument();
+    expect(screen.getByTestId('sign-out')).toHaveAttribute('data-redirect', RESUME_SIGN_IN_PATH);
+    expect(screen.queryByRole('button', { name: 'Resume payments' })).toBeNull();
     expect(screen.queryByText(/was removed recently/)).toBeNull();
     expect(document.body.textContent).toContain(`then resume within ${RECENT_AUTH_WINDOW_MS / 60_000} minutes.`);
   });

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { SignOutButton } from '@/components/account/sign-out-button';
-import { ResumePaymentsForm } from '@/components/settings/resume-payments-form';
+import { ResumePaymentsForm, RESUME_SIGN_IN_PATH } from '@/components/settings/resume-payments-form';
 import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 import { PAYOUT_CHANGE_PHRASES, payoutMasksAlikeNote } from '@/lib/email-templates';
 import { formatClassContext, formatDateWithYear, formatMoney, paymentStateInlineText } from '@/lib/format';
@@ -89,9 +89,10 @@ function currencyNote(currency: Currency | null): string {
 export default async function ResumePaymentsPage() {
   const session = await requireTeacherSession();
   const timeZone = session.defaultTimezone;
-  const [review, passkeys] = await Promise.all([
+  const [review, passkeys, account] = await Promise.all([
     readResumeReview(prisma, session.teacherId, session.sessionId),
     prisma.passkeyCredential.count({ where: { accountId: session.accountId } }),
+    prisma.account.findUniqueOrThrow({ where: { id: session.accountId }, select: { email: true } }),
   ]);
 
   if (review === null) {
@@ -204,7 +205,7 @@ export default async function ResumePaymentsPage() {
               <> If you no longer have it, you can resume without it from {when(review.fallbackOpensAt, timeZone)}.</>
             )}
           </p>
-          <SignOutButton accountId={session.accountId} />
+          <SignOutButton accountId={session.accountId} redirectTo={RESUME_SIGN_IN_PATH} />
         </section>
       ) : (
         <section className="flex flex-col gap-3">
@@ -224,6 +225,8 @@ export default async function ResumePaymentsPage() {
             teacherId={session.teacherId}
             fingerprint={review.fingerprint}
             passkeyRequired={review.passkeyRequired}
+            accountId={session.accountId}
+            email={account.email}
           />
         </section>
       )}
