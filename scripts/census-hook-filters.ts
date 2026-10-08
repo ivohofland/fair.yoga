@@ -5,6 +5,8 @@
 // deep, plus calls handing such a binding to a helper it does not follow.
 // Its reach and known misses are in docs/test-database.md (section 6).
 // A report, not a gate: it exits 0 whatever it finds. The runtime guard is the gate.
+// It exits 1 when it could not read what it meant to: no files collected, a
+// collected file missing from the program, or a file that does not parse.
 // Run: pnpm run census:hook-filters
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
@@ -13,13 +15,20 @@ import { censusHookFilters, type HookFilterFinding } from '../src/lib/hook-filte
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 
-const files = execFileSync('git', ['ls-files', '--', '*.test.ts', '*.test.tsx', '*.spec.ts', 'tests/**/*.ts'], {
-  cwd: repoRoot,
-  encoding: 'utf8',
-})
+function fail(message: string): never {
+  console.error(`census-hook-filters: ${message}`);
+  process.exit(1);
+}
+
+const files = execFileSync(
+  'git',
+  ['ls-files', '--', '*.test.ts', '*.test.tsx', '*.spec.ts', 'tests/*.ts', 'tests/**/*.ts'],
+  { cwd: repoRoot, encoding: 'utf8' },
+)
   .split('\n')
   .filter((line) => line !== '')
   .map((rel) => path.resolve(repoRoot, rel));
+if (files.length === 0) fail('git ls-files collected no test files; nothing was scanned.');
 
 const configPath = path.join(repoRoot, 'tsconfig.json');
 const config = ts.readConfigFile(configPath, (p) => ts.sys.readFile(p));
@@ -29,6 +38,19 @@ if (config.error !== undefined) {
 }
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, repoRoot, undefined, configPath);
 const program = ts.createProgram(files, { ...parsed.options, incremental: false, noEmit: true });
+
+const missing = files.filter((file) => program.getSourceFile(file) === undefined);
+if (missing.length > 0) {
+  fail(`not in the program, so not scanned:\n${missing.map((f) => `  ${path.relative(repoRoot, f)}`).join('\n')}`);
+}
+const unparsed = files.flatMap((file) => {
+  const source = program.getSourceFile(file);
+  const diagnostics = source === undefined ? [] : program.getSyntacticDiagnostics(source);
+  return diagnostics.map(
+    (d) => `  ${path.relative(repoRoot, file)}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`,
+  );
+});
+if (unparsed.length > 0) fail(`syntax errors, so the census would misread these files:\n${unparsed.join('\n')}`);
 
 const findings = censusHookFilters(program, files, repoRoot).sort(
   (a, b) => a.file.localeCompare(b.file) || a.line - b.line,

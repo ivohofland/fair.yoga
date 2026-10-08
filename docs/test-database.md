@@ -378,7 +378,7 @@ of an `if` whose then-branch holds it, an `&&` whose right side holds it, a
 enclosing block. A followed function's row is also guarded by such a
 condition around the hook's call to it.
 
-On 2026-10-08 it scanned 509 tracked test and test-helper files and printed
+On 2026-10-08 it scanned 525 tracked test and test-helper files and printed
 813 rows in 108 files:
 
 | | direct | indirect |
