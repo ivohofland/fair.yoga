@@ -148,14 +148,19 @@ describe('paymentMethodsFor', () => {
     ]);
   });
 
-  it('offers the bank methods alone, and logs the teacher, when the stored link does not parse', () => {
+  it('offers the bank methods alone, and logs the teacher and why, when the stored link does not parse', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
     onTestFinished(() => error.mockRestore());
-    expect(methodsFor(account({ currency: 'EUR', iban: IBAN }), 'http://x').map((m) => m.kind)).toEqual([
+    const stored = 'http://pay.example/anna';
+    expect(methodsFor(account({ currency: 'EUR', iban: IBAN }), stored).map((m) => m.kind)).toEqual([
       'bank_transfer',
       'epc_qr',
     ]);
-    expect(error).toHaveBeenCalledWith({ teacherId: TEACHER_ID }, expect.stringContaining('payment link'));
+    expect(error).toHaveBeenCalledWith(
+      { teacherId: TEACHER_ID, reason: 'not_https', length: stored.length },
+      'stored payment link does not parse; offering no link',
+    );
+    expect(JSON.stringify(error.mock.calls)).not.toContain('pay.example');
   });
 
   it('offers nothing with neither an account nor a link', () => {
