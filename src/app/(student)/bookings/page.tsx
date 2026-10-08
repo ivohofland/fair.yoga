@@ -51,7 +51,7 @@ export default async function StudentBookingsPage() {
                     lastName: true,
                     pageSlug: true,
                     defaultTimezone: true,
-                    // Each class picks the one in its own currency below.
+                    // Includes every bank account; each class picks the one in its own currency below.
                     ...teacherPaymentSelect,
                   },
                 },
