@@ -29,8 +29,21 @@ afterAll(async () => {
 
 const NONCE = /'nonce-([A-Za-z0-9+/]+={0,2})'/;
 
+function directive(csp: string, name: string): string {
+  return csp.split('; ').find((d) => d.startsWith(`${name} `)) ?? '';
+}
+
 function scriptSrc(csp: string): string {
-  return csp.split('; ').find((d) => d.startsWith('script-src ')) ?? '';
+  return directive(csp, 'script-src');
+}
+
+/** An unmatched multi-segment path: the global not-found, not the `[slug]` page's own `notFound()`. */
+const NOT_FOUND_PATH = '/csp-404/none';
+
+/** `next dev` names its HMR client chunk in every page; a production build never does. */
+async function isDevServer(): Promise<boolean> {
+  const html = await (await fetch(`${BASE_URL}/login`, { headers: freshIp() })).text();
+  return html.includes('hmr-client');
 }
 
 async function page(path: string, signedIn = false): Promise<Response> {
@@ -48,7 +61,7 @@ describe('page CSP', () => {
     ['/start', false],
     ['/schedule', true],
     [`/${slug}`, false],
-    ['/no-such-teacher-csp-404', false],
+    [NOT_FOUND_PATH, false],
   ];
 
   for (const [path, signedIn] of cases) {
@@ -60,10 +73,27 @@ describe('page CSP', () => {
       expect(scriptSrc(csp)).toMatch(NONCE);
       expect(scriptSrc(csp)).toContain("'strict-dynamic'");
       expect(scriptSrc(csp)).not.toContain("'unsafe-inline'");
+      if (path === NOT_FOUND_PATH) expect(res.status).toBe(404);
     });
   }
 
-  for (const path of ['/login', '/no-such-teacher-csp-404']) {
+  it('carries no development source outside a dev server', async () => {
+    const dev = await isDevServer();
+    // CI serves a production build, so there this assertion always runs; a
+    // dev server on CI would make it vacuous, and fails instead.
+    if (process.env.CI) expect(dev).toBe(false);
+    const csp = (await page('/login')).headers.get('content-security-policy') ?? '';
+    if (dev) {
+      // The detection agrees with the policy it gates.
+      expect(scriptSrc(csp)).toContain("'unsafe-eval'");
+      return;
+    }
+    expect(scriptSrc(csp)).not.toContain("'unsafe-eval'");
+    expect(directive(csp, 'connect-src')).not.toContain('ws:');
+    expect(directive(csp, 'connect-src')).toBe("connect-src 'self'");
+  });
+
+  for (const path of ['/login', NOT_FOUND_PATH]) {
     it(`${path} stamps the header's nonce on its scripts, fresh per request`, async () => {
       const first = await page(path);
       const nonce = (first.headers.get('content-security-policy') ?? '').match(NONCE)?.[1];
@@ -73,7 +103,9 @@ describe('page CSP', () => {
       expect(html).not.toMatch(/<script(?![^>]*\bnonce=)[^>]*>/);
 
       const second = await page(path);
-      expect((second.headers.get('content-security-policy') ?? '').match(NONCE)?.[1]).not.toBe(nonce);
+      const secondNonce = (second.headers.get('content-security-policy') ?? '').match(NONCE)?.[1];
+      expect(secondNonce).toBeDefined();
+      expect(secondNonce).not.toBe(nonce);
     });
   }
 
