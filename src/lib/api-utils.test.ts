@@ -45,6 +45,7 @@ import {
   requireTeacher,
   requireStudent,
   parseBody,
+  isJsonContentType,
   isErrorResponse,
   withErrorHandler,
 } from './api-utils';
@@ -58,7 +59,7 @@ const mockedValidateSession = vi.mocked(validateSession);
 
 function makeRequest(
   url = 'http://localhost/api/test',
-  init?: { method?: string; body?: string; headers?: Record<string, string> }
+  init?: { method?: string; body?: string | Blob; headers?: Record<string, string> }
 ): NextRequest {
   return new NextRequest(url, init);
 }
@@ -356,6 +357,49 @@ describe('parseBody', () => {
     if ('error' in result) {
       expect(result.error.status).toBe(400);
     }
+  });
+
+  it('refuses a text/plain body with 415 UNSUPPORTED_MEDIA_TYPE', async () => {
+    const request = makeRequest('http://localhost/api/test', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'Yoga Class', spots: 10 }),
+      headers: { 'Content-Type': 'text/plain' },
+    });
+    const result = await parseBody(request, testSchema);
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error.status).toBe(415);
+      expect(((await result.error.json()) as { error: { code: string } }).error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+    }
+  });
+
+  it('refuses a body with no Content-Type', async () => {
+    const request = makeRequest('http://localhost/api/test', {
+      method: 'POST',
+      body: new Blob([JSON.stringify({ title: 'Yoga Class', spots: 10 })]),
+    });
+    const result = await parseBody(request, testSchema);
+    expect('error' in result && result.error.status).toBe(415);
+  });
+
+  it('accepts a charset parameter and any letter case', async () => {
+    const request = makeRequest('http://localhost/api/test', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'Yoga Class', spots: 10 }),
+      headers: { 'Content-Type': 'Application/JSON ; charset=UTF-8' },
+    });
+    expect('data' in (await parseBody(request, testSchema))).toBe(true);
+  });
+});
+
+describe('isJsonContentType', () => {
+  it('matches the media type exactly', () => {
+    expect(isJsonContentType('application/json')).toBe(true);
+    expect(isJsonContentType('application/json; charset=utf-8')).toBe(true);
+    expect(isJsonContentType('application/json-patch+json')).toBe(false);
+    expect(isJsonContentType('application/jsonx')).toBe(false);
+    expect(isJsonContentType('text/plain;charset=UTF-8')).toBe(false);
+    expect(isJsonContentType(null)).toBe(false);
   });
 });
 

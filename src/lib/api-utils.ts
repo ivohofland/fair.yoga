@@ -46,7 +46,7 @@ export function respondUnchanged<T = never>(data: NoInfer<T>): NextResponse {
 }
 
 /** Every error status the app sends. */
-export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
+export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 415 | 429 | 500 | 503;
 
 /** True when `T` is a union with more than one member (`A | B`, not `A`). */
 export type IsUnion<T, B = T> = T extends T ? ([B] extends [T] ? false : true) : never;
@@ -157,10 +157,22 @@ export async function requireStudent(
   return { ...result, studentId: result.studentId };
 }
 
+/** `application/json`, with or without parameters such as a charset. */
+export function isJsonContentType(header: string | null): boolean {
+  if (header === null) return false;
+  const [mediaType] = header.split(';');
+  return mediaType?.trim().toLowerCase() === 'application/json';
+}
+
 export async function parseBody<T>(
   request: NextRequest,
   schema: z.ZodType<T>,
 ): Promise<{ data: T } | { error: NextResponse }> {
+  // A cross-site form can post text/plain without a preflight; JSON cannot.
+  if (!isJsonContentType(request.headers.get('content-type'))) {
+    return { error: respondError('Send this request as JSON.', 415, 'UNSUPPORTED_MEDIA_TYPE') };
+  }
+
   let raw: unknown;
   try {
     raw = await request.json();

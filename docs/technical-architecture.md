@@ -693,7 +693,7 @@ prefetching it — without ever asking the user which one this is:
 5. Redirect to dashboard (teacher) or bookings (student), once a session exists
 ```
 
-Writes are refused cross-origin in `withErrorHandler` (`src/lib/cross-origin.ts`), so SameSite=Lax is not the only CSRF layer.
+Writes are refused cross-origin in `withErrorHandler` (`src/lib/cross-origin.ts`), so SameSite=Lax is not the only CSRF layer. `parseBody` also refuses any body not sent as `application/json` (415 `UNSUPPORTED_MEDIA_TYPE`), which closes the cross-site `text/plain` form path even where the Origin check is stripped.
 
 On iOS, an installed home-screen app keeps its own cookie jar, separate from
 the browser's, so a link tapped in Mail opens in the browser and takes the
