@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readError } from '@/lib/client-errors';
+import { RemoveControl } from './remove-control';
 import { PAYMENT_LINK_MESSAGES, parsePaymentLink } from '@/lib/payment-link';
 
 interface PaymentLinkFormProps {
@@ -24,7 +25,9 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState('');
   const busy = saving || removing;
   const url = `/api/teachers/${teacherId}/payment-link`;
 
@@ -54,8 +57,7 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
       });
       if (!res.ok) {
         const { message } = await readError(res, 'Couldn’t save your payment link.');
-        // One field, one issue, and its copy holds the issue separator itself:
-        // the message is not split.
+        // One field, one issue: the message is the prefix and that issue's copy.
         if (message.startsWith(FIELD_PREFIX)) setFieldError(message.slice(FIELD_PREFIX.length));
         else setError(message);
         return;
@@ -73,22 +75,24 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
 
   async function handleRemove() {
     setRemoving(true);
+    setRemoveError('');
     setError('');
     setSuccess('');
     try {
       const res = await fetch(url, { method: 'DELETE' });
       if (!res.ok) {
         const { message } = await readError(res, 'Couldn’t remove your payment link.');
-        setError(message);
+        setRemoveError(message);
         return;
       }
+      setConfirming(false);
       setValue('');
       setFieldError('');
       setSuccess('Payment link removed.');
       router.refresh();
     } catch (err) {
       logRequestFailure('payment-link-form', { teacherId }, err);
-      setError('Network error. Please try again.');
+      setRemoveError('Network error. Please try again.');
     } finally {
       setRemoving(false);
     }
@@ -116,16 +120,17 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
         </Button>
       </form>
       {hasLink && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => void handleRemove()}
-            disabled={busy}
-            className="type-label text-danger disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {removing ? 'Removing...' : 'Remove payment link'}
-          </button>
-        </div>
+        <RemoveControl
+          label="payment link"
+          question="Remove your payment link? Students with unpaid classes will no longer see it."
+          confirming={confirming}
+          removing={removing}
+          disabled={busy}
+          error={removeError}
+          onAsk={() => { setRemoveError(''); setConfirming(true); }}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => void handleRemove()}
+        />
       )}
     </section>
   );

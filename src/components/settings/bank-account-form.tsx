@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Currency } from '@prisma/client';
 import type { z } from 'zod';
@@ -9,6 +9,7 @@ import { SCHEME_FOR_CURRENCY, type BankDetails } from '@/lib/bank-details';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { listRowClass } from '@/components/ui/list-row';
+import { RemoveControl } from './remove-control';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import { ISSUE_SEPARATOR } from '@/lib/validation-message';
 import { BANK_FIELD_MAX, HOLDER_NAME_MAX } from '@/lib/input-bounds';
@@ -87,93 +88,6 @@ interface BankAccountFormProps {
   hasAccount: boolean;
   /** Accounts the teacher holds in other currencies, identifier masked. */
   others: readonly { currency: Currency; masked: string }[];
-}
-
-interface RemoveControlProps {
-  currency: Currency;
-  confirming: boolean;
-  removing: boolean;
-  disabled: boolean;
-  error: string;
-  /** Laid out in a row: the trigger sits at the row's end and the confirmation spans below it. */
-  children?: React.ReactNode;
-  onAsk: () => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-}
-
-/**
- * A text trigger, then an inline confirmation below it: nothing is sent on
- * the first tap. Opening the confirmation focuses its Remove button, which the
- * question describes; Cancel hands focus back to the trigger. A refusal shows
- * here, beside the control that failed.
- */
-function RemoveControl({ currency, confirming, removing, disabled, error, children, onAsk, onCancel, onConfirm }: RemoveControlProps) {
-  const questionId = useId();
-  const confirmRef = useRef<HTMLButtonElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  // Set by Cancel, so focus returns to the trigger once it is back on the page.
-  const returnFocus = useRef(false);
-
-  // Disabled while the request is in flight, the Remove button takes focus
-  // again once it settles with the confirmation still open (a refusal).
-  useEffect(() => {
-    if (confirming) {
-      if (!removing) confirmRef.current?.focus();
-      return;
-    }
-    if (returnFocus.current) {
-      returnFocus.current = false;
-      triggerRef.current?.focus();
-    }
-  }, [confirming, removing]);
-
-  function cancel() {
-    returnFocus.current = true;
-    onCancel();
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-4">
-        {children}
-        {!confirming && (
-          <button
-            ref={triggerRef}
-            type="button"
-            onClick={onAsk}
-            disabled={disabled}
-            className="type-label text-danger disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Remove <span className="sr-only">{currency} details</span>
-          </button>
-        )}
-      </div>
-      {confirming && (
-        <div className="flex flex-col gap-2">
-          <p id={questionId} className="text-sm text-brown">
-            Remove {currency} details? Students with unpaid {currency} classes will no longer see them.
-          </p>
-          <div className="flex gap-3">
-            <Button
-              ref={confirmRef}
-              type="button"
-              variant="destructive"
-              aria-describedby={questionId}
-              onClick={onConfirm}
-              disabled={disabled}
-            >
-              {removing ? 'Removing...' : 'Remove'}
-            </Button>
-            <Button type="button" variant="secondary" onClick={cancel} disabled={disabled}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-    </div>
-  );
 }
 
 export function BankAccountForm({ teacherId, currency, initial, hasAccount, others }: BankAccountFormProps) {
@@ -289,7 +203,8 @@ export function BankAccountForm({ teacherId, currency, initial, hasAccount, othe
 
   function removeControlProps(target: Currency) {
     return {
-      currency: target,
+      label: `${target} details`,
+      question: `Remove ${target} details? Students with unpaid ${target} classes will no longer see them.`,
       confirming: confirming === target,
       removing: removing === target,
       disabled: busy,
