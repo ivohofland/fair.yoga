@@ -29,8 +29,8 @@ const linkClass =
  */
 export function PayoutPauseForm() {
   const [state, setState] = useState<State>('ready');
-  // Set once a request's answer was lost: the pause may have gone through,
-  // and a used link afterwards is most likely that attempt's doing.
+  // Set once an attempt's outcome is unknown: a used link afterwards may be
+  // that attempt's doing.
   const [lostEarlier, setLostEarlier] = useState(false);
   // `undefined` on the server and through hydration: the fragment never
   // reaches the server.
@@ -68,13 +68,26 @@ export function PayoutPauseForm() {
       setState('limited');
       return;
     }
-    const { code } = await readError(res, 'Something went wrong, and nothing was paused.');
+    // An empty fallback marks a body the app did not write.
+    const { code, message } = await readError(res, '');
     if (code === 'PAUSE_LINK_INVALID') {
       setState('invalid');
       return;
     }
     logRequestFailure('payout-pause', { status: res.status, code }, new Error('pause refused'));
-    setState(res.status === 400 || res.status === 403 || res.status === 404 ? 'rejected' : 'failed');
+    // Only a coded refusal or the app's own busy answer says the pause did not
+    // happen; anything else (a gateway, a proxy's page, an uncoded refusal)
+    // leaves the outcome unknown.
+    if (code !== undefined && res.status >= 400 && res.status < 500) {
+      setState('rejected');
+      return;
+    }
+    if (res.status === 503 && message !== '') {
+      setState('failed');
+      return;
+    }
+    setLostEarlier(true);
+    setState('unknown');
   }
 
   if (state === 'paused') {
@@ -99,7 +112,7 @@ export function PayoutPauseForm() {
           {state !== 'invalid'
             ? 'This link is incomplete. Open it again from the email, or copy the whole address.'
             : lostEarlier
-              ? 'This link has now been used: your earlier attempt most likely paused payments.'
+              ? 'This link has already been used, perhaps by your earlier attempt.'
               : 'This link no longer works. It may have been used already, or it has expired.'}
         </p>
         <p className="type-body">
@@ -127,8 +140,8 @@ export function PayoutPauseForm() {
       )}
       {state === 'unknown' && (
         <p role="alert" className="text-[13px] leading-[1.4] text-danger">
-          We couldn&rsquo;t tell whether payments were paused. Press the button again: if it then says this link no
-          longer works, the pause went through.
+          We couldn&rsquo;t confirm whether payments were paused. To check, press Pause payments again: if it
+          says this link no longer works, the link has been used, and signing in shows whether payments are paused.
         </p>
       )}
       {state === 'rejected' && (
