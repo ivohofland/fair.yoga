@@ -324,10 +324,16 @@ export const PAYOUT_CHANGE_PHRASES = {
  * while the full value changed (or nothing says it did not): the mask hides
  * exactly the part of the value someone else would choose.
  */
+type PayoutChangedKind = Extract<PayoutChangeKind, `${string}_changed`>;
+
 const PAYOUT_MASKS_ALIKE_WARNING = {
   bank_account_changed: "The bank details changed, though the account number's last digits look the same. Check the full details in your settings.",
   payment_link_changed: 'The new link looks like the old one here, but it is a different link. Check it in full in your settings.',
-} as const satisfies Partial<Record<PayoutChangeKind, string>>;
+} as const satisfies Record<PayoutChangedKind, string>;
+
+function isChangedKind(kind: PayoutChangeKind): kind is PayoutChangedKind {
+  return Object.hasOwn(PAYOUT_MASKS_ALIKE_WARNING, kind);
+}
 
 /** A note explaining why before and after look alike: reassuring only when the full identifier did not change. */
 export type PayoutMasksAlikeNote = { tone: 'same_identifier' | 'warning'; text: string };
@@ -345,11 +351,12 @@ export function payoutMasksAlikeNote(event: {
   identifierChanged: boolean | null;
 }): PayoutMasksAlikeNote | null {
   if (event.before === null || event.before !== event.after) return null;
-  if (!(event.kind in PAYOUT_MASKS_ALIKE_WARNING)) return null;
-  if (event.kind === 'bank_account_changed' && event.identifierChanged === false) {
+  const kind = event.kind;
+  if (!isChangedKind(kind)) return null;
+  if (kind === 'bank_account_changed' && event.identifierChanged === false) {
     return { tone: 'same_identifier', text: 'Before and after look the same here because a detail other than the account number changed.' };
   }
-  return { tone: 'warning', text: PAYOUT_MASKS_ALIKE_WARNING[event.kind as keyof typeof PAYOUT_MASKS_ALIKE_WARNING] };
+  return { tone: 'warning', text: PAYOUT_MASKS_ALIKE_WARNING[kind] };
 }
 
 function formatInZoneOrUtc(at: Date, timezone: string): string {
