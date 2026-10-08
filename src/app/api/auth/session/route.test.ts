@@ -30,9 +30,9 @@ describe('GET /api/auth/session — session extension race (#632)', () => {
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { accountId } });
-    await prisma.teacher.deleteMany({ where: { id: teacherId } });
-    await prisma.account.deleteMany({ where: { id: accountId } });
+    if (accountId) await prisma.session.deleteMany({ where: { accountId } });
+    if (teacherId) await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    if (accountId) await prisma.account.deleteMany({ where: { id: accountId } });
     await prisma.$disconnect();
   });
 
