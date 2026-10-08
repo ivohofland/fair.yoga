@@ -3,7 +3,7 @@ import { respondOk, respondError, parseBody, requireTeacher, isErrorResponse, wi
 import { prisma } from '@/lib/db';
 import { onboardingSkipSchema } from '@/lib/schemas';
 import { isSettled } from '@/lib/onboarding';
-import { hasAccountInCurrency } from '@/lib/payment-methods';
+import { hasPayoutDetails } from '@/lib/payment-methods';
 
 /**
  * Records a skip (#385). Appends to `skippedOnboarding` idempotently.
@@ -26,14 +26,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const [teacher, roomCount, classCount] = await Promise.all([
       prisma.teacher.findUniqueOrThrow({
         where: { id: session.teacherId },
-        select: { bio: true, currency: true, skippedOnboarding: true, bankAccounts: { select: { currency: true } } },
+        select: {
+          bio: true, currency: true, paymentLink: true, skippedOnboarding: true, bankAccounts: { select: { currency: true } },
+        },
       }),
       prisma.teacherRoom.count({ where: { teacherId: session.teacherId, isArchived: false } }),
       prisma.class.count({ where: { calendarEntry: { teacherId: session.teacherId } } }),
     ]);
     const settled = isSettled({
       bio: teacher.bio,
-      bankAccountInCurrentCurrency: hasAccountInCurrency(teacher.bankAccounts, teacher.currency),
+      payoutDetailsSet: hasPayoutDetails(teacher),
       roomCount,
       classCount,
       skipped: teacher.skippedOnboarding,

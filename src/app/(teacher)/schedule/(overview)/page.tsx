@@ -6,7 +6,7 @@ import { GettingStarted } from '@/components/schedule/getting-started';
 import { InstallCard } from '@/components/schedule/install-card';
 import { ScheduleHeader } from '@/components/schedule/schedule-header';
 import { isOnboardingComplete } from '@/lib/onboarding';
-import { hasAccountInCurrency } from '@/lib/payment-methods';
+import { hasPayoutDetails } from '@/lib/payment-methods';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
@@ -40,6 +40,7 @@ export default async function SchedulePage() {
       select: {
         bio: true,
         currency: true,
+        paymentLink: true,
         bankAccounts: { select: { currency: true } },
         skippedOnboarding: true,
         pageSlug: true,
@@ -77,7 +78,7 @@ export default async function SchedulePage() {
 
   const onboardingInput = {
     bio: teacher.bio,
-    bankAccountInCurrentCurrency: hasAccountInCurrency(teacher.bankAccounts, teacher.currency),
+    payoutDetailsSet: hasPayoutDetails(teacher),
     roomCount,
     classCount,
     skipped: teacher.skippedOnboarding,

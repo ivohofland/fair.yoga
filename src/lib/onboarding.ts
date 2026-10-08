@@ -9,8 +9,8 @@ export type StepState = 'done' | 'skipped' | 'todo';
 
 export interface StepInput {
   bio: string;
-  /** Whether the teacher holds a bank account in their current currency. */
-  bankAccountInCurrentCurrency: boolean;
+  /** Whether the teacher has a bank account in their current currency or a payment link. */
+  payoutDetailsSet: boolean;
   roomCount: number;
   classCount: number;
   skipped: OnboardingStep[];
@@ -31,7 +31,7 @@ const ORDER: readonly StepKey[] = ['profile', 'bank', 'room', 'class'];
 function isDone(key: StepKey, input: StepInput): boolean {
   switch (key) {
     case 'profile': return input.bio !== '';
-    case 'bank': return input.bankAccountInCurrentCurrency;
+    case 'bank': return input.payoutDetailsSet;
     case 'room': return input.roomCount > 0;
     case 'class': return input.classCount > 0;
     default: {
@@ -49,8 +49,8 @@ const COPY: Record<StepKey, { label: string; detail: string; href: string }> = {
     href: '/settings/profile',
   },
   bank: {
-    label: 'Add your bank details',
-    detail: 'Students see them when it’s time to pay — skip if you take cash',
+    label: 'Add how students pay you',
+    detail: 'Bank details or a payment link — skip if you take cash',
     href: '/settings/profile',
   },
   room: {
