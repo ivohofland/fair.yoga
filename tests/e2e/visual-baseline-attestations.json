@@ -16,6 +16,12 @@
     "verifiedAt": "2026-10-06",
     "note": "Currency threaded through ClassPriceLine; EUR output is byte-identical"
   },
+  "schedule": {
+    "sourceSha256": "f199ed76f300ceb747b36f11152afa2961611bbcefc1cd04e53714a2c78a3ed7",
+    "baselineSha256": "8b46340e4490ccb2af380da8c134ec63fe43c7f31a95c3c895538bbc5b9903d1",
+    "verifiedAt": "2026-10-08",
+    "note": "The paused-payments card renders only for a paused teacher; the baseline teacher is not paused"
+  },
   "settings": {
     "sourceSha256": "212265916e17d150cc6a8395323ad24bcf518c25a6e5a82b2805568b6aef0e9c",
     "baselineSha256": "981b53c74746867fea5f1459a0e697100a93a23cdd3b7eb717712f39b65f9f0c",
