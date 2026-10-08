@@ -491,18 +491,18 @@ describe('renderDegradationDigestEmail', () => {
     it('says a detail other than the account number changed when a bank change masks alike and its number did not change', () => {
       const { html } = renderPayoutChangedEmail({ ...base, after: base.before, identifierChanged: false });
       expect(html).toContain('a detail other than the account number changed');
-      expect(html).not.toContain('ends in the same digits');
+      expect(html).not.toContain('last digits look the same');
     });
 
-    it('warns that the account number changed when a bank change masks alike but its number changed', () => {
+    it('warns that the bank details changed when a bank change masks alike but an identifier changed', () => {
       const { html } = renderPayoutChangedEmail({ ...base, after: base.before, identifierChanged: true });
-      expect(html).toContain('The account number changed to a different one that ends in the same digits.');
+      expect(html).toContain("The bank details changed, though the account number&#39;s last digits look the same. Check the full details in your settings.");
       expect(html).not.toContain('other than the account number');
     });
 
     it('warns, and never reassures, about a bank change that masks alike with nothing recorded', () => {
       const { html } = renderPayoutChangedEmail({ ...base, after: base.before, identifierChanged: null });
-      expect(html).toContain('ends in the same digits');
+      expect(html).toContain('last digits look the same');
       expect(html).not.toContain('other than the account number');
     });
 
@@ -517,7 +517,7 @@ describe('renderDegradationDigestEmail', () => {
     it('says neither when the masks differ', () => {
       const { html } = renderPayoutChangedEmail({ ...base, identifierChanged: true });
       expect(html).not.toContain('other than the account number');
-      expect(html).not.toContain('same digits');
+      expect(html).not.toContain('last digits look the same');
       expect(html).not.toContain('looks like the old one');
     });
 

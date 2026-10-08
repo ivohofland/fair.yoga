@@ -88,12 +88,12 @@ describe('the resume-payments change list', () => {
     createdAt: new Date('2026-07-19T12:00:00Z'),
   };
 
-  it('warns when a changed account number masks like the old one', async () => {
+  it('warns when changed bank details mask like the old ones', async () => {
     readResumeReview.mockResolvedValue(review({ events: [{ ...event, kind: 'bank_account_changed', identifierChanged: true }] }));
 
     render(await ResumePaymentsPage());
 
-    expect(screen.getByText('The account number changed to a different one that ends in the same digits.')).toBeInTheDocument();
+    expect(screen.getByText("The bank details changed, though the account number's last digits look the same. Check the full details in your settings.")).toBeInTheDocument();
     expect(screen.queryByText(/other than the account number/)).toBeNull();
   });
 

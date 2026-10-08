@@ -325,7 +325,7 @@ export const PAYOUT_CHANGE_PHRASES = {
  * exactly the part of the value someone else would choose.
  */
 const PAYOUT_MASKS_ALIKE_WARNING = {
-  bank_account_changed: 'The account number changed to a different one that ends in the same digits.',
+  bank_account_changed: "The bank details changed, though the account number's last digits look the same. Check the full details in your settings.",
   payment_link_changed: 'The new link looks like the old one here, but it is a different link. Check it in full in your settings.',
 } as const satisfies Partial<Record<PayoutChangeKind, string>>;
 
