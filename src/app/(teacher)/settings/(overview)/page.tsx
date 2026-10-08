@@ -3,6 +3,7 @@ import { Icon } from '@/components/ui/icon';
 import { ListRow } from '@/components/ui/list-row';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { InstallAppRow } from '@/components/account/install-app-row';
+import { ReportProblemRow } from '@/components/account/report-problem-row';
 import { getSession } from '@/lib/session';
 
 const SETTINGS_ITEMS = [
@@ -35,6 +36,7 @@ export default async function SettingsPage() {
           </ListRow>
         )}
         <InstallAppRow />
+        <ReportProblemRow />
       </div>
       <div className="mt-8">
         <SignOutButton accountId={session?.accountId ?? null} />
