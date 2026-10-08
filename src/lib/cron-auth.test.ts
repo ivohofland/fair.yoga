@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 import { requireCronAuth, hasCronSecret } from './cron-auth';
 
 /**
- * `requireCronAuth` and `hasCronSecret` guard all five `/api/cron/*` routes,
+ * `requireCronAuth` and `hasCronSecret` guard the `/api/cron/*` routes,
  * standing between a stranger and sweeps that generate classes, send email, or
  * transition class states. `hasCronSecret` performs constant-time comparison to
  * prevent timing attacks; `requireCronAuth` wraps it and returns HTTP responses
@@ -11,7 +11,7 @@ import { requireCronAuth, hasCronSecret } from './cron-auth';
  *
  * Per `docs/technical-architecture.md`, a shared guard earns coverage **once**,
  * at the helper — not a ladder repeated across every route that calls it. The
- * five cron routes are otherwise a guard plus a service call whose sweeps are
+ * cron routes are otherwise a guard plus a service call whose sweeps are
  * already unit-tested, so this file is what #53 needed from them.
  */
 

@@ -14,6 +14,7 @@ function cronSecret(): string {
 describe('GET /api/health', () => {
   it('without the secret answers exactly status and db', async () => {
     const res = await fetch(`${BASE_URL}/api/health`, { headers: freshIp() });
+    expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(['db', 'status']);
   });
@@ -23,6 +24,7 @@ describe('GET /api/health', () => {
     const res = await fetch(`${BASE_URL}/api/health`, {
       headers: { ...freshIp(), authorization: `Bearer ${secret}` },
     });
+    expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toHaveProperty('jobs');
   });

@@ -175,15 +175,20 @@ describe('GET /api/health', () => {
 });
 
 describe('GET /api/health without the secret', () => {
-  it('answers only status and db', async () => {
+  it('answers only status and db, without running the degradation query', async () => {
+    count.mockClear();
     const { status, body } = await read(null);
     expect(status).toBe(200);
     expect(body).toEqual({ status: 'ok', db: 'up' });
+    expect(count).not.toHaveBeenCalled();
   });
 
   it('a wrong secret gets the same summary', async () => {
-    const { body } = await read('Bearer wrong');
+    count.mockClear();
+    const { status, body } = await read('Bearer wrong');
+    expect(status).toBe(200);
     expect(Object.keys(body).sort()).toEqual(['db', 'status']);
+    expect(count).not.toHaveBeenCalled();
   });
 
   it('still rolls an unhealthy job into status', async () => {
