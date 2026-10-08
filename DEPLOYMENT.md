@@ -97,7 +97,7 @@ useful for the hourly and daily jobs — alongside the scheduler, not instead of
 it. Every job already runs within 15 seconds of the app starting, so a
 restart needs none. Not every job has been examined for a manual call that
 overlaps its own tick — `docs/technical-architecture.md` (Cron Jobs →
-Overlapping triggers) says which were:
+Overlapping triggers) says which were.
 
 nginx refuses `/api/cron/` from outside, so the call is made on the VPS itself.
 
