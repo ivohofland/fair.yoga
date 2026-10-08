@@ -52,6 +52,14 @@ describe('PUT /api/teachers/[id]/bank-accounts/[currency]', () => {
     expect(await prisma.teacherBankAccount.findMany({ where: { teacherId: t.id }, select: { bic: true } })).toEqual([{ bic: null }]);
   });
 
+  it('answers unchanged to a re-save of the stored values, with the stored account (#786)', async () => {
+    const t = await makeTeacher();
+    await expectApplied(await send('PUT', t.id, 'EUR', t.token, { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }));
+    const data = await expectUnchanged(await send('PUT', t.id, 'EUR', t.token, { holderName: 'A. Teacher ', iban: 'NL91 ABNA 0417 1643 00' }));
+    expect(data).toMatchObject({ currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null });
+    expect(await prisma.payoutChangeEvent.count({ where: { teacherId: t.id } })).toBe(1);
+  });
+
   it('answers 200 to concurrent saves in one currency and keeps one row', async () => {
     const t = await makeTeacher();
     const holders = ['A. Teacher', 'B. Teacher', 'C. Teacher', 'D. Teacher'];

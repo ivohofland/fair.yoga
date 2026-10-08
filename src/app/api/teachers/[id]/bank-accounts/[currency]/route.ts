@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { Currency } from '@prisma/client';
+import { Currency, type TeacherBankAccount } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import {
@@ -77,6 +77,8 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: Params
   switch (outcome.kind) {
     case 'saved':
       return respondOk(outcome.account);
+    case 'unchanged':
+      return respondUnchanged<TeacherBankAccount>(outcome.account);
     case 'invalid':
       return respondInvalid(outcome.failure);
     case 'teacher_gone':
