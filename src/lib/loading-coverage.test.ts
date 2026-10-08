@@ -43,6 +43,7 @@ const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '(teacher)/settings/recurring/archived': 'neutral',
   '(teacher)/settings/recurring/new': 'neutral',
   '(teacher)/settings/reporting': 'neutral',
+  '(teacher)/settings/resume-payments': 'neutral',
   '(teacher)/settings/rooms': 'neutral',
   '(teacher)/settings/rooms/[id]': 'neutral',
   '(teacher)/settings/rooms/archived': 'neutral',

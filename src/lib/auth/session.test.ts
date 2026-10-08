@@ -145,6 +145,29 @@ describe('createSession', () => {
     expect(await db.session.findUnique({ where: { id: token } })).toBeNull();
     expect(await db.session.findUnique({ where: { id: hashToken(token) } })).not.toBeNull();
   });
+
+  it('records no passkey unless it is handed one', async () => {
+    const token = await createSession(db, teacherAccountId);
+
+    const session = await db.session.findUniqueOrThrow({ where: { id: hashToken(token) } });
+    expect(session.passkeyCredentialId).toBeNull();
+  });
+
+  it('records the passkey a session signed in with', async () => {
+    const credentialId = `session-pk-${uniqueSuffix}`;
+    await db.passkeyCredential.create({
+      data: { id: credentialId, accountId: teacherAccountId, publicKey: Buffer.from('k'), counter: 0, transports: [] },
+    });
+    try {
+      const token = await createSession(db, teacherAccountId, { passkeyCredentialId: credentialId });
+
+      const session = await db.session.findUniqueOrThrow({ where: { id: hashToken(token) } });
+      expect(session.passkeyCredentialId).toBe(credentialId);
+    } finally {
+      await db.session.deleteMany({ where: { accountId: teacherAccountId } });
+      await db.passkeyCredential.deleteMany({ where: { id: credentialId } });
+    }
+  });
 });
 
 describe('validateSession', () => {

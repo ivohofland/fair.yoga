@@ -236,6 +236,11 @@ export const payoutPauseSchema = z.object({
   token: z.string().trim().min(1).max(256),
 });
 
+/** The fingerprint of the payout details the resume screen showed (`payoutFingerprint`). */
+export const paymentsResumeSchema = z.object({
+  fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
 export const magicLinkClaimSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Enter the six-digit code'),
 });

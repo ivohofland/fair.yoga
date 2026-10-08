@@ -19,9 +19,15 @@ function hashToken(token: string): string {
   return encodeHexLowerCase(bytes);
 }
 
+/**
+ * Mints a session for `accountId` and returns its raw token. A passkey
+ * sign-in names the credential it verified (`passkeyCredentialId`); every
+ * other door leaves it out, so the row records no passkey.
+ */
 export async function createSession(
   db: PrismaClient,
-  accountId: string
+  accountId: string,
+  { passkeyCredentialId = null }: { passkeyCredentialId?: string | null } = {},
 ): Promise<string> {
   const token = crypto.randomBytes(32).toString('hex');
   const sessionHash = hashToken(token);
@@ -32,6 +38,7 @@ export async function createSession(
       id: sessionHash,
       accountId,
       expiresAt,
+      passkeyCredentialId,
     },
   });
 

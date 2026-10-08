@@ -172,6 +172,8 @@ export const LOCK_CONTENTION_TESTS = [
   // #786: the pause waits out a held passkey row under the 2s bound; its
   // header carries the reason.
   'src/services/payout-pause-lock-order.test.ts',
+  // #786: the bank-account route's shape, for the resume's `Teacher` gate.
+  'src/services/payout-resume-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
