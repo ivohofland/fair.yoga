@@ -1,3 +1,4 @@
+import { request as httpRequest, type ClientRequest } from 'node:http';
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import sharp from 'sharp';
@@ -201,6 +202,40 @@ describe('POST /api/teachers/[id]/photo', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
     expect(body.error.message).toBe(PHOTO_MESSAGES['no-photo']);
+  });
+
+  it('refuses an oversized declared length while the body is still unfinished', async () => {
+    // A layer that buffers the body before the route runs would wait on bytes
+    // that never arrive; the route's own refusal needs only the headers.
+    const teacher = await makeTeacher();
+    const url = new URL(`${BASE_URL}/api/teachers/${teacher.id}/photo`);
+    let req: ClientRequest | undefined;
+    const outcome = await new Promise<{ status: number; message: string } | 'no-response'>((resolve) => {
+      const timer = setTimeout(() => resolve('no-response'), 4000);
+      req = httpRequest(
+        {
+          hostname: url.hostname, port: url.port, path: url.pathname, method: 'POST',
+          headers: {
+            ...cookie(teacher.token),
+            'Content-Type': 'multipart/form-data; boundary=x',
+            'Content-Length': String(50 * 1024 * 1024),
+          },
+        },
+        (res) => {
+          let raw = '';
+          res.on('data', (c: Buffer) => { raw += c.toString(); });
+          res.on('end', () => {
+            clearTimeout(timer);
+            const parsed = JSON.parse(raw) as { error: { message: string } };
+            resolve({ status: res.statusCode ?? 0, message: parsed.error.message });
+          });
+        },
+      );
+      req.on('error', () => undefined);
+      req.write('--x\r\n');
+    });
+    req?.destroy();
+    expect(outcome).toEqual({ status: 400, message: PHOTO_MESSAGES['too-large'] });
   });
 });
 
