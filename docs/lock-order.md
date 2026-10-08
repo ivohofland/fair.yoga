@@ -2125,8 +2125,12 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   if later). Sessions go before passkeys: `Session.passkeyCredentialId` is
   `ON DELETE SET NULL`, and the sessions that existed are deleted first, so
   the passkey delete's `SET NULL` reaches only a session a passkey sign-in
-  inserted between the two statements. That session's credential is then
-  null, and a session with no credential cannot satisfy a resume. None of
+  inserted between the two statements. The session delete is a statement
+  snapshot, so a sign-in landing between the two statements leaves a live
+  session: one with a passkey this delete removes has its credential nulled,
+  and a session with no credential cannot satisfy a resume; one with a passkey
+  created before the cutoff keeps its credential, which is the teacher's own
+  by the trust model the cutoff states. None of
   those rows is locked by a transaction that then waits on
   `Teacher`. A pause arriving during an erasure waits on the lock, finds the
   row erased and answers `invalid` without consuming. A failure after the
@@ -2141,9 +2145,13 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   teacher's `TeacherBankAccount` rows and link for the fingerprint; a
   `Teacher` `UPDATE` of non-key columns (which raises nothing); a delete of the
   teacher's `PayoutPauseToken` rows; a read of its outstanding `Payment` rows,
-  an `UPDATE` of their `reminderSentAt`, and `Notification` inserts. The
-  `Payment` `UPDATE` can wait on a holder of one of those rows, such as a
-  mark-paid in flight, and none of those holders waits on `Teacher`. Taking
+  an `UPDATE` of their `reminderSentAt`, and `Notification` inserts, each of
+  whose foreign-key check takes `FOR KEY SHARE` on its `Class`
+  (`relatedClassId`). The `Payment` `UPDATE` can wait on a holder of one of
+  those rows, such as a mark-paid in flight, and a `Notification` insert on a
+  `Class` `FOR UPDATE` holder (`completeClass` through `lockClassRow`,
+  `updateClass`); none of those holders waits on `Teacher`, since each that
+  takes the teacher row takes it first. Taking
   the payout writers' own lock is what makes the fingerprint meaningful: a
   bank-account or link save in flight finishes first, and the resume reads
   what it wrote. `src/services/payout-resume-lock-order.test.ts` holds a
