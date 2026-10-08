@@ -1,0 +1,304 @@
+import { describe, it, expect, afterAll } from 'vitest';
+import crypto from 'crypto';
+import { PrismaClient } from '@prisma/client';
+import { hashToken } from '@/lib/auth/magic-link';
+import { mintPayoutPauseToken, PAUSE_TOKEN_TTL_DAYS } from './payout-pause-token';
+import { pausePayments, pauseWindowFloor, pausePasskeyCutoff, PAUSE_PASSKEY_LOOKBACK_DAYS } from './payout-pause';
+import { uniqueSuffix, seedSession } from '../../tests/helpers';
+
+const prisma = new PrismaClient();
+const teacherIds: string[] = [];
+const accountIds: string[] = [];
+const emails: string[] = [];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * DAY_MS);
+
+interface Fixture {
+  teacherId: string;
+  accountId: string;
+  email: string;
+}
+
+async function makeTeacher(): Promise<Fixture> {
+  const s = uniqueSuffix();
+  const email = `pause-${s}@test.local`;
+  const t = await prisma.teacher.create({
+    data: {
+      firstName: 'Pause', lastName: 'Teacher', email, bio: '', pageSlug: `pause-${s}`,
+      account: { create: { email } },
+    },
+    select: { id: true, accountId: true },
+  });
+  teacherIds.push(t.id);
+  accountIds.push(t.accountId);
+  emails.push(email);
+  return { teacherId: t.id, accountId: t.accountId, email };
+}
+
+async function event(teacherId: string, createdAt: Date): Promise<string> {
+  const e = await prisma.payoutChangeEvent.create({
+    data: { teacherId, kind: 'payment_link_changed', before: 'revolut.me/…anna', after: 'revolut.me/…evil', createdAt },
+    select: { id: true },
+  });
+  return e.id;
+}
+
+/** A token row for `eventId`, returning the raw value a link would carry. */
+async function token(teacherId: string, eventId: string, expiresAt: Date): Promise<string> {
+  const raw = crypto.randomBytes(32).toString('hex');
+  await prisma.payoutPauseToken.create({ data: { tokenHash: hashToken(raw), teacherId, eventId, expiresAt } });
+  return raw;
+}
+
+async function passkey(accountId: string, tag: string, createdAt: Date): Promise<string> {
+  const id = `pause-pk-${tag}-${uniqueSuffix()}`;
+  await prisma.passkeyCredential.create({
+    data: { id, accountId, publicKey: Buffer.from('k'), counter: 0, transports: [], createdAt },
+  });
+  return id;
+}
+
+async function pauseState(teacherId: string) {
+  return prisma.teacher.findUniqueOrThrow({
+    where: { id: teacherId },
+    select: { paymentsPausedAt: true, pauseWindowStart: true, pausePasskeyCutoff: true },
+  });
+}
+
+afterAll(async () => {
+  await prisma.magicLinkToken.deleteMany({ where: { email: { in: emails } } });
+  await prisma.pushSubscription.deleteMany({ where: { accountId: { in: accountIds } } });
+  await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+  await prisma.passkeyCredential.deleteMany({ where: { accountId: { in: accountIds } } });
+  await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+  await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  await prisma.$disconnect();
+});
+
+describe('pausePayments', () => {
+  it('pauses, signs every device out, removes recent passkeys and spends the token', async () => {
+    const now = new Date();
+    const me = await makeTeacher();
+    const other = await makeTeacher();
+    const eventAt = daysAgo(now, 2);
+    const eventId = await event(me.teacherId, eventAt);
+    const raw = await token(me.teacherId, eventId, new Date(now.getTime() + DAY_MS));
+    const cutoff = new Date(eventAt.getTime() - PAUSE_PASSKEY_LOOKBACK_DAYS * DAY_MS);
+
+    const old = await passkey(me.accountId, 'old', new Date(cutoff.getTime() - 1));
+    const atCutoff = await passkey(me.accountId, 'at', cutoff);
+    const recent = await passkey(me.accountId, 'recent', daysAgo(now, 1));
+    const othersRecent = await passkey(other.accountId, 'other', daysAgo(now, 1));
+    await seedSession(prisma, me.accountId);
+    await seedSession(prisma, me.accountId);
+    await seedSession(prisma, other.accountId);
+    const sub = (accountId: string) => ({
+      accountId, endpoint: `https://push.test/pause-${uniqueSuffix()}`, p256dh: 'p', auth: 'a',
+    });
+    await prisma.pushSubscription.createMany({ data: [sub(me.accountId), sub(other.accountId)] });
+    const link = (email: string) => ({
+      tokenHash: hashToken(crypto.randomBytes(32).toString('hex')), email, expiresAt: new Date(now.getTime() + DAY_MS),
+    });
+    await prisma.magicLinkToken.createMany({ data: [link(me.email), link(other.email)] });
+
+    expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'paused' });
+
+    expect(await pauseState(me.teacherId)).toEqual({
+      paymentsPausedAt: now, pauseWindowStart: eventAt, pausePasskeyCutoff: cutoff,
+    });
+    expect(await prisma.session.count({ where: { accountId: me.accountId } })).toBe(0);
+    expect(await prisma.pushSubscription.count({ where: { accountId: me.accountId } })).toBe(0);
+    expect(await prisma.magicLinkToken.count({ where: { email: me.email } })).toBe(0);
+    const left = await prisma.passkeyCredential.findMany({
+      where: { id: { in: [old, atCutoff, recent, othersRecent] } }, select: { id: true },
+    });
+    expect(left.map((p) => p.id).sort()).toEqual([old, othersRecent].sort());
+    expect(await prisma.payoutPauseToken.count({ where: { tokenHash: hashToken(raw) } })).toBe(0);
+
+    // Another account is untouched.
+    expect(await pauseState(other.teacherId)).toEqual({ paymentsPausedAt: null, pauseWindowStart: null, pausePasskeyCutoff: null });
+    expect(await prisma.session.count({ where: { accountId: other.accountId } })).toBe(1);
+    expect(await prisma.pushSubscription.count({ where: { accountId: other.accountId } })).toBe(1);
+    expect(await prisma.magicLinkToken.count({ where: { email: other.email } })).toBe(1);
+  });
+
+  it('freezes no cutoff when no passkey predates it, and still removes the recent ones', async () => {
+    const now = new Date();
+    const me = await makeTeacher();
+    const eventAt = daysAgo(now, 1);
+    const raw = await token(me.teacherId, await event(me.teacherId, eventAt), new Date(now.getTime() + DAY_MS));
+    const recent = await passkey(me.accountId, 'only-recent', daysAgo(now, 3));
+
+    expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'paused' });
+
+    expect(await pauseState(me.teacherId)).toEqual({
+      paymentsPausedAt: now, pauseWindowStart: eventAt, pausePasskeyCutoff: null,
+    });
+    expect(await prisma.passkeyCredential.count({ where: { id: recent } })).toBe(0);
+  });
+
+  it('works with a token minted by mintPayoutPauseToken', async () => {
+    const me = await makeTeacher();
+    const eventId = await event(me.teacherId, new Date());
+    const raw = await mintPayoutPauseToken(prisma, me.teacherId, eventId);
+
+    expect(await pausePayments(prisma, raw)).toEqual({ status: 'paused' });
+    expect((await pauseState(me.teacherId)).paymentsPausedAt).not.toBeNull();
+  });
+
+  describe('one answer for every link that cannot pause', () => {
+    it('a used token', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      const raw = await token(me.teacherId, await event(me.teacherId, now), new Date(now.getTime() + DAY_MS));
+      expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'paused' });
+      await seedSession(prisma, me.accountId);
+
+      expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'invalid' });
+      // A refused link signs no one out.
+      expect(await prisma.session.count({ where: { accountId: me.accountId } })).toBe(1);
+    });
+
+    it('an expired token, which it leaves alone and does not pause on', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      const raw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 3)), daysAgo(now, 1));
+      await seedSession(prisma, me.accountId);
+
+      expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'invalid' });
+      expect((await pauseState(me.teacherId)).paymentsPausedAt).toBeNull();
+      expect(await prisma.session.count({ where: { accountId: me.accountId } })).toBe(1);
+    });
+
+    it('a token that expires at this very instant', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      const raw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 3)), now);
+
+      expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'invalid' });
+      expect((await pauseState(me.teacherId)).paymentsPausedAt).toBeNull();
+    });
+
+    it('an unknown token', async () => {
+      expect(await pausePayments(prisma, crypto.randomBytes(32).toString('hex'))).toEqual({ status: 'invalid' });
+    });
+
+    it('an erased teacher\'s token', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      const raw = await token(me.teacherId, await event(me.teacherId, now), new Date(now.getTime() + DAY_MS));
+      await prisma.teacher.update({ where: { id: me.teacherId }, data: { deletedAt: now } });
+      await seedSession(prisma, me.accountId);
+
+      expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'invalid' });
+      expect((await pauseState(me.teacherId)).paymentsPausedAt).toBeNull();
+      expect(await prisma.session.count({ where: { accountId: me.accountId } })).toBe(1);
+    });
+  });
+
+  it('a second link while paused signs out again and keeps the first pause\'s instant, window and cutoff', async () => {
+    const first = daysAgo(new Date(), 0.5);
+    const me = await makeTeacher();
+    const firstEventAt = daysAgo(first, 1);
+    const firstRaw = await token(me.teacherId, await event(me.teacherId, firstEventAt), new Date(Date.now() + DAY_MS));
+    await passkey(me.accountId, 'old-enough', daysAgo(first, 30));
+    expect(await pausePayments(prisma, firstRaw, first)).toEqual({ status: 'paused' });
+    const paused = await pauseState(me.teacherId);
+
+    // A later change mails a second link, and a passkey is added after the
+    // first pause.
+    const later = new Date();
+    const secondRaw = await token(me.teacherId, await event(me.teacherId, daysAgo(later, 0.1)), new Date(later.getTime() + DAY_MS));
+    const sinceFirstCutoff = await passkey(me.accountId, 'since', daysAgo(later, 0.2));
+    await seedSession(prisma, me.accountId);
+
+    expect(await pausePayments(prisma, secondRaw, later)).toEqual({ status: 'paused' });
+
+    expect(await pauseState(me.teacherId)).toEqual(paused);
+    expect(paused.paymentsPausedAt).toEqual(first);
+    expect(await prisma.session.count({ where: { accountId: me.accountId } })).toBe(0);
+    // This pause computes its own cutoff, and the new passkey is past it.
+    expect(await prisma.passkeyCredential.count({ where: { id: sinceFirstCutoff } })).toBe(0);
+  });
+
+  describe('the window start', () => {
+    it('is the earliest event since the floor, not the token\'s own', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      await event(me.teacherId, daysAgo(now, 40));
+      const tenDays = daysAgo(now, 10);
+      await event(me.teacherId, tenDays);
+      const raw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 2)), new Date(now.getTime() + DAY_MS));
+
+      await pausePayments(prisma, raw, now);
+
+      expect((await pauseState(me.teacherId)).pauseWindowStart).toEqual(tenDays);
+    });
+
+    it('ignores an event older than the link lifetime', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      await event(me.teacherId, daysAgo(now, 40));
+      const twoDays = daysAgo(now, 2);
+      const raw = await token(me.teacherId, await event(me.teacherId, twoDays), new Date(now.getTime() + DAY_MS));
+
+      await pausePayments(prisma, raw, now);
+
+      expect((await pauseState(me.teacherId)).pauseWindowStart).toEqual(twoDays);
+    });
+
+    it('starts no earlier than the last resume, even for a token whose event predates it', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      const raw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 8)), new Date(now.getTime() + DAY_MS));
+      await prisma.teacher.update({ where: { id: me.teacherId }, data: { paymentsResumedAt: daysAgo(now, 5) } });
+      const threeDays = daysAgo(now, 3);
+      await event(me.teacherId, threeDays);
+
+      await pausePayments(prisma, raw, now);
+
+      expect((await pauseState(me.teacherId)).pauseWindowStart).toEqual(threeDays);
+    });
+
+    it('falls back to the token\'s event when nothing lies past the floor', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      const threeDays = daysAgo(now, 3);
+      const raw = await token(me.teacherId, await event(me.teacherId, threeDays), new Date(now.getTime() + DAY_MS));
+      await prisma.teacher.update({ where: { id: me.teacherId }, data: { paymentsResumedAt: daysAgo(now, 1) } });
+
+      await pausePayments(prisma, raw, now);
+
+      expect(await pauseState(me.teacherId)).toEqual({
+        paymentsPausedAt: now,
+        pauseWindowStart: threeDays,
+        pausePasskeyCutoff: null,
+      });
+    });
+  });
+});
+
+describe('pauseWindowFloor', () => {
+  const now = new Date('2026-10-08T12:00:00Z');
+  const ttlFloor = daysAgo(now, PAUSE_TOKEN_TTL_DAYS);
+
+  it('is the link lifetime ago with no resume', () => {
+    expect(pauseWindowFloor(now, null)).toEqual(ttlFloor);
+  });
+
+  it('is a resume later than that', () => {
+    expect(pauseWindowFloor(now, daysAgo(now, 3))).toEqual(daysAgo(now, 3));
+  });
+
+  it('ignores a resume earlier than that', () => {
+    expect(pauseWindowFloor(now, daysAgo(now, 30))).toEqual(ttlFloor);
+  });
+});
+
+describe('pausePasskeyCutoff', () => {
+  it('is the lookback before the window start', () => {
+    const start = new Date('2026-10-08T12:00:00Z');
+    expect(pausePasskeyCutoff(start)).toEqual(daysAgo(start, PAUSE_PASSKEY_LOOKBACK_DAYS));
+  });
+});

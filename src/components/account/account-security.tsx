@@ -47,6 +47,12 @@ function transportHint(transports: string[]): string | null {
 // remove) and ending every session. Adding needs a sign-in within the last
 // few minutes; when the server says so, the person is offered a fresh
 // sign-in link that returns here.
+const REMOVE_ERROR_COPY = {
+  failed: 'Could not remove that passkey.',
+  'signed-out': 'Your session has ended — sign in again.',
+  paused: 'Passkeys can’t be removed while payments are paused. Resume payments first.',
+} as const;
+
 export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
   const [passkeys, setPasskeys] = useState<PasskeyRow[] | null>(null);
   const [listError, setListError] = useState(false);
@@ -54,7 +60,7 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
   const [stepUp, setStepUp] = useState<StepUp>('none');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<false | 'failed' | 'signed-out'>(false);
+  const [removeError, setRemoveError] = useState<false | 'failed' | 'signed-out' | 'paused'>(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
 
@@ -149,6 +155,10 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
           if (res.status === 401) {
             logRequestFailure('account-security', { step: 'remove', status: 401 }, new Error('session ended'));
             setRemoveError('signed-out');
+            return;
+          }
+          if (code === 'PASSKEY_REMOVAL_PAUSED') {
+            setRemoveError('paused');
             return;
           }
           throw new RefusedError('remove', code);
@@ -256,7 +266,7 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
         {listError && <p role="alert" className="mb-3 text-[13px] text-danger">Could not load your passkeys.</p>}
         {removeError && (
           <p role="alert" className="mb-3 text-[13px] text-danger">
-            {removeError === 'signed-out' ? 'Your session has ended — sign in again.' : 'Could not remove that passkey.'}
+            {REMOVE_ERROR_COPY[removeError]}
           </p>
         )}
 

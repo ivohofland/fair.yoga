@@ -231,6 +231,11 @@ export const magicLinkVerifySchema = z.object({
   token: z.string().trim().min(1),
 });
 
+/** The secret from a payout-change email's pause link (`mintPayoutPauseToken`). */
+export const payoutPauseSchema = z.object({
+  token: z.string().trim().min(1).max(256),
+});
+
 export const magicLinkClaimSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Enter the six-digit code'),
 });
