@@ -101,7 +101,7 @@ test.describe('Account — GDPR export and deletion', () => {
 
   test('the settings index walks to Privacy and a share persists', async ({ page }) => {
     await page.goto('/account');
-    // The four rows exist and Privacy navigates.
+    // These rows exist and Privacy navigates.
     for (const row of ['Your tier', 'Notifications', 'Privacy', 'Data & deletion']) {
       await expect(page.getByRole('link', { name: row })).toBeVisible();
     }
