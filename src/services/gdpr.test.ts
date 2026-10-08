@@ -166,6 +166,7 @@ let studentAccountId: string;
         account: { create: { email: `gdpr-teacher-${uniqueSuffix}@test.local` } },
         bio: 'GDPR tests',
         pageSlug: `gdpr-teacher-${uniqueSuffix}`,
+        paymentLink: 'https://revolut.me/gdpr-teacher',
         bankAccounts: { create: { currency: 'EUR', holderName: 'G. Teacher', iban: 'NL00TEST0123456789' } },
       },
     });
@@ -504,6 +505,7 @@ let studentAccountId: string;
     expect(teacher.firstName).toBe('Deleted');
     expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
     expect(teacher.pageSlug).toBe(`deleted-${teacherId}`);
+    expect(teacher.paymentLink).toBeNull();
     expect(teacher.deletedAt).not.toBeNull();
 
     // Cancellation is the ENTRY's column since #327 — the class keeps its
@@ -3611,6 +3613,13 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     await expectErased(deleteTeacherAccount(prisma, teacherId));
     expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
   }, 20_000);
+
+  it('exports the payment link as stored (#785)', async () => {
+    const teacherId = await makeTeacher();
+    await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: 'https://revolut.me/photo-teacher' } });
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.profile.paymentLink).toBe('https://revolut.me/photo-teacher');
+  });
 
   it('exports photo: null for a teacher without one', async () => {
     const teacherId = await makeTeacher();
