@@ -31,6 +31,22 @@ describe('POST /api/csp-report', () => {
     expect((await send(big)).status).toBe(400);
   });
 
+  it('refuses a body sent without a Content-Length with 400', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(REPORT));
+        controller.close();
+      },
+    });
+    const res = await fetch(URL_, {
+      method: 'POST',
+      headers: { 'content-type': 'application/csp-report', ...freshIp() },
+      body: stream,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+    expect(res.status).toBe(400);
+  });
+
   it('refuses a body that is not a report with 400', async () => {
     expect((await send('not json')).status).toBe(400);
     expect((await send(JSON.stringify({ 'csp-report': {} }))).status).toBe(400);
