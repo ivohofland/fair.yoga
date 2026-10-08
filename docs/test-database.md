@@ -339,13 +339,21 @@ the clients test code builds:
   ESLint `no-restricted-syntax` rule bans `new PrismaClient` under
   `tests/e2e`.
 
+The vitest installer decides per client. The first stack frame outside `node:`
+internals, `node_modules` and the setup file is the call site; it must be a
+`.test`/`.spec` file, or a module under `tests/`, relative to the repo root.
+Otherwise the client comes back plain.
+
 **What is exempt, and why.** A client built by app code comes back plain —
 the `@/lib/db` singleton, and any client an app helper such as
 `src/lib/db-provision.ts` builds. App code's `undefined` filters are
 deliberate optional filters and must behave as they do in production. So a
 test whose cleanup writes through `@/lib/db` is outside the guard's reach;
 the census marks those rows `app`, and such a hook needs its own `if` guard
-(as `src/app/api/auth/session/route.test.ts` has).
+(as `src/app/api/auth/session/route.test.ts` has). The inverse holds too: an
+app module handed a test's client is guarded under test, so a deliberate
+`undefined` filter in it throws in the suite. The fix is an explicit filter in
+that call, not a weaker guard.
 
 **The census.** `pnpm run census:hook-filters` (`scripts/census-hook-filters.ts`,
 analyzer `src/lib/hook-filter-census.ts`) reads every `afterAll`/`afterEach`
@@ -357,10 +365,12 @@ lists:
 - `direct`: a `deleteMany`/`updateMany`/`updateManyAndReturn` in the hook's
   own body whose object-literal `where` reads such a binding;
 - `indirect`: any other call in the hook handed such a binding anywhere in an
-  argument (`alice?.id`, `[a, b]`, `{ a }`), except a model delegate's reads,
-  `create` and unique-`where` methods, which reject an `undefined` key
-  themselves; and every row found in the body of a function declared in the
-  same file that the hook calls by name, read one level deep.
+  argument (`alice?.id`, `[a, b]`, `{ a }`), except a call to a model delegate's other methods: reads and `create` cannot
+  write to every row, and unique-`where` methods reject an `undefined` key
+  themselves (a delegate is recognised by its type); and every row found in the
+  body of a function declaration, or a `const`-bound arrow or function
+  expression, in the same file that the hook calls by name, read one level
+  deep.
 
 A row is `guarded` when every binding it reads is mentioned by the condition
 of an `if` whose then-branch holds it, an `&&` whose right side holds it, a
@@ -383,6 +393,7 @@ values:
 
 - A helper from another file is listed as the call that hands it the
   binding, never followed; nor is a same-file function's own callee.
+- A `let`/`var`-bound arrow function or an object method is not followed.
 - "Mentions" is not "tests": `if (!id) { write(id) }` reads as guarded.
 - A guard on a sibling binding assigned in the same statement (`if
   (teacherId)` around a write reading `teacherAccountId`) reads as

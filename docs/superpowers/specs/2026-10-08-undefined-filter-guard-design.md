@@ -94,7 +94,10 @@ matches every row of the table. This happened twice in #669: once in an e2e
   the census reports any such write in a column of its own (`client: 'app'`),
   so the class stays visible.
 - **Playwright** has no module mocking. The 20 e2e files switch to a
-  `createGuardedPrismaClient()` factory exported by the guard module. An
+  `createGuardedPrismaClient()` factory exported by `tests/e2e/prisma.ts`. (The
+  guard module, `tests/undefined-filter-guard.ts`, imports only types from
+  `@prisma/client`, so the vitest installer can call it inside a
+  `vi.mock('@prisma/client')` factory.) An
   ESLint `no-restricted-syntax` rule on `tests/e2e/**` bans `new PrismaClient`
   there, so a new spec cannot silently skip the guard.
 
@@ -119,11 +122,17 @@ vitest and Playwright test file. For each `afterAll`/`afterEach` (and
   its declaration;
 - flags a binding as possibly-`undefined` when it is a `let` or `var` with no
   initializer;
-- reports whether the write sits under an `if`/`&&`/`?:` that tests that
-  binding (**guarded**) or not (**unguarded**);
+- reports whether the write sits under an `if`/`&&`/`?:` whose condition
+  mentions that binding, or after an earlier `if (…) return;`/`throw` that
+  mentions it (**guarded**), or not (**unguarded**);
 - separately lists calls in the hook that pass a possibly-`undefined` binding
-  as an argument to a function. That is the indirect shape: the census does
-  not follow the call into the helper.
+  as an argument to a function. That is the indirect shape. It skips the
+  non-bulk methods of a Prisma model delegate (reads, `create`, unique-`where`
+  methods), recognising a delegate by its type. A function declaration, or a
+  `const`-bound arrow or function expression, in the same file is followed one
+  level deep; a helper in another file is listed as an indirect call and not
+  followed. The owning description, with what the census does not see, is
+  `docs/test-database.md`, section "Undefined filters in test cleanup (#783)".
 
 The command, its output count and the date go in `docs/test-database.md`,
 where a count has an owner.
