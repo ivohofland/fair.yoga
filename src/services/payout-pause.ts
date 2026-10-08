@@ -49,10 +49,9 @@ export function pausePasskeyCutoff(windowStart: Date): Date {
  * at or after `cutoff`: a removal inside the lookback must not lift the
  * requirement the passkey would have set
  * (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
- * Decision 4). The standing passkeys are read first: `deletePasskey` deletes
- * and records in one transaction, so a removal committing between the two
- * reads moves its passkey from the first read's set into the second's, never
- * out of both.
+ * Decision 4). The standing passkeys are read first, the removals second;
+ * why that order loses no passkey: `docs/technical-architecture.md`,
+ * "Resuming paused payments".
  */
 async function heldPasskeyBefore(tx: Prisma.TransactionClient, accountId: string, cutoff: Date): Promise<boolean> {
   const standing = await tx.passkeyCredential.count({ where: { accountId, createdAt: { lt: cutoff } } });

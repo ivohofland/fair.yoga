@@ -63,7 +63,10 @@ inbox, and after fourteen days so can one who has. A thief who registers a
 passkey from a magic-link session more than `PAUSE_PASSKEY_LOOKBACK_DAYS`
 before changing the details holds a passkey older than the cutoff, which the
 resume trusts; the passkey-added email to the account address is the signal
-for it. The pause still signs everyone out, removes recent
+for it. Its mirror: passkeys removed more than `PAUSE_PASSKEY_LOOKBACK_DAYS`
+before the details change leave a removal older than the cutoff, so the pause
+sets no requirement; the passkey-removed email, sent at the removal, is the
+signal for that. The pause still signs everyone out, removes recent
 passkeys and stops students paying; the resume screen nudges a teacher without
 a passkey to add one after resuming.
 
@@ -130,6 +133,10 @@ and a resume's fingerprint read could interleave with a save. Every one returns
 `teacher_gone` before any insert, so no event outlives an erasure.
 `docs/lock-order.md` ("The `Teacher` row is the first lock") gains the pause,
 the resume and the link writers and records the bank writers' new mode.
+A passkey removal takes the same lock first when the account has a teacher,
+and reads the pause under it: otherwise a removal racing a pause deadlocks on
+the session and passkey rows the two delete in opposite orders, and its
+paused refusal is a check-then-act.
 
 ## 1 · The alert
 

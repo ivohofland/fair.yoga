@@ -75,4 +75,13 @@ describe('deletePasskey', () => {
     expect(await prisma.passkeyCredential.count({ where: { id } })).toBe(1);
     expect(await prisma.removedPasskey.count({ where: { accountId } })).toBe(0);
   });
+
+  it('removes a passkey of an account with no teacher profile', async () => {
+    const account = await prisma.account.create({ data: { email: `pk-del-solo-${uniqueSuffix()}@test.local` }, select: { id: true } });
+    accountIds.push(account.id);
+    const id = await passkey(account.id, new Date('2026-01-02T03:04:05Z'));
+
+    expect((await deletePasskey(prisma, { accountId: account.id, credentialId: id })).status).toBe('deleted');
+    expect(await prisma.passkeyCredential.count({ where: { id } })).toBe(0);
+  });
 });
