@@ -210,8 +210,9 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/classes/[id]/route.ts:198` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
 | `src/app/api/classes/route.ts:189` | warn | routine | documented race; the loser is refused or retried (room deleted) |
 | `src/app/api/classes/route.ts:208` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/health/route.ts:45` | error | routine | failure, surfaced as an error (503) |
-| `src/app/api/health/route.ts:62` | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
+| `src/app/api/health/route.ts:32` | warn | routine | refusal; nothing substituted (an `Authorization` header that is not the cron secret gets the public summary) |
+| `src/app/api/health/route.ts:56` | error | routine | failure, surfaced as an error (503) |
+| `src/app/api/health/route.ts:73` | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
 | `src/app/api/invitations/[id]/resend/route.ts:68` | warn | routine | rate-limit throttle |
 | `src/app/api/invitations/[id]/route.ts:97` | warn | routine | failure (an exception or outage), not impossible data; answered as a 409 |
 | `src/app/api/registrations/[id]/route.ts:500` | error | routine | failure (an exception or outage), not impossible data; the cancellation itself succeeded |
@@ -230,6 +231,8 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/teacher-rooms/[id]/route.ts:200` | warn | routine | documented race; the loser is refused or retried (FK backstop, 409) |
 | `src/app/api/teacher-rooms/route.ts:133` | error | routine | failure, surfaced as an error (throws, 500) |
 | `src/app/api/teachers/[id]/photo/route.ts:39` | warn | routine | bad upload (400); input, not stored data |
+| `src/lib/api-utils.ts:175` | warn | routine | refusal (4xx); nothing substituted (415, body not sent as JSON) |
+| `src/lib/api-utils.ts:256` | warn | routine | refusal (4xx); nothing substituted (403 `CROSS_ORIGIN`); a misconfigured proxy shows here, a configuration fault like `rate-limit.ts`'s unresolved IP |
 | `src/lib/auth/handoff.ts:222` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
 | `src/lib/auth/handoff.ts:247` | warn | routine | rate-limit throttle (every address budget exhausted; the claim is refused) |
 | `src/lib/auth/handoff.ts:278` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
@@ -273,8 +276,8 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/class-transitions.ts:744` | warn | routine | documented race; the loser is refused or retried (rescheduled or cancelled after the snapshot) |
 | `src/services/class-transitions.ts:746` | error | routine | operational state, reported through job health (completion refused) |
 | `src/services/class-transitions.ts:750` | error | routine | operational state, reported through job health |
-| `src/services/degradation-digest.ts:61` | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
-| `src/services/degradation-digest.ts:111` | error | routine | failure (an exception or outage), not impossible data; the job throws |
+| `src/services/degradation-digest.ts:62` | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
+| `src/services/degradation-digest.ts:112` | error | routine | failure (an exception or outage), not impossible data; the job throws |
 | `src/services/email-fallback.ts:100` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/email-fallback.ts:119` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/email-fallback.ts:154` | error | routine | documented race; the loser is refused or retried (claim no longer ours) |
@@ -346,7 +349,7 @@ Each picks its level at run time, mostly through `transientDbFailure` (`src/lib/
 | `src/app/api/registrations/[id]/route.ts:587` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/registrations/route.ts:480` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/waitlist/route.ts:64` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/lib/api-utils.ts:217` | dynamic | routine | `withErrorHandler`; every uncaught route error, surfaced as an error |
+| `src/lib/api-utils.ts:271` | dynamic | routine | `withErrorHandler`; every uncaught route error, surfaced as an error |
 | `src/lib/degradation.ts:78` | dynamic | — | not a site: the line `logDegraded` itself emits |
 | `src/services/class-template-lifecycle.ts:1109` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts:1012` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |

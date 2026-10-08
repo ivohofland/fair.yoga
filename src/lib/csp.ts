@@ -1,8 +1,7 @@
 /**
- * The Content-Security-Policy strings. `buildPageCsp` is served by
- * `src/proxy.ts`, with a nonce minted per request; Next reads the nonce back
- * off the request's own CSP header and stamps it on its inline scripts.
- * `API_CSP` and `SERVICE_WORKER_CSP` are static strings.
+ * The Content-Security-Policy strings: one page policy built per request
+ * around a nonce, and static ones for API and service-worker responses
+ * (served from src/proxy.ts and next.config.ts).
  *
  * `style-src` keeps 'unsafe-inline' for the app's `style={}` attributes;
  * style injection is not script execution. Development adds 'unsafe-eval'
@@ -17,8 +16,8 @@ export function buildPageCsp(nonce: string, isDev: boolean): string {
     "img-src 'self' data: blob:",
     "font-src 'self'",
     `connect-src 'self'${isDev ? ' ws:' : ''}`,
-    // The service worker registers from a bundled script, which
-    // 'strict-dynamic' trusts; worker-src names the worker's own origin.
+    // Without worker-src, workers fall back to script-src, where
+    // 'strict-dynamic' disables 'self' and /sw.js would be refused.
     "worker-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",

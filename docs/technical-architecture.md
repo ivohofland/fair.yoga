@@ -693,8 +693,6 @@ prefetching it — without ever asking the user which one this is:
 5. Redirect to dashboard (teacher) or bookings (student), once a session exists
 ```
 
-Writes are refused cross-origin in `withErrorHandler` (`src/lib/cross-origin.ts`), so SameSite=Lax is not the only CSRF layer. `parseBody` also refuses any body not sent as `application/json` (415 `UNSUPPORTED_MEDIA_TYPE`), which closes the cross-site `text/plain` form path even where the Origin check is stripped.
-
 On iOS, an installed home-screen app keeps its own cookie jar, separate from
 the browser's, so a link tapped in Mail opens in the browser and takes the
 code branch; the app redeems the code like any second browser (#723). `/login`
@@ -718,11 +716,27 @@ person is reading their mail.
 `manifest.ts` `start_url`. It routes by profile — a teacher to `/schedule`, a
 student-only account to `/bookings`, a two-hat account to the teacher home,
 and a signed-out visitor to `/login` rather than the public pitch `/` shows —
-and it stays outside `src/proxy.ts`'s `requiresSession` list deliberately: the
+and it stays outside `SIGNED_IN_SECTIONS` in `src/proxy.ts` deliberately: the
 proxy would turn the signed-out case into `/login?redirect=/start`, trading
 `/start`'s own per-profile routing for a fixed redirect target nobody asked
 for. (The proxy's matcher does cover it, since every page needs a CSP nonce.)
 Pinned by `tests/integration/pwa.test.ts`.
+
+### Cross-site writes
+
+Writes are refused cross-origin in `withErrorHandler` (`src/lib/cross-origin.ts`,
+403 `CROSS_ORIGIN`, logged at `warn` with the reason), so SameSite=Lax is not
+the only CSRF layer. `src/lib/write-handler-wrap-census.test.ts` fails when an
+exported write handler under `src/app/api` is not wrapped in it.
+
+`parseBody` also refuses any body not sent as `application/json` (415
+`UNSUPPORTED_MEDIA_TYPE`). That closes the content types a cross-site form can
+post without a preflight — `text/plain`, urlencoded and multipart — but only
+for routes that read their body through `parseBody`. A route that reads its
+body itself relies on the Origin check alone: the multipart photo upload
+(`POST /api/teachers/[id]/photo`) and the optional archive body of
+`PATCH /api/students/[id]`. Find others with
+`grep -rln "formData()\|request.text()\|request.json()" src/app/api`.
 
 ### Unauthenticated API routes
 
@@ -765,7 +779,9 @@ call no `require*` helper themselves — each authorizes through a resolver in
 `src/lib/auth/profile-authorization.ts` (`resolveProfileAuthorization`,
 `resolveTicketOnlyProfileAuthorization`) that accepts a signup ticket or a
 live session, which is why the pattern names those resolvers. A route that
-guards through a helper the pattern does not name prints an empty row.
+guards through a helper the pattern does not name prints an empty row. And a
+`hasCronSecret` in a row gates only `health`'s detail, not access: count it as
+no guard.
 
 ### Passkey authentication options
 
@@ -1345,6 +1361,6 @@ These are deferred, not forgotten:
 - **Native mobile app.** The teacher dashboard is mobile-first responsive web. If native is needed later, the services layer can be extracted into a standalone API.
 - **Multi-language / i18n.** English first. Next.js has built-in i18n routing for when we add languages.
 - **Rate limiting / abuse prevention.** Needed before public launch, but not for initial development.
-- **Log-based monitoring / observability.** A fallback that substitutes a value is recorded as a `DegradationEvent` row by `logDegraded` and emailed to `OPERATOR_EMAIL` in a daily digest, and `/api/health` carries the aggregate (with the cron secret) (Cron Jobs → Degradation events). Every other log line stays on stdout. A log backend (Grafana/Loki or similar) remains deferred until logs leave the box. Errors logged through `@/lib/log` are allowlisted (`src/lib/log-serializers.ts`, #739): every `Error` at the top level of a log call's first argument, any error-like value under `err`, and the `msg` pino falls back to; a value that cannot be serialized is replaced by a placeholder, never logged raw. Only named fields survive, and a cause appears under `err.cause` rather than folded into the message. A Prisma query error's message is withheld, since it renders row values; any other error's message is kept as written. Shipping logs still needs the rest of the stdout stream accounted for. Next prints an error a page or route throws outside `withErrorHandler` through `console.error`, with its message, stack, enumerable properties and cause chain; an `onRequestError` hook in `src/instrumentation.ts` would run beside that print, not instead of it, so that stream needs handling outside the app. Third-party text the app copies into its own messages is kept verbatim: Resend's error message inside `lib/email.ts`'s errors, `reason: error.message` strings, the push failure `cause` string `lib/push/send.ts` builds, and the push service's response body. Values copied out of an error into sibling keys (`rawTarget: err.meta?.target`) bypass the allowlist. An error nested below the top level of a log object, passed in the message position, passed as a format argument, or bound with `log.child` under any key but `err` is written by pino as its own enumerable properties, without the allowlist. And dry-run email mode logs recipient addresses, magic links and invitation sign-in URLs.
+- **Log-based monitoring / observability.** A fallback that substitutes a value is recorded as a `DegradationEvent` row by `logDegraded` and emailed to `OPERATOR_EMAIL` in a daily digest, and `/api/health` carries the aggregate for a request with the cron secret (Cron Jobs → Degradation events). Every other log line stays on stdout. A log backend (Grafana/Loki or similar) remains deferred until logs leave the box. Errors logged through `@/lib/log` are allowlisted (`src/lib/log-serializers.ts`, #739): every `Error` at the top level of a log call's first argument, any error-like value under `err`, and the `msg` pino falls back to; a value that cannot be serialized is replaced by a placeholder, never logged raw. Only named fields survive, and a cause appears under `err.cause` rather than folded into the message. A Prisma query error's message is withheld, since it renders row values; any other error's message is kept as written. Shipping logs still needs the rest of the stdout stream accounted for. Next prints an error a page or route throws outside `withErrorHandler` through `console.error`, with its message, stack, enumerable properties and cause chain; an `onRequestError` hook in `src/instrumentation.ts` would run beside that print, not instead of it, so that stream needs handling outside the app. Third-party text the app copies into its own messages is kept verbatim: Resend's error message inside `lib/email.ts`'s errors, `reason: error.message` strings, the push failure `cause` string `lib/push/send.ts` builds, and the push service's response body. Values copied out of an error into sibling keys (`rawTarget: err.meta?.target`) bypass the allowlist. An error nested below the top level of a log object, passed in the message position, passed as a format argument, or bound with `log.child` under any key but `err` is written by pino as its own enumerable properties, without the allowlist. And dry-run email mode logs recipient addresses, magic links and invitation sign-in URLs.
 - **GDPR tooling.** Data export and account deletion endpoints. Required before launch, designed later.
 - **Level 2 payment retry logic.** Open question — parked for now.

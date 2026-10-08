@@ -132,7 +132,8 @@ Migrations run automatically via the `migrate` service on every deploy.
 ## 7. Monitoring
 
 - `GET /api/health` — liveness and DB reachability (503 when the DB is down)
-  as `{ status, db }`, where `status` is `degraded` once any job is unhealthy.
+  as `{ status, db }`, where `status` is `degraded` once any job is unhealthy
+  or the DB is down.
   A monitor needs only that public summary; the per-job scheduler state below
   needs the cron secret (`Authorization: Bearer $CRON_SECRET`).
   `jobs.<name>.healthy` flips false when a job errors, and also when its run

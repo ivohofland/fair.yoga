@@ -83,10 +83,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const degradationDigest = await settle(() => notifyOperatorOfDegradations(prisma));
   const timezoneAudit = await settle(() => auditTeacherTimezones(prisma));
 
-  // The composite body at whichever status the outcomes earn — the shape
-  // `/api/health` already uses for an ops endpoint whose body is a report and
-  // whose status is the verdict (it answers 503 with a full `degraded` body
-  // rather than trading one for the other).
+  // The composite body at whichever status the outcomes earn: the body is
+  // the report, the status the verdict, so a failed sweep answers with every
+  // outcome rather than trading the report for the status.
   return respondOk(
     { auth, waitlistRetention, notificationRetention, pushSubscriptionRetention, degradationDigest, timezoneAudit },
     worstStatus([
