@@ -2,6 +2,7 @@ import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { GettingStarted } from './getting-started';
+import { resolveSteps } from '@/lib/onboarding';
 import { routerRefresh } from '../../../tests/setup/components';
 
 type Props = ComponentProps<typeof GettingStarted>;
@@ -34,12 +35,18 @@ describe('GettingStarted', () => {
 
   const nothingDone: Props = {
     bio: '',
-    bankAccountInCurrentCurrency: false,
+    payoutDetailsSet: false,
     roomCount: 0,
     classCount: 0,
     skipped: [],
     pageSlug: 'jane-doe',
   };
+
+  // The bank row's copy, read from the steps themselves so a copy change
+  // cannot leave the negative assertions below checking text no row carries.
+  const bankStep = resolveSteps(nothingDone).find((s) => s.key === 'bank');
+  if (bankStep === undefined) throw new Error('expected a bank step');
+  const bankSkipName = `Skip ${bankStep.label.toLowerCase()}`;
 
   describe('the checklist', () => {
     it('renders the four rows in order profile, bank, room, class', () => {
@@ -49,10 +56,11 @@ describe('GettingStarted', () => {
       const links = screen.getAllByRole('link');
       expect(links.map((l) => l.textContent)).toEqual([
         expect.stringContaining('Complete your profile'),
-        expect.stringContaining('Add your bank details'),
+        expect.stringContaining(bankStep.label),
         expect.stringContaining('Add a room'),
         expect.stringContaining('Create your first class'),
       ]);
+      expect(screen.getByText(bankStep.detail)).toBeInTheDocument();
     });
 
     it('shows a Skip control on exactly the first two rows', () => {
@@ -60,7 +68,7 @@ describe('GettingStarted', () => {
       render(<GettingStarted {...nothingDone} />);
 
       expect(screen.getByRole('button', { name: 'Skip complete your profile' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Skip add your bank details' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: bankSkipName })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /skip add a room/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /skip create your first class/i })).not.toBeInTheDocument();
 
@@ -84,7 +92,7 @@ describe('GettingStarted', () => {
       stubFetch({ ok: true });
       render(<GettingStarted {...nothingDone} />);
 
-      screen.getByRole('button', { name: 'Skip add your bank details' }).click();
+      screen.getByRole('button', { name: bankSkipName }).click();
 
       await vi.waitFor(() =>
         expect(fetchMock).toHaveBeenCalledWith('/api/account/onboarding', {
@@ -112,17 +120,17 @@ describe('GettingStarted', () => {
       // the completion card.
       expect(screen.getByRole('link', { name: /Complete your profile/ })).toBeInTheDocument();
 
-      const bankRow = screen.getByRole('link', { name: /Add your bank details/ }).closest('div');
+      const bankRow = screen.getByRole('link', { name: new RegExp(bankStep.label) }).closest('div');
       expect(bankRow).not.toBeNull();
       // The dash icon (aria-hidden, since the row's accessible name already
       // says "skipped" via its text) in place of the todo/done indicator.
       expect(bankRow!.querySelector('[aria-hidden="true"]')?.textContent).toBe('–');
       // No detail line, no chevron, and no Skip button for a settled row —
       // those are `step.state === 'todo'`-gated in GettingStarted.
-      expect(screen.queryByText('Students see them when it’s time to pay — skip if you take cash')).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /skip add your bank/i })).not.toBeInTheDocument();
+      expect(screen.queryByText(bankStep.detail)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: bankSkipName })).not.toBeInTheDocument();
       // Muted text colour (text-brown), not the todo colour (text-ink).
-      const bankLabel = screen.getByText('Add your bank details');
+      const bankLabel = screen.getByText(bankStep.label);
       expect(bankLabel.className).toContain('text-brown');
       expect(bankLabel.className).not.toContain('text-ink');
 
@@ -134,7 +142,7 @@ describe('GettingStarted', () => {
   describe('the completion card', () => {
     const settled: Props = {
       bio: 'Yoga since 2009.',
-      bankAccountInCurrentCurrency: false,
+      payoutDetailsSet: false,
       roomCount: 1,
       classCount: 1,
       skipped: ['bank'],
@@ -173,7 +181,7 @@ describe('GettingStarted', () => {
       const { container } = render(
         <GettingStarted
           bio="Yoga since 2009."
-          bankAccountInCurrentCurrency
+          payoutDetailsSet
           roomCount={1}
           classCount={1}
           skipped={['bank', 'share']}
@@ -194,7 +202,7 @@ describe('GettingStarted', () => {
       const { container } = render(
         <GettingStarted
           bio=""
-          bankAccountInCurrentCurrency={false}
+          payoutDetailsSet={false}
           roomCount={0}
           classCount={0}
           skipped={['share']}

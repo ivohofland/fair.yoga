@@ -3,7 +3,7 @@ import { PrismaClient, type Currency } from '@prisma/client';
 import { saveBankAccount, removeBankAccount, type BankAccountFailure } from './bank-accounts';
 import { updateTeacherProfile } from './teacher-profile';
 import { resolveSteps } from '@/lib/onboarding';
-import { hasAccountInCurrency } from '@/lib/payment-methods';
+import { hasPayoutDetails } from '@/lib/payment-methods';
 import { uniqueSuffix } from '../../tests/helpers';
 
 const prisma = new PrismaClient();
@@ -151,11 +151,11 @@ describe('the onboarding bank step against stored accounts', () => {
   async function bankDone(teacherId: string): Promise<boolean> {
     const teacher = await prisma.teacher.findUniqueOrThrow({
       where: { id: teacherId },
-      select: { currency: true, bankAccounts: { select: { currency: true } } },
+      select: { currency: true, paymentLink: true, bankAccounts: { select: { currency: true } } },
     });
     const steps = resolveSteps({
       bio: '',
-      bankAccountInCurrentCurrency: hasAccountInCurrency(teacher.bankAccounts, teacher.currency),
+      payoutDetailsSet: hasPayoutDetails(teacher),
       roomCount: 0,
       classCount: 0,
       skipped: [],
@@ -173,6 +173,12 @@ describe('the onboarding bank step against stored accounts', () => {
     expect(await bankDone(teacherId)).toBe(false);
 
     await saveBankAccount(prisma, teacherId, 'GBP', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '12345678' });
+    expect(await bankDone(teacherId)).toBe(true);
+  });
+
+  it('is done with a payment link and no account, whatever the currency', async () => {
+    const teacherId = await makeTeacher('GBP');
+    await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: 'https://revolut.me/anna' } });
     expect(await bankDone(teacherId)).toBe(true);
   });
 });

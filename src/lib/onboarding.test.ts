@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveSteps, isOnboardingComplete, isSettled } from './onboarding';
 
 const nothingDone = {
-  bio: '', bankAccountInCurrentCurrency: false, roomCount: 0, classCount: 0, skipped: [],
+  bio: '', payoutDetailsSet: false, roomCount: 0, classCount: 0, skipped: [],
 };
 
 describe('resolveSteps', () => {
@@ -31,19 +31,27 @@ describe('resolveSteps', () => {
     expect(steps.filter((s) => s.skipAs !== null).map((s) => s.key)).toEqual(['profile', 'bank']);
   });
 
-  it('marks bank done once an account exists in the teacher’s current currency', () => {
-    const bank = resolveSteps({ ...nothingDone, bankAccountInCurrentCurrency: true }).find((s) => s.key === 'bank');
+  it('marks bank done once payout details are set', () => {
+    const bank = resolveSteps({ ...nothingDone, payoutDetailsSet: true }).find((s) => s.key === 'bank');
     expect(bank?.state).toBe('done');
   });
 
-  it('leaves bank to do without an account in the current currency', () => {
+  it('names the bank step for either way a student pays', () => {
+    const bank = resolveSteps(nothingDone).find((s) => s.key === 'bank');
+    expect({ label: bank?.label, detail: bank?.detail }).toEqual({
+      label: 'Add how students pay you',
+      detail: 'Bank details or a payment link — skip if you take cash',
+    });
+  });
+
+  it('leaves bank to do without payout details', () => {
     expect(resolveSteps(nothingDone).find((s) => s.key === 'bank')?.state).toBe('todo');
   });
 
   it('holds back settling until the bank step is done or skipped', () => {
     const rest = { ...nothingDone, bio: 'x', roomCount: 1, classCount: 1 };
     expect(isSettled(rest)).toBe(false);
-    expect(isSettled({ ...rest, bankAccountInCurrentCurrency: true })).toBe(true);
+    expect(isSettled({ ...rest, payoutDetailsSet: true })).toBe(true);
     expect(isSettled({ ...rest, skipped: ['bank'] })).toBe(true);
   });
 });
@@ -55,7 +63,7 @@ describe('isOnboardingComplete', () => {
 
   it('is true when every step is done or skipped and share is dismissed', () => {
     expect(isOnboardingComplete({
-      bio: 'x', bankAccountInCurrentCurrency: false, roomCount: 1, classCount: 1, skipped: ['bank', 'share'],
+      bio: 'x', payoutDetailsSet: false, roomCount: 1, classCount: 1, skipped: ['bank', 'share'],
     })).toBe(true);
   });
 
@@ -63,7 +71,7 @@ describe('isOnboardingComplete', () => {
   // checklist has not retired.
   it('is false when every step is settled but share is not dismissed', () => {
     expect(isOnboardingComplete({
-      bio: 'x', bankAccountInCurrentCurrency: false, roomCount: 1, classCount: 1, skipped: ['bank'],
+      bio: 'x', payoutDetailsSet: false, roomCount: 1, classCount: 1, skipped: ['bank'],
     })).toBe(false);
   });
 });
