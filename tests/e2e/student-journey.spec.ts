@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { BrowserContext } from '@playwright/test';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -12,7 +12,7 @@ import { createClassFixture } from '../class-fixtures';
  * rejoin, and auto-promotion when the seat frees.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const slug = `e2e-sjourney-${suffix}`;

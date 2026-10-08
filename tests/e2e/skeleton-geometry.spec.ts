@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Locator, Page } from '@playwright/test';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal } from './page-helpers';
 import { armHold, installFetchHold, isDevServer, prefetchSettled, releaseHold, waitForHolding } from './skeleton-hold';
@@ -43,7 +43,7 @@ const ROUTES: readonly RouteSpec[] = [
 ];
 const TOLERANCE_PX = 2;
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 const suffix = uniqueSuffix();
 const email = `e2e-skeleton-${suffix}@test.local`;
 

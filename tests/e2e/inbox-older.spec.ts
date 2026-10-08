@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { hydrationSignal } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
@@ -16,7 +16,7 @@ import { NOTIFICATION_PAGE_SIZE } from '@/lib/notification-paging';
  * without an id tie-breaker would repeat or drop a row there.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const TOTAL = NOTIFICATION_PAGE_SIZE + 5;

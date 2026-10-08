@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import fs from 'fs';
 import { accountIdOfTeacher } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
@@ -12,7 +12,7 @@ import { timeToHHmm } from '@/lib/time-of-day';
  * idempotency: re-firing over the already-filled window creates nothing.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 /** CRON_SECRET from the environment (CI) or .env (local). */
 function cronSecret(): string {

@@ -1,6 +1,6 @@
 import type { CDPSession } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -21,7 +21,7 @@ import { createClassFixture } from '../class-fixtures';
  * journey failure does not skip it.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const slug = `e2e-passkey-${suffix}`;

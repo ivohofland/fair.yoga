@@ -1,12 +1,13 @@
 import type { BrowserContext, Page } from '@playwright/test';
 import { test, expect, suppressInstallPromptOn } from './fixtures';
-import { PrismaClient, type MagicLinkPurpose } from '@prisma/client';
+import type { MagicLinkPurpose } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import crypto from 'crypto';
 import { uniqueSuffix, hashToken } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 /**
  * The 2×2 device-handoff matrix (#214): role (teacher/student) × flow

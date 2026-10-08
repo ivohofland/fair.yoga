@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
@@ -15,7 +15,7 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
 
 test.use({ serviceWorkers: 'allow' });
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 const suffix = uniqueSuffix();
 const FIRST_NAME = 'Zephyrine';
 

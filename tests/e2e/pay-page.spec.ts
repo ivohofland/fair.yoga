@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, cookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -11,7 +11,7 @@ import { createClassFixture } from '../class-fixtures';
  * the server-rendered HTML can show that; only a click can.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const IBAN = 'NL91ABNA0417164300';

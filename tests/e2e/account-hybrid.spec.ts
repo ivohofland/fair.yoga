@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
@@ -11,7 +11,7 @@ import { createClassFixture } from '../class-fixtures';
  * account, no dead-end sign-in form.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const hostSlug = `e2e-hybrid-host-${suffix}`;

@@ -1,9 +1,9 @@
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import sharp from 'sharp';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 
