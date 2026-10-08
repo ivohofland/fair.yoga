@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
-import { ResumePaymentsForm } from './resume-payments-form';
+import { ResumePaymentsForm, PASSKEY_RECENT_AUTH_COPY } from './resume-payments-form';
 
 const FINGERPRINT = 'f'.repeat(64);
 
@@ -29,7 +29,7 @@ describe('ResumePaymentsForm', () => {
 
   it('posts the fingerprint it was given and confirms', async () => {
     const fetchMock = stubFetch(() => respond(200, { data: { resumed: true } }));
-    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} />);
+    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} passkeyRequired={false} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
     await settle();
@@ -45,7 +45,7 @@ describe('ResumePaymentsForm', () => {
 
   it('treats an unchanged answer as resumed', async () => {
     stubFetch(() => new Response(JSON.stringify({ data: { resumed: true }, outcome: 'unchanged' }), { status: 200 }));
-    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} />);
+    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} passkeyRequired={false} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
     await settle();
@@ -55,7 +55,7 @@ describe('ResumePaymentsForm', () => {
 
   it('reloads the details when they changed since the page loaded', async () => {
     stubFetch(() => respond(409, { error: { code: 'PAYOUT_DETAILS_CHANGED', message: 'Your payment details changed.' } }));
-    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} />);
+    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} passkeyRequired={false} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
     await settle();
@@ -67,12 +67,34 @@ describe('ResumePaymentsForm', () => {
 
   it('shows the server\'s reason for any other refusal and keeps the button', async () => {
     stubFetch(() => respond(403, { error: { code: 'RECENT_AUTH_REQUIRED', message: 'Please confirm it is you first.' } }));
-    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} />);
+    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} passkeyRequired={false} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
     await settle();
 
     expect(screen.getByRole('alert')).toHaveTextContent('Please confirm it is you first.');
     expect(screen.getByRole('button', { name: 'Resume payments' })).toBeEnabled();
+  });
+
+  it('sends a passkey-required teacher with a stale session back to their passkey, not to an emailed link', async () => {
+    stubFetch(() => respond(403, { error: { code: 'RECENT_AUTH_REQUIRED', message: 'have a sign-in link emailed to you' } }));
+    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} passkeyRequired />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent(PASSKEY_RECENT_AUTH_COPY);
+    expect(screen.getByRole('alert')).not.toHaveTextContent('emailed');
+    expect(screen.getByRole('button', { name: 'Resume payments' })).toBeEnabled();
+  });
+
+  it('keeps the server\'s own copy for another refusal while a passkey is required', async () => {
+    stubFetch(() => respond(409, { error: { code: 'PAYOUT_DETAILS_CHANGED', message: 'Your payment details changed.' } }));
+    render(<ResumePaymentsForm teacherId="t-1" fingerprint={FINGERPRINT} passkeyRequired />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Your payment details changed.');
   });
 });
