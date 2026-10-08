@@ -1,31 +1,9 @@
 import type { NextConfig } from "next";
+import { API_CSP } from "./src/lib/csp";
 
 const isDev = process.env.NODE_ENV === "development";
 
-/**
- * Content-Security-Policy. 'unsafe-inline' for scripts is required by
- * Next's hydration payload (a nonce-based policy needs middleware-driven
- * per-request nonces — heavier than this app warrants); the policy still
- * blocks all external script/style/connect origins, which is the main
- * XSS exfiltration path. Dev additionally needs 'unsafe-eval' and
- * websockets for Fast Refresh.
- */
-const csp = [
-  "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
-  "style-src 'self' 'unsafe-inline'",
-  // data: for the inline EPC payment QR codes
-  "img-src 'self' data: blob:",
-  "font-src 'self'",
-  `connect-src 'self'${isDev ? " ws:" : ""}`,
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-].join("; ");
-
 const securityHeaders = [
-  { key: "Content-Security-Policy", value: csp },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -65,7 +43,12 @@ const nextConfig: NextConfig = {
   // silently serves stale pages until restarted (bit us repeatedly).
   distDir: process.env.NODE_ENV === "development" ? ".next" : ".next-build",
   async headers() {
-    const rules = [{ source: "/(.*)", headers: securityHeaders }];
+    const rules = [
+      { source: "/(.*)", headers: securityHeaders },
+      // Pages get a nonce CSP from src/proxy.ts; API responses never pass the
+      // proxy and get this static one instead (src/lib/csp.ts).
+      { source: "/api/:path*", headers: [{ key: "Content-Security-Policy", value: API_CSP }] },
+    ];
     if (isDev) {
       // Safari reuses cached dev chunks on plain reload despite
       // no-cache+ETag — stale CSS made every design change look broken.

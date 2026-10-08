@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { connection } from 'next/server';
 import { InstallListener } from '@/components/layout/install-listener';
 import { THEME_COLOR } from './manifest';
 import './globals.css';
@@ -19,11 +20,15 @@ export const viewport: Viewport = {
   themeColor: THEME_COLOR,
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // The nonce exists only on a request-time render; a page prerendered at
+  // build time would ship Next's scripts without it, and the CSP would block
+  // them. This makes every page dynamic.
+  await connection();
   // suppressHydrationWarning is one element deep only: it absorbs attributes
   // browser extensions (e.g. Tag Assistant) inject into <html> before
   // hydration, without hiding real mismatches in the tree below.
