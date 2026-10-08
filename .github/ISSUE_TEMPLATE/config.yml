@@ -3,6 +3,3 @@ contact_links:
   - name: No GitHub account? Email us
     url: https://github.com/ivohofland/fair.yoga/blob/main/CONTRIBUTING.md#teachers-and-students
     about: Teachers and students can email hello@fair.yoga instead — same help, no account needed.
-  - name: Security problem? Report it privately
-    url: https://github.com/ivohofland/fair.yoga/security/advisories/new
-    about: Please don't open a public issue for a security vulnerability. See SECURITY.md.
