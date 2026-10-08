@@ -13,7 +13,7 @@ that fails CI, and a report endpoint that gives production a log line.
 | The policy has no `report-uri` / `report-to` | holds | `src/lib/csp.ts` |
 | `fixtures.ts` captures but never fails | holds | its docblock says so deliberately |
 | CI's e2e runs a production build | holds | `ci.yml` `test-e2e`: `pnpm run build`, then `node .next-build/standalone/server.js` |
-| An auto fixture "catches regressions on every page the suite visits" | **incomplete** | all 21 `*.spec.ts` import `test` from `./fixtures`, but 3 (`account`, `booking`, `magic-link-handoff`) open their own `browser.newContext()` — 7 call sites (1 + 1 + 5). A listener armed on the `page` fixture never sees those pages. |
+| An auto fixture "catches regressions on every page the suite visits" | **incomplete** | at `de352d49`, all 21 `*.spec.ts` import `test` from `./fixtures`, but 3 (`account`, `booking`, `magic-link-handoff`) open their own `browser.newContext()` — 7 call sites (1 + 1 + 5). A listener armed on the `page` fixture never sees those pages. |
 | Accept `application/csp-report` **and** `application/reports+json`; add `report-to` **and** `report-uri` | **wrong for Chromium** | against a throwaway server, headless Chromium 149 on `http://localhost` delivered a `report-uri` report within 3 s, and **no** `report-to` report within 75 s. Chromium ignores `report-uri` whenever `report-to` is present, so adding `report-to` would replace the one delivery path we could observe with one we could not. |
 | The report is a new unauthenticated write | holds, and it passes the Origin check | the measured `report-uri` POST carried `Origin: http://localhost:4799` (equal to `Host`) and `Sec-Fetch-Site: same-origin`, so `crossOriginRefusal` returns null for it unchanged |
 | Must not fire on dev-only noise | measured: there is none to filter | the dev server (`next dev`, worktree) produced no violation on `/`, `/login`, `/signup`, `/start` or a 404 |
@@ -72,10 +72,17 @@ slugs and cuids (`find src/app -name page.tsx | grep "\["`).
   3. `Content-Length` required and at most 8 KiB, else 400 — a measured report
      is under 400 bytes; refusing a missing header refuses a chunked body.
   4. Body parsed and summarised by a pure function in `src/lib/csp-report.ts`:
-     `directive` (lowercase letters and `-`, ≤ 64), `blockedUri` (scheme and
-     host for a URL, the keyword for a keyword, else `other`), `documentPath`
-     (pathname only, ≤ 256), `disposition`. Malformed → 400.
+     `directive` (the first whitespace-delimited token of the field, because
+     older browsers append the policy's sources; lowercase letters and `-`,
+     ≤ 64), `blockedUri` (`none` when absent or empty, scheme and host for a
+     URL, the bare scheme when the URL has no host, the keyword for a keyword,
+     else `other`), `documentPath` (pathname only, ≤ 256), `disposition`.
+     Malformed → 400.
   5. One `log.warn` with that summary; answer 204.
+  6. Each refusal after the rate limit (415 and the three 400s) logs one
+     `warn`, `csp report refused`, per reason per minute: the reason, the
+     content-type token and the declared length, never the body. Without it
+     "no violations" and "every report is being refused" read the same.
 - No global log throttle beyond the per-IP limit: a distributed sender can fill
   logs through this route as through any other; accepted, and stated in the doc.
 
@@ -100,9 +107,9 @@ slugs and cuids (`find src/app -name page.tsx | grep "\["`).
 
 | Guard | Broken by | Expected |
 |---|---|---|
-| fixture fails on a violation, default context | delete the teardown assertion | the `test.fail()` case (`a test whose page blocked a script`) passes unexpectedly → red |
-| fixture records in a context the test opens | drop the `browser.newContext` wrap | the `a context the test opens itself` and `browser.newPage()` cases → red |
-| fixture records in the default context | drop the `watchCspViolations(page.context(), …)` arming | `a blocked script in the default context` → red |
+| fixture fails on a violation, default context | delete the teardown assertion | the `test.fail()` case (`a test whose page blocked an inline handler`) passes unexpectedly → red |
+| fixture records in a context the test opens | drop the `browser.newContext` wrap | the `a blocked inline handler in a context the test opens itself` and `a blocked inline handler on a page from browser.newPage()` cases → red |
+| fixture records in the default context | drop the `watchCspViolations(page.context(), …)` arming | `a blocked inline handler in the default context` → red |
 | suite catches a real broken page | `proxy.ts`: strip the nonce from the response CSP | `landing` went red, listing blocked script chunks. Measured and unexplained: a request-header CSP whose nonce differs from the response's had no effect in dev, though Next 16's `app-render.js` reads the nonce from the request's `content-security-policy` header |
 | report-uri present | drop it from `buildPageCsp` | `csp.test.ts` + integration header pin red |
 | route content-type / size / rate limit | remove each check | its integration case red |

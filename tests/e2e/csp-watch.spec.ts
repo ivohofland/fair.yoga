@@ -4,9 +4,9 @@ import { test, expect } from './fixtures';
 test.describe.configure({ mode: 'serial' });
 
 /**
- * An inline event handler: refused under any nonce policy, and from the
- * document's own context. A script element inserted from script is not a
- * stand-in, because 'strict-dynamic' lets a trusted script's insertions run.
+ * An inline event handler is refused because a nonce does not authorise
+ * attributes. A script element inserted from script is not a stand-in,
+ * because 'strict-dynamic' lets a trusted script's insertions run.
  */
 async function injectInlineHandler(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -26,6 +26,7 @@ test.describe('the CSP watcher records', () => {
     await injectInlineHandler(page);
     await expect.poll(() => cspViolations.join('\n')).toContain('script-src-attr');
     expect(cspViolations.join('\n')).toContain('/login');
+    await expect.poll(() => cspViolations.some((line) => line.startsWith('console:'))).toBe(true);
     expect((await reported).status()).toBe(204);
   });
 
