@@ -206,6 +206,43 @@ describe('GET /api/health without the secret', () => {
     expect(body).toEqual({ status: 'degraded', db: 'down' });
   });
 
+  it('logs a presented but wrong secret at warn, never its value, and answers the summary', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+    const { status, body } = await read('Bearer wrong-presented-value');
+    expect(status).toBe(200);
+    expect(body).toEqual({ status: 'ok', db: 'up' });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith({ reason: 'mismatch' }, 'health: authorization presented but not accepted');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('wrong-presented-value');
+  });
+
+  it('logs a presented secret with no CRON_SECRET configured as secret_unset', async () => {
+    delete process.env.CRON_SECRET;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+    const { body } = await read(`Bearer ${SECRET}`);
+    expect(body).toEqual({ status: 'ok', db: 'up' });
+    expect(warn).toHaveBeenCalledWith({ reason: 'secret_unset' }, 'health: authorization presented but not accepted');
+  });
+
+  it('logs nothing for a request with no authorization header, or with the secret', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+    await read(null);
+    await read();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('with CRON_SECRET unset, "Bearer undefined" gets exactly the summary', async () => {
+    delete process.env.CRON_SECRET;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+    const { status, body } = await read('Bearer undefined');
+    expect(status).toBe(200);
+    expect(body).toEqual({ status: 'ok', db: 'up' });
+  });
+
   it('with no CRON_SECRET configured, answers the summary rather than failing', async () => {
     delete process.env.CRON_SECRET;
     const { status, body } = await read(`Bearer ${SECRET}`);

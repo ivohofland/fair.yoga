@@ -19,10 +19,21 @@ const OPEN_WINDOW_MS = 24 * 60 * 60 * 1000;
  * bare number. Which ones, and what they carried, appear only in the
  * operator's digest email and the server log (`docs/technical-architecture.md`,
  * Cron Jobs → Degradation events). When that number cannot be read, the
- * `degradations` key is omitted and the database still reports up.
+ * `degradations` key is omitted and the database still reports up. The public
+ * answer never queries the degradation table, so a failure to read it is
+ * logged only when a request carrying the secret asks.
+ *
+ * An `Authorization` header that is not the secret still gets the public
+ * answer, and is logged at `warn` with why — never with its value.
  */
 export async function GET(request: NextRequest) {
   const detailed = hasCronSecret(request);
+  if (!detailed && request.headers.has('authorization')) {
+    log.warn(
+      { reason: process.env.CRON_SECRET ? 'mismatch' : 'secret_unset' },
+      'health: authorization presented but not accepted',
+    );
+  }
   const jobs = Object.fromEntries(
     Object.entries(getJobHealth()).map(([name, j]) => [
       name,
