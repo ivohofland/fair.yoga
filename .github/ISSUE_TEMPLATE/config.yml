@@ -1,7 +1,7 @@
 blank_issues_enabled: true
 contact_links:
   - name: No GitHub account? Email us
-    url: mailto:hello@fair.yoga
+    url: https://github.com/ivohofland/fair.yoga/blob/main/CONTRIBUTING.md#teachers-and-students
     about: Teachers and students can email hello@fair.yoga instead — same help, no account needed.
   - name: Security problem? Report it privately
     url: https://github.com/ivohofland/fair.yoga/security/advisories/new

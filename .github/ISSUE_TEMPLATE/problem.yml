@@ -7,7 +7,7 @@ body:
       value: |
         Thank you for taking the time to tell us. Plain words are perfect — you don't need to know anything about how the app is built.
 
-        **This page is public.** Anyone on the internet can read what you write here, so please leave out names, email addresses, phone numbers and payment details — yours and anyone else's. If you need to share something private, email hello@fair.yoga instead.
+        **This page is public.** Anyone on the internet can read what you write here, so please leave out names, email addresses, phone numbers and payment details — yours and anyone else's. Your GitHub username is shown too. If you need to share something private, or would rather not be named, email hello@fair.yoga instead.
   - type: dropdown
     id: role
     attributes:

@@ -5,9 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        fair.yoga is a calm tool, not an engagement platform: no streaks, no reward badges, no marketplace. Ideas in that spirit are very welcome.
+        fair.yoga aims to stay a calm, simple tool. Ideas in that spirit are very welcome.
 
-        **This page is public** — please leave out names, email addresses and payment details.
+        **This page is public.** Anyone on the internet can read what you write here, so please leave out names, email addresses, phone numbers and payment details — yours and anyone else's. Your GitHub username is shown too. If you'd rather not be named, email hello@fair.yoga instead.
   - type: dropdown
     id: role
     attributes:
@@ -27,10 +27,8 @@ body:
   - type: textarea
     id: why
     attributes:
-      label: Why? What does it make easier?
+      label: Why? What does it make easier? (optional)
       description: A moment from your week where this would have helped is the most useful thing you can tell us.
-    validations:
-      required: true
   - type: checkboxes
     id: privacy
     attributes:

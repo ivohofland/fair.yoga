@@ -8,7 +8,7 @@ reports seriously and we're grateful for them.
 **Please don't open a public issue.** Report it privately instead:
 
 - **Preferred:** [GitHub private vulnerability reporting](https://github.com/ivohofland/fair.yoga/security/advisories/new)
-- **Or email:** hello@fair.yoga
+- **Or email:** hello@fair.yoga, starting the subject with `Security:`
 
 Helpful to include: what an attacker could do, the steps to reproduce it, and the
 commit or page you tested against. Please don't access, change or delete data that
