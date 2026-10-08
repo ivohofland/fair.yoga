@@ -4,6 +4,7 @@ import { saveBankAccount, removeBankAccount, type BankAccountFailure } from './b
 import { updateTeacherProfile } from './teacher-profile';
 import { resolveSteps } from '@/lib/onboarding';
 import { hasPayoutDetails } from '@/lib/payment-methods';
+import { payoutMasksAlikeNote } from '@/lib/email-templates';
 import { uniqueSuffix } from '../../tests/helpers';
 
 const prisma = new PrismaClient();
@@ -207,6 +208,26 @@ describe('saveBankAccount records a payout-change event (#786)', () => {
     const changed = (await events(teacherId))[1];
     expect(changed).toMatchObject({ kind: 'bank_account_changed', before: '•••• 4300', after: '•••• 4300' });
     expect(await identifierChangedOf(teacherId)).toEqual([null, true]);
+  });
+
+  // The masks show only the account number's last digits, so a change that
+  // keeps them warns in words true whichever identifier moved.
+  it.each([
+    ['the sort code alone', { holderName: 'A. Teacher', sortCode: '654321', accountNumber: '12345678' }],
+    ['an account number ending in the same digits', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '99995678' }],
+  ] as const)('warns about a GBP change of %s without naming the account number as what changed', async (_case, second) => {
+    const teacherId = await makeTeacher('GBP');
+    await saveBankAccount(prisma, teacherId, 'GBP', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '12345678' });
+    await saveBankAccount(prisma, teacherId, 'GBP', second);
+    const changed = await prisma.payoutChangeEvent.findFirstOrThrow({
+      where: { teacherId, kind: 'bank_account_changed' },
+      select: { kind: true, before: true, after: true, identifierChanged: true },
+    });
+    expect(changed.before).toBe(changed.after);
+    expect(payoutMasksAlikeNote(changed)).toEqual({
+      tone: 'warning',
+      text: "The bank details changed, though the account number's last digits look the same. Check the full details in your settings.",
+    });
   });
 });
 
