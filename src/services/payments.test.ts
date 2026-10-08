@@ -346,6 +346,26 @@ describe('Payment Service (DB)', () => {
     expect(notification.body).toMatch(/^€24\.59 for Hatha class on .* at 09:00 is still open\.$/);
   });
 
+  it('sendPaymentReminder leaves out "Pay your teacher directly" when the teacher has a payment link and no bank account', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'pending', method: null, paidAt: null, reminderSentAt: null },
+    });
+    expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
+    await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: 'https://paypal.me/payments' } });
+    onTestFinished(async () => {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: null } });
+    });
+
+    paymentOf(await sendPaymentReminder(prisma, paymentId), 'applied');
+
+    const notification = await prisma.notification.findFirstOrThrow({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(notification.body).toMatch(/^€24\.59 for Hatha class on .* at 09:00 is still open\.$/);
+  });
+
   // The class's own currency, not the teacher's: a CHF payment under a EUR
   // teacher with a euro account is reminded in CHF, and told to pay the
   // teacher directly because the teacher holds no CHF account.

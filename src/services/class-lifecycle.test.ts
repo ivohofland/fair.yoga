@@ -1299,6 +1299,35 @@ describe('completeClass (DB)', () => {
     }
   });
 
+  it('leaves "Pay your teacher directly" out of the payment request when the teacher has a payment link and no bank account', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
+    await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: 'https://paypal.me/lifecycle' } });
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[0]!, status: 'attended', tierAtBooking: 3 },
+      });
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[1]!, status: 'no_show', tierAtBooking: 3 },
+      });
+
+      const result = await completeClass(prisma, cls.id, { finishedEarly: true });
+      expect(result.ok).toBe(true);
+
+      const bodyFor = async (studentId: string) =>
+        (await prisma.notification.findFirstOrThrow({
+          where: { relatedClassId: cls.id, recipientType: 'student', recipientId: studentId },
+        })).body;
+      expect(await bodyFor(studentIds[0]!)).toMatch(/^Your price for .* is €\d+\.\d{2}\.$/);
+      const noShow = await bodyFor(studentIds[1]!);
+      expect(noShow).toMatch(/^We missed you at .* If this isn't right, talk to your teacher\.$/);
+      expect(noShow).not.toContain('Pay your teacher directly');
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: null } });
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    }
+  });
+
   // The class's own currency, not the teacher's: a CHF class under a EUR
   // teacher with a euro account is priced in CHF, and its students are told
   // to pay the teacher directly because the teacher holds no CHF account.
