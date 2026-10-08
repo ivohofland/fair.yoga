@@ -57,7 +57,7 @@ const YAMAS = [
   { name: 'Ahimsa', gloss: 'non-harm', body: 'The math never squeezes one side to favour the other — student, teacher, or studio.' },
 ] as const;
 
-const STEPS = ['Profile', 'Bank details', 'Room', 'Class', 'Share'] as const;
+const STEPS = ['Profile', 'How students pay', 'Room', 'Class', 'Share'] as const;
 
 function Section({
   id,
@@ -199,7 +199,7 @@ export default async function LandingPage() {
           <p className="type-caption mb-1.5">Get started</p>
           <h2 className="type-title mb-3">Set up your first class in a few minutes</h2>
           <p className="type-body mb-5">
-            Fill in your profile and bank details, add your room, create your first class, and share
+            Fill in your profile and how students pay you, add your room, create your first class, and share
             your page. That’s it.
           </p>
           <ol className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-7 type-body text-ink">
