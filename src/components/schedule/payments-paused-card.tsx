@@ -10,7 +10,7 @@ export function PaymentsPausedCard() {
       </p>
       <Link
         href="/settings/resume-payments"
-        className="type-label text-teal no-underline rounded-field focus:outline-none focus-visible:shadow-focus"
+        className="inline-flex items-center min-h-11 type-label text-teal hover:text-teal-hover no-underline rounded-field focus:outline-none focus-visible:shadow-focus"
       >
         Check and resume
       </Link>
