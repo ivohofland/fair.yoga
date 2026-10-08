@@ -15,7 +15,7 @@ import {
 } from '@/lib/student-visibility';
 import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
-import { accountInCurrency, bankAccountSelect, paymentMethodsFor } from '@/lib/payment-methods';
+import { paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
@@ -439,7 +439,7 @@ export async function sendPaymentReminder(
                     classType: true,
                     date: true,
                     startTime: true,
-                    teacher: { select: { bankAccounts: { select: bankAccountSelect } } },
+                    teacher: { select: teacherPaymentSelect },
                   },
                 },
               },
@@ -458,7 +458,7 @@ export async function sendPaymentReminder(
         body: studentPaymentReminderBody(
           registration.class.calendarEntry,
           Number(payment.amount),
-          paymentMethodsFor(accountInCurrency(registration.class.calendarEntry.teacher.bankAccounts, registration.class.currency)).length > 0,
+          paymentMethodsForTeacher(registration.class.calendarEntry.teacher, registration.class.currency).length > 0,
           registration.class.currency,
         ),
         relatedClassId: registration.class.id,

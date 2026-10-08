@@ -16,7 +16,7 @@ import { getWaitlistWindow, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
 import { formatInstantInZone } from '@/lib/timezone';
 import { PAY_NOW_LABEL, payPagePath, studentNotificationHref } from '@/lib/notification-links';
-import { accountInCurrency, bankAccountSelect, paymentMethodsFor } from '@/lib/payment-methods';
+import { paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
@@ -52,7 +52,7 @@ export default async function StudentBookingsPage() {
                     pageSlug: true,
                     defaultTimezone: true,
                     // Each class picks the one in its own currency below.
-                    bankAccounts: { select: bankAccountSelect },
+                    ...teacherPaymentSelect,
                   },
                 },
               },
@@ -401,7 +401,7 @@ export default async function StudentBookingsPage() {
                   )}
                 </div>
                 {payment && outstanding && (
-                  paymentMethodsFor(accountInCurrency(cls.calendarEntry.teacher.bankAccounts, cls.currency)).length > 0 ? (
+                  paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency).length > 0 ? (
                     <div className="mt-3">
                       <Link
                         href={payPagePath(cls.id)}

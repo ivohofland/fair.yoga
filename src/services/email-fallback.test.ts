@@ -680,5 +680,96 @@ describe('processEmailFallback (DB)', () => {
         await prisma.account.deleteMany({ where: { email: bankEmail } });
       }
     });
+
+    // A payment link is a payment method: a teacher with no bank account but a
+    // link still gives the student a Pay now button, not "pay directly".
+    it('gives a student payment email a Pay now link when the class teacher has only a payment link', async () => {
+      const linkEmail = `fallback-link-${uniqueSuffix}@test.local`;
+      const studentEmail = `fallback-link-payer-${uniqueSuffix}@test.local`;
+      let linkTeacherId: string | undefined;
+      let linkRoomId: string | undefined;
+      let studentId: string | undefined;
+      try {
+        const linkTeacher = await prisma.teacher.create({
+          data: {
+            firstName: 'Link',
+            lastName: 'Teacher',
+            email: linkEmail,
+            account: { create: { email: linkEmail } },
+            bio: 'Pay-link fixture',
+            pageSlug: `fallback-link-${uniqueSuffix}`,
+            defaultTimezone: 'UTC',
+            paymentLink: 'https://revolut.me/anna',
+          },
+        });
+        linkTeacherId = linkTeacher.id;
+        const room = await prisma.room.create({
+          data: {
+            venueName: 'Link Studio',
+            address: `${uniqueSuffix} Link St`,
+            city: 'Amsterdam',
+            postcode: '1111LK',
+            maxCapacity: 10,
+            createdById: linkTeacher.id,
+          },
+        });
+        linkRoomId = room.id;
+        const teacherRoom = await prisma.teacherRoom.create({
+          data: { teacherId: linkTeacher.id, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+        });
+        const linkClass = await createClassFixture(prisma, {
+          teacherId: linkTeacher.id,
+          teacherRoomId: teacherRoom.id,
+          classType: 'Vinyasa',
+          date: new Date('2026-06-03'),
+          startTime: hhmmToTime('09:00'),
+          durationMinutes: 60,
+          roomCost: 30,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents: 10,
+          status: 'completed',
+        });
+        classIds.push(linkClass.id);
+        const student = await prisma.student.create({
+          data: { firstName: 'Linked', lastName: 'Student', email: studentEmail },
+        });
+        studentId = student.id;
+        const notification = await prisma.notification.create({
+          data: {
+            recipientType: 'student',
+            recipientId: student.id,
+            type: 'payment_request',
+            title: 'Priced with a link',
+            body: 'Your price is €9.00.',
+            isRead: false,
+            emailSent: false,
+            createdAt: new Date(Date.now() - 45 * 60 * 1000),
+            relatedClassId: linkClass.id,
+          },
+        });
+        perTestNotificationIds.push(notification.id);
+
+        await processEmailFallback(scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } }).db);
+
+        const call = sendMock.mock.calls.find(([args]) => args.subject === 'Priced with a link');
+        if (!call) throw new Error('no email sent with subject "Priced with a link"');
+        expect(call[0].html as string).toContain(`/bookings/${linkClass.id}/pay"`);
+        expect(call[0].html as string).toContain('Pay now');
+      } finally {
+        if (studentId !== undefined) {
+          await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+          await prisma.student.delete({ where: { id: studentId } });
+        }
+        if (linkTeacherId !== undefined) {
+          await prisma.calendarEntry.deleteMany({ where: { teacherId: linkTeacherId } });
+          await prisma.teacherRoom.deleteMany({ where: { teacherId: linkTeacherId } });
+        }
+        if (linkRoomId !== undefined) await prisma.room.delete({ where: { id: linkRoomId } });
+        if (linkTeacherId !== undefined) await prisma.teacher.delete({ where: { id: linkTeacherId } });
+        await prisma.account.deleteMany({ where: { email: linkEmail } });
+      }
+    });
   });
 });

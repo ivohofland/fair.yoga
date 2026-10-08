@@ -18,7 +18,7 @@ import { emailDryRun } from '@/lib/email';
 import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';
 import { isPaymentNotification } from '@/lib/notification-links';
-import { accountInCurrency, bankAccountSelect, paymentMethodsFor } from '@/lib/payment-methods';
+import { paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 
 // Lazy for the same reason as lib/email: a keyless environment must be
 // able to import this module (the dry-run path never constructs).
@@ -42,10 +42,10 @@ async function studentPaymentEmailHasMethods(
     where: { id: notification.relatedClassId },
     select: {
       currency: true,
-      calendarEntry: { select: { teacher: { select: { bankAccounts: { select: bankAccountSelect } } } } },
+      calendarEntry: { select: { teacher: { select: teacherPaymentSelect } } },
     },
   });
-  return cls !== null && paymentMethodsFor(accountInCurrency(cls.calendarEntry.teacher.bankAccounts, cls.currency)).length > 0;
+  return cls !== null && paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency).length > 0;
 }
 
 /**

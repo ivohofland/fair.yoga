@@ -6,6 +6,7 @@ import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { PaymentDetails } from '@/components/student/payment-details';
+import { PaymentLinkPanel } from '@/components/student/payment-link-panel';
 import { PaymentQr } from '@/components/student/payment-qr';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
@@ -13,7 +14,7 @@ import { formatDayHeader, formatMoney, paymentStateText } from '@/lib/format';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
 import { markedPaidLine, reportMissingPayment } from '@/lib/pay-page.server';
-import { PAYMENT_METHOD_COPY, accountInCurrency, bankAccountSelect, paymentMethodsFor, type PaymentMethod } from '@/lib/payment-methods';
+import { PAYMENT_METHOD_COPY, paymentMethodsForTeacher, teacherPaymentSelect, type PaymentMethod } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
 
 export const dynamic = 'force-dynamic';
@@ -51,6 +52,16 @@ function MethodPanel({
           remittance={reference}
         />
       );
+    case 'payment_link':
+      return (
+        <PaymentLinkPanel
+          url={method.url}
+          host={method.host}
+          amount={amount}
+          currency={currency}
+          reference={reference}
+        />
+      );
     default: {
       // A kind added to `PaymentMethod` without a panel fails the build here.
       const unhandled: never = method;
@@ -82,9 +93,9 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
                   firstName: true,
                   lastName: true,
                   defaultTimezone: true,
-                  // All of them: the one in the class's currency is picked
+                  // Every account: the one in the class's currency is picked
                   // below, since this query cannot filter on a sibling column.
-                  bankAccounts: { select: bankAccountSelect },
+                  ...teacherPaymentSelect,
                 },
               },
             },
@@ -110,7 +121,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const teacher = entry.teacher;
   const amount = Number(payment.amount);
   const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
-  const methods = paymentMethodsFor(accountInCurrency(teacher.bankAccounts, cls.currency));
+  const methods = paymentMethodsForTeacher(teacher, cls.currency);
   const state = paymentStateText(payment.status);
   // A waived payment is not charged, so it gets no line saying it still is.
   const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);
