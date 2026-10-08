@@ -237,7 +237,7 @@ The onboarding flow is not a separate section — it's a checklist card on the S
 ```
 Getting started (checklist card, retires once settled)
 ├── Row 1: Profile → Settings > Profile   (skippable — the bio is the one optional part)
-├── Row 2: Bank → Settings > Profile      (skippable — cash-only teachers exist)
+├── Row 2: How students pay → Settings > Profile      (skippable — cash-only teachers exist)
 ├── Row 3: Room → Settings > Rooms > Add room   (required)
 └── Row 4: Class → Schedule > Create class      (required)
 
