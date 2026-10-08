@@ -740,10 +740,12 @@ two places (#793):
 - **Production.** The policy ends in `report-uri /api/csp-report`. That route
   (`src/app/api/csp-report/route.ts`, summary in `src/lib/csp-report.ts`) logs
   one `warn`, `csp violation`, carrying the directive, the blocked scheme and
-  host or keyword, the document path without its query, and the disposition. It
-  is IP-rate-limited (60 a minute), and there is no global log throttle beyond
-  that: a distributed sender can fill logs through it as through any other
-  unauthenticated route.
+  blocked resource reduced to its origin, scheme or keyword, the document path
+  without its query, and the disposition. It is IP-rate-limited (60 a minute),
+  and there is no global log throttle beyond that: a distributed sender can fill
+  logs through it as through any other unauthenticated route. The default-context
+  case of `csp-watch.spec.ts` also waits for the report Chromium sends for its
+  violation and asserts the route answered 204.
 
 The policy uses `report-uri`, not `report-to`. Measured against a throwaway
 server, headless Chromium 149 on `http://localhost` delivered a `report-uri`
@@ -765,7 +767,11 @@ post without a preflight — `text/plain`, urlencoded and multipart — but only
 for routes that read their body through `parseBody`. A route that reads its
 body itself relies on the Origin check alone: the multipart photo upload
 (`POST /api/teachers/[id]/photo`) and the optional archive body of
-`PATCH /api/students/[id]`. Find others with
+`PATCH /api/students/[id]`, and `POST /api/csp-report`. The last is acceptable
+because a cross-site page's own `report-uri` can make a browser send
+`application/csp-report` without a preflight, so the Origin check is its only
+gate, and the worst a cross-site sender gets is one `warn` line;
+`tests/integration/csp-report.test.ts` pins the `CROSS_ORIGIN` refusal. Find others with
 `grep -rln "formData()\|request.text()\|request.json()" src/app/api`.
 
 ### Unauthenticated API routes
