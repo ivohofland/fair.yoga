@@ -261,10 +261,12 @@ export const passkeyAuthVerifySchema = z.object({
 
 // App routes the public teacher page must never shadow. A static segment
 // beats the `[slug]` dynamic one, so anything listed here would silently
-// hide a teacher who had claimed it.
+// hide a teacher who had claimed it. `schemas.test.ts` holds every static
+// top-level route segment against this set.
 const RESERVED_SLUGS = new Set([
   'login', 'verify', 'signup', 'bookings', 'settings', 'schedule', 'students',
   'inbox', 'class', 'studio-class', 'api', 'health', 'admin', 'account', 'updates', 'start',
+  'payout-pause',
 ]);
 
 /**

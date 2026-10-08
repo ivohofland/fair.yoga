@@ -1,3 +1,5 @@
+import { readdirSync } from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { Currency } from '@prisma/client';
@@ -656,8 +658,22 @@ describe('pageSlugField', () => {
 
   // 'signup' is new here: a static /signup route shadows any teacher who
   // claimed it, because a static segment beats the [slug] dynamic one.
-  it.each(['signup', 'login', 'schedule', 'api', 'start'])('rejects the reserved slug %s', (slug) => {
+  it.each(['signup', 'login', 'schedule', 'api', 'start', 'payout-pause'])('rejects the reserved slug %s', (slug) => {
     expect(() => pageSlugField.parse(slug)).toThrow('This slug is reserved');
+  });
+
+  // Every static first segment of the app, inside a route group or not, beats
+  // `(public)/[slug]`; a slug equal to one would never reach its teacher's page.
+  it('reserves every static top-level route segment', () => {
+    const app = path.resolve(__dirname, '../app');
+    const dirs = (dir: string) =>
+      readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    const segments = dirs(app).flatMap((name) =>
+      /^\(.+\)$/.test(name) ? dirs(path.join(app, name)) : [name],
+    );
+    const statics = segments.filter((name) => !name.startsWith('[') && !name.startsWith('('));
+    expect(statics.length).toBeGreaterThan(0);
+    expect(statics.filter((name) => pageSlugField.safeParse(name).success)).toEqual([]);
   });
 });
 

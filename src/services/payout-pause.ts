@@ -30,6 +30,15 @@ export function pauseWindowFloor(now: Date, paymentsResumedAt: Date | null): Dat
   return paymentsResumedAt !== null && paymentsResumedAt > ttlFloor ? paymentsResumedAt : ttlFloor;
 }
 
+/**
+ * The window start when no event lies at or after the floor: the token's own
+ * event, unless it predates the last resume, which confirmed it; then the
+ * floor.
+ */
+function tokenEventOrFloor(tokenEventAt: Date, paymentsResumedAt: Date | null, floor: Date): Date {
+  return paymentsResumedAt === null || tokenEventAt >= paymentsResumedAt ? tokenEventAt : floor;
+}
+
 /** A passkey created at or after this instant is not trusted to resume. */
 export function pausePasskeyCutoff(windowStart: Date): Date {
   return new Date(windowStart.getTime() - PAUSE_PASSKEY_LOOKBACK_DAYS * DAY_MS);
@@ -44,8 +53,10 @@ export function pausePasskeyCutoff(windowStart: Date): Date {
  * The token is consumed inside that transaction, so a failure in any later
  * statement rolls the consume back and the link still works. The teacher row
  * is the first lock (`docs/lock-order.md`, "The `Teacher` row is the first
- * lock"). Sessions are deleted before passkeys, so the passkey delete finds no
- * session left to null out.
+ * lock"). The sessions that existed are deleted before the passkeys. A
+ * passkey sign-in landing between the two leaves a session whose credential
+ * the passkey delete then nulls, and a session with no credential cannot
+ * satisfy a resume.
  */
 export async function pausePayments(db: PrismaClient, rawToken: string, now: Date = new Date()): Promise<PauseOutcome> {
   const tokenHash = hashToken(rawToken);
@@ -62,14 +73,21 @@ export async function pausePayments(db: PrismaClient, rawToken: string, now: Dat
 
     const teacher = await tx.teacher.findUniqueOrThrow({
       where: { id: token.teacherId },
-      select: { accountId: true, paymentsPausedAt: true, paymentsResumedAt: true, account: { select: { email: true } } },
+      select: {
+        accountId: true,
+        paymentsPausedAt: true,
+        paymentsResumedAt: true,
+        pausePasskeyCutoff: true,
+        account: { select: { email: true } },
+      },
     });
+    const floor = pauseWindowFloor(now, teacher.paymentsResumedAt);
     const earliest = await tx.payoutChangeEvent.findFirst({
-      where: { teacherId: token.teacherId, createdAt: { gte: pauseWindowFloor(now, teacher.paymentsResumedAt) } },
+      where: { teacherId: token.teacherId, createdAt: { gte: floor } },
       orderBy: { createdAt: 'asc' },
       select: { createdAt: true },
     });
-    const windowStart = earliest?.createdAt ?? token.event.createdAt;
+    const windowStart = earliest?.createdAt ?? tokenEventOrFloor(token.event.createdAt, teacher.paymentsResumedAt, floor);
     const cutoff = pausePasskeyCutoff(windowStart);
 
     if (teacher.paymentsPausedAt === null) {
@@ -82,7 +100,11 @@ export async function pausePayments(db: PrismaClient, rawToken: string, now: Dat
 
     await signOutEverywhereTx(tx, teacher.accountId);
     await tx.magicLinkToken.deleteMany({ where: { email: teacher.account.email } });
-    await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId, createdAt: { gte: cutoff } } });
+    // A frozen cutoff later than this pause's own keeps every passkey it made
+    // eligible to resume.
+    const frozen = teacher.pausePasskeyCutoff;
+    const removeFrom = frozen !== null && frozen > cutoff ? frozen : cutoff;
+    await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId, createdAt: { gte: removeFrom } } });
     return { status: 'paused' };
   });
 }
