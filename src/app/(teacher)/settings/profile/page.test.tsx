@@ -15,6 +15,11 @@ vi.mock('@/components/settings/bank-account-form', () => ({
     <span data-testid="bank-account-form" data-props={JSON.stringify(props)} />
   ),
 }));
+vi.mock('@/components/settings/payment-link-form', () => ({
+  PaymentLinkForm: (props: { teacherId: string; initial: string; hasLink: boolean }) => (
+    <span data-testid="payment-link-form" data-props={JSON.stringify(props)} />
+  ),
+}));
 vi.mock('@/components/account/account-security', () => ({ AccountSecurity: () => null }));
 vi.mock('@/components/account/data-and-deletion', () => ({
   DataAndDeletion: ({ accountId }: { accountId: string }) => (
@@ -37,6 +42,7 @@ describe('ProfilePage', () => {
       currency: 'EUR',
       defaultTimezone: 'Europe/Amsterdam',
       photo: null,
+      paymentLink: null,
       bankAccounts: [],
     });
 
@@ -50,7 +56,7 @@ describe('ProfilePage', () => {
     const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
-      currency: 'GBP', defaultTimezone: 'Europe/London', photo: null,
+      currency: 'GBP', defaultTimezone: 'Europe/London', photo: null, paymentLink: null,
       bankAccounts: [
         { ...none, currency: 'EUR', holderName: 'Ada L', iban: 'NL91ABNA0417164300' },
         { ...none, currency: 'GBP', holderName: 'Ada Lovelace', sortCode: '123456', accountNumber: '12345678' },
@@ -74,7 +80,7 @@ describe('ProfilePage', () => {
     const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
-      currency: 'GBP', defaultTimezone: 'Europe/London', photo: null,
+      currency: 'GBP', defaultTimezone: 'Europe/London', photo: null, paymentLink: null,
       bankAccounts: [{ ...none, currency: 'EUR', holderName: 'Ada L', iban: 'NL91ABNA0417164300' }],
     });
 
@@ -82,5 +88,31 @@ describe('ProfilePage', () => {
 
     const props = JSON.parse(screen.getByTestId('bank-account-form').getAttribute('data-props') ?? '{}') as { hasAccount: boolean };
     expect(props.hasAccount).toBe(false);
+  });
+
+  it('hands the link block nothing to remove when no link is stored', async () => {
+    requireTeacherSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
+    findUniqueOrThrow.mockResolvedValue({
+      id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
+      currency: 'EUR', defaultTimezone: 'Europe/Amsterdam', photo: null, paymentLink: null, bankAccounts: [],
+    });
+
+    render(await ProfilePage());
+
+    const props = JSON.parse(screen.getByTestId('payment-link-form').getAttribute('data-props') ?? '{}') as unknown;
+    expect(props).toEqual({ teacherId: 'teacher-1', initial: '', hasLink: false });
+  });
+
+  it('hands the link block the stored link', async () => {
+    requireTeacherSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
+    findUniqueOrThrow.mockResolvedValue({
+      id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
+      currency: 'EUR', defaultTimezone: 'Europe/Amsterdam', photo: null, paymentLink: 'https://paypal.me/ada', bankAccounts: [],
+    });
+
+    render(await ProfilePage());
+
+    const props = JSON.parse(screen.getByTestId('payment-link-form').getAttribute('data-props') ?? '{}') as unknown;
+    expect(props).toEqual({ teacherId: 'teacher-1', initial: 'https://paypal.me/ada', hasLink: true });
   });
 });

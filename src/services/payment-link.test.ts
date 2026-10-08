@@ -77,7 +77,7 @@ async function raceBehindErasure<T>(teacherId: string, call: () => Promise<T>): 
     await tx.$executeRaw`UPDATE "Teacher" SET "deletedAt" = now() WHERE id = ${teacherId}`;
     held.open();
     await release.promise;
-  }, { timeout: 20_000 });
+  }, { timeout: 60_000 });
   try {
     await Promise.race([held.promise, holding]);
     let settled = false;

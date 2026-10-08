@@ -186,7 +186,7 @@ Classes move through states: `draft → open → in_progress → completed` (eve
 
 ### Payment Model
 
-- **Level 1 (default):** Platform calculates prices. Student pays teacher directly (bank transfer, cash, etc) into the teacher's bank account in the payment's currency (`TeacherBankAccount`, one per currency). Teacher marks paid manually.
+- **Level 1 (default):** Platform calculates prices. Student pays teacher directly (bank transfer, cash, etc) into the teacher's bank account in the payment's currency (`TeacherBankAccount`, one per currency), or through an open-ended payment link the teacher adds (`Teacher.paymentLink`), shown beside the bank methods. Teacher marks paid manually.
 - **Level 2:** Teacher connects Mollie (EU) or Stripe (US). Payment links sent to students. Teacher pays processor fees. Platform is never a financial intermediary.
 - **Grace policy (#47):** `PaymentStatus` is `pending → paid / overdue / not_charged`, both paid and not_charged reopening to pending. `not_charged` is the teacher waiving a post-completion payment they choose not to collect — a genuine emergency, lenience — never a refund (`paid → not_charged` is refused) and never available before completion, since `Payment` rows are created only by `completeClass`. Reporting (`/settings/reporting`) reads `Class.totalRevenue`, a snapshot written once at completion — marking a payment not_charged afterward doesn't touch it, so a waived amount stays counted there exactly as it did before this policy existed. Reporting was never the lie the "charged" copy was about; the payments-overview's own outstanding total was the only number a mis-marked payment could inflate.
 

@@ -226,7 +226,8 @@ The system calculates each student's price after class and displays it. The stud
 - Teacher's bank details displayed (account holder, the account's identifiers — IBAN, UK sort code and account number, or US routing and account number — and payment reference), from the account the teacher saved in the payment's currency
 - "Copy payment details" button for mobile users
 - EPC QR code for scanning with a banking app (useful when viewing on a different device than the one used for payment); an EPC QR can only carry euros
-- Tikkie, cash, or any other method the teacher accepts
+- An open-ended payment link the teacher adds (a Tikkie, PayPal.me or Revolut link without a fixed amount), shown beside the bank methods as a "Pay via" button to the link's host
+- Cash, or any other method the teacher accepts
 
 The teacher manually tracks payments in the system — a simple per-class checklist showing each student, the amount owed, and paid/unpaid status. Zero fees, no payment processor needed.
 
