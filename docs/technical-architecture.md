@@ -686,14 +686,14 @@ prefetching it — without ever asking the user which one this is:
 3. Resend delivers email with link to /verify?token=xxx
 4. /verify checks the opening browser's nonce against the bound hash:
    - matching nonce: consumes the token, creates a session cookie (httpOnly,
-     secure, sameSite). Writes are also refused cross-origin in
-     `withErrorHandler` (`src/lib/cross-origin.ts`), so SameSite=Lax is not
-     the only CSRF layer.
+     secure, sameSite)
    - no cookie, or another browser's: consumes nothing — stamps a one-time
      6-digit code on the token instead and shows it, for the browser that
      actually asked for the link to redeem via POST /api/auth/magic-link/claim
 5. Redirect to dashboard (teacher) or bookings (student), once a session exists
 ```
+
+Writes are refused cross-origin in `withErrorHandler` (`src/lib/cross-origin.ts`), so SameSite=Lax is not the only CSRF layer.
 
 On iOS, an installed home-screen app keeps its own cookie jar, separate from
 the browser's, so a link tapped in Mail opens in the browser and takes the

@@ -41,9 +41,11 @@ describe('Origin check', () => {
   });
 
   it('a cross-site GET is not refused', async () => {
-    const res = await fetch(`${BASE_URL}/api/health`, {
+    // /api/teacher-rooms is wrapped in withErrorHandler and needs a session, so
+    // reaching its own 401 shows the wrapper let the read through.
+    const res = await fetch(`${BASE_URL}/api/teacher-rooms`, {
       headers: { ...freshIp(), 'sec-fetch-site': 'cross-site', origin: 'https://mail.example' },
     });
-    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(401);
   });
 });
