@@ -1,0 +1,46 @@
+name: Something isn't working
+description: Tell us about something in fair.yoga that went wrong or confused you. No technical knowledge needed.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to tell us. Plain words are perfect — you don't need to know anything about how the app is built.
+
+        **This page is public.** Anyone on the internet can read what you write here, so please leave out names, email addresses, phone numbers and payment details — yours and anyone else's. If you need to share something private, email hello@fair.yoga instead.
+  - type: dropdown
+    id: role
+    attributes:
+      label: I use fair.yoga as a…
+      options:
+        - Teacher
+        - Student
+        - Developer / contributor
+    validations:
+      required: true
+  - type: textarea
+    id: trying
+    attributes:
+      label: What were you trying to do?
+      placeholder: e.g. "I was booking a spot in Thursday's evening class."
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened instead?
+      description: What did you see? An error message, a page that didn't load, a wrong number — anything you remember helps.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Phone or computer, and which browser? (optional)
+      placeholder: e.g. "iPhone, Safari" or "Laptop, Chrome"
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I haven't included anyone's name, email address, phone number or payment details.
+          required: true
