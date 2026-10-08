@@ -76,6 +76,9 @@ link masks to a host, and for every link product the payee is in the path.
 - `Teacher.paymentsResumedAt DateTime?` — set by a resume.
 - `Teacher.pausePasskeyCutoff DateTime?` — Decision 4; cleared by a resume.
   A re-pause while paused keeps the existing value.
+- `Teacher.pauseWindowStart DateTime?` — the pause's `windowStart`, stored
+  because the resume screen may be read after the floor has moved past it;
+  cleared by a resume, kept by a re-pause.
 - `Session.passkeyCredentialId String?` — written only by passkey sign-in
   (`passkey/authenticate/verify`), `onDelete: SetNull`.
 - `PayoutChangeEvent { id, teacherId, kind PayoutChangeKind, accountCurrency
@@ -137,7 +140,7 @@ limited per IP under a new prefix, runs one transaction:
    if none is; the token's event is ignored when it predates
    `paymentsResumedAt`;
 4. `cutoff` = `windowStart − PAUSE_PASSKEY_LOOKBACK_DAYS`; unless already
-   paused, set `paymentsPausedAt` = now and `pausePasskeyCutoff` = `cutoff`
+   paused, set `paymentsPausedAt` = now, `pauseWindowStart` = `windowStart`, and `pausePasskeyCutoff` = `cutoff`
    when a passkey created before it exists, else null;
 5. delete the account's sessions, push subscriptions and sign-in links (a
    transaction-taking form of `signOutEverywhere`), and its passkeys created
@@ -172,11 +175,11 @@ is refused while paused, 409 `PASSKEY_REMOVAL_PAUSED`.
 The schedule home shows a "Payments are paused" card linking to
 `/settings/resume-payments`:
 
-1. the change events since `windowStart`;
+1. the change events since `pauseWindowStart`;
 2. payments outstanding now that were created before the pause — the
    students who may have paid the wrong destination;
 3. payments marked paid (`paidAt`) or not charged (`notChargedAt`) between
-   `windowStart` and the pause;
+   `pauseWindowStart` and the pause;
 4. the current payout details **in full** — IBAN or account number, holder,
    BIC, the whole link — with **Resume payments**; and, when a passkey is
    required, whether this session satisfies it, or the date the fallback
@@ -195,7 +198,7 @@ The schedule home shows a "Payments are paused" card linking to
    hash of the payout details the screen showed — must match the details now,
    else 409 `PAYOUT_DETAILS_CHANGED`.
 
-Success clears `paymentsPausedAt` and `pausePasskeyCutoff`, sets
+Success clears `paymentsPausedAt`, `pauseWindowStart` and `pausePasskeyCutoff`, sets
 `paymentsResumedAt`, deletes the teacher's pause tokens, and sends each
 student with an outstanding payment a `reminder` notification that they can
 pay now (stamping `reminderSentAt`).
