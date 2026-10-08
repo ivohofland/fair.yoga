@@ -28,8 +28,8 @@ import { test as base, expect, type BrowserContext } from '@playwright/test';
  * THE ONE EXCEPTION IS A CONTENT-SECURITY-POLICY VIOLATION, which fails the
  * test. Under `'strict-dynamic'` a blocked script means a page that renders but
  * never hydrates (#793), and nothing else in the run would say so.
- * `cspViolationsAllowed` turns that off for `csp-watch.spec.ts`, which
- * triggers violations on purpose.
+ * `cspViolationsAllowed` turns that off for a spec that triggers violations on
+ * purpose.
  *
  * ATTACHED ONLY WHEN THE TEST DID NOT GET ITS EXPECTED RESULT, so a green run
  * carries no extra weight and a `retries`-driven flake attaches on the attempt
@@ -38,6 +38,7 @@ import { test as base, expect, type BrowserContext } from '@playwright/test';
  * needed it.
  */
 const MAX_LINES = 500;
+const MAX_CSP_LINES = 20;
 
 /**
  * Whether this Chromium fires `beforeinstallprompt` is not ours to pin: when
@@ -87,8 +88,15 @@ export const test = base.extend<{
   cspViolationsAllowed: [false, { option: true }],
   cspViolations: [
     async ({ page, browser, cspViolationsAllowed }, provide) => {
+      // One violation reaches us as an event and as a console message, and a
+      // regression repeats per blocked chunk: a line is kept once.
       const seen: string[] = [];
-      const record = (line: string) => seen.push(line);
+      const kept = new Set<string>();
+      const record = (line: string) => {
+        if (kept.has(line)) return;
+        kept.add(line);
+        seen.push(line);
+      };
       await watchCspViolations(page.context(), record);
       // Contexts the test opens itself are armed too, for the test's duration.
       const newContext = browser.newContext;
@@ -103,7 +111,13 @@ export const test = base.extend<{
         browser.newContext = newContext;
       }
       if (!cspViolationsAllowed) {
-        expect(seen, 'a page this test visited blocked something under its Content-Security-Policy').toEqual([]);
+        // Capped so a broken page does not bury the failure, and the cap is
+        // said aloud: a list cut short without a note reads as the whole list.
+        const shown =
+          seen.length > MAX_CSP_LINES
+            ? [...seen.slice(0, MAX_CSP_LINES), `… ${seen.length - MAX_CSP_LINES} more not shown`]
+            : seen;
+        expect(shown, 'a page this test visited blocked something under its Content-Security-Policy').toEqual([]);
       }
     },
     { auto: true },
