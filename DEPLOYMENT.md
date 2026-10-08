@@ -22,7 +22,7 @@ Edit `.env` — every value matters in production:
 | Variable | Notes |
 |---|---|
 | `POSTGRES_PASSWORD` | generate one: `openssl rand -hex 24` |
-| `CRON_SECRET` | `openssl rand -hex 24` — without it the `/api/cron/*` endpoints stay disabled (the in-process scheduler runs regardless); it also unlocks `/api/health`'s per-job detail |
+| `CRON_SECRET` | `openssl rand -hex 24` — without it the `/api/cron/*` endpoints stay disabled (the in-process scheduler runs regardless); it also unlocks `/api/health`'s per-job detail, and is checked there on a public path, so keep it high-entropy |
 | `RESEND_API_KEY` / `EMAIL_FROM` | real key + verified sender; the app refuses to "send" silently without them |
 | `OPERATOR_EMAIL` | required in production; the daily degradation digest goes here (§7). Unset, a degradation event fails the `daily-cleanup` job instead of reaching you |
 | `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
@@ -51,7 +51,9 @@ certbot --nginx -d yourdomain.example
 ```
 
 The proxy config sets `X-Forwarded-For` (the rate limiter keys on it) and
-disables buffering for the SSE endpoint.
+disables buffering for the SSE endpoint. Serve the app on the default HTTPS
+port (or have nginx forward the port in `Host`): writes are refused when the
+browser's Origin and the forwarded Host differ.
 
 The teacher photo upload route gets its own `location` block with a raised
 `client_max_body_size` (10m) — the app already refuses anything above
@@ -90,7 +92,7 @@ emails, payment reminders and class reminders don't send; daily cleanup
 degradation digest) doesn't run. Waitlist reconciliation is worse off than the
 rest — it has no endpoint, so it cannot be run any other way — and a seat freed by a cancellation whose spot-freed
 hook was dropped (§7) is never offered to the queue. `/api/health` still
-answers `ok` — its job list is simply empty — so the boot warning is the only
+answers `ok` — the job list in its cron-secret body is simply empty — so the boot warning is the only
 sign. The app logs a warning at boot when the scheduler is off.
 
 The `/api/cron/*` endpoints are for running a job by hand between its ticks —
@@ -132,9 +134,10 @@ Migrations run automatically via the `migrate` service on every deploy.
 - `GET /api/health` — liveness and DB reachability (503 when the DB is down)
   as `{ status, db }`, where `status` is `degraded` once any job is unhealthy.
   A monitor needs only that public summary; the per-job scheduler state below
-  needs the cron secret (`Authorization: Bearer $CRON_SECRET`). `jobs.<name>.healthy` flips false
-  when a job errors, and also when its run is still in flight when a second
-  consecutive tick comes due — `STALLED_AFTER_SKIPPED_TICKS` in
+  needs the cron secret (`Authorization: Bearer $CRON_SECRET`).
+  `jobs.<name>.healthy` flips false when a job errors, and also when its run
+  is still in flight when a second consecutive tick comes due —
+  `STALLED_AFTER_SKIPPED_TICKS` in
   `src/lib/scheduler.ts` — which is at most two of the job's own intervals
   after the run began, so a couple of minutes for a job that ticks every
   minute and two days for the daily one; each job's interval is
