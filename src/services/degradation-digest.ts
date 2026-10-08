@@ -16,7 +16,7 @@
  *
  * Any failure from the first claim through the send (a claim, the render, the
  * send) puts back every claim made so far and throws, which flips the job
- * unhealthy on the verdict `/api/health` already publishes.
+ * unhealthy on the verdict `/api/health` already reports.
  */
 
 import type { PrismaClient } from '@prisma/client';

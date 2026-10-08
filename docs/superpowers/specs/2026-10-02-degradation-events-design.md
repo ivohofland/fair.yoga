@@ -1,5 +1,7 @@
 # A degradation that nobody is told about is a silent failure (#157)
 
+2026-10-08 (#770): `/api/health` is no longer fully public — the degradation count and per-job detail need the cron secret; see `2026-10-08-defense-in-depth-design.md` §2.5.
+
 ## Problem
 
 Several modules substitute a safe value instead of throwing, on the reasoning

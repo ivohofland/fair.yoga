@@ -22,7 +22,7 @@ Edit `.env` — every value matters in production:
 | Variable | Notes |
 |---|---|
 | `POSTGRES_PASSWORD` | generate one: `openssl rand -hex 24` |
-| `CRON_SECRET` | `openssl rand -hex 24` — without it the `/api/cron/*` endpoints stay disabled (the in-process scheduler runs regardless) |
+| `CRON_SECRET` | `openssl rand -hex 24` — without it the `/api/cron/*` endpoints stay disabled (the in-process scheduler runs regardless); it also unlocks `/api/health`'s per-job detail |
 | `RESEND_API_KEY` / `EMAIL_FROM` | real key + verified sender; the app refuses to "send" silently without them |
 | `OPERATOR_EMAIL` | required in production; the daily degradation digest goes here (§7). Unset, a degradation event fails the `daily-cleanup` job instead of reaching you |
 | `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
@@ -33,7 +33,8 @@ Then:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
-curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...},"degradations":{"open":0}}
+curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up"}
+curl -s -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...},"degradations":{"open":0}}
 ```
 
 The `migrate` service applies Prisma migrations before the app starts.
@@ -128,14 +129,16 @@ Migrations run automatically via the `migrate` service on every deploy.
 
 ## 7. Monitoring
 
-- `GET /api/health` — liveness, DB reachability (503 when the DB is down),
-  and per-job scheduler state (`jobs.<name>.healthy` flips false when a
-  job errors, and also when its run is still in flight when a second
+- `GET /api/health` — liveness and DB reachability (503 when the DB is down)
+  as `{ status, db }`, where `status` is `degraded` once any job is unhealthy.
+  A monitor needs only that public summary; the per-job scheduler state below
+  needs the cron secret (`Authorization: Bearer $CRON_SECRET`). `jobs.<name>.healthy` flips false
+  when a job errors, and also when its run is still in flight when a second
   consecutive tick comes due — `STALLED_AFTER_SKIPPED_TICKS` in
   `src/lib/scheduler.ts` — which is at most two of the job's own intervals
   after the run began, so a couple of minutes for a job that ticks every
   minute and two days for the daily one; each job's interval is
-  `intervalMs` in `buildJobs`). From that tick on, the scheduler logs an
+  `intervalMs` in `buildJobs`. From that tick on, the scheduler logs an
   `error` line — `scheduler job run still in flight; reporting it unhealthy`,
   with `job`, `skippedTicks` and `runningSince` fields — on that tick and
   every refused tick after it, so an operator can grep for that message; the
@@ -144,7 +147,7 @@ Migrations run automatically via the `migrate` service on every deploy.
   lock is one cause — the `pg_blocking_pids()` / `pg_stat_activity` advice in
   the `class-generation` bullet below applies to any job, not only that one.
   `degradations.open` is the number of degradation events that fired in the
-  last 24 hours: a bare count, with no codes, so the endpoint stays public.
+  last 24 hours: a bare count, with no codes, in the secret-holder's body only.
   Which ones fired is in the digest email and, per code, in
   `docs/degradation-sites.md`. If the digest cannot be sent, `daily-cleanup`
   reads unhealthy. With `OPERATOR_EMAIL` unset, the server log line names the

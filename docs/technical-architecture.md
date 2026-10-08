@@ -726,14 +726,15 @@ Pinned by `tests/integration/pwa.test.ts`.
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **75** routes. **10** carry no session
+`find src/app/api -name route.ts` finds **75** routes. **11** carry no session
 guard; **6** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
-`passkey/authenticate/options`), leaving **4** with neither:
+`passkey/authenticate/options`), leaving **5** with neither:
 
 | route | why that is correct |
 |---|---|
-| `health` | Public health check. |
+| `health` | Public summary `{ status, db }`; per-job detail and the degradation count need the cron secret (`hasCronSecret`). |
+| `ping` | Public reachability probe: touches no database and answers only the server's clock. |
 | `auth/magic-link/verify` | Token is `crypto.randomBytes(32)` — 256 bits, stored hashed, 15-minute TTL. Brute force is infeasible. |
 | `auth/passkey/authenticate/verify` | Gated on a one-time 5-minute challenge plus WebAuthn signature verification; `redirect` is `relativePath.optional()` in `passkeyAuthVerifySchema`. |
 | `teacher-photos/[photoId]` | Public by design (#46): the teacher's public page shows the photo to signed-out visitors. The id is a per-upload `randomUUID`, regenerated on every upload and replace, and the route answers 404 once a photo is replaced or its teacher erased. |
@@ -743,7 +744,7 @@ Re-derive with:
 ```sh
 find src/app/api -name route.ts | wc -l
 for f in $(find src/app/api -name route.ts | sort); do
-  ids=$(grep -ohE "require[A-Za-z]+\(|getSession[A-Za-z]*\(|resolveProfileAuthorization\(|resolveTicketOnlyProfileAuthorization\(|CRON_SECRET|checkIpRateLimit\(|checkRateLimit\(|checkStudentWriteLimit\(" "$f" \
+  ids=$(grep -ohE "require[A-Za-z]+\(|getSession[A-Za-z]*\(|resolveProfileAuthorization\(|resolveTicketOnlyProfileAuthorization\(|CRON_SECRET|hasCronSecret\(|checkIpRateLimit\(|checkRateLimit\(|checkStudentWriteLimit\(" "$f" \
         | tr -d '(' | sort -u | tr '\n' ' ')
   printf "%-60s %s\n" "${f#src/app/api/}" "$ids"
 done
@@ -1212,9 +1213,10 @@ the rest do not, and one runbook section per code.
   the due codes at `error` and throws, so the job reads unhealthy on
   `/api/health` instead of the events sitting unseen; nothing is claimed.
 - **Health.** `/api/health` reports `degradations.open`, the number of events
-  whose `lastSeenAt` is within the last 24 hours, as a bare number. Which codes
-  fired, and what they carried, appear only in the digest email and the server
-  log, never on `/api/health`. When the count cannot be read, `degradations` is
+  whose `lastSeenAt` is within the last 24 hours, as a bare number, in the body
+  a request carrying the cron secret receives; the public body is `{ status, db }`.
+  Which codes fired, and what they carried, appear only in the digest email and
+  the server log, never on `/api/health`. When the count cannot be read, `degradations` is
   omitted and `db` still reports up.
 
 ---
