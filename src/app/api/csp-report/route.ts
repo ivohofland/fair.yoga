@@ -13,8 +13,8 @@ const WINDOW_MS = 60 * 1000;
 /**
  * Where the page CSP's `report-uri` sends violations: one `warn` per report,
  * reduced by `summariseCspReport`. Unauthenticated, so IP rate-limited first.
- * Reads its own body — a browser sends `application/csp-report`, which
- * `parseBody` refuses.
+ * Reads its own body, because a browser sends `application/csp-report`, not
+ * JSON.
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const limit = checkIpRateLimit('csp-report:ip', clientIp(request), PER_IP_LIMIT, WINDOW_MS, 'csp-report');
@@ -32,9 +32,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('This is not a CSP report.', 400);
   }
 
+  const text = await request.text();
   let body: unknown;
   try {
-    body = JSON.parse(await request.text());
+    body = JSON.parse(text);
     // eslint-disable-next-line no-restricted-syntax -- a body that isn't JSON is a 400, not a fault
   } catch {
     return respondError('This is not a CSP report.', 400);
