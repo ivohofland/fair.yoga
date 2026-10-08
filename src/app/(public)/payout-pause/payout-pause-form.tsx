@@ -5,7 +5,7 @@ import { useState, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 
-type State = 'ready' | 'pausing' | 'paused' | 'invalid' | 'limited' | 'failed';
+type State = 'ready' | 'pausing' | 'paused' | 'invalid' | 'limited' | 'failed' | 'unknown' | 'rejected';
 
 /** The `t` parameter of the address's fragment, where the email puts the token. */
 function tokenFromHash(hash: string): string | null {
@@ -29,6 +29,9 @@ const linkClass =
  */
 export function PayoutPauseForm() {
   const [state, setState] = useState<State>('ready');
+  // Set once a request's answer was lost: the pause may have gone through,
+  // and a used link afterwards is most likely that attempt's doing.
+  const [lostEarlier, setLostEarlier] = useState(false);
   // `undefined` on the server and through hydration: the fragment never
   // reaches the server.
   const hash = useSyncExternalStore(subscribeToHash, () => window.location.hash, () => undefined);
@@ -38,32 +41,40 @@ export function PayoutPauseForm() {
   async function handlePause() {
     if (token === null) return;
     setState('pausing');
+    let res: Response;
     try {
-      const res = await fetch('/api/payout-pause', {
+      res = await fetch('/api/payout-pause', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
       });
-      if (res.ok) {
-        window.history.replaceState(null, '', window.location.pathname);
-        setState('paused');
-        return;
-      }
-      if (res.status === 429) {
-        setState('limited');
-        return;
-      }
-      const { code } = await readError(res, 'pause');
-      if (code === 'PAUSE_LINK_INVALID') {
-        setState('invalid');
-        return;
-      }
-      logRequestFailure('payout-pause', { status: res.status, code }, new Error('pause refused'));
-      setState('failed');
     } catch (err) {
       logRequestFailure('payout-pause', {}, err);
-      setState('failed');
+      setLostEarlier(true);
+      setState('unknown');
+      return;
     }
+    if (res.ok) {
+      try {
+        window.history.replaceState(null, '', window.location.pathname);
+      } catch (err) {
+        // The pause committed; only dropping the spent token from the address failed.
+        logRequestFailure('payout-pause', { step: 'replace-state' }, err);
+      }
+      setState('paused');
+      return;
+    }
+    if (res.status === 429) {
+      setState('limited');
+      return;
+    }
+    const { code } = await readError(res, 'Something went wrong, and nothing was paused.');
+    if (code === 'PAUSE_LINK_INVALID') {
+      setState('invalid');
+      return;
+    }
+    logRequestFailure('payout-pause', { status: res.status, code }, new Error('pause refused'));
+    setState(res.status === 400 || res.status === 403 || res.status === 404 ? 'rejected' : 'failed');
   }
 
   if (state === 'paused') {
@@ -85,9 +96,11 @@ export function PayoutPauseForm() {
     return (
       <div role="alert" className="flex flex-col gap-3">
         <p className="type-body">
-          {state === 'invalid'
-            ? 'This link no longer works. It may have been used already, or it has expired.'
-            : 'This link is incomplete. Open it again from the email, or copy the whole address.'}
+          {state !== 'invalid'
+            ? 'This link is incomplete. Open it again from the email, or copy the whole address.'
+            : lostEarlier
+              ? 'This link has now been used: your earlier attempt most likely paused payments.'
+              : 'This link no longer works. It may have been used already, or it has expired.'}
         </p>
         <p className="type-body">
           If you&rsquo;re worried about your payment details, <Link href="/login" className={linkClass}>sign in</Link> and
@@ -110,6 +123,17 @@ export function PayoutPauseForm() {
       {state === 'failed' && (
         <p role="alert" className="text-[13px] leading-[1.4] text-danger">
           Something went wrong, and nothing was paused. Please try again.
+        </p>
+      )}
+      {state === 'unknown' && (
+        <p role="alert" className="text-[13px] leading-[1.4] text-danger">
+          We couldn&rsquo;t tell whether payments were paused. Press the button again: if it then says this link no
+          longer works, the pause went through.
+        </p>
+      )}
+      {state === 'rejected' && (
+        <p role="alert" className="text-[13px] leading-[1.4] text-danger">
+          Nothing was paused. Open the link from the email again, or copy the whole address.
         </p>
       )}
       {state === 'limited' && (

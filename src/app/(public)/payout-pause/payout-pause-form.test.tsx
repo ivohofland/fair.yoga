@@ -70,7 +70,7 @@ describe('PayoutPauseForm', () => {
     expect(screen.queryByRole('button', { name: 'Pause payments' })).not.toBeInTheDocument();
   });
 
-  it('keeps the button for another try after a failure', async () => {
+  it('keeps the button for another try after a server failure, saying nothing was paused', async () => {
     window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
     stubFetch(() => respond(503, { error: { message: 'busy' } }));
     render(<PayoutPauseForm />);
@@ -79,9 +79,79 @@ describe('PayoutPauseForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
     await settle();
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong, and nothing was paused. Please try again.');
     expect(screen.getByRole('button', { name: 'Pause payments' })).toBeEnabled();
     expect(window.location.hash).toBe(`#t=${TOKEN}`);
+  });
+
+  it('says the outcome is unknown, and how to tell, when the response is lost', async () => {
+    window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
+    stubFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    render(<PayoutPauseForm />);
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t tell whether payments were paused/);
+    expect(screen.getByRole('alert')).toHaveTextContent('no longer works');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('nothing was paused');
+    expect(screen.getByRole('button', { name: 'Pause payments' })).toBeEnabled();
+  });
+
+  it('reads a used link after a lost response as the earlier attempt having paused', async () => {
+    window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
+    const fetchMock = stubFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    render(<PayoutPauseForm />);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
+    await settle();
+    fetchMock.mockImplementation(async () => respond(404, { error: { code: 'PAUSE_LINK_INVALID', message: 'x' } }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('your earlier attempt most likely paused payments');
+  });
+
+  it('confirms the pause even when the address cannot be rewritten', async () => {
+    window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
+    stubFetch(() => respond(200, { data: { paused: true } }));
+    render(<PayoutPauseForm />);
+    await settle();
+    vi.spyOn(window.history, 'replaceState').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
+    await settle();
+
+    expect(screen.getByRole('status')).toHaveTextContent('Payments are paused');
+  });
+
+  it.each([400, 403, 404])('asks for the link to be opened again, not retried, on an uncoded %s', async (status) => {
+    window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
+    stubFetch(() => respond(status, { error: { message: 'nope' } }));
+    render(<PayoutPauseForm />);
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Nothing was paused. Open the link from the email again');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('Please try again');
+  });
+
+  it('asks for a wait on 429', async () => {
+    window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
+    stubFetch(() => respond(429, { error: { message: 'Too many attempts.' } }));
+    render(<PayoutPauseForm />);
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Too many attempts from here');
   });
 
   it('offers no button when the address carries no token', async () => {
