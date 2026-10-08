@@ -174,6 +174,8 @@ export const LOCK_CONTENTION_TESTS = [
   'src/services/payout-pause-lock-order.test.ts',
   // #786: the bank-account route's shape, for the resume's `Teacher` gate.
   'src/services/payout-resume-lock-order.test.ts',
+  // #786: the same shape, for the passkey removal's `Teacher` gate.
+  'src/services/passkey-credentials-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

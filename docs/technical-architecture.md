@@ -907,9 +907,12 @@ signing out everywhere (`DELETE /api/auth/session/all`) are not gated on recent
 sign-in: both only take ways in away. Removing a passkey is refused, `409
 PASSKEY_REMOVAL_PAUSED`, while the account's teacher has payments paused
 (`deletePasskey`, `src/services/passkey-credentials.ts`); an account without a
-teacher profile is never refused. A removal that goes through writes a
-`RemovedPasskey` row (the removed credential's `createdAt`, and when) in the
-delete's own transaction, and emails the account address once it has
+teacher profile is never refused. The removal reads the pause under the
+teacher row's lock, its first lock (`docs/lock-order.md`, "The `Teacher` row
+is the first lock"), so a removal and a pause serialise and the refusal is
+exact. A removal that goes through deletes the passkey and writes a
+`RemovedPasskey` row (the removed credential's `createdAt`, and when) in one
+transaction, and emails the account address once it has
 committed (`deliverPasskeyRemovedNotice`, `FireAndForget`, the same shape as
 the added notice below). The pause itself
 (`POST /api/payout-pause`, `pausePayments`) signs out everywhere inside its own
@@ -938,7 +941,11 @@ froze. The pause writes a `pausePasskeyCutoff` when the account then held a
 passkey created before it, or had removed one created before it at or after
 the cutoff (a `RemovedPasskey` row): so someone signed in by an emailed link
 who removes the teacher's passkeys and then changes the details has not
-removed the requirement. When the pause wrote one and fewer than
+removed the requirement. The pause counts the standing passkeys first and
+the removals second (`heldPasskeyBefore`, `src/services/payout-pause.ts`);
+since a removal deletes and records in one transaction, one committing
+between the two reads moves its passkey from the first read's set into the
+second's, never out of both. When the pause wrote one and fewer than
 `PAUSE_PASSKEY_FALLBACK_DAYS` (14) have passed since `paymentsPausedAt`, the
 session's `passkeyCredentialId` must name one of the account's credentials
 created before the cutoff, else `403 PASSKEY_REQUIRED`. A passkey registered
@@ -950,7 +957,11 @@ fourteen days, or with no cutoff, no passkey is required. One more case the
 gate trusts: a passkey an inbox thief registers more than
 `PAUSE_PASSKEY_LOOKBACK_DAYS` (7) before changing the details is older than
 the cutoff, so it is eligible; the passkey-added email to the account address
-is the signal for it. Both are the residual risk the design states
+is the signal for it. Its mirror: passkeys removed more than
+`PAUSE_PASSKEY_LOOKBACK_DAYS` before the details change leave a
+`RemovedPasskey` older than the cutoff, so the pause sets no requirement; the
+passkey-removed email, sent at the removal, is the signal for that. Both are
+the residual risk the design states
 (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
 Decisions 4 and 5). Last, under the teacher's `FOR NO KEY UPDATE` lock, it
 re-checks paused and the passkey, and compares the fingerprint the resume
