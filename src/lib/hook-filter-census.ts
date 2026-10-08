@@ -5,8 +5,9 @@
  * write whose `where` reads a `let`/`var` declared with no initializer filters
  * on `undefined` when the hook that would have assigned it never ran, and
  * Prisma drops an `undefined` key, so the write matches every row. It reads
- * the hook's own body, and the body of a function declared in the same file
- * that the hook calls, one level deep; a function from another file is
+ * the hook's own body, and the body of a function declaration or a
+ * `const`-bound arrow/function expression in the same file that the hook
+ * calls, one level deep; a function from another file is
  * reported as the call that hands it the binding, not followed. Its reach and
  * its known misses are in `docs/test-database.md` (section 6). This is a
  * report, not a gate — the runtime guard (`tests/undefined-filter-guard.ts`)
