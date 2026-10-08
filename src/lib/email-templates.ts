@@ -6,7 +6,7 @@
  * palette inlined (email clients ignore stylesheets).
  */
 
-import type { NotificationType } from '@prisma/client';
+import type { Currency, NotificationType, PayoutChangeKind } from '@prisma/client';
 import {
   STUDENT_INVITATION_LABEL,
   STUDENT_INVITATION_PATH,
@@ -266,6 +266,98 @@ export function renderPasskeyAddedEmail(addedAt: Date): { subject: string; html:
     'A passkey was added',
     `<p style="margin:0 0 16px;">A passkey was added to your fair.yoga account on ${escapeHtml(when)} UTC. It can now sign in to your account.</p>
      <p style="margin:0;">If that was you, there is nothing to do. If it was not, sign in, find your passkeys under Settings → Profile if you teach (under Account if you are a student), remove the passkey and choose sign out everywhere.</p>`,
+  );
+  return { subject, html };
+}
+
+export interface PayoutChangedEmailInput {
+  kind: PayoutChangeKind;
+  accountCurrency: Currency | null;
+  before: string | null;
+  after: string | null;
+  at: Date;
+  timezone: string;
+  pauseUrl: string;
+}
+
+/** Sent on every payout change, whatever the notification settings say, so the default footer's opt-out claim would be false. */
+const PAYOUT_CHANGED_FOOTER = 'You get this email whenever your payout details change; it is not optional.';
+
+/** What happened, as the sentence's predicate, per kind. */
+const PAYOUT_CHANGE_PHRASES = {
+  bank_account_added: 'A bank account was added',
+  bank_account_changed: 'A bank account was changed',
+  bank_account_removed: 'A bank account was removed',
+  payment_link_added: 'A payment link was added',
+  payment_link_changed: 'A payment link was changed',
+  payment_link_removed: 'A payment link was removed',
+} as const satisfies Record<PayoutChangeKind, string>;
+
+/** The sentence for a change whose before and after mask to the same string. */
+const PAYOUT_MASKS_ALIKE = {
+  bank_account_changed: 'a detail other than the account number changed',
+  payment_link_changed: 'the link changed on the same site',
+} as const satisfies Partial<Record<PayoutChangeKind, string>>;
+
+function formatInZoneOrUtc(at: Date, timezone: string): string {
+  const format = (timeZone: string) =>
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZoneName: 'short',
+    }).format(at);
+  try {
+    return format(timezone);
+  } catch {
+    return format('UTC');
+  }
+}
+
+/**
+ * The alert sent when where a teacher's students pay changes: what changed,
+ * the masked before and after, when, and a **This wasn't me** button.
+ *
+ * Unlike `renderPasskeyAddedEmail`, this one carries a link, on purpose
+ * (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
+ * Decision 2): the link holds no credential and signs no one in, and the most
+ * it can do is pause payments, which fails toward safety. The secret rides in
+ * the URL fragment, so it never reaches a server log or a Referer.
+ *
+ * Every interpolated value is escaped. `before`/`after` are masked strings
+ * built from teacher input, and `pauseUrl` is escaped as an attribute.
+ */
+export function renderPayoutChangedEmail(input: PayoutChangedEmailInput): { subject: string; html: string } {
+  const subject = 'Your payout details changed on fair.yoga';
+  const when = formatInZoneOrUtc(input.at, input.timezone);
+  const isBank = input.kind.startsWith('bank_account');
+  const what =
+    PAYOUT_CHANGE_PHRASES[input.kind] +
+    (isBank && input.accountCurrency !== null ? ` (${input.accountCurrency})` : '');
+  const maskedAlike = input.before !== null && input.before === input.after;
+  const alike = maskedAlike && input.kind in PAYOUT_MASKS_ALIKE
+    ? PAYOUT_MASKS_ALIKE[input.kind as keyof typeof PAYOUT_MASKS_ALIKE]
+    : null;
+  const lines: string[] = [];
+  if (alike !== null) {
+    lines.push(`Shown as: ${escapeHtml(input.before ?? '')}`);
+    lines.push(`Before and after look the same here because ${alike}.`);
+  } else {
+    if (input.before !== null) lines.push(`Before: ${escapeHtml(input.before)}`);
+    if (input.after !== null) lines.push(`After: ${escapeHtml(input.after)}`);
+  }
+  const html = wrapEmail(
+    'Your payout details changed',
+    `<p style="margin:0 0 16px;">${escapeHtml(what)} on your fair.yoga account on ${escapeHtml(when)}.</p>
+     <p style="margin:0 0 16px;">${lines.join('<br>')}</p>
+     <p style="margin:0 0 16px;">If that was you, there is nothing to do. If it was not, pause payments now: students are told to hold off, and every device is signed out.</p>
+     <p style="margin:0 0 16px;"><a href="${escapeHtml(input.pauseUrl)}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">This wasn't me</a></p>
+     <p style="margin:0;font-size:13px;color:#71645A;">The link works for 14 days and pauses payments only; it does not sign anyone in.</p>`,
+    PAYOUT_CHANGED_FOOTER,
   );
   return { subject, html };
 }

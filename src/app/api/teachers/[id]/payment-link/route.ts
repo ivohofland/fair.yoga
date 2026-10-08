@@ -8,6 +8,7 @@ import { paymentLinkSchema } from '@/lib/schemas';
 import { formatIssues } from '@/lib/validation-message';
 import { PAYMENT_LINK_MESSAGES } from '@/lib/payment-link';
 import { savePaymentLink, removePaymentLink } from '@/services/payment-link';
+import { deliverPayoutChangedNotice } from '@/services/payout-notice';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -30,6 +31,7 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: Params
   const outcome = await savePaymentLink(prisma, teacherId, body.data.paymentLink);
   switch (outcome.kind) {
     case 'saved':
+      deliverPayoutChangedNotice(prisma, outcome.eventId);
       return respondTyped<{ paymentLink: string }>({ paymentLink: outcome.paymentLink });
     case 'unchanged':
       return respondUnchanged<{ paymentLink: string }>({ paymentLink: outcome.paymentLink });
@@ -52,6 +54,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Par
   const outcome = await removePaymentLink(prisma, teacherId);
   switch (outcome.kind) {
     case 'removed':
+      deliverPayoutChangedNotice(prisma, outcome.eventId);
       return respondTyped<{ paymentLink: null }>({ paymentLink: null });
     case 'absent':
       return respondUnchanged<{ paymentLink: null }>({ paymentLink: null });

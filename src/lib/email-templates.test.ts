@@ -7,6 +7,7 @@ import {
   renderMagicLinkEmail,
   renderInvitationEmail,
   renderPasskeyAddedEmail,
+  renderPayoutChangedEmail,
   renderDegradationDigestEmail,
 } from './email-templates';
 import { STUDENT_INVITATION_PATH, STUDENT_BOOKINGS_PATH, TEACHER_INVITATION_PATH } from './notification-links';
@@ -411,6 +412,86 @@ describe('renderDegradationDigestEmail', () => {
       const { html } = renderPasskeyAddedEmail(addedAt);
       expect(html).not.toContain('<a ');
       expect(html).not.toContain('href');
+    });
+  });
+
+  describe('renderPayoutChangedEmail', () => {
+    const base = {
+      kind: 'bank_account_changed',
+      accountCurrency: 'EUR',
+      before: 'NL•• •••• 1234',
+      after: 'NL•• •••• 9876',
+      at: new Date('2026-10-06T14:03:00Z'),
+      timezone: 'Europe/Amsterdam',
+      pauseUrl: 'https://fair.yoga/payout-pause#t=abc123',
+    } as const;
+
+    it('names the change, the currency, both masked strings and the local time', () => {
+      const { subject, html } = renderPayoutChangedEmail(base);
+      expect(subject).toContain('payout');
+      expect(html).toContain('bank account');
+      expect(html).toContain('EUR');
+      expect(html).toContain('NL•• •••• 1234');
+      expect(html).toContain('NL•• •••• 9876');
+      expect(html).toContain('16:03');
+      expect(html).toContain('6 Oct 2026');
+    });
+
+    it.each([
+      ['bank_account_added', 'added'],
+      ['bank_account_removed', 'removed'],
+      ['payment_link_added', 'payment link'],
+      ['payment_link_changed', 'payment link'],
+      ['payment_link_removed', 'removed'],
+    ] as const)('words %s', (kind, needle) => {
+      const { html } = renderPayoutChangedEmail({ ...base, kind, accountCurrency: kind.startsWith('bank') ? 'GBP' : null });
+      expect(html).toContain(needle);
+    });
+
+    it('leaves the currency out of a payment-link change', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, kind: 'payment_link_changed', accountCurrency: null });
+      expect(html).not.toContain('EUR');
+    });
+
+    it('says a detail other than the account number changed when a bank change masks alike', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, after: base.before });
+      expect(html).toContain('a detail other than the account number changed');
+    });
+
+    it('says the link changed on the same site when a link change masks alike', () => {
+      const { html } = renderPayoutChangedEmail({
+        ...base, kind: 'payment_link_changed', accountCurrency: null, before: 'pay.example', after: 'pay.example',
+      });
+      expect(html).toContain('the link changed on the same site');
+    });
+
+    it('does not say either when the masks differ', () => {
+      const { html } = renderPayoutChangedEmail(base);
+      expect(html).not.toContain('other than the account number');
+      expect(html).not.toContain('same site');
+    });
+
+    it('escapes the masked strings', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, before: '<b>x</b>', after: '"><script>' });
+      expect(html).not.toContain('<b>x</b>');
+      expect(html).not.toContain('<script>');
+      expect(html).toContain('&lt;b&gt;x&lt;/b&gt;');
+    });
+
+    it('carries the pause link on its own button', () => {
+      const { html } = renderPayoutChangedEmail(base);
+      expect(html).toContain('href="https://fair.yoga/payout-pause#t=abc123"');
+      expect(html).toContain("This wasn't me");
+    });
+
+    it('does not offer an opt-out it does not have', () => {
+      const { html } = renderPayoutChangedEmail(base);
+      expect(html).not.toContain('turn them off');
+    });
+
+    it('falls back to UTC for an unreadable timezone instead of throwing', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, timezone: 'Not/AZone' });
+      expect(html).toContain('14:03');
     });
   });
 });

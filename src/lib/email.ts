@@ -1,5 +1,11 @@
 import { Resend } from 'resend';
-import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail } from '@/lib/email-templates';
+import {
+  renderMagicLinkEmail,
+  renderInvitationEmail,
+  renderPasskeyAddedEmail,
+  renderPayoutChangedEmail,
+  type PayoutChangedEmailInput,
+} from '@/lib/email-templates';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 import { log } from '@/lib/log';
 
@@ -109,6 +115,30 @@ export async function sendPasskeyAddedEmail(to: string, addedAt: Date): Promise<
 
   if (error) {
     throw new Error(`Failed to send passkey-added email: ${error.message}`);
+  }
+}
+
+/**
+ * Sends the payout-change alert. Fire-and-forget at the call site, so a failure
+ * throws for `deliverPayoutChangedNotice` to log. The dry-run line logs neither
+ * the address nor the pause link: the link's fragment is a bearer secret.
+ */
+export async function sendPayoutChangedEmail(to: string, input: PayoutChangedEmailInput): Promise<void> {
+  if (emailDryRun()) {
+    log.info({}, 'payout-changed email dry-run');
+    return;
+  }
+
+  const { subject, html } = renderPayoutChangedEmail(input);
+  const { error } = await resend().emails.send({
+    from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
+    to,
+    subject,
+    html,
+  });
+
+  if (error) {
+    throw new Error(`Failed to send payout-changed email: ${error.message}`);
   }
 }
 
