@@ -48,10 +48,16 @@ slugs and cuids (`find src/app -name page.tsx | grep "\["`).
 - At teardown, any recorded violation fails the test with the list.
 - The `browserLogs` docblock keeps its reason for not failing on console
   errors in general; CSP violations are the narrow exception, and it says why.
-- Pinned by an e2e spec that triggers a violation on a real app page in both
-  kinds of context and is marked `test.fail()`, plus a mechanism case asserting
-  the recorded entry. The acceptance proof — a nonce mismatch in
-  `src/proxy.ts`, suite goes red — is a recorded mutation, not a committed test.
+- Pinned by an e2e spec (`csp-watch.spec.ts`) that triggers a violation on
+  `/login` and asserts the recorded entry in three kinds of page (the default
+  `page`, a context from `browser.newContext()`, a page from
+  `browser.newPage()`), plus a `test.fail()` case for the teardown assertion.
+  The trigger injects an inline event handler, which violates
+  `script-src-attr`. It does not inject a `<script>`: measured, under
+  `'strict-dynamic'` a script element inserted by script (not parser-inserted)
+  runs even without a nonce, so it is no violation. The acceptance proof —
+  the response CSP stripped of its nonce in `src/proxy.ts`, suite goes red — is
+  a recorded mutation, not a committed test.
 
 ### 2.2 Production: a report endpoint
 
@@ -94,9 +100,10 @@ slugs and cuids (`find src/app -name page.tsx | grep "\["`).
 
 | Guard | Broken by | Expected |
 |---|---|---|
-| fixture fails on a violation, default context | delete the teardown assertion | the `test.fail()` spec passes unexpectedly → red |
-| fixture covers `browser.newContext()` | drop the wrap | the newContext `test.fail()` case → red |
-| suite catches a real broken page | `proxy.ts`: request-header nonce ≠ response nonce | specs visiting pages go red listing `script-src-elem` violations |
+| fixture fails on a violation, default context | delete the teardown assertion | the `test.fail()` case (`a test whose page blocked a script`) passes unexpectedly → red |
+| fixture records in a context the test opens | drop the `browser.newContext` wrap | the `a context the test opens itself` and `browser.newPage()` cases → red |
+| fixture records in the default context | drop the `watchCspViolations(page.context(), …)` arming | `a blocked script in the default context` → red |
+| suite catches a real broken page | `proxy.ts`: strip the nonce from the response CSP | `landing` went red, listing blocked script chunks. Measured and unexplained: a request-header CSP whose nonce differs from the response's had no effect in dev, though Next 16's `app-render.js` reads the nonce from the request's `content-security-policy` header |
 | report-uri present | drop it from `buildPageCsp` | `csp.test.ts` + integration header pin red |
 | route content-type / size / rate limit | remove each check | its integration case red |
 | summary strips query and URL path | return raw values | `csp-report.test.ts` red |

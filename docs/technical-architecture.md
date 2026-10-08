@@ -722,6 +722,36 @@ proxy would turn the signed-out case into `/login?redirect=/start`, trading
 for. (The proxy's matcher does cover it, since every page needs a CSP nonce.)
 Pinned by `tests/integration/pwa.test.ts`.
 
+### Content Security Policy
+
+Pages carry a per-request nonce policy with `'strict-dynamic'`
+(`src/lib/csp.ts`, applied in `src/proxy.ts`). A page whose HTML and header
+nonces disagree still renders but never hydrates, so a violation is surfaced in
+two places (#793):
+
+- **CI.** The e2e suite fails the test. `cspViolations` in
+  `tests/e2e/fixtures.ts` is an auto fixture armed on the default context and on
+  every context the test opens itself through `browser.newContext()` or
+  `browser.newPage()`. `tests/e2e/csp-watch.spec.ts` pins it. Its self-test
+  injects an inline event handler, which violates `script-src-attr`, rather than
+  a script element: under `'strict-dynamic'` a script inserted by script runs
+  even without a nonce, so it would not be a violation. `cspViolationsAllowed`
+  exists only so that spec can trigger violations on purpose.
+- **Production.** The policy ends in `report-uri /api/csp-report`. That route
+  (`src/app/api/csp-report/route.ts`, summary in `src/lib/csp-report.ts`) logs
+  one `warn`, `csp violation`, carrying the directive, the blocked scheme and
+  host or keyword, the document path without its query, and the disposition. It
+  is IP-rate-limited (60 a minute), and there is no global log throttle beyond
+  that: a distributed sender can fill logs through it as through any other
+  unauthenticated route.
+
+The policy uses `report-uri`, not `report-to`. Measured against a throwaway
+server, headless Chromium 149 on `http://localhost` delivered a `report-uri`
+report within 3 s and no `report-to` report within 75 s, and Chromium ignores
+`report-uri` whenever `report-to` is present, so adding the second would replace
+the one path that can be observed with one that cannot
+(`docs/superpowers/specs/2026-10-08-csp-violation-signal-design.md`, section 1).
+
 ### Cross-site writes
 
 Writes are refused cross-origin in `withErrorHandler` (`src/lib/cross-origin.ts`,
@@ -740,10 +770,10 @@ body itself relies on the Origin check alone: the multipart photo upload
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **75** routes. **11** carry no session
-guard; **6** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
+`find src/app/api -name route.ts` finds **76** routes. **12** carry no session
+guard; **7** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
-`passkey/authenticate/options`), leaving **5** with neither:
+`passkey/authenticate/options`, `csp-report`), leaving **5** with neither:
 
 | route | why that is correct |
 |---|---|
