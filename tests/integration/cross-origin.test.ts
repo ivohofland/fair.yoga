@@ -1,6 +1,34 @@
-import { describe, it, expect } from 'vitest';
-import { BASE_URL, freshIp } from '../helpers';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient } from '@prisma/client';
+import { BASE_URL, cookie, freshIp, seedSession, uniqueSuffix } from '../helpers';
 import { expectRefusal } from '../api-assertions';
+
+const prisma = new PrismaClient();
+const suffix = uniqueSuffix();
+const email = `json-only-teacher-${suffix}@test.local`;
+const venueName = `JSON-only venue ${suffix}`;
+let token = '';
+
+beforeAll(async () => {
+  const account = await prisma.account.create({
+    data: {
+      email,
+      teachers: { create: { firstName: 'Json', lastName: 'Only', email, bio: '', pageSlug: `json-only-${suffix}` } },
+    },
+  });
+  token = await seedSession(prisma, account.id);
+});
+
+afterAll(async () => {
+  // Keyed by the literal venue name and address, never by an id beforeAll assigns.
+  await prisma.teacherRoom.deleteMany({ where: { room: { venueName } } });
+  await prisma.room.deleteMany({ where: { venueName } });
+  const accounts = await prisma.account.findMany({ where: { email }, select: { id: true } });
+  await prisma.session.deleteMany({ where: { accountId: { in: accounts.map((a) => a.id) } } });
+  await prisma.teacher.deleteMany({ where: { email } });
+  await prisma.account.deleteMany({ where: { email } });
+  await prisma.$disconnect();
+});
 
 const ID = '00000000-0000-0000-0000-000000000000';
 
@@ -47,5 +75,28 @@ describe('Origin check', () => {
       headers: { ...freshIp(), 'sec-fetch-site': 'cross-site', origin: 'https://mail.example' },
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('JSON-only bodies', () => {
+  const room = { venueName, address: 'Keizersgracht 1', city: 'Amsterdam', postcode: '1015CJ', maxCapacity: 12 };
+
+  function createRoom(contentType: string): Promise<Response> {
+    return fetch(`${BASE_URL}/api/rooms`, {
+      method: 'POST',
+      headers: { ...freshIp(), ...cookie(token), 'Content-Type': contentType },
+      body: JSON.stringify(room),
+    });
+  }
+
+  it('a signed-in write sent as text/plain is refused with 415 and writes nothing', async () => {
+    await expectRefusal(await createRoom('text/plain'), 'UNSUPPORTED_MEDIA_TYPE');
+    expect(await prisma.room.count({ where: { venueName } })).toBe(0);
+  });
+
+  it('the same body sent as JSON is written', async () => {
+    // The control: the refusal above is the content type, not the body.
+    expect((await createRoom('application/json')).status).toBe(201);
+    expect(await prisma.room.count({ where: { venueName } })).toBe(1);
   });
 });
