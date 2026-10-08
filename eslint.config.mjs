@@ -40,7 +40,8 @@ const teacherStudentWriteSelector = {
     'Create the roster link with linkTeacherStudent (src/services/roster-link.ts) — a direct create/upsert here reopens the #181 race.',
 };
 
-// A hardcoded dev-server origin in a test file (see the `tests/**` block).
+// A hardcoded dev-server origin in a test file; every `no-restricted-syntax`
+// block over `tests/` below lists it.
 const localhostOriginSelector = {
   selector:
     'Literal[value=/(localhost|127\\.0\\.0\\.1):[0-9]+/], TemplateElement[value.raw=/(localhost|127\\.0\\.0\\.1):[0-9]+/]',

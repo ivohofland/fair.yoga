@@ -339,10 +339,14 @@ the clients test code builds:
   ESLint `no-restricted-syntax` rule bans `new PrismaClient` under
   `tests/e2e`.
 
-The vitest installer decides per client. The first stack frame outside `node:`
-internals, `node_modules` and the setup file is the call site; it must be a
-`.test`/`.spec` file, or a module under `tests/`, relative to the repo root.
-Otherwise the client comes back plain.
+The vitest installer decides per client, from the stack its constructor
+captures (up to 50 frames, so a run of library frames cannot push the call
+site off it). The first frame outside `node:` internals, `node_modules` and
+the setup file is the call site. Inside the repo root, a `.test`/`.spec` file
+or a module under `tests/` gets the guard; any other frame, including one
+outside the repo root, gets a plain client. A stack with no such frame at all
+makes the constructor throw an `[undefined-filter-guard]` error naming the
+stack, rather than guess either way.
 
 **What is exempt, and why.** A client built by app code comes back plain —
 the `@/lib/db` singleton, and any client an app helper such as
@@ -372,11 +376,19 @@ lists:
   expression, in the same file that the hook calls by name, read one level
   deep.
 
+A hook's callback is an inline arrow or function expression, or an
+identifier naming such a same-file function (`afterAll(cleanup)`,
+`afterAll(cleanup, 30_000)`), whose body is then read as the hook's own.
+
 A row is `guarded` when every binding it reads is mentioned by the condition
-of an `if` whose then-branch holds it, an `&&` whose right side holds it, a
-`?:` whose true branch holds it, or an earlier `if (…) return;`/`throw` in an
-enclosing block. A followed function's row is also guarded by such a
-condition around the hook's call to it.
+of an `if` whose then-branch holds it, an `&&` whose right side holds it, or a
+`?:` whose true branch holds it; or when an earlier `if (…) return;`/`throw`
+in an enclosing block exits on a condition that holds only when the binding is
+absent: `!x`, `x == null`, `x === undefined` (either operand order, `==` or
+`===`, `null` or `undefined`), or an `||` with such a disjunct. `if (x)
+return;` does not count, since the write after it runs exactly when `x` is
+falsy. A followed function's row is also guarded by such a condition around
+the hook's call to it.
 
 On 2026-10-08 it scanned 525 tracked test and test-helper files and printed
 813 rows in 108 files:
@@ -386,7 +398,9 @@ On 2026-10-08 it scanned 525 tracked test and test-helper files and printed
 | UNGUARDED | 545 | 30 |
 | guarded | 219 | 19 |
 
-7 of those rows are `client: app`, 2 of them unguarded.
+7 of those rows are `client: app`, 2 of them unguarded
+(`pnpm run -s census:hook-filters | grep -cE '^(UNGUARDED|guarded) +(direct|indirect) +app '`
+and `pnpm run -s census:hook-filters | grep -cE '^UNGUARDED +(direct|indirect) +app '`).
 
 What the census does not see, since it reads syntax and symbols rather than
 values:
@@ -394,14 +408,19 @@ values:
 - A helper from another file is listed as the call that hands it the
   binding, never followed; nor is a same-file function's own callee.
 - A `let`/`var`-bound arrow function or an object method is not followed.
-- "Mentions" is not "tests": `if (!id) { write(id) }` reads as guarded.
+- For the `if`, `&&` and `?:` forms, "mentions" is not "tests":
+  `if (!id) { write(id) }` reads as guarded.
+- A Playwright hook is recognised only as `test.afterAll`/`test.afterEach`:
+  one called through any other name for the test object (`base.afterAll`)
+  is not read.
 - A guard on a sibling binding assigned in the same statement (`if
   (teacherId)` around a write reading `teacherAccountId`) reads as
   unguarded.
-- `client` resolves only an identifier imported from `@/lib/db`: a local
-  alias (`const db = prisma`) or the `tx` of that client's `$transaction`
-  reads as `test`.
+- `client` is `app` only for an identifier that resolves to `src/lib/db.ts`
+  (or, when the import does not resolve, one imported from `'@/lib/db'`): a
+  local alias (`const db = prisma`) or the `tx` of that client's
+  `$transaction` reads as `test`.
 
-The census reports; it does not gate. The guard is the gate: an unguarded row
-whose `beforeAll` failed now throws in its `afterAll` instead of wiping a
-table.
+The census reports; it does not gate. The guard is the gate: an unguarded
+`test` row whose `beforeAll` failed now throws in its `afterAll` instead of
+wiping a table.

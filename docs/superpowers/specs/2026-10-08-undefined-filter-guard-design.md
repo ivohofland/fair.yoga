@@ -23,7 +23,8 @@ matches every row of the table. This happened twice in #669: once in an e2e
 - **Playwright builds its own:** `grep -rlE "new PrismaClient\(" tests/e2e | wc -l`
   → 20 files, each `const prisma = new PrismaClient();`. `vi.mock` cannot reach
   them.
-- No test calls `$on`/`$use`, which extended clients lack.
+- No test calls `$on`, which extended clients lack. (Prisma 6.19's generated
+  `PrismaClient` declares no `$use`.)
 - #782's guarded blocks (`if (classId) …`, `if (ids.length) …`) never pass
   `undefined`, so a guard that throws only on an actual `undefined` leaves them
   working. Their `if` checks still decide whether a write runs, so they stay
@@ -50,7 +51,7 @@ matches every row of the table. This happened twice in #669: once in an e2e
 
 ### The guard (`tests/undefined-filter-guard.ts`)
 
-- `findUndefinedFilterPaths(where: unknown): string[]` walks plain objects and
+- `findUndefinedFilterPaths(where: unknown, path = 'where'): string[]` walks plain objects and
   arrays. That covers `AND`/`OR`/`NOT`, relation filters and `in: [...]`. It
   returns the path of every `undefined` it meets, e.g. `where.classId` or
   `where.id.in[0]`. A `where` key whose value is `undefined` counts too.
@@ -76,9 +77,15 @@ matches every row of the table. This happened twice in #669: once in an e2e
   `vi.mock('@prisma/client')` and re-exports the real module with a
   `PrismaClient` that inspects its construction stack. A client constructed by
   test code is returned extended with the guard. A client constructed by app
-  code is returned plain. Test code means the first non-`node_modules` frame
-  outside the setup module is a `*.test.ts(x)`/`*.spec.ts` file or lies under
-  `tests/`. App code that writes through its own client (the `@/lib/db`
+  code is returned plain. The call site is the first frame of the
+  construction stack that is not in a `node:` module, under `node_modules`,
+  or in the setup module itself. Test code means that frame lies inside the
+  repo root, and its repo-relative path is a `*.test.ts(x)`/`*.spec.ts(x)`
+  file or lies under `tests/`; any other frame, including one outside the
+  repo root, is app code. A stack with no such frame makes the constructor
+  throw an `[undefined-filter-guard]` error instead of guessing, and the
+  stack is captured with a raised `Error.stackTraceLimit` so library frames
+  cannot push the call site off it. App code that writes through its own client (the `@/lib/db`
   singleton) therefore keeps its deliberate `undefined` filters as in
   production. An app module that takes a `PrismaClient` parameter and is
   handed a test's client is guarded under test. That module's `undefined`
@@ -115,7 +122,8 @@ matches every row of the table. This happened twice in #669: once in an e2e
 `scripts/census-hook-filters.ts` is the CLI, run as
 `pnpm run census:hook-filters`. It builds a TypeScript `Program` over every
 vitest and Playwright test file. For each `afterAll`/`afterEach` (and
-`test.afterAll`/`test.afterEach`) callback it:
+`test.afterAll`/`test.afterEach`) callback, inline or a same-file function
+the hook names, it:
 
 - finds each direct `.deleteMany`/`.updateMany`/`.updateManyAndReturn` call,
   and resolves every identifier in its `where` through the type checker to
@@ -123,8 +131,10 @@ vitest and Playwright test file. For each `afterAll`/`afterEach` (and
 - flags a binding as possibly-`undefined` when it is a `let` or `var` with no
   initializer;
 - reports whether the write sits under an `if`/`&&`/`?:` whose condition
-  mentions that binding, or after an earlier `if (…) return;`/`throw` that
-  mentions it (**guarded**), or not (**unguarded**);
+  mentions that binding, or after an earlier `if (…) return;`/`throw` whose
+  condition holds only when the binding is absent (`!x`, a `==`/`===`
+  comparison with `null` or `undefined`, or an `||` with such a disjunct)
+  (**guarded**), or not (**unguarded**);
 - separately lists calls in the hook that pass a possibly-`undefined` binding
   as an argument to a function. That is the indirect shape. It skips the
   non-bulk methods of a Prisma model delegate (reads, `create`, unique-`where`

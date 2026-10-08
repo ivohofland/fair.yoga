@@ -8,11 +8,10 @@
  * the hook's own body, and the body of a function declaration or a
  * `const`-bound arrow/function expression in the same file that the hook
  * calls, one level deep; a function from another file is
- * reported as the call that hands it the binding, not followed. Its reach and
- * its known misses are in `docs/test-database.md` (section 6). This is a
- * report, not a gate — the runtime guard (`tests/undefined-filter-guard.ts`)
- * is the gate. Tooling only: it imports `typescript`, a devDependency, so no
- * application module may import it.
+ * reported as the call that hands it the binding, not followed. A report, not
+ * a gate; its reach, its known misses and the gate it reports for are in
+ * `docs/test-database.md` (section 6). Tooling only: it imports `typescript`,
+ * a devDependency.
  *
  * Spec: docs/superpowers/specs/2026-10-08-undefined-filter-guard-design.md
  */
@@ -37,7 +36,10 @@ export type HookFilterFinding = {
   bindings: string[];
   /** Every binding is mentioned by a condition the row sits behind: see `isGuarded`. */
   guarded: boolean;
-  /** `app` when the receiver (or, for an indirect call, an argument) resolves to `src/lib/db.ts`; the guard does not cover that client. */
+  /**
+   * `app` when a bulk write's receiver, or a bare-identifier argument of any
+   * other call, resolves to `src/lib/db.ts`; the guard does not cover that client.
+   */
   client: 'test' | 'app';
 };
 
