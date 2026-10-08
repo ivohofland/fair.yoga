@@ -457,6 +457,7 @@ describe('renderDegradationDigestEmail', () => {
       at: new Date('2026-10-06T14:03:00Z'),
       timezone: 'Europe/Amsterdam',
       pauseUrl: 'https://fair.yoga/payout-pause#t=abc123',
+      identifierChanged: true,
     } as const;
 
     it('names the change, the currency, both masked strings and the local time', () => {
@@ -486,22 +487,37 @@ describe('renderDegradationDigestEmail', () => {
       expect(html).not.toContain('EUR');
     });
 
-    it('says a detail other than the account number changed when a bank change masks alike', () => {
-      const { html } = renderPayoutChangedEmail({ ...base, after: base.before });
+    it('says a detail other than the account number changed when a bank change masks alike and its number did not change', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, after: base.before, identifierChanged: false });
       expect(html).toContain('a detail other than the account number changed');
+      expect(html).not.toContain('ends in the same digits');
     });
 
-    it('says the link changed on the same site when a link change masks alike', () => {
-      const { html } = renderPayoutChangedEmail({
-        ...base, kind: 'payment_link_changed', accountCurrency: null, before: 'pay.example', after: 'pay.example',
-      });
-      expect(html).toContain('the link changed on the same site');
-    });
-
-    it('does not say either when the masks differ', () => {
-      const { html } = renderPayoutChangedEmail(base);
+    it('warns that the account number changed when a bank change masks alike but its number changed', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, after: base.before, identifierChanged: true });
+      expect(html).toContain('The account number changed to a different one that ends in the same digits.');
       expect(html).not.toContain('other than the account number');
+    });
+
+    it('warns, and never reassures, about a bank change that masks alike with nothing recorded', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, after: base.before, identifierChanged: null });
+      expect(html).toContain('ends in the same digits');
+      expect(html).not.toContain('other than the account number');
+    });
+
+    it('warns that a changed link masking like the old one is a different link', () => {
+      const { html } = renderPayoutChangedEmail({
+        ...base, kind: 'payment_link_changed', accountCurrency: null, before: 'revolut.me/…cher', after: 'revolut.me/…cher', identifierChanged: true,
+      });
+      expect(html).toContain('The new link looks like the old one here, but it is a different link. Check it in full in your settings.');
       expect(html).not.toContain('same site');
+    });
+
+    it('says neither when the masks differ', () => {
+      const { html } = renderPayoutChangedEmail({ ...base, identifierChanged: true });
+      expect(html).not.toContain('other than the account number');
+      expect(html).not.toContain('same digits');
+      expect(html).not.toContain('looks like the old one');
     });
 
     it('escapes the masked strings', () => {

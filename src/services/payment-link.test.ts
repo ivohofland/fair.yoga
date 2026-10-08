@@ -125,6 +125,14 @@ async function events(teacherId: string): Promise<EventRow[]> {
   });
 }
 
+/** Each event's `identifierChanged`, oldest first. */
+async function identifierChangedOf(teacherId: string): Promise<(boolean | null)[]> {
+  const rows = await prisma.payoutChangeEvent.findMany({
+    where: { teacherId }, select: { identifierChanged: true }, orderBy: { createdAt: 'asc' },
+  });
+  return rows.map((r) => r.identifierChanged);
+}
+
 /** Fails when any event column holds `secret` whole. */
 async function expectNoEventHolds(teacherId: string, secret: string): Promise<void> {
   const rows = await prisma.payoutChangeEvent.findMany({ where: { teacherId } });
@@ -210,6 +218,7 @@ describe('savePaymentLink records a payout-change event (#786)', () => {
     expect(await events(teacherId)).toEqual([
       { id: out.eventId, kind: 'payment_link_added', accountCurrency: null, before: null, after: 'revolut.me/…yoga' },
     ]);
+    expect(await identifierChangedOf(teacherId)).toEqual([null]);
     await expectNoEventHolds(teacherId, 'annayoga');
   });
 
@@ -222,6 +231,15 @@ describe('savePaymentLink records a payout-change event (#786)', () => {
     ]);
     await expectNoEventHolds(teacherId, 'oldteacher');
     await expectNoEventHolds(teacherId, 'annayoga');
+  });
+
+  it('records a changed link that masks like the old one as a changed identifier', async () => {
+    const teacherId = await makeTeacher('https://revolut.me/annacher');
+    await savePaymentLink(prisma, teacherId, 'https://revolut.me/evilcher');
+    expect(await events(teacherId)).toMatchObject([
+      { kind: 'payment_link_changed', before: 'revolut.me/…cher', after: 'revolut.me/…cher' },
+    ]);
+    expect(await identifierChangedOf(teacherId)).toEqual([true]);
   });
 
   // The column's CHECK admits any https value; the parser also refuses userinfo.
@@ -250,6 +268,7 @@ describe('removePaymentLink', () => {
     expect(await events(teacherId)).toEqual([
       { id: out.eventId, kind: 'payment_link_removed', accountCurrency: null, before: 'revolut.me/…yoga', after: null },
     ]);
+    expect(await identifierChangedOf(teacherId)).toEqual([null]);
     await expectNoEventHolds(teacherId, 'annayoga');
   });
 

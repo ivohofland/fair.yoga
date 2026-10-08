@@ -5,7 +5,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { ResumePaymentsForm } from '@/components/settings/resume-payments-form';
-import { PAYOUT_CHANGE_PHRASES } from '@/lib/email-templates';
+import { PAYOUT_CHANGE_PHRASES, payoutMasksAlikeNote } from '@/lib/email-templates';
 import { formatClassContext, formatDateWithYear, formatMoney, paymentStateInlineText } from '@/lib/format';
 import type { BankAccountData } from '@/lib/payment-methods';
 import { startOfLocalDay } from '@/lib/timezone';
@@ -119,17 +119,23 @@ export default async function ResumePaymentsPage() {
           <p className="type-body">No changes recorded since {when(review.windowStart, timeZone)}.</p>
         ) : (
           <ul>
-            {review.events.map((e) => (
-              <li key={e.id} className="py-3 border-b border-border last:border-b-0">
-                <p className="type-body">
-                  {PAYOUT_CHANGE_PHRASES[e.kind]}
-                  {currencyNote(e.accountCurrency)}
-                </p>
-                <p className="type-caption">
-                  {e.before ?? '—'} → {e.after ?? '—'} · {when(e.createdAt, timeZone)}
-                </p>
-              </li>
-            ))}
+            {review.events.map((e) => {
+              const alike = payoutMasksAlikeNote(e);
+              return (
+                <li key={e.id} className="py-3 border-b border-border last:border-b-0">
+                  <p className="type-body">
+                    {PAYOUT_CHANGE_PHRASES[e.kind]}
+                    {currencyNote(e.accountCurrency)}
+                  </p>
+                  <p className="type-caption">
+                    {e.before ?? '—'} → {e.after ?? '—'} · {when(e.createdAt, timeZone)}
+                  </p>
+                  {alike !== null && (
+                    <p className={alike.tone === 'warning' ? 'type-caption text-danger' : 'type-caption'}>{alike.text}</p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

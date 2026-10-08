@@ -98,7 +98,10 @@ link masks to a host, and for every link product the payee is in the path.
 - `Session.passkeyCredentialId String?` — written only by passkey sign-in
   (`passkey/authenticate/verify`), `onDelete: SetNull`.
 - `PayoutChangeEvent { id, teacherId, kind PayoutChangeKind, accountCurrency
-  Currency?, before String?, after String?, createdAt }`. `before`/`after` are
+  Currency?, before String?, after String?, identifierChanged Boolean?,
+  createdAt }`. `identifierChanged` is set on the two `_changed` kinds only:
+  for a bank account, whether any of `iban`, `accountNumber`, `sortCode`,
+  `routingNumber` differs; for a link, whether the full URL does. `before`/`after` are
   masked strings only: `•••• 1234` (`maskedIdentifier`) for a bank account,
   host plus the path's last four characters (`revolut.me/…cher`) for a link.
   `accountCurrency` names which account, not a frozen price, so it is not a
@@ -136,8 +139,15 @@ event, returning it. The route delivers after commit through
 `deliverPasskeyAddedNotice` pattern): it mints a pause token and emails
 `Account.email` immediately — not a notification, no preference, not the
 30-minute fallback. The email says what changed (kind and currency), masked
-before and after, and when (teacher's timezone); when before and after mask
-alike it says so ("a detail other than the account number changed"). Its
+before and after, and when (teacher's timezone). Equal masks do not mean an
+equal account, and the attacker picks the new value, so the writer decides
+from the full values under its lock and records `identifierChanged` on the
+event. When before and after mask alike, the email reassures ("a detail other
+than the account number changed") only for a bank change whose identifier did
+not change; a bank change whose identifier did warns that the account number
+changed to one ending in the same digits, and a link change warns that the
+new link looks like the old one and should be checked in full. The resume
+screen's change list carries the same sentence. Its
 **This wasn't me** button opens `/payout-pause#t=…`. A send failure is
 logged, never returned.
 
@@ -248,7 +258,9 @@ Test-first; each guard gets a recorded mutation.
 - Writers: each kind records exactly one event with masked strings; a no-op
   re-save records none and answers unchanged; the email goes after commit and
   a send failure is logged.
-- Template: a full IBAN or link in the input never reaches the HTML.
+- Template: a full IBAN or link in the input never reaches the HTML; alike
+  masks reassure only on `identifierChanged: false` for a bank change, and
+  warn otherwise.
 - Pause: single use; unknown, expired and used refused alike with
   `PAUSE_LINK_INVALID`; a throw after the consume leaves the token usable;
   sessions, push subscriptions, sign-in links and post-cutoff passkeys gone,

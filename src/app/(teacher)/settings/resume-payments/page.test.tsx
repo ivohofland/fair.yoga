@@ -69,3 +69,37 @@ describe('the resume-payments page', () => {
     expect(screen.queryByText(/was removed recently/)).toBeNull();
   });
 });
+
+describe('the resume-payments change list', () => {
+  const event = {
+    id: 'e1', accountCurrency: 'EUR' as const, before: '•••• 4300', after: '•••• 4300',
+    createdAt: new Date('2026-07-19T12:00:00Z'),
+  };
+
+  it('warns when a changed account number masks like the old one', async () => {
+    readResumeReview.mockResolvedValue(review({ events: [{ ...event, kind: 'bank_account_changed', identifierChanged: true }] }));
+
+    render(await ResumePaymentsPage());
+
+    expect(screen.getByText('The account number changed to a different one that ends in the same digits.')).toBeInTheDocument();
+    expect(screen.queryByText(/other than the account number/)).toBeNull();
+  });
+
+  it('says only a detail other than the number changed when the number did not', async () => {
+    readResumeReview.mockResolvedValue(review({ events: [{ ...event, kind: 'bank_account_changed', identifierChanged: false }] }));
+
+    render(await ResumePaymentsPage());
+
+    expect(screen.getByText('Before and after look the same here because a detail other than the account number changed.')).toBeInTheDocument();
+  });
+
+  it('warns when a changed link masks like the old one', async () => {
+    readResumeReview.mockResolvedValue(review({
+      events: [{ ...event, kind: 'payment_link_changed', accountCurrency: null, before: 'revolut.me/…cher', after: 'revolut.me/…cher', identifierChanged: true }],
+    }));
+
+    render(await ResumePaymentsPage());
+
+    expect(screen.getByText('The new link looks like the old one here, but it is a different link. Check it in full in your settings.')).toBeInTheDocument();
+  });
+});

@@ -49,6 +49,14 @@ async function events(teacherId: string): Promise<EventRow[]> {
   });
 }
 
+/** Each event's `identifierChanged`, oldest first. */
+async function identifierChangedOf(teacherId: string): Promise<(boolean | null)[]> {
+  const rows = await prisma.payoutChangeEvent.findMany({
+    where: { teacherId }, select: { identifierChanged: true }, orderBy: { createdAt: 'asc' },
+  });
+  return rows.map((r) => r.identifierChanged);
+}
+
 /** Fails when any event column holds `secret` whole. */
 async function expectNoEventHolds(teacherId: string, secret: string): Promise<void> {
   const rows = await prisma.payoutChangeEvent.findMany({ where: { teacherId } });
@@ -174,20 +182,31 @@ describe('saveBankAccount records a payout-change event (#786)', () => {
   });
 
   // Every stored column the upsert writes takes part in the comparison: a
-  // change to any one of them alone is a save, and records an edit.
+  // change to any one of them alone is a save, and records an edit. The
+  // identifier columns alone mark it as one whose account identifier changed.
   it.each([
-    ['holderName', 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }, { holderName: 'B. Teacher', iban: 'NL91ABNA0417164300' }],
-    ['iban', 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }, { holderName: 'A. Teacher', iban: 'DE89370400440532013000' }],
-    ['bic', 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }, { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A' }],
-    ['sortCode', 'GBP', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '12345678' }, { holderName: 'A. Teacher', sortCode: '654321', accountNumber: '12345678' }],
-    ['accountNumber', 'GBP', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '12345678' }, { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '87654321' }],
-    ['routingNumber', 'USD', { holderName: 'A. Teacher', routingNumber: '021000021', accountNumber: '1234567' }, { holderName: 'A. Teacher', routingNumber: '011000015', accountNumber: '1234567' }],
-  ] as const)('saves and records an edit when only %s differs', async (_column, currency, first, second) => {
+    ['holderName', false, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }, { holderName: 'B. Teacher', iban: 'NL91ABNA0417164300' }],
+    ['iban', true, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }, { holderName: 'A. Teacher', iban: 'DE89370400440532013000' }],
+    ['bic', false, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' }, { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A' }],
+    ['sortCode', true, 'GBP', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '12345678' }, { holderName: 'A. Teacher', sortCode: '654321', accountNumber: '12345678' }],
+    ['accountNumber', true, 'GBP', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '12345678' }, { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '87654321' }],
+    ['routingNumber', true, 'USD', { holderName: 'A. Teacher', routingNumber: '021000021', accountNumber: '1234567' }, { holderName: 'A. Teacher', routingNumber: '011000015', accountNumber: '1234567' }],
+  ] as const)('saves and records an edit when only %s differs, identifierChanged %s', async (_column, identifierChanged, currency, first, second) => {
     const teacherId = await makeTeacher(currency);
     expect((await saveBankAccount(prisma, teacherId, currency, first)).kind).toBe('saved');
     const out = await saveBankAccount(prisma, teacherId, currency, second);
     expect(out.kind).toBe('saved');
     expect((await events(teacherId)).map((e) => e.kind)).toEqual(['bank_account_added', 'bank_account_changed']);
+    expect(await identifierChangedOf(teacherId)).toEqual([null, identifierChanged]);
+  });
+
+  it('records a changed identifier even when the new IBAN masks like the old one', async () => {
+    const teacherId = await makeTeacher();
+    await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' });
+    await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'NL26RABO0123454300' });
+    const changed = (await events(teacherId))[1];
+    expect(changed).toMatchObject({ kind: 'bank_account_changed', before: '•••• 4300', after: '•••• 4300' });
+    expect(await identifierChangedOf(teacherId)).toEqual([null, true]);
   });
 });
 
@@ -218,6 +237,7 @@ describe('removeBankAccount', () => {
     expect((await events(teacherId)).slice(1)).toEqual([
       { id: out.eventId, kind: 'bank_account_removed', accountCurrency: 'EUR', before: '•••• 4300', after: null },
     ]);
+    expect(await identifierChangedOf(teacherId)).toEqual([null, null]);
     await expectNoEventHolds(teacherId, 'NL91ABNA0417164300');
   });
 
