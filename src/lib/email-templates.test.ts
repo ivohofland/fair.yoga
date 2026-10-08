@@ -145,7 +145,7 @@ describe('email templates', () => {
         body: '€5.75',
         recipientType: 'student',
         relatedClassId: 'class-9',
-        teacherHasPaymentMethods: true,
+        payGuidance: 'methods',
       },
       'https://example.test',
     );
@@ -161,7 +161,7 @@ describe('email templates', () => {
         body: '€5.75',
         recipientType: 'student',
         relatedClassId: 'class-9',
-        teacherHasPaymentMethods: true,
+        payGuidance: 'methods',
       },
       'https://example.test',
     );
@@ -174,7 +174,21 @@ describe('email templates', () => {
     'gives a student %s no button when the teacher has no payment method',
     (type) => {
       const { html } = renderNotificationEmail(
-        { type, title: 'T', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9', teacherHasPaymentMethods: false },
+        { type, title: 'T', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9', payGuidance: 'directly' },
+        'https://example.test',
+      );
+      expect(html).not.toContain('href=');
+      expect(html).not.toContain('Pay now');
+    },
+  );
+
+  // The body tells this student to hold off; a button would invite the
+  // payment the pause exists to stop.
+  it.each(['payment_request', 'reminder'] as const)(
+    'gives a student %s no button while the teacher has paused payments',
+    (type) => {
+      const { html } = renderNotificationEmail(
+        { type, title: 'T', body: '€5.75', recipientType: 'student', relatedClassId: 'class-9', payGuidance: 'hold_off' },
         'https://example.test',
       );
       expect(html).not.toContain('href=');
@@ -205,7 +219,7 @@ describe('email templates', () => {
           body: '€5.75',
           recipientType: 'student',
           relatedClassId: null,
-          teacherHasPaymentMethods: true,
+          payGuidance: 'methods',
         },
         'https://example.test',
       );
@@ -219,7 +233,7 @@ describe('email templates', () => {
     it('records nothing for a payment notification that has its class', () => {
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
       renderNotificationEmail(
-        { type: 'reminder', title: 'T', body: 'B', recipientType: 'student', relatedClassId: 'class-9', teacherHasPaymentMethods: true },
+        { type: 'reminder', title: 'T', body: 'B', recipientType: 'student', relatedClassId: 'class-9', payGuidance: 'methods' },
         'https://example.test',
       );
       expect(warn).not.toHaveBeenCalled();
@@ -246,7 +260,7 @@ describe('email templates', () => {
         body: 'Prices are out.',
         recipientType: 'teacher',
         relatedClassId: 'class-9',
-        teacherHasPaymentMethods: true,
+        payGuidance: 'methods',
       },
       'https://example.test',
     );

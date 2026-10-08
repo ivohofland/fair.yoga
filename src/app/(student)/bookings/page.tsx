@@ -16,7 +16,13 @@ import { getWaitlistWindow, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
 import { formatInstantInZone } from '@/lib/timezone';
 import { PAY_NOW_LABEL, payPagePath, studentNotificationHref } from '@/lib/notification-links';
-import { paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import {
+  PAYMENTS_PAUSED_COPY,
+  payGuidanceFor,
+  paymentMethodsForTeacher,
+  teacherPaymentSelect,
+  type PayGuidance,
+} from '@/lib/payment-methods';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
@@ -401,19 +407,13 @@ export default async function StudentBookingsPage() {
                   )}
                 </div>
                 {payment && outstanding && (
-                  paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency).length > 0 ? (
-                    <div className="mt-3">
-                      <Link
-                        href={payPagePath(cls.id)}
-                        aria-label={`${PAY_NOW_LABEL} — ${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)}`}
-                        className="inline-flex items-center h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint no-underline"
-                      >
-                        {PAY_NOW_LABEL}
-                      </Link>
-                    </div>
-                  ) : (
-                    <p className="type-caption mt-2">{`Pay ${cls.calendarEntry.teacher.firstName} directly`}</p>
-                  )
+                  <OutstandingPayAction
+                    guidance={payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency))}
+                    classId={cls.id}
+                    classType={cls.calendarEntry.classType}
+                    date={cls.calendarEntry.date}
+                    teacherFirstName={cls.calendarEntry.teacher.firstName}
+                  />
                 )}
                 {breakdown.kind === 'shown' && (
                   <PaymentBreakdown
@@ -430,4 +430,43 @@ export default async function StudentBookingsPage() {
       )}
     </div>
   );
+}
+
+/** What an outstanding payment's row offers: Pay now beside a method, otherwise a line saying what to do. */
+function OutstandingPayAction({
+  guidance,
+  classId,
+  classType,
+  date,
+  teacherFirstName,
+}: {
+  guidance: PayGuidance;
+  classId: string;
+  classType: string;
+  date: Date;
+  teacherFirstName: string;
+}) {
+  switch (guidance) {
+    case 'methods':
+      return (
+        <div className="mt-3">
+          <Link
+            href={payPagePath(classId)}
+            aria-label={`${PAY_NOW_LABEL} — ${classType}, ${formatDayHeader(date)}`}
+            className="inline-flex items-center h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint no-underline"
+          >
+            {PAY_NOW_LABEL}
+          </Link>
+        </div>
+      );
+    case 'directly':
+      return <p className="type-caption mt-2">{`Pay ${teacherFirstName} directly`}</p>;
+    case 'hold_off':
+      return <p className="type-caption mt-2">{PAYMENTS_PAUSED_COPY}</p>;
+    default: {
+      const unhandled: never = guidance;
+      log.error({ guidance: String(unhandled) }, 'bookings: unhandled pay guidance');
+      return null;
+    }
+  }
 }

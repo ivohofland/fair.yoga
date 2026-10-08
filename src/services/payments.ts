@@ -15,7 +15,7 @@ import {
 } from '@/lib/student-visibility';
 import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
-import { paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
@@ -38,6 +38,7 @@ export type PaymentRefusal = Extract<
     code:
       | 'CONCURRENT_MODIFICATION'
       | 'NOT_FOUND'
+      | 'PAYMENTS_PAUSED'
       | 'PAYMENT_ALREADY_PAID'
       | 'PAYMENT_SETTLED'
       | 'PAYMENT_WAIVED';
@@ -382,11 +383,37 @@ export const MANUAL_REMIND_COOLDOWN_MS = 2 * 60 * 1000;
  * — bounded by MANUAL_REMIND_COOLDOWN_MS, which is a retry guard and not a
  * nagging policy (#196). A call inside that window is `unchanged`: the
  * reminder it asks for went out moments ago.
+ *
+ * A teacher who has paused payments is refused (`PAYMENTS_PAUSED`): their
+ * students were told to hold off. The check reads the teacher after the stamp,
+ * so a settled or missing payment answers as such first, and the refusal
+ * rolls the stamp back.
  */
 export async function sendPaymentReminder(
   db: PrismaClient,
   paymentId: string,
 ): Promise<PaymentOutcome> {
+  try {
+    return await remindInTransaction(db, paymentId);
+  } catch (e) {
+    if (e instanceof RemindRefused) return { kind: 'refused', refusal: e.refusal };
+    throw e;
+  }
+}
+
+/** Thrown inside the reminder's transaction so a refusal found after the stamp rolls it back. */
+class RemindRefused extends Error {
+  constructor(readonly refusal: PaymentRefusal) {
+    super(`payment reminder refused: ${refusal.code}`);
+  }
+}
+
+const PAYMENTS_PAUSED: PaymentRefusal = codedRefusal(
+  'PAYMENTS_PAUSED',
+  'Payments are paused, so your students are holding off. Resume payments before sending a reminder.',
+);
+
+function remindInTransaction(db: PrismaClient, paymentId: string): Promise<PaymentOutcome> {
   return db.$transaction(async (tx): Promise<PaymentOutcome> => {
     // Compare-and-swap on both things a reminder depends on: the payment is
     // still outstanding, and it was not just reminded. A count of 0 means one
@@ -449,18 +476,18 @@ export async function sendPaymentReminder(
       },
     });
 
+    const guidance = payGuidanceFor(
+      paymentMethodsForTeacher(registration.class.calendarEntry.teacher, registration.class.currency),
+    );
+    if (guidance === 'hold_off') throw new RemindRefused(PAYMENTS_PAUSED);
+
     await createBulkNotifications(tx, [
       {
         recipientType: 'student',
         recipientId: registration.studentId,
         type: 'reminder',
         title: 'Payment outstanding',
-        body: studentPaymentReminderBody(
-          registration.class.calendarEntry,
-          Number(payment.amount),
-          paymentMethodsForTeacher(registration.class.calendarEntry.teacher, registration.class.currency).length > 0,
-          registration.class.currency,
-        ),
+        body: studentPaymentReminderBody(registration.class.calendarEntry, Number(payment.amount), guidance, registration.class.currency),
         relatedClassId: registration.class.id,
       },
     ]);

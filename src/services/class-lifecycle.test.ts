@@ -20,6 +20,7 @@ import {
   type EconomicField,
 } from './class-lifecycle';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
+import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
 import { createClassFixture, slotDate, slotTime, wallSlotAt } from '../../tests/class-fixtures';
 
 // We use string literals matching the Prisma ClassStatus enum values.
@@ -1252,7 +1253,7 @@ describe('completeClass (DB)', () => {
         expect(notes[0]!.type).toBe('payment_request');
         expect(notes[0]!.title).toBe('Payment requested');
         expect(notes[0]!.body).toBe(
-          studentPaymentRequestBody(status, cls.calendarEntry, Number(reg.price), false, cls.currency),
+          studentPaymentRequestBody(status, cls.calendarEntry, Number(reg.price), 'directly', cls.currency),
         );
       }
 
@@ -1324,6 +1325,42 @@ describe('completeClass (DB)', () => {
       expect(noShow).not.toContain('Pay your teacher directly');
     } finally {
       await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: null } });
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    }
+  });
+
+  // Paused never reads as zero methods: the request is still created, and
+  // tells the student to hold off rather than to pay the teacher directly.
+  it('still creates the payment request while the teacher has paused payments, telling the student to hold off', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: { paymentLink: 'https://paypal.me/lifecycle', paymentsPausedAt: new Date() },
+    });
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[0]!, status: 'attended', tierAtBooking: 3 },
+      });
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: studentIds[1]!, status: 'no_show', tierAtBooking: 3 },
+      });
+
+      const result = await completeClass(prisma, cls.id, { finishedEarly: true });
+      expect(result.ok).toBe(true);
+      expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(2);
+
+      const bodyFor = async (studentId: string) =>
+        (await prisma.notification.findFirstOrThrow({
+          where: { relatedClassId: cls.id, recipientType: 'student', recipientId: studentId, type: 'payment_request' },
+        })).body;
+      expect(await bodyFor(studentIds[0]!)).toMatch(
+        /^Your price for .* is €\d+\.\d{2}\. Payment details are being checked — please hold off for now\.$/,
+      );
+      const noShow = await bodyFor(studentIds[1]!);
+      expect(noShow).toContain(PAYMENTS_PAUSED_COPY);
+      expect(noShow).not.toContain('Pay your teacher directly');
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: null, paymentsPausedAt: null } });
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     }
   });

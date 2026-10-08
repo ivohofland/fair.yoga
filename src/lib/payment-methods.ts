@@ -115,18 +115,54 @@ function bankMethodsFor(account: StoredBankAccount): PaymentMethod[] {
 export const teacherPaymentSelect = {
   id: true,
   paymentLink: true,
+  paymentsPausedAt: true,
   bankAccounts: { select: bankAccountSelect },
 } as const satisfies Prisma.TeacherSelect;
 
 export type TeacherPaymentSources = Prisma.TeacherGetPayload<{ select: typeof teacherPaymentSelect }>;
 
-/** The methods for a teacher read with `teacherPaymentSelect`, using their account in `currency`. */
-export function paymentMethodsForTeacher(teacher: TeacherPaymentSources, currency: Currency): PaymentMethod[] {
-  return paymentMethodsFor({
-    teacherId: teacher.id,
-    account: accountInCurrency(teacher.bankAccounts, currency),
-    paymentLink: teacher.paymentLink,
-  });
+/**
+ * What a student may do about paying a teacher: hold off while the teacher has
+ * paused payments, or use these methods. Paused is its own answer, never an
+ * empty `methods` — no methods tells a student to pay directly, the opposite of
+ * holding off.
+ */
+export type PaymentMethodsAnswer = { kind: 'paused' } | { kind: 'methods'; methods: PaymentMethod[] };
+
+/** What a student is told while a teacher has paused payments, in place of any method. */
+export const PAYMENTS_PAUSED_COPY = 'Payment details are being checked — please hold off for now.';
+
+/** The answer for a teacher read with `teacherPaymentSelect`, using their account in `currency`. */
+export function paymentMethodsForTeacher(teacher: TeacherPaymentSources, currency: Currency): PaymentMethodsAnswer {
+  if (teacher.paymentsPausedAt !== null) return { kind: 'paused' };
+  return {
+    kind: 'methods',
+    methods: paymentMethodsFor({
+      teacherId: teacher.id,
+      account: accountInCurrency(teacher.bankAccounts, currency),
+      paymentLink: teacher.paymentLink,
+    }),
+  };
+}
+
+/**
+ * Which payment instruction a student's copy carries: hold off while paused,
+ * none beside a method (the method is the instruction), and "pay your teacher
+ * directly" when there is no method.
+ */
+export type PayGuidance = 'hold_off' | 'methods' | 'directly';
+
+export function payGuidanceFor(answer: PaymentMethodsAnswer): PayGuidance {
+  switch (answer.kind) {
+    case 'paused':
+      return 'hold_off';
+    case 'methods':
+      return answer.methods.length > 0 ? 'methods' : 'directly';
+    default: {
+      const unhandled: never = answer;
+      throw new Error(`unhandled payment methods answer: ${JSON.stringify(unhandled)}`);
+    }
+  }
 }
 
 /** Onboarding's `bank` step: an account in the current currency, or a link. */

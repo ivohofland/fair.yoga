@@ -7,6 +7,7 @@
  */
 
 import type { Currency, NotificationType, PayoutChangeKind } from '@prisma/client';
+import type { PayGuidance } from './payment-methods';
 import {
   STUDENT_INVITATION_LABEL,
   STUDENT_INVITATION_PATH,
@@ -137,19 +138,19 @@ export interface NotificationEmailInput {
   body: string;
   /** Defaults to the student framing when absent. */
   recipientType?: 'teacher' | 'student';
-  /** The class a notification is about; with `teacherHasPaymentMethods`, gives a payment notification its pay link. */
+  /** The class a notification is about; with `payGuidance`, gives a payment notification its pay link. */
   relatedClassId?: string | null;
   /**
-   * Whether the class's teacher has a payment method (`paymentMethodsFor`).
-   * A student payment notification gets its Pay now button only when this is
-   * `true`.
+   * What the class's teacher lets a student do about paying, read at send
+   * time (`payGuidanceFor`). A student payment notification gets its Pay now
+   * button only when this is `'methods'`.
    */
-  teacherHasPaymentMethods?: boolean;
+  payGuidance?: PayGuidance;
 }
 
 /**
  * A student email's action. A payment notification gets its class's pay page
- * when both the class and a teacher payment method are known, and otherwise no
+ * when both the class and a live teacher payment method are known, and otherwise no
  * link; any other type gets its fixed one.
  */
 function studentAction(
@@ -164,7 +165,7 @@ function studentAction(
       );
       return undefined;
     }
-    return notification.teacherHasPaymentMethods === true
+    return notification.payGuidance === 'methods'
       ? { label: PAY_NOW_LABEL, path: payPagePath(notification.relatedClassId) }
       : undefined;
   }

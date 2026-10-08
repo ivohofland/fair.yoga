@@ -12,8 +12,11 @@ import {
   hasPayoutDetails,
   nonBlank,
   paymentMethodsFor,
+  payGuidanceFor,
   paymentMethodsForTeacher,
   type PaymentMethod,
+  type PaymentMethodKind,
+  type PaymentMethodsAnswer,
   type StoredBankAccount,
 } from './payment-methods';
 
@@ -169,17 +172,39 @@ describe('paymentMethodsFor', () => {
 });
 
 describe('paymentMethodsForTeacher', () => {
+  const eur = account({ currency: 'EUR', iban: IBAN });
+  const gbp = account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' });
+
+  function kinds(answer: PaymentMethodsAnswer): PaymentMethodKind[] | 'paused' {
+    return answer.kind === 'paused' ? 'paused' : answer.methods.map((m) => m.kind);
+  }
+
   it('picks the account in the given currency and includes the link', () => {
-    const eur = account({ currency: 'EUR', iban: IBAN });
-    const gbp = account({ currency: 'GBP', sortCode: '123456', accountNumber: '12345678' });
-    const teacher = { id: TEACHER_ID, paymentLink: LINK, bankAccounts: [eur, gbp] };
-    expect(paymentMethodsForTeacher(teacher, 'GBP').map((m) => m.kind)).toEqual(['bank_transfer', 'payment_link']);
-    expect(paymentMethodsForTeacher(teacher, 'EUR').map((m) => m.kind)).toEqual([
-      'bank_transfer',
-      'epc_qr',
-      'payment_link',
-    ]);
-    expect(paymentMethodsForTeacher(teacher, 'CHF')).toEqual([LINK_METHOD]);
+    const teacher = { id: TEACHER_ID, paymentLink: LINK, paymentsPausedAt: null, bankAccounts: [eur, gbp] };
+    expect(kinds(paymentMethodsForTeacher(teacher, 'GBP'))).toEqual(['bank_transfer', 'payment_link']);
+    expect(kinds(paymentMethodsForTeacher(teacher, 'EUR'))).toEqual(['bank_transfer', 'epc_qr', 'payment_link']);
+    expect(paymentMethodsForTeacher(teacher, 'CHF')).toEqual({ kind: 'methods', methods: [LINK_METHOD] });
+  });
+
+  it('answers methods with none, not paused, for a teacher with nothing to pay into', () => {
+    const teacher = { id: TEACHER_ID, paymentLink: null, paymentsPausedAt: null, bankAccounts: [] };
+    expect(paymentMethodsForTeacher(teacher, 'EUR')).toEqual({ kind: 'methods', methods: [] });
+  });
+
+  // Paused is its own answer, never zero methods: zero methods tells a
+  // student to pay directly, the opposite of holding off.
+  it('answers paused for a paused teacher, whatever they hold', () => {
+    const teacher = { id: TEACHER_ID, paymentLink: LINK, paymentsPausedAt: new Date(), bankAccounts: [eur, gbp] };
+    expect(paymentMethodsForTeacher(teacher, 'EUR')).toEqual({ kind: 'paused' });
+    expect(paymentMethodsForTeacher({ ...teacher, paymentLink: null, bankAccounts: [] }, 'EUR')).toEqual({ kind: 'paused' });
+  });
+});
+
+describe('payGuidanceFor', () => {
+  it('answers hold off for paused, methods for any method, and directly for none', () => {
+    expect(payGuidanceFor({ kind: 'paused' })).toBe('hold_off');
+    expect(payGuidanceFor({ kind: 'methods', methods: [LINK_METHOD] })).toBe('methods');
+    expect(payGuidanceFor({ kind: 'methods', methods: [] })).toBe('directly');
   });
 });
 

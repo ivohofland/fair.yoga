@@ -2,8 +2,9 @@
  * Payment Reminders — scheduled dunning for Level 1 payments.
  *
  * Policy:
- * - A pending payment becomes overdue OVERDUE_AFTER_DAYS after it was
- *   created (payments are created at class completion).
+ * - A pending payment becomes overdue OVERDUE_AFTER_DAYS after the later of
+ *   its creation (at class completion) and the teacher's last resume of
+ *   payments; never while the teacher has payments paused.
  * - Overdue payments get a reminder notification, repeated at most once
  *   every REMIND_EVERY_DAYS (deduped via Payment.reminderSentAt).
  * - Tone stays calm: unpaid is brown, never alarming — the reminder is a
@@ -13,7 +14,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
-import { paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { readInPages } from '@/lib/read-in-pages';
 
 export const OVERDUE_AFTER_DAYS = 7;
@@ -21,14 +22,31 @@ export const REMIND_EVERY_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Flips pending payments older than OVERDUE_AFTER_DAYS to overdue. */
+/**
+ * Flips to overdue each pending payment whose OVERDUE_AFTER_DAYS have run,
+ * counted from the later of `createdAt` and the teacher's `paymentsResumedAt`.
+ * A paused teacher's payments never flip: their students were told to hold off.
+ */
 export async function markOverduePayments(
   db: PrismaClient,
   now: Date = new Date(),
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - OVERDUE_AFTER_DAYS * DAY_MS);
   const result = await db.payment.updateMany({
-    where: { status: 'pending', createdAt: { lt: cutoff } },
+    where: {
+      status: 'pending',
+      createdAt: { lt: cutoff },
+      registration: {
+        class: {
+          calendarEntry: {
+            teacher: {
+              paymentsPausedAt: null,
+              OR: [{ paymentsResumedAt: null }, { paymentsResumedAt: { lt: cutoff } }],
+            },
+          },
+        },
+      },
+    },
     data: { status: 'overdue' },
   });
   return result.count;
@@ -47,9 +65,10 @@ function readDuePaymentPage(
       OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
       // Erased accounts end the dunning: a deleted student reads nothing,
       // and a deleted teacher has no bank account or payment link left to pay into.
+      // A paused teacher's students were told to hold off, so they are not chased.
       registration: {
         student: { deletedAt: null },
-        class: { calendarEntry: { teacher: { deletedAt: null } } },
+        class: { calendarEntry: { teacher: { deletedAt: null, paymentsPausedAt: null } } },
       },
       ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
     },
@@ -83,7 +102,8 @@ export type DuePayment = Awaited<ReturnType<typeof readDuePaymentPage>>[number];
 
 /**
  * The overdue payments `sendPaymentReminders` reminds: not reminded since
- * `remindCutoff`, with neither side of the payment erased. Read
+ * `remindCutoff`, with neither side of the payment erased and the teacher's
+ * payments not paused. Read
  * `SWEEP_PAGE_SIZE` at a time via `readInPages` (`@/lib/read-in-pages`); why
  * is in `docs/technical-architecture.md` ("Relation loads over platform-wide
  * sets").
@@ -108,6 +128,11 @@ export async function sendPaymentReminders(
 
   let reminded = 0;
   for (const payment of due) {
+    const cls = payment.registration.class;
+    const guidance = payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
+    // The read above leaves paused teachers out; this keeps a paused answer
+    // from ever reaching the copy as a reminder.
+    if (guidance === 'hold_off') continue;
     // Stamp + notify in ONE transaction. The conditional stamp keeps two
     // overlapping cron runs from double-sending; the transaction keeps a
     // failed notification from stamping a reminder that never went out
@@ -129,13 +154,8 @@ export async function sendPaymentReminders(
           recipientId: payment.registration.studentId,
           type: 'reminder',
           title: 'Payment outstanding',
-          body: studentPaymentReminderBody(
-            payment.registration.class.calendarEntry,
-            Number(payment.amount),
-            paymentMethodsForTeacher(payment.registration.class.calendarEntry.teacher, payment.registration.class.currency).length > 0,
-            payment.registration.class.currency,
-          ),
-          relatedClassId: payment.registration.class.id,
+          body: studentPaymentReminderBody(cls.calendarEntry, Number(payment.amount), guidance, cls.currency),
+          relatedClassId: cls.id,
         },
       ];
       await createBulkNotifications(tx, notifications);
