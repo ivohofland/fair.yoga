@@ -207,6 +207,29 @@ git commit -m "feat: Teacher.paymentLink with an https-only CHECK and its parser
 
 ---
 
+#### Task 1 amendments from the plan review (binding; they override the steps above where they differ)
+
+- **Wire schema (I-1).** `paymentLinkSchema = z.object({ paymentLink: singleLineCharacters(z.string().trim(), PAYMENT_LINK_MAX * 2).max(PAYMENT_LINK_MAX * 2) }).strict()`. This satisfies the #769 every-leaf census in `src/lib/schemas.test.ts`: bounded, and refusing hidden characters. The trim keeps a pasted trailing newline from being refused. Never add this path to `HIDDEN_CHARACTERS_ALLOWED`. `schemas.test.ts` cases:
+  - `'https://revolut.me/anna\n'` is accepted and trimmed.
+  - `'https://revolut.me/a‮b'` is refused.
+  - An extra key is refused.
+  - `PAYMENT_LINK_MAX * 2 + 1` characters are refused.
+- **`src/lib/input-bounds.test.ts`** censuses numeric exports by exact equality: add `PAYMENT_LINK_MAX: 500` to its expected object and commit the file.
+- **A fifth failure, `has_userinfo`.** The userinfo refusal gets its own failure, so its message can be true. `https://revolut.me@evil.example/` does start with `https://`. `PaymentLinkFailure = 'required' | 'too_long' | 'invalid' | 'not_https' | 'has_userinfo'`. The parser tests' two userinfo cases expect `has_userinfo`.
+- **The messages live in `src/lib/payment-link.ts`** (client-safe), so the route and the form share one copy:
+  ```ts
+  export const PAYMENT_LINK_MESSAGES = {
+    required: 'Enter your payment link.',
+    too_long: 'That link is too long.',
+    invalid: 'Enter the full link, starting with https://',
+    not_https: 'Enter the full link, starting with https://',
+    has_userinfo: 'Enter the link without a name and @ before the address.',
+  } as const satisfies Record<PaymentLinkFailure, string>;
+  ```
+- **Pin the href-length check.** Add a parser case: `` `https://x.example/${'é'.repeat(200)}` `` (input 218 characters, href over 1,000 after percent-encoding) expects `too_long`. Add mutation (d): delete the `url.href.length` line; this case must fail.
+- **CHECK test placement and mutation (I-5).** Put the CHECK test in the **unit** tier as a real-DB file, `src/lib/payment-link-check.test.ts`, following `src/services/class-economics-constraints.test.ts`. The unit project reads the worktree's test DB, so mutation (c) drops the constraint on the **test** DB (`ethical_yoga_test_issue_785`, via `psql` in the `fairyoga-db-1` container), runs that test, records the failure, and re-adds the constraint. There is no throwaway migration, and no `tests/integration/payment-link-check.test.ts`. Make sure the migration is applied to both the dev and test DBs; check how `worktree:setup`/`pnpm test` migrates the test DB.
+- **Migration comment.** One line, about its own SQL only: `-- A payment link is shown to students as a link: only https, bounded.`
+
 ### Task 2: The `payment_link` method, every consumer, the pay-page panel
 
 Order matters: this task depends on Task 1's `paymentLinkFromColumn` and column.
@@ -314,6 +337,13 @@ git commit -m "feat: a teacher's payment link is a pay method beside transfer an
 
 ---
 
+#### Task 2 amendments from the plan review (binding; they override the steps above where they differ)
+
+- **`hasPayoutDetails`** returns `hasAccountInCurrency(teacher.bankAccounts, teacher.currency) || paymentLinkFromColumn(teacher.paymentLink) !== null`. A stored but unparseable link then counts as no link, consistent with `paymentMethodsFor`. Add a unit case for it.
+- **`TeacherPaymentSources`** is derived, not hand-written: `Prisma.TeacherGetPayload<{ select: typeof teacherPaymentSelect }>`.
+- **`CopyFieldList`** has no `JSX.Element` return annotation; React 19 types have no global `JSX`. Omit it. The moved `copy` keeps its `[payment-details]` console prefix, because `payment-details.test.tsx` pins it.
+- **The link anchor** copies `Button`'s base classes, including the focus ring (`focus-visible:shadow-focus`) and `min-h-12`, as well as the primary variant's. Precedent for a button-styled link: `src/components/signup/already-teaching-panel.tsx`. The host text wraps with `break-all` and is never ellipsised, because the host is the point of the label.
+
 ### Task 3: Saving and removing the link; onboarding; GDPR
 
 **Files:**
@@ -417,6 +447,29 @@ const INVALID_MESSAGES = {
 
 ---
 
+#### Task 3 amendments from the plan review (binding; they override the steps above where they differ)
+
+- **There is no erased-teacher 404 over HTTP.** `validateSession` (`src/lib/auth/session.ts`) drops erased teachers, so such a request gets 401 or 403. Drop that integration bullet. Optionally assert the 401/403 that does happen.
+- **`src/services/payment-link.test.ts` is a real-DB unit test** in the style of `src/services/bank-accounts.test.ts` (`new PrismaClient()`, real teachers, cleanup by a non-undefined id). Do not mock the db. Cases:
+  - `saved`, `unchanged`, `invalid`.
+  - `teacher_gone` for each verb after setting `deletedAt` (the column must stay unchanged).
+  - **A race test per verb.** On a second connection, open a transaction, `SELECT … FROM "Teacher" WHERE id = $1 FOR NO KEY UPDATE`, then `UPDATE "Teacher" SET "deletedAt" = now() WHERE id = $1`. Start the service call, which blocks; commit the second connection. Assert `teacher_gone` and that `paymentLink` is unchanged. For remove, set a link beforehand.
+  - **Mutation:** drop `deletedAt: null` from the `updateMany`. The race test must fail; record the exact text and restore.
+  - Look at an existing race test for the two-connection pattern (`grep -rln "FOR NO KEY UPDATE" src/**/*.test.ts tests`).
+- **Messages.** `INVALID_MESSAGES` moves to `src/lib/payment-link.ts` as the exported `PAYMENT_LINK_MESSAGES` (Task 1 amendment), and the route imports it. The integration assertions compare against it: `` `paymentLink: ${PAYMENT_LINK_MESSAGES.not_https}` `` and so on, never a literal. Use `expectUnchanged`/`expectApplied` from `tests/api-assertions.ts` for the 200 shapes.
+- **Route mechanics:**
+  - `formatIssues` comes from `@/lib/validation-message`.
+  - `respondUnchanged` needs an explicit type argument: `respondUnchanged<{ paymentLink: string }>(…)` and `respondUnchanged<{ paymentLink: null }>(…)`.
+  - For the applied answers use `respondTyped<…>` if `api-utils.ts`'s `respondOk` docblock steers new literals there. Follow what the docblock says.
+- **Service docblock.** Link `docs/lock-order.md` ("The `Teacher` row is the first lock (#758)") rather than describing `updateTeacherProfile`, per Comment Discipline.
+- **Onboarding copy sweep.** Grep case-insensitively for `skip if you take cash`, `Students see them` and `add your bank` across `src` and `tests`. `src/components/schedule/getting-started.test.tsx`'s negative assertions on the old label and detail would otherwise go vacuous. Rewrite them against the new copy, preferably reading the label and detail from `resolveSteps(...)` rather than literals. Also update `src/services/bank-accounts.test.ts`, which uses `bankAccountInCurrentCurrency`.
+- **`hasPayoutDetails`** (Task 2) uses `paymentLinkFromColumn(teacher.paymentLink) !== null`. Task 2 owns it; Task 3 only consumes it.
+- **Visual baseline.** This task edits `src/app/(teacher)/schedule/(overview)/page.tsx`, a visually baselined route (`src/lib/visual-baseline-freshness.ts`). The copy change moves `schedule.png`. After Step 6:
+  - Run the check (`pnpm exec tsx scripts/check-visual-baseline-freshness.ts` or whatever `package.json` names) and the regenerate command it prints. This machine is macOS.
+  - Inspect the image diff: only the bank row's label and detail should move.
+  - Commit the PNG with this task. If regeneration is impossible here, report BLOCKED with the exact output; do not attest.
+- **GDPR test.** `gdpr.test.ts` is real-DB. Give the fixture teacher a `paymentLink`, then after `deleteTeacherAccount` assert `teacher.paymentLink` is `null`, beside the existing `firstName`/`pageSlug` checks. For export, assert `profile.paymentLink` equals the stored value.
+
 ### Task 4: Settings form, profile page, docs
 
 **Files:**
@@ -456,6 +509,15 @@ const INVALID_MESSAGES = {
 `feat: the payment link is edited on the profile settings page; docs name it as a Level 1 method (#785)`
 
 ---
+
+#### Task 4 amendments from the plan review (binding; they override the steps above where they differ)
+
+- **No `maxLength` on the input.** Browsers silently truncate a pasted link at `maxLength`, producing a different but valid URL. Leave the bound to the parser: a pasted 520-character link shows `PAYMENT_LINK_MESSAGES.too_long` and does not fetch. Pin that with a form test.
+- **`type="url"`, `inputMode="url"` and `autoComplete="off"`, plus `noValidate` on the `<form>`.** Without `noValidate`, the browser's own bubble pre-empts the app's message for `paypal.me/anna` (precedent: `src/components/student/contact-details-form.tsx`). Client-side refusals show `PAYMENT_LINK_MESSAGES[error]`, imported from `@/lib/payment-link`, not a literal.
+- **`page.test.tsx`.** Mock `@/components/settings/payment-link-form` the way `BankAccountForm` is mocked there. Add `paymentLink: null` to the existing fixtures, and assert both `hasLink: false` with `initial: ''`, and `hasLink: true` with the stored link.
+- **`docs/lock-order.md`.** In the "The `Teacher` row is the first lock (#758)" section, add one bullet beside `updateTeacherProfile` for `savePaymentLink`/`removePaymentLink` (`src/services/payment-link.ts`). It takes no explicit lock. Its erasure safety is the live-row `deletedAt` scope on the `updateMany`, and `src/services/payment-link.test.ts`'s race test pins it.
+- **The spec's security note.** Add a line to `docs/superpowers/specs/2026-10-08-payment-link-design.md`: changing the link, like the bank PUT, does not `requireRecentAuth`; #786 is the tracked mitigation.
+- `pnpm run verify` needs Task 3's regenerated `schedule` baseline committed; if the freshness check still fails, report it rather than attesting.
 
 ## Self-review notes
 

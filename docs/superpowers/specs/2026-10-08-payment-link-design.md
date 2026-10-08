@@ -73,7 +73,8 @@ bounds, and the CHECK repeats the literal. `parsePaymentLink(raw: string)` retur
 2. `new URL(trimmed)`. If that throws, `invalid`.
 3. `protocol !== 'https:'` gives `not_https`. This refuses `http:`, `javascript:`,
    `data:` and every other scheme, so there is no denylist.
-4. Userinfo present (`username` or `password` non-empty) gives `invalid`. In
+4. Userinfo present (`username` or `password` non-empty) gives `has_userinfo`,
+   which has its own message, because such a link does start with `https://`. In
    `https://revolut.me@evil.example/` the visible start of the URL is not its
    host, and the button's host label exists to defeat exactly that.
 5. The stored value is `url.href`, the normalised form.
@@ -135,7 +136,7 @@ once it arrives, as the transfer panel's does.
   - An invalid link is a 400 carrying the field message in `parseBody`'s
     `path: message` shape, as `bank-accounts` does. A 400 needs no registered
     code.
-  - An erased teacher is a 404.
+  - A write that loses the race to an erasure (`teacher_gone`) is a 404.
   - A same-value PUT and a DELETE with no link answer `respondUnchanged`.
 - **Service:** `src/services/payment-link.ts`, with `savePaymentLink` and
   `removePaymentLink`.
@@ -143,7 +144,13 @@ once it arrives, as the transfer panel's does.
     live-row-scoped update the profile PUT uses (`updateTeacherProfile`). Under
     READ COMMITTED a write that waits on the erasure's row lock re-evaluates its
     `WHERE` and matches nothing, so count 0 means `teacher_gone`.
-  - It adds no lock site, so `docs/lock-order.md` needs no new entry.
+  - It takes no explicit lock. Its erasure safety rests on that `deletedAt`
+    scope, as the profile PUT's does, so `docs/lock-order.md`'s #758 section
+    gains a bullet beside `updateTeacherProfile`. A real-DB race test pins
+    the scope: a second connection holds the row and erases it, and the save
+    answers `teacher_gone`.
+  - It does not `requireRecentAuth`, the same as the bank-account PUT. A
+    changed payout destination is #786's to alert on.
   - The unchanged check reads the current value before writing. Two racing saves
     from the same teacher end with last-writer-wins, which is correct for a
     single field.
@@ -189,7 +196,9 @@ if you take cash".
   (anchor `href`, `target`, `rel`, host label).
 - Integration:
   - The route: 403, 400 per refusal, 200, unchanged on the same value, DELETE
-    and unchanged-DELETE, 404 for an erased teacher.
+    and unchanged-DELETE.
+  - An erased teacher never reaches the route: `validateSession` drops them,
+    so `teacher_gone` is tested at the service level, including the race.
   - The pay page shows the link for a link-only teacher.
   - The bookings page shows Pay now for a link-only teacher.
   - The DB CHECK refuses a direct `http://` update.
