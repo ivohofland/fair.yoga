@@ -25,6 +25,12 @@ import { test as base, expect, type BrowserContext } from '@playwright/test';
  * This captures; whether anything should also assert is a question for whoever
  * has measured what the app actually logs.
  *
+ * THE ONE EXCEPTION IS A CONTENT-SECURITY-POLICY VIOLATION, which fails the
+ * test. Under `'strict-dynamic'` a blocked script means a page that renders but
+ * never hydrates (#793), and nothing else in the run would say so.
+ * `cspViolationsAllowed` turns that off for `csp-watch.spec.ts`, which
+ * triggers violations on purpose.
+ *
  * ATTACHED ONLY WHEN THE TEST DID NOT GET ITS EXPECTED RESULT, so a green run
  * carries no extra weight and a `retries`-driven flake attaches on the attempt
  * that failed — the one worth reading. `auto: true` because a diagnostic that
@@ -46,7 +52,62 @@ export async function suppressInstallPromptOn(context: BrowserContext): Promise<
   });
 }
 
-export const test = base.extend<{ browserLogs: void; suppressInstallPrompt: void }>({
+const CSP_BINDING = '__fairyogaCspViolation';
+const armed = new WeakSet<BrowserContext>();
+
+/**
+ * Records every Content-Security-Policy violation in `context`: the
+ * document's `securitypolicyviolation` event (directive, blocked URI, path)
+ * and any console message naming the policy, which is how a violation
+ * outside a document listener's reach is reported. Idempotent per context.
+ */
+export async function watchCspViolations(context: BrowserContext, record: (line: string) => void): Promise<void> {
+  if (armed.has(context)) return;
+  armed.add(context);
+  await context.exposeBinding(CSP_BINDING, (_source, line: string) => record(line));
+  await context.addInitScript((binding: string) => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      const report: unknown = Reflect.get(window, binding);
+      if (typeof report === 'function') {
+        report(`${event.effectiveDirective} blocked ${event.blockedURI || '(none)'} on ${location.pathname}`);
+      }
+    });
+  }, CSP_BINDING);
+  context.on('console', (message) => {
+    if (message.text().includes('Content Security Policy')) record(`console: ${message.text()}`);
+  });
+}
+
+export const test = base.extend<{
+  browserLogs: void;
+  suppressInstallPrompt: void;
+  cspViolationsAllowed: boolean;
+  cspViolations: readonly string[];
+}>({
+  cspViolationsAllowed: [false, { option: true }],
+  cspViolations: [
+    async ({ page, browser, cspViolationsAllowed }, provide) => {
+      const seen: string[] = [];
+      const record = (line: string) => seen.push(line);
+      await watchCspViolations(page.context(), record);
+      // Contexts the test opens itself are armed too, for the test's duration.
+      const newContext = browser.newContext;
+      browser.newContext = async (options) => {
+        const context = await newContext.call(browser, options);
+        await watchCspViolations(context, record);
+        return context;
+      };
+      try {
+        await provide(seen);
+      } finally {
+        browser.newContext = newContext;
+      }
+      if (!cspViolationsAllowed) {
+        expect(seen, 'a page this test visited blocked something under its Content-Security-Policy').toEqual([]);
+      }
+    },
+    { auto: true },
+  ],
   suppressInstallPrompt: [
     async ({ page }, use) => {
       await suppressInstallPromptOn(page.context());
