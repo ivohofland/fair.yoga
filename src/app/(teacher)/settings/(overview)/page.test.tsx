@@ -21,4 +21,15 @@ describe('SettingsPage', () => {
 
     expect(screen.getByTestId('sign-out')).toHaveAttribute('data-account-id', 'acct-1');
   });
+
+  it('links Report a problem to the public CONTRIBUTING reporting section', async () => {
+    getSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
+
+    render(await SettingsPage());
+
+    expect(screen.getByRole('link', { name: /Report a problem/ })).toHaveAttribute(
+      'href',
+      'https://github.com/ivohofland/fair.yoga/blob/main/CONTRIBUTING.md#teachers-and-students',
+    );
+  });
 });

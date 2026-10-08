@@ -8,6 +8,7 @@ import { ListRow } from '@/components/ui/list-row';
 import { AccountSecurity } from '@/components/account/account-security';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { InstallAppRow } from '@/components/account/install-app-row';
+import { ReportProblemRow } from '@/components/account/report-problem-row';
 import { NameForm } from '@/components/student/name-form';
 import { ContactDetailsForm } from '@/components/student/contact-details-form';
 
@@ -77,6 +78,7 @@ export default async function StudentSettingsPage() {
           </ListRow>
         ))}
         <InstallAppRow />
+        <ReportProblemRow />
       </div>
 
       {session.teacherId && (
