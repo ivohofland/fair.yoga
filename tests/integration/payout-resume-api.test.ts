@@ -200,4 +200,29 @@ describe('the resume screen and the schedule card', () => {
     await prisma.teacher.update({ where: { id: me.teacherId }, data: { paymentsPausedAt: null, pauseWindowStart: null } });
     expect(await (await get('/schedule')).text()).not.toContain('Payments are paused');
   });
+
+  // The page decides whether this session satisfies the frozen passkey from
+  // the session it reads; a passkey sign-in sees the resume button.
+  it.each([
+    ['a passkey created before the cutoff', true],
+    ['an emailed link', false],
+  ] as const)('offers the resume to a session signed in with %s only when it satisfies the cutoff', async (_how, satisfies) => {
+    const cutoff = new Date(Date.now() - 10 * DAY_MS);
+    const me = await pausedTeacher(satisfies ? 'page-pk' : 'page-link', cutoff);
+    const token = satisfies
+      ? await passkeySession(me.accountId, new Date(cutoff.getTime() - DAY_MS))
+      : await seedSession(prisma, me.accountId);
+    if (!satisfies) {
+      await prisma.passkeyCredential.create({
+        data: { id: `resume-api-pk-${uniqueSuffix()}`, accountId: me.accountId, publicKey: Buffer.from('k'), counter: 0, transports: [], createdAt: new Date(cutoff.getTime() - DAY_MS) },
+      });
+    }
+
+    const res = await fetch(`${BASE_URL}/settings/resume-payments`, { headers: { ...cookie(token), ...freshIp() }, redirect: 'manual' });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html.includes('You signed in with your passkey.')).toBe(satisfies);
+    expect(html.includes('Sign in with your passkey to resume')).toBe(!satisfies);
+  });
 });
+
