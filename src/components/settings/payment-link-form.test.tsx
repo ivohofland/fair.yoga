@@ -52,7 +52,7 @@ describe('PaymentLinkForm', () => {
   });
 
   it('shows a 400’s message on the field, without its path prefix', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: `paymentLink: ${PAYMENT_LINK_MESSAGES.invalid}` }), { status: 400 }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { message: `paymentLink: ${PAYMENT_LINK_MESSAGES.invalid}` } }), { status: 400 }));
     renderForm();
     type('https://x.example');
     fireEvent.click(screen.getByRole('button', { name: 'Save payment link' }));
@@ -85,20 +85,40 @@ describe('PaymentLinkForm', () => {
     expect(screen.queryByRole('button', { name: /^Remove/ })).toBeNull();
   });
 
-  it('Remove sends DELETE, clears the field and refreshes', async () => {
+  const QUESTION = 'Remove your payment link? Students with unpaid classes will no longer see it.';
+
+  it('the first tap on Remove asks for confirmation and sends nothing', () => {
+    renderForm('https://paypal.me/anna', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove payment link' }));
+    expect(screen.getByText(QUESTION)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('confirming sends DELETE, clears the field and refreshes', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: { paymentLink: null } }), { status: 200 }));
     renderForm('https://paypal.me/anna', true);
-    fireEvent.click(screen.getByRole('button', { name: /^Remove/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove payment link' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
     expect(sent().url).toBe('/api/teachers/t1/payment-link');
     expect(sent().init.method).toBe('DELETE');
     expect(screen.getByLabelText('Payment link')).toHaveValue('');
   });
 
-  it('shows a failed removal’s message and keeps the link', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: 'Teacher not found' }), { status: 404 }));
+  it('cancelling sends nothing and keeps the link', () => {
     renderForm('https://paypal.me/anna', true);
-    fireEvent.click(screen.getByRole('button', { name: /^Remove/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove payment link' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Payment link')).toHaveValue('https://paypal.me/anna');
+  });
+
+  it('shows a failed removal’s message beside the control and keeps the link', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Teacher not found' } }), { status: 404 }));
+    renderForm('https://paypal.me/anna', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove payment link' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     expect(await screen.findByText('Teacher not found')).toBeInTheDocument();
     expect(screen.getByLabelText('Payment link')).toHaveValue('https://paypal.me/anna');
     expect(routerRefresh).not.toHaveBeenCalled();
