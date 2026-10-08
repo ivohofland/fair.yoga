@@ -291,11 +291,12 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 - Personal page URL display
 - ~~Custom domain configuration~~ — non-goal (see [Non-Goals](non-goals.md))
 
-### 9.2 — Bank Details (Level 1)
+### 9.2 — Bank Details and Payment Link (Level 1)
 - One account per currency: account holder name plus the fields of the currency's scheme (IBAN, UK sort code and account number, or US routing and account number)
 - The form edits the account for the teacher's current currency; accounts in other currencies are listed beneath it, each removable
 - The account in the payment's currency is shown to students on the payment screen
 - EPC QR code auto-generated from a euro account
+- A payment link (Tikkie, PayPal.me, Revolut or similar, https only) can stand beside or instead of a bank account; students see it next to what they owe, and removing either asks first
 
 ### 9.3 — Payment Processor (Level 2)
 - Same as 7.4 — connect/disconnect Mollie or Stripe
