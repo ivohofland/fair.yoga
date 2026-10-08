@@ -121,6 +121,10 @@ pnpm run db:reset
 | Teacher | `sarah@fairyoga.dev` | GBP, London, 1 room |
 | Students | `anna@example.com` through `jan@example.com` | 10 students, tiers 1-5 (2 per tier) |
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — including how teachers and students can report a problem without writing code. Security issues: [SECURITY.md](SECURITY.md).
+
 ## License
 
 fair.yoga is free software, licensed under the [GNU AGPL-3.0](LICENSE). You may use, study, modify, and share it; if you run a modified version as a service, you must offer its source to your users.
