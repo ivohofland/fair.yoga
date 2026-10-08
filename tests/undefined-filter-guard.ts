@@ -5,7 +5,7 @@
  * walks the `where` of the bulk writes, plus the classifier that tells a test
  * call site from application code.
  *
- * Installed by `tests/setup/undefined-filter-guard.ts` and `tests/e2e/prisma.ts`.
+ * Installers: `docs/test-database.md`, section "Undefined filters in test cleanup (#783)".
  *
  * Only types come from `@prisma/client`, so this module is callable from
  * inside a `vi.mock('@prisma/client')` factory.

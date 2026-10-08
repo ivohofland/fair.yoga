@@ -23,7 +23,7 @@ vi.mock('@prisma/client', async (importOriginal) => {
     constructor(...args: ConstructorParameters<typeof actual.PrismaClient>) {
       super(...args);
       if (isTestCallSite(new Error().stack ?? '', [SELF], REPO_ROOT)) {
-        // The extended client lacks `$on`/`$use`, which no test calls; every other member matches `PrismaClient`.
+        // The cast restores `PrismaClient`'s type; the extended client has no `$on`/`$use`.
         return this.$extends(undefinedFilterGuard) as unknown as GuardedPrismaClient;
       }
     }
