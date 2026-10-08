@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { hashToken } from '@/lib/auth/magic-link';
 
@@ -91,6 +91,18 @@ describe('deliverPayoutChangedNotice', () => {
     create.mockRejectedValue(new Error('db down'));
     expect(() => deliverPayoutChangedNotice(db, 'ev-1')).not.toThrow();
     await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
+    expect(sendPayoutChangedEmail).not.toHaveBeenCalled();
+  });
+
+  it('warns, not errors, and sends nothing when the teacher is erased between the read and the mint', async () => {
+    create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', { code: 'P2003', clientVersion: 'test' }));
+
+    deliverPayoutChangedNotice(db, 'ev-1');
+
+    await vi.waitFor(() => expect(log.warn).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(log.warn).mock.calls[0]?.[0]).toMatchObject({ eventId: 'ev-1' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(log.error).not.toHaveBeenCalled();
     expect(sendPayoutChangedEmail).not.toHaveBeenCalled();
   });
 

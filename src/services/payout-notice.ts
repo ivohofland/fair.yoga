@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { sendPayoutChangedEmail } from '@/lib/email';
 import { log } from '@/lib/log';
 import type { FireAndForget } from '@/lib/fire-and-forget';
@@ -12,8 +12,9 @@ import { mintPayoutPauseToken } from '@/services/payout-pause-token';
  * latency nor the failure of the lookup, the mint or the send may reach the
  * write's response. Hence `FireAndForget`, with the rejection owned here
  * (`docs/technical-architecture.md`, The Services Layer → Work that must not
- * be awaited). An event that no longer exists belongs to an erased teacher:
- * nothing to tell, logged and dropped.
+ * be awaited). An event that no longer exists, or whose link cannot be
+ * minted because its rows went in between, belongs to an erased teacher:
+ * nothing to tell, logged at warn and dropped.
  *
  * Nothing sits before the IIFE: a statement there that threw would escape the
  * `.catch` into the caller.
@@ -37,7 +38,18 @@ export function deliverPayoutChangedNotice(db: PrismaClient, eventId: string): F
       log.warn({ eventId }, 'payout-change notice dropped: the event is gone (erased teacher)');
       return;
     }
-    const raw = await mintPayoutPauseToken(db, event.teacherId, eventId);
+    let raw: string;
+    try {
+      raw = await mintPayoutPauseToken(db, event.teacherId, eventId);
+    } catch (err) {
+      // A foreign-key refusal here is the erased-teacher case above, landing
+      // between the read and the insert.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+        log.warn({ eventId }, 'payout-change notice dropped: the teacher was erased before its link was minted');
+        return;
+      }
+      throw err;
+    }
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     await sendPayoutChangedEmail(event.teacher.account.email, {
       kind: event.kind,
