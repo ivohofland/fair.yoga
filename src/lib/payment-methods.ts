@@ -48,7 +48,7 @@ type SameKeys<A extends PropertyKey, B extends PropertyKey> = [A] extends [B] ? 
  * A `TeacherBankAccount` column is either one of the row's identity and
  * bookkeeping keys named here or a payout detail in `BankAccountData`, so a
  * detail column the model gains fails to compile until `BankAccountData`, and
- * with it `bankAccountDataSelect` and the resume fingerprint, carry it.
+ * with it `bankAccountDataSelect`, carry it.
  */
 const _bankAccountDataIsEveryDetailColumn: SameKeys<
   Exclude<keyof TeacherBankAccount, 'id' | 'teacherId' | 'createdAt' | 'updatedAt'>,

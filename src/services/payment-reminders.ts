@@ -25,7 +25,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Flips to overdue each pending payment whose OVERDUE_AFTER_DAYS have run,
  * counted from the later of `createdAt` and the teacher's `paymentsResumedAt`.
- * A paused teacher's payments never flip: their students were told to hold off.
+ * A paused teacher's payments never flip: students are being asked to hold off paying.
  */
 export async function markOverduePayments(
   db: PrismaClient,
@@ -65,7 +65,7 @@ function readDuePaymentPage(
       OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
       // Erased accounts end the dunning: a deleted student reads nothing,
       // and a deleted teacher has no bank account or payment link left to pay into.
-      // A paused teacher's students were told to hold off, so they are not chased.
+      // A paused teacher's students are asked to hold off, so they are not chased.
       registration: {
         student: { deletedAt: null },
         class: { calendarEntry: { teacher: { deletedAt: null, paymentsPausedAt: null } } },

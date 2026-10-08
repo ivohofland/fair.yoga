@@ -151,7 +151,7 @@ export interface NotificationEmailInput {
 
 /**
  * A student email's action. A payment notification gets its class's pay page
- * when both the class and a live teacher payment method are known, and otherwise no
+ * when both the class and a teacher payment method in use (payments not paused) are known, and otherwise no
  * link; any other type gets its fixed one.
  */
 function studentAction(
@@ -384,8 +384,9 @@ function formatInZoneOrUtc(at: Date, timezone: string): string {
  *
  * Unlike `renderPasskeyAddedEmail`, this one carries a link, on purpose
  * (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
- * Decision 2): the link holds no credential and signs no one in, and the most
- * it can do is pause payments, which fails toward safety. The secret rides in
+ * Decision 2): the link holds no credential and signs no one in; all it can do
+ * is pause payments, sign every device out and remove recent passkeys, each
+ * of which fails toward safety. The secret rides in
  * the URL fragment, so it never reaches a server log or a Referer.
  *
  * Every interpolated value is escaped. `before`/`after` are masked strings

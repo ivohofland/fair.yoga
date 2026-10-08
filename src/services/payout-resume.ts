@@ -180,8 +180,9 @@ async function readPayoutDetails(
 
 /**
  * The resume screen for a paused teacher, or null when the teacher's payments
- * are not paused (or the teacher is gone). Both window lists are bounded by
- * the window start and the pause instant the pause stored.
+ * are not paused (or the teacher is gone). `events` run from the window start
+ * on, `outstanding` is what was created before the pause, and `settled` is
+ * bounded by both.
  */
 export async function readResumeReview(
   db: PrismaClient,
@@ -265,8 +266,8 @@ const RESUMED_TITLE = 'You can pay now';
  *
  * Success clears the pause, stamps `paymentsResumedAt`, deletes the teacher's
  * pause links, and reminds each outstanding payment's student with the copy
- * the teacher's methods now give, stamping `reminderSentAt` so the overdue
- * sweep does not repeat it within its interval.
+ * the teacher's methods now give, stamping `reminderSentAt`, the column the
+ * reminder sweep dedupes on (`docs/data-model.md`, Payout-change alert).
  */
 export async function resumePayments(
   db: PrismaClient,

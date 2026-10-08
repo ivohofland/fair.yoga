@@ -236,7 +236,7 @@ export const payoutPauseSchema = z.object({
   token: z.string().trim().min(1).max(256),
 });
 
-/** The fingerprint of the payout details the resume screen showed (`payoutFingerprint`). */
+/** A `payoutFingerprint` digest: lowercase hex SHA-256. */
 export const paymentsResumeSchema = z.object({
   fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
 });

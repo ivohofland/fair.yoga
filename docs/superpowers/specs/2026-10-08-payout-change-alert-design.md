@@ -14,7 +14,8 @@ draft said.
    is a bank account in another currency, whose creation already alerted.
 2. **The alert carries a link**, reversing the passkey-added email's "no link"
    precedent for this one email. The link carries no credential and signs no
-   one in; the most it can do is pause, which fails toward safety.
+   one in; all it can do is pause payments, sign every device out and remove
+   recent passkeys, each of which fails toward safety.
 3. **The token rides in the URL fragment, and the pause is a button** (a POST
    with the token in its body). A fragment never reaches the server's logs or
    a Referer; a GET, or a page posting on load, would let a mail scanner pause
@@ -183,7 +184,8 @@ limited per IP under a new prefix, runs one transaction:
    (Decision 4), else null;
 5. delete the account's sessions, push subscriptions and sign-in links (a
    transaction-taking form of `signOutEverywhere`), and its passkeys created
-   at or after `cutoff` (a re-pause computes its own, possibly later, one).
+   at or after `cutoff` (a re-pause uses the later of the frozen cutoff and
+   its own).
 
 A failure anywhere rolls the consume back, so a 503 does not burn the link.
 

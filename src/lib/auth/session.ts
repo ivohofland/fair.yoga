@@ -20,9 +20,10 @@ function hashToken(token: string): string {
 }
 
 /**
- * Mints a session for `accountId` and returns its raw token. A passkey
- * sign-in names the credential it verified (`passkeyCredentialId`); every
- * other door leaves it out, so the row records no passkey.
+ * Mints a session for `accountId` and returns its raw token.
+ * `passkeyCredentialId` names the credential a passkey sign-in verified;
+ * omitted, the row records no passkey (which doors pass it:
+ * `docs/technical-architecture.md`, "Which passkey a session signed in with").
  */
 export async function createSession(
   db: PrismaClient,

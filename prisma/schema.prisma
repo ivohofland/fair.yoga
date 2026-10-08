@@ -259,7 +259,7 @@ enum PayoutChangeKind {
 /// One change to where a teacher's students pay. `before`/`after` are masked
 /// strings only, never the stored value. `accountCurrency` names which bank
 /// account changed; it is not a frozen price. `identifierChanged`, set on the
-/// two `_changed` kinds only, says whether the full account number or link
+/// two `_changed` kinds only, says whether the full account identifier or link
 /// differs, which equal masks cannot tell.
 model PayoutChangeEvent {
   id                String             @id @default(uuid())

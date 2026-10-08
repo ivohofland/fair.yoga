@@ -169,8 +169,8 @@ export const LOCK_CONTENTION_TESTS = [
   'src/services/currency-switch-lock-order.test.ts',
   // #758: the same shape, for the bank-account save's `Teacher` gate.
   'src/app/api/teachers/[id]/bank-accounts/[currency]/route-lock-order.test.ts',
-  // #786: the pause waits out a held passkey row under the 2s bound; its
-  // header carries the reason.
+  // #786: the pause waits out a held passkey row under the shared lock
+  // bound; its header carries the reason.
   'src/services/payout-pause-lock-order.test.ts',
   // #786: the bank-account route's shape, for the resume's `Teacher` gate.
   'src/services/payout-resume-lock-order.test.ts',

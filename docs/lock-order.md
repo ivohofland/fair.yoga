@@ -2096,14 +2096,13 @@ and the same raise in a currency-switching save that also changes `pageSlug`
 - The bank-account save and removal (`saveBankAccount` and
   `removeBankAccount`, `src/services/bank-accounts.ts`, behind
   `PUT`/`DELETE /api/teachers/[id]/bank-accounts/[currency]`):
-  `lockTeacherForNoKeyUpdate` as the first lock (#786; `lockTeacherForShare`
-  before it), then a read of the one `TeacherBankAccount` row on
+  `lockTeacherForNoKeyUpdate` as the first lock (#786), then a read of the one `TeacherBankAccount` row on
   `(teacherId, currency)`, its upsert or delete, and an insert of the
   `PayoutChangeEvent` that records the change. A save whose values are
   already stored writes nothing and inserts no event. Under `FOR SHARE` two
   saves could both read the same row as "before"; this mode conflicts with
   itself, so they serialise. It also conflicts with
-  the `FOR SHARE` creators above, which these writers now wait out and which
+  the `FOR SHARE` creators above, which these writers wait out and which
   wait them out; neither side holds another lock the other wants. An erasure
   holds the row `FOR NO KEY UPDATE`, so a save that arrives during one waits,
   finds the row erased and answers 404. Without the lock the upsert's

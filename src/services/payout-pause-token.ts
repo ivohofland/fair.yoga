@@ -11,8 +11,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Mints the secret behind one payout-change email's "This wasn't me" link and
  * returns it raw. Only its SHA-256 is stored, so a database read cannot be
  * turned into a pause link; the raw value exists in the returned string and
- * the email it goes into, nowhere else. `POST /api/payout-pause` resolves it
- * by `hashToken(raw)`.
+ * the email it goes into, nowhere else. `pausePayments` looks it up by
+ * `hashToken(raw)`.
  */
 export async function mintPayoutPauseToken(db: PrismaClient, teacherId: string, eventId: string): Promise<string> {
   const raw = crypto.randomBytes(32).toString('hex');
