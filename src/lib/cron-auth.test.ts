@@ -3,10 +3,8 @@ import { NextRequest } from 'next/server';
 import { requireCronAuth, hasCronSecret } from './cron-auth';
 
 /**
- * `requireCronAuth` and `hasCronSecret` guard the `/api/cron/*` routes,
- * standing between a stranger and sweeps that generate classes, send email, or
- * transition class states. `hasCronSecret` performs constant-time comparison to
- * prevent timing attacks; `requireCronAuth` wraps it and returns HTTP responses
+ * `hasCronSecret` answers whether a request carries the cron secret,
+ * compared in constant time; `requireCronAuth` wraps it into an HTTP refusal
  * (null to allow, NextResponse to reject).
  *
  * Per `docs/technical-architecture.md`, a shared guard earns coverage **once**,
@@ -47,6 +45,11 @@ describe('hasCronSecret', () => {
   it('is false with no header', () => {
     process.env.CRON_SECRET = 'right-secret';
     expect(hasCronSecret(req())).toBe(false);
+  });
+
+  it('is false for "Bearer undefined" when no secret is configured', () => {
+    delete process.env.CRON_SECRET;
+    expect(hasCronSecret(req('Bearer undefined'))).toBe(false);
   });
 
   it('is false when no secret is configured, or it is empty', () => {
