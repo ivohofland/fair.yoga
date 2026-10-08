@@ -3,15 +3,20 @@ import { render, screen } from '@testing-library/react';
 import type { ResumeReview } from '@/services/payout-resume';
 import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 
-const { requireTeacherSession, readResumeReview, count } = vi.hoisted(() => ({
+const { requireTeacherSession, readResumeReview, count, teacherFindUnique } = vi.hoisted(() => ({
   requireTeacherSession: vi.fn(),
   readResumeReview: vi.fn<(...args: unknown[]) => Promise<ResumeReview | null>>(),
   count: vi.fn<(args: unknown) => Promise<number>>(),
+  teacherFindUnique: vi.fn<(args: unknown) => Promise<{ paymentsResumedAt: Date | null } | null>>(),
 }));
 
 vi.mock('@/lib/session', () => ({ requireTeacherSession }));
 vi.mock('@/lib/db', () => ({
-  prisma: { passkeyCredential: { count }, account: { findUniqueOrThrow: async () => ({ email: 'anna@test.local' }) } },
+  prisma: {
+    passkeyCredential: { count },
+    account: { findUniqueOrThrow: async () => ({ email: 'anna@test.local' }) },
+    teacher: { findUnique: teacherFindUnique },
+  },
 }));
 vi.mock('@/services/payout-resume', () => ({ readResumeReview }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
@@ -48,6 +53,29 @@ beforeEach(() => {
 });
 
 describe('the resume-payments page', () => {
+  // A resume refreshes this page, so the not-paused answer is what the
+  // teacher reads straight after resuming.
+  it('says when payments were resumed, and that students were told then', async () => {
+    readResumeReview.mockResolvedValue(null);
+    teacherFindUnique.mockResolvedValue({ paymentsResumedAt: new Date('2026-07-20T14:05:00Z') });
+
+    render(await ResumePaymentsPage());
+
+    expect(screen.getByText(/Payments are running\. You resumed them on 20 Jul 2026, 14:05/)).toBeInTheDocument();
+    expect(document.body.textContent).toContain('were told then that they can pay');
+    expect(screen.queryByRole('button', { name: 'Resume payments' })).toBeNull();
+  });
+
+  it('says payments are not paused for a teacher who never paused', async () => {
+    readResumeReview.mockResolvedValue(null);
+    teacherFindUnique.mockResolvedValue({ paymentsResumedAt: null });
+
+    render(await ResumePaymentsPage());
+
+    expect(document.body.textContent).toContain('Payments aren’t paused.');
+    expect(document.body.textContent).not.toContain('resumed');
+  });
+
   it('says a removed passkey leaves only the date the resume opens, with no way to sign in past it', async () => {
     readResumeReview.mockResolvedValue(review({
       passkeyRequired: true, passkeyRemoved: true, fallbackOpensAt: new Date('2026-08-03T12:00:00Z'),
