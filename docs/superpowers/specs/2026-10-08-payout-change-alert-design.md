@@ -21,13 +21,25 @@ draft said.
    the teacher after every honest edit.
 4. **Passkey eligibility is frozen at the pause.** The pause writes
    `Teacher.pausePasskeyCutoff` = `windowStart − PAUSE_PASSKEY_LOOKBACK_DAYS`
-   (7) when the account then holds a passkey created before that instant, else
-   null. Resume reads only that snapshot: a non-null cutoff requires a session
-   signed in with a passkey created before it. A passkey registered after the
-   pause, or racing it, is never eligible; deleting the teacher's passkeys
-   after the pause changes nothing. The pause also deletes passkeys created at
-   or after the cutoff — defence in depth against a thief signing back in, not
-   the gate.
+   (7) when the account then holds a passkey created before that instant, or
+   holds a `RemovedPasskey` whose `credentialCreatedAt` is before it and whose
+   `removedAt` is at or after it; else null. A passkey removal records that
+   row in the delete's own transaction and emails the account address, so a
+   thief signed in by an emailed link who removes the teacher's passkeys and
+   then changes the details leaves the requirement standing. The removal must
+   fall at or after the cutoff, not the window start: the thief removes
+   before changing, so a removal bounded by the window start would miss
+   exactly that case; one older than the lookback is a week-old email the
+   teacher had the chance to act on. When only a removed passkey made the
+   cutoff non-null, no live passkey can satisfy it, the resume screen says
+   "A passkey on this account was removed recently; resuming opens on
+   <date>", and only the fallback (Decision 5) opens. Resume reads only the
+   snapshot: a non-null cutoff requires a session signed in with a passkey
+   created before it. A passkey registered after the pause, or racing it, is
+   never eligible; deleting the teacher's passkeys after the pause is refused
+   and would change nothing. The pause also deletes passkeys created at or
+   after the cutoff — defence in depth against a thief signing back in, not
+   the gate — and records no removal for them, since none could ever count.
 5. **Lost-passkey fallback.** Fourteen days after `paymentsPausedAt`
    (`PAUSE_PASSKEY_FALLBACK_DAYS`), resume no longer requires the passkey. A
    frozen requirement with no exit would lock a teacher who lost their device
@@ -46,8 +58,12 @@ draft said.
    alert, as the payment link already does.
 
 **Residual risk, stated plainly:** a teacher with no passkey older than the
-cutoff can be resumed by anyone holding their inbox, and after fourteen days
-so can one who has. The pause still signs everyone out, removes recent
+cutoff (and none removed since it) can be resumed by anyone holding their
+inbox, and after fourteen days so can one who has. A thief who registers a
+passkey from a magic-link session more than `PAUSE_PASSKEY_LOOKBACK_DAYS`
+before changing the details holds a passkey older than the cutoff, which the
+resume trusts; the passkey-added email to the account address is the signal
+for it. The pause still signs everyone out, removes recent
 passkeys and stops students paying; the resume screen nudges a teacher without
 a passkey to add one after resuming.
 
@@ -94,8 +110,13 @@ link masks to a host, and for every link product the payee is in the path.
   onDelete Cascade, expiresAt, createdAt }` — sha256 (`hashToken`) of 32 random
   bytes, `PAUSE_TOKEN_TTL_DAYS` = 14. A resume deletes the teacher's tokens:
   everything they pointed at has just been confirmed.
-- Erasure deletes the teacher's events and tokens; the GDPR export includes
-  the events; the daily auth cleanup deletes expired tokens.
+- `RemovedPasskey { id, accountId, credentialCreatedAt, removedAt }` —
+  written by a passkey removal in the delete's own transaction (Decision 4),
+  never by the pause's own deletions or by erasure.
+- Erasure deletes the teacher's events and tokens, and the account's
+  `RemovedPasskey` rows wherever it deletes its passkeys; the GDPR export
+  includes the events (it lists no passkeys, so no removals); the daily auth
+  cleanup deletes expired tokens.
 
 ## Locks
 
@@ -141,7 +162,8 @@ limited per IP under a new prefix, runs one transaction:
    `paymentsResumedAt`;
 4. `cutoff` = `windowStart − PAUSE_PASSKEY_LOOKBACK_DAYS`; unless already
    paused, set `paymentsPausedAt` = now, `pauseWindowStart` = `windowStart`, and `pausePasskeyCutoff` = `cutoff`
-   when a passkey created before it exists, else null;
+   when a passkey created before it exists or was removed at or after it
+   (Decision 4), else null;
 5. delete the account's sessions, push subscriptions and sign-in links (a
    transaction-taking form of `signOutEverywhere`), and its passkeys created
    at or after `cutoff` (a re-pause computes its own, possibly later, one).
@@ -234,7 +256,9 @@ Test-first; each guard gets a recorded mutation.
   cutoff; the page does not pause on load.
 - Surfaces: each reader's paused branch; manual reminder 409; sweep skip;
   overdue predicate both halves.
-- Resume: stale session 403; a magic-link session refused while a cutoff is
+- Resume: stale session 403; passkeys removed from a magic-link session
+  before a change leave the pause's cutoff set and the resume refused until
+  the fallback; a magic-link session refused while a cutoff is
   set, a post-cutoff passkey session refused, a pre-cutoff passkey session
   accepted, the fallback after fourteen days; passkey DELETE refused while
   paused; fingerprint mismatch 409; not paused 200 unchanged; window lists

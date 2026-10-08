@@ -196,6 +196,29 @@ describe('readResumeReview', () => {
   });
 });
 
+describe('readResumeReview, a requirement no live passkey can meet', () => {
+  it('says the passkey was removed when the cutoff stands and no passkey older than it is left', async () => {
+    const cutoff = daysBefore(NOW, 20);
+    const removed = await pausedTeacher({ cutoff });
+    await passkey(removed.accountId, cutoff);
+    const kept = await pausedTeacher({ cutoff });
+    await passkey(kept.accountId, daysBefore(cutoff, 1));
+
+    expect(await readResumeReview(prisma, removed.teacherId, await session(removed.accountId), NOW))
+      .toMatchObject({ passkeyRequired: true, passkeyRemoved: true });
+    expect(await readResumeReview(prisma, kept.teacherId, await session(kept.accountId), NOW))
+      .toMatchObject({ passkeyRequired: true, passkeyRemoved: false });
+  });
+
+  it('says nothing about a removal once the fallback has opened', async () => {
+    const t = await pausedTeacher({ cutoff: daysBefore(NOW, 20) });
+    const opensAt = daysAfter(t.pausedAt, PAUSE_PASSKEY_FALLBACK_DAYS);
+
+    expect(await readResumeReview(prisma, t.teacherId, await session(t.accountId), opensAt))
+      .toMatchObject({ passkeyRequired: false, passkeyRemoved: false });
+  });
+});
+
 describe('resumePayments, the passkey gate', () => {
   it('refuses a session with no passkey while a cutoff is frozen', async () => {
     const t = await pausedTeacher({ cutoff: daysBefore(NOW, 20) });

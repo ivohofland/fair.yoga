@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail, sendPasskeyAddedEmail, sendPayoutChangedEmail } from './email';
-import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail, renderPayoutChangedEmail } from './email-templates';
+import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail, sendPasskeyAddedEmail, sendPasskeyRemovedEmail, sendPayoutChangedEmail } from './email';
+import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail, renderPasskeyRemovedEmail, renderPayoutChangedEmail } from './email-templates';
 import { log } from '@/lib/log';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 
@@ -271,6 +271,46 @@ describe('sendPasskeyAddedEmail', () => {
       expect(sendMock).toHaveBeenCalledWith(
         expect.objectContaining({ to: 'a@test.local', subject, html }),
       );
+    });
+  });
+});
+
+describe('sendPasskeyRemovedEmail', () => {
+  const REMOVED_AT = new Date('2026-10-06T14:03:00Z');
+
+  it('logs instead of sending without a key, and keeps the address out of the line', async () => {
+    delete process.env.EMAIL_DRY_RUN;
+    delete process.env.RESEND_API_KEY;
+    vi.mocked(log.info).mockClear();
+
+    await expect(sendPasskeyRemovedEmail('a@test.local', REMOVED_AT)).resolves.toBeUndefined();
+
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(vi.mocked(log.info)).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(vi.mocked(log.info).mock.calls)).not.toContain('a@test.local');
+  });
+
+  describe('with a key configured', () => {
+    beforeEach(() => {
+      delete process.env.EMAIL_DRY_RUN;
+      process.env.RESEND_API_KEY = 're_real_looking_key';
+    });
+
+    it('throws with the error message when Resend reports { error }', async () => {
+      sendMock.mockResolvedValue({ data: null, error: { message: 'rate limited' } });
+
+      await expect(sendPasskeyRemovedEmail('a@test.local', REMOVED_AT)).rejects.toThrow(
+        'Failed to send passkey-removed email: rate limited',
+      );
+    });
+
+    it('sends the rendered subject and html', async () => {
+      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
+      const { subject, html } = renderPasskeyRemovedEmail(REMOVED_AT);
+
+      await sendPasskeyRemovedEmail('a@test.local', REMOVED_AT);
+
+      expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ to: 'a@test.local', subject, html }));
     });
   });
 });

@@ -580,10 +580,14 @@ describe('GDPR on dual-role accounts', () => {
     });
     soloStudentId = solo.id;
     soloAccountId = solo.accountId!;
+    await prisma.removedPasskey.createMany({
+      data: [accountId, soloAccountId].map((id) => ({ accountId: id, credentialCreatedAt: new Date('2026-01-01T00:00:00Z') })),
+    });
   });
 
   afterAll(async () => {
     await prisma.session.deleteMany({ where: { accountId: { in: [accountId, soloAccountId] } } });
+    await prisma.removedPasskey.deleteMany({ where: { accountId: { in: [accountId, soloAccountId] } } });
     await prisma.student.deleteMany({ where: { id: { in: [studentId, soloStudentId] } } });
     await prisma.teacher.deleteMany({ where: { id: teacherId } });
     await prisma.account.deleteMany({ where: { id: { in: [accountId, soloAccountId] } } });
@@ -595,6 +599,7 @@ describe('GDPR on dual-role accounts', () => {
 
     // The living teacher profile still uses this account.
     expect(await prisma.session.count({ where: { accountId } })).toBe(1);
+    expect(await prisma.removedPasskey.count({ where: { accountId } })).toBe(1);
     const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
     expect(account.email).toBe(`${suffix}@test.local`);
   });
@@ -604,6 +609,7 @@ describe('GDPR on dual-role accounts', () => {
 
     const account = await prisma.account.findUniqueOrThrow({ where: { id: soloAccountId } });
     expect(account.email).toBe(`deleted-${soloAccountId}@deleted.invalid`);
+    expect(await prisma.removedPasskey.count({ where: { accountId: soloAccountId } })).toBe(0);
   });
 
   it('composed route order (student half, then teacher half) leaves nothing behind', async () => {
@@ -614,6 +620,7 @@ describe('GDPR on dual-role accounts', () => {
 
     expect(await prisma.session.count({ where: { accountId } })).toBe(0);
     expect(await prisma.passkeyCredential.count({ where: { accountId } })).toBe(0);
+    expect(await prisma.removedPasskey.count({ where: { accountId } })).toBe(0);
     const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
     expect(account.email).toBe(`deleted-${accountId}@deleted.invalid`);
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });

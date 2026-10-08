@@ -7,6 +7,7 @@ import {
   renderMagicLinkEmail,
   renderInvitationEmail,
   renderPasskeyAddedEmail,
+  renderPasskeyRemovedEmail,
   renderPayoutChangedEmail,
   renderDegradationDigestEmail,
 } from './email-templates';
@@ -424,6 +425,24 @@ describe('renderDegradationDigestEmail', () => {
 
     it('carries no link, so there is no token to forward or phish with', () => {
       const { html } = renderPasskeyAddedEmail(addedAt);
+      expect(html).not.toContain('<a ');
+      expect(html).not.toContain('href');
+    });
+  });
+
+  describe('passkey-removed email', () => {
+    const removedAt = new Date('2026-10-06T14:03:00Z');
+
+    it('says a passkey was removed, when, and what to do if it was not the reader', () => {
+      const { subject, html } = renderPasskeyRemovedEmail(removedAt);
+      expect(subject).toBe('A passkey was removed from your fair.yoga account');
+      expect(html).toContain('6 Oct 2026, 14:03 UTC');
+      expect(html).toContain('sign out everywhere');
+      expect(html).toContain('Settings → Profile');
+    });
+
+    it('carries no link, like the passkey-added email', () => {
+      const { html } = renderPasskeyRemovedEmail(removedAt);
       expect(html).not.toContain('<a ');
       expect(html).not.toContain('href');
     });

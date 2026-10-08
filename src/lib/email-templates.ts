@@ -271,6 +271,29 @@ export function renderPasskeyAddedEmail(addedAt: Date): { subject: string; html:
   return { subject, html };
 }
 
+/**
+ * The notice sent after a passkey is removed. No link, for the reason
+ * `renderPasskeyAddedEmail` gives.
+ */
+export function renderPasskeyRemovedEmail(removedAt: Date): { subject: string; html: string } {
+  const when = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(removedAt);
+  const subject = 'A passkey was removed from your fair.yoga account';
+  const html = wrapEmail(
+    'A passkey was removed',
+    `<p style="margin:0 0 16px;">A passkey was removed from your fair.yoga account on ${escapeHtml(when)} UTC. It can no longer sign in to your account.</p>
+     <p style="margin:0;">If that was you, there is nothing to do. If it was not, someone else is signed in to your account: sign in, choose sign out everywhere under Settings → Profile if you teach (under Account if you are a student), and check your payment details.</p>`,
+  );
+  return { subject, html };
+}
+
 export interface PayoutChangedEmailInput {
   kind: PayoutChangeKind;
   accountCurrency: Currency | null;
