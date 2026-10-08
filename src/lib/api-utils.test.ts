@@ -373,6 +373,35 @@ describe('parseBody', () => {
     }
   });
 
+  it('logs a 415 at warn with the media type only, never its parameters or the query', async () => {
+    vi.mocked(log.warn).mockClear();
+    const request = makeRequest('http://localhost/api/test?token=secret-token', {
+      method: 'PUT',
+      body: 'a=1',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=secret-param' },
+    });
+    expect('error' in (await parseBody(request, testSchema))).toBe(true);
+    expect(log.warn).toHaveBeenCalledOnce();
+    expect(log.warn).toHaveBeenCalledWith(
+      { method: 'PUT', path: '/api/test', contentType: 'application/x-www-form-urlencoded' },
+      'request body refused: not sent as JSON',
+    );
+    expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain('secret');
+  });
+
+  it('logs a missing Content-Type as null', async () => {
+    vi.mocked(log.warn).mockClear();
+    const request = makeRequest('http://localhost/api/test', {
+      method: 'POST',
+      body: new Blob(['{}']),
+    });
+    await parseBody(request, testSchema);
+    expect(log.warn).toHaveBeenCalledWith(
+      { method: 'POST', path: '/api/test', contentType: null },
+      'request body refused: not sent as JSON',
+    );
+  });
+
   it('refuses a body with no Content-Type', async () => {
     const request = makeRequest('http://localhost/api/test', {
       method: 'POST',
@@ -589,6 +618,23 @@ describe('withErrorHandler', () => {
     expect(res.status).toBe(403);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('CROSS_ORIGIN');
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('logs a cross-origin refusal at warn with its reason and hosts, never the query or cookies', async () => {
+    const res = await withErrorHandler(vi.fn(async () => NextResponse.json({ ok: true })))(
+      makeRequest('http://localhost:3000/api/test?token=secret-token', {
+        method: 'POST',
+        headers: { host: 'localhost:3000', origin: 'https://evil.example', cookie: 'session=secret-cookie' },
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(log.warn).toHaveBeenCalledOnce();
+    expect(log.warn).toHaveBeenCalledWith(
+      { method: 'POST', path: '/api/test', reason: 'host-mismatch', originHost: 'evil.example', host: 'localhost:3000' },
+      'cross-origin write refused',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+    expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain('secret');
   });
 
   it('runs the handler for a same-origin write', async () => {

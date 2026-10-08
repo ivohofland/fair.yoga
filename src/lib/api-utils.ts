@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { validateSession, getSessionToken, hasRecentAuth } from './auth';
 import { prisma } from './db';
 import { classifyApiError } from './api-errors';
-import { isCrossOrigin } from './cross-origin';
+import { crossOriginRefusal } from './cross-origin';
 import type { ApiErrorCode, CodedRefusal, StatusOf } from './api-error-codes';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
@@ -168,8 +168,18 @@ export async function parseBody<T>(
   request: NextRequest,
   schema: z.ZodType<T>,
 ): Promise<{ data: T } | { error: NextResponse }> {
-  // A cross-site form can post text/plain without a preflight; JSON cannot.
-  if (!isJsonContentType(request.headers.get('content-type'))) {
+  // A cross-site form can post text/plain, urlencoded or multipart without a
+  // preflight; application/json cannot.
+  const contentType = request.headers.get('content-type');
+  if (!isJsonContentType(contentType)) {
+    log.warn(
+      {
+        method: request.method,
+        path: request.nextUrl.pathname,
+        contentType: contentType === null ? null : (contentType.split(';')[0]?.trim() ?? ''),
+      },
+      'request body refused: not sent as JSON',
+    );
     return { error: respondError('Send this request as JSON.', 415, 'UNSUPPORTED_MEDIA_TYPE') };
   }
 
@@ -215,10 +225,12 @@ export function pick<T extends Record<string, unknown>>(
 /**
  * Wraps an API route handler in a try-catch to prevent unhandled exceptions
  * from leaking stack traces to the client. A cross-origin write
- * (`isCrossOrigin`) is refused with `CROSS_ORIGIN` before the handler runs.
+ * (`crossOriginRefusal`) is refused with `CROSS_ORIGIN` before the handler
+ * runs, and logged at `warn` with why — so a deployment whose proxy rewrites
+ * `Host` shows up in the log rather than only as refused writes.
  *
- * Exactly one log call and one response, both unconditional. Error-specific
- * behaviour lives in `classifyApiError` (src/lib/api-errors.ts), so adding a
+ * An uncaught error gets exactly one log call and one response, both
+ * unconditional. Error-specific behaviour lives in `classifyApiError` (src/lib/api-errors.ts), so adding a
  * case cannot skip the logger the way the old P2002 early return did (#121).
  *
  * The request is named positionally and only the trailing arguments are
@@ -239,7 +251,18 @@ export function withErrorHandler<Rest extends unknown[]>(
 ): (request: NextRequest, ...rest: Rest) => Promise<NextResponse> {
   return async (request: NextRequest, ...rest: Rest): Promise<NextResponse> => {
     try {
-      if (isCrossOrigin(request)) {
+      const refusal = crossOriginRefusal(request);
+      if (refusal !== null) {
+        log.warn(
+          {
+            method: request.method,
+            path: request.nextUrl.pathname,
+            reason: refusal.reason,
+            originHost: refusal.originHost,
+            host: refusal.host,
+          },
+          'cross-origin write refused',
+        );
         return respondError('This request came from another site, so it was refused.', 403, 'CROSS_ORIGIN');
       }
       return await handler(request, ...rest);
