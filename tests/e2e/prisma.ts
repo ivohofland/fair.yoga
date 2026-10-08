@@ -8,6 +8,6 @@ import { undefinedFilterGuard } from '../undefined-filter-guard';
  * cleanup (#783)".
  */
 export function createGuardedPrismaClient(...args: ConstructorParameters<typeof PrismaClient>): PrismaClient {
-  // The cast restores `PrismaClient`'s type; the extended client has no `$on`/`$use`.
+  // The cast restores `PrismaClient`'s type; the extended client has no `$on`.
   return new PrismaClient(...args).$extends(undefinedFilterGuard) as unknown as PrismaClient;
 }
