@@ -915,6 +915,33 @@ signed out. A successful registration emails the account address
 (`deliverPasskeyAddedNotice`, `FireAndForget`: the registration has committed
 and its response must not depend on the provider).
 
+**Which passkey a session signed in with.** `Session.passkeyCredentialId` names
+the credential a passkey sign-in verified: `passkey/authenticate/verify` passes
+it to `createSession`, and every other session-issuing door (below) leaves it
+null, so a magic-link session records no passkey. It is `ON DELETE SET NULL`
+against `PasskeyCredential`, so deleting a passkey leaves its sessions
+standing with no credential named.
+
+**Resuming paused payments** (`POST /api/teachers/[id]/payments-resume`,
+`resumePayments` in `src/services/payout-resume.ts`) is the one action that
+reads that column. In order: ownership; `requireRecentAuth`, the same 5-minute
+rule as adding a passkey; a teacher who is not paused answers `200` unchanged,
+so a double-submit is answered rather than refused; then the passkey the pause
+froze. When the pause wrote a `pausePasskeyCutoff` (the account then held a
+passkey older than it) and fewer than `PAUSE_PASSKEY_FALLBACK_DAYS` (14) have
+passed since `paymentsPausedAt`, the session's `passkeyCredentialId` must name
+one of the account's credentials created before the cutoff, else `403
+PASSKEY_REQUIRED`: a passkey registered after the pause, from a session an
+inbox thief could mint, is never eligible, and the passkey-removal refusal
+above keeps the eligible ones in place. After the fourteen days, or with no
+cutoff, no passkey is required — the residual risk the design states
+(`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
+Decisions 4 and 5). Last, under the teacher's `FOR NO KEY UPDATE` lock, it
+re-checks paused and the passkey, and compares the fingerprint the resume
+screen posted (`payoutFingerprint`, `src/lib/payout-fingerprint.ts`: sha256
+over every bank account in every currency, column by column, and the link)
+with the details now, else `409 PAYOUT_DETAILS_CHANGED`.
+
 **Offline cache and `Clear-Site-Data`.** The service worker keeps visited pages
 for 24 hours so a teacher with no signal in a studio can still open them. Ending a
 session elsewhere is already handled without the header: local sign-out and
