@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,8 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState('');
+  const [removed, setRemoved] = useState('');
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const busy = saving || removing;
   const url = `/api/teachers/${teacherId}/payment-link`;
 
@@ -36,12 +38,14 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
     setFieldError('');
     setError('');
     setSuccess('');
+    setRemoved('');
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setSuccess('');
+    setRemoved('');
     const parsed = parsePaymentLink(value);
     if (!parsed.ok) {
       setFieldError(PAYMENT_LINK_MESSAGES[parsed.error]);
@@ -76,6 +80,7 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
   async function handleRemove() {
     setRemoving(true);
     setRemoveError('');
+    setRemoved('');
     setError('');
     setSuccess('');
     try {
@@ -88,7 +93,10 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
       setConfirming(false);
       setValue('');
       setFieldError('');
-      setSuccess('Payment link removed.');
+      setRemoved('Payment link removed.');
+      // The control that had focus is gone; the section's heading is where the
+      // outcome line sits.
+      headingRef.current?.focus();
       router.refresh();
     } catch (err) {
       logRequestFailure('payment-link-form', { teacherId }, err);
@@ -100,7 +108,9 @@ export function PaymentLinkForm({ teacherId, initial, hasLink }: PaymentLinkForm
 
   return (
     <section className="mt-10 pt-6 border-t border-border flex flex-col gap-4">
-      <h2 className="type-subtitle">Payment link</h2>
+      <h2 ref={headingRef} tabIndex={-1} className="type-subtitle focus:outline-none">Payment link</h2>
+      {/* Mounted empty, so its text arriving is announced; `sr-only` keeps it out of the layout until then. */}
+      <p role="status" className="type-caption text-teal empty:sr-only">{removed}</p>
       <form onSubmit={handleSave} noValidate className="flex flex-col gap-4">
         <Input
           id="payment-link"

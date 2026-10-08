@@ -105,6 +105,20 @@ describe('PaymentLinkForm', () => {
     expect(screen.getByLabelText('Payment link')).toHaveValue('');
   });
 
+  it('says what it removed in a live region mounted beforehand, and moves focus to the section heading', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: { paymentLink: null } }), { status: 200 }));
+    renderForm('https://paypal.me/anna', true);
+    const region = screen.getByRole('status');
+    expect(region).toHaveTextContent('');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove payment link' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(region).toHaveTextContent('Payment link removed.'));
+    expect(screen.getByRole('status')).toBe(region);
+    expect(screen.getByRole('heading', { name: 'Payment link' })).toHaveFocus();
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+  });
+
   it('cancelling sends nothing and keeps the link', () => {
     renderForm('https://paypal.me/anna', true);
     fireEvent.click(screen.getByRole('button', { name: 'Remove payment link' }));
