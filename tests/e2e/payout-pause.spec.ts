@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { mintPayoutPauseToken } from '@/services/payout-pause-token';
 import { uniqueSuffix, seedSession, sessionCookie, cookie } from '../helpers';
 
@@ -10,7 +10,7 @@ import { uniqueSuffix, seedSession, sessionCookie, cookie } from '../helpers';
  * screen's form and the schedule card it clears are the teacher's way back.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 test.describe('Payout pause and resume', () => {
