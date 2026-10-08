@@ -4,9 +4,9 @@
  * file from one project leaves that tier's test-built clients plain, and
  * nothing else would notice: its tests still pass.
  *
- * The config is read through `unknown` and narrowed by hand, as in
- * `tests-root-membership.test.ts`, so a reshaped config fails here by name
- * rather than reading as "no project has a database".
+ * The config is read through `unknown` and narrowed by hand, and the first
+ * case requires the database tiers to be found, so a reshaped config fails
+ * here by name rather than reading as "no project has a database".
  */
 import { describe, it, expect } from 'vitest';
 import config from '../../vitest.config';

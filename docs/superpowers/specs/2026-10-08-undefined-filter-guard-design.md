@@ -132,9 +132,9 @@ the hook names, it:
   initializer;
 - reports whether the write sits under an `if`/`&&`/`?:` whose condition
   mentions that binding, or after an earlier `if (…) return;`/`throw` whose
-  condition holds only when the binding is absent (`!x`, a `==`/`===`
-  comparison with `null` or `undefined`, or an `||` with such a disjunct)
-  (**guarded**), or not (**unguarded**);
+  condition holds whenever the binding is undefined (`!x`, `x == null`,
+  `x == undefined`, `x === undefined`, either operand order, or an `||` with
+  such a disjunct; not `x === null`) (**guarded**), or not (**unguarded**);
 - separately lists calls in the hook that pass a possibly-`undefined` binding
   as an argument to a function. That is the indirect shape. It skips the
   non-bulk methods of a Prisma model delegate (reads, `create`, unique-`where`
