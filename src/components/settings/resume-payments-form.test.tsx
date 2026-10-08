@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
+import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 import { ResumePaymentsForm, PASSKEY_RECENT_AUTH_COPY } from './resume-payments-form';
 
 const FINGERPRINT = 'f'.repeat(64);
@@ -84,6 +85,7 @@ describe('ResumePaymentsForm', () => {
     await settle();
 
     expect(screen.getByRole('alert')).toHaveTextContent(PASSKEY_RECENT_AUTH_COPY);
+    expect(PASSKEY_RECENT_AUTH_COPY).toContain(`within ${RECENT_AUTH_WINDOW_MS / 60_000} minutes`);
     expect(screen.getByRole('alert')).not.toHaveTextContent('emailed');
     expect(screen.getByRole('button', { name: 'Resume payments' })).toBeEnabled();
   });

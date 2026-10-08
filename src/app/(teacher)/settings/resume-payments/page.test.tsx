@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { ResumeReview } from '@/services/payout-resume';
+import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 
 const { requireTeacherSession, readResumeReview, count } = vi.hoisted(() => ({
   requireTeacherSession: vi.fn(),
@@ -67,6 +68,17 @@ describe('the resume-payments page', () => {
     expect(screen.getByRole('heading', { name: 'Sign in with your passkey to resume' })).toBeInTheDocument();
     expect(screen.getByTestId('sign-out')).toBeInTheDocument();
     expect(screen.queryByText(/was removed recently/)).toBeNull();
+    expect(document.body.textContent).toContain(`then resume within ${RECENT_AUTH_WINDOW_MS / 60_000} minutes.`);
+  });
+
+  it('tells a passkey session how long it has to resume', async () => {
+    readResumeReview.mockResolvedValue(review({
+      passkeyRequired: true, sessionSatisfiesPasskey: true, fallbackOpensAt: new Date('2026-08-03T12:00:00Z'),
+    }));
+
+    render(await ResumePaymentsPage());
+
+    expect(document.body.textContent).toContain(`Resume within ${RECENT_AUTH_WINDOW_MS / 60_000} minutes of signing in`);
   });
 });
 

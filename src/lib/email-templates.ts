@@ -8,6 +8,7 @@
 
 import type { Currency, NotificationType, PayoutChangeKind } from '@prisma/client';
 import type { PayGuidance } from './payment-methods';
+import { PAUSE_TOKEN_TTL_DAYS } from '@/services/payout-pause-token';
 import {
   STUDENT_INVITATION_LABEL,
   STUDENT_INVITATION_PATH,
@@ -405,7 +406,7 @@ export function renderPayoutChangedEmail(input: PayoutChangedEmailInput): { subj
      <p style="margin:0 0 16px;">${lines.join('<br>')}</p>
      <p style="margin:0 0 16px;">If that was you, there is nothing to do. If it was not, pause payments now: students are told to hold off, and every device is signed out.</p>
      <p style="margin:0 0 16px;"><a href="${escapeHtml(input.pauseUrl)}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">This wasn't me</a></p>
-     <p style="margin:0;font-size:13px;color:#71645A;">The link works for 14 days and pauses payments only; it does not sign anyone in.</p>`,
+     <p style="margin:0;font-size:13px;color:#71645A;">The link works for ${PAUSE_TOKEN_TTL_DAYS} days. It can only pause payments and sign devices out; it never signs anyone in.</p>`,
     PAYOUT_CHANGED_FOOTER,
   );
   return { subject, html };

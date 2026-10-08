@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 
 type State = { kind: 'ready' } | { kind: 'resuming' } | { kind: 'resumed' } | { kind: 'refused'; message: string };
@@ -12,11 +13,12 @@ const linkClass =
   'text-teal underline decoration-[0.5px] underline-offset-[3px] rounded-field focus:outline-none focus-visible:shadow-focus';
 
 /**
- * A stale session's way through when the pause requires a passkey: the
- * server's own copy points at an emailed link, whose session cannot resume.
+ * A stale session's way through when the pause requires a passkey, shown in
+ * place of the server's copy; why the server's does not fit here:
+ * `docs/technical-architecture.md`, "Recent authentication".
  */
 export const PASSKEY_RECENT_AUTH_COPY =
-  'For your security, sign out and sign in again with your passkey, then resume within five minutes.';
+  `For your security, sign out and sign in again with your passkey, then resume within ${RECENT_AUTH_WINDOW_MS / 60_000} minutes.`;
 
 /**
  * The resume button. Sends back the fingerprint of the details the page

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { log } from '@/lib/log';
+import { PAUSE_TOKEN_TTL_DAYS } from '@/services/payout-pause-token';
 import {
   CLASS_REMINDER_EMAIL_FOOTER,
   escapeHtml,
@@ -531,6 +532,12 @@ describe('renderDegradationDigestEmail', () => {
       const { html } = renderPayoutChangedEmail(base);
       expect(html).toContain('href="https://fair.yoga/payout-pause#t=abc123"');
       expect(html).toContain("This wasn't me");
+    });
+
+    it('says how long the link works and everything it can do', () => {
+      const { html } = renderPayoutChangedEmail(base);
+      expect(html).toContain(`The link works for ${PAUSE_TOKEN_TTL_DAYS} days. It can only pause payments and sign devices out; it never signs anyone in.`);
+      expect(html).not.toContain('pauses payments only');
     });
 
     it('does not offer an opt-out it does not have', () => {
