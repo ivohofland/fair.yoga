@@ -115,6 +115,12 @@ describe('proxy', () => {
     const [pattern] = config.matcher;
     const matches = (path: string): boolean => new RegExp(`^${pattern}$`).test(path);
 
+    it('is the one pattern the cases below read', () => {
+      // A second entry in Next's path syntax ('/api/:path*') is not a regex
+      // these cases could evaluate, so it would widen the matcher unseen.
+      expect(config.matcher).toHaveLength(1);
+    });
+
     it('matches every page, public or protected', () => {
       for (const p of ['/', '/login', '/start', '/schedule/2026-10-08', '/some-teacher-slug']) {
         expect(matches(p)).toBe(true);
