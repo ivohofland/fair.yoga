@@ -319,13 +319,14 @@ export const PAYOUT_CHANGE_PHRASES = {
   payment_link_removed: 'A payment link was removed',
 } as const satisfies Record<PayoutChangeKind, string>;
 
+/** The kinds that have both a before and an after to mask alike. */
+type PayoutChangedKind = Extract<PayoutChangeKind, `${string}_changed`>;
+
 /**
  * The warning for a change whose before and after mask to the same string
  * while the full value changed (or nothing says it did not): the mask hides
  * exactly the part of the value someone else would choose.
  */
-type PayoutChangedKind = Extract<PayoutChangeKind, `${string}_changed`>;
-
 const PAYOUT_MASKS_ALIKE_WARNING = {
   bank_account_changed: "The bank details changed, though the account number's last digits look the same. Check the full details in your settings.",
   payment_link_changed: 'The new link looks like the old one here, but it is a different link. Check it in full in your settings.',

@@ -967,7 +967,11 @@ Decisions 4 and 5). Last, under the teacher's `FOR NO KEY UPDATE` lock, it
 re-checks paused and the passkey, and compares the fingerprint the resume
 screen posted (`payoutFingerprint`, `src/lib/payout-fingerprint.ts`: sha256
 over every bank account in every currency, column by column, and the link)
-with the details now, else `409 PAYOUT_DETAILS_CHANGED`.
+with the details now, else `409 PAYOUT_DETAILS_CHANGED`. A resume from the
+resume screen refreshes it, so the screen's not-paused answer states the last
+resume (`paymentsResumedAt`) rather than only that payments are not paused;
+the refresh is what keeps a Back to the schedule from showing the paused card
+it cached.
 
 **Offline cache and `Clear-Site-Data`.** The service worker keeps visited pages
 for 24 hours so a teacher with no signal in a studio can still open them. Ending a

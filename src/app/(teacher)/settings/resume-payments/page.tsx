@@ -95,7 +95,6 @@ export default async function ResumePaymentsPage() {
     prisma.account.findUniqueOrThrow({ where: { id: session.accountId }, select: { email: true } }),
   ]);
 
-  // Also what a resume from this page refreshes to, so it states the resume.
   if (review === null) {
     const resumed = await prisma.teacher.findUnique({ where: { id: session.teacherId }, select: { paymentsResumedAt: true } });
     const resumedAt = resumed?.paymentsResumedAt ?? null;
