@@ -1,0 +1,40 @@
+name: I have an idea
+description: Suggest something that would make fair.yoga more useful to you.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        fair.yoga is a calm tool, not an engagement platform: no streaks, no reward badges, no marketplace. Ideas in that spirit are very welcome.
+
+        **This page is public** — please leave out names, email addresses and payment details.
+  - type: dropdown
+    id: role
+    attributes:
+      label: I use fair.yoga as a…
+      options:
+        - Teacher
+        - Student
+        - Developer / contributor
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help you?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why? What does it make easier?
+      description: A moment from your week where this would have helped is the most useful thing you can tell us.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I haven't included anyone's name, email address, phone number or payment details.
+          required: true
