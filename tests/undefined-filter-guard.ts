@@ -7,9 +7,8 @@
  *
  * Installed by `tests/setup/undefined-filter-guard.ts` and `tests/e2e/prisma.ts`.
  *
- * Only types come from `@prisma/client`: the unit-tier installer calls this
- * module from inside a `vi.mock('@prisma/client')` factory, where a runtime
- * import would be circular.
+ * Only types come from `@prisma/client`, so this module is callable from
+ * inside a `vi.mock('@prisma/client')` factory.
  */
 import type { PrismaClient } from '@prisma/client';
 
@@ -34,16 +33,16 @@ export function findUndefinedFilterPaths(where: unknown, path: string = 'where')
   return Object.entries(where).flatMap(([key, value]) => findUndefinedFilterPaths(value, `${path}.${key}`));
 }
 
-interface BulkWriteParams {
+interface BulkWriteParams<A> {
   model: string;
   operation: string;
-  args: unknown;
-  query: (args: never) => Promise<unknown>;
+  args: A;
+  query: (args: A) => Promise<unknown>;
 }
 
-async function refuseUndefinedFilter({ model, operation, args, query }: BulkWriteParams): Promise<unknown> {
+async function refuseUndefinedFilter<A>({ model, operation, args, query }: BulkWriteParams<A>): Promise<unknown> {
   if (typeof args === 'object' && args !== null && 'where' in args) {
-    const paths = findUndefinedFilterPaths((args as { where: unknown }).where);
+    const paths = findUndefinedFilterPaths(args.where);
     if (paths.length > 0) {
       throw new Error(
         `${UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX} ${model}.${operation}: ${paths.join(', ')} is undefined. ` +
@@ -52,7 +51,7 @@ async function refuseUndefinedFilter({ model, operation, args, query }: BulkWrit
       );
     }
   }
-  return query(args as never);
+  return query(args);
 }
 
 export const undefinedFilterGuard = {
@@ -69,10 +68,12 @@ export const undefinedFilterGuard = {
 const FRAME = /^\s*at (?:.*? \()?(.+?):\d+:\d+\)?\s*$/;
 
 /**
- * Whether the first stack frame outside libraries, `ignoreFiles` and
- * `repoRoot`-external code is a test file or a module under `tests/`.
- * The path is made relative to `repoRoot` first, so a checkout under a
- * directory named `tests` is not misread.
+ * Whether a stack's call site is test code. Frames in `node:` modules, under
+ * `node_modules/` or in `ignoreFiles` are skipped; the first remaining frame
+ * decides. A frame outside `repoRoot` yields false; one inside yields true when
+ * it is a `.test`/`.spec` file or a module under `tests/`. The path is made
+ * relative to `repoRoot` first, so a checkout under a directory named `tests`
+ * is not misread.
  */
 export function isTestCallSite(stack: string, ignoreFiles: readonly string[], repoRoot: string): boolean {
   const root = repoRoot.endsWith('/') ? repoRoot : `${repoRoot}/`;

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
   findUndefinedFilterPaths,
@@ -71,6 +71,28 @@ describe('isTestCallSite', () => {
   });
   it('reads the stack vitest actually produces', () => {
     expect(isTestCallSite(new Error('x').stack ?? '', [], process.cwd())).toBe(true);
+  });
+});
+
+describe('undefinedFilterGuard handler', () => {
+  const handler = undefinedFilterGuard.query.$allModels.updateMany;
+  const call = (args: unknown) => {
+    const query = vi.fn(async (_args: unknown): Promise<unknown> => ({ count: 0 }));
+    return { query, result: handler({ model: 'DegradationEvent', operation: 'updateMany', args, query }) };
+  };
+
+  it('passes a call with no where key to the query', async () => {
+    const args = { data: { occurrences: 1 } };
+    const { query, result } = call(args);
+    await expect(result).resolves.toEqual({ count: 0 });
+    expect(query).toHaveBeenCalledWith(args);
+  });
+  it('refuses an explicit where: undefined without querying', async () => {
+    const { query, result } = call({ where: undefined, data: { occurrences: 1 } });
+    await expect(result).rejects.toThrow(
+      new RegExp(`${UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX.replace(/[[\]]/g, '\\$&')} DegradationEvent\\.updateMany: where is undefined`),
+    );
+    expect(query).not.toHaveBeenCalled();
   });
 });
 
