@@ -1,6 +1,9 @@
 // scripts/census-hook-filters.ts
 //
-// Lists every afterAll/afterEach write whose filter can be undefined (#783).
+// Lists afterAll/afterEach writes whose filter can be undefined (#783): bulk
+// writes in the hook's body and in same-file functions it calls, one level
+// deep, plus calls handing such a binding to a helper it does not follow.
+// Its reach and known misses are in docs/test-database.md (section 6).
 // A report, not a gate: it always exits 0. The runtime guard is the gate.
 // Run: pnpm run census:hook-filters
 import { execFileSync } from 'node:child_process';

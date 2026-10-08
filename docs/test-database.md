@@ -349,22 +349,47 @@ the census marks those rows `app`, and such a hook needs its own `if` guard
 
 **The census.** `pnpm run census:hook-filters` (`scripts/census-hook-filters.ts`,
 analyzer `src/lib/hook-filter-census.ts`) reads every `afterAll`/`afterEach`
-in the tracked test files and lists each bulk write whose `where` reads a
-no-initializer `let`/`var` (`direct`), and each other call handed such a
-binding as an argument (`indirect`, not followed into the callee). A row is
-`guarded` when an enclosing `if`, `&&` or `?:` inside the hook tests every
-binding it reads. On 2026-10-08 it scanned 509 files and printed 843 rows in
-119 files:
+(and Playwright `test.afterAll`/`test.afterEach`) in the tracked test and
+test-helper files. A binding is possibly-`undefined` when it is a `let`/`var`
+declared with no initializer outside a declaration file or `declare`. It
+lists:
+
+- `direct`: a `deleteMany`/`updateMany`/`updateManyAndReturn` in the hook's
+  own body whose object-literal `where` reads such a binding;
+- `indirect`: any other call in the hook handed such a binding anywhere in an
+  argument (`alice?.id`, `[a, b]`, `{ a }`), except a model delegate's reads,
+  `create` and unique-`where` methods, which reject an `undefined` key
+  themselves; and every row found in the body of a function declared in the
+  same file that the hook calls by name, read one level deep.
+
+A row is `guarded` when every binding it reads is mentioned by the condition
+of an `if` whose then-branch holds it, an `&&` whose right side holds it, a
+`?:` whose true branch holds it, or an earlier `if (…) return;`/`throw` in an
+enclosing block. A followed function's row is also guarded by such a
+condition around the hook's call to it.
+
+On 2026-10-08 it scanned 509 tracked test and test-helper files and printed
+813 rows in 108 files:
 
 | | direct | indirect |
 |---|---|---|
-| UNGUARDED | 548 | 63 |
-| guarded | 218 | 14 |
+| UNGUARDED | 545 | 30 |
+| guarded | 219 | 19 |
 
-7 of those rows are `client: app`, 2 of them unguarded. The census is
-syntax-level: an early `if (!id) return;` is not read as a guard, nor is a
-guard on a sibling binding assigned in the same statement, and an `indirect`
-row is any call at all, `Object.defineProperty` included.
+7 of those rows are `client: app`, 2 of them unguarded.
+
+What the census does not see, since it reads syntax and symbols rather than
+values:
+
+- A helper from another file is listed as the call that hands it the
+  binding, never followed; nor is a same-file function's own callee.
+- "Mentions" is not "tests": `if (!id) { write(id) }` reads as guarded.
+- A guard on a sibling binding assigned in the same statement (`if
+  (teacherId)` around a write reading `teacherAccountId`) reads as
+  unguarded.
+- `client` resolves only an identifier imported from `@/lib/db`: a local
+  alias (`const db = prisma`) or the `tx` of that client's `$transaction`
+  reads as `test`.
 
 The census reports; it does not gate. The guard is the gate: an unguarded row
 whose `beforeAll` failed now throws in its `afterAll` instead of wiping a
