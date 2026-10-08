@@ -12,6 +12,8 @@ const liveSessionId = crypto.randomBytes(32).toString('hex');
 const deadSessionId = crypto.randomBytes(32).toString('hex');
 const liveTokenHash = crypto.randomBytes(32).toString('hex');
 const deadTokenHash = crypto.randomBytes(32).toString('hex');
+const livePauseHash = crypto.randomBytes(32).toString('hex');
+const deadPauseHash = crypto.randomBytes(32).toString('hex');
 const staleBudgetEmail = `cleanup-budget-stale-${uniqueSuffix}@test.local`;
 const freshBudgetEmail = `cleanup-budget-fresh-${uniqueSuffix}@test.local`;
 // Fixed, and passed to the sweep, so every fixture sits a known distance from
@@ -32,6 +34,16 @@ describe('cleanupExpiredAuth', () => {
       },
     });
     const teacherAccountId = teacher.accountId;
+
+    const event = await prisma.payoutChangeEvent.create({
+      data: { teacherId: teacher.id, kind: 'payment_link_added', after: 'revolut.me/…cher' },
+    });
+    await prisma.payoutPauseToken.createMany({
+      data: [
+        { tokenHash: livePauseHash, teacherId: teacher.id, eventId: event.id, expiresAt: new Date(now.getTime() + 86400000) },
+        { tokenHash: deadPauseHash, teacherId: teacher.id, eventId: event.id, expiresAt: new Date(now.getTime() - 1000) },
+      ],
+    });
 
     await prisma.session.createMany({
       data: [
@@ -95,6 +107,7 @@ describe('cleanupExpiredAuth', () => {
     const scoped = scopeSweep(prisma, {
       Session: { id: { in: [liveSessionId, deadSessionId] } },
       MagicLinkToken: { tokenHash: { in: [liveTokenHash, deadTokenHash] } },
+      PayoutPauseToken: { tokenHash: { in: [livePauseHash, deadPauseHash] } },
       HandoffAttemptBudget: { email: { in: [staleBudgetEmail, freshBudgetEmail] } },
     });
     const result = await cleanupExpiredAuth(scoped.db, now);
@@ -103,6 +116,7 @@ describe('cleanupExpiredAuth', () => {
     expect(result.sessions).toBe(1);
     expect(result.magicLinkTokens).toBe(1);
     expect(result.handoffAttemptBudgets).toBe(1);
+    expect(result.payoutPauseTokens).toBe(1);
 
     expect(await prisma.session.findUnique({ where: { id: liveSessionId } })).not.toBeNull();
     expect(await prisma.session.findUnique({ where: { id: deadSessionId } })).toBeNull();
@@ -112,6 +126,8 @@ describe('cleanupExpiredAuth', () => {
     expect(
       await prisma.magicLinkToken.findUnique({ where: { tokenHash: deadTokenHash } }),
     ).toBeNull();
+    expect(await prisma.payoutPauseToken.findUnique({ where: { tokenHash: livePauseHash } })).not.toBeNull();
+    expect(await prisma.payoutPauseToken.findUnique({ where: { tokenHash: deadPauseHash } })).toBeNull();
     expect(
       await prisma.handoffAttemptBudget.findUnique({ where: { email: freshBudgetEmail } }),
     ).not.toBeNull();

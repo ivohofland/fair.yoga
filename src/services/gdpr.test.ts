@@ -3614,6 +3614,23 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
   }, 20_000);
 
+  it('teacher erasure deletes payout-change events and pause tokens, and the export carried the events (#786)', async () => {
+    const teacherId = await makeTeacher();
+    const event = await prisma.payoutChangeEvent.create({
+      data: { teacherId, kind: 'bank_account_changed', accountCurrency: 'EUR', before: '•••• 4300', after: '•••• 1234' },
+    });
+    await prisma.payoutPauseToken.create({
+      data: { tokenHash: `erasure-${event.id}`, teacherId, eventId: event.id, expiresAt: new Date(Date.now() + 86_400_000) },
+    });
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.payoutChanges).toEqual([
+      { kind: 'bank_account_changed', accountCurrency: 'EUR', before: '•••• 4300', after: '•••• 1234', createdAt: event.createdAt },
+    ]);
+    await expectErased(deleteTeacherAccount(prisma, teacherId));
+    expect(await prisma.payoutChangeEvent.count({ where: { teacherId } })).toBe(0);
+    expect(await prisma.payoutPauseToken.count({ where: { teacherId } })).toBe(0);
+  }, 20_000);
+
   it('exports the payment link as stored (#785)', async () => {
     const teacherId = await makeTeacher();
     await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: 'https://revolut.me/photo-teacher' } });
