@@ -29,10 +29,9 @@ report privately.
 **Getting set up** — [README.md](README.md) walks through installing, the
 database, seed accounts and the test suite.
 
-**How the project works** — [CLAUDE.md](CLAUDE.md) is the working guide: the
-development principles, the core business rules, the design philosophy and the
-links into `docs/`. Read its *Development Principles* and *Comment Discipline*
-before your first PR; they are what review checks against.
+**How the project works** — [CLAUDE.md](CLAUDE.md) is the working guide. Read
+its *Development Principles* and *Comment Discipline* before your first PR; they
+are what review checks against.
 
 **Finding something to work on** — issues labelled
 [`good first issue`](https://github.com/ivohofland/fair.yoga/labels/good%20first%20issue)
@@ -46,10 +45,11 @@ teacher or student, and how it was found.
 **Making a change**
 
 1. Branch from `main`.
-2. Start with a failing test — every change ships with tests that cover it.
-3. Run `pnpm run verify` before pushing (it needs the app running on `:3000`).
+2. Work test-first, as CLAUDE.md's *Development Principles* describe.
+3. Run `pnpm run verify` before pushing — README's *Scripts* table says what it
+   needs.
 4. Open a pull request that references the issue and says what you measured.
-   PRs are rebase-merged, never squashed, so keep each commit meaningful.
+   We rebase-merge rather than squash, so keep each commit meaningful.
 
 **Licence** — fair.yoga is licensed under the [GNU AGPL-3.0](LICENSE). By
 contributing, you agree that your contribution is licensed under it too.
