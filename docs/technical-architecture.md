@@ -899,7 +899,10 @@ way into an account, so `POST /api/auth/passkey/register/options` and
 new session (roster in Session-issuing doors, below) and a sliding extension only moves `expiresAt`. The
 check runs in `verify` before the challenge is consumed, so a refusal leaves the
 challenge standing. The way through is the ordinary emailed sign-in link, which
-mints a fresh session. Removing a passkey (`DELETE /api/auth/passkey/[id]`) and
+mints a fresh session — except for a resume that requires a passkey (below),
+whose fresh session must come from signing in with that passkey, since a
+link's session cannot satisfy it; the resume screen says so in place of the
+server's copy. Removing a passkey (`DELETE /api/auth/passkey/[id]`) and
 signing out everywhere (`DELETE /api/auth/session/all`) are not gated on recent
 sign-in: both only take ways in away. Removing a passkey is refused, `409
 PASSKEY_REMOVAL_PAUSED`, while the account's teacher has payments paused

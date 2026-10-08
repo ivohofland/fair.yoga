@@ -179,8 +179,8 @@ export default async function ResumePaymentsPage() {
         <section className="flex flex-col gap-3">
           <h2 className="type-subtitle">Sign in with your passkey to resume</h2>
           <p className="type-body">
-            Your account had a passkey before these changes, so resuming needs it: sign out, then sign in again with
-            your passkey.
+            Your account had a passkey before these changes, so resuming needs it: sign out, sign in again with
+            your passkey, then resume within five minutes.
             {review.fallbackOpensAt !== null && (
               <> If you no longer have it, you can resume without it from {when(review.fallbackOpensAt, timeZone)}.</>
             )}
@@ -195,7 +195,17 @@ export default async function ResumePaymentsPage() {
               future pause harder for anyone else to lift.
             </p>
           )}
-          <ResumePaymentsForm teacherId={session.teacherId} fingerprint={review.fingerprint} />
+          {review.passkeyRequired && (
+            <p className="type-body">
+              You signed in with your passkey. Resume within five minutes of signing in; after that, sign out and
+              sign in with your passkey again.
+            </p>
+          )}
+          <ResumePaymentsForm
+            teacherId={session.teacherId}
+            fingerprint={review.fingerprint}
+            passkeyRequired={review.passkeyRequired}
+          />
         </section>
       )}
     </div>

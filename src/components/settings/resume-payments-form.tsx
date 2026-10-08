@@ -12,11 +12,27 @@ const linkClass =
   'text-teal underline decoration-[0.5px] underline-offset-[3px] rounded-field focus:outline-none focus-visible:shadow-focus';
 
 /**
+ * A stale session's way through when the pause requires a passkey: the
+ * server's own copy points at an emailed link, whose session cannot resume.
+ */
+export const PASSKEY_RECENT_AUTH_COPY =
+  'For your security, sign out and sign in again with your passkey, then resume within five minutes.';
+
+/**
  * The resume button. Sends back the fingerprint of the details the page
  * showed, so a change made since is refused; on that refusal the page reloads
- * with the details as they now stand.
+ * with the details as they now stand. `passkeyRequired` is the review's: false
+ * once the pause's fallback has opened.
  */
-export function ResumePaymentsForm({ teacherId, fingerprint }: { teacherId: string; fingerprint: string }) {
+export function ResumePaymentsForm({
+  teacherId,
+  fingerprint,
+  passkeyRequired,
+}: {
+  teacherId: string;
+  fingerprint: string;
+  passkeyRequired: boolean;
+}) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: 'ready' });
 
@@ -34,7 +50,8 @@ export function ResumePaymentsForm({ teacherId, fingerprint }: { teacherId: stri
       }
       const { code, message } = await readError(res, 'Something went wrong, and payments are still paused. Please try again.');
       if (code === 'PAYOUT_DETAILS_CHANGED') router.refresh();
-      setState({ kind: 'refused', message });
+      const shown = code === 'RECENT_AUTH_REQUIRED' && passkeyRequired ? PASSKEY_RECENT_AUTH_COPY : message;
+      setState({ kind: 'refused', message: shown });
     } catch (err) {
       logRequestFailure('resume-payments', {}, err);
       setState({ kind: 'refused', message: 'Something went wrong, and payments are still paused. Please try again.' });
