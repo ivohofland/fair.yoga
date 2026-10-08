@@ -1,9 +1,11 @@
 /**
  * A `PrismaClient` built by test code carries `undefinedFilterGuard`, so a
  * bulk write whose `where` holds `undefined` rejects instead of matching every
- * row. A client built by application code (`src/lib/db.ts`) stays plain: its
- * `undefined` filters are deliberate optional filters and must behave exactly
- * as they do in production.
+ * row. A client built by application code (for example `src/lib/db.ts`) comes
+ * back plain, including one an app helper such as `src/lib/db-provision.ts`
+ * builds while a test calls it: the first non-library frame decides, and that
+ * frame is the app module. App code's `undefined` filters are deliberate
+ * optional filters and must behave exactly as they do in production.
  *
  * Spec: docs/superpowers/specs/2026-10-08-undefined-filter-guard-design.md
  */
@@ -21,7 +23,7 @@ vi.mock('@prisma/client', async (importOriginal) => {
     constructor(...args: ConstructorParameters<typeof actual.PrismaClient>) {
       super(...args);
       if (isTestCallSite(new Error().stack ?? '', [SELF], REPO_ROOT)) {
-        // A query-only extension leaves the client's API unchanged, but `$extends` is typed as a new client type.
+        // The extended client lacks `$on`/`$use`, which no test calls; every other member matches `PrismaClient`.
         return this.$extends(undefinedFilterGuard) as unknown as GuardedPrismaClient;
       }
     }

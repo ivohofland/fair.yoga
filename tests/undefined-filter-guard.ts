@@ -71,7 +71,8 @@ const FRAME = /^\s*at (?:.*? \()?(.+?):\d+:\d+\)?\s*$/;
  * Whether a stack's call site is test code. Frames in `node:` modules, under
  * `node_modules/` or in `ignoreFiles` are skipped; the first remaining frame
  * decides. A frame outside `repoRoot` yields false; one inside yields true when
- * it is a `.test`/`.spec` file or a module under `tests/`. The path is made
+ * it is a `.test`/`.spec` file or a module under `tests/`. A stack with no
+ * deciding frame yields false. The path is made
  * relative to `repoRoot` first, so a checkout under a directory named `tests`
  * is not misread.
  */
