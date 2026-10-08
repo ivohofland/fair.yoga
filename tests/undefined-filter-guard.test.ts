@@ -7,6 +7,7 @@ import {
   UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX,
 } from './undefined-filter-guard';
 import { uniqueSuffix } from './helpers';
+import { prisma as appPrisma } from '@/lib/db';
 
 describe('findUndefinedFilterPaths', () => {
   it('names a top-level undefined value', () => {
@@ -96,22 +97,22 @@ describe('undefinedFilterGuard handler', () => {
   });
 });
 
-const raw = new PrismaClient();
-const guarded = raw.$extends(undefinedFilterGuard);
+const base = new PrismaClient();
+const guarded = base.$extends(undefinedFilterGuard);
 const sentinels = [`ufg-783-${uniqueSuffix()}-a`, `ufg-783-${uniqueSuffix()}-b`];
 // Stands in for a beforeAll-assigned binding that never got its value.
 let unassigned: Date | undefined;
 
 beforeAll(async () => {
-  await raw.degradationEvent.createMany({ data: sentinels.map((code) => ({ code, sample: {} })) });
+  await base.degradationEvent.createMany({ data: sentinels.map((code) => ({ code, sample: {} })) });
 });
 afterAll(async () => {
-  await raw.degradationEvent.deleteMany({ where: { code: { in: sentinels } } });
-  await raw.$disconnect();
+  await base.degradationEvent.deleteMany({ where: { code: { in: sentinels } } });
+  await base.$disconnect();
 });
-const remaining = (): Promise<number> => raw.degradationEvent.count({ where: { code: { in: sentinels } } });
+const remaining = (): Promise<number> => base.degradationEvent.count({ where: { code: { in: sentinels } } });
 const changed = (): Promise<number> =>
-  raw.degradationEvent.count({ where: { code: { in: sentinels }, occurrences: 99 } });
+  base.degradationEvent.count({ where: { code: { in: sentinels }, occurrences: 99 } });
 
 const refusal = new RegExp(
   `${UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX.replace(/[[\]]/g, '\\$&')}.*where\\.lastNotifiedAt`,
@@ -166,5 +167,41 @@ describe('undefinedFilterGuard against the database', () => {
       data: { occurrences: 2 },
     });
     expect(result.count).toBe(2);
+  });
+});
+
+const moduleLevel = new PrismaClient();
+function build(): PrismaClient {
+  return new PrismaClient();
+}
+
+describe('the vitest installer (tests/setup/undefined-filter-guard.ts)', () => {
+  let builtInHook: PrismaClient | undefined;
+  beforeAll(() => {
+    builtInHook = build();
+  });
+  afterAll(async () => {
+    await moduleLevel.$disconnect();
+    if (builtInHook) await builtInHook.$disconnect();
+  });
+
+  it('guards a client test code builds at module level', async () => {
+    await expect(
+      moduleLevel.degradationEvent.deleteMany({ where: { code: { in: sentinels }, lastNotifiedAt: unassigned } }),
+    ).rejects.toThrow(refusal);
+    expect(await remaining()).toBe(2);
+  });
+  it('guards a client built inside a function a hook calls', async () => {
+    if (!builtInHook) throw new Error('beforeAll did not build the client');
+    await expect(
+      builtInHook.degradationEvent.deleteMany({ where: { code: { in: sentinels }, lastNotifiedAt: unassigned } }),
+    ).rejects.toThrow(refusal);
+    expect(await remaining()).toBe(2);
+  });
+  it('leaves the app client from @/lib/db unguarded', async () => {
+    const result = await appPrisma.degradationEvent.deleteMany({
+      where: { code: `ufg-783-absent-${uniqueSuffix()}`, lastNotifiedAt: unassigned },
+    });
+    expect(result.count).toBe(0);
   });
 });
