@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
   findUndefinedFilterPaths,
-  isTestCallSite,
+  classifyCallSite,
   undefinedFilterGuard,
   UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX,
 } from './undefined-filter-guard';
@@ -40,38 +40,43 @@ describe('findUndefinedFilterPaths', () => {
   });
 });
 
-describe('isTestCallSite', () => {
+describe('classifyCallSite', () => {
   const setup = '/repo/tests/setup/undefined-filter-guard.ts';
   const frame = (file: string): string => `    at something (${file}:10:5)`;
   const stack = (...files: string[]): string => ['Error', ...files.map(frame)].join('\n');
 
-  it('is true when the first non-library frame is a test file', () => {
-    expect(isTestCallSite(stack('/repo/node_modules/x/y.js', setup, '/repo/src/app/api/a/route.test.ts'), [setup], '/repo')).toBe(true);
+  it('is test when the first non-library frame is a test file', () => {
+    expect(classifyCallSite(stack('/repo/node_modules/x/y.js', setup, '/repo/src/app/api/a/route.test.ts'), [setup], '/repo')).toBe('test');
   });
-  it('is true for a module under tests/', () => {
-    expect(isTestCallSite(stack(setup, '/repo/tests/class-fixtures.ts'), [setup], '/repo')).toBe(true);
+  it('is test for a module under tests/', () => {
+    expect(classifyCallSite(stack(setup, '/repo/tests/class-fixtures.ts'), [setup], '/repo')).toBe('test');
   });
-  it('is false for app code', () => {
-    expect(isTestCallSite(stack(setup, '/repo/src/lib/db.ts', '/repo/src/app/api/a/route.test.ts'), [setup], '/repo')).toBe(false);
+  it('is app for app code', () => {
+    expect(classifyCallSite(stack(setup, '/repo/src/lib/db.ts', '/repo/src/app/api/a/route.test.ts'), [setup], '/repo')).toBe('app');
   });
-  it('is false for a tests/ directory outside the repo root', () => {
-    expect(isTestCallSite(stack(setup, '/elsewhere/tests/x.ts'), [setup], '/repo')).toBe(false);
+  it('is app for a tests/ directory outside the repo root', () => {
+    expect(classifyCallSite(stack(setup, '/elsewhere/tests/x.ts'), [setup], '/repo')).toBe('app');
   });
   it('reads a bare frame without a function name', () => {
-    expect(isTestCallSite('Error\n    at /repo/src/a.test.ts:3:1', [], '/repo')).toBe(true);
+    expect(classifyCallSite('Error\n    at /repo/src/a.test.ts:3:1', [], '/repo')).toBe('test');
   });
   it('strips file:// and a ?query suffix', () => {
-    expect(isTestCallSite('Error\n    at f (file:///repo/src/a.test.ts?v=123:3:1)', [], '/repo')).toBe(true);
-    expect(isTestCallSite('Error\n    at f (file:///repo/src/lib/db.ts?v=123:3:1)', [], '/repo')).toBe(false);
+    expect(classifyCallSite('Error\n    at f (file:///repo/src/a.test.ts?v=123:3:1)', [], '/repo')).toBe('test');
+    expect(classifyCallSite('Error\n    at f (file:///repo/src/lib/db.ts?v=123:3:1)', [], '/repo')).toBe('app');
   });
   it('skips node: frames', () => {
-    expect(isTestCallSite('Error\n    at f (node:internal/x:1:1)\n    at g (/repo/tests/x.ts:1:1)', [], '/repo')).toBe(true);
+    expect(classifyCallSite('Error\n    at f (node:internal/x:1:1)\n    at g (/repo/tests/x.ts:1:1)', [], '/repo')).toBe('test');
   });
-  it('is false when no frame remains', () => {
-    expect(isTestCallSite('Error', [], '/repo')).toBe(false);
+  it('is undecided when no frame remains', () => {
+    expect(classifyCallSite('Error', [], '/repo')).toBe('undecided');
+  });
+  it('is undecided when every frame is node:, node_modules or ignored', () => {
+    expect(
+      classifyCallSite(stack(setup, '/repo/node_modules/x/y.js', 'node:internal/process/task_queues'), [setup], '/repo'),
+    ).toBe('undecided');
   });
   it('reads the stack vitest actually produces', () => {
-    expect(isTestCallSite(new Error('x').stack ?? '', [], process.cwd())).toBe(true);
+    expect(classifyCallSite(new Error('x').stack ?? '', [], process.cwd())).toBe('test');
   });
 });
 
@@ -197,6 +202,25 @@ describe('the vitest installer (tests/setup/undefined-filter-guard.ts)', () => {
       builtInHook.degradationEvent.deleteMany({ where: { code: { in: sentinels }, lastNotifiedAt: unassigned } }),
     ).rejects.toThrow(refusal);
     expect(await remaining()).toBe(2);
+  });
+  it('throws rather than guess when no frame of the construction stack can decide', async () => {
+    // A bound native constructor run as a promise reaction that nothing awaits
+    // leaves no file frame on the construction stack but the installer's own.
+    let outcome: unknown;
+    void Promise.resolve([])
+      .then(Reflect.construct.bind(null, PrismaClient))
+      .then(
+        (client: unknown) => {
+          outcome = client;
+        },
+        (err: unknown) => {
+          outcome = err;
+        },
+      );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(outcome instanceof Error ? outcome.message : outcome).toMatch(
+      /^\[undefined-filter-guard\] cannot tell whether test or app code built this PrismaClient/,
+    );
   });
   it('leaves the app client from @/lib/db unguarded', async () => {
     const result = await appPrisma.degradationEvent.deleteMany({
