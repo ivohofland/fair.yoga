@@ -142,6 +142,11 @@ describe('attendance sync', () => {
       ['not json', async () => new Response('not json', { status: 200 }), { kind: 'retry' }],
       ['401', async () => bare(401), { kind: 'signed_out' }],
       ['403', async () => refusal(403, undefined, 'Not your class'), { kind: 'dropped' }],
+      [
+        '403 cross-origin',
+        async () => refusal(403, 'CROSS_ORIGIN', 'This request came from another site, so it was refused.'),
+        { kind: 'retry' },
+      ],
       ['403 without a body', async () => bare(403), { kind: 'retry' }],
       ['403 from an intermediary', async () => html(403), { kind: 'retry' }],
       ['407 from a proxy', async () => html(407), { kind: 'retry' }],
@@ -273,6 +278,28 @@ describe('attendance sync', () => {
     await flushAttendance('acct-1');
     expect(getOutbox().pending.r1?.status).toBe('attended');
     expect(getOutbox().refused).toEqual({});
+  });
+
+  it('a cross-origin refusal keeps the entry pending and logs the Host/Origin mismatch, naming no student', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await enqueue('attended');
+    fetchMock.mockResolvedValueOnce(
+      refusal(403, 'CROSS_ORIGIN', 'This request came from another site, so it was refused.'),
+    );
+    await flushAttendance('acct-1');
+    expect(getOutbox().pending.r1?.status).toBe('attended');
+    expect(getOutbox().refused).toEqual({});
+    expect(warn).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledWith('[attendance-sync] request failed', {
+      registrationId: 'r1',
+      status: 'attended',
+      httpStatus: 403,
+      contentType: 'application/json',
+      err: expect.objectContaining({ message: expect.stringContaining('Host') }),
+    });
+    expect(JSON.stringify(errors.mock.calls)).not.toContain('Ada');
   });
 
   it.each([
