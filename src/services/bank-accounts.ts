@@ -49,6 +49,26 @@ function storesAlready(current: TeacherBankAccount, next: StoredValues): boolean
   return (Object.keys(STORED_KEYS) as (keyof StoredValues)[]).every((key) => current[key] === next[key]);
 }
 
+/**
+ * Which scheme columns say where the money goes, so that a change to one is a
+ * new destination: true for the identifier columns, false for the BIC, which
+ * routes to the same account.
+ */
+const IDENTIFIER_COLUMNS = {
+  iban: true, bic: false, sortCode: true, accountNumber: true, routingNumber: true,
+} as const satisfies Record<keyof BankAccountColumns, boolean>;
+
+/**
+ * Whether the save moves the account to a different identifier, decided from
+ * the full values: the masks the event stores can be alike for two different
+ * accounts.
+ */
+function identifierDiffers(current: TeacherBankAccount, next: StoredValues): boolean {
+  return (Object.keys(IDENTIFIER_COLUMNS) as (keyof BankAccountColumns)[]).some(
+    (key) => IDENTIFIER_COLUMNS[key] && current[key] !== next[key],
+  );
+}
+
 /** Every scheme column, the ones `details`' scheme does not use set to null. */
 function columnsFor(details: BankDetails): BankAccountColumns {
   switch (details.scheme) {
@@ -104,6 +124,7 @@ export async function saveBankAccount(
         accountCurrency: currency,
         before: current === null ? null : maskedIdentifier(current),
         after: maskedIdentifier(account),
+        identifierChanged: current === null ? null : identifierDiffers(current, next),
       },
       select: { id: true },
     });

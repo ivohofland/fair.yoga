@@ -98,6 +98,7 @@ export interface ReviewEvent {
   accountCurrency: Currency | null;
   before: string | null;
   after: string | null;
+  identifierChanged: boolean | null;
   createdAt: Date;
 }
 
@@ -201,7 +202,7 @@ export async function readResumeReview(
     db.payoutChangeEvent.findMany({
       where: { teacherId, createdAt: { gte: windowStart } },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, kind: true, accountCurrency: true, before: true, after: true, createdAt: true },
+      select: { id: true, kind: true, accountCurrency: true, before: true, after: true, identifierChanged: true, createdAt: true },
     }),
     db.payment.findMany({
       where: { ...ofTeacher, status: { in: OUTSTANDING_STATUSES }, createdAt: { lt: pausedAt } },

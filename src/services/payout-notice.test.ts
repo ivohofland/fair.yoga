@@ -5,7 +5,7 @@ import { hashToken } from '@/lib/auth/magic-link';
 
 type Sent = {
   kind: string; accountCurrency: string | null; before: string | null; after: string | null;
-  at: Date; timezone: string; pauseUrl: string;
+  identifierChanged: boolean | null; at: Date; timezone: string; pauseUrl: string;
 };
 const sendPayoutChangedEmail = vi.hoisted(() => vi.fn<(to: string, input: Sent) => Promise<void>>());
 vi.mock('@/lib/email', () => ({ sendPayoutChangedEmail }));
@@ -19,7 +19,7 @@ const { PAUSE_TOKEN_TTL_DAYS } = await import('./payout-pause-token');
 const at = new Date('2026-10-06T14:03:00Z');
 const event = {
   id: 'ev-1', teacherId: 't-1', kind: 'bank_account_changed', accountCurrency: 'EUR',
-  before: 'NL•• 1234', after: 'NL•• 9876', createdAt: at,
+  before: 'NL•• 1234', after: 'NL•• 9876', identifierChanged: true, createdAt: at,
   teacher: { defaultTimezone: 'Europe/Amsterdam', account: { email: 'a@test.local' } },
 };
 const findUnique = vi.fn<(args: unknown) => Promise<typeof event | null>>();
@@ -62,7 +62,7 @@ describe('deliverPayoutChangedNotice', () => {
     expect(to).toBe('a@test.local');
     expect(sent).toMatchObject({
       kind: 'bank_account_changed', accountCurrency: 'EUR', before: 'NL•• 1234', after: 'NL•• 9876',
-      at, timezone: 'Europe/Amsterdam',
+      identifierChanged: true, at, timezone: 'Europe/Amsterdam',
     });
     expect(sent.pauseUrl).toMatch(/\/payout-pause#t=[0-9a-f]{64}$/);
   });

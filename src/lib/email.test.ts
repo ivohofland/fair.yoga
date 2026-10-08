@@ -321,6 +321,7 @@ describe('sendPayoutChangedEmail', () => {
     accountCurrency: null,
     before: null,
     after: 'pay.example',
+    identifierChanged: null,
     at: new Date('2026-10-06T14:03:00Z'),
     timezone: 'UTC',
     pauseUrl: 'https://fair.yoga/payout-pause#t=secret-token',

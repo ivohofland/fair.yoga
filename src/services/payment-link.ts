@@ -41,6 +41,8 @@ export async function savePaymentLink(db: PrismaClient, teacherId: string, raw: 
         kind: current === null ? 'payment_link_added' : 'payment_link_changed',
         before: current === null ? null : maskPaymentLink(current),
         after: maskPaymentLink(parsed.url),
+        // Decided from the full links: two different ones can mask alike.
+        identifierChanged: current === null ? null : current !== parsed.url,
       },
       select: { id: true },
     });

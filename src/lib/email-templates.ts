@@ -299,6 +299,7 @@ export interface PayoutChangedEmailInput {
   accountCurrency: Currency | null;
   before: string | null;
   after: string | null;
+  identifierChanged: boolean | null;
   at: Date;
   timezone: string;
   pauseUrl: string;
@@ -317,11 +318,38 @@ export const PAYOUT_CHANGE_PHRASES = {
   payment_link_removed: 'A payment link was removed',
 } as const satisfies Record<PayoutChangeKind, string>;
 
-/** The sentence for a change whose before and after mask to the same string. */
-const PAYOUT_MASKS_ALIKE = {
-  bank_account_changed: 'a detail other than the account number changed',
-  payment_link_changed: 'the link changed on the same site',
+/**
+ * The warning for a change whose before and after mask to the same string
+ * while the full value changed (or nothing says it did not): the mask hides
+ * exactly the part of the value someone else would choose.
+ */
+const PAYOUT_MASKS_ALIKE_WARNING = {
+  bank_account_changed: 'The account number changed to a different one that ends in the same digits.',
+  payment_link_changed: 'The new link looks like the old one here, but it is a different link. Check it in full in your settings.',
 } as const satisfies Partial<Record<PayoutChangeKind, string>>;
+
+/** A note explaining why before and after look alike: reassuring only when the full identifier did not change. */
+export type PayoutMasksAlikeNote = { tone: 'same_identifier' | 'warning'; text: string };
+
+/**
+ * The note for a change event whose before and after mask alike, or null when
+ * they differ or the kind has no before and after. Only a bank change whose
+ * writer recorded `identifierChanged: false` reassures; every other alike
+ * change, an unrecorded one included, warns.
+ */
+export function payoutMasksAlikeNote(event: {
+  kind: PayoutChangeKind;
+  before: string | null;
+  after: string | null;
+  identifierChanged: boolean | null;
+}): PayoutMasksAlikeNote | null {
+  if (event.before === null || event.before !== event.after) return null;
+  if (!(event.kind in PAYOUT_MASKS_ALIKE_WARNING)) return null;
+  if (event.kind === 'bank_account_changed' && event.identifierChanged === false) {
+    return { tone: 'same_identifier', text: 'Before and after look the same here because a detail other than the account number changed.' };
+  }
+  return { tone: 'warning', text: PAYOUT_MASKS_ALIKE_WARNING[event.kind as keyof typeof PAYOUT_MASKS_ALIKE_WARNING] };
+}
 
 function formatInZoneOrUtc(at: Date, timezone: string): string {
   const format = (timeZone: string) =>
@@ -362,14 +390,11 @@ export function renderPayoutChangedEmail(input: PayoutChangedEmailInput): { subj
   const what =
     PAYOUT_CHANGE_PHRASES[input.kind] +
     (isBank && input.accountCurrency !== null ? ` (${input.accountCurrency})` : '');
-  const maskedAlike = input.before !== null && input.before === input.after;
-  const alike = maskedAlike && input.kind in PAYOUT_MASKS_ALIKE
-    ? PAYOUT_MASKS_ALIKE[input.kind as keyof typeof PAYOUT_MASKS_ALIKE]
-    : null;
+  const alike = payoutMasksAlikeNote(input);
   const lines: string[] = [];
   if (alike !== null) {
     lines.push(`Shown as: ${escapeHtml(input.before ?? '')}`);
-    lines.push(`Before and after look the same here because ${alike}.`);
+    lines.push(escapeHtml(alike.text));
   } else {
     if (input.before !== null) lines.push(`Before: ${escapeHtml(input.before)}`);
     if (input.after !== null) lines.push(`After: ${escapeHtml(input.after)}`);
