@@ -172,22 +172,23 @@ function readsSymbol(checker: ts.TypeChecker, expression: ts.Expression, symbol:
   return ts.isIdentifier(bare) && valueSymbolOf(checker, bare) === symbol;
 }
 
-function isNullish(expression: ts.Expression): boolean {
+function isUndefinedLiteral(expression: ts.Expression): boolean {
   const bare = unparenthesized(expression);
-  return bare.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(bare) && bare.text === 'undefined');
+  return ts.isIdentifier(bare) && bare.text === 'undefined';
 }
 
-const NULLISH_EQUALITY: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.EqualsEqualsToken,
-  ts.SyntaxKind.EqualsEqualsEqualsToken,
-]);
+/** `null` or `undefined`: what `==` equates with an undefined binding. */
+function isLooselyUndefined(expression: ts.Expression): boolean {
+  return unparenthesized(expression).kind === ts.SyntaxKind.NullKeyword || isUndefinedLiteral(expression);
+}
 
 /**
- * `condition` holds only when `symbol` is falsy or nullish: `!x`, `x == null`,
- * `x === undefined` (either operand order, `==` or `===`, `null` or
- * `undefined`), or an `||` with such a disjunct.
+ * `condition` holds whenever `symbol` is undefined: `!x`, `x == null`,
+ * `x == undefined`, `x === undefined` (either operand order), or an `||` with
+ * such a disjunct. `x === null` is false for an undefined `x`, so it does not
+ * count.
  */
-function establishesAbsent(checker: ts.TypeChecker, condition: ts.Expression, symbol: ts.Symbol): boolean {
+function holdsWhenUndefined(checker: ts.TypeChecker, condition: ts.Expression, symbol: ts.Symbol): boolean {
   const bare = unparenthesized(condition);
   if (ts.isPrefixUnaryExpression(bare)) {
     return bare.operator === ts.SyntaxKind.ExclamationToken && readsSymbol(checker, bare.operand, symbol);
@@ -195,12 +196,18 @@ function establishesAbsent(checker: ts.TypeChecker, condition: ts.Expression, sy
   if (!ts.isBinaryExpression(bare)) return false;
   const operator = bare.operatorToken.kind;
   if (operator === ts.SyntaxKind.BarBarToken) {
-    return establishesAbsent(checker, bare.left, symbol) || establishesAbsent(checker, bare.right, symbol);
+    return holdsWhenUndefined(checker, bare.left, symbol) || holdsWhenUndefined(checker, bare.right, symbol);
   }
-  if (!NULLISH_EQUALITY.has(operator)) return false;
+  const matches =
+    operator === ts.SyntaxKind.EqualsEqualsToken
+      ? isLooselyUndefined
+      : operator === ts.SyntaxKind.EqualsEqualsEqualsToken
+        ? isUndefinedLiteral
+        : undefined;
+  if (matches === undefined) return false;
   return (
-    (readsSymbol(checker, bare.left, symbol) && isNullish(bare.right)) ||
-    (isNullish(bare.left) && readsSymbol(checker, bare.right, symbol))
+    (readsSymbol(checker, bare.left, symbol) && matches(bare.right)) ||
+    (matches(bare.left) && readsSymbol(checker, bare.right, symbol))
   );
 }
 
@@ -208,8 +215,8 @@ function establishesAbsent(checker: ts.TypeChecker, condition: ts.Expression, sy
  * Between `node` and `boundary`, `node` sits in the then-branch of an `if`,
  * the right of an `&&` or the true branch of a `?:` whose condition mentions
  * `symbol`, or after an `if (…) return;`/`throw` in the same block whose
- * condition establishes it is absent (`establishesAbsent`). The branch forms
- * are "mentions", not "tests": `if (!id) write(id)` counts.
+ * condition holds whenever `symbol` is undefined (`holdsWhenUndefined`). The
+ * branch forms are "mentions", not "tests": `if (!id) write(id)` counts.
  */
 function isGuarded(checker: ts.TypeChecker, node: ts.Node, boundary: ts.Node, symbol: ts.Symbol): boolean {
   let child: ts.Node = node;
@@ -227,7 +234,7 @@ function isGuarded(checker: ts.TypeChecker, node: ts.Node, boundary: ts.Node, sy
     if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isCaseOrDefaultClause(current)) {
       const index = current.statements.findIndex((statement) => statement === child);
       const earlier = index < 0 ? [] : current.statements.slice(0, index);
-      if (earlier.some((s) => ts.isIfStatement(s) && exits(s.thenStatement) && establishesAbsent(checker, s.expression, symbol))) {
+      if (earlier.some((s) => ts.isIfStatement(s) && exits(s.thenStatement) && holdsWhenUndefined(checker, s.expression, symbol))) {
         return true;
       }
     }

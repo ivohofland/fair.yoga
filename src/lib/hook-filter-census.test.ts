@@ -477,30 +477,34 @@ afterAll(async () => {
       ]);
     });
 
-    it('counts an early exit on a nullish comparison in either operand order, and on an || with such a disjunct', () => {
+    it('counts an early exit whose condition holds whenever the binding is undefined, in either operand order and as an || disjunct', () => {
       const findings = census(`${LOCAL}
 let a: string | undefined;
 let b: string | undefined;
 let c: string | undefined;
 let d: string | undefined;
 let e: string | undefined;
+let f: string | undefined;
 afterAll(async () => {
   if (a == null) return;
   if (undefined === b) return;
   if ((c === undefined)) return;
   if (null == d || !e) return;
-  await prisma.class.deleteMany({ where: { id: { in: [a, b, c, d, e] } } });
+  if (undefined == f) return;
+  await prisma.class.deleteMany({ where: { id: { in: [a, b, c, d, e, f] } } });
 });
 `);
-      expect(findings.map((f) => [f.bindings, f.guarded])).toEqual([[['a', 'b', 'c', 'd', 'e'], true]]);
+      expect(findings.map((f) => [f.bindings, f.guarded])).toEqual([[['a', 'b', 'c', 'd', 'e', 'f'], true]]);
     });
 
-    it('does not count an early exit whose condition holds when the binding is present', () => {
+    it('does not count an early exit whose condition can be false for an undefined binding', () => {
       const findings = census(`${LOCAL}
 let a: string;
 let b: string;
 let c: string;
 let d: string;
+let e: string | null;
+let g: string | null;
 afterAll(async () => {
   if (a) return;
   await prisma.class.deleteMany({ where: { id: a } });
@@ -517,12 +521,22 @@ afterAll(async () => {
   if (d === 'x' || Math.random() > 1) return;
   await prisma.class.deleteMany({ where: { id: d } });
 });
+afterAll(async () => {
+  if (e === null) return;
+  await prisma.class.deleteMany({ where: { id: e } });
+});
+afterAll(async () => {
+  if (null === g) return;
+  await prisma.class.deleteMany({ where: { id: g } });
+});
 `);
       expect(findings.map((f) => [f.bindings, f.guarded])).toEqual([
         [['a'], false],
         [['b'], false],
         [['c'], false],
         [['d'], false],
+        [['e'], false],
+        [['g'], false],
       ]);
     });
 

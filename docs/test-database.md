@@ -383,11 +383,11 @@ identifier naming such a same-file function (`afterAll(cleanup)`,
 A row is `guarded` when every binding it reads is mentioned by the condition
 of an `if` whose then-branch holds it, an `&&` whose right side holds it, or a
 `?:` whose true branch holds it; or when an earlier `if (…) return;`/`throw`
-in an enclosing block exits on a condition that holds only when the binding is
-absent: `!x`, `x == null`, `x === undefined` (either operand order, `==` or
-`===`, `null` or `undefined`), or an `||` with such a disjunct. `if (x)
-return;` does not count, since the write after it runs exactly when `x` is
-falsy. A followed function's row is also guarded by such a condition around
+in an enclosing block exits on a condition that holds whenever the binding is
+undefined: `!x`, `x == null`, `x == undefined`, `x === undefined` (either
+operand order), or an `||` with such a disjunct. `if (x) return;` does not
+count, since the write after it runs exactly when `x` is falsy; nor does
+`if (x === null) return;`, which is false for an undefined `x`. A followed function's row is also guarded by such a condition around
 the hook's call to it.
 
 On 2026-10-08 it scanned 525 tracked test and test-helper files and printed
