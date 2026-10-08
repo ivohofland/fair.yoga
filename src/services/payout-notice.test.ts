@@ -94,8 +94,19 @@ describe('deliverPayoutChangedNotice', () => {
     expect(sendPayoutChangedEmail).not.toHaveBeenCalled();
   });
 
-  it('warns, not errors, and sends nothing when the teacher is erased between the read and the mint', async () => {
-    create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', { code: 'P2003', clientVersion: 'test' }));
+  function fkRefusal(meta?: Record<string, unknown>): Prisma.PrismaClientKnownRequestError {
+    return new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', { code: 'P2003', clientVersion: 'test', meta });
+  }
+
+  // The `meta` shapes are what Prisma reports for this insert against a real
+  // database: an erasure keeps the anonymised teacher and deletes the event,
+  // so the event's key is the one that fails; a hard-deleted teacher fails on
+  // the teacher's.
+  it.each([
+    'PayoutPauseToken_eventId_fkey',
+    'PayoutPauseToken_teacherId_fkey',
+  ])('warns, not errors, and sends nothing when the mint is refused by %s', async (constraint) => {
+    create.mockRejectedValue(fkRefusal({ modelName: 'PayoutPauseToken', constraint }));
 
     deliverPayoutChangedNotice(db, 'ev-1');
 
@@ -103,6 +114,19 @@ describe('deliverPayoutChangedNotice', () => {
     expect(vi.mocked(log.warn).mock.calls[0]?.[0]).toMatchObject({ eventId: 'ev-1' });
     await new Promise((r) => setTimeout(r, 10));
     expect(log.error).not.toHaveBeenCalled();
+    expect(sendPayoutChangedEmail).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another constraint', { modelName: 'PayoutPauseToken', constraint: 'Something_else_fkey' }],
+    ['none', undefined],
+  ] as const)('logs an error for a foreign-key refusal naming %s', async (_case, meta) => {
+    create.mockRejectedValue(fkRefusal(meta));
+
+    deliverPayoutChangedNotice(db, 'ev-1');
+
+    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
+    expect(log.warn).not.toHaveBeenCalled();
     expect(sendPayoutChangedEmail).not.toHaveBeenCalled();
   });
 
