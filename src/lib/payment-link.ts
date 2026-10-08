@@ -11,8 +11,8 @@ export type ParsedPaymentLink = { url: string; host: string };
 export const PAYMENT_LINK_MESSAGES = {
   required: 'Enter your payment link.',
   too_long: 'That link is too long.',
-  invalid: 'Enter the full link, starting with https://',
-  not_https: 'Enter the full link, starting with https://',
+  invalid: 'Paste the whole link — it starts with https://',
+  not_https: 'Use a secure link — one that starts with https://',
   has_userinfo: 'Enter the link without a name and @ before the address.',
 } as const satisfies Record<PaymentLinkFailure, string>;
 

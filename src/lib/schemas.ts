@@ -360,8 +360,8 @@ export const bankAccountSchema = z.object({
 /**
  * `PUT /api/teachers/[id]/payment-link`'s wire shape: the shape only; what
  * makes a link acceptable is `parsePaymentLink`'s to check. The wire bound is
- * twice the stored one so surrounding whitespace never trips the generic 400
- * before the parser's own `too_long`.
+ * twice the stored one so an overlong link reaches the parser and answers with
+ * its `too_long` copy rather than this schema's generic 400.
  */
 export const paymentLinkSchema = z.object({
   paymentLink: singleLineCharacters(z.string().trim(), PAYMENT_LINK_MAX * 2).max(PAYMENT_LINK_MAX * 2),
