@@ -6,7 +6,7 @@ import { test as base, expect, type BrowserContext } from '@playwright/test';
  * stay on the upstream package.
  *
  * WHY THIS EXISTS. A trace records where a client-side failure stopped and
- * says nothing about why. Class C is the worked example (`docs/backlog-roadmap.md`):
+ * says nothing about why. Class C is the worked example:
  * a click's RSC payload and route chunk both arrived in ~11ms, the transition
  * never committed, and the uploaded trace carried the network timeline, the
  * action log — and no browser output at all to explain it.
@@ -27,7 +27,7 @@ import { test as base, expect, type BrowserContext } from '@playwright/test';
  *
  * THE ONE EXCEPTION IS A CONTENT-SECURITY-POLICY VIOLATION, which fails the
  * test. Under `'strict-dynamic'` a blocked script means a page that renders but
- * never hydrates (#793), and nothing else in the run would say so.
+ * never hydrates (#793).
  * `cspViolationsAllowed` turns that off for a spec that triggers violations on
  * purpose.
  *
@@ -54,18 +54,24 @@ export async function suppressInstallPromptOn(context: BrowserContext): Promise<
 }
 
 const CSP_BINDING = '__fairyogaCspViolation';
-const armed = new WeakSet<BrowserContext>();
+// The recorder a context currently reports to. The binding and the listener
+// are registered once per context and look it up on every line, so a context
+// that outlives a test (reused contexts) reports to the current test's.
+const recorders = new WeakMap<BrowserContext, (line: string) => void>();
 
 /**
- * Records every Content-Security-Policy violation in `context`: the
- * document's `securitypolicyviolation` event (directive, blocked URI, path)
- * and any console message naming the policy, which is how a violation
- * outside a document listener's reach is reported. Idempotent per context.
+ * Arms `context` to record Content-Security-Policy violations into `record`:
+ * the document's `securitypolicyviolation` event (directive, blocked URI,
+ * path), and, as a second channel, a console message naming the policy for a
+ * violation the document listener does not see. Arming a context again
+ * replaces its recorder; the binding, init script and listener are
+ * registered once.
  */
 export async function watchCspViolations(context: BrowserContext, record: (line: string) => void): Promise<void> {
-  if (armed.has(context)) return;
-  armed.add(context);
-  await context.exposeBinding(CSP_BINDING, (_source, line: string) => record(line));
+  const wasArmed = recorders.has(context);
+  recorders.set(context, record);
+  if (wasArmed) return;
+  await context.exposeBinding(CSP_BINDING, (_source, line: string) => recorders.get(context)?.(line));
   await context.addInitScript((binding: string) => {
     document.addEventListener('securitypolicyviolation', (event) => {
       const report: unknown = Reflect.get(window, binding);
@@ -75,7 +81,7 @@ export async function watchCspViolations(context: BrowserContext, record: (line:
     });
   }, CSP_BINDING);
   context.on('console', (message) => {
-    if (message.text().includes('Content Security Policy')) record(`console: ${message.text()}`);
+    if (message.text().includes('Content Security Policy')) recorders.get(context)?.(`console: ${message.text()}`);
   });
 }
 

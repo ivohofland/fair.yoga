@@ -725,9 +725,9 @@ Pinned by `tests/integration/pwa.test.ts`.
 ### Content Security Policy
 
 Pages carry a per-request nonce policy with `'strict-dynamic'`
-(`src/lib/csp.ts`, applied in `src/proxy.ts`). A page whose HTML and header
-nonces disagree still renders but never hydrates, so a violation is surfaced in
-two places (#793):
+(`src/lib/csp.ts`, applied in `src/proxy.ts`). A page whose scripts the policy
+refuses (for example, no matching nonce) still renders but never hydrates, so a
+violation is surfaced in two places (#793):
 
 - **CI.** The e2e suite fails the test. `cspViolations` in
   `tests/e2e/fixtures.ts` is an auto fixture armed on the default context and on
@@ -739,16 +739,21 @@ two places (#793):
   exists only so that spec can trigger violations on purpose.
 - **Production.** The policy ends in `report-uri /api/csp-report`. That route
   (`src/app/api/csp-report/route.ts`, summary in `src/lib/csp-report.ts`) logs
-  one `warn`, `csp violation`, carrying the directive, the blocked scheme and
-  blocked resource reduced to its origin, scheme or keyword, the document path
-  without its query, and the disposition. It is IP-rate-limited (60 a minute),
-  and there is no global log throttle beyond that: a distributed sender can fill
-  logs through it as through any other unauthenticated route. The default-context
-  case of `csp-watch.spec.ts` also waits for the report Chromium sends for its
-  violation and asserts the route answered 204.
+  one `warn`, `csp violation`, carrying the directive, the blocked resource
+  reduced to its origin, bare scheme or keyword, the document path without its
+  query, and the disposition. It is IP-rate-limited (60 a minute), and there is
+  no global log throttle beyond that: a distributed sender can fill logs through
+  it as through any other unauthenticated route. A report the route refuses (a
+  content type other than `application/csp-report`, a missing or oversized
+  `Content-Length`, a body that is not JSON or not a report) is not silent
+  either: it logs one `warn`, `csp report refused`, per reason per minute, with
+  the reason, the content-type token and the declared length and never the body,
+  so "no violations" and "every report is being refused" read differently.
+  The default-context case of `csp-watch.spec.ts` also waits for the report
+  Chromium sends for its violation and asserts the route answered 204.
 
-The policy uses `report-uri`, not `report-to`. Measured against a throwaway
-server, headless Chromium 149 on `http://localhost` delivered a `report-uri`
+The policy uses `report-uri`, not `report-to`. Measured in Chromium only,
+against a throwaway server, headless Chromium 149 on `http://localhost` delivered a `report-uri`
 report within 3 s and no `report-to` report within 75 s, and Chromium ignores
 `report-uri` whenever `report-to` is present, so adding the second would replace
 the one path that can be observed with one that cannot
@@ -767,11 +772,13 @@ post without a preflight — `text/plain`, urlencoded and multipart — but only
 for routes that read their body through `parseBody`. A route that reads its
 body itself relies on the Origin check alone: the multipart photo upload
 (`POST /api/teachers/[id]/photo`) and the optional archive body of
-`PATCH /api/students/[id]`, and `POST /api/csp-report`. The last is acceptable
-because a cross-site page's own `report-uri` can make a browser send
-`application/csp-report` without a preflight, so the Origin check is its only
-gate, and the worst a cross-site sender gets is one `warn` line;
-`tests/integration/csp-report.test.ts` pins the `CROSS_ORIGIN` refusal. Find others with
+`PATCH /api/students/[id]`, and `POST /api/csp-report`. The last has no
+`parseBody` because its content type is `application/csp-report`, not JSON, so
+the 415 above cannot close the form-post path for it. A browser's cross-site
+report carries the foreign `Origin` and is refused 403 `CROSS_ORIGIN`
+(`tests/integration/csp-report.test.ts` pins it); a sender with no `Origin`
+header is not a browser page and gets at most one `warn` per accepted report,
+bounded by the IP rate limit. Find others with
 `grep -rln "formData()\|request.text()\|request.json()" src/app/api`.
 
 ### Unauthenticated API routes
