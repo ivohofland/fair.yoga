@@ -9,7 +9,7 @@ services:
     # sweeps fail every minute until someone notices the container is gone.
     restart: unless-stopped
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     environment:
       POSTGRES_DB: ethical_yoga
       POSTGRES_USER: yoga

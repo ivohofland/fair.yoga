@@ -1255,35 +1255,9 @@ the rest do not, and one runbook section per code.
 
 When `clientIp()` can't resolve any address at all (`x-forwarded-for` and `x-real-ip` both absent), the request is *not* exempted from its IP-keyed check — `checkIpRateLimit` routes it into one bucket shared by every such caller instead (`UNRESOLVED_IP_ID`), and logs a throttled warning, so an operator learns the trusted-proxy assumption above has broken rather than the check silently vanishing. Under normal operation (nginx configured as documented) this path never fires.
 
-### docker-compose.yml (production)
+### Production compose
 
-```yaml
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - DATABASE_URL=postgresql://yoga:${DB_PASSWORD}@db:5432/ethical_yoga
-      - RESEND_API_KEY=${RESEND_API_KEY}
-      - OPERATOR_EMAIL=${OPERATOR_EMAIL}
-    depends_on:
-      - db
-    restart: unless-stopped
-
-  db:
-    image: postgres:16-alpine
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_DB=ethical_yoga
-      - POSTGRES_USER=yoga
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-    restart: unless-stopped
-
-volumes:
-  pgdata:
-```
+The production stack is `docker-compose.prod.yml`; read it there rather than in a copy here. Its database publishes no port, so Postgres is reachable only on the compose network.
 
 ### CI/CD
 
