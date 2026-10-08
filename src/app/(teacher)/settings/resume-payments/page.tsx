@@ -5,6 +5,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { ResumePaymentsForm } from '@/components/settings/resume-payments-form';
+import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 import { PAYOUT_CHANGE_PHRASES, payoutMasksAlikeNote } from '@/lib/email-templates';
 import { formatClassContext, formatDateWithYear, formatMoney, paymentStateInlineText } from '@/lib/format';
 import type { BankAccountData } from '@/lib/payment-methods';
@@ -24,6 +25,9 @@ const DETAIL_LABELS = {
 } as const satisfies Record<Exclude<keyof BankAccountData, 'currency'>, string>;
 
 const DETAIL_KEYS = Object.keys(DETAIL_LABELS) as (keyof typeof DETAIL_LABELS)[];
+
+/** How long after signing in a resume is accepted. */
+const RESUME_WINDOW_MINUTES = RECENT_AUTH_WINDOW_MS / 60_000;
 
 const linkClass =
   'text-teal underline decoration-[0.5px] underline-offset-[3px] rounded-field focus:outline-none focus-visible:shadow-focus';
@@ -195,7 +199,7 @@ export default async function ResumePaymentsPage() {
           <h2 className="type-subtitle">Sign in with your passkey to resume</h2>
           <p className="type-body">
             Your account had a passkey before these changes, so resuming needs it: sign out, sign in again with
-            your passkey, then resume within five minutes.
+            your passkey, then resume within {RESUME_WINDOW_MINUTES} minutes.
             {review.fallbackOpensAt !== null && (
               <> If you no longer have it, you can resume without it from {when(review.fallbackOpensAt, timeZone)}.</>
             )}
@@ -212,7 +216,7 @@ export default async function ResumePaymentsPage() {
           )}
           {review.passkeyRequired && (
             <p className="type-body">
-              You signed in with your passkey. Resume within five minutes of signing in; after that, sign out and
+              You signed in with your passkey. Resume within {RESUME_WINDOW_MINUTES} minutes of signing in; after that, sign out and
               sign in with your passkey again.
             </p>
           )}
