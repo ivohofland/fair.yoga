@@ -1,10 +1,10 @@
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 

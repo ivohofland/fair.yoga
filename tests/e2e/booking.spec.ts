@@ -1,6 +1,6 @@
 import type { BrowserContext } from '@playwright/test';
 import { test, expect, suppressInstallPromptOn } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import crypto from 'crypto';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
@@ -8,7 +8,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 import { mintSignupTicket } from '@/lib/auth';
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 /** Stamps `context` with the origin-nonce cookie a token bound to `nonce`
  *  needs to take the same-browser branch at `/verify`. */

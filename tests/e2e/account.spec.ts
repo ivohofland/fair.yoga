@@ -1,5 +1,5 @@
 import { test, expect, suppressInstallPromptOn } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import fs from 'fs/promises';
 import { accountIdOfStudent, accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal, reloadHydrated, SERVER_RENDER_TIMEOUT } from './page-helpers';
@@ -10,7 +10,7 @@ import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
  * deletion anonymizes and signs out.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const studentEmail = `e2e-account-${suffix}@test.local`;

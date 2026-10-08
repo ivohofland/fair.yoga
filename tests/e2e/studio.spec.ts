@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal, patchOk, reloadHydrated, SERVER_RENDER_TIMEOUT } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
@@ -32,7 +32,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
  * held by the components' own tests.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 const suffix = uniqueSuffix();
 
 // Three days out, so the template's weekday is never the run day. On the run

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { BrowserContext } from '@playwright/test';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
@@ -23,7 +23,7 @@ import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
  * coverage of that page through a real browser.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const teacherEmail = `e2e-invite-teacher-${suffix}@test.local`;

@@ -1,11 +1,11 @@
 import type { BrowserContext } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import crypto from 'crypto';
 import { accountIdOfTeacher } from './account-helpers';
 import { uniqueSuffix, hashToken } from '../helpers';
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');

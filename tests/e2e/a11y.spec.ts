@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import type { BrowserContext } from '@playwright/test';
 import type { PaymentStatus } from '@prisma/client';
 import AxeBuilder from '@axe-core/playwright';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -15,7 +15,7 @@ import { createClassFixture } from '../class-fixtures';
  * WCAG AA on every surface they sit on, so contrast is CI-enforced.
  */
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const slug = `e2e-a11y-${suffix}`;

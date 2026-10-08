@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
-import { PrismaClient } from '@prisma/client';
+import { createGuardedPrismaClient } from './prisma';
 import fs from 'fs';
 import path from 'path';
 import { accountIdOfTeacher } from './account-helpers';
@@ -32,7 +32,7 @@ const hasBaselines =
   fs.existsSync(snapshotDir) &&
   fs.readdirSync(snapshotDir).some((f) => f.includes(process.platform));
 
-const prisma = new PrismaClient();
+const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 const slug = `e2e-visual-${suffix}`;

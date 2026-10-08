@@ -40,6 +40,14 @@ const teacherStudentWriteSelector = {
     'Create the roster link with linkTeacherStudent (src/services/roster-link.ts) — a direct create/upsert here reopens the #181 race.',
 };
 
+// A hardcoded dev-server origin in a test file (see the `tests/**` block).
+const localhostOriginSelector = {
+  selector:
+    'Literal[value=/(localhost|127\\.0\\.0\\.1):[0-9]+/], TemplateElement[value.raw=/(localhost|127\\.0\\.0\\.1):[0-9]+/]',
+  message:
+    "Don't hardcode a localhost/127.0.0.1 origin — import BASE_URL from tests/helpers.ts and interpolate it instead, so tests work against any origin (e.g. a worktree's dev server on another port).",
+};
+
 // A `catch` with no binding discards the error it caught (#692).
 const bareCatchSelector = {
   selector: 'CatchClause[param=null]',
@@ -135,13 +143,24 @@ const eslintConfig = defineConfig([
     files: ['tests/**/*.ts', 'tests/**/*.tsx'],
     ignores: ['tests/helpers.ts'],
     rules: {
+      'no-restricted-syntax': ['error', localhostOriginSelector],
+    },
+  },
+  // Playwright has no module mocking, so an e2e spec reaches the undefined-
+  // filter guard (#783) only through createGuardedPrismaClient. A flat-config
+  // block replaces a rule's options rather than merging them, so this block
+  // repeats the localhost selector the `tests/**` block above sets.
+  {
+    files: ['tests/e2e/**/*.ts'],
+    ignores: ['tests/e2e/prisma.ts'],
+    rules: {
       'no-restricted-syntax': [
         'error',
+        localhostOriginSelector,
         {
-          selector:
-            'Literal[value=/(localhost|127\\.0\\.0\\.1):[0-9]+/], TemplateElement[value.raw=/(localhost|127\\.0\\.0\\.1):[0-9]+/]',
+          selector: "NewExpression[callee.name='PrismaClient']",
           message:
-            "Don't hardcode a localhost/127.0.0.1 origin — import BASE_URL from tests/helpers.ts and interpolate it instead, so tests work against any origin (e.g. a worktree's dev server on another port).",
+            'Build e2e Prisma clients with createGuardedPrismaClient() from tests/e2e/prisma.ts; it refuses bulk writes whose filter holds undefined (#783).',
         },
       ],
     },
