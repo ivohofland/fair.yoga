@@ -388,6 +388,25 @@ describe('resumePayments', () => {
     expect(stampOf(otherOwed.paymentId)).toBeNull();
   });
 
+  it('tells no erased student, and leaves the payment of an erased student unstamped', async () => {
+    const t = await pausedTeacher();
+    const cls = await classFor(t.teacherId);
+    const live = await payment(cls.id, { status: 'pending', createdAt: daysBefore(NOW, 2) });
+    const erased = await payment(cls.id, { status: 'pending', createdAt: daysBefore(NOW, 2) });
+    await prisma.student.update({ where: { id: erased.studentId }, data: { deletedAt: daysBefore(NOW, 1) } });
+
+    expect(await resumePayments(prisma, {
+      teacherId: t.teacherId, sessionId: await session(t.accountId), fingerprint: await currentFingerprint(t.teacherId), now: NOW,
+    })).toEqual({ status: 'resumed' });
+
+    const told = async (studentId: string) =>
+      prisma.notification.count({ where: { recipientType: 'student', recipientId: studentId } });
+    expect(await told(live.studentId)).toBe(1);
+    expect(await told(erased.studentId)).toBe(0);
+    const stamp = await prisma.payment.findUniqueOrThrow({ where: { id: erased.paymentId }, select: { reminderSentAt: true } });
+    expect(stamp.reminderSentAt).toBeNull();
+  });
+
   it('leaves the reminder sweep nothing to send for an overdue payment the resume just told', async () => {
     const t = await pausedTeacher();
     const cls = await classFor(t.teacherId);

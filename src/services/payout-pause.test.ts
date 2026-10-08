@@ -246,9 +246,32 @@ describe('pausePayments', () => {
     // An earlier event moves the re-pause's own cutoff to 12 days ago.
     await event(me.teacherId, daysAgo(now, 5));
     const secondRaw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 1)), new Date(now.getTime() + DAY_MS));
+    const frozen = await pauseState(me.teacherId);
     expect(await pausePayments(prisma, secondRaw, now)).toEqual({ status: 'paused' });
 
     expect(await prisma.passkeyCredential.count({ where: { id: eligible } })).toBe(1);
+    expect(await pauseState(me.teacherId)).toEqual(frozen);
+  });
+
+  it('a re-pause whose own window and cutoff are later keeps the first pause\'s window and cutoff', async () => {
+    const now = new Date();
+    const me = await makeTeacher();
+    const firstAt = daysAgo(now, 20);
+    const firstEventAt = daysAgo(now, 21);
+    const firstRaw = await token(me.teacherId, await event(me.teacherId, firstEventAt), new Date(now.getTime() + DAY_MS));
+    await passkey(me.accountId, 'old-enough', daysAgo(now, 60));
+    expect(await pausePayments(prisma, firstRaw, firstAt)).toEqual({ status: 'paused' });
+    const paused = await pauseState(me.teacherId);
+    expect(paused.pauseWindowStart).toEqual(firstEventAt);
+    expect(paused.pausePasskeyCutoff).toEqual(daysAgo(firstEventAt, PAUSE_PASSKEY_LOOKBACK_DAYS));
+
+    // The first event is now older than any link's lifetime, so the second
+    // pause's own window starts at its own event, a later cutoff.
+    const secondEventAt = daysAgo(now, 1);
+    const secondRaw = await token(me.teacherId, await event(me.teacherId, secondEventAt), new Date(now.getTime() + DAY_MS));
+    expect(await pausePayments(prisma, secondRaw, now)).toEqual({ status: 'paused' });
+
+    expect(await pauseState(me.teacherId)).toEqual(paused);
   });
 
   describe('the window start', () => {
