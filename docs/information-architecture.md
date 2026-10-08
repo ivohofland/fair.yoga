@@ -198,7 +198,8 @@ Settings
 │   ├── Name, photo, bio (250 chars)
 │   ├── Personal page URL
 │   ├── Custom domain
-│   └── Bank details (one account per currency, its fields following the currency's scheme)
+│   ├── Bank details (one account per currency, its fields following the currency's scheme)
+│   └── Payment link (one open-ended link, shown to students beside the bank methods)
 │
 ├── Rooms
 │   ├── My rooms list
@@ -257,7 +258,7 @@ Each row takes the teacher to the real screen where they'll do this task in the 
 ```
 Sign up (magic link)
   → Profile setup (checklist row 1 — bio, skippable)
-    → Bank details (checklist row 2 — skippable; done once an account exists in the teacher's current currency)
+    → How students pay (checklist row 2 — skippable; done once an account exists in the teacher's current currency or a payment link is set)
       → Add room (checklist row 3 — required)
         → Create class (checklist row 4 — required)
           → Completion card: share the booking page → Dismiss
