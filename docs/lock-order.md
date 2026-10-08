@@ -2121,11 +2121,13 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   earliest `PayoutChangeEvent`, a `Teacher` `UPDATE` of non-key columns
   (which raises nothing) unless already paused, then deletes of the
   account's `Session`, `PushSubscription` and `MagicLinkToken` rows and,
-  last, of its passkeys created at or after the cutoff. Sessions go before
-  passkeys: `Session.passkeyCredentialId` is `ON DELETE SET NULL`, and with
-  the sessions already gone the passkey delete updates no `Session` row, so
-  the pause takes no lock on a row a passkey delete elsewhere could also be
-  nulling. None of those rows is locked by a transaction that then waits on
+  last, of its passkeys created at or after the cutoff (or the frozen one,
+  if later). Sessions go before passkeys: `Session.passkeyCredentialId` is
+  `ON DELETE SET NULL`, and the sessions that existed are deleted first, so
+  the passkey delete's `SET NULL` reaches only a session a passkey sign-in
+  inserted between the two statements. That session's credential is then
+  null, and a session with no credential cannot satisfy a resume. None of
+  those rows is locked by a transaction that then waits on
   `Teacher`. A pause arriving during an erasure waits on the lock, finds the
   row erased and answers `invalid` without consuming. A failure after the
   consume rolls it back: `src/services/payout-pause-lock-order.test.ts` holds

@@ -222,6 +222,23 @@ describe('pausePayments', () => {
     expect(await prisma.passkeyCredential.count({ where: { id: sinceFirstCutoff } })).toBe(0);
   });
 
+  it('a re-pause whose own cutoff is earlier never removes a passkey the first pause left eligible', async () => {
+    const now = new Date();
+    const me = await makeTeacher();
+    const firstRaw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 2)), new Date(now.getTime() + DAY_MS));
+    // Older than the first pause's cutoff (9 days ago), so eligible to resume.
+    const eligible = await passkey(me.accountId, 'eligible', daysAgo(now, 10));
+    expect(await pausePayments(prisma, firstRaw, now)).toEqual({ status: 'paused' });
+    expect((await pauseState(me.teacherId)).pausePasskeyCutoff).toEqual(daysAgo(daysAgo(now, 2), PAUSE_PASSKEY_LOOKBACK_DAYS));
+
+    // An earlier event moves the re-pause's own cutoff to 12 days ago.
+    await event(me.teacherId, daysAgo(now, 5));
+    const secondRaw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 1)), new Date(now.getTime() + DAY_MS));
+    expect(await pausePayments(prisma, secondRaw, now)).toEqual({ status: 'paused' });
+
+    expect(await prisma.passkeyCredential.count({ where: { id: eligible } })).toBe(1);
+  });
+
   describe('the window start', () => {
     it('is the earliest event since the floor, not the token\'s own', async () => {
       const now = new Date();
@@ -264,15 +281,31 @@ describe('pausePayments', () => {
     it('falls back to the token\'s event when nothing lies past the floor', async () => {
       const now = new Date();
       const me = await makeTeacher();
-      const threeDays = daysAgo(now, 3);
-      const raw = await token(me.teacherId, await event(me.teacherId, threeDays), new Date(now.getTime() + DAY_MS));
-      await prisma.teacher.update({ where: { id: me.teacherId }, data: { paymentsResumedAt: daysAgo(now, 1) } });
+      // Older than the link lifetime, on a token that outlived it.
+      const twentyDays = daysAgo(now, 20);
+      const raw = await token(me.teacherId, await event(me.teacherId, twentyDays), new Date(now.getTime() + DAY_MS));
 
       await pausePayments(prisma, raw, now);
 
       expect(await pauseState(me.teacherId)).toEqual({
         paymentsPausedAt: now,
-        pauseWindowStart: threeDays,
+        pauseWindowStart: twentyDays,
+        pausePasskeyCutoff: null,
+      });
+    });
+
+    it('starts at the floor when nothing lies past it and the token\'s event predates the last resume', async () => {
+      const now = new Date();
+      const me = await makeTeacher();
+      const raw = await token(me.teacherId, await event(me.teacherId, daysAgo(now, 3)), new Date(now.getTime() + DAY_MS));
+      const resumedAt = daysAgo(now, 1);
+      await prisma.teacher.update({ where: { id: me.teacherId }, data: { paymentsResumedAt: resumedAt } });
+
+      await pausePayments(prisma, raw, now);
+
+      expect(await pauseState(me.teacherId)).toEqual({
+        paymentsPausedAt: now,
+        pauseWindowStart: resumedAt,
         pausePasskeyCutoff: null,
       });
     });

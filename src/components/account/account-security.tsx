@@ -43,16 +43,16 @@ function transportHint(transports: string[]): string | null {
   return null;
 }
 
-// Sign-in security for the signed-in account: its passkeys (list, add,
-// remove) and ending every session. Adding needs a sign-in within the last
-// few minutes; when the server says so, the person is offered a fresh
-// sign-in link that returns here.
 const REMOVE_ERROR_COPY = {
   failed: 'Could not remove that passkey.',
   'signed-out': 'Your session has ended — sign in again.',
   paused: 'Passkeys can’t be removed while payments are paused. Resume payments first.',
 } as const;
 
+// Sign-in security for the signed-in account: its passkeys (list, add,
+// remove) and ending every session. Adding needs a sign-in within the last
+// few minutes; when the server says so, the person is offered a fresh
+// sign-in link that returns here.
 export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
   const [passkeys, setPasskeys] = useState<PasskeyRow[] | null>(null);
   const [listError, setListError] = useState(false);
