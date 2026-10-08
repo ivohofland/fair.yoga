@@ -33,8 +33,28 @@ describe('summariseCspReport', () => {
     expect(summariseCspReport(report({ 'blocked-uri': 'inline' }))).toBeNull();
   });
 
+  it('prefers effective-directive over violated-directive', () => {
+    const s = summariseCspReport(report({ 'effective-directive': 'script-src-elem', 'violated-directive': 'script-src' }));
+    expect(s?.directive).toBe('script-src-elem');
+  });
+
+  it('takes the first token of a violated-directive that carries sources', () => {
+    const s = summariseCspReport(report({ 'violated-directive': "script-src 'self' 'nonce-abc'" }));
+    expect(s?.directive).toBe('script-src');
+  });
+
+  it('marks an empty blocked-uri as none', () => {
+    expect(summariseCspReport(report({ 'effective-directive': 'img-src', 'blocked-uri': '' }))?.blockedUri).toBe('none');
+  });
+
+  it('keeps a report-only disposition', () => {
+    expect(summariseCspReport(report({ 'effective-directive': 'img-src', disposition: 'report' }))?.disposition).toBe('report');
+  });
+
   it('refuses a directive that is not a directive name', () => {
-    expect(summariseCspReport(report({ 'effective-directive': 'script-src\nforged log line' }))).toBeNull();
+    expect(summariseCspReport(report({ 'effective-directive': 'script-src;forged' }))).toBeNull();
+    expect(summariseCspReport(report({ 'effective-directive': '\nforged log line' }))).toBeNull();
+    expect(summariseCspReport(report({ 'effective-directive': 'script-src\nforged log line' }))?.directive).toBe('script-src');
   });
 
   it('marks missing or unparseable fields rather than passing them through', () => {

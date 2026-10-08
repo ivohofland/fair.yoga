@@ -1,9 +1,4 @@
-/**
- * What the report route logs from a browser's CSP violation report
- * (`application/csp-report`, sent for the page policy's `report-uri`).
- * Every field is reduced before it is logged: a query string can carry a
- * token, and a blocked URL's path is the sender's to choose.
- */
+/** Where the page policy's `report-uri` points. */
 export const CSP_REPORT_PATH = '/api/csp-report';
 export const MAX_CSP_REPORT_BYTES = 8 * 1024;
 
@@ -47,12 +42,18 @@ function documentPath(raw: string | undefined): string {
   }
 }
 
-/** The loggable summary of a parsed report body, or null when it is not a CSP report. */
+/**
+ * The loggable summary of a parsed report body (`application/csp-report`), or
+ * null when it is not a CSP report. Every field is reduced: a query string can
+ * carry a token, and a blocked URL's path is the sender's to choose. The
+ * directive is the first token of the field, because older browsers append
+ * the policy's sources to `violated-directive`.
+ */
 export function summariseCspReport(body: unknown): CspReportSummary | null {
   if (!isRecord(body)) return null;
   const report = body['csp-report'];
   if (!isRecord(report)) return null;
-  const directive = field(report, 'effective-directive') ?? field(report, 'violated-directive');
+  const directive = (field(report, 'effective-directive') ?? field(report, 'violated-directive'))?.split(/\s+/)[0];
   if (directive === undefined || !DIRECTIVE.test(directive)) return null;
   const disposition = field(report, 'disposition');
   return {
