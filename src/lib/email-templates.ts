@@ -285,7 +285,7 @@ export interface PayoutChangedEmailInput {
 const PAYOUT_CHANGED_FOOTER = 'You get this email whenever your payout details change; it is not optional.';
 
 /** What happened, as the sentence's predicate, per kind. */
-const PAYOUT_CHANGE_PHRASES = {
+export const PAYOUT_CHANGE_PHRASES = {
   bank_account_added: 'A bank account was added',
   bank_account_changed: 'A bank account was changed',
   bank_account_removed: 'A bank account was removed',

@@ -4,6 +4,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
 import { InstallCard } from '@/components/schedule/install-card';
+import { PaymentsPausedCard } from '@/components/schedule/payments-paused-card';
 import { ScheduleHeader } from '@/components/schedule/schedule-header';
 import { isOnboardingComplete } from '@/lib/onboarding';
 import { hasPayoutDetails } from '@/lib/payment-methods';
@@ -41,6 +42,7 @@ export default async function SchedulePage() {
         bio: true,
         currency: true,
         paymentLink: true,
+        paymentsPausedAt: true,
         bankAccounts: { select: { currency: true } },
         skippedOnboarding: true,
         pageSlug: true,
@@ -95,6 +97,8 @@ export default async function SchedulePage() {
         photoId={teacher.photo?.id ?? null}
         today={formatDayHeader(startOfLocalDay(now, session.defaultTimezone))}
       />
+
+      {teacher.paymentsPausedAt !== null && <PaymentsPausedCard />}
 
       <InstallCard dismissed={teacher.skippedOnboarding.includes('install')} />
 

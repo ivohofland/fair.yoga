@@ -57,7 +57,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     data: { counter: result.newCounter },
   });
 
-  const sessionToken = await createSession(prisma, credential.accountId);
+  const sessionToken = await createSession(prisma, credential.accountId, { passkeyCredentialId: credential.id });
   const account = await prisma.account.findUnique({
     where: { id: credential.accountId },
     select: { teachers: { where: { deletedAt: null }, select: { id: true, deletedAt: true } } },

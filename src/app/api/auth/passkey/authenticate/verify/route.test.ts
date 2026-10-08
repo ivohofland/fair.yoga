@@ -153,3 +153,17 @@ describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destinat
     expect(body.data.redirectTo).toBe('/signup/profile');
   });
 });
+
+describe('POST /api/auth/passkey/authenticate/verify — the session it mints', () => {
+  it('names the passkey it signed in with, which a payments resume reads', async () => {
+    primeCredential('acc-passkey');
+    accountFindUnique.mockResolvedValue({ teachers: [] });
+    storeChallenge('authentication', 'chal-session', 'expected-challenge');
+
+    const res = await POST(verify('chal-session'));
+
+    expect(res.status).toBe(200);
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith(expect.anything(), 'acc-passkey', { passkeyCredentialId: 'cred-1' });
+  });
+});
