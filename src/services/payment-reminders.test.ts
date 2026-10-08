@@ -315,4 +315,101 @@ describe('payment reminders (DB)', () => {
     const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(row.reminderSentAt).toBeNull();
   });
+
+  describe('a paused teacher', () => {
+    /** Runs `body` with the suite's teacher paused or resumed as given, then restores both columns. */
+    async function withTeacherState(
+      state: { paymentsPausedAt?: Date | null; paymentsResumedAt?: Date | null },
+      body: () => Promise<void>,
+    ): Promise<void> {
+      await prisma.teacher.update({ where: { id: teacherId }, data: state });
+      try {
+        await body();
+      } finally {
+        await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: null, paymentsResumedAt: null } });
+      }
+    }
+
+    it('never flips a paused teacher’s pending payment to overdue, however old', async () => {
+      await withTeacherState({ paymentsPausedAt: new Date(now.getTime() - 1 * DAY) }, async () => {
+        const payment = await makeAgedPayment('pending', 8);
+        await markOverduePayments(prisma, now);
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('pending');
+      });
+    });
+
+    // The overdue clock restarts at resume: seven days from the later of
+    // `createdAt` and `paymentsResumedAt`.
+    it('leaves a payment pending until seven days after the resume', async () => {
+      await withTeacherState({ paymentsResumedAt: new Date(now.getTime() - 2 * DAY) }, async () => {
+        const payment = await makeAgedPayment('pending', 8);
+        await markOverduePayments(prisma, now);
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('pending');
+      });
+    });
+
+    it('flips a payment to overdue once both its age and the resume are past seven days', async () => {
+      await withTeacherState({ paymentsResumedAt: new Date(now.getTime() - 8 * DAY) }, async () => {
+        const payment = await makeAgedPayment('pending', 8);
+        await markOverduePayments(prisma, now);
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('overdue');
+      });
+    });
+
+    it('skips a paused teacher’s overdue payment and still reminds another teacher’s', async () => {
+      const otherEmail = `payrem-other-${uniqueSuffix}@test.local`;
+      const other = await prisma.teacher.create({
+        data: {
+          firstName: 'Other',
+          lastName: 'Teacher',
+          email: otherEmail,
+          account: { create: { email: otherEmail } },
+          bio: 'Payment reminder tests',
+          pageSlug: `payrem-other-${uniqueSuffix}`,
+        },
+      });
+      const otherRoom = await prisma.teacherRoom.create({ data: { teacherId: other.id, roomId, capacityOverride: 15, rentalRate: 30 } });
+      try {
+        const otherClass = await createClassFixture(prisma, {
+          teacherId: other.id,
+          teacherRoomId: otherRoom.id,
+          classType: 'PayRem Other',
+          date: new Date('2026-06-03'),
+          startTime: hhmmToTime('09:00'),
+          durationMinutes: 60,
+          roomCost: 20,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents: 12,
+          status: 'completed',
+        });
+        await withTeacherState({ paymentsPausedAt: new Date(now.getTime() - 1 * DAY) }, async () => {
+          const paused = await makePayment(new Date(now.getTime() - 10 * DAY), 'overdue');
+          const live = await makePayment(new Date(now.getTime() - 10 * DAY), 'overdue', null, otherClass.id);
+          const scoped = scopeSweep(prisma, { Payment: { id: { in: [paused.id, live.id] } } });
+          expect(await sendPaymentReminders(scoped.db, now)).toBe(1);
+
+          const pausedRow = await prisma.payment.findUniqueOrThrow({ where: { id: paused.id } });
+          const liveRow = await prisma.payment.findUniqueOrThrow({ where: { id: live.id } });
+          expect(pausedRow.reminderSentAt).toBeNull();
+          expect(liveRow.reminderSentAt?.getTime()).toBe(now.getTime());
+        });
+      } finally {
+        const otherClassIds = (
+          await prisma.class.findMany({ where: { calendarEntry: { teacherId: other.id } }, select: { id: true } })
+        ).map((c) => c.id);
+        await prisma.notification.deleteMany({ where: { relatedClassId: { in: otherClassIds } } });
+        await prisma.payment.deleteMany({ where: { registration: { class: { calendarEntry: { teacherId: other.id } } } } });
+        await prisma.registration.deleteMany({ where: { class: { calendarEntry: { teacherId: other.id } } } });
+        await prisma.calendarEntry.deleteMany({ where: { teacherId: other.id } });
+        await prisma.teacherRoom.delete({ where: { id: otherRoom.id } });
+        await prisma.teacher.delete({ where: { id: other.id } });
+        await prisma.account.deleteMany({ where: { email: otherEmail } });
+      }
+    });
+  });
 });

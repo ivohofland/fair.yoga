@@ -34,7 +34,7 @@ import {
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
-import { paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { log } from '@/lib/log';
 
 export { ECONOMIC_FIELDS, type EconomicField };
@@ -889,8 +889,8 @@ export async function completeClass(
 
     // Payments exist — now tell people about them, in the same transaction.
     // In the Level 1 model this notification IS the payment request.
-    const teacherHasPaymentMethods =
-      paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency).length > 0;
+    // A paused teacher's students still get the request, told to hold off.
+    const guidance = payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
     const notifications: CreateNotificationInput[] = pricing.students.map((s, i) => {
       const reg = chargedRegistrations[i]!;
       return {
@@ -898,7 +898,7 @@ export async function completeClass(
         recipientId: reg.studentId,
         type: 'payment_request' as const,
         title: 'Payment requested',
-        body: studentPaymentRequestBody(reg.status, cls.calendarEntry, s.price, teacherHasPaymentMethods, cls.currency),
+        body: studentPaymentRequestBody(reg.status, cls.calendarEntry, s.price, guidance, cls.currency),
         relatedClassId: cls.id,
       };
     });

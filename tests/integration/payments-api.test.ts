@@ -358,6 +358,62 @@ describe('POST /api/payments/[id]/remind', () => {
     }
   });
 
+  // A paused teacher's students are told to hold off; a reminder would ask
+  // them to pay into details the teacher has said may not be theirs.
+  describe('while the teacher has paused payments', () => {
+    const reminderCount = () =>
+      prisma.notification.count({ where: { recipientType: 'student', recipientId: studentId, type: 'reminder' } });
+
+    async function withPaused(body: () => Promise<void>): Promise<void> {
+      const { reminderSentAt, status } = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+      // Outside the cooldown, so the unchanged answer is not what refuses.
+      await prisma.payment.update({ where: { id: paymentId }, data: { reminderSentAt: null } });
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: new Date() } });
+      try {
+        await body();
+      } finally {
+        await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: null } });
+        await prisma.payment.update({ where: { id: paymentId }, data: { reminderSentAt, status } });
+      }
+    }
+
+    it('refuses the reminder with PAYMENTS_PAUSED, stamping and sending nothing', async () => {
+      await withPaused(async () => {
+        const before = await reminderCount();
+        const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
+          method: 'POST',
+          headers: cookie(teacherToken),
+        });
+        await expectRefusal(res, 'PAYMENTS_PAUSED');
+        expect(await reminderCount()).toBe(before);
+        const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+        expect(after.reminderSentAt).toBeNull();
+      });
+    });
+
+    it("403s another teacher's reminder rather than naming the pause", async () => {
+      await withPaused(async () => {
+        const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
+          method: 'POST',
+          headers: cookie(otherTeacherToken),
+        });
+        await expectForbidden(res);
+      });
+    });
+
+    // Settled makes the reminder moot whatever the pause, so it answers first.
+    it('refuses a settled payment with PAYMENT_SETTLED, not PAYMENTS_PAUSED', async () => {
+      await withPaused(async () => {
+        await prisma.payment.update({ where: { id: paymentId }, data: { status: 'paid' } });
+        const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
+          method: 'POST',
+          headers: cookie(teacherToken),
+        });
+        await expectRefusal(res, 'PAYMENT_SETTLED');
+      });
+    });
+  });
+
   describe('is retry-safe against a concurrent duplicate (#196)', () => {
     // Its own student and payment: the assertion is a notification count, and
     // the shared fixture student has already been reminded by the cases above.

@@ -771,5 +771,98 @@ describe('processEmailFallback (DB)', () => {
         await prisma.account.deleteMany({ where: { email: linkEmail } });
       }
     });
+
+    // Paused is decided at send time: a teacher who paused after the request
+    // was written gets the student no button, whatever methods they hold.
+    it('gives a student payment email no Pay now link while the class teacher has paused payments', async () => {
+      const linkEmail = `fallback-paused-${uniqueSuffix}@test.local`;
+      const studentEmail = `fallback-paused-payer-${uniqueSuffix}@test.local`;
+      let linkTeacherId: string | undefined;
+      let linkRoomId: string | undefined;
+      let studentId: string | undefined;
+      try {
+        const linkTeacher = await prisma.teacher.create({
+          data: {
+            firstName: 'Link',
+            lastName: 'Teacher',
+            email: linkEmail,
+            account: { create: { email: linkEmail } },
+            bio: 'Pay-link fixture',
+            pageSlug: `fallback-paused-${uniqueSuffix}`,
+            defaultTimezone: 'UTC',
+            paymentLink: 'https://revolut.me/anna',
+            bankAccounts: { create: { currency: 'EUR', holderName: 'P. Teacher', iban: 'NL91ABNA0417164300' } },
+            paymentsPausedAt: new Date(),
+          },
+        });
+        linkTeacherId = linkTeacher.id;
+        const room = await prisma.room.create({
+          data: {
+            venueName: 'Paused Studio',
+            address: `${uniqueSuffix} Paused St`,
+            city: 'Amsterdam',
+            postcode: '1111PS',
+            maxCapacity: 10,
+            createdById: linkTeacher.id,
+          },
+        });
+        linkRoomId = room.id;
+        const teacherRoom = await prisma.teacherRoom.create({
+          data: { teacherId: linkTeacher.id, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+        });
+        const linkClass = await createClassFixture(prisma, {
+          teacherId: linkTeacher.id,
+          teacherRoomId: teacherRoom.id,
+          classType: 'Vinyasa',
+          date: new Date('2026-06-04'),
+          startTime: hhmmToTime('09:00'),
+          durationMinutes: 60,
+          roomCost: 30,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents: 10,
+          status: 'completed',
+        });
+        classIds.push(linkClass.id);
+        const student = await prisma.student.create({
+          data: { firstName: 'Linked', lastName: 'Student', email: studentEmail },
+        });
+        studentId = student.id;
+        const notification = await prisma.notification.create({
+          data: {
+            recipientType: 'student',
+            recipientId: student.id,
+            type: 'payment_request',
+            title: 'Priced while paused',
+            body: 'Your price is €9.00.',
+            isRead: false,
+            emailSent: false,
+            createdAt: new Date(Date.now() - 45 * 60 * 1000),
+            relatedClassId: linkClass.id,
+          },
+        });
+        perTestNotificationIds.push(notification.id);
+
+        await processEmailFallback(scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } }).db);
+
+        const call = sendMock.mock.calls.find(([args]) => args.subject === 'Priced while paused');
+        if (!call) throw new Error('no email sent with subject "Priced while paused"');
+        expect(call[0].html as string).not.toContain('/pay"');
+        expect(call[0].html as string).not.toContain('Pay now');
+      } finally {
+        if (studentId !== undefined) {
+          await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+          await prisma.student.delete({ where: { id: studentId } });
+        }
+        if (linkTeacherId !== undefined) {
+          await prisma.calendarEntry.deleteMany({ where: { teacherId: linkTeacherId } });
+          await prisma.teacherRoom.deleteMany({ where: { teacherId: linkTeacherId } });
+        }
+        if (linkRoomId !== undefined) await prisma.room.delete({ where: { id: linkRoomId } });
+        if (linkTeacherId !== undefined) await prisma.teacher.delete({ where: { id: linkTeacherId } });
+        await prisma.account.deleteMany({ where: { email: linkEmail } });
+      }
+    });
   });
 });

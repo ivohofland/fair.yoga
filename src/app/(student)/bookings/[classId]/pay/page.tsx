@@ -14,7 +14,14 @@ import { formatDayHeader, formatMoney, paymentStateText } from '@/lib/format';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
 import { markedPaidLine, reportMissingPayment } from '@/lib/pay-page.server';
-import { PAYMENT_METHOD_COPY, paymentMethodsForTeacher, teacherPaymentSelect, type PaymentMethod } from '@/lib/payment-methods';
+import {
+  PAYMENTS_PAUSED_COPY,
+  PAYMENT_METHOD_COPY,
+  paymentMethodsForTeacher,
+  teacherPaymentSelect,
+  type PaymentMethod,
+  type PaymentMethodsAnswer,
+} from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
 
 export const dynamic = 'force-dynamic';
@@ -186,7 +193,7 @@ function PayBody({
   timeZone,
 }: {
   status: PaymentStatus;
-  methods: PaymentMethod[];
+  methods: PaymentMethodsAnswer;
   amount: number;
   currency: Currency;
   reference: string;
@@ -202,7 +209,12 @@ function PayBody({
       return <p className="type-body mb-6">{`${teacherFirstName} isn’t charging for this class.`}</p>;
     case 'pending':
     case 'overdue':
-      if (methods.length === 0) {
+      // Paused is not zero methods: zero methods says pay directly, the
+      // opposite of holding off.
+      if (methods.kind === 'paused') {
+        return <p className="type-body mb-6">{PAYMENTS_PAUSED_COPY}</p>;
+      }
+      if (methods.methods.length === 0) {
         return (
           <p className="type-body mb-6">
             {`Pay ${teacherFirstName} directly — cash or transfer, whatever you two agreed. They’ll mark it as received.`}
@@ -213,7 +225,7 @@ function PayBody({
         <section className="mb-6">
           <h2 className="type-subtitle mb-3">How would you like to pay?</h2>
           <div className="border-t border-border">
-            {methods.map((method) => (
+            {methods.methods.map((method) => (
               // A shared `name` makes the rows exclusive: opening one closes the others.
               <details key={method.kind} name="pay-method" className="border-b border-border">
                 <summary className="min-h-14 py-3 cursor-pointer">

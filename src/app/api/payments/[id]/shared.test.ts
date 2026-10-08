@@ -43,6 +43,7 @@ describe('respondPaymentOutcome', () => {
    */
   const OTHER_REFUSAL_CODES = {
     CONCURRENT_MODIFICATION: true,
+    PAYMENTS_PAUSED: true,
     PAYMENT_ALREADY_PAID: true,
     PAYMENT_SETTLED: true,
     PAYMENT_WAIVED: true,

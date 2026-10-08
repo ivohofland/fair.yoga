@@ -5,6 +5,7 @@ import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { formatInstantInZone } from '@/lib/timezone';
+import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 
 const prisma = new PrismaClient();
@@ -199,6 +200,23 @@ describe('GET /bookings (page) — payment status gate', () => {
       await prisma.teacherBankAccount.create({
         data: { teacherId, currency: 'EUR', holderName: 'Bookings Teacher', iban: TEACHER_IBAN },
       });
+    }
+  });
+
+  // The teacher still holds a bank account, so a missing Pay now is the
+  // pause's doing; and paused is not zero methods, so no pay-directly line.
+  it('tells an unpaid student to hold off, with no Pay now, while the teacher has paused payments', async () => {
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', notChargedAt: null } });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: new Date() } });
+    try {
+      const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+      expect(html).toContain('○ Unpaid');
+      expect(html).toContain(PAYMENTS_PAUSED_COPY);
+      expect(html).not.toContain('Pay now');
+      expect(html).not.toContain(`href="/bookings/${classId}/pay"`);
+      expect(html).not.toContain('Pay Bookings directly');
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: null } });
     }
   });
 });

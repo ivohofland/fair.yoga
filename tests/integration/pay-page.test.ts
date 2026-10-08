@@ -5,6 +5,7 @@ import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { formatInstantInZone } from '@/lib/timezone';
+import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -48,6 +49,7 @@ describe('GET /bookings/[classId]/pay', () => {
     chf: '',
     linkOnly: '',
     linkAndBank: '',
+    paused: '',
   };
   const overdueClass = { classType: `Pay Overdue ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') };
 
@@ -200,6 +202,14 @@ describe('GET /bookings/[classId]/pay', () => {
       LINK,
     );
 
+    // Holds every method, so a paused page showing none is the pause's doing.
+    const pausedTeacher = await makeTeacher(
+      'paused',
+      { currency: 'EUR', accounts: [{ currency: 'EUR', holderName: HOLDER, iban: IBAN, bic: BIC }] },
+      LINK,
+    );
+    await prisma.teacher.update({ where: { id: pausedTeacher.id }, data: { paymentsPausedAt: new Date() } });
+
     const student = await makeStudent('main');
     studentToken = await seedSession(prisma, student.accountId);
     const otherStudent = await makeStudent('other');
@@ -227,6 +237,7 @@ describe('GET /bookings/[classId]/pay', () => {
     classIds.chf = await completedClass(bankTeacher, { classType: `Pay Francs ${suffix}`, date: new Date('2026-06-12T00:00:00.000Z'), currency: 'CHF' }, student.id, 'attended', { amount: 11, status: 'pending' });
     classIds.linkOnly = await completedClass(linkOnlyTeacher, { classType: `Pay LinkOnly ${suffix}`, date: new Date('2026-06-13T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
     classIds.linkAndBank = await completedClass(linkAndBankTeacher, { classType: `Pay LinkBank ${suffix}`, date: new Date('2026-06-14T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
+    classIds.paused = await completedClass(pausedTeacher, { classType: `Pay Paused ${suffix}`, date: new Date('2026-06-15T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
 
     // Warm the route: `next dev` compiles a page lazily on its first request.
     await payPage(classIds.overdue, studentToken).catch(() => {});
@@ -323,6 +334,20 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).toContain('Pay via ');
     expect(html).toContain('revolut.me');
     expect(html).not.toContain('Pay Paylinkonly directly');
+  });
+
+  // Paused is not zero methods: "pay directly" would be the opposite of
+  // holding off.
+  it('tells a student whose teacher has paused payments to hold off, with no method and no pay-directly line', async () => {
+    const res = await payPage(classIds.paused, studentToken);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(PAYMENTS_PAUSED_COPY);
+    expect(html).not.toContain('How would you like to pay?');
+    expect(html).not.toContain('name="pay-method"');
+    expect(html).not.toContain(IBAN);
+    expect(html).not.toContain(LINK);
+    expect(html).not.toContain('Pay Paypaused directly');
   });
 
   it('lists the payment link after the bank transfer and the QR code', async () => {
