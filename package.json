@@ -17,6 +17,7 @@
     "check-service-image-freshness": "tsx scripts/check-service-image-freshness.ts",
     "check-visual-baseline-freshness": "tsx scripts/check-visual-baseline-freshness.ts",
     "attest-visual-baseline": "tsx scripts/attest-visual-baseline.ts",
+    "census:hook-filters": "tsx scripts/census-hook-filters.ts",
     "test": "vitest run --project unit --project components && vitest run --project unit-sweeps --project integration",
     "test:watch": "vitest --project unit --project components",
     "test:coverage": "vitest run --coverage --no-file-parallelism",

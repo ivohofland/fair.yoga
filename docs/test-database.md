@@ -317,3 +317,55 @@ recorded dev-server pid can't be confirmed stopped (its process group no
 longer matches, or `lsof`/`ps` themselves fail), in which case the sweep
 leaves that entry alone and retries it on the next run rather than drop its
 databases out from under a process that may still be running.
+
+## 6. Undefined filters in test cleanup (#783)
+
+A cleanup hook usually deletes by ids a `beforeAll` assigned to `let`
+bindings declared with no initializer. When that `beforeAll` throws first, the
+bindings are still `undefined` when `afterAll` runs, and Prisma drops an
+`undefined` key from a filter, so `deleteMany({ where: { teacherId } })`
+becomes `deleteMany({ where: {} })` and empties the table. The shared test
+database turns one failing fixture into a wiped table for every other suite.
+
+**The guard.** `tests/undefined-filter-guard.ts` is a Prisma extension that
+refuses `deleteMany`, `updateMany` and `updateManyAndReturn` when any value
+inside `where` is `undefined`, before the query runs. Two installers put it on
+the clients test code builds:
+
+- vitest: `tests/setup/undefined-filter-guard.ts`, in the `setupFiles` of the
+  `unit`, `unit-sweeps` and `integration` projects. A `new PrismaClient()` in
+  test code comes back guarded.
+- Playwright: `createGuardedPrismaClient()` from `tests/e2e/prisma.ts`; an
+  ESLint `no-restricted-syntax` rule bans `new PrismaClient` under
+  `tests/e2e`.
+
+**What is exempt, and why.** A client built by app code comes back plain —
+the `@/lib/db` singleton, and any client an app helper such as
+`src/lib/db-provision.ts` builds. App code's `undefined` filters are
+deliberate optional filters and must behave as they do in production. So a
+test whose cleanup writes through `@/lib/db` is outside the guard's reach;
+the census marks those rows `app`, and such a hook needs its own `if` guard
+(as `src/app/api/auth/session/route.test.ts` has).
+
+**The census.** `pnpm run census:hook-filters` (`scripts/census-hook-filters.ts`,
+analyzer `src/lib/hook-filter-census.ts`) reads every `afterAll`/`afterEach`
+in the tracked test files and lists each bulk write whose `where` reads a
+no-initializer `let`/`var` (`direct`), and each other call handed such a
+binding as an argument (`indirect`, not followed into the callee). A row is
+`guarded` when an enclosing `if`, `&&` or `?:` inside the hook tests every
+binding it reads. On 2026-10-08 it scanned 508 files and printed 843 rows in
+119 files:
+
+| | direct | indirect |
+|---|---|---|
+| UNGUARDED | 548 | 63 |
+| guarded | 218 | 14 |
+
+7 of those rows are `client: app`, 2 of them unguarded. The census is
+syntax-level: an early `if (!id) return;` is not read as a guard, nor is a
+guard on a sibling binding assigned in the same statement, and an `indirect`
+row is any call at all, `Object.defineProperty` included.
+
+The census reports; it does not gate. The guard is the gate: an unguarded row
+whose `beforeAll` failed now throws in its `afterAll` instead of wiping a
+table.
