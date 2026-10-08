@@ -54,6 +54,7 @@ import {
   DURATION_MAX_MINUTES,
   MONEY_MAX,
   CAPACITY_MAX,
+  PAYMENT_LINK_MAX,
   singleLineText,
   multiLineText,
   linkFreeText,
@@ -616,6 +617,25 @@ describe('the character rule on the profile, contact and bank fields (#769)', ()
   });
 });
 
+describe('paymentLinkSchema', () => {
+  it('trims a pasted trailing newline', () => {
+    expect(schemas.paymentLinkSchema.parse({ paymentLink: 'https://revolut.me/anna\n' })).toEqual({
+      paymentLink: 'https://revolut.me/anna',
+    });
+  });
+  it('refuses a hidden character mid-value', () => {
+    expect(schemas.paymentLinkSchema.safeParse({ paymentLink: 'https://revolut.me/a\u202Eb' }).success).toBe(false);
+  });
+  it('refuses an extra key', () => {
+    expect(schemas.paymentLinkSchema.safeParse({ paymentLink: 'https://a.example/', extra: 1 }).success).toBe(false);
+  });
+  it('refuses a string past twice the stored bound and accepts one at it', () => {
+    const at = 'a'.repeat(PAYMENT_LINK_MAX * 2);
+    expect(schemas.paymentLinkSchema.safeParse({ paymentLink: at }).success).toBe(true);
+    expect(schemas.paymentLinkSchema.safeParse({ paymentLink: `${at}a` }).success).toBe(false);
+  });
+});
+
 describe('updateTeacherSchema.pageSlug', () => {
   it('rejects reserved slugs on update, not just on signup', () => {
     expect(updateTeacherSchema.safeParse({ pageSlug: 'settings' }).success).toBe(false);
@@ -648,6 +668,7 @@ describe('a request-sized value parses in linear time (#769)', () => {
     'an email': fieldAt('createInvitationSchema', 'email'),
     'the page slug': pageSlugField,
     'a bank field': fieldAt('bankAccountSchema', 'iban'),
+    'a payment link': fieldAt('paymentLinkSchema', 'paymentLink'),
     'a phone': fieldAt('updateStudentSchema', 'phone'),
     'an address': fieldAt('updateStudentSchema', 'address'),
   } as const;

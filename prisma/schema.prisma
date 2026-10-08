@@ -186,6 +186,7 @@ model Teacher {
   bio                   String                      @db.VarChar(250)
   pageSlug              String                      @unique
   customDomain          String?
+  paymentLink           String?
   currency              Currency                    @default(EUR)
   defaultTimezone       String                      @default("Europe/Amsterdam")
   classReminder         ReminderTiming              @default(morning_of)

@@ -47,6 +47,7 @@ describe('limit values', () => {
       PAGE_SLUG_MAX: 60,
       BANK_FIELD_MAX: 64,
       HOLDER_NAME_MAX: 200,
+      PAYMENT_LINK_MAX: 500,
       DURATION_MAX_MINUTES: 1440,
       MONEY_MAX: 100000,
       CAPACITY_MAX: 1000,
