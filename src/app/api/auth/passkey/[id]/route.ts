@@ -13,7 +13,8 @@ const PASSKEY_GONE = 'That passkey is not on your account.';
 
 /**
  * Not gated on recent sign-in: removing a passkey only takes a way in away,
- * and an owner locked out of one still has the emailed link.
+ * and an owner locked out of one still has the emailed link. Refused while
+ * the account's teacher has payments paused (`deletePasskey`).
  */
 export const DELETE = withErrorHandler(
   async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
@@ -21,9 +22,22 @@ export const DELETE = withErrorHandler(
     if (isErrorResponse(session)) return session;
 
     const { id } = await params;
-    const deleted = await deletePasskey(prisma, { accountId: session.accountId, credentialId: id });
-    if (!deleted) return respondError(PASSKEY_GONE, 404, 'NOT_FOUND');
-
-    return respondOk({ deleted: true });
+    const outcome = await deletePasskey(prisma, { accountId: session.accountId, credentialId: id });
+    switch (outcome) {
+      case 'deleted':
+        return respondOk({ deleted: true });
+      case 'not_found':
+        return respondError(PASSKEY_GONE, 404, 'NOT_FOUND');
+      case 'payments_paused':
+        return respondError(
+          'Passkeys cannot be removed while payments are paused. Resume payments first.',
+          409,
+          'PASSKEY_REMOVAL_PAUSED',
+        );
+      default: {
+        const unhandled: never = outcome;
+        throw new Error(`unhandled passkey removal outcome: ${String(unhandled)}`);
+      }
+    }
   },
 );

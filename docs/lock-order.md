@@ -2114,6 +2114,23 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   outlives the erasure's delete.
   `src/app/api/teachers/[id]/bank-accounts/[currency]/route-lock-order.test.ts`
   pins this, and that a `FOR SHARE` holder parks both writers.
+- The pause (`pausePayments`, `src/services/payout-pause.ts`, behind
+  `POST /api/payout-pause`): a plain read of the `PayoutPauseToken` row by its
+  hash, then `lockTeacherForNoKeyUpdate` as the first lock (#786). Under it:
+  the token's `deleteMany` (the consume), reads of the teacher and of its
+  earliest `PayoutChangeEvent`, a `Teacher` `UPDATE` of non-key columns
+  (which raises nothing) unless already paused, then deletes of the
+  account's `Session`, `PushSubscription` and `MagicLinkToken` rows and,
+  last, of its passkeys created at or after the cutoff. Sessions go before
+  passkeys: `Session.passkeyCredentialId` is `ON DELETE SET NULL`, and with
+  the sessions already gone the passkey delete updates no `Session` row, so
+  the pause takes no lock on a row a passkey delete elsewhere could also be
+  nulling. None of those rows is locked by a transaction that then waits on
+  `Teacher`. A pause arriving during an erasure waits on the lock, finds the
+  row erased and answers `invalid` without consuming. A failure after the
+  consume rolls it back: `src/services/payout-pause-lock-order.test.ts` holds
+  the passkey row so the last delete times out, and the link still pauses
+  afterwards.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
@@ -2129,11 +2146,12 @@ Re-derive the call sites with:
 
 It prints call lines only: an import has no `(` after the name, and the last
 two filters drop the definitions and comment lines. Run on 2026-10-08 after
-the payout writers moved to `lockTeacherForNoKeyUpdate` (#786), it printed
-`classes/route.ts`, `studio-classes/route.ts`, `class-template-lifecycle.ts`,
+the pause joined them (#786), it printed `classes/route.ts`,
+`studio-classes/route.ts`, `class-template-lifecycle.ts`,
 `studio-class-template-lifecycle.ts`, `gdpr.ts`, `currency-switch.ts`,
-`teacher-photo.ts`, `bank-accounts.ts` (its save and its removal) and
-`payment-link.ts` (its save and its removal), each a site with an entry above.
+`teacher-photo.ts`, `bank-accounts.ts` (its save and its removal),
+`payment-link.ts` (its save and its removal) and `payout-pause.ts`, each a site
+with an entry above.
 Re-derive the list rather than trusting it.
 
 ### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`

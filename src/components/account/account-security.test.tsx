@@ -196,6 +196,22 @@ describe('AccountSecurity', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not remove that passkey.');
   });
 
+  it('a remove refused while payments are paused says so', async () => {
+    arrange({
+      'GET /api/auth/passkey': () => ok([ROW_A]),
+      'DELETE /api/auth/passkey/pk-a': () => refusal(409, 'PASSKEY_REMOVAL_PAUSED', 'paused'),
+    });
+    renderIt();
+    const row = await screen.findByRole('listitem');
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Yes, remove' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Passkeys can’t be removed while payments are paused. Resume payments first.',
+    );
+  });
+
   it('a remove answered 401 tells the person to sign in again', async () => {
     arrange({
       'GET /api/auth/passkey': () => ok([ROW_A]),
