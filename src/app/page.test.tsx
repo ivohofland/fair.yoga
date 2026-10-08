@@ -109,7 +109,7 @@ describe('LandingPage', () => {
 
     expect(text).toContain('who’s paid and who hasn’t');
     expect(text).toContain('Set a minimum and a target. Every price is worked out to pay you between the two.');
-    expect(text).toContain('Fill in your profile and bank details, add your room, create your first class, and share your page.');
+    expect(text).toContain('Fill in your profile and how students pay you, add your room, create your first class, and share your page.');
     expect(text).not.toContain('Transparent costs');
     expect(text).not.toContain('The app protects it');
   });
