@@ -2,7 +2,7 @@
  * The Content-Security-Policy strings. `buildPageCsp` is served by
  * `src/proxy.ts`, with a nonce minted per request; Next reads the nonce back
  * off the request's own CSP header and stamps it on its inline scripts.
- * `API_CSP` and `SERVICE_WORKER_CSP` are static and served by `next.config.ts`.
+ * `API_CSP` and `SERVICE_WORKER_CSP` are static strings.
  *
  * `style-src` keeps 'unsafe-inline' for the app's `style={}` attributes;
  * style injection is not script execution. Development adds 'unsafe-eval'
@@ -30,5 +30,5 @@ export function buildPageCsp(nonce: string, isDev: boolean): string {
 /** A JSON body is not a document: if a browser renders one, nothing in it loads or runs. */
 export const API_CSP = "default-src 'none'; frame-ancestors 'none'";
 
-/** The service worker only fetches same-origin URLs (public/sw.js). */
+/** Same-origin only: the worker's own fetches. */
 export const SERVICE_WORKER_CSP = "default-src 'self'";
