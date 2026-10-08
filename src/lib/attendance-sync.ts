@@ -125,8 +125,9 @@ interface Classified {
   /**
    * True only for the app's own answer to a request past the session check: a
    * 2xx that answers the write sent, or the app's JSON error body on a 4xx
-   * other than 401, 408 and 429. A 5xx can come from the session check itself,
-   * and a 2xx the replay cannot confirm may not be the app's.
+   * other than 401, 408 and 429 that is not a `CROSS_ORIGIN` refusal. A 5xx
+   * can come from the session check itself, a `CROSS_ORIGIN` refusal is sent
+   * before it, and a 2xx the replay cannot confirm may not be the app's.
    */
   signedIn: boolean;
 }
@@ -155,6 +156,13 @@ async function classify(res: Response, entry: PendingEntry): Promise<Classified>
   if (answer === null) {
     // A proxy, portal or filter answered, not the app: the write never reached it.
     logRetriedAnswer(entry, res, new Error('the answer is not the app\'s error body'));
+    return { outcome: { kind: 'retry' }, signedIn: false };
+  }
+  if (answer.code === 'CROSS_ORIGIN') {
+    // Refused before the session check, for where the request came from: a
+    // deployment whose `Host` disagrees with the page's origin, not a refusal
+    // to this account, so the entry stays for when that is fixed.
+    logRetriedAnswer(entry, res, new Error('refused as cross-origin: the Host the app sees does not match this page\'s Origin'));
     return { outcome: { kind: 'retry' }, signedIn: false };
   }
   if (res.status === 403) {
