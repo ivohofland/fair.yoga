@@ -30,6 +30,7 @@ import {
   MONEY_MAX,
   CAPACITY_MAX,
   BANK_FIELD_MAX,
+  PAYMENT_LINK_MAX,
   HOLDER_NAME_MAX,
 } from '@/lib/input-bounds';
 
@@ -354,6 +355,16 @@ export const bankAccountSchema = z.object({
   sortCode: bankField,
   accountNumber: bankField,
   routingNumber: bankField,
+}).strict();
+
+/**
+ * `PUT /api/teachers/[id]/payment-link`'s wire shape: the shape only; what
+ * makes a link acceptable is `parsePaymentLink`'s to check. The wire bound is
+ * twice the stored one so surrounding whitespace never trips the generic 400
+ * before the parser's own `too_long`.
+ */
+export const paymentLinkSchema = z.object({
+  paymentLink: singleLineCharacters(z.string().trim(), PAYMENT_LINK_MAX * 2).max(PAYMENT_LINK_MAX * 2),
 }).strict();
 
 /**
