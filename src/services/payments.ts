@@ -385,7 +385,7 @@ export const MANUAL_REMIND_COOLDOWN_MS = 2 * 60 * 1000;
  * reminder it asks for went out moments ago.
  *
  * A teacher who has paused payments is refused (`PAYMENTS_PAUSED`): their
- * students were told to hold off. The check reads the teacher after the stamp,
+ * students are asked to hold off. The check reads the teacher after the stamp,
  * so a settled or missing payment answers as such first, and the refusal
  * rolls the stamp back.
  */

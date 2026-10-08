@@ -242,7 +242,7 @@ describe('savePaymentLink records a payout-change event (#786)', () => {
     expect(await identifierChangedOf(teacherId)).toEqual([true]);
   });
 
-  // The column's CHECK admits any https value; the parser also refuses userinfo.
+  // A stored link the parser refuses (here, one with userinfo).
   it('masks a stored link that no longer parses as an unreadable link', async () => {
     const teacherId = await makeTeacher('https://revolut.me@evil.example/oldteacher');
     const out = await savePaymentLink(prisma, teacherId, 'https://paypal.me/annayoga');

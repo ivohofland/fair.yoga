@@ -1,11 +1,11 @@
 /**
  * @serial-tier lock-contention — the case below holds one of the teacher's
  * passkey rows on a second connection until `pausePayments` gives up on it
- * under the shared 2s `lock_timeout`. Its assertion is that failure's SQLSTATE,
- * and the whole transaction must reach that statement and wait out the bound
- * inside Prisma's 5s interactive-transaction budget: a tier-mate's lock noise
- * that pushed it past would answer `P2028` instead, which is not the failure
- * this file stages.
+ * under the shared `lock_timeout` (`LOCK_TIMEOUT_SQL`). Its assertion is that
+ * failure's SQLSTATE, and the whole transaction must reach that statement and
+ * wait out the bound inside Prisma's interactive-transaction `timeout`: a
+ * tier-mate's lock noise that pushed it past would answer `P2028` instead,
+ * which is not the failure this file stages.
  *
  * A pause that fails after spending its token must leave the token usable:
  * the consume belongs to the pause's own transaction, so it rolls back with

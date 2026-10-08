@@ -140,8 +140,8 @@ export async function sendPasskeyRemovedEmail(to: string, removedAt: Date): Prom
 }
 
 /**
- * Sends the payout-change alert. Fire-and-forget at the call site, so a failure
- * throws for `deliverPayoutChangedNotice` to log. The dry-run line logs neither
+ * Sends the payout-change alert. A failed send throws; the caller owns what
+ * happens next. The dry-run line logs neither
  * the address nor the pause link: the link's fragment is a bearer secret.
  */
 export async function sendPayoutChangedEmail(to: string, input: PayoutChangedEmailInput): Promise<void> {

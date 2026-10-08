@@ -12,7 +12,7 @@ type Params = { params: Promise<{ id: string }> };
 /**
  * Resumes the session teacher's paused payments, confirming the payout
  * details the resume screen showed (`docs/technical-architecture.md`,
- * "Recent authentication"). Ownership, then a fresh sign-in, then the
+ * "Resuming paused payments"). Ownership, then a fresh sign-in, then the
  * service's own order: not paused answers unchanged, then the passkey the
  * pause froze, then the details under the teacher's lock.
  */

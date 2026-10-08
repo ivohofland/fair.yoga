@@ -7,11 +7,10 @@ const COLUMNS = Object.keys(bankAccountDataSelect) as (keyof BankAccountData)[];
 
 /**
  * A digest of every payout detail a teacher holds: each bank account in every
- * currency, column by column, and the payment link. The resume screen shows
- * the details and hands this back, so a resume confirms exactly what was
- * shown — a change to any account since, in any currency, no longer matches.
- * Keys beyond `BankAccountData`'s (a row's `id`, its timestamps) are not
- * payout details and do not enter it.
+ * currency, column by column, and the payment link. A change to any account
+ * since, in any currency, produces a different digest. Columns outside
+ * `BankAccountData` (the row's identity and timestamps) are not payout
+ * details and do not enter it.
  */
 export function payoutFingerprint(t: {
   paymentLink: string | null;
