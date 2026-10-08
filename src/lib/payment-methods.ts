@@ -1,4 +1,4 @@
-import type { Currency, Prisma } from '@prisma/client';
+import type { Currency, Prisma, TeacherBankAccount } from '@prisma/client';
 import { log } from '@/lib/log';
 import { parsePaymentLink, paymentLinkFromColumn } from '@/lib/payment-link';
 import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';
@@ -40,6 +40,21 @@ export const bankAccountDataSelect = {
   accountNumber: true,
   routingNumber: true,
 } as const satisfies Record<keyof BankAccountData, true> & Prisma.TeacherBankAccountSelect;
+
+/** True when `A` and `B` are the same set of keys. */
+type SameKeys<A extends PropertyKey, B extends PropertyKey> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/**
+ * A `TeacherBankAccount` column is either one of the row's identity and
+ * bookkeeping keys named here or a payout detail in `BankAccountData`, so a
+ * detail column the model gains fails to compile until `BankAccountData`, and
+ * with it `bankAccountDataSelect` and the resume fingerprint, carry it.
+ */
+const _bankAccountDataIsEveryDetailColumn: SameKeys<
+  Exclude<keyof TeacherBankAccount, 'id' | 'teacherId' | 'createdAt' | 'updatedAt'>,
+  keyof BankAccountData
+> = true;
+void _bankAccountDataIsEveryDetailColumn;
 
 /** The columns `StoredBankAccount` holds, so one select reads every one `paymentMethodsFor` needs. */
 export const bankAccountSelect = {
