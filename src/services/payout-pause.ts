@@ -72,10 +72,10 @@ async function heldPasskeyBefore(tx: Prisma.TransactionClient, accountId: string
  * The token is consumed inside that transaction, so a failure in any later
  * statement rolls the consume back and the link still works. The teacher row
  * is the first lock (`docs/lock-order.md`, "The `Teacher` row is the first
- * lock"). The sessions that existed are deleted before the passkeys. A
- * passkey sign-in landing between the two leaves a session whose credential
- * the passkey delete then nulls, and a session with no credential cannot
- * satisfy a resume.
+ * lock"). The sessions that existed are deleted before the passkeys, so a
+ * sign-in with a passkey this delete removes, landing between the two, leaves
+ * a session whose credential is nulled; what that means for a resume is
+ * `docs/lock-order.md`'s pause entry.
  */
 export async function pausePayments(db: PrismaClient, rawToken: string, now: Date = new Date()): Promise<PauseOutcome> {
   const tokenHash = hashToken(rawToken);

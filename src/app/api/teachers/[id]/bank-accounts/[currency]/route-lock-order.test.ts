@@ -137,9 +137,9 @@ describe('PUT /api/teachers/[id]/bank-accounts/[currency] during an erasure writ
 });
 
 /**
- * The bank writers take the teacher row `FOR NO KEY UPDATE` first
- * (`docs/lock-order.md`, "The `Teacher` row is the first lock"), so two of
- * them, or one and a pause or resume, serialise on it. A `FOR SHARE` first
+ * The bank writers take the teacher row `FOR NO KEY UPDATE` first, so two of
+ * them serialise on it; who else takes it, and in which mode, is
+ * `docs/lock-order.md`'s "The `Teacher` row is the first lock". A `FOR SHARE` first
  * lock would let a `FOR SHARE` holder through; none of the writers' other
  * statements touch the teacher row in a mode that conflicts with it.
  */
