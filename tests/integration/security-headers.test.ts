@@ -70,7 +70,7 @@ describe('page CSP', () => {
       expect(nonce).toBeDefined();
       const html = await first.text();
       expect(html).toContain(`nonce="${nonce}"`);
-      expect(html).not.toMatch(/<script(?![^>]*\bnonce=)(?![^>]*\bsrc=)[^>]*>/);
+      expect(html).not.toMatch(/<script(?![^>]*\bnonce=)[^>]*>/);
 
       const second = await page(path);
       expect((second.headers.get('content-security-policy') ?? '').match(NONCE)?.[1]).not.toBe(nonce);
@@ -92,5 +92,12 @@ describe('API CSP', () => {
     const res = await fetch(`${BASE_URL}/api/health`, { headers: freshIp() });
     expect(res.headers.get('content-security-policy')).toBe("default-src 'none'; frame-ancestors 'none'");
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+});
+
+describe('service worker CSP', () => {
+  it('/sw.js carries exactly the same-origin policy', async () => {
+    const res = await fetch(`${BASE_URL}/sw.js`, { headers: freshIp() });
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'self'");
   });
 });

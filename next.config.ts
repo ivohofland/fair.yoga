@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-import { API_CSP } from "./src/lib/csp";
+import { API_CSP, SERVICE_WORKER_CSP } from "./src/lib/csp";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -45,9 +45,9 @@ const nextConfig: NextConfig = {
   async headers() {
     const rules = [
       { source: "/(.*)", headers: securityHeaders },
-      // Pages get a nonce CSP from src/proxy.ts; API responses never pass the
-      // proxy and get this static one instead (src/lib/csp.ts).
+      // Static policies for the responses that are not pages (src/lib/csp.ts).
       { source: "/api/:path*", headers: [{ key: "Content-Security-Policy", value: API_CSP }] },
+      { source: "/sw.js", headers: [{ key: "Content-Security-Policy", value: SERVICE_WORKER_CSP }] },
     ];
     if (isDev) {
       // Safari reuses cached dev chunks on plain reload despite

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPageCsp, API_CSP } from './csp';
+import { buildPageCsp, API_CSP, SERVICE_WORKER_CSP } from './csp';
 
 function directive(csp: string, name: string): string | undefined {
   return csp.split('; ').find((d) => d === name || d.startsWith(`${name} `));
@@ -46,5 +46,11 @@ describe('buildPageCsp', () => {
 describe('API_CSP', () => {
   it('lets a JSON response load and run nothing', () => {
     expect(API_CSP).toBe("default-src 'none'; frame-ancestors 'none'");
+  });
+});
+
+describe('SERVICE_WORKER_CSP', () => {
+  it('lets the worker fetch same-origin only', () => {
+    expect(SERVICE_WORKER_CSP).toBe("default-src 'self'");
   });
 });
