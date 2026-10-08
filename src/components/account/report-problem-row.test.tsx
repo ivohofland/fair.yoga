@@ -34,7 +34,7 @@ describe('ReportProblemRow', () => {
     const fragment = new URL(screen.getByRole('link', { name: /Report a problem/ }).getAttribute('href')!).hash.slice(1);
 
     const sections = readFileSync(CONTRIBUTING, 'utf8').split(/^## /m).slice(1);
-    const section = sections.find((s) => githubSlug(s.split('\n', 1)[0]) === fragment);
+    const section = sections.find((s) => githubSlug(s.split('\n', 1)[0] ?? '') === fragment);
 
     expect(section, `no "## " heading in CONTRIBUTING.md slugs to #${fragment}`).toBeDefined();
     expect(section).toContain('hello@fair.yoga');
