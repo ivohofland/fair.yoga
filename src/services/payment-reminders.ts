@@ -130,9 +130,6 @@ export async function sendPaymentReminders(
   for (const payment of due) {
     const cls = payment.registration.class;
     const guidance = payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
-    // The read above leaves paused teachers out; this keeps a paused answer
-    // from ever reaching the copy as a reminder.
-    if (guidance === 'hold_off') continue;
     // Stamp + notify in ONE transaction. The conditional stamp keeps two
     // overlapping cron runs from double-sending; the transaction keeps a
     // failed notification from stamping a reminder that never went out
