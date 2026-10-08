@@ -4,7 +4,11 @@
  * A syntax-and-symbol reading of `afterAll`/`afterEach` callbacks: a bulk
  * write whose `where` reads a `let`/`var` declared with no initializer filters
  * on `undefined` when the hook that would have assigned it never ran, and
- * Prisma drops an `undefined` key, so the write matches every row. This is a
+ * Prisma drops an `undefined` key, so the write matches every row. It reads
+ * the hook's own body, and the body of a function declared in the same file
+ * that the hook calls, one level deep; a function from another file is
+ * reported as the call that hands it the binding, not followed. Its reach and
+ * its known misses are in `docs/test-database.md` (section 6). This is a
  * report, not a gate — the runtime guard (`tests/undefined-filter-guard.ts`)
  * is the gate. Tooling only: it imports `typescript`, a devDependency, so no
  * application module may import it.
@@ -20,13 +24,17 @@ export type HookFilterFinding = {
   /** 1-based line of the write or the call. */
   line: number;
   hook: 'afterAll' | 'afterEach';
-  /** `direct`: the bulk write itself. `indirect`: a call handing a possibly-undefined binding to a function the census does not follow. */
+  /**
+   * `direct`: a bulk write in the hook's own body. `indirect`: a call in the
+   * hook handing a possibly-undefined binding to a function, or a row found
+   * inside a same-file function the hook calls.
+   */
   kind: 'direct' | 'indirect';
   /** The callee as written, e.g. `prisma.class.deleteMany` or `teardownTeacher`. */
   call: string;
   /** The possibly-undefined bindings the write's `where` (or the call's arguments) reads. */
   bindings: string[];
-  /** Every binding is tested by an enclosing `if`, `&&` or `?:` inside the hook. */
+  /** Every binding is mentioned by a condition the row sits behind: see `isGuarded`. */
   guarded: boolean;
   /** `app` when the receiver (or, for an indirect call, an argument) resolves to `src/lib/db.ts`; the guard does not cover that client. */
   client: 'test' | 'app';
@@ -53,11 +61,18 @@ function hookOf(node: ts.CallExpression): Hook | undefined {
   return callback === undefined ? undefined : { name, callback };
 }
 
-/** A `let`/`var` declared with no initializer, outside a `for…of`/`for…in` head. */
+/**
+ * A `let`/`var` declared with no initializer, outside a `for…of`/`for…in`
+ * head. Ambient declarations — a `declare` statement, or anything in a
+ * declaration file such as the lib's `Boolean` or `window` — are values the
+ * runtime supplies, never unassigned.
+ */
 function isPossiblyUndefined(symbol: ts.Symbol): boolean {
   const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
   if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return false;
   if (declaration.initializer !== undefined) return false;
+  if (declaration.getSourceFile().isDeclarationFile) return false;
+  if ((ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0) return false;
   const list = declaration.parent;
   if (!ts.isVariableDeclarationList(list)) return false;
   if ((list.flags & (ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) !== 0) return false;
@@ -72,10 +87,15 @@ function valueSymbolOf(checker: ts.TypeChecker, id: ts.Identifier): ts.Symbol | 
   return checker.getSymbolAtLocation(id);
 }
 
-/** Identifiers in `node` that read a value: not property names, not the `.name` of an access. */
+/**
+ * Identifiers in `node` that read a value: not property names, not the
+ * `.name` of an access. Function bodies inside `node` are skipped — a callback
+ * argument's own calls are visited as calls in their own right.
+ */
 function valueIdentifiers(node: ts.Node): ts.Identifier[] {
   const found: ts.Identifier[] = [];
   const visit = (n: ts.Node): void => {
+    if (n !== node && ts.isFunctionLike(n)) return;
     if (ts.isIdentifier(n)) {
       const parent = n.parent;
       const isPropertyName =
@@ -107,24 +127,83 @@ function isDirectWrite(call: ts.CallExpression): call is ts.CallExpression & { e
   return ts.isPropertyAccessExpression(call.expression) && BULK_WRITES.has(call.expression.name.text);
 }
 
+/**
+ * A call to a model delegate's other methods — a read, a `create`, or a
+ * unique-`where` `delete`/`update`/`upsert`, which rejects an `undefined` key
+ * itself. A delegate is recognised by its type carrying both `deleteMany` and
+ * `findMany`, so no list of method names has to track Prisma's.
+ */
+function isOtherDelegateMethod(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
+  if (!ts.isPropertyAccessExpression(call.expression) || BULK_WRITES.has(call.expression.name.text)) return false;
+  const receiver = checker.getTypeAtLocation(call.expression.expression);
+  return receiver.getProperty('deleteMany') !== undefined && receiver.getProperty('findMany') !== undefined;
+}
+
 function mentions(checker: ts.TypeChecker, node: ts.Node, symbol: ts.Symbol): boolean {
   return valueIdentifiers(node).some((id) => valueSymbolOf(checker, id) === symbol);
 }
 
-/** An ancestor between `node` and `boundary` is an `if`, `&&` or `?:` whose condition mentions `symbol`. */
+/** `return;`/`throw …;`, alone or as the only statement of a block. */
+function exits(statement: ts.Statement): boolean {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  if (!ts.isBlock(statement)) return false;
+  const [only, ...rest] = statement.statements;
+  return only !== undefined && rest.length === 0 && exits(only);
+}
+
+/**
+ * Between `node` and `boundary`, `node` sits in the then-branch of an `if`,
+ * the right of an `&&` or the true branch of a `?:` whose condition mentions
+ * `symbol`, or after an `if (…) return;`/`throw` in the same block whose
+ * condition mentions it. "Mentions", not "tests": `if (!id) write(id)` counts.
+ */
 function isGuarded(checker: ts.TypeChecker, node: ts.Node, boundary: ts.Node, symbol: ts.Symbol): boolean {
-  for (let current = node.parent; current !== boundary; current = current.parent) {
-    if (ts.isIfStatement(current) && mentions(checker, current.expression, symbol)) return true;
-    if (ts.isConditionalExpression(current) && mentions(checker, current.condition, symbol)) return true;
+  let child: ts.Node = node;
+  for (let current = node.parent; current !== boundary; child = current, current = current.parent) {
+    if (ts.isIfStatement(current) && current.thenStatement === child && mentions(checker, current.expression, symbol)) return true;
+    if (ts.isConditionalExpression(current) && current.whenTrue === child && mentions(checker, current.condition, symbol)) return true;
     if (
       ts.isBinaryExpression(current) &&
       current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      current.right === child &&
       mentions(checker, current.left, symbol)
     ) {
       return true;
     }
+    if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isCaseOrDefaultClause(current)) {
+      const index = current.statements.findIndex((statement) => statement === child);
+      const earlier = index < 0 ? [] : current.statements.slice(0, index);
+      if (earlier.some((s) => ts.isIfStatement(s) && exits(s.thenStatement) && mentions(checker, s.expression, symbol))) {
+        return true;
+      }
+    }
   }
   return false;
+}
+
+/** The function declared in `source`, outside `hook`, that `call` invokes by name: a function declaration or a `const` bound to an arrow or function expression. */
+function sameFileCallee(
+  checker: ts.TypeChecker,
+  call: ts.CallExpression,
+  source: ts.SourceFile,
+  hook: ts.Node,
+): ts.FunctionLikeDeclaration | undefined {
+  if (!ts.isIdentifier(call.expression)) return undefined;
+  const declaration = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
+  if (declaration === undefined || declaration.getSourceFile() !== source) return undefined;
+  let fn: ts.FunctionLikeDeclaration | undefined;
+  if (ts.isFunctionDeclaration(declaration)) fn = declaration;
+  else if (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer)) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+  ) {
+    fn = declaration.initializer;
+  }
+  if (fn?.body === undefined) return undefined;
+  return ts.findAncestor(fn, (n) => n === hook) === undefined ? fn : undefined;
 }
 
 /** The leftmost identifier of `a.b.c` / `a[b].c`, if the chain is rooted in one. */
@@ -166,13 +245,22 @@ export function censusHookFilters(program: ts.Program, files: readonly string[],
     if (source === undefined) continue;
     const rel = path.relative(repoRoot, source.fileName).split(path.sep).join('/');
 
-    const inspectHook = (hook: Hook): void => {
-      const body = hook.callback.body;
-      if (body === undefined) return;
+    /**
+     * Rows for the calls in `body`. In a followed callee, `callSite` is the
+     * hook's call to it: every row is `indirect`, a row is guarded inside the
+     * callee or at the call site, and the callee's own callees are not followed.
+     */
+    const inspect = (hook: Hook, body: ts.Node, boundary: ts.Node, callSite: ts.CallExpression | undefined): void => {
+      const followed = new Set<ts.Node>();
       const visit = (n: ts.Node): void => {
         if (ts.isCallExpression(n)) {
           const direct = isDirectWrite(n) ? whereOf(n) : undefined;
-          const read = direct === undefined ? n.arguments.filter(ts.isIdentifier) : valueIdentifiers(direct);
+          const read =
+            direct === undefined
+              ? isOtherDelegateMethod(checker, n)
+                ? []
+                : n.arguments.filter((arg) => !ts.isFunctionLike(arg)).flatMap((arg) => valueIdentifiers(arg))
+              : valueIdentifiers(direct);
           const symbols = new Map<string, ts.Symbol>();
           for (const id of read) {
             const symbol = valueSymbolOf(checker, id);
@@ -187,12 +275,21 @@ export function censusHookFilters(program: ts.Program, files: readonly string[],
               file: rel,
               line: source.getLineAndCharacterOfPosition(n.getStart(source)).line + 1,
               hook: hook.name,
-              kind: direct === undefined ? 'indirect' : 'direct',
+              kind: direct !== undefined && callSite === undefined ? 'direct' : 'indirect',
               call: calleeText(n, source),
               bindings: [...symbols.keys()],
-              guarded: [...symbols.values()].every((symbol) => isGuarded(checker, n, hook.callback, symbol)),
+              guarded: [...symbols.values()].every(
+                (symbol) =>
+                  isGuarded(checker, n, boundary, symbol) ||
+                  (callSite !== undefined && isGuarded(checker, callSite, hook.callback, symbol)),
+              ),
               client: clientIds.some((id) => id !== undefined && isAppClient(checker, id, appDbFile)) ? 'app' : 'test',
             });
+          }
+          const callee = callSite === undefined ? sameFileCallee(checker, n, source, hook.callback) : undefined;
+          if (callee?.body !== undefined && !followed.has(callee)) {
+            followed.add(callee);
+            inspect(hook, callee.body, callee, n);
           }
         }
         ts.forEachChild(n, visit);
@@ -204,7 +301,7 @@ export function censusHookFilters(program: ts.Program, files: readonly string[],
       if (ts.isCallExpression(n)) {
         const hook = hookOf(n);
         if (hook !== undefined) {
-          inspectHook(hook);
+          if (hook.callback.body !== undefined) inspect(hook, hook.callback.body, hook.callback, undefined);
           return;
         }
       }

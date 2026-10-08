@@ -16,10 +16,17 @@ declare function afterAll(fn: () => unknown): void;
 declare function afterEach(fn: () => unknown): void;
 declare const test: { afterAll(fn: () => unknown): void; afterEach(fn: () => unknown): void };
 declare class FakeClient {
-  class: { deleteMany(args?: unknown): Promise<unknown>; updateMany(args?: unknown): Promise<unknown> };
+  class: {
+    deleteMany(args?: unknown): Promise<unknown>;
+    updateMany(args?: unknown): Promise<unknown>;
+    findMany(args?: unknown): Promise<unknown>;
+    delete(args: unknown): Promise<unknown>;
+  };
   teacher: { deleteMany(args?: unknown): Promise<unknown> };
 }
 declare function teardownTeacher(client: FakeClient, id: string): Promise<void>;
+declare function teardownMany(client: FakeClient, ...rest: unknown[]): Promise<void>;
+declare var fixtureGlobal: string;
 `;
 
 const DB = `export const prisma = new FakeClient();\n`;
@@ -266,5 +273,202 @@ afterAll(async () => { await prisma.class.deleteMany({ where: { classId } }); })
       { 'helpers.ts': 'export const prisma = new FakeClient();\n' },
     );
     expect(findings).toMatchObject([{ client: 'test' }]);
+  });
+
+  describe('ambient globals', () => {
+    it('does not read a lib global such as Boolean as a binding', () => {
+      const findings = census(`${LOCAL}
+let a: string;
+afterAll(async () => {
+  await prisma.class.deleteMany({ where: { id: { in: [a].filter(Boolean) } } });
+});
+`);
+      expect(findings).toMatchObject([{ bindings: ['a'] }]);
+    });
+
+    it('reports no row for a call handed a declaration-file global or a declare in the test file', () => {
+      expect(
+        census(`${LOCAL}
+declare let ambientId: string;
+afterAll(async () => {
+  await teardownTeacher(prisma, window.name);
+  await teardownTeacher(prisma, fixtureGlobal);
+  await teardownTeacher(prisma, ambientId);
+});
+`),
+      ).toEqual([]);
+    });
+  });
+
+  describe('indirect arguments that are not bare identifiers', () => {
+    it('reads an optional chain, an array literal and a shorthand object', () => {
+      const findings = census(`${LOCAL}
+let alice: { id: string } | undefined;
+let a: string;
+let b: string;
+afterAll(async () => {
+  await teardownMany(prisma, alice?.id);
+  await teardownMany(prisma, [a, b]);
+  await teardownMany(prisma, { a });
+});
+`);
+      expect(findings.map((f) => [f.line, f.kind, f.call, f.bindings])).toEqual([
+        [6, 'indirect', 'teardownMany', ['alice']],
+        [7, 'indirect', 'teardownMany', ['a', 'b']],
+        [8, 'indirect', 'teardownMany', ['a']],
+      ]);
+    });
+  });
+
+  describe('delegate methods other than the bulk writes', () => {
+    it('reports no row for a unique delete or a read, but an indirect row for a bulk write without a literal where', () => {
+      const findings = census(`${LOCAL}
+let classId: string;
+let filter: { where: { id: string } };
+afterAll(async () => {
+  await prisma.class.delete({ where: { id: classId } });
+  await prisma.class.findMany({ where: { id: classId } });
+  await prisma.class.deleteMany(filter);
+});
+`);
+      expect(findings.map((f) => [f.line, f.kind, f.call, f.bindings])).toEqual([[7, 'indirect', 'prisma.class.deleteMany', ['filter']]]);
+    });
+  });
+
+  describe('same-file callees', () => {
+    it('follows a function declaration the hook calls, one level deep', () => {
+      const findings = census(`${LOCAL}
+let classId: string;
+async function teardownWorld() {
+  await prisma.class.deleteMany({ where: { classId } });
+}
+afterAll(() => teardownWorld());
+`);
+      expect(findings).toEqual([
+        {
+          file: 'case.test.ts',
+          line: 4,
+          hook: 'afterAll',
+          kind: 'indirect',
+          call: 'prisma.class.deleteMany',
+          bindings: ['classId'],
+          guarded: false,
+          client: 'test',
+        },
+      ]);
+    });
+
+    it('follows a const arrow, reading guards inside it and at the call site', () => {
+      const findings = census(`${LOCAL}
+let a: string;
+let b: string;
+const cleanup = async () => {
+  if (a) await prisma.class.deleteMany({ where: { id: a } });
+  await prisma.class.deleteMany({ where: { id: b } });
+  await teardownTeacher(prisma, b);
+};
+afterAll(async () => {
+  await cleanup();
+});
+afterEach(async () => {
+  if (b) await cleanup();
+});
+`);
+      expect(findings.map((f) => [f.hook, f.line, f.kind, f.call, f.guarded])).toEqual([
+        ['afterAll', 5, 'indirect', 'prisma.class.deleteMany', true],
+        ['afterAll', 6, 'indirect', 'prisma.class.deleteMany', false],
+        ['afterAll', 7, 'indirect', 'teardownTeacher', false],
+        ['afterEach', 5, 'indirect', 'prisma.class.deleteMany', true],
+        ['afterEach', 6, 'indirect', 'prisma.class.deleteMany', true],
+        ['afterEach', 7, 'indirect', 'teardownTeacher', true],
+      ]);
+    });
+
+    it('does not follow a function from another file, nor a callee of a callee', () => {
+      const findings = census(
+        `${LOCAL}
+import { remoteCleanup } from './helpers';
+let classId: string;
+async function inner() { await prisma.class.deleteMany({ where: { classId } }); }
+async function outer() { await inner(); }
+afterAll(async () => {
+  await remoteCleanup();
+  await outer();
+});
+`,
+        { 'helpers.ts': 'export async function remoteCleanup(): Promise<void> {}\n' },
+      );
+      expect(findings).toEqual([]);
+    });
+  });
+
+  describe('which branch a guard covers', () => {
+    it('does not count the else branch of an if on the binding', () => {
+      const findings = census(`${LOCAL}
+let classId: string;
+afterAll(async () => {
+  if (classId) {
+    return;
+  } else {
+    await prisma.class.deleteMany({ where: { classId } });
+  }
+});
+`);
+      expect(findings).toMatchObject([{ guarded: false }]);
+    });
+
+    it('does not count a write in the left operand of &&', () => {
+      const findings = census(`${LOCAL}
+let classId: string;
+afterAll(async () => {
+  await (prisma.class.deleteMany({ where: { classId } }) && classId);
+});
+`);
+      expect(findings).toMatchObject([{ guarded: false }]);
+    });
+
+    it('does not count the false branch of ?:', () => {
+      const findings = census(`${LOCAL}
+let classId: string;
+afterAll(async () => {
+  await (classId ? undefined : prisma.class.deleteMany({ where: { classId } }));
+});
+`);
+      expect(findings).toMatchObject([{ guarded: false }]);
+    });
+
+    it('counts an early return or throw on the binding earlier in the same block', () => {
+      const findings = census(`${LOCAL}
+let a: string;
+let b: string;
+afterAll(async () => {
+  if (!a) return;
+  await prisma.class.deleteMany({ where: { id: a } });
+});
+afterAll(async () => {
+  if (!b) { throw new Error('no b'); }
+  await prisma.class.deleteMany({ where: { id: b } });
+});
+`);
+      expect(findings.map((f) => [f.line, f.guarded])).toEqual([
+        [6, true],
+        [10, true],
+      ]);
+    });
+
+    it('does not count an early-exit if that follows the write or does not exit', () => {
+      const findings = census(`${LOCAL}
+let a: string;
+afterAll(async () => {
+  await prisma.class.deleteMany({ where: { id: a } });
+  if (!a) return;
+});
+afterAll(async () => {
+  if (!a) console.log('missing');
+  await prisma.class.deleteMany({ where: { id: a } });
+});
+`);
+      expect(findings.map((f) => f.guarded)).toEqual([false, false]);
+    });
   });
 });
