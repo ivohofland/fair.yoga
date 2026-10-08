@@ -27,6 +27,10 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
+    # Production runs these jobs in-process (src/lib/scheduler.ts). A manual
+    # run goes to http://127.0.0.1:3000 from the VPS itself (DEPLOYMENT.md).
+    location /api/cron/ { deny all; }
+
     # Teacher photo uploads. The app refuses above `MAX_PHOTO_BYTES`
     # (`src/lib/teacher-photo-limits.ts`; 8 MB today) itself, in JSON; this
     # limit sits above that so the app, not nginx, is the one answering.

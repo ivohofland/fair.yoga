@@ -99,8 +99,10 @@ restart needs none. Not every job has been examined for a manual call that
 overlaps its own tick — `docs/technical-architecture.md` (Cron Jobs →
 Overlapping triggers) says which were:
 
+nginx refuses `/api/cron/` from outside, so the call is made on the VPS itself.
+
 ```bash
-curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/daily-cleanup
+curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/cron/daily-cleanup
 # also: /api/cron/transition-classes  /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/class-reminders
 ```
 
