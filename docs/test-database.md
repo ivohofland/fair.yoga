@@ -353,7 +353,7 @@ in the tracked test files and lists each bulk write whose `where` reads a
 no-initializer `let`/`var` (`direct`), and each other call handed such a
 binding as an argument (`indirect`, not followed into the callee). A row is
 `guarded` when an enclosing `if`, `&&` or `?:` inside the hook tests every
-binding it reads. On 2026-10-08 it scanned 508 files and printed 843 rows in
+binding it reads. On 2026-10-08 it scanned 509 files and printed 843 rows in
 119 files:
 
 | | direct | indirect |
