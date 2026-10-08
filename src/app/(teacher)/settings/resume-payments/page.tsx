@@ -95,12 +95,18 @@ export default async function ResumePaymentsPage() {
     prisma.account.findUniqueOrThrow({ where: { id: session.accountId }, select: { email: true } }),
   ]);
 
+  // Also what a resume from this page refreshes to, so it states the resume.
   if (review === null) {
+    const resumed = await prisma.teacher.findUnique({ where: { id: session.teacherId }, select: { paymentsResumedAt: true } });
+    const resumedAt = resumed?.paymentsResumedAt ?? null;
     return (
       <div>
         <PageHeader title="Resume payments" backHref="/schedule" backLabel="Schedule" />
         <p className="type-body">
-          Payments aren&rsquo;t paused. <Link href="/schedule" className={linkClass}>Back to your schedule</Link>
+          {resumedAt === null
+            ? 'Payments aren’t paused.'
+            : `Payments are running. You resumed them on ${when(resumedAt, timeZone)}, and students with an outstanding payment were told then that they can pay.`}{' '}
+          <Link href="/schedule" className={linkClass}>Back to your schedule</Link>
         </p>
       </div>
     );
