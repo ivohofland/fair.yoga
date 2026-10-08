@@ -27,7 +27,7 @@ export const RESUME_PATH = '/settings/resume-payments';
 export const RESUME_SIGN_IN_PATH = `/login?redirect=${encodeURIComponent(RESUME_PATH)}` as const;
 
 const RETRY_COPY = 'Something went wrong, and payments are still paused. Please try again.';
-const RELOAD_COPY = 'This page is out of date, and payments are still paused. Reload this page, then resume.';
+const UNKNOWN_COPY = 'We couldn’t confirm whether payments were resumed. To check, reload this page: it says whether payments are paused.';
 
 const linkClass =
   'text-teal underline decoration-[0.5px] underline-offset-[3px] rounded-field focus:outline-none focus-visible:shadow-focus';
@@ -86,7 +86,7 @@ export function ResumePaymentsForm({
       });
     } catch (err) {
       logRequestFailure('resume-payments', {}, err);
-      setState({ kind: 'refused', message: RETRY_COPY, signOut: false });
+      setState({ kind: 'refused', message: UNKNOWN_COPY, signOut: false });
       return;
     }
     if (res.ok) {
@@ -94,7 +94,8 @@ export function ResumePaymentsForm({
       router.refresh();
       return;
     }
-    const { code, message } = await readError(res, RETRY_COPY);
+    // An empty fallback marks a body the app did not write.
+    const { code, message } = await readError(res, '');
     if (code === 'PAYOUT_DETAILS_CHANGED') {
       router.refresh();
       setState({ kind: 'refused', message, signOut: false });
@@ -115,11 +116,18 @@ export function ResumePaymentsForm({
       setState({ kind: 'signed_out' });
       return;
     }
-    if (res.status === 400 || res.status === 403 || res.status === 404) {
-      setState({ kind: 'refused', message: RELOAD_COPY, signOut: false });
+    // Only the app's own busy or rate-limit answer says the resume did not
+    // happen; anything else (a gateway, a proxy's page, an uncoded refusal)
+    // leaves the outcome unknown.
+    if (res.status === 503 && message !== '') {
+      setState({ kind: 'refused', message: RETRY_COPY, signOut: false });
       return;
     }
-    setState({ kind: 'refused', message: res.status === 429 ? message : RETRY_COPY, signOut: false });
+    if (res.status === 429 && message !== '') {
+      setState({ kind: 'refused', message, signOut: false });
+      return;
+    }
+    setState({ kind: 'refused', message: UNKNOWN_COPY, signOut: false });
   }
 
   async function handleSendLink() {
@@ -160,7 +168,7 @@ export function ResumePaymentsForm({
   if (state.kind === 'signed_out') {
     return (
       <p role="alert" className="type-body">
-        You&rsquo;ve been signed out, and payments are still paused.{' '}
+        You&rsquo;ve been signed out.{' '}
         <Link href={RESUME_SIGN_IN_PATH} className={linkClass}>Sign in again</Link> to resume.
       </p>
     );

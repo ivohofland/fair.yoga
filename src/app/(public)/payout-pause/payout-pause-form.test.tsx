@@ -70,9 +70,9 @@ describe('PayoutPauseForm', () => {
     expect(screen.queryByRole('button', { name: 'Pause payments' })).not.toBeInTheDocument();
   });
 
-  it('keeps the button for another try after a server failure, saying nothing was paused', async () => {
+  it('keeps the button for another try after the server says it was busy, saying nothing was paused', async () => {
     window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
-    stubFetch(() => respond(503, { error: { message: 'busy' } }));
+    stubFetch(() => respond(503, { error: { message: 'The system was busy and could not finish that. Please try again.' } }));
     render(<PayoutPauseForm />);
     await settle();
 
@@ -84,24 +84,36 @@ describe('PayoutPauseForm', () => {
     expect(window.location.hash).toBe(`#t=${TOKEN}`);
   });
 
-  it('says the outcome is unknown, and how to tell, when the response is lost', async () => {
+  // Nothing the app answered says what happened: a gateway, a proxy's own
+  // page, an uncoded refusal or no answer at all.
+  it.each([
+    ['a network error', () => Promise.reject(new TypeError('Failed to fetch'))],
+    ['a 502', () => new Response('<html>Bad Gateway</html>', { status: 502 })],
+    ['a 504', () => new Response('<html>Gateway Timeout</html>', { status: 504 })],
+    ['a 503 that is not the app\'s', () => new Response('<html>Service Unavailable</html>', { status: 503 })],
+    ['a 500', () => respond(500, { error: { message: 'Internal server error' } })],
+    ['an uncoded 404', () => respond(404, { error: { message: 'nope' } })],
+  ] as const)('says how to check, claiming nothing, after %s', async (_case, answer) => {
     window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
-    stubFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    stubFetch(answer);
     render(<PayoutPauseForm />);
     await settle();
 
     fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
     await settle();
 
-    expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t tell whether payments were paused/);
-    expect(screen.getByRole('alert')).toHaveTextContent('no longer works');
-    expect(screen.getByRole('alert')).not.toHaveTextContent('nothing was paused');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/couldn.t confirm whether payments were paused/);
+    expect(alert).toHaveTextContent('To check, press Pause payments again');
+    expect(alert).not.toHaveTextContent('nothing was paused');
+    expect(alert).not.toHaveTextContent('Nothing was paused');
+    expect(alert).not.toHaveTextContent('went through');
     expect(screen.getByRole('button', { name: 'Pause payments' })).toBeEnabled();
   });
 
-  it('reads a used link after a lost response as the earlier attempt having paused', async () => {
+  it('after an unconfirmed attempt, reads a used link as something to check, not as a pause', async () => {
     window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
-    const fetchMock = stubFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    const fetchMock = stubFetch(() => new Response('<html>Bad Gateway</html>', { status: 502 }));
     render(<PayoutPauseForm />);
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
@@ -111,7 +123,9 @@ describe('PayoutPauseForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Pause payments' }));
     await settle();
 
-    expect(screen.getByRole('alert')).toHaveTextContent('your earlier attempt most likely paused payments');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('This link has already been used, perhaps by your earlier attempt.');
+    expect(alert).toHaveTextContent('sign in');
   });
 
   it('confirms the pause even when the address cannot be rewritten', async () => {
@@ -129,9 +143,9 @@ describe('PayoutPauseForm', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Payments are paused');
   });
 
-  it.each([400, 403, 404])('asks for the link to be opened again, not retried, on an uncoded %s', async (status) => {
+  it('asks for the link to be opened again, not retried, on a coded refusal', async () => {
     window.history.replaceState(null, '', `/payout-pause#t=${TOKEN}`);
-    stubFetch(() => respond(status, { error: { message: 'nope' } }));
+    stubFetch(() => respond(403, { error: { code: 'CROSS_ORIGIN', message: 'nope' } }));
     render(<PayoutPauseForm />);
     await settle();
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
 import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
+import { isLoginRedirectTarget } from '@/lib/schemas';
 import { ResumePaymentsForm, PASSKEY_RECENT_AUTH_COPY, RESUME_SIGN_IN_PATH } from './resume-payments-form';
 
 const FINGERPRINT = 'f'.repeat(64);
@@ -118,30 +119,45 @@ describe('ResumePaymentsForm', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('signed out');
     expect(screen.getByRole('link', { name: 'Sign in again' })).toHaveAttribute('href', RESUME_SIGN_IN_PATH);
     expect(RESUME_SIGN_IN_PATH).toBe('/login?redirect=%2Fsettings%2Fresume-payments');
+    // The same rule `/login` applies to the redirect it is handed.
+    const redirect = new URL(RESUME_SIGN_IN_PATH, 'http://localhost').searchParams.get('redirect');
+    expect(redirect).not.toBeNull();
+    expect(isLoginRedirectTarget(redirect ?? '')).toBe(true);
+    expect(screen.getByRole('alert')).not.toHaveTextContent('still paused');
   });
 
-  it.each([400, 403, 404])('tells the teacher to reload rather than retry on an uncoded %s', async (status) => {
-    stubFetch(() => respond(status, { error: { message: 'Access denied' } }));
-    render(<ResumePaymentsForm {...props} passkeyRequired={false} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
-    await settle();
-
-    expect(screen.getByRole('alert')).toHaveTextContent('Reload this page');
-    expect(screen.getByRole('alert')).not.toHaveTextContent('Please try again');
-  });
-
+  // Nothing the app answered says what happened: a gateway, a proxy's own
+  // page, an uncoded refusal or no answer at all.
   it.each([
-    ['a server failure', () => respond(503, { error: { message: 'busy' } })],
-    ['a lost response', () => Promise.reject(new TypeError('Failed to fetch'))],
-  ] as const)('asks for another try after %s', async (_case, answer) => {
+    ['a network error', () => Promise.reject(new TypeError('Failed to fetch'))],
+    ['a 502', () => new Response('<html>Bad Gateway</html>', { status: 502 })],
+    ['a 504', () => new Response('<html>Gateway Timeout</html>', { status: 504 })],
+    ['a 503 that is not the app\'s', () => new Response('<html>Service Unavailable</html>', { status: 503 })],
+    ['a 500', () => respond(500, { error: { message: 'Internal server error' } })],
+    ['an uncoded 403', () => respond(403, { error: { message: 'Access denied' } })],
+    ['an uncoded 404', () => respond(404, { error: { message: 'Teacher not found' } })],
+  ] as const)('says how to check, claiming nothing, after %s', async (_case, answer) => {
     stubFetch(answer);
     render(<ResumePaymentsForm {...props} passkeyRequired={false} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
     await settle();
 
-    expect(screen.getByRole('alert')).toHaveTextContent('payments are still paused. Please try again.');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/couldn.t confirm whether payments were resumed/);
+    expect(alert).toHaveTextContent('To check, reload this page');
+    expect(alert).not.toHaveTextContent('still paused');
+    expect(screen.getByRole('button', { name: 'Resume payments' })).toBeEnabled();
+  });
+
+  it('asks for another try after the server says it was busy, which rolled the resume back', async () => {
+    stubFetch(() => respond(503, { error: { message: 'The system was busy and could not finish that. Please try again.' } }));
+    render(<ResumePaymentsForm {...props} passkeyRequired={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resume payments' }));
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong, and payments are still paused. Please try again.');
     expect(screen.getByRole('button', { name: 'Resume payments' })).toBeEnabled();
   });
 
