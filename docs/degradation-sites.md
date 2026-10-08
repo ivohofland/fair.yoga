@@ -210,8 +210,8 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/classes/[id]/route.ts:198` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
 | `src/app/api/classes/route.ts:189` | warn | routine | documented race; the loser is refused or retried (room deleted) |
 | `src/app/api/classes/route.ts:208` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/health/route.ts:40` | error | routine | failure, surfaced as an error (503) |
-| `src/app/api/health/route.ts:53` | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
+| `src/app/api/health/route.ts:45` | error | routine | failure, surfaced as an error (503) |
+| `src/app/api/health/route.ts:62` | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
 | `src/app/api/invitations/[id]/resend/route.ts:68` | warn | routine | rate-limit throttle |
 | `src/app/api/invitations/[id]/route.ts:97` | warn | routine | failure (an exception or outage), not impossible data; answered as a 409 |
 | `src/app/api/registrations/[id]/route.ts:500` | error | routine | failure (an exception or outage), not impossible data; the cancellation itself succeeded |

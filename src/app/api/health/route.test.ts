@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
+import { NextRequest } from 'next/server';
 import { STALLED_AFTER_SKIPPED_TICKS, type JobHealth } from '@/lib/scheduler';
 import { log } from '@/lib/log';
 
@@ -29,12 +30,26 @@ function entry(overrides: Partial<JobHealth>): JobHealth {
   };
 }
 
-async function read(): Promise<{ status: number; body: HealthBody }> {
-  const res = await GET();
+const SECRET = 'health-test-secret';
+
+async function read(
+  authorization: string | null = `Bearer ${SECRET}`,
+): Promise<{ status: number; body: HealthBody }> {
+  const res = await GET(
+    new NextRequest('http://localhost:3000/api/health', authorization ? { headers: { authorization } } : {}),
+  );
   return { status: res.status, body: (await res.json()) as HealthBody };
 }
 
+const originalSecret = process.env.CRON_SECRET;
+
+beforeEach(() => {
+  process.env.CRON_SECRET = SECRET;
+});
+
 afterEach(() => {
+  if (originalSecret === undefined) delete process.env.CRON_SECRET;
+  else process.env.CRON_SECRET = originalSecret;
   globalThis.__fairYogaJobHealth = undefined;
   vi.useRealTimers();
 });
@@ -156,5 +171,40 @@ describe('GET /api/health', () => {
       lastSuccessAt: '2026-09-29T10:00:00.000Z',
       healthy: true,
     });
+  });
+});
+
+describe('GET /api/health without the secret', () => {
+  it('answers only status and db', async () => {
+    const { status, body } = await read(null);
+    expect(status).toBe(200);
+    expect(body).toEqual({ status: 'ok', db: 'up' });
+  });
+
+  it('a wrong secret gets the same summary', async () => {
+    const { body } = await read('Bearer wrong');
+    expect(Object.keys(body).sort()).toEqual(['db', 'status']);
+  });
+
+  it('still rolls an unhealthy job into status', async () => {
+    globalThis.__fairYogaJobHealth = { failing: entry({ lastError: 'boom' }) };
+    const { body } = await read(null);
+    expect(body).toEqual({ status: 'degraded', db: 'up' });
+  });
+
+  it('a database outage is still a 503, summary only', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    queryRaw.mockRejectedValueOnce(new Error('down'));
+    const { status, body } = await read(null);
+    expect(status).toBe(503);
+    expect(body).toEqual({ status: 'degraded', db: 'down' });
+  });
+
+  it('with no CRON_SECRET configured, answers the summary rather than failing', async () => {
+    delete process.env.CRON_SECRET;
+    const { status, body } = await read(`Bearer ${SECRET}`);
+    expect(status).toBe(200);
+    expect(body).toEqual({ status: 'ok', db: 'up' });
   });
 });
