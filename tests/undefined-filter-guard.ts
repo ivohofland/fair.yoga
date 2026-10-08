@@ -67,16 +67,19 @@ export const undefinedFilterGuard = {
 
 const FRAME = /^\s*at (?:.*? \()?(.+?):\d+:\d+\)?\s*$/;
 
+/** Who a stack's call site belongs to; `undecided` when no frame could say. */
+export type CallSite = 'test' | 'app' | 'undecided';
+
 /**
- * Whether a stack's call site is test code. Frames in `node:` modules, under
- * `node_modules/` or in `ignoreFiles` are skipped; the first remaining frame
- * decides. A frame outside `repoRoot` yields false; one inside yields true when
- * it is a `.test`/`.spec` file or a module under `tests/`. A stack with no
- * deciding frame yields false. The path is made
- * relative to `repoRoot` first, so a checkout under a directory named `tests`
- * is not misread.
+ * Classifies a stack's call site. Frames in `node:` modules, under
+ * `node_modules/` or in `ignoreFiles` are skipped, as are lines that are not
+ * file frames; the first remaining frame decides. A frame outside `repoRoot`
+ * is `app`; one inside is `test` when it is a `.test`/`.spec` file or a module
+ * under `tests/`, and `app` otherwise. The path is made relative to `repoRoot`
+ * first, so a checkout under a directory named `tests` is not misread. A stack
+ * with no remaining frame is `undecided`, never a guess.
  */
-export function isTestCallSite(stack: string, ignoreFiles: readonly string[], repoRoot: string): boolean {
+export function classifyCallSite(stack: string, ignoreFiles: readonly string[], repoRoot: string): CallSite {
   const root = repoRoot.endsWith('/') ? repoRoot : `${repoRoot}/`;
   for (const line of stack.split('\n')) {
     const match = FRAME.exec(line);
@@ -86,9 +89,9 @@ export function isTestCallSite(stack: string, ignoreFiles: readonly string[], re
     if (file.startsWith('node:')) continue;
     if (file.includes('/node_modules/')) continue;
     if (ignoreFiles.includes(file)) continue;
-    if (!file.startsWith(root)) return false;
+    if (!file.startsWith(root)) return 'app';
     const relative = file.slice(root.length);
-    return /\.(test|spec)\.tsx?$/.test(relative) || relative.startsWith('tests/');
+    return /\.(test|spec)\.tsx?$/.test(relative) || relative.startsWith('tests/') ? 'test' : 'app';
   }
-  return false;
+  return 'undecided';
 }
