@@ -4,8 +4,8 @@ import { isAdminHost } from '@/lib/admin-host';
 
 /**
  * How recently an admin session must have signed in with a passkey, measured
- * from the session row's `createdAt` like `RECENT_AUTH_WINDOW_MS` — and
- * separate from it, which governs adding a passkey.
+ * from the session row's `createdAt`. Separate from `RECENT_AUTH_WINDOW_MS`,
+ * the passkey-adding rule, which is measured the same way.
  */
 export const ADMIN_AUTH_WINDOW_MS = 5 * 60 * 1000;
 
@@ -30,7 +30,7 @@ export type AdminAccess = { kind: 'not_found' } | { kind: 'sign_in' } | { kind: 
 /**
  * The admin gate, in order: the admin host, a session, an active grant, a
  * passkey sign-in within `ADMIN_AUTH_WINDOW_MS`. A non-grantee can reach only
- * `not_found` or the no-session `sign_in`, so the answer never says whether an
+ * `not_found` or the session-less (or unrecognised-session) `sign_in`, so the answer never says whether an
  * account holds a grant. docs/technical-architecture.md (Admin surface).
  */
 export async function resolveAdminAccess(

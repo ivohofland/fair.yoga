@@ -161,7 +161,7 @@ The gate is two modules. `resolveAdminAccess` in `src/lib/admin-access.ts` is
 the decision, framework-free and testable without mocking `next/headers`.
 `requireAdminSession()` in `src/lib/admin-session.ts` is the Next wrapper,
 cached per request, that turns its answer into `notFound()` or a redirect.
-Every admin page and every future admin API route calls the wrapper. In order:
+Every page in the gated tree and every future admin API route calls the wrapper. In order:
 
 1. `Host` equals `ADMIN_HOST`, else `notFound()`. Unset `ADMIN_HOST` fails here.
 2. A session exists, else redirect to `/admin/sign-in?redirect=<path>`.
@@ -197,7 +197,8 @@ answer on any host. Two changes there:
   otherwise. `@simplewebauthn/server` accepts an array.
 - Production sets `PASSKEY_RP_ID=fair.yoga`, the registrable parent of both
   hosts, so a passkey registered on the main host signs in on the admin host.
-  Nothing is in production yet, so no existing credential is stranded.
+  `PASSKEY_RP_ID` must already be the parent domain before the admin host is
+  turned on; passkeys registered under another RP ID stop working when it changes.
 
 Sign-out is the existing `SignOutButton` (`src/components/account/sign-out-button.tsx`) with `redirectTo` `/admin/sign-in`, a client navigation.
 
@@ -291,7 +292,7 @@ sign-in is the post-deploy smoke test in `DEPLOYMENT.md` (Admin access).
 - The partial unique index refuses a second active row **inserted directly**,
   bypassing the service — otherwise the service's own pre-check keeps the test
   green even if the index is missing.
-- `requireAdminSession`: one test per step — wrong host and unset `ADMIN_HOST`
+- `resolveAdminAccess`: one test per step — wrong host and unset `ADMIN_HOST`
   (404); no session (redirect); no grant and revoked grant (404); magic-link
   session and passkey session past the window (redirect); the happy path
   (proof). Each refusal is mutation-tested: removing its check turns exactly
@@ -344,6 +345,9 @@ not discovered at the end:
 
 ## Future (not this spec)
 
+- **Before the first mutating admin service:** decide whether `AdminProof`
+  carries its mint time or the service re-resolves the gate. Revocation and the
+  window are checked once, at mint.
 - **Account-only sessions.** A third `SessionUser` arm would let an admin hold
   no yoga profile. Deferred because the union is narrowed across the whole app
   and the admin host would need its own passkey-registration path with its own

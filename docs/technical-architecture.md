@@ -1060,7 +1060,9 @@ access). Its pages live in the `(admin)` route group, under `/admin`.
 
 **The host.** `ADMIN_HOST` is a host with optional port, compared with the
 request's `Host` header (`src/lib/admin-host.ts`). Unset or blank, the surface is
-off: every admin path answers 404. That is the default for self-hosters.
+off: every admin path answers 404. That is the default for self-hosters. A value
+that is not a bare `host` or `host:port`, or that equals the app's own host
+(which would redirect every main-site page), also turns it off.
 Neither the hostname nor the paths are secret (the repo is public and
 certificates are in Certificate Transparency logs); what is withheld is whether
 an account holds a grant.
@@ -1087,7 +1089,7 @@ order, and the order is the disclosure rule:
    is younger than `ADMIN_AUTH_WINDOW_MS`, else `sign_in`.
 5. `granted`, carrying an `AdminProof`.
 
-A non-grantee therefore reaches only `not_found` or the no-session `sign_in`,
+A non-grantee therefore reaches only `not_found` or the session-less (or unrecognised-session) `sign_in`,
 and sees the same 404 a nonexistent route gives. Only a grantee can reach the
 step-4 redirect, which discloses nothing a non-grantee could use.
 `ADMIN_AUTH_WINDOW_MS` is its own constant, not `RECENT_AUTH_WINDOW_MS`, whose
@@ -1106,7 +1108,7 @@ type check. `src/lib/admin-session.ts` (`requireAdminSession`) only wraps the
 resolver for Next, turning `not_found` into `notFound()` and `sign_in` into a
 redirect, and caches per request.
 
-**Every admin page calls `requireAdminSession` itself,** not only the layout.
+**Every page in the gated tree calls `requireAdminSession` itself,** not only the layout.
 App Router renders a layout and its page concurrently, so the layout's redirect
 does not stop the page's data fetch. The layout's call is the user-facing
 redirect; the page's is the one that guards the data. Pages render dynamically.
@@ -1139,15 +1141,17 @@ is the ordinary registrable-parent case. Tests therefore seed a session as the
 ceremony would leave it (a session bound to the grantee's passkey credential):
 `seedPasskeySession` in `tests/admin-fixtures.ts` for unit tests, and
 `tests/e2e/admin/admin-dashboard.spec.ts` for the browser, whose `admin`
-Playwright project runs against the admin host. That the registration and the authentication verifiers accept the admin origin
+Playwright project runs against the admin host.
+
+That the registration and the authentication verifiers accept the admin origin
 is pinned by the passkey unit test (`src/lib/auth/passkey.test.ts`, the
-admin-origin blocks). The first real
-sign-in is the post-deploy smoke test in `DEPLOYMENT.md` (Admin access).
+admin-origin blocks). The first real sign-in is the post-deploy smoke test in
+`DEPLOYMENT.md` (Admin access).
 
 **The dashboard.** `getPlatformCounts` (`src/services/admin-metrics.ts`) returns
 aggregates only (no names, addresses or emails) from one `RepeatableRead`
 transaction, since a batch at Read Committed gives each statement its own
-snapshot. The page derives totals from the parts, so a total cannot disagree
+snapshot. The service returns the parts and no total field, so a total cannot disagree
 with them.
 
 ## Database

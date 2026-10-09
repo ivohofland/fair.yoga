@@ -14,7 +14,7 @@ const RETRY_ONLY_ERROR_MESSAGE = "Passkey sign-in didn't work here. Try again.";
 interface PasskeySignInProps {
   /** Where to land after sign-in (relative path) — defaults to the role home. */
   redirect?: string;
-  /** False where no email sign-in exists (the admin host): the copy then offers only a retry. */
+  /** False where the page has no email sign-in to point to: the copy then offers only a retry. */
   emailFallback?: boolean;
 }
 

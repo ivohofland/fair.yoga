@@ -55,7 +55,6 @@ beforeAll(async () => {
   if (access.kind !== 'granted') throw new Error('fixture admin was not granted');
   proof = access.proof;
 
-  // Expected: teachers 3, withAccount 2, walkInOnly 4, public 5, private 6.
   const creator = await teacher('t0', false);
   await teacher('t1', false);
   await teacher('t2', false);

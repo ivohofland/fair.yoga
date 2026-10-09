@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { assertAdminProof, type AdminProof } from '@/lib/admin-access';
 
-/** Platform-wide counts for the admin dashboard. Aggregates only; totals are the page's sum of the parts. */
+/** Platform-wide counts for the admin dashboard. Aggregates only; the parts are returned and no total field is. */
 export interface PlatformCounts {
   teachers: number;
   students: { withAccount: number; walkInOnly: number };

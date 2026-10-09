@@ -4,7 +4,7 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-/** The admin host for whatever origin the app under test answers on: admin.<host>:<port>. */
+/** The admin origin for `INTEGRATION_BASE_URL`: admin.<host>:<port>. Expects a hostname base URL such as localhost, not an IP. */
 function adminBaseUrl(): string {
   const url = new URL(process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000');
   url.hostname = `admin.${url.hostname}`;
