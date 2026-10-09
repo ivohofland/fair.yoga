@@ -2,10 +2,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 
 export type GrantRefusal = 'no_account' | 'no_passkey' | 'no_operator';
 export type GrantOutcome = { kind: 'granted' } | { kind: 'unchanged' } | { kind: 'refused'; reason: GrantRefusal };
+export type RevokeRefusal = Exclude<GrantRefusal, 'no_passkey'>;
 export type RevokeOutcome =
   | { kind: 'revoked' }
   | { kind: 'unchanged' }
-  | { kind: 'refused'; reason: 'no_account' | 'no_operator' };
+  | { kind: 'refused'; reason: RevokeRefusal };
 
 export interface AdminListing {
   accountId: string;

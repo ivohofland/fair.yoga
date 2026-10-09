@@ -65,7 +65,7 @@ test.describe('Admin dashboard', () => {
     await page.goto('/');
     await page.waitForURL('**/admin/sign-in?redirect=%2Fadmin');
     await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
-    await expect(page.getByRole('textbox')).toHaveCount(0);
+    await expect(page.locator('input[type=email]')).toHaveCount(0);
   });
 
   test('an account without a grant gets the same 404 as a missing page', async ({ page, context }) => {
@@ -83,7 +83,6 @@ test.describe('Admin dashboard', () => {
     await context.addCookies([{ name: SESSION_COOKIE, value: token, url: ADMIN_URL.origin }]);
 
     await page.goto('/admin');
-    await page.waitForURL((url) => url.pathname === '/admin/sign-in');
-    expect(new URL(page.url()).pathname).toBe('/admin/sign-in');
+    await page.waitForURL('**/admin/sign-in?redirect=%2Fadmin');
   });
 });
