@@ -513,6 +513,43 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
   });
 });
 
+describe('verifyPasskeyRegistration from the admin origin', () => {
+  const ADMIN_ORIGIN = `https://admin.${FORGED_RP_ID}`;
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', FORGED_ORIGIN);
+    vi.stubEnv('PASSKEY_RP_ID', FORGED_RP_ID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function fromAdminOrigin() {
+    const credentialId = new Uint8Array(randomBytes(16));
+    return forgedNoneRegistration({
+      ...FORGED,
+      origin: ADMIN_ORIGIN,
+      authDataCredentialId: credentialId,
+      responseId: isoBase64URL.fromBuffer(credentialId),
+    });
+  }
+
+  it('verifies when ADMIN_HOST names that origin', async () => {
+    vi.stubEnv('ADMIN_HOST', `admin.${FORGED_RP_ID}`);
+    const result = await verifyPasskeyRegistration({ response: fromAdminOrigin(), expectedChallenge: FORGED_CHALLENGE });
+    expect(result.verified).toBe(true);
+  });
+
+  it('refuses when ADMIN_HOST is unset', async () => {
+    vi.stubEnv('ADMIN_HOST', '');
+    vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const result = await verifyPasskeyRegistration({ response: fromAdminOrigin(), expectedChallenge: FORGED_CHALLENGE });
+    expect(result.verified).toBe(false);
+  });
+});
+
 describe('verifyPasskeyAuthentication, signed assertion', () => {
   const keyA = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const keyB = generateKeyPairSync('ec', { namedCurve: 'P-256' });

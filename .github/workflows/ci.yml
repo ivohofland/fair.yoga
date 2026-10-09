@@ -195,6 +195,7 @@ jobs:
       EMAIL_DRY_RUN: '1'
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ADMIN_HOST: admin.localhost:3000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -279,6 +280,7 @@ jobs:
       EMAIL_DRY_RUN: '1'
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ADMIN_HOST: admin.localhost:3000
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -381,6 +383,7 @@ jobs:
       EMAIL_DRY_RUN: '1'
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ADMIN_HOST: admin.localhost:3000
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

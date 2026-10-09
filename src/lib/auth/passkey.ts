@@ -17,6 +17,7 @@ import type {
   UserVerificationRequirement,
 } from '@simplewebauthn/types';
 import { log } from '@/lib/log';
+import { adminOrigin } from '@/lib/admin-host';
 
 // ---------------------------------------------------------------------------
 // Challenge store — one bounded, in-memory partition per purpose
@@ -186,8 +187,11 @@ function getRpId(): string {
   return process.env.PASSKEY_RP_ID ?? 'localhost';
 }
 
-function getExpectedOrigin(): string {
-  return process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+/** The app origin, plus the admin origin when `ADMIN_HOST` is set (docs/technical-architecture.md, Admin surface). */
+function getExpectedOrigin(): string | string[] {
+  const app = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const admin = adminOrigin();
+  return admin === null ? app : [app, admin];
 }
 
 // ---------------------------------------------------------------------------
