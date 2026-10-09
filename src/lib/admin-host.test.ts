@@ -64,7 +64,7 @@ describe('adminReturnPath', () => {
 describe('proxy-weight imports', () => {
   function importSpecifiers(file: string): string[] {
     const source = readFileSync(path.resolve(__dirname, file), 'utf8');
-    return [...source.matchAll(/^import\s[^;]*?from\s+'([^']+)'/gms)].map((m) => m[1] ?? '');
+    return [...source.matchAll(/^import\s[^;]*?from\s+'([^']+)'/gm)].map((m) => m[1] ?? '');
   }
 
   it('admin-host reaches only the dependency-free path guard', () => {
