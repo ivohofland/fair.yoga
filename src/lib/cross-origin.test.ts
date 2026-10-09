@@ -86,4 +86,16 @@ describe('crossOriginRefusal', () => {
       expect(crossOriginRefusal(req(m, { host: 'localhost:3000', origin: 'https://evil.example' }))?.reason).toBe('host-mismatch');
     }
   });
+
+  it('refuses a same-site write from the admin host to the main host as host-mismatch', () => {
+    expect(
+      crossOriginRefusal(req('POST', { host: 'localhost:3000', origin: 'http://admin.localhost:3000', 'sec-fetch-site': 'same-site' })),
+    ).toEqual({ reason: 'host-mismatch', originHost: 'admin.localhost:3000', host: 'localhost:3000' });
+  });
+
+  it('refuses a same-site write from the main host to the admin host as host-mismatch', () => {
+    expect(
+      crossOriginRefusal(req('POST', { host: 'admin.localhost:3000', origin: 'http://localhost:3000', 'sec-fetch-site': 'same-site' })),
+    ).toEqual({ reason: 'host-mismatch', originHost: 'localhost:3000', host: 'admin.localhost:3000' });
+  });
 });
