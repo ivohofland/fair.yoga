@@ -9,8 +9,8 @@ import { resolveAdminAccess, type AdminProof } from '@/lib/admin-access';
 /**
  * `resolveAdminAccess` for a page or route handler: `notFound()` and
  * `redirect()` for its refusals. Cached per request, so a layout and its page
- * share one answer. Every admin page calls it itself — a layout's redirect
- * does not stop its page from rendering.
+ * share one answer. Every page in the gated tree calls it itself — a
+ * layout's redirect does not stop its page from rendering.
  */
 export const requireAdminSession = cache(async (): Promise<AdminProof> => {
   const headerList = await headers();

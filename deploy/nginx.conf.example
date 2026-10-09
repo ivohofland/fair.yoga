@@ -1,8 +1,8 @@
 # Nginx site config for fair.yoga on a single VPS.
 # Copy to /etc/nginx/sites-available/fairyoga, symlink into sites-enabled,
 # obtain certificates with: certbot --nginx -d yourdomain.example
-# (add -d admin.yourdomain.example when you use the admin vhost below).
-# (certbot rewrites the ssl_certificate lines for you).
+# (certbot rewrites the ssl_certificate lines for you). Add
+# -d admin.yourdomain.example when you use the admin vhost below.
 
 server {
     listen 80;
@@ -68,7 +68,7 @@ server {
 
 # The admin surface (DEPLOYMENT.md, Admin access). Same app process, second
 # name: set ADMIN_HOST=admin.yourdomain.example. Omit these two blocks to leave
-# the surface off. The admin tree uses no photo upload and no SSE.
+# the surface off. No photo-upload or SSE locations here; add them if an admin page ever needs them.
 server {
     listen 80;
     server_name admin.yourdomain.example;
@@ -93,6 +93,7 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
+    # Cron routes are bearer-secret endpoints; they are not served on this name.
     location /api/cron/ { deny all; }
 
     location / {
