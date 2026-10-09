@@ -309,4 +309,33 @@ describe('PasskeySignIn', () => {
       expect(screen.getByRole('button', { name: /sign in with a passkey/i })).toBeEnabled(),
     );
   });
+
+  it('does not offer the email link when emailFallback is false', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PasskeySignIn redirect="/admin" emailFallback={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in with a passkey' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("Passkey sign-in didn't work here. Try again.");
+    expect(alert.textContent).not.toMatch(/email/i);
+  });
+
+  it('offers only a retry after an incomplete ceremony when emailFallback is false', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { options: { challenge: 'c' }, challengeId: 'ch-1' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const dismissed = new Error('dismissed');
+    dismissed.name = 'NotAllowedError';
+    startAuthentication.mockRejectedValue(dismissed);
+    render(<PasskeySignIn emailFallback={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Nothing came back from your device. Try again.');
+  });
 });

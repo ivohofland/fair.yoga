@@ -9,16 +9,20 @@ import { recordPushDeviceForSignIn } from '@/lib/push-client';
 import { Button } from '@/components/ui/button';
 
 const DEFAULT_ERROR_MESSAGE = "Passkey sign-in didn't work here — use the email link instead.";
+const RETRY_ONLY_ERROR_MESSAGE = "Passkey sign-in didn't work here. Try again.";
 
 interface PasskeySignInProps {
   /** Where to land after sign-in (relative path) — defaults to the role home. */
   redirect?: string;
+  /** False where no email sign-in exists (the admin host): the copy then offers only a retry. */
+  emailFallback?: boolean;
 }
 
-export function PasskeySignIn({ redirect }: PasskeySignInProps) {
+export function PasskeySignIn({ redirect, emailFallback = true }: PasskeySignInProps) {
   const router = useRouter();
+  const defaultErrorMessage = emailFallback ? DEFAULT_ERROR_MESSAGE : RETRY_ONLY_ERROR_MESSAGE;
   const [state, setState] = useState<'idle' | 'working' | 'incomplete' | 'error'>('idle');
-  const [errorMessage, setErrorMessage] = useState(DEFAULT_ERROR_MESSAGE);
+  const [errorMessage, setErrorMessage] = useState(defaultErrorMessage);
 
   async function handleSignIn() {
     setState('working');
@@ -27,7 +31,7 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
         method: 'POST',
       });
       if (optionsRes.status === 429) {
-        setErrorMessage(await readErrorMessage(optionsRes, DEFAULT_ERROR_MESSAGE));
+        setErrorMessage(await readErrorMessage(optionsRes, defaultErrorMessage));
         setState('error');
         return;
       }
@@ -84,7 +88,7 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
         return;
       }
       logRequestFailure('passkey-sign-in', {}, err);
-      setErrorMessage(DEFAULT_ERROR_MESSAGE);
+      setErrorMessage(defaultErrorMessage);
       setState('error');
     }
   }
@@ -96,7 +100,9 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       </Button>
       {state === 'incomplete' && (
         <p role="status" className="type-caption">
-          Nothing came back from your device. Try again, or use the email link.
+          {emailFallback
+            ? 'Nothing came back from your device. Try again, or use the email link.'
+            : 'Nothing came back from your device. Try again.'}
         </p>
       )}
       {state === 'error' && (

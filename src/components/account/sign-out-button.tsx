@@ -20,7 +20,7 @@ interface SignOutButtonProps {
    * pass an explicit destination when signing out is a step toward
    * somewhere else (e.g. re-starting a signup under a different address).
    */
-  redirectTo?: '/login' | '/signup' | `/login?redirect=${string}`;
+  redirectTo?: '/login' | '/signup' | '/admin/sign-in' | `/login?redirect=${string}`;
 }
 
 function pendingCount(): number {
