@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
@@ -67,7 +67,7 @@ describe('grantAdmin', () => {
     });
   });
 
-  it('collapses concurrent grants into one active row', async () => {
+  it('smoke: concurrent grants end in one active row', async () => {
     const racer = await studentAccount('race', { passkey: true });
     const outcomes = await Promise.all([
       grantAdmin(db, { email: emailOf('race'), by: 'a' }),
@@ -75,6 +75,18 @@ describe('grantAdmin', () => {
     ]);
     expect(outcomes.map((o) => o.kind).sort()).toEqual(['granted', 'unchanged']);
     expect(await db.adminGrant.count({ where: { accountId: racer, revokedAt: null } })).toBe(1);
+  });
+
+  it('answers unchanged when a concurrent grant lands between the read and the insert', async () => {
+    const stale = await studentAccount('stale', { passkey: true });
+    await grantAdmin(db, { email: emailOf('stale'), by: 'first' });
+    const spy = vi.spyOn(db.adminGrant, 'findFirst').mockResolvedValueOnce(null);
+    try {
+      expect(await grantAdmin(db, { email: emailOf('stale'), by: 'second' })).toEqual({ kind: 'unchanged' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await db.adminGrant.count({ where: { accountId: stale, revokedAt: null } })).toBe(1);
   });
 
   it('refuses an address with no account', async () => {
