@@ -31,7 +31,7 @@ The class detail screen adapts to show the right information and actions for eac
 
 Four tabs. Not five — the original screen inventory had Dashboard and Classes as separate items, but they're really the same thing from the teacher's perspective. The teacher's "home" *is* their class schedule.
 
-The bar is 64px with Lucide-style line icons (calendar, users, inbox, settings); the active tab shows a teal icon + label in a teal-tint pill, and the Inbox tab carries a small gold dot when unread. The bar renders only on the four tab roots — detail pages keep their back links instead. Class cards on the Schedule tab use the sand-soft surface with the registration progress bar and a status badge.
+The bar is 64px with Lucide-style line icons (calendar, users, inbox, settings); the active tab shows a teal icon + label in a teal-tint pill, and the Inbox tab carries a small gold dot when unread. The bar renders only on the four tab roots — detail pages keep their back links instead. The admin surface (#60) is outside this IA: its own host, no tab bar (docs/technical-architecture.md, Admin surface). Class cards on the Schedule tab use the sand-soft surface with the registration progress bar and a status badge.
 
 ```
 ┌──────────────────────────────────────────────┐

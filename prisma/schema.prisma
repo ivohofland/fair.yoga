@@ -176,7 +176,7 @@ model Account {
 /// cannot show: `AdminGrant_account_active_unique` on (accountId) WHERE
 /// "revokedAt" IS NULL — at most one active grant per account — and
 /// `AdminGrant_revoke_pair_check`, which sets the two revoke columns together.
-/// Rows are never deleted; see docs/data-model.md (AdminGrant).
+/// Lifecycle and erasure: docs/data-model.md (AdminGrant).
 model AdminGrant {
   id        String    @id @default(uuid())
   accountId String

@@ -17,6 +17,27 @@ The source of truth for the application's data layer, across several domains.
 
 One Account per human. Teacher and Student are profiles optionally linked to it, each holding at most one LIVE profile of its kind per account — enforced by the partial unique indexes `Teacher_account_live_unique` and `Student_account_live_unique` (`ON ("accountId") WHERE "deletedAt" IS NULL`) rather than a plain `@unique` — a dual-role person (a teacher who also attends classes) has one Account with both profiles attached. See Design Notes below for the claim path that links an Account to an unclaimed Student.
 
+### AdminGrant (an account's authority over the admin surface, #60)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| account_id | uuid, FK → Account | The authority is keyed on the account, never on an address: an address is something erasure rewrites (#522). Indexed. |
+| granted_at | datetime | |
+| granted_by | string | Free text: the operator who ran the grant command. The first grant has no granting admin, and grants come from a shell, so the server's shell history is the real audit. |
+| revoked_at | datetime, nullable | Null while the grant is active. |
+| revoked_by | string, nullable | Set together with `revoked_at`. |
+
+**Active** means `revokedAt IS NULL`. `AdminGrant_account_active_unique` (a partial unique index on `("accountId") WHERE "revokedAt" IS NULL`) allows at most one active grant per account; `AdminGrant_revoke_pair_check` keeps `revokedAt` and `revokedBy` null together or set together. Prisma expresses neither, so both live in the migration; re-derive them with `grep -n "AdminGrant_" prisma/migrations/*/migration.sql`. A test inserts a second active row directly, bypassing the service, so the index is what that test exercises.
+
+**Rows are never deleted.** Revoking stamps the row; granting again inserts a new one, so the table is the history of who held admin and when. The foreign key is `ON DELETE RESTRICT` for the same reason: no cascade can remove a grant's history as a side effect. Nothing deletes an `Account` today (erasure acts on the profiles).
+
+**Erasure does not revoke.** Erasing an admin's only profile leaves the grant active but unusable, because no session validates for an account without a live profile. `listAdmins` (`src/services/admin-grants.ts`) reports such a grant as *dormant*; dormancy is derived on read and never stored. Revocation is always its own act.
+
+**An admin must hold a live teacher or student profile.** `SessionUser` (`src/lib/types.ts`) has no profile-less arm, and passkey registration needs a profile for the credential's display name. An admin registers their passkey where every user does, and a volunteer who is not a teacher signs up as a student. `grantAdmin` also refuses an account with no passkey, which could never pass the gate.
+
+Grants are made only by the operator CLI (`scripts/admin-grant.ts`); no route creates, revokes or lists them. How the gate reads a grant: `docs/technical-architecture.md` (Admin surface).
+
 ### PushSubscription (one browser's push endpoint, #724)
 
 | Field | Type | Notes |
