@@ -13,3 +13,6 @@ export function isSafeRelativePath(path: string): boolean {
   const stripped = path.replace(URL_STRIPPED_CHARS, '');
   return stripped.startsWith('/') && !stripped.startsWith('//') && !stripped.includes('\\');
 }
+
+/** The longest redirect target the sign-in schemas accept. */
+export const REDIRECT_MAX_LENGTH = 200;
