@@ -142,19 +142,26 @@ host check that actually holds lives in the gate.
 
 | Host | Path | Result |
 |---|---|---|
-| admin host | `/` | redirect to `/admin` |
 | admin host | `/admin`, `/admin/**`, no session cookie, not `/admin/sign-in` | redirect to `/admin/sign-in?redirect=…` |
-| admin host | `/admin`, `/admin/**` otherwise | pass, with `X-Robots-Tag: noindex` |
-| admin host | any other page | 404 |
-| main host | `/admin`, `/admin/**` | 404 |
+| admin host | `/admin`, `/admin/**` otherwise | pass, with `X-Robots-Tag: noindex, nofollow` |
+| admin host | any other page, `/` included | redirect to `/admin` |
+| main host | `/admin`, `/admin/**` | pass; the page's host check renders the 404 |
+
+Other pages on the admin host redirect rather than 404 because an admin-host
+session would otherwise render teacher and student pages there. The main
+host's `/admin` is left to the page-level host check, which renders the real
+404 page.
 
 URLs stay literally `/admin/…` on the admin host. No rewrite, so a `<Link
 href>` never disagrees with the address bar.
 
 ## The gate
 
-`requireAdminSession()` in `src/lib/admin-session.ts`. Every admin page and
-every future admin API route calls it. In order:
+The gate is two modules. `resolveAdminAccess` in `src/lib/admin-access.ts` is
+the decision, framework-free and testable without mocking `next/headers`.
+`requireAdminSession()` in `src/lib/admin-session.ts` is the Next wrapper,
+cached per request, that turns its answer into `notFound()` or a redirect.
+Every admin page and every future admin API route calls the wrapper. In order:
 
 1. `Host` equals `ADMIN_HOST`, else `notFound()`. Unset `ADMIN_HOST` fails here.
 2. A session exists, else redirect to `/admin/sign-in?redirect=<path>`.
@@ -172,8 +179,12 @@ Both are measured from `Session.createdAt`, for the reason
 gives.
 
 **`AdminProof`** is `{ accountId, sessionId }` branded with a `declare const
-… : unique symbol`, mintable only inside `admin-session.ts`. Admin services
-take it as a parameter, so a route that skips the gate does not compile.
+… : unique symbol` and also bound at runtime: it is minted only in
+`admin-access.ts`, frozen and recorded in a `WeakSet`, and admin services call
+`assertAdminProof` on it. The brand is erased at runtime and an `as AdminProof`
+cast passes every type check, so the `WeakSet` is what refuses a cast literal or
+a spread copy. Admin services take the proof as a parameter, so a route that
+skips the gate does not compile.
 Because step 1 runs first, no code path can obtain a proof on the wrong host,
 whether or not it sits inside the `(admin)` route group.
 
@@ -188,7 +199,7 @@ answer on any host. Two changes there:
   hosts, so a passkey registered on the main host signs in on the admin host.
   Nothing is in production yet, so no existing credential is stranded.
 
-Sign-out uses the existing session `DELETE`.
+Sign-out is the existing `SignOutButton` (`src/components/account/sign-out-button.tsx`) with `redirectTo` `/admin/sign-in`, a client navigation.
 
 **What the host split buys, and what it does not.**
 
@@ -229,7 +240,7 @@ export async function getPlatformCounts(
 | `rooms.public` | `Room` with `isPublic = true` |
 | `rooms.private` | `Room` with `isPublic = false` |
 
-- The counts run in one `$transaction([...])`, so they read one snapshot.
+- The counts run in one `$transaction([...])` at `RepeatableRead`, so they read one snapshot; the default Read Committed would give each statement its own.
 - Totals are derived by the page, never returned, so a total cannot disagree
   with its parts.
 - `proof` is not read. It exists so that every caller has passed the gate; the
@@ -259,14 +270,15 @@ private 42". No navigation (one page needs none), no trends, deltas or charts.
 
 ## Testing
 
-**Task 1 is a throwaway spike.** A scratch Playwright script registers a
-passkey with RP ID `localhost` on `localhost:<port>` through a CDP virtual
-authenticator, then signs in with it on `admin.localhost:<port>`. Chromium
-resolves `*.localhost` to loopback and treats it as a secure context; whether
-it accepts RP ID `localhost` for origin `admin.localhost` is the one thing this
-design has not observed. Go: proceed. No-go: the fallback is a hosts-file alias
-under a registrable test domain, and the plan adds a contributor-setup step.
-Nothing from the spike is kept.
+**The passkey ceremony cannot run on `admin.localhost`.** A spike measured it:
+Chrome refuses the WebAuthn ceremony there with `The RP ID "localhost" is
+invalid for this domain`, so locally the admin passkey sign-in cannot complete.
+Production, with `PASSKEY_RP_ID` set to the parent domain and the admin host a
+subdomain of it, is the standard registrable-parent case. Tests therefore seed a
+session bound to the grantee's passkey credential, as the ceremony would leave
+it (`seedPasskeySession`, `tests/admin-fixtures.ts`), and the admin origin's
+acceptance by the ceremony is pinned by the passkey unit test. The first real
+sign-in is the post-deploy smoke test in `DEPLOYMENT.md` (Admin access).
 
 **Vitest, test-first, against the test database.**
 
@@ -284,10 +296,14 @@ Nothing from the spike is kept.
   its test red.
 - `getPlatformCounts`: fixtures with an erased teacher, an erased student, a
   claimed student, an unclaimed walk-in, and public and private rooms, with
-  **no two expected counts equal**, so a swapped field cannot pass.
+  **no two expected counts equal**, so a swapped field cannot pass. The counts
+  are whole-table, so the test runs through a `scopeSweep` client narrowed to
+  its own rows, which keeps exact numbers in the parallel tier.
 - An `@ts-expect-error` test: `getPlatformCounts` refuses a hand-built
   `{ accountId, sessionId }`.
 - `getExpectedOrigin()`: one origin with `ADMIN_HOST` unset, two with it set.
+- `admin-host.ts` imports only the dependency-free `safe-path.ts`, so the proxy
+  stays light; a tether test pins its imports.
 - The session `Set-Cookie` carries no `Domain` attribute — the host-only
   isolation is otherwise a default nobody wrote down.
 - `crossOriginRefusal`: a write from the admin origin to the main host, and the
@@ -296,9 +312,10 @@ Nothing from the spike is kept.
 - `proxy.ts`: one test per row of the host-routing table.
 
 **Playwright.** An `admin` project whose `baseURL` is the admin host: a grantee
-signs in with a virtual-authenticator passkey and sees the seeded counts; a
-signed-in non-grantee gets the 404 page; the main host's `/admin` answers 404;
-a visual baseline of the dashboard.
+with a seeded passkey-signed session sees the dashboard; a signed-in
+non-grantee gets the 404 page; the main host's `/admin` answers 404. There is
+no visual baseline: the dashboard shows whole-database counts, which a
+screenshot cannot hold stable.
 
 **Census guards the route trips.** Named in the plan task that adds the route,
 not discovered at the end:
@@ -307,17 +324,18 @@ not discovered at the end:
   recorded decision that the admin group has no `loading.tsx`.
 - `src/lib/list-row-recipe.test.ts` (`SPLIT_RECIPE_SITES`) — only if the page
   renders rows; the design uses cards.
-- `attest-visual-baseline` — the new baseline needs its attestation.
 
 ## Documentation in the same PR
 
 - `docs/data-model.md`: `AdminGrant`, what active means, the partial unique
   index, the profile requirement and dormancy.
-- `docs/technical-architecture.md`: the admin host, the gate's order, what the
-  host split does and does not buy.
+- `docs/technical-architecture.md` (Admin surface): the admin host, the gate's
+  order, what the host split does and does not buy, and the local passkey
+  limit.
 - `DEPLOYMENT.md`: DNS record, second `server_name`, the certificate's extra
-  name, `ADMIN_HOST`, `PASSKEY_RP_ID`, the grant command, and an optional Nginx
-  IP allowlist for the admin vhost as an operator choice.
+  name, `ADMIN_HOST`, `PASSKEY_RP_ID`, the grant command, the post-deploy
+  passkey smoke test, and an optional Nginx IP allowlist for the admin vhost as
+  an operator choice.
 - `deploy/nginx.conf.example`: the admin `server` block.
 - `docs/information-architecture.md`: one line — the admin surface sits outside
   the four-tab IA.

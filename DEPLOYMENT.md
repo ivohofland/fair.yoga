@@ -206,3 +206,37 @@ Migrations run automatically via the `migrate` service on every deploy.
   resets it to zero.
 - `docker compose -f docker-compose.prod.yml logs -f app` — scheduler and
   request logs.
+
+## 8. Admin access
+
+The platform-admin surface (#60) answers on its own host, served by the same
+app process. It is off unless `ADMIN_HOST` is set. Design and gate:
+`docs/technical-architecture.md` (Admin surface).
+
+1. Add a DNS `A`/`AAAA` record for `admin.<domain>`.
+2. Copy the admin `server` blocks from `deploy/nginx.conf.example` and edit the
+   name.
+3. Extend the certificate: `certbot --nginx -d <domain> -d admin.<domain>`
+   (one certificate, two names).
+4. Set `ADMIN_HOST=admin.<domain>` and `PASSKEY_RP_ID=<domain>` (the parent
+   domain, so a passkey registered on the main site also signs in on the admin
+   host), then redeploy.
+5. Register a passkey on the main site as the person who is to be an admin
+   (they need a teacher or student profile), then grant, revoke and list from
+   the `migrate` image, which carries the CLI:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml run --rm migrate pnpm admin:grant <email> --by <name>
+   docker compose -f docker-compose.prod.yml run --rm migrate pnpm admin:revoke <email> --by <name>
+   docker compose -f docker-compose.prod.yml run --rm migrate pnpm admin:list
+   ```
+
+6. Optional: if your admins have fixed addresses, put `allow <ip>; deny all;`
+   in the admin vhost.
+
+**Smoke test after the first deploy.** The passkey sign-in cannot be exercised
+locally (browsers refuse it on `admin.localhost`), so production is where it is
+first seen working: register a passkey on the main site, grant that account,
+sign in with the passkey on `https://admin.<domain>/admin/sign-in`, and confirm
+the dashboard shows the platform counts. A signed-in non-admin at the same
+address gets the ordinary 404 page.

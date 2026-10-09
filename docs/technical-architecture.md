@@ -1050,6 +1050,106 @@ platform parser refuses.
 
 ---
 
+### Admin surface
+
+The platform-admin surface (#60) is a short-lived, passkey-only part of the app
+that answers on its own host. Who may enter is `AdminGrant`
+(`docs/data-model.md`, AdminGrant); grants are made only from a shell
+(`scripts/admin-grant.ts`, run from the `migrate` image: `DEPLOYMENT.md`, Admin
+access). Its pages live in the `(admin)` route group, under `/admin`.
+
+**The host.** `ADMIN_HOST` is a host with optional port, compared with the
+request's `Host` header (`src/lib/admin-host.ts`). Unset or blank, the surface is
+off: every admin path answers 404. That is the default for self-hosters.
+Neither the hostname nor the paths are secret (the repo is public and
+certificates are in Certificate Transparency logs); what is withheld is whether
+an account holds a grant.
+
+**The proxy shapes pages only.** Its matcher excludes `/api/*` (a matched path
+has its body buffered, which would defeat the photo upload's early size
+refusal), so it can route pages by host but cannot guard an API route. The
+host check that holds is the gate's. On the admin host the proxy redirects any
+page outside the admin tree to `/admin`, redirects an admin path with no
+session cookie to `/admin/sign-in?redirect=...`, and stamps
+`X-Robots-Tag: noindex, nofollow`. On the main host it does nothing: `/admin`
+passes through and the page-level host check renders the 404. The proxy imports
+`admin-host.ts`, which imports only the dependency-free `src/lib/safe-path.ts`
+(`isSafeRelativePath`), so the proxy stays off the database; a test pins
+`admin-host.ts`'s imports.
+
+**The gate.** `resolveAdminAccess` (`src/lib/admin-access.ts`) answers in this
+order, and the order is the disclosure rule:
+
+1. `Host` equals `ADMIN_HOST`, else `not_found`.
+2. A valid session, else `sign_in`.
+3. An active grant on the session's account, else `not_found`.
+4. The session was created by a passkey sign-in (`passkeyCredentialId` set) and
+   is younger than `ADMIN_AUTH_WINDOW_MS`, else `sign_in`.
+5. `granted`, carrying an `AdminProof`.
+
+A non-grantee therefore reaches only `not_found` or the no-session `sign_in`,
+and sees the same 404 a nonexistent route gives. Only a grantee can reach the
+step-4 redirect, which discloses nothing a non-grantee could use.
+`ADMIN_AUTH_WINDOW_MS` is its own constant, not `RECENT_AUTH_WINDOW_MS`, whose
+docblock makes it the passkey-adding rule; both are measured from
+`Session.createdAt` for the reason given under Recent authentication above.
+The admin pages are consequently a short window after each passkey sign-in, and
+signing in again is the expected rhythm.
+
+**`AdminProof`.** `{ accountId, sessionId }` with a compile-time brand
+(`unique symbol`) and a runtime binding: the only mint is
+`resolveAdminAccess`, which freezes the object and records it in a `WeakSet`.
+Admin services take a proof and call `assertAdminProof`, so a route that skips
+the gate does not compile, and a cast literal or spread copy throws. The brand
+alone would not do: it is erased at runtime and an `as AdminProof` passes every
+type check. `src/lib/admin-session.ts` (`requireAdminSession`) only wraps the
+resolver for Next, turning `not_found` into `notFound()` and `sign_in` into a
+redirect, and caches per request.
+
+**Every admin page calls `requireAdminSession` itself,** not only the layout.
+App Router renders a layout and its page concurrently, so the layout's redirect
+does not stop the page's data fetch. The layout's call is the user-facing
+redirect; the page's is the one that guards the data. Pages render dynamically.
+
+**Sign-in.** `/admin/sign-in` offers one passkey button and no email field and
+uses the ordinary `/api/auth/passkey/authenticate/*` routes, which answer on
+any host. `getExpectedOrigin()` (`src/lib/auth/passkey.ts`) returns an array of
+the app origin and the admin origin when `ADMIN_HOST` is set, and one origin
+otherwise. Production sets `PASSKEY_RP_ID` to the parent domain (the
+registrable domain of both hosts), so a passkey registered on the main site
+signs in on the admin host. Sign-out is `SignOutButton` with `redirectTo`
+`/admin/sign-in`.
+
+**What the host split buys, and what it does not.** It buys host-only session
+cookies (no `Domain` attribute), so the browser never sends the admin cookie to
+the main host or the reverse; a test pins the absence of `Domain`. It does not
+buy protection against a stolen session token, which a client can present on
+either host: the recency window bounds that. The two hosts are same-site and
+cross-origin, so `SameSite` does not separate them and a script on one can make
+a credentialed request to the other; CORS keeps it from reading the response,
+and `crossOriginRefusal` (`src/lib/cross-origin.ts`) refuses a write through its
+`host-mismatch` branch, not `sec-fetch-cross-site`, since the browser sends
+`Sec-Fetch-Site: same-site`.
+
+**Testing, and the local limit.** Chrome refuses the WebAuthn ceremony on
+`admin.localhost` (`The RP ID "localhost" is invalid for this domain`), so the
+admin passkey sign-in cannot complete locally. Production, with
+`PASSKEY_RP_ID` set to the parent domain and the admin host a subdomain of it,
+is the ordinary registrable-parent case. Tests therefore seed a session as the
+ceremony would leave it (a session bound to the grantee's passkey credential):
+`seedPasskeySession` in `tests/admin-fixtures.ts` for unit tests, and
+`tests/e2e/admin/admin-dashboard.spec.ts` for the browser, whose `admin`
+Playwright project runs against the admin host. That the ceremony accepts the
+admin origin is pinned by the passkey unit test
+(`src/lib/auth/passkey.test.ts`, the admin-origin block). The first real
+sign-in is the post-deploy smoke test in `DEPLOYMENT.md` (Admin access).
+
+**The dashboard.** `getPlatformCounts` (`src/services/admin-metrics.ts`) returns
+aggregates only (no names, addresses or emails) from one `RepeatableRead`
+transaction, since a batch at Read Committed gives each statement its own
+snapshot. The page derives totals from the parts, so a total cannot disagree
+with them.
+
 ## Database
 
 ### PostgreSQL Configuration
@@ -1392,7 +1492,7 @@ to run anywhere else: a Linux digest would attest to bytes CI never renders.
 DATABASE_URL=postgresql://yoga:password@localhost:5432/ethical_yoga
 
 # Auth
-PASSKEY_RP_ID=              # Relying party ID for WebAuthn (e.g. "ethicalyoga.app")
+PASSKEY_RP_ID=              # Relying party ID for WebAuthn (e.g. "ethicalyoga.app"); the parent domain when ADMIN_HOST is set
 PASSKEY_RP_NAME=            # Display name (e.g. "Ethical Yoga")
 
 # Email
@@ -1414,6 +1514,7 @@ VAPID_SUBJECT=              # a mailto: or https:// URL, e.g. "mailto:ops@fair.y
 
 # App
 NEXT_PUBLIC_APP_URL=        # e.g. "https://ethicalyoga.app"
+ADMIN_HOST=                 # e.g. "admin.ethicalyoga.app"; unset turns the admin surface off (Admin surface)
 ```
 
 ---
