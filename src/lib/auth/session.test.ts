@@ -738,6 +738,12 @@ describe('setSessionCookie', () => {
     expect(cookie).toContain('Path=/');
     expect(cookie).toContain('Max-Age=7776000');
   });
+
+  it('is host-only: no Domain attribute, so the admin host and the main host never share it', () => {
+    const headers = new Headers();
+    setSessionCookie(headers, 'my-token-value');
+    expect(headers.get('Set-Cookie')).not.toMatch(/;\s*Domain=/i);
+  });
 });
 
 describe('clearSessionCookie', () => {

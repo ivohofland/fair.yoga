@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { proxy, config, requiresSession, mintNonce } from './proxy';
 
@@ -180,5 +180,61 @@ describe('proxy', () => {
       const res = proxy(makeRequest('/start', { headers: { 'content-security-policy': "script-src 'nonce-evil'" } }));
       expect(res.headers.get('x-middleware-request-content-security-policy')).not.toContain('nonce-evil');
     });
+  });
+});
+
+function adminRequest(path: string, cookies?: Record<string, string>): NextRequest {
+  const headers = new Headers({ host: 'admin.localhost:3000' });
+  if (cookies) headers.set('cookie', Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; '));
+  return new NextRequest(`http://admin.localhost:3000${path}`, { headers });
+}
+
+describe('proxy on the admin host', () => {
+  beforeEach(() => vi.stubEnv('ADMIN_HOST', 'admin.localhost:3000'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('redirects / to /admin', () => {
+    const response = proxy(adminRequest('/'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('http://admin.localhost:3000/admin');
+  });
+
+  it('redirects any non-admin page to /admin, signed in or not', () => {
+    for (const path of ['/schedule', '/login', '/administrator']) {
+      const response = proxy(adminRequest(path, { fair_yoga_session: 't' }));
+      expect(response.headers.get('location')).toBe('http://admin.localhost:3000/admin');
+    }
+  });
+
+  it('sends a cookieless /admin request to admin sign-in with its destination', () => {
+    const response = proxy(adminRequest('/admin?x=1'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'http://admin.localhost:3000/admin/sign-in?redirect=%2Fadmin%3Fx%3D1',
+    );
+  });
+
+  it('serves admin sign-in without a cookie, marked noindex', () => {
+    const response = proxy(adminRequest('/admin/sign-in'));
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  it('passes a cookie-bearing /admin request through, marked noindex, with x-pathname stamped', () => {
+    const response = proxy(adminRequest('/admin', { fair_yoga_session: 't' }));
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+    expect(response.headers.get('x-middleware-request-x-pathname')).toBe('/admin');
+  });
+});
+
+describe('proxy on the main host', () => {
+  beforeEach(() => vi.stubEnv('ADMIN_HOST', 'admin.localhost:3000'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('leaves /admin to the page, whose host check answers 404', () => {
+    const response = proxy(makeRequest('/admin'));
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('x-robots-tag')).toBeNull();
   });
 });

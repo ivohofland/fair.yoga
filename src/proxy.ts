@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildPageCsp } from '@/lib/csp';
+import { ADMIN_ROOT_PATH, ADMIN_SIGN_IN_PATH, isAdminHost, isAdminPath } from '@/lib/admin-host';
 
 // Duplicated here intentionally to keep proxy startup lightweight
 // without pulling in database or server-only session dependencies.
@@ -33,8 +34,20 @@ export function mintNonce(): string {
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+  const onAdminHost = isAdminHost(request.headers.get('host'));
 
-  if (requiresSession(pathname) && !request.cookies.get(SESSION_COOKIE_NAME)?.value) {
+  // The admin host serves only the admin tree; an admin-host session would
+  // otherwise render teacher and student pages here.
+  if (onAdminHost && !isAdminPath(pathname)) {
+    return NextResponse.redirect(new URL(ADMIN_ROOT_PATH, request.url));
+  }
+  if (onAdminHost && pathname !== ADMIN_SIGN_IN_PATH && !request.cookies.get(SESSION_COOKIE_NAME)?.value) {
+    const signIn = new URL(ADMIN_SIGN_IN_PATH, request.url);
+    signIn.searchParams.set('redirect', pathname + search);
+    return NextResponse.redirect(signIn);
+  }
+
+  if (!onAdminHost && requiresSession(pathname) && !request.cookies.get(SESSION_COOKIE_NAME)?.value) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname + search);
     return NextResponse.redirect(loginUrl);
@@ -54,6 +67,7 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set('Content-Security-Policy', csp);
+  if (onAdminHost) response.headers.set('X-Robots-Tag', 'noindex, nofollow');
   return response;
 }
 
