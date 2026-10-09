@@ -1,4 +1,4 @@
-import { isSafeRelativePath } from '@/lib/schemas';
+import { isSafeRelativePath } from '@/lib/safe-path';
 
 /**
  * Where the admin surface lives (#60). Pure: read by the proxy, which stays

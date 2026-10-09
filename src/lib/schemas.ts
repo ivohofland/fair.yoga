@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Currency, OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@prisma/client';
+import { isSafeRelativePath, URL_STRIPPED_CHARS } from '@/lib/safe-path';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
@@ -147,23 +148,7 @@ export const MAX_CLASS_SIZE = 200;
 // ============================================================================
 
 // redirect must be a relative path — a full URL here would be an open redirect.
-/**
- * Shared by the schema below and the verify-route runtime guard. Rejects
- * protocol-relative URLs (`//evil.com`), their backslash variants
- * (`/\evil.com` — browsers normalize `\` to `/` before resolving), and
- * WHATWG control-whitespace stripping (`/\t/evil.com`).
- */
-/**
- * What a browser drops from a URL before resolving it, so every guard below
- * decides on the string the browser will actually use — not the one it was
- * handed.
- */
-const URL_STRIPPED_CHARS = /[\t\r\n]/g;
-
-export function isSafeRelativePath(path: string): boolean {
-  const stripped = path.replace(URL_STRIPPED_CHARS, '');
-  return stripped.startsWith('/') && !stripped.startsWith('//') && !stripped.includes('\\');
-}
+export { isSafeRelativePath };
 
 const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a relative path');
 
