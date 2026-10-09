@@ -29,6 +29,9 @@
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
     "vapid:keys": "tsx scripts/vapid-keys.ts",
+    "admin:grant": "tsx scripts/admin-grant.ts grant",
+    "admin:revoke": "tsx scripts/admin-grant.ts revoke",
+    "admin:list": "tsx scripts/admin-grant.ts list",
     "worktree:setup": "tsx scripts/worktree-setup.ts",
     "worktree:up": "tsx scripts/worktree-up.ts",
     "worktree:down": "tsx scripts/worktree-down.ts"

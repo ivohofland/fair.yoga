@@ -47,6 +47,10 @@ RUN pnpm exec prisma generate && pnpm run build
 FROM deps AS migrate
 WORKDIR /app
 COPY prisma ./prisma
+# Not a migration: the operator's admin-grant CLI (DEPLOYMENT.md, Admin
+# access). This stage is the only image with tsx and the full dependencies.
+COPY scripts/admin-grant.ts ./scripts/admin-grant.ts
+COPY src/services/admin-grants.ts ./src/services/admin-grants.ts
 CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
 
 # ---------------------------------------------------------------------------
