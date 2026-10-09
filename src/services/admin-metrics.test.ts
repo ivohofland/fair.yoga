@@ -29,15 +29,15 @@ async function teacher(label: string, erased: boolean): Promise<string> {
   return t.id;
 }
 
-async function student(label: string, kind: 'claimed' | 'walk-in' | 'erased'): Promise<void> {
+async function student(label: string, kind: 'claimed' | 'walk-in' | 'erased' | 'erased-walk-in'): Promise<void> {
   const email = `metrics-s-${label}-${suffix}@test.local`;
   const s = await db.student.create({
     data:
-      kind === 'walk-in'
+      kind === 'walk-in' || kind === 'erased-walk-in'
         ? { firstName: 'M', lastName: label, email, incomeTier: 3 }
         : { firstName: 'M', lastName: label, email, incomeTier: 3, claimedAt: new Date(), account: { create: { email } } },
   });
-  if (kind === 'erased') await db.student.update({ where: { id: s.id }, data: { deletedAt: new Date() } });
+  if (kind === 'erased' || kind === 'erased-walk-in') await db.student.update({ where: { id: s.id }, data: { deletedAt: new Date() } });
   studentIds.push(s.id);
 }
 
@@ -63,6 +63,7 @@ beforeAll(async () => {
   for (const l of ['s0', 's1']) await student(l, 'claimed');
   await student('s2', 'erased');
   for (const l of ['w0', 'w1', 'w2', 'w3']) await student(l, 'walk-in');
+  await student('w4', 'erased-walk-in');
   for (const l of ['p0', 'p1', 'p2', 'p3', 'p4']) await room(l, true, creator);
   for (const l of ['q0', 'q1', 'q2', 'q3', 'q4', 'q5']) await room(l, false, creator);
 });

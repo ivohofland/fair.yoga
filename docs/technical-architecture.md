@@ -1139,9 +1139,9 @@ is the ordinary registrable-parent case. Tests therefore seed a session as the
 ceremony would leave it (a session bound to the grantee's passkey credential):
 `seedPasskeySession` in `tests/admin-fixtures.ts` for unit tests, and
 `tests/e2e/admin/admin-dashboard.spec.ts` for the browser, whose `admin`
-Playwright project runs against the admin host. That the ceremony accepts the
-admin origin is pinned by the passkey unit test
-(`src/lib/auth/passkey.test.ts`, the admin-origin block). The first real
+Playwright project runs against the admin host. That the registration and the authentication verifiers accept the admin origin
+is pinned by the passkey unit test (`src/lib/auth/passkey.test.ts`, the
+admin-origin blocks). The first real
 sign-in is the post-deploy smoke test in `DEPLOYMENT.md` (Admin access).
 
 **The dashboard.** `getPlatformCounts` (`src/services/admin-metrics.ts`) returns

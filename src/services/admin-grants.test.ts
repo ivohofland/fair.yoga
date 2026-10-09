@@ -160,7 +160,8 @@ describe('listAdmins', () => {
 describe('admin-grants.ts imports', () => {
   it('imports only @prisma/client, which is all the migrate image carries', () => {
     const source = readFileSync(path.join(__dirname, 'admin-grants.ts'), 'utf8');
-    const specifiers = [...source.matchAll(/from\s+'([^']+)'/g)].map((m) => m[1]);
+    const specifiers = [...source.matchAll(/(?:\bfrom\s+|\bimport\s*\(?\s*)(['"])([^'"]+)\1/g)].map((m) => m[2]);
+    expect(specifiers.length).toBeGreaterThan(0);
     expect(specifiers.every((s) => s === '@prisma/client')).toBe(true);
   });
 });
