@@ -130,6 +130,20 @@ describe('revokeAdmin', () => {
     expect(await revokeAdmin(db, { email: emailOf('revoke'), by: 'remover' })).toEqual({ kind: 'unchanged' });
   });
 
+  it('refuses an address with no account', async () => {
+    expect(await revokeAdmin(db, { email: emailOf('revoke-nobody'), by: 'remover' })).toEqual({
+      kind: 'refused',
+      reason: 'no_account',
+    });
+  });
+
+  it('refuses an empty operator name', async () => {
+    expect(await revokeAdmin(db, { email: emailOf('revoke'), by: '  ' })).toEqual({
+      kind: 'refused',
+      reason: 'no_operator',
+    });
+  });
+
   it('grant after revoke inserts a new row and keeps the old one', async () => {
     expect(await grantAdmin(db, { email: emailOf('revoke'), by: 'tester' })).toEqual({ kind: 'granted' });
     expect(await db.adminGrant.count({ where: { accountId } })).toBe(2);

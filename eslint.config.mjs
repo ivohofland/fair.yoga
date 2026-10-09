@@ -31,6 +31,18 @@ const classLockCastSelector = {
     'Only lockClassRow (src/lib/db-locks.ts) mints a ClassLock — take the lock instead of casting one (#219).',
 };
 
+// `AdminProof` is minted in exactly one place — `resolveAdminAccess`
+// (src/lib/admin-access.ts), which `assertAdminProof` checks at runtime. Like
+// `classLockCastSelector`, an early signal against a cast that names it.
+const adminProofCastSelector = {
+  selector: [
+    "TSAsExpression[typeAnnotation.typeName.name='AdminProof']",
+    "TSTypeAssertion[typeAnnotation.typeName.name='AdminProof']",
+  ].join(', '),
+  message:
+    'Only resolveAdminAccess (src/lib/admin-access.ts) mints an AdminProof — pass the gate instead of casting one (#60).',
+};
+
 // The roster-link create/upsert refusal (#181); a named constant for the same
 // reason as `classLockCastSelector`.
 const teacherStudentWriteSelector = {
@@ -103,7 +115,7 @@ const eslintConfig = defineConfig([
     files: ['src/**/*.ts', 'src/**/*.tsx'],
     ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     rules: {
-      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector],
+      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector, adminProofCastSelector],
     },
   },
   // Client and route code refuses an unbound `catch` and a parameterless
@@ -118,6 +130,7 @@ const eslintConfig = defineConfig([
         'error',
         teacherStudentWriteSelector,
         classLockCastSelector,
+        adminProofCastSelector,
         bareCatchSelector,
         discardedRejectionSelector,
       ],
@@ -132,7 +145,14 @@ const eslintConfig = defineConfig([
   {
     files: ['src/services/roster-link.ts'],
     rules: {
-      'no-restricted-syntax': ['error', classLockCastSelector],
+      'no-restricted-syntax': ['error', classLockCastSelector, adminProofCastSelector],
+    },
+  },
+  // `resolveAdminAccess` is the one place that mints an `AdminProof`.
+  {
+    files: ['src/lib/admin-access.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector],
     },
   },
   // A hardcoded dev-server origin in a test file breaks against any server
