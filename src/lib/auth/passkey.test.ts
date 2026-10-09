@@ -526,19 +526,29 @@ describe('verifyPasskeyRegistration from the admin origin', () => {
     vi.restoreAllMocks();
   });
 
-  function fromAdminOrigin() {
+  function fromOrigin(origin: string) {
     const credentialId = new Uint8Array(randomBytes(16));
     return forgedNoneRegistration({
       ...FORGED,
-      origin: ADMIN_ORIGIN,
+      origin,
       authDataCredentialId: credentialId,
       responseId: isoBase64URL.fromBuffer(credentialId),
     });
   }
+  const fromAdminOrigin = () => fromOrigin(ADMIN_ORIGIN);
 
   it('verifies when ADMIN_HOST names that origin', async () => {
     vi.stubEnv('ADMIN_HOST', `admin.${FORGED_RP_ID}`);
     const result = await verifyPasskeyRegistration({ response: fromAdminOrigin(), expectedChallenge: FORGED_CHALLENGE });
+    expect(result.verified).toBe(true);
+  });
+
+  it('still verifies the main origin when ADMIN_HOST is set', async () => {
+    vi.stubEnv('ADMIN_HOST', `admin.${FORGED_RP_ID}`);
+    const result = await verifyPasskeyRegistration({
+      response: fromOrigin(FORGED_ORIGIN),
+      expectedChallenge: FORGED_CHALLENGE,
+    });
     expect(result.verified).toBe(true);
   });
 
@@ -587,25 +597,31 @@ describe('verifyPasskeyAuthentication, signed assertion', () => {
   });
 
   describe('from the admin origin', () => {
-    const adminAssertion = () =>
+    const assertionFrom = (origin: string) =>
       signedAssertion({
         ...FORGED,
-        origin: `https://admin.${FORGED_RP_ID}`,
+        origin,
         credentialId,
         counter: 1,
         privateKey: keyA.privateKey,
       });
-    const verifyAdminAssertion = () =>
+    const verifyAssertionFrom = (origin: string) =>
       verifyPasskeyAuthentication({
-        response: adminAssertion(),
+        response: assertionFrom(origin),
         expectedChallenge: FORGED_CHALLENGE,
         credentialPublicKey: coseES256PublicKey(keyA.publicKey),
         credentialCounter: 0,
       });
+    const verifyAdminAssertion = () => verifyAssertionFrom(`https://admin.${FORGED_RP_ID}`);
 
     it('verifies when ADMIN_HOST names that origin', async () => {
       vi.stubEnv('ADMIN_HOST', `admin.${FORGED_RP_ID}`);
       expect((await verifyAdminAssertion()).verified).toBe(true);
+    });
+
+    it('still verifies the main origin when ADMIN_HOST is set', async () => {
+      vi.stubEnv('ADMIN_HOST', `admin.${FORGED_RP_ID}`);
+      expect((await verifyAssertionFrom(FORGED_ORIGIN)).verified).toBe(true);
     });
 
     it('refuses when ADMIN_HOST is unset', async () => {
