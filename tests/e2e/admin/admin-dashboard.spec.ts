@@ -8,8 +8,8 @@ import { createAdminFixture, seedPasskeySession, cleanupAdminFixtures } from '..
  * (the RP ID "localhost" is invalid for that domain). So the grantee's session
  * is seeded as the ceremony would leave it, a session bound to the grantee's
  * passkey credential, and the sign-in button is only looked at, never clicked.
- * The ceremony's acceptance of the admin origin is pinned by the passkey unit
- * test.
+ * The registration and authentication verifiers' acceptance of the admin
+ * origin is pinned by the passkey unit test.
  */
 const prisma = createGuardedPrismaClient();
 const accountIds: string[] = [];

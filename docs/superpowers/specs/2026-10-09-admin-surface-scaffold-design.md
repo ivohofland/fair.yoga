@@ -243,8 +243,9 @@ export async function getPlatformCounts(
 - The counts run in one `$transaction([...])` at `RepeatableRead`, so they read one snapshot; the default Read Committed would give each statement its own.
 - Totals are derived by the page, never returned, so a total cannot disagree
   with its parts.
-- `proof` is not read. It exists so that every caller has passed the gate; the
-  parameter carries a one-line comment saying so.
+- `proof` is checked, not used: the service calls `assertAdminProof(proof)`
+  first, so a caller holding a forged or spread-copied proof is refused before
+  any count runs.
 
 **Routes.**
 
@@ -277,7 +278,8 @@ Production, with `PASSKEY_RP_ID` set to the parent domain and the admin host a
 subdomain of it, is the standard registrable-parent case. Tests therefore seed a
 session bound to the grantee's passkey credential, as the ceremony would leave
 it (`seedPasskeySession`, `tests/admin-fixtures.ts`), and the admin origin's
-acceptance by the ceremony is pinned by the passkey unit test. The first real
+acceptance by the registration and authentication verifiers is pinned by the
+passkey unit test. The first real
 sign-in is the post-deploy smoke test in `DEPLOYMENT.md` (Admin access).
 
 **Vitest, test-first, against the test database.**

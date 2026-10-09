@@ -70,11 +70,11 @@ export default defineConfig({
     serviceWorkers: 'block',
   },
   projects: [
-    { name: 'chromium', testIgnore: /admin\//, use: { ...devices['Desktop Chrome'] } },
-    { name: 'Mobile Chrome', testIgnore: /admin\//, use: { ...devices['Pixel 5'] } },
+    { name: 'chromium', testIgnore: /tests\/e2e\/admin\//, use: { ...devices['Desktop Chrome'] } },
+    { name: 'Mobile Chrome', testIgnore: /tests\/e2e\/admin\//, use: { ...devices['Pixel 5'] } },
     {
       name: 'admin',
-      testMatch: /admin\/.*\.spec\.ts/,
+      testMatch: /tests\/e2e\/admin\/.*\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], baseURL: adminBaseUrl() },
     },
   ],

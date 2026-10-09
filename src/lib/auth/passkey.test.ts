@@ -586,6 +586,35 @@ describe('verifyPasskeyAuthentication, signed assertion', () => {
     expect(result.newCounter).toBe(1);
   });
 
+  describe('from the admin origin', () => {
+    const adminAssertion = () =>
+      signedAssertion({
+        ...FORGED,
+        origin: `https://admin.${FORGED_RP_ID}`,
+        credentialId,
+        counter: 1,
+        privateKey: keyA.privateKey,
+      });
+    const verifyAdminAssertion = () =>
+      verifyPasskeyAuthentication({
+        response: adminAssertion(),
+        expectedChallenge: FORGED_CHALLENGE,
+        credentialPublicKey: coseES256PublicKey(keyA.publicKey),
+        credentialCounter: 0,
+      });
+
+    it('verifies when ADMIN_HOST names that origin', async () => {
+      vi.stubEnv('ADMIN_HOST', `admin.${FORGED_RP_ID}`);
+      expect((await verifyAdminAssertion()).verified).toBe(true);
+    });
+
+    it('refuses when ADMIN_HOST is unset', async () => {
+      vi.stubEnv('ADMIN_HOST', '');
+      vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      expect((await verifyAdminAssertion()).verified).toBe(false);
+    });
+  });
+
   it('refuses, with one warn, an assertion whose authenticator did not verify the user', async () => {
     const response = signedAssertion({
       ...FORGED,
