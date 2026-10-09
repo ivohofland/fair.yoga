@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Currency, OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@prisma/client';
-import { isSafeRelativePath, URL_STRIPPED_CHARS } from '@/lib/safe-path';
+import { isSafeRelativePath, REDIRECT_MAX_LENGTH, URL_STRIPPED_CHARS } from '@/lib/safe-path';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
@@ -147,15 +147,15 @@ export const MAX_CLASS_SIZE = 200;
 // AUTH
 // ============================================================================
 
-// redirect must be a relative path — a full URL here would be an open redirect.
 export { isSafeRelativePath };
 
-const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a relative path');
+// redirect must be a relative path — a full URL here would be an open redirect.
+const relativePath = z.string().max(REDIRECT_MAX_LENGTH).refine(isSafeRelativePath, 'Must be a relative path');
 
 /**
  * The redirect `/login` (`src/app/(public)/login/page.tsx`) accepts, beyond
- * `isSafeRelativePath`'s shape check: capped at 200 characters (matching
- * `relativePath`'s own `.max(200)`) and refusing a target on `/login` or
+ * `isSafeRelativePath`'s shape check: capped at `REDIRECT_MAX_LENGTH` (matching
+ * `relativePath`'s own cap) and refusing a target on `/login` or
  * `/verify`, which would loop the sign-in flow back on itself.
  *
  * Exported so a caller that BUILDS a `/login?redirect=` link can assert the
@@ -169,11 +169,11 @@ export function isLoginRedirectTarget(path: string): boolean {
   // browser drops the tab from `/<tab>login` and goes to `/login`, so reading
   // the raw string here would wave through exactly the loop this clause
   // exists to stop. The length cap reads the raw string on purpose — it
-  // mirrors `relativePath`'s own `.max(200)`, which measures what was sent.
+  // mirrors `relativePath`'s own cap, which measures what was sent.
   const stripped = path.replace(URL_STRIPPED_CHARS, '');
   return (
     isSafeRelativePath(path) &&
-    path.length <= 200 &&
+    path.length <= REDIRECT_MAX_LENGTH &&
     !stripped.startsWith('/login') &&
     !stripped.startsWith('/verify')
   );
