@@ -59,6 +59,16 @@ describe('resolveAdminAccess', () => {
     expect(await resolveAdminAccess(db, { host: TEST_ADMIN_HOST, sessionToken: token })).toEqual({ kind: 'not_found' });
   });
 
+  it('is not_found for a non-grantee whose session came from a magic link, never sign_in', async () => {
+    const token = await seedSession(db, plain.accountId);
+    expect(await resolveAdminAccess(db, { host: TEST_ADMIN_HOST, sessionToken: token })).toEqual({ kind: 'not_found' });
+  });
+
+  it('is not_found for a non-grantee whose passkey session is past the window, never sign_in', async () => {
+    const token = await seedPasskeySession(db, plain, ADMIN_AUTH_WINDOW_MS + 1000);
+    expect(await resolveAdminAccess(db, { host: TEST_ADMIN_HOST, sessionToken: token })).toEqual({ kind: 'not_found' });
+  });
+
   it('is not_found once the grant is revoked, for a session that was granted a moment before', async () => {
     const revokee = await createAdminFixture(db, 'gate-revoke');
     try {
