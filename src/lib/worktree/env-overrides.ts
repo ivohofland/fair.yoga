@@ -11,5 +11,6 @@ export function buildEnvOverrides(dbHost: string, dev: string, test: string, por
     DATABASE_URL_TEST: `${dbHost}/${test}`,
     INTEGRATION_BASE_URL: appUrl,
     NEXT_PUBLIC_APP_URL: appUrl,
+    ADMIN_HOST: `admin.localhost:${port}`,
   };
 }

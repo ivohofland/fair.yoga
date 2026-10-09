@@ -11,6 +11,7 @@ describe('buildEnvOverrides', () => {
       DATABASE_URL_TEST: 'postgresql://yoga:pw@localhost:5432/ethical_yoga_test_x',
       INTEGRATION_BASE_URL: 'http://localhost:3100',
       NEXT_PUBLIC_APP_URL: 'http://localhost:3100',
+      ADMIN_HOST: 'admin.localhost:3100',
     });
   });
 
