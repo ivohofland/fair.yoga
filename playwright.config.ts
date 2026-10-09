@@ -4,6 +4,13 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
+/** The admin host for whatever origin the app under test answers on: admin.<host>:<port>. */
+function adminBaseUrl(): string {
+  const url = new URL(process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000');
+  url.hostname = `admin.${url.hostname}`;
+  return url.origin;
+}
+
 export default defineConfig({
   testDir: './tests/e2e',
   // Every module an e2e spec imports resolves `server-only` through
@@ -63,8 +70,13 @@ export default defineConfig({
     serviceWorkers: 'block',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'Mobile Chrome', use: { ...devices['Pixel 5'] } },
+    { name: 'chromium', testIgnore: /admin\//, use: { ...devices['Desktop Chrome'] } },
+    { name: 'Mobile Chrome', testIgnore: /admin\//, use: { ...devices['Pixel 5'] } },
+    {
+      name: 'admin',
+      testMatch: /admin\/.*\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], baseURL: adminBaseUrl() },
+    },
   ],
   webServer: {
     // In a worktree (INTEGRATION_BASE_URL set), the dev server is expected
