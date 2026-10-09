@@ -166,8 +166,28 @@ model Account {
   email     String   @unique
   createdAt DateTime @default(now())
 
-  teachers Teacher[]
-  students Student[]
+  teachers    Teacher[]
+  students    Student[]
+  adminGrants AdminGrant[]
+}
+
+/// An account's authority to use the admin surface (#60). Active while
+/// `revokedAt` is null. Carries two rules Prisma cannot express and therefore
+/// cannot show: `AdminGrant_account_active_unique` on (accountId) WHERE
+/// "revokedAt" IS NULL — at most one active grant per account — and
+/// `AdminGrant_revoke_pair_check`, which sets the two revoke columns together.
+/// Rows are never deleted; see docs/data-model.md (AdminGrant).
+model AdminGrant {
+  id        String    @id @default(uuid())
+  accountId String
+  grantedAt DateTime  @default(now())
+  grantedBy String
+  revokedAt DateTime?
+  revokedBy String?
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
 }
 
 /// Carries a partial unique index Prisma cannot express and therefore cannot
