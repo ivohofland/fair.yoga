@@ -1,5 +1,6 @@
 /**
- * Delivery policy for the email fallback (layer 3).
+ * Delivery policy for the email fallback (layer 3), and the unsubscribe kind
+ * each type's email carries.
  *
  * Two independent axes:
  * - WHETHER: essential types are service messages about the student's
@@ -133,7 +134,7 @@ export function shouldEmailTeacher(
 }
 
 /** The student has one email switch, so every optional type unsubscribes through it. */
-export function studentUnsubscribeKind(type: NotificationType): UnsubscribeKind | null {
+export function studentUnsubscribeKind(type: NotificationType): Exclude<UnsubscribeKind, 'invitation'> | null {
   return isEssential(type) ? null : 'student_notifications';
 }
 
@@ -148,8 +149,10 @@ const TEACHER_UNSUBSCRIBE = {
   payment_request: 'teacher_class_completed',
   teacher_invitation: 'teacher_invitations',
   class_reminder: null,
-} as const satisfies Record<TeacherNotificationType, UnsubscribeKind | null>;
+} as const satisfies Record<TeacherNotificationType, Exclude<UnsubscribeKind, 'invitation'> | null>;
 
-export function teacherUnsubscribeKind(type: TeacherNotificationType): UnsubscribeKind | null {
+export function teacherUnsubscribeKind(
+  type: TeacherNotificationType,
+): Exclude<UnsubscribeKind, 'invitation'> | null {
   return TEACHER_UNSUBSCRIBE[type];
 }

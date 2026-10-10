@@ -172,7 +172,7 @@ export async function processEmailFallback(
     // Follows the recipient branch, not the type alone: a type both audiences
     // receive maps to a different switch for each. A teacher row outside
     // `TeacherNotificationType` is emailed ignoring preferences, so no switch.
-    let unsubscribeKind: UnsubscribeKind | null = null;
+    let unsubscribeKind: Exclude<UnsubscribeKind, 'invitation'> | null = null;
 
     if (notification.recipientType === 'teacher') {
       // No `deletedAt: null` here, unlike every reader that surfaces a

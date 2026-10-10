@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { erasedAddress } from '@/lib/erased-address';
+import type { UnsubscribeKind } from '@/lib/unsubscribe-kind';
 import { invitationSubject } from '@/lib/unsubscribe-token';
 import { declinePending } from './invitations';
 import { unsubscribe } from './unsubscribe';
@@ -177,6 +178,7 @@ describe('unsubscribe', () => {
     it('subject without an address tag: invalid', async () => {
       const teacherId = await makeTeacher();
       const inv = await makeInvitation(teacherId);
+      // @ts-expect-error -- the type refuses a subject without a tag; the service refuses it at runtime too
       expect(await unsubscribe(prisma, { kind: 'invitation', subjectId: inv.id })).toEqual({ status: 'invalid' });
       expect((await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe('pending');
     });
@@ -205,16 +207,33 @@ describe('unsubscribe', () => {
     expect(await unsubscribe(prisma, { kind: 'invitation', subjectId: invitationSubject(id, 'a@test.local') })).toEqual({ status: 'invalid' });
   });
 
-  it('erased student: invalid, flag untouched', async () => {
-    const id = await makeStudent({ emailNotifications: true, deletedAt: new Date() });
-    expect(await unsubscribe(prisma, { kind: 'student_notifications', subjectId: id })).toEqual({ status: 'invalid' });
-    expect((await prisma.student.findUniqueOrThrow({ where: { id } })).emailNotifications).toBe(true);
-  });
+  const PREFS = {
+    student: { emailNotifications: true, classReminder: true, classReminderChannel: true },
+    teacher: { bookingNotifications: true, emailOnClassCompleted: true, emailOnInvitation: true, classReminder: true, classReminderChannel: true },
+  } as const;
+  const readStudent = (id: string) => prisma.student.findUniqueOrThrow({ where: { id }, select: PREFS.student });
+  const readTeacher = (id: string) => prisma.teacher.findUniqueOrThrow({ where: { id }, select: PREFS.teacher });
 
-  it('erased teacher: invalid, preference untouched', async () => {
-    const id = await makeTeacher({ bookingNotifications: 'inbox_and_email', deletedAt: new Date() });
-    expect(await unsubscribe(prisma, { kind: 'teacher_bookings', subjectId: id })).toEqual({ status: 'invalid' });
-    expect((await prisma.teacher.findUniqueOrThrow({ where: { id } })).bookingNotifications).toBe('inbox_and_email');
+  // Every preference starts on (the schema defaults); the reminder kinds run
+  // once per channel, so both of their writes meet an erased profile.
+  it.each([
+    ['student_notifications', 'student', {}],
+    ['student_reminders', 'student', { classReminderChannel: 'inbox_and_email' }],
+    ['student_reminders', 'student', { classReminderChannel: 'email' }],
+    ['teacher_bookings', 'teacher', {}],
+    ['teacher_class_completed', 'teacher', {}],
+    ['teacher_invitations', 'teacher', {}],
+    ['teacher_reminders', 'teacher', { classReminderChannel: 'inbox_and_email' }],
+    ['teacher_reminders', 'teacher', { classReminderChannel: 'email' }],
+  ] as const satisfies ReadonlyArray<
+    readonly [Exclude<UnsubscribeKind, 'invitation'>, 'student' | 'teacher', Pick<StudentOverrides & TeacherOverrides, 'classReminderChannel'>]
+  >)('erased profile for %s (%s, %o): invalid, preference untouched', async (kind, profile, overrides) => {
+    const deleted = { ...overrides, deletedAt: new Date() };
+    const id = profile === 'student' ? await makeStudent(deleted) : await makeTeacher(deleted);
+    const read = () => (profile === 'student' ? readStudent(id) : readTeacher(id));
+    const before = await read();
+    expect(await unsubscribe(prisma, { kind, subjectId: id })).toEqual({ status: 'invalid' });
+    expect(await read()).toEqual(before);
   });
 
   it('two-hat account: the student switch leaves the teacher profile alone', async () => {

@@ -3,6 +3,7 @@ import { log } from '@/lib/log';
 import {
   parseUnsubscribePayload,
   UNSUBSCRIBE_TOKEN_VERSION,
+  type InvitationSubject,
   type UnsubscribeTarget,
 } from '@/lib/unsubscribe-kind';
 
@@ -11,6 +12,7 @@ const DEV_KEY = 'fair.yoga development unsubscribe key, never used in production
 const MAC_DOMAIN = 'unsubscribe:';
 
 let warnedNoSecret = false;
+let warnedRefusedNoSecret = false;
 
 /** The signing key; null in production without a usable secret, which disables unsubscribe links. */
 function key(): string | null {
@@ -43,10 +45,20 @@ export function signUnsubscribeToken(target: UnsubscribeTarget): string | null {
   return `${payload}.${mac(k, payload).toString('base64url')}`;
 }
 
-/** The target a token was signed for, or null. Never throws and never reads the database. */
+/**
+ * The target a token was signed for, or null. Never throws and never reads the
+ * database. Without a key every link is refused, which production says once;
+ * the token itself is never logged.
+ */
 export function verifyUnsubscribeToken(token: string): UnsubscribeTarget | null {
   const k = key();
-  if (k === null) return null;
+  if (k === null) {
+    if (!warnedRefusedNoSecret) {
+      warnedRefusedNoSecret = true;
+      log.warn({}, 'an unsubscribe link was refused because UNSUBSCRIBE_SECRET is not configured');
+    }
+    return null;
+  }
   const parts = token.split('.');
   if (parts.length !== 2) return null;
   const [payload, presented] = parts as [string, string];
@@ -78,8 +90,8 @@ export function addressTag(email: string): string {
   return createHash('sha256').update(email.toLowerCase()).digest('base64url').slice(0, 22);
 }
 
-export function invitationSubject(invitationId: string, email: string): string {
-  return `${invitationId}~${addressTag(email)}`;
+export function invitationSubject(invitationId: string, email: string): InvitationSubject {
+  return `${invitationId}~${addressTag(email)}` as InvitationSubject;
 }
 
 export function parseInvitationSubject(

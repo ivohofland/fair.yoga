@@ -1,7 +1,7 @@
 /**
- * What an unsubscribe link can switch off, one member per preference it
- * flips (spec: docs/superpowers/specs/2026-10-10-list-unsubscribe-design.md,
- * Decision 3). Imports nothing server-only.
+ * What an unsubscribe link can act on (spec:
+ * docs/superpowers/specs/2026-10-10-list-unsubscribe-design.md, Decision 3).
+ * Imports nothing, so the client form can use it.
  */
 export type UnsubscribeKind =
   | 'student_notifications'
@@ -22,10 +22,16 @@ export const UNSUBSCRIBE_KINDS = {
   invitation: true,
 } as const satisfies Record<UnsubscribeKind, true>;
 
-export interface UnsubscribeTarget {
-  kind: UnsubscribeKind;
-  subjectId: string;
-}
+/**
+ * An invitation's subject: its id and a tag of the address it was sent to,
+ * joined by `~`. Minted only by `invitationSubject` (`unsubscribe-token.ts`)
+ * and by `parseUnsubscribePayload` after a shape check.
+ */
+export type InvitationSubject = string & { readonly __brand: 'InvitationSubject' };
+
+export type UnsubscribeTarget =
+  | { kind: Exclude<UnsubscribeKind, 'invitation'>; subjectId: string }
+  | { kind: 'invitation'; subjectId: InvitationSubject };
 
 export const UNSUBSCRIBE_TOKEN_VERSION = 'v1';
 
@@ -58,7 +64,15 @@ export function parseUnsubscribePayload(encoded: string): UnsubscribeTarget | nu
   ) {
     return null;
   }
-  return isUnsubscribeKind(kind) ? { kind, subjectId } : null;
+  if (!isUnsubscribeKind(kind)) return null;
+  if (kind !== 'invitation') return { kind, subjectId };
+  return isInvitationShape(subjectId) ? { kind, subjectId: subjectId as InvitationSubject } : null;
+}
+
+/** Exactly one `~`, with something on both sides of it. */
+function isInvitationShape(subjectId: string): boolean {
+  const halves = subjectId.split('~');
+  return halves.length === 2 && halves[0] !== '' && halves[1] !== '';
 }
 
 /** The kind a token claims. Not a verification: anyone can write a payload. */

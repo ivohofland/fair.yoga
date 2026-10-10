@@ -3,8 +3,9 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { UnsubscribeForm } from './unsubscribe-form';
 import { UNSUBSCRIBE_KINDS, type UnsubscribeKind } from '@/lib/unsubscribe-kind';
 
+/** An invitation subject must read `<id>~<tag>`; the other kinds take any id. */
 function tokenFor(kind: string): string {
-  const payload = btoa(`v1.${kind}.subject`).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+  const payload = btoa(`v1.${kind}.inv_1~tag`).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
   return `${payload}.mac`;
 }
 
@@ -44,7 +45,7 @@ describe('UnsubscribeForm', () => {
   const REMINDERS = 'Class reminders stop coming by email. If email was the only way you got them, reminders turn off.';
   const EXPECTED = {
     student_notifications: {
-      what: "You'll stop getting an email when a message in the app goes unread. Cancellations, waitlist spots and payment requests still come by email.",
+      what: "You'll stop getting an email when a message in the app goes unread. Class cancellations, waitlist spots and payment requests still come by email.",
       settings: '/account/notifications',
     },
     teacher_bookings: {
@@ -139,11 +140,32 @@ describe('UnsubscribeForm', () => {
   });
 
   it('shows the same success when nothing changed', async () => {
-    stubFetch(() => respond(200, { data: { unsubscribed: true, outcome: 'unchanged' } }));
+    stubFetch(() => respond(200, { data: { unsubscribed: true }, outcome: 'unchanged' }));
     await open('teacher_invitations');
     fireEvent.click(screen.getByRole('button', BUTTON));
     await settle();
     expect(screen.getByRole('status')).toHaveTextContent("You\u2019re unsubscribed");
+  });
+
+  it('says an applied invitation unsubscribe declined the invitation', async () => {
+    stubFetch(() => respond(200, { data: { unsubscribed: true } }));
+    await open('invitation');
+    fireEvent.click(screen.getByRole('button', BUTTON));
+    await settle();
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('You\u2019ve declined the invitation. That teacher can\u2019t add your address again.');
+    expect(status).not.toHaveTextContent('already answered');
+  });
+
+  it('says an unchanged invitation unsubscribe was already answered, without claiming a decline', async () => {
+    stubFetch(() => respond(200, { data: { unsubscribed: true }, outcome: 'unchanged' }));
+    await open('invitation');
+    fireEvent.click(screen.getByRole('button', BUTTON));
+    await settle();
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('This invitation was already answered, so nothing changed.');
+    expect(status).not.toHaveTextContent('declined');
+    expect(screen.queryByRole('link', { name: 'notification settings' })).not.toBeInTheDocument();
   });
 
   it('says the link no longer works, with a sign-in link, on UNSUBSCRIBE_LINK_INVALID', async () => {
