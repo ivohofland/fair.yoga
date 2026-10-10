@@ -919,6 +919,27 @@ describe('POST /api/account/onboarding', () => {
   });
 
   /**
+   * `push` (#817) dismisses the push card on the schedule. Like `install`,
+   * it carries no settlement gate; a double post stores it once.
+   */
+  it('records push once, however often it is posted', async () => {
+    for (let i = 0; i < 2; i += 1) {
+      const res = await fetch(`${BASE_URL}/api/account/onboarding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(onboardingToken), ...freshIp() },
+        body: JSON.stringify({ step: 'push' }),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    const teacher = await prisma.teacher.findUnique({
+      where: { id: onboardingTeacherId },
+      select: { skippedOnboarding: true },
+    });
+    expect(teacher?.skippedOnboarding.filter((s) => s === 'push')).toHaveLength(1);
+  });
+
+  /**
    * A teacher with a bio, a room and a class, plus `own`, asks to dismiss the
    * completion card: `accepted` records it, `refused` is the unsettled 409.
    */
