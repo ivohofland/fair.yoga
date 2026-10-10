@@ -54,7 +54,14 @@ Measured on `main` at `1e76deed`.
    `202 { message_id, status }`, errors 401/403/409/422/429/500 in three body
    shapes (`{ message }`, `{ error: { code, message } }`,
    `{ message, errors }`). Open/click tracking is a project setting, not a
-   per-message field. An optional `Idempotency-Key` header (1–255 chars)
+   per-message field. Every send names a **route** (`route` in the body;
+   omitted → the project's default, `outgoing`, transactional). A spam
+   complaint or unsubscribe suppresses the address **on the route it came
+   from**; a hard bounce suppresses it team-wide. A send to a suppressed
+   recipient is skipped, and the docs do not say what the API answers — so
+   assume a 202 the app cannot tell from delivery. A broadcast route injects
+   a Lettermint-hosted unsubscribe link and keeps its own unsubscribe list;
+   disabling that needs a higher plan and support. An optional `Idempotency-Key` header (1–255 chars)
    returns the original response for a repeat with the same key **and body**
    within 24 hours; the same key with a different body answers 409.
 
@@ -72,6 +79,8 @@ Measured on `main` at `1e76deed`.
 | Reply-To, class mail | **None.** The footer says replies are not read. Exposing the teacher's address was rejected (it is not exposed today). |
 | Text part | A shared block model rendered to both html and text. |
 | Idempotency key | Sent by `email-fallback` only, salted with a payload hash. |
+| Lettermint routes | Two **transactional** routes, chosen by `audience`: platform mail on the project's default route, class mail on `LETTERMINT_CLASS_ROUTE`. No broadcast route. |
+| Invitation | `class` audience: class route, no Reply-To. |
 
 ## Design
 
@@ -105,8 +114,21 @@ export async function sendEmail(message: EmailMessage): Promise<SendResult>;
   `{ ok: false, reason: 'LETTERMINT_API_TOKEN is not configured' }` — never a
   dry-run. Otherwise dry-run logs `{ subject }` (no address) and answers
   `{ ok: true, delivery: 'dry-run' }`.
-- **Reply-To from `audience`.** `platform` → `EMAIL_REPLY_TO || 'hello@fair.yoga'`;
-  `class` → none.
+- **Reply-To and route from `audience`.** `platform` →
+  `Reply-To: EMAIL_REPLY_TO || 'hello@fair.yoga'`, no `route` (the project's
+  default). `class` → no Reply-To, `route: LETTERMINT_CLASS_ROUTE`. When that
+  variable is unset, class mail rides the default route (it still sends), and
+  in production the first such send logs one `log.warn` naming the variable.
+
+  Why two routes: suppression is route-scoped. On one route, a student who
+  marks a teacher's announcement as spam is suppressed for every mail on that
+  route, magic links included, and the API most likely still answers 202 — a
+  sign-in that fails with nothing to see. Splitting by audience keeps a
+  complaint about class mail away from sign-in. Both routes are
+  transactional because a broadcast route's hosted unsubscribe would be an
+  opt-out list the app cannot see, and would let a student unsubscribe at the
+  provider from essential booking and payment mail, which
+  `notification-policy.ts` always emails.
 - **From.** `EMAIL_FROM || 'noreply@fair.yoga'`, in one place.
 - `emailDryRun()` stays exported; `emailConfigured()` reads
   `LETTERMINT_API_TOKEN`. The `re_placeholder` sentinel goes.
@@ -115,16 +137,32 @@ Which mail is which:
 
 | Sender | Audience |
 |---|---|
-| magic link, invitation, passkey added / removed, payout changed, degradation digest | `platform` |
-| `email-fallback` (every notification type), class reminders | `class` |
+| magic link, passkey added / removed, payout changed, degradation digest | `platform` |
+| `email-fallback` (every notification type), class reminders, invitation | `class` |
 
-The invitation is `platform`: it is about fair.yoga, and the only teacher text
-in it is the teacher's name.
+The invitation is `class`: to a stranger it is unsolicited, so it is the mail
+most likely to draw a complaint, and a complaint on the platform route would
+suppress that person's future sign-in links. The cost is that a stranger's
+"who is this?" reply reaches nobody.
 
-The "replies are not read" line lives in the two class-mail footers
-(`UNREAD_FALLBACK_FOOTER`, `CLASS_REMINDER_EMAIL_FOOTER`), each gaining the
-sentence *Replies to this email are not read.* `wrapEmail` knows nothing of
-audience; the footer is the renderer's choice, as today.
+### Footers
+
+`wrapEmail`'s `footer` becomes **required**. Today the magic link, the
+invitation and both passkey notices fall back to `UNREAD_FALLBACK_FOOTER` —
+"You get emails like this when an in-app message goes unread; turn them off in
+your settings." — which is false for all four, and is the reason the payout
+renderer already passes its own. Every renderer now names its footer:
+
+| Renderer | Footer |
+|---|---|
+| notification fallback | `UNREAD_FALLBACK_FOOTER` + *Replies to this email are not read.* |
+| class reminder | `CLASS_REMINDER_EMAIL_FOOTER` + *Replies to this email are not read.* |
+| invitation | *You get this email because a teacher on fair.yoga added your address. Replies to this email are not read.* |
+| magic link, passkey added / removed | *You get this email because of activity on your fair.yoga account.* |
+| payout changed, degradation digest | unchanged |
+
+`wrapEmail` knows nothing of audience; the footer stays the renderer's
+choice. Copy is provisional for the UX copy phase.
 
 ### Callers
 
@@ -154,7 +192,7 @@ The only file that knows Lettermint exists.
 
 ```ts
 export async function deliverViaLettermint(
-  payload: { from: string; to: string; replyTo?: string; subject: string;
+  payload: { from: string; to: string; replyTo?: string; route?: string; subject: string;
              html: string; text: string; headers?: Record<string, string>;
              idempotencyKey?: string },
   token: string,
@@ -163,7 +201,8 @@ export async function deliverViaLettermint(
 
 - `fetch` with `AbortSignal.timeout(10_000)`. Token passed in per call: nothing
   to construct, so the lazy-client hazard both old comments described is gone.
-- `to` and `reply_to` sent as one-element arrays; `headers` sent as given.
+- `to` and `reply_to` sent as one-element arrays; `route` sent when given;
+  `headers` sent as given.
 - Non-2xx → `{ ok: false, reason: \`lettermint ${status}: ${message}\` }`,
   `message` read from whichever of the three error shapes the body has, or the
   status text when the body is not JSON. A rejected `fetch` (network, timeout)
@@ -202,13 +241,16 @@ export function wrapEmail(
 
 ### Configuration and docs
 
-- `.env.example`: `LETTERMINT_API_TOKEN`, `EMAIL_FROM`, `EMAIL_REPLY_TO`.
+- `.env.example`: `LETTERMINT_API_TOKEN`, `LETTERMINT_CLASS_ROUTE`,
+  `EMAIL_FROM`, `EMAIL_REPLY_TO`.
 - CI: the four `RESEND_API_KEY: re_test` lines are deleted, not renamed —
   `EMAIL_DRY_RUN: '1'` already forces dry-run there.
 - `DEPLOYMENT.md`: prerequisite (Lettermint project token), env-table row with
   wording that is now true for every sender, a required provider setting —
   **open and click tracking off**, because click tracking rewrites links
   through the provider's redirect domain and would hand it magic-link tokens —
+  a required second **transactional** route for class mail (its slug in
+  `LETTERMINT_CLASS_ROUTE`; not broadcast, for the reason under *The seam*) —
   and a short DNS note: send from `notify.fair.yoga`, SPF/DKIM from Lettermint,
   one DMARC record on the apex starting at `p=none` with reports to
   `ops@fair.yoga`.
@@ -230,18 +272,22 @@ export function wrapEmail(
   without a key, present with one, different for a different body.
 - **`sendEmail`** (adapter mocked): success; adapter `ok: false`; adapter
   throws — both `ok: false` with a reason; production + no key → `ok: false`;
-  `EMAIL_DRY_RUN=1` → dry-run; audience → Reply-To; `headers` passed through.
+  `EMAIL_DRY_RUN=1` → dry-run; audience → Reply-To and route; class route
+  unset → default route plus one production warning; `headers` passed
+  through.
 - **Callers:** `email-fallback` releases its claim and counts a failure for
   both failure modes and for production-without-key; `class-reminders` and
   `degradation-digest` see the failure; each of the five wrappers throws on
   `ok: false`; the magic-link production guard (#730) still fails loudly.
 - **Templates:** each of the seven renderers' text contains its essential copy
-  and every href in its html (the magic link, the pause link).
+  and every href in its html (the magic link, the pause link); no platform
+  renderer's footer mentions unread messages or settings, and both class-mail
+  footers and the invitation's say replies are not read.
 - Tests mock `@/lib/email` or the adapter module; no test mocks a vendor.
 
 **Guards to prove by breaking** (break, record the failure text, restore):
 the never-throw catch in `sendEmail`; the production no-key rule; the
-audience → Reply-To switch; claim release in `email-fallback`; the payload hash
+audience → Reply-To and route switch; claim release in `email-fallback`; the payload hash
 in the idempotency key; escaping in `wrapEmail`.
 
 ## Out of scope
@@ -250,3 +296,6 @@ in the idempotency key; escaping in `wrapEmail`.
 - An idempotency key for the degradation digest (it retries a released claim
   on a daily cadence; a duplicate digest to the operator is harmless).
 - Lettermint pricing and the cut-over itself.
+- Detecting suppression in the app (`suppression.added` webhook). A
+  suppressed sign-in still fails invisibly; the route split narrows who can
+  trigger it, it does not report it.
