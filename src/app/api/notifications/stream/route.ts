@@ -116,8 +116,13 @@ export async function GET(request: NextRequest) {
       request.signal.addEventListener('abort', cleanup);
 
       // Last, so a shutdown already under way runs `cleanup` against a fully
-      // built stream. Ending the stream lets the server's close complete.
+      // built stream. Why streams end on shutdown: `docs/technical-architecture.md`
+      // (Shutdown).
       unsubscribeShutdown = onShutdown(cleanup);
+
+      // A client that left during the session check fired its abort before the
+      // listener above existed, and a listener added to a fired signal never runs.
+      if (request.signal.aborted) cleanup();
     },
   });
 

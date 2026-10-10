@@ -199,3 +199,32 @@ describe('GET /api/notifications/stream shutdown', () => {
     await readerA.cancel();
   });
 });
+
+describe('GET /api/notifications/stream client gone during the session check', () => {
+  it('ends the stream and leaves no count, bus listener or shutdown subscriber', async () => {
+    let resolveSession: (s: SessionUser) => void = () => undefined;
+    validateSession.mockReturnValue(
+      new Promise<SessionUser>((resolve) => {
+        resolveSession = resolve;
+      }),
+    );
+    const listenersBefore = notificationBus.listenerCount('notification');
+    const abort = new AbortController();
+
+    const pending = GET(
+      new NextRequest('http://localhost/api/notifications/stream', {
+        headers: { Cookie: 'fair_yoga_session=tok' },
+        signal: abort.signal,
+      }),
+    );
+    abort.abort();
+    resolveSession(SESSION);
+    const res = await pending;
+    const reader = res.body!.getReader();
+    while (!(await reader.read()).done);
+
+    expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
+    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(globalThis.__fairYogaShutdown?.subscribers.size ?? 0).toBe(0);
+  });
+});
