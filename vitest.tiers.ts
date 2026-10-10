@@ -176,6 +176,10 @@ export const LOCK_CONTENTION_TESTS = [
   'src/services/payout-resume-lock-order.test.ts',
   // #786: the same shape, for the passkey removal's `Teacher` gate.
   'src/services/passkey-credentials-lock-order.test.ts',
+  // The pause's shape, for the passkey-added link's redemption: a held session
+  // row times its sign-out delete out under the shared lock bound; its header
+  // carries the reason.
+  'src/services/passkey-revoke-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
