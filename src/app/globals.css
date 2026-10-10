@@ -156,6 +156,19 @@
     }
   }
 
+  /* iOS Safari draws date and time inputs at their own native height and
+     ignores min-height; without the native appearance they take the field's
+     frame like any text input, and tapping still opens the system picker.
+     The value then centres on iOS, so it is aligned back to the left. */
+  input[type="date"],
+  input[type="time"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input::-webkit-date-and-time-value {
+    text-align: left;
+  }
+
   /* Dims a control the offline snapshot's fieldset has disabled. This is in the base layer, so a control's own opacity or cursor utility takes precedence. */
   fieldset[data-offline-fieldset]:disabled :is(button, input, select, textarea):disabled {
     opacity: 0.5;
