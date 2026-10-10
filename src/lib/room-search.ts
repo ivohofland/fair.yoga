@@ -6,6 +6,10 @@
  * NOT the same question `Room_public_identity_unique` answers — see
  * `src/lib/room-identity.ts`. This one finds neighbours for a human to judge;
  * that one decides whether the database will accept the write.
+ *
+ * `searchRoomsByCity` asks the other question: `GET /api/rooms?city=` matches
+ * the city as a prefix, accent- and case-insensitively on the server, and
+ * says whether the list was cut off.
  */
 import { logRequestFailure } from './client-errors';
 import type { RoomIdentity } from '@/lib/room-identity';
@@ -43,7 +47,7 @@ export interface RoomCitySearchResult {
  * A result, or which way it failed — never a throw.
  *
  * `reason` exists because a refused request and an unreachable server are
- * different problems for the teacher, and both callers have to say which one
+ * different problems for the teacher, and each caller has to say which one
  * happened. An earlier version of this module threw on `!res.ok`; every
  * caller then had one `catch`, and a 400 or a 500 was reported as a network
  * failure. Returning the distinction instead of throwing it means a caller
@@ -62,23 +66,12 @@ export type RoomCitySearchOutcome =
   | { ok: false; reason: 'http' | 'network' };
 
 /**
- * `res.json()` is `any`, so annotating its result is a cast, not a check —
- * and this module's whole contract is that it returns a value instead of
- * throwing. Without this, a 200 whose body has no `data` array yields
- * `rooms: undefined` typed as `RoomResult[]`, and the throw reappears in the
- * *render* path of both callers, where nothing catches it.
- *
- * The precedent this module cites for returning rather than throwing (the
- * `undo` function's `readUndoStatus` call in `src/lib/use-payment-actions.ts`)
- * also validates rather than asserts — see its definition in
- * `src/lib/payment-status.ts`. This is the other half of it.
- *
  * Deliberately shallow: it checks the shape the callers actually consume —
- * an array whose entries carry the identity fields — not every field. A
+ * the identity fields — not every field. A
  * deeper check would duplicate `RoomResult` in a second place that could
  * drift from it.
  */
-function isRoomResult(room: unknown): boolean {
+function isRoomResult(room: unknown): room is RoomResult {
   if (typeof room !== 'object' || room === null) return false;
   const r = room as Record<string, unknown>;
   return typeof r.id === 'string'
@@ -87,11 +80,23 @@ function isRoomResult(room: unknown): boolean {
     && typeof r.roomName === 'string';
 }
 
+/**
+ * `res.json()` is `any`, so annotating its result is a cast, not a check —
+ * and this module's whole contract is that it returns a value instead of
+ * throwing. Without this, a 200 whose body has no `data` array yields
+ * `rooms: undefined` typed as `RoomResult[]`, and the throw reappears in the
+ * *render* path of the caller, where nothing catches it.
+ *
+ * The precedent this module cites for returning rather than throwing (the
+ * `undo` function's `readUndoStatus` call in `src/lib/use-payment-actions.ts`)
+ * also validates rather than asserts — see its definition in
+ * `src/lib/payment-status.ts`. This is the other half of it.
+ */
 function readRoomResults(body: unknown): RoomResult[] | null {
   if (typeof body !== 'object' || body === null) return null;
   const data = (body as { data?: unknown }).data;
   if (!Array.isArray(data)) return null;
-  return data.every(isRoomResult) ? (data as RoomResult[]) : null;
+  return data.every(isRoomResult) ? data : null;
 }
 
 /** The city search's body: `data` is `{ rooms, truncated }`, not a bare array. */
@@ -102,7 +107,7 @@ function readRoomCitySearch(body: unknown): RoomCitySearchResult | null {
   const { rooms, truncated } = data as { rooms?: unknown; truncated?: unknown };
   if (!Array.isArray(rooms) || !rooms.every(isRoomResult)) return null;
   if (typeof truncated !== 'boolean') return null;
-  return { rooms: rooms as RoomResult[], truncated };
+  return { rooms, truncated };
 }
 
 /**
@@ -125,11 +130,10 @@ async function fetchRoomSearch(
 
   if (!res.ok) return { ok: false, reason: 'http' };
 
-  // An `ok` response whose body will not parse or does not carry the shape
-  // we asked for — a proxy error page, a truncation — is not the server
-  // refusing us. Both are reported as 'network': it is the honest description
-  // of a reply that did not arrive intact, and because this is a read,
-  // nothing was written, so retrying is always safe.
+  // An `ok` response whose body will not parse — a proxy error page, a
+  // truncation — is not the server refusing us. It is reported as 'network':
+  // the honest description of a reply that did not arrive intact, and because
+  // this is a read, nothing was written, so retrying is always safe.
   try {
     return { ok: true, body: await res.json() };
   } catch (err) {
@@ -147,6 +151,7 @@ export async function searchPublicRooms(
   if (!fetched.ok) return fetched;
 
   const rooms = readRoomResults(fetched.body);
+  // A body of the wrong shape is a reply that did not arrive intact too.
   if (rooms === null) return { ok: false, reason: 'network' };
   return { ok: true, rooms };
 }

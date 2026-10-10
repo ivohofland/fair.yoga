@@ -467,9 +467,11 @@ describe('AddRoomFlow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
 
     fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht' } });
-    expect(screen.getByText('Did you include the house number?')).toBeInTheDocument();
+    const hint = screen.getByText('Did you include the house number?');
+    expect(screen.getByLabelText('Address').getAttribute('aria-describedby')).toBe(hint.id);
     fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
     expect(screen.queryByText('Did you include the house number?')).toBeNull();
+    expect(screen.getByLabelText('Address').hasAttribute('aria-describedby')).toBe(false);
 
     fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht' } });
     fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
@@ -506,6 +508,19 @@ describe('AddRoomFlow', () => {
     expect((screen.getByLabelText('Address') as HTMLInputElement).value).toBe('Oudegracht 12');
     expect((screen.getByLabelText('City') as HTMLInputElement).value).toBe('Utrecht Centrum');
     expect((screen.getByLabelText('Postcode') as HTMLInputElement).value).toBe('3511 AB');
+  });
+
+  it('reseeds the create form city from a newer search, but not one the teacher typed', async () => {
+    stubFetch();
+    render(<AddRoomFlow currency="EUR" />);
+    await searchCity('Amsterdam');
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Utrecht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no shared rooms found/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    expect((screen.getByLabelText('City') as HTMLInputElement).value).toBe('Utrecht');
   });
 
   it('says the list is cut off when the search was truncated', async () => {
