@@ -1,8 +1,8 @@
 import { listRowClass } from '@/components/ui/list-row';
 
-// The public CONTRIBUTING section, not the issue chooser: the chooser asks a signed-out visitor to sign in
-// first, and the section gives an email address too (pinned by this component's test).
-const REPORT_PROBLEM_URL = 'https://github.com/ivohofland/fair.yoga/blob/main/CONTRIBUTING.md#teachers-and-students';
+// The repo's public Contributing tab, not the issue chooser: the chooser asks a signed-out visitor to sign in
+// first, and CONTRIBUTING.md gives an email address too (pinned by this component's test).
+const REPORT_PROBLEM_URL = 'https://github.com/ivohofland/fair.yoga?tab=contributing-ov-file#contributing-to-fairyoga';
 
 export function ReportProblemRow() {
   return (
