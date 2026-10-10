@@ -12,9 +12,8 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 // notifications get picked up and marked emailSent.
 //
 // Except in the last describe, which sets a token and mocks the Lettermint
-// adapter. Claim-before-send is only observable where a delivery actually
-// happens: on the dry-run path the mark still follows the decision, so
-// every ordering looks identical from the database alone.
+// adapter. A dry run claims first too; claim-before-send is observable only
+// where the adapter is called and can fail.
 const deliverMock = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 

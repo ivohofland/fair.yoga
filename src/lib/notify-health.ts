@@ -22,9 +22,8 @@ let recentFailures: number[] = [];
  * Global, not per-teacher — and NOT because a teacher can't cause a
  * `sendInvitationEmail` throw on demand (they can: `sendInvitationEmail`
  * throws on any provider failure, including a rate-limit rejection, and
- * `checkStudentWriteLimit`'s 50/hour sliding-log cap is looser than
- * the provider's own send rate — a burst of 50 stranger invites in a
- * few seconds is within the app's own budget and can trip the provider's). What
+ * `checkStudentWriteLimit`'s 50/hour sliding-log cap admits a burst of 50
+ * stranger invites in a few seconds, which can trip a provider rate limit). What
  * makes global the right scope regardless: an attacker trying to single out
  * one target address (`[decoy, decoy, target]`, hoping only the target's
  * throw gets suppressed) fills the SAME shared window with their own decoy

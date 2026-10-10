@@ -974,7 +974,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | body | text | |
 | *related_class_id* (FK) | → Class, nullable | |
 | is_read | boolean, default false | |
-| email_sent | boolean, default false | True once no fallback email may be sent for this row: set by the fallback when it claims the row for a send (cleared again if the send fails) or marks it without sending (an opted-out or missing recipient); a dry run claims the row and `sendEmail` dry-runs it, and written true at creation for every `class_reminder` row, whose email (if its channel has one) the class-reminder sweep sends directly |
+| email_sent | boolean, default false | True once no fallback email may be sent for this row: set by the fallback when it claims the row for a send (cleared again if the send fails) or marks it without sending (an opted-out or missing recipient). A dry run claims the row, and `sendEmail` dry-runs it. It is written true at creation for every `class_reminder` row, whose email (if its channel has one) the class-reminder sweep sends directly |
 | push_handled_at | datetime, nullable, indexed with `created_at` (#724) | Stamped by the `push-dispatch` sweep before any send: by its retire step, for a row already past the 15-minute push cutoff, or by the claim that takes the row for sending. Never cleared, so a push is never retried, whatever the send's outcome. Independent of `email_sent`: the two channels are claimed and decided separately, and neither reads the other. Never read by email or the inbox. |
 | created_at | datetime | |
 | updated_at | datetime | |

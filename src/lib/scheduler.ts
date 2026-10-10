@@ -146,7 +146,7 @@ export async function startScheduler(): Promise<void> {
   }
   if (process.env.NODE_ENV === 'production' && process.env.EMAIL_DRY_RUN === '1') {
     log.warn(
-      'EMAIL_DRY_RUN=1 — email is in dry-run, so the degradation digest is logged and not sent while its events are marked told (DEPLOYMENT.md §7)',
+      'EMAIL_DRY_RUN=1 — email is in dry-run, so the degradation digest is not sent (only its subject is logged) while its events are marked told (DEPLOYMENT.md §7)',
     );
   }
 

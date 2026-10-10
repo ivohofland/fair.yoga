@@ -350,9 +350,7 @@ type EmailFallbackCandidate = Awaited<ReturnType<typeof readEmailFallbackPage>>[
  * Returning an outcome rather than `void` is what lets the caller send only on
  * `'claimed'` — a caller that sends after calling this and ignores the answer
  * is back to the unguarded behaviour, where both sweeps emailed the same
- * recipient. Ignoring it is fine only where no send follows:
- * `email-fallback.ts` deliberately does so on its opted-out
- * branch, which marks a decision rather than claiming a send.
+ * recipient. Ignoring it is fine only where no send follows.
  *
  * One id, not an array, and that is a correctness constraint rather than a
  * convenience. This used to take `string[]` and return a count, and the caller
