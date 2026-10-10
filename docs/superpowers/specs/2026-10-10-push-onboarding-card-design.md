@@ -77,7 +77,7 @@ unchanged, which is what proves the extraction preserves behaviour.
 
 Props: `{ dismissed: boolean; vapidPublicKey: string | null }`.
 
-Renders null unless `!dismissed && coarse && state === 'off' && permission === 'default'`
+Renders null unless `!dismissed && coarse && state === 'off' && permission === 'default'` (and a non-null key, which `off` already implies — checked for type narrowing)
 (so also null while `state` is null — nothing to flash). Styled as `InstallCard`
 (sand-soft card, `type-subtitle` heading, `type-caption` line, primary `Button`
 plus a quiet `OnboardingSkipButton`).

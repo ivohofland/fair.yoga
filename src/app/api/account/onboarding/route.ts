@@ -45,7 +45,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
-  // `push` on a Postgres scalar list, guarded by a NOT-contains filter:
+  // Prisma's `push` (append) on a Postgres scalar list, guarded by a NOT-contains filter:
   // a double-tap must not store the member twice.
   await prisma.teacher.updateMany({
     where: { id: session.teacherId, NOT: { skippedOnboarding: { has: parsed.data.step } } },
