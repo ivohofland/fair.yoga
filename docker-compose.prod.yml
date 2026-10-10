@@ -41,6 +41,11 @@ services:
       context: .
       target: runner
     restart: unless-stopped
+    # On SIGTERM Next's production server waits for every open connection to
+    # end, and a notification stream never ends on its own, so a deploy would
+    # sit out Docker's 10 s default before the kill. Ordinary requests finish
+    # well inside this; a cut stream reconnects to the new container.
+    stop_grace_period: 3s
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fairyoga}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-fairyoga}
