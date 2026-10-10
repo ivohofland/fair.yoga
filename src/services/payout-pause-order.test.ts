@@ -29,8 +29,7 @@ afterAll(async () => {
 /**
  * A client whose transaction records each `deleteMany` as `model.deleteMany`.
  * Properties starting `$` or `_` are the client's own, not model delegates,
- * and pass through unwrapped: the pause's raw lock query reads `_extensions`,
- * which a proxy may not replace.
+ * and pass through unwrapped.
  */
 function recordingClient(calls: string[]): PrismaClient {
   const record = (tx: Prisma.TransactionClient): Prisma.TransactionClient =>
