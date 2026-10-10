@@ -77,15 +77,14 @@ export async function processEmailFallback(
   // the inbox record intact — the message survives, only its second delivery
   // channel does not.
   //
-  // The one non-send branch (opted-out) marks AFTER its decision rather than
+  // The skip branch (no recipient, or opted out) marks AFTER its decision rather than
   // claiming before it: there is no external effect to protect, so ordering
   // buys nothing and a lost mark costs one reconsidered row.
   //
-  // But it still reports a write failure, for the same reason `claimOne` does
-  // below. It used to swallow one, and the argument for that ("a lost mark
-  // only costs a duplicate") is about duplicates and silent about health:
-  // `processEmailFallback` returning cleanly does not merely fail to raise the
-  // outage, it makes `scheduler.ts` CLEAR `lastError`. So a sweep whose
+  // It reports a write failure, for the same reason `claimOne` does below: a
+  // lost mark costs one reconsidered row, but a clean return from
+  // `processEmailFallback` does not merely fail to raise the outage, it makes
+  // `scheduler.ts` CLEAR `lastError`. So a sweep whose
   // candidates are all opted-out could turn a database that cannot accept
   // writes into a green `/api/health`, one row at a time, every five minutes.
   const markOne = async (id: string): Promise<'marked' | 'error'> => {

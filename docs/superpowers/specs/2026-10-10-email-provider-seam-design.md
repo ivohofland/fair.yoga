@@ -130,8 +130,8 @@ export async function sendEmail(message: EmailMessage): Promise<SendResult>;
   provider from essential booking and payment mail, which
   `notification-policy.ts` always emails.
 - **From.** `EMAIL_FROM || 'noreply@fair.yoga'`, in one place.
-- `emailDryRun()` stays exported; `emailConfigured()` reads
-  `LETTERMINT_API_TOKEN`. The `re_placeholder` sentinel goes.
+- `emailDryRun()` stays exported and reads `LETTERMINT_API_TOKEN` through
+  `env()` (empty or whitespace counts as unset). The `re_placeholder` sentinel goes.
 
 Which mail is which:
 
