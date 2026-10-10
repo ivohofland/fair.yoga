@@ -12,6 +12,9 @@
  * - A per-job `running` flag prevents a slow tick from stacking on itself. A
  *   run holding that flag across `STALLED_AFTER_SKIPPED_TICKS` ticks makes
  *   `isJobHealthy` report its job unhealthy.
+ * - A tick does not start once shutdown has begun, and one in flight is
+ *   abandoned at exit rather than awaited (`docs/technical-architecture.md`,
+ *   Shutdown).
  * - CRON_SCHEDULER=off disables the scheduler entirely and is a CI setting,
  *   not a production mode (`DEPLOYMENT.md` §5). `startScheduler` warns when
  *   it is set.
@@ -19,6 +22,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
+import { isShuttingDown } from '@/lib/shutdown';
 
 export interface Job {
   name: string;
@@ -250,6 +254,11 @@ export function scheduleJobs(
  * `skippedTicks`, and `isJobHealthy` reads that count — a run still in flight
  * after `STALLED_AFTER_SKIPPED_TICKS` refused ticks reads unhealthy, whether
  * that run is hung or merely slow.
+ *
+ * Once `isShuttingDown()` the tick returns first of all, touching neither
+ * `skippedTicks` nor `lastRunAt` — a tick refused for shutdown is not a stall.
+ * A run already in flight is not awaited (`docs/technical-architecture.md`,
+ * Shutdown).
  */
 export function makeTick(
   job: Job,
@@ -257,6 +266,7 @@ export function makeTick(
   db: PrismaClient,
 ): () => Promise<void> {
   return async () => {
+    if (isShuttingDown()) return;
     if (job.running) {
       jobHealth.skippedTicks += 1;
       if (isStalled(jobHealth)) {

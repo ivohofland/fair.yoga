@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, onTestFinished, type Mock } from 'vitest';
+import { describe, it, expect, vi, onTestFinished, afterEach, type Mock } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { log } from './log';
+import { beginShutdown } from './shutdown';
 import type { NoneOf } from './type-pins';
 import {
   buildJobs,
@@ -266,6 +267,35 @@ describe('makeTick', () => {
     // And the guard is released, so the next scheduled tick is not lost.
     await tick();
     expect(runs).toBe(2);
+  });
+
+  describe('once shutdown has begun', () => {
+    afterEach(() => {
+      delete globalThis.__fairYogaShutdown;
+    });
+
+    it('does not start the job and leaves the health entry and guard untouched', async () => {
+      const run = vi.fn(async () => {});
+      const { job, health } = fixture(run);
+      const tick = makeTick(job, health, db);
+      beginShutdown();
+
+      await tick();
+
+      expect(run).not.toHaveBeenCalled();
+      expect(health).toEqual({ lastRunAt: null, lastSuccessAt: null, lastError: null, skippedTicks: 0 });
+      expect(job.running).toBeFalsy();
+    });
+
+    it('does not count a tick landing on a running job as a skipped tick', async () => {
+      const { job, health } = fixture(async () => {});
+      job.running = true;
+      beginShutdown();
+
+      await makeTick(job, health, db)();
+
+      expect(health.skippedTicks).toBe(0);
+    });
   });
 
   it('records a success and clears any previous error', async () => {
