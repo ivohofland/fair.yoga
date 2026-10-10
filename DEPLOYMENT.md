@@ -222,13 +222,98 @@ reports success for a run in which a sweep did not run.
 
 ## 6. Updates
 
+A commit on `main` deploys itself once every CI test job has passed: the
+`deploy` job in `.github/workflows/ci.yml` connects over SSH and runs
+`deploy/deploy.sh` with that commit's hash. The script checks the commit out,
+builds while the old containers keep serving, replaces them (`migrate` runs
+first, as on every `up`), and waits up to two minutes for `/api/health` to
+report `"status":"ok"`. A failed build puts the checkout back and replaces
+nothing; a failed health check leaves the new commit running and turns the
+CI run red. The app is unreachable for the few seconds the container swap
+takes.
+
+It only moves forward along `origin/main`. A commit already deployed, or an
+older one, answers success and changes nothing, so two runs finishing out of
+order cannot roll the server back.
+
+### Setting it up
+
+1. **Install the script where the key will point.** A root-owned copy, so a
+   commit that changes `deploy/deploy.sh` changes nothing the key can run
+   until you have read it and installed it again:
+
+   ```bash
+   sudo install -m 755 -o root -g root /opt/fairyoga/deploy/deploy.sh /usr/local/bin/fairyoga-deploy
+   ```
+
+2. **A key that can do nothing but deploy.** Make it anywhere but the VPS,
+   with no passphrase (CI cannot type one):
+
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C github-deploy -f github-deploy
+   ```
+
+   On the VPS, append the public half to the deploy user's
+   `~/.ssh/authorized_keys`, forced onto the script:
+
+   ```
+   command="/usr/local/bin/fairyoga-deploy",restrict ssh-ed25519 AAAA… github-deploy
+   ```
+
+   `command=` runs the script whatever the caller asks for, and passes what
+   it asked for in `SSH_ORIGINAL_COMMAND`, which the script accepts only as
+   one full commit hash. `restrict` turns off the terminal and every kind of
+   forwarding. Your own key on the same account is unaffected.
+
+3. **The host key, pinned.** From your machine, then compare the fingerprint
+   with the one the VPS itself reports, so the pinned key is the real one:
+
+   ```bash
+   ssh-keyscan -t ed25519 <vps-ip> > deploy_known_hosts && ssh-keygen -lf deploy_known_hosts
+   # on the VPS:  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+   ```
+
+4. **GitHub → Settings → Environments → `production`.** Under deployment
+   branches, allow `main` only. Add three secrets:
+
+   | Secret | Value |
+   |---|---|
+   | `DEPLOY_SSH_KEY` | the private half (`cat github-deploy`), then delete the local copy |
+   | `DEPLOY_HOST` | `<user>@<vps-ip>` |
+   | `DEPLOY_KNOWN_HOSTS` | the contents of `deploy_known_hosts` |
+
+   With none of the three set, the job warns that deploy is not configured
+   and succeeds; with only some set, it fails.
+
+Test it by re-running the `deploy` job of the latest `main` run: the script
+answers that it is already there, which proves the key, the host key and the
+forced command without changing anything.
+
+### By hand
+
+The same script, as the deploy user on the VPS:
+
+```bash
+cd /opt/fairyoga && git fetch -q origin main && fairyoga-deploy "$(git rev-parse origin/main)"
+```
+
+The checkout is left detached at the deployed commit, so `git pull` there no
+longer applies; `git fetch` and the script replace it.
+
+### Rolling back
+
+Deliberately not something the CI key can do. On the VPS:
+
 ```bash
 cd /opt/fairyoga
-git pull
+git checkout --detach <good commit>
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Migrations run automatically via the `migrate` service on every deploy.
+Migrations do not roll back: the older code runs against the newer schema, so
+a migration that dropped or renamed something the older code reads needs a
+fix forward instead. The next commit merged to `main` deploys normally, since
+it descends from the one you rolled back to.
 
 ## 7. Monitoring
 
