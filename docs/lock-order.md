@@ -2187,14 +2187,16 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   `READ COMMITTED` statement sees it), and one arriving after blocks on the
   credential row and fails its foreign key once the redemption commits. It
   cannot deadlock against a pause: both serialise on `Teacher` before touching
-  a session or a passkey. Passkey before sessions is also `deletePasskey`'s
-  order. An account with no live teacher profile takes no teacher lock, so
-  there the link can still deadlock with `deleteStudentAccount` (`gdpr.ts`,
-  student half), which deletes the sessions, then the passkeys, then rows of
-  its own tokens (`RemovedPasskey`, `PasskeyRevokeToken`, ...): each can hold
-  what the other waits on, and the loser answers 40P01. The link's side rolls
-  back, the consume with it, and the link can be used again; an erasure that
-  loses is a 500 and is retried. A link redeemed during a pause signs out and
+  a session or a passkey. Like `deletePasskey`, the link takes the teacher
+  lock first and removes the credential before anything else touches
+  `Session`. An account with no live teacher profile takes no teacher lock, so
+  every removal of a credential on such an account, `deletePasskey` included
+  (its entry above), can deadlock with `deleteStudentAccount` (`gdpr.ts`,
+  student half), which deletes the sessions, then the passkeys, then its
+  own passkey-related rows: each can hold what the other waits on, and the
+  loser answers 40P01. The link's side rolls back, the consume with it, and the
+  link can be used again; an erasure that loses answers an error and the
+  account holder repeats the request. A link redeemed during a pause signs out and
   keeps the passkey.
   `src/services/passkey-revoke.test.ts` holds the pause and the removal's
   outcomes, `src/services/passkey-revoke-order.test.ts` holds the order of the

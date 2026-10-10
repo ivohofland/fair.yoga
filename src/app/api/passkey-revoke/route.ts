@@ -11,8 +11,8 @@ const PER_IP_LIMIT = 20;
 
 /**
  * Redeems a passkey-added email's "This wasn't me" link. Needs no session: the
- * link is the credential, and all it can do is sign the account out and remove
- * that one passkey.
+ * link is the credential, and all it can do is sign the account out, delete
+ * its pending sign-in links and remove that one passkey where a pause allows.
  *
  * One answer whether the passkey was removed, was already gone or was kept by
  * a pause, and one refusal for every link that cannot act: an unauthenticated

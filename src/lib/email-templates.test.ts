@@ -440,11 +440,15 @@ describe('renderDegradationDigestEmail', () => {
       expect(html).toContain(`href="${url}"`);
       expect(html).toContain('This wasn&#39;t me');
       expect(html).toContain('sign out everywhere');
+      expect(html).toContain('cancels any sign-in links already sent');
+      expect(html).toContain('removes this passkey where it can');
       expect(html).toContain('check your email account');
     });
 
     it('escapes the url as an attribute', () => {
       const { html } = renderPasskeyAddedEmail(addedAt, 'https://x.test/p#t="><script>');
+      expect(html).toContain('href="https://x.test/p#t=&quot;&gt;&lt;script&gt;"');
+      expect(html).not.toContain('"><script>');
       expect(html).not.toContain('<script>');
     });
   });
