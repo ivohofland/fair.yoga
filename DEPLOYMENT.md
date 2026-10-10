@@ -30,13 +30,13 @@ Edit `.env` — every value matters in production:
 | `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
 | `PASSKEY_RP_ID` | your bare domain |
 | `ADMIN_HOST` | `.env.example` ships a local value; delete the line to keep the admin surface off, or set `admin.<domain>` per §8 Admin access |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | generate the keys with `pnpm run vapid:keys`; `VAPID_SUBJECT` must be a `mailto:` or `https://` URL; unset disables push, and rotating the pair silently orphans every existing subscription (browsers re-subscribe only when the user turns push on again) |
 
 ### Email provider
 
 - Open and click tracking must be **off** in the Lettermint project. Click tracking rewrites links through the provider's redirect domain and would hand it magic-link tokens.
 - Send from a subdomain (`notify.fair.yoga`) and publish the SPF and DKIM records Lettermint gives you for it.
 - Publish one DMARC record on the apex, starting at `p=none` with `rua=mailto:ops@fair.yoga`.
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | generate the keys with `pnpm run vapid:keys`; `VAPID_SUBJECT` must be a `mailto:` or `https://` URL; unset disables push, and rotating the pair silently orphans every existing subscription (browsers re-subscribe only when the user turns push on again) |
 
 Then:
 
