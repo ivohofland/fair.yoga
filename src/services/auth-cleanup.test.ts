@@ -14,6 +14,8 @@ const liveTokenHash = crypto.randomBytes(32).toString('hex');
 const deadTokenHash = crypto.randomBytes(32).toString('hex');
 const livePauseHash = crypto.randomBytes(32).toString('hex');
 const deadPauseHash = crypto.randomBytes(32).toString('hex');
+const liveRevokeHash = crypto.randomBytes(32).toString('hex');
+const deadRevokeHash = crypto.randomBytes(32).toString('hex');
 const staleBudgetEmail = `cleanup-budget-stale-${uniqueSuffix}@test.local`;
 const freshBudgetEmail = `cleanup-budget-fresh-${uniqueSuffix}@test.local`;
 // Fixed, and passed to the sweep, so every fixture sits a known distance from
@@ -42,6 +44,13 @@ describe('cleanupExpiredAuth', () => {
       data: [
         { tokenHash: livePauseHash, teacherId: teacher.id, eventId: event.id, expiresAt: new Date(now.getTime() + 86400000) },
         { tokenHash: deadPauseHash, teacherId: teacher.id, eventId: event.id, expiresAt: new Date(now.getTime() - 1000) },
+      ],
+    });
+
+    await prisma.passkeyRevokeToken.createMany({
+      data: [
+        { tokenHash: liveRevokeHash, accountId: teacherAccountId, credentialId: 'c-live', expiresAt: new Date(now.getTime() + 86400000) },
+        { tokenHash: deadRevokeHash, accountId: teacherAccountId, credentialId: 'c-dead', expiresAt: new Date(now.getTime() - 1000) },
       ],
     });
 
@@ -93,6 +102,7 @@ describe('cleanupExpiredAuth', () => {
     try {
       await prisma.session.deleteMany({ where: { id: { in: [liveSessionId, deadSessionId] } } });
       await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+      await prisma.passkeyRevokeToken.deleteMany({ where: { tokenHash: { in: [liveRevokeHash, deadRevokeHash] } } });
       await prisma.handoffAttemptBudget.deleteMany({ where: { email: { contains: uniqueSuffix } } });
       // By this run's email, not a captured id: an id left unset by a failed
       // beforeAll would be dropped from the where, widening the delete.
@@ -108,6 +118,7 @@ describe('cleanupExpiredAuth', () => {
       Session: { id: { in: [liveSessionId, deadSessionId] } },
       MagicLinkToken: { tokenHash: { in: [liveTokenHash, deadTokenHash] } },
       PayoutPauseToken: { tokenHash: { in: [livePauseHash, deadPauseHash] } },
+      PasskeyRevokeToken: { tokenHash: { in: [liveRevokeHash, deadRevokeHash] } },
       HandoffAttemptBudget: { email: { in: [staleBudgetEmail, freshBudgetEmail] } },
     });
     const result = await cleanupExpiredAuth(scoped.db, now);
@@ -117,6 +128,9 @@ describe('cleanupExpiredAuth', () => {
     expect(result.magicLinkTokens).toBe(1);
     expect(result.handoffAttemptBudgets).toBe(1);
     expect(result.payoutPauseTokens).toBe(1);
+    expect(result.passkeyRevokeTokens).toBe(1);
+    expect(await prisma.passkeyRevokeToken.findUnique({ where: { tokenHash: liveRevokeHash } })).not.toBeNull();
+    expect(await prisma.passkeyRevokeToken.findUnique({ where: { tokenHash: deadRevokeHash } })).toBeNull();
 
     expect(await prisma.session.findUnique({ where: { id: liveSessionId } })).not.toBeNull();
     expect(await prisma.session.findUnique({ where: { id: deadSessionId } })).toBeNull();
