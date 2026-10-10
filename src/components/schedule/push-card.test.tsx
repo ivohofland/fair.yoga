@@ -9,8 +9,12 @@ vi.mock('@/components/layout/install-store', () => ({
 }));
 
 let device: { state: PushDeviceState | null; permission: NotificationPermission | null } = { state: 'off', permission: 'default' };
+let hookArgs: unknown[] = [];
 vi.mock('@/components/settings/use-push-device', () => ({
-  usePushDevice: () => ({ ...device, notice: null, setState: vi.fn(), setNotice: vi.fn() }),
+  usePushDevice: (...args: unknown[]) => {
+    hookArgs = args;
+    return { ...device, notice: null, setState: vi.fn(), setNotice: vi.fn() };
+  },
 }));
 
 const enablePushMock = vi.fn<(vapidPublicKey: string) => Promise<'on' | 'blocked' | 'failed'>>();
@@ -37,6 +41,7 @@ describe('PushCard', () => {
   beforeEach(() => {
     coarse = true;
     device = { state: 'off', permission: 'default' };
+    hookArgs = [];
     enablePushMock.mockReset();
     fetchMock.mockReset();
     fetchMock.mockResolvedValue({ ok: true });
@@ -63,7 +68,12 @@ describe('PushCard', () => {
     });
   });
 
-  it('renders nothing without a VAPID key, whatever the device reports', () => {
+  it('resolves the device with the page\'s key and never re-records it', () => {
+    render(<PushCard dismissed={false} vapidPublicKey="KEY" />);
+    expect(hookArgs).toEqual(['KEY', { resync: false }]);
+  });
+
+  it('renders nothing without a VAPID key, even for a device reported off and never asked', () => {
     const { container } = render(<PushCard dismissed={false} vapidPublicKey={null} />);
     expect(container).toBeEmptyDOMElement();
   });
