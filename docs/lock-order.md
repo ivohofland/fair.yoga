@@ -2181,10 +2181,11 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   token's `deleteMany`, a read of the `Account`, the `Session` and
   `PushSubscription` deletes, the `MagicLinkToken` delete and, when the account
   is not paused, the `PasskeyCredential` read and delete (its `SET NULL`
-  reaches `Session`) and the `RemovedPasskey` insert. It cannot deadlock against a pause: both serialise
-  on `Teacher` before touching a session or a passkey. A link redeemed during a
-  pause signs out and keeps the passkey. `src/services/passkey-revoke.test.ts`
-  holds the pause and the removal's outcomes, and
+  reaches `Session`) and the `RemovedPasskey` insert. It cannot deadlock
+  against a pause: both serialise on `Teacher` before touching a session or a
+  passkey. A link redeemed during a pause signs out and keeps the passkey.
+  `src/services/passkey-revoke.test.ts` holds the pause and the removal's
+  outcomes, and
   `src/services/passkey-revoke-lock-order.test.ts` holds a session row on a
   second connection so the sign-out delete times out, and asserts the token is
   still usable afterwards. An account with no teacher profile takes no teacher
