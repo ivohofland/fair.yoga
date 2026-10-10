@@ -78,6 +78,21 @@ describe('shutdown', () => {
     expect(vi.mocked(log.error).mock.calls[0]?.[1]).toContain('kills');
   });
 
+  it('shares its state across module instances', async () => {
+    vi.resetModules();
+    const a = await import('./shutdown');
+    vi.resetModules();
+    const b = await import('./shutdown');
+    expect(a).not.toBe(b);
+    const fn = vi.fn();
+    b.onShutdown(fn);
+
+    a.beginShutdown();
+
+    expect(b.isShuttingDown()).toBe(true);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   describe('installShutdownSignal', () => {
     it('begins shutdown on SIGTERM', () => {
       const target = new EventEmitter();

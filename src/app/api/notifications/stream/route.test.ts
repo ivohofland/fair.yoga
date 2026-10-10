@@ -198,6 +198,23 @@ describe('GET /api/notifications/stream shutdown', () => {
     expect(off).toHaveBeenCalledTimes(2);
     await readerA.cancel();
   });
+
+  it('unsubscribes from shutdown when the client aborts', async () => {
+    validateSession.mockResolvedValue(SESSION);
+    const abort = new AbortController();
+    const res = await GET(
+      new NextRequest('http://localhost/api/notifications/stream', {
+        headers: { Cookie: 'fair_yoga_session=tok' },
+        signal: abort.signal,
+      }),
+    );
+    expect(globalThis.__fairYogaShutdown?.subscribers.size).toBe(1);
+
+    abort.abort();
+
+    expect(globalThis.__fairYogaShutdown?.subscribers.size).toBe(0);
+    await res.body!.cancel();
+  });
 });
 
 describe('GET /api/notifications/stream client gone during the session check', () => {
