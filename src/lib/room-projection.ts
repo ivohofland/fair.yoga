@@ -28,3 +28,25 @@ export const SHARED_ROOM_SELECT = {
   maxCapacity: true,
   equipment: true,
 } satisfies Record<keyof SharedRoom, true>;
+
+/**
+ * The columns the shared-room search returns: exactly `RoomResult`'s keys.
+ *
+ * `satisfies Record<keyof RoomResult, true>` refuses a key `RoomResult` does
+ * not name, and that is what keeps other teachers' `createdById`, `notes` and
+ * timestamps out of the browser. `respondTyped<RoomResult[]>` on the route cannot:
+ * the query result is not a fresh literal, so it gets no excess-property
+ * check; what it adds is refusing a column whose type no longer matches
+ * `RoomResult`. Pass this object to `select` as is — spreading extra
+ * columns in beside it at the call site escapes both.
+ */
+export const ROOM_SEARCH_SELECT = {
+  id: true,
+  venueName: true,
+  roomName: true,
+  address: true,
+  city: true,
+  postcode: true,
+  floor: true,
+  maxCapacity: true,
+} satisfies Record<keyof RoomResult, true>;
