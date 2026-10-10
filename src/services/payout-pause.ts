@@ -71,13 +71,9 @@ async function heldPasskeyBefore(tx: Prisma.TransactionClient, accountId: string
  * The token is consumed inside that transaction, so a failure in any later
  * statement rolls the consume back and the link still works. The teacher row
  * is the first lock (`docs/lock-order.md`, "The `Teacher` row is the first
- * lock"). The passkeys go before the sessions: a sign-in with a passkey this
- * delete removes either committed its `Session` before the delete, and the
- * session delete that follows catches it, or fails once the pause commits.
- * Sessions first would let such a sign-in land between the two deletes and
- * outlive the pause, its credential merely nulled. A magic-link sign-in that
- * consumed its link before the pause is an accepted window, not closed here:
- * `docs/lock-order.md`'s pause entry.
+ * lock"). The passkeys go before the sessions, so a sign-in with a passkey
+ * this delete removes cannot outlive the pause; why, and the magic-link window
+ * this leaves open on purpose: `docs/lock-order.md`'s pause entry.
  */
 export async function pausePayments(db: PrismaClient, rawToken: string, now: Date = new Date()): Promise<PauseOutcome> {
   const tokenHash = hashToken(rawToken);

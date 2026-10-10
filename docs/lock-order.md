@@ -2125,7 +2125,8 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   `MagicLinkToken` rows. Passkeys go before sessions so that a sign-in with a
   removed passkey cannot outlive the pause: one that committed its `Session`
   before the passkey delete is caught by the session delete (a later
-  `READ COMMITTED` statement sees it); one that arrives after it blocks on the
+  `READ COMMITTED` statement sees it); one that arrives while the pause is
+  open, after that delete, blocks on the
   credential row, in its counter `update` or its `Session` insert's foreign
   key, and fails once the pause commits, so that sign-in answers 500. A
   sign-in with a passkey created before the cutoff is the teacher's own by the
@@ -2190,8 +2191,10 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   committed before the passkey delete is caught by the session delete (a later
   `READ COMMITTED` statement sees it), and one arriving after blocks on the
   credential row and fails its foreign key once the redemption commits. A
-  magic-link sign-in whose link was consumed before the redemption is the same
-  accepted window as the pause entry's, for the same reason. It
+  magic-link sign-in whose link was consumed before the redemption is likewise
+  accepted: such a session is one a holder of the inbox could start a second
+  after the redemption anyway, and the redemption's job, removing the passkey,
+  is unaffected. It
   cannot deadlock against a pause: both serialise on `Teacher` before touching
   a session or a passkey. Like `deletePasskey`, the link takes the teacher
   lock first and removes the credential before anything else touches
