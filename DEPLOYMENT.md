@@ -6,7 +6,9 @@ Let's Encrypt. Sized for a 2GB VPS.
 ## 1. Prerequisites
 
 - A VPS with Docker + the compose plugin, Nginx, and certbot installed
-- A domain pointing at the VPS
+- A domain pointing at the VPS — an `A` record, and an `AAAA` record if the
+  VPS has IPv6 (Let's Encrypt then validates over IPv6, which is why the nginx
+  example listens on both)
 - A [Lettermint](https://lettermint.co) project API token (`lm_…`) for transactional email, with two transactional routes (see Email provider below)
 
 ## 2. First deploy
@@ -15,26 +17,36 @@ Let's Encrypt. Sized for a 2GB VPS.
 git clone https://github.com/ivohofland/fair.yoga.git /opt/fairyoga
 cd /opt/fairyoga
 cp .env.example .env
+chmod 600 .env
 ```
 
-Edit `.env` — every value matters in production:
+Edit `.env` — every value matters in production. `.env.example` is written
+for local development, so a few lines change shape here: delete
+`DATABASE_URL` and `DATABASE_URL_TEST` (the compose file builds the app's
+`DATABASE_URL` from `POSTGRES_PASSWORD`, and its value wins over the
+`.env` one), and add `POSTGRES_PASSWORD`, which the example only carries
+commented out. Keep a copy of the finished file outside the VPS: the secrets
+in it cannot be regenerated without consequences (the VAPID row below).
 
 | Variable | Notes |
 |---|---|
-| `POSTGRES_PASSWORD` | generate one: `openssl rand -hex 24` |
+| `POSTGRES_PASSWORD` | generate one: `openssl rand -hex 24` (hex, because it is interpolated into a connection URL). Set it before the first `up`: Postgres reads it only when it initialises the `pgdata` volume, so changing it later leaves the database on the old one |
 | `CRON_SECRET` | `openssl rand -hex 24` — without it the `/api/cron/*` endpoints stay disabled (the in-process scheduler runs regardless); it also unlocks `/api/health`'s per-job detail, and is checked there on a public path, so keep it high-entropy |
 | `LETTERMINT_API_TOKEN` / `EMAIL_FROM` | real token + a sender on the verified domain. Without the token production refuses every send; the failure reaches the logs, and `/api/health` through the email-fallback sweep and the digest job, rather than "sending" silently |
 | `LETTERMINT_CLASS_ROUTE` | slug of a second **transactional** route for class mail (audience table: `docs/superpowers/specs/2026-10-10-email-provider-seam-design.md`). Unset, class mail shares the default route, so a spam complaint about an announcement or invitation suppresses that address's sign-in mail. Not a broadcast route: its hosted unsubscribe is an opt-out list the app cannot see |
 | `EMAIL_REPLY_TO` | default `hello@fair.yoga`; set on platform mail only, never on class mail (audience table: `docs/superpowers/specs/2026-10-10-email-provider-seam-design.md`) |
+| `EMAIL_DRY_RUN` | leave unset. `1` logs mail instead of sending it, with magic-link and invitation URLs printed in full — a bring-up mode for a server no one else signs in to yet (read the link with `docker compose -f docker-compose.prod.yml logs app \| grep "Magic link"`), never one to leave on, since the log then holds working sign-in tokens |
 | `OPERATOR_EMAIL` | required in production; the daily degradation digest goes here (§7). Unset, a degradation event fails the `daily-cleanup` job instead of reaching you |
-| `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
-| `PASSKEY_RP_ID` | your bare domain |
+| `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example`, no trailing slash — the origin in every emailed link, and the origin passkey ceremonies are checked against, so it must be the exact host people use (redirect `www.` to it rather than serving both). Read at runtime: `.dockerignore` keeps `.env` out of the build, so `next build` never sees it and inlines nothing; the same is why a client component reading it would get `undefined` |
+| `PASSKEY_RP_ID` | your bare domain. Never change it once passkeys exist: each is bound to it |
 | `ADMIN_HOST` | `.env.example` ships a local value; delete the line to keep the admin surface off, or set `admin.<domain>` per §8 Admin access |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | generate the keys with `pnpm run vapid:keys`; `VAPID_SUBJECT` must be a `mailto:` or `https://` URL; unset disables push, and rotating the pair silently orphans every existing subscription (browsers re-subscribe only when the user turns push on again) |
 
 ### Email provider
 
-- Open and click tracking must be **off** in the Lettermint project. Click tracking rewrites links through the provider's redirect domain and would hand it magic-link tokens.
+- Open and click tracking must be **off** in the Lettermint project. Click tracking rewrites links through the provider's redirect domain and would hand it magic-link tokens. The project settings page does not hold this switch ("Use your own tracking domain" there only renames the redirect domain); look on each route. Confirm it on a received magic link: its URL must start with `NEXT_PUBLIC_APP_URL`, not a Lettermint domain.
+- Turn **Hide email content** on in the project settings. Otherwise every magic link is readable in the Lettermint dashboard, so access to that account is access to every account here.
+- Set **Bounce and complaint forwarding** to the operator address, so bounces and spam complaints reach a person.
 - Send from a subdomain (`notify.fair.yoga`) and publish the SPF and DKIM records Lettermint gives you for it.
 - Publish one DMARC record on the apex, starting at `p=none` with `rua=mailto:ops@fair.yoga`.
 
@@ -51,13 +63,51 @@ The app binds to `127.0.0.1:3000` only — Nginx is the public face.
 
 ## 3. Nginx + TLS
 
+The certificate comes first, because nginx refuses to load the example's
+`listen ... ssl` blocks while the certificate files they name do not exist.
+Serve only the port-80 block until certbot has run (add `admin.<domain>` to
+`server_name` and to `-d` if you use §8 Admin access):
+
+```bash
+tee /etc/nginx/sites-available/fairyoga >/dev/null <<'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name yourdomain.example;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+EOF
+ln -s /etc/nginx/sites-available/fairyoga /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
+certbot certonly --webroot -w /var/www/html -d yourdomain.example -m you@yourdomain.example --agree-tos --no-eff-email
+```
+
+Then install the full config and reload:
+
 ```bash
 cp deploy/nginx.conf.example /etc/nginx/sites-available/fairyoga
-# edit server_name, then:
-ln -s /etc/nginx/sites-available/fairyoga /etc/nginx/sites-enabled/
+# edit every yourdomain.example; drop the admin blocks unless you use §8
 nginx -t && systemctl reload nginx
-certbot --nginx -d yourdomain.example
 ```
+
+`certonly --webroot` leaves the nginx config alone, so certbot also does not
+reload nginx after a renewal — without a hook, nginx keeps serving the old
+certificate from memory until it expires. Install one, and check it fires:
+
+```bash
+tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh >/dev/null <<'EOF'
+#!/bin/sh
+systemctl reload nginx
+EOF
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+certbot renew --dry-run --run-deploy-hooks
+grep "Running deploy-hook" /var/log/letsencrypt/letsencrypt.log | tail -1
+```
+
+Until the app is up, `https://yourdomain.example` answers 502 — nginx and TLS
+are working and nothing listens on port 3000 yet.
 
 The proxy config sets `X-Forwarded-For` (the rate limiter keys on it) and
 disables buffering for the SSE endpoint. Serve the app on the default HTTPS
@@ -82,6 +132,10 @@ chmod +x deploy/backup.sh
 crontab -e   # add:
 # 17 3 * * * /opt/fairyoga/deploy/backup.sh >> /var/log/fairyoga-backup.log 2>&1
 ```
+
+That log path assumes root's crontab. From a non-root user in the `docker`
+group, log to a file that user can write (its home directory, say), and make
+sure it owns `/var/backups/fairyoga`.
 
 Nightly `pg_dump | gzip` into `/var/backups/fairyoga`, 14-day rotation.
 Restore: `gunzip -c backup.sql.gz | docker compose -f docker-compose.prod.yml exec -T db psql -U fairyoga fairyoga`.
@@ -225,7 +279,9 @@ app process. It is off unless `ADMIN_HOST` is set. Design and gate:
 1. Add a DNS `A`/`AAAA` record for `admin.<domain>`.
 2. Copy the admin `server` blocks from `deploy/nginx.conf.example` and edit the
    name.
-3. Extend the certificate: `certbot --nginx -d <domain> -d admin.<domain>`
+3. Extend the certificate (the admin name must already be in the port-80
+   block's `server_name`, §3): `certbot certonly --webroot -w /var/www/html
+   --expand -d <domain> -d admin.<domain>`
    (one certificate, two names).
 4. Set `ADMIN_HOST=admin.<domain>` and `PASSKEY_RP_ID=<domain>` (the parent
    domain, so a passkey registered on the main site also signs in on the admin
