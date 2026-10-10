@@ -92,7 +92,7 @@ export async function notifyOperatorOfDegradations(
       occurrences: r.occurrences,
       sample: isPlainObject(r.sample) ? r.sample : {},
     }));
-    const sent = await sendEmail({ to: operatorEmail, audience: 'platform', content: renderDegradationDigestEmail(entries) });
+    const sent = await sendEmail({ to: operatorEmail, audience: 'platform', content: renderDegradationDigestEmail(entries), unsubscribe: null });
     if (!sent.ok) failure = new Error(sent.reason);
   } catch (err) {
     failure = err;

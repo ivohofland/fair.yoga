@@ -11,9 +11,17 @@
 
 import type { NotificationType, PrismaClient } from '@prisma/client';
 import { getUnreadForEmailFallback, claimEmailFallback } from './notifications';
-import { shouldEmailStudent, shouldEmailTeacher, isTeacherNotificationType } from './notification-policy';
-import { renderNotificationEmail } from '@/lib/email-templates';
+import {
+  shouldEmailStudent,
+  shouldEmailTeacher,
+  isTeacherNotificationType,
+  studentUnsubscribeKind,
+  teacherUnsubscribeKind,
+} from './notification-policy';
+import { renderNotificationEmail, UNREAD_FALLBACK_FOOTER } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
+import { unsubscribeLinks } from '@/lib/unsubscribe-token';
+import type { UnsubscribeKind } from '@/lib/unsubscribe-kind';
 import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';
 import { isPaymentNotification } from '@/lib/notification-links';
@@ -161,6 +169,10 @@ export async function processEmailFallback(
     // Look up recipient email and preferences
     let email: string | null = null;
     let emailEnabled = true;
+    // Follows the recipient branch, not the type alone: a type both audiences
+    // receive maps to a different switch for each. A teacher row outside
+    // `TeacherNotificationType` is emailed ignoring preferences, so no switch.
+    let unsubscribeKind: UnsubscribeKind | null = null;
 
     if (notification.recipientType === 'teacher') {
       // No `deletedAt: null` here, unlike every reader that surfaces a
@@ -227,6 +239,7 @@ export async function processEmailFallback(
       if (teacher) {
         if (isTeacherNotificationType(notification.type)) {
           emailEnabled = shouldEmailTeacher(notification.type, teacher);
+          unsubscribeKind = teacherUnsubscribeKind(notification.type);
         } else {
           // A row outside `TeacherNotificationType` was written around the
           // type: directly, or by a cast, mutation or `Object.assign` that
@@ -250,6 +263,7 @@ export async function processEmailFallback(
         notification.type,
         student?.emailNotifications ?? true,
       );
+      unsubscribeKind = studentUnsubscribeKind(notification.type);
     }
 
     if (!email || !emailEnabled) {
@@ -321,13 +335,21 @@ export async function processEmailFallback(
     try {
       // Branded template; escapes teacher-authored bodies so markup or
       // phishing HTML never renders in a platform email.
+      const target =
+        unsubscribeKind === null ? null : ({ kind: unsubscribeKind, subjectId: notification.recipientId } as const);
       const result = await sendEmail({
         to: email,
         audience: 'class',
-        content: renderNotificationEmail({
-          ...notification,
-          payGuidance: await studentPaymentEmailGuidance(db, notification),
-        }),
+        content: renderNotificationEmail(
+          {
+            ...notification,
+            payGuidance: await studentPaymentEmailGuidance(db, notification),
+          },
+          undefined,
+          UNREAD_FALLBACK_FOOTER,
+          target === null ? undefined : unsubscribeLinks(target)?.page,
+        ),
+        unsubscribe: target,
         idempotencyKey: `notification-${notification.id}`,
       });
       // `sendEmail` reports a refusal as a value rather than throwing; an

@@ -819,7 +819,7 @@ export async function notifyInvitee(
   // not: no "welcome back", nothing that says whether fair.yoga already
   // knew this address (see `renderInvitationEmail`'s own test).
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  await sendInvitationEmail(email, input.teacherName, `${baseUrl}/login`);
+  await sendInvitationEmail(email, input.teacherName, `${baseUrl}/login`, input.invitationId);
 }
 
 /** Which caller a failed delivery came from — chooses the log line below. */
