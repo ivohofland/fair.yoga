@@ -66,7 +66,7 @@ describe('StudentSettingsPage', () => {
     expect(screen.getByTestId('sign-out')).toHaveAttribute('data-account-id', 'acct-1');
   });
 
-  it('links Report a problem to the public CONTRIBUTING reporting section', async () => {
+  it('links Report a problem to the public Contributing tab', async () => {
     getSession.mockResolvedValue({ accountId: 'acct-1', studentId: STUDENT_ID, teacherId: null });
     findUnique.mockResolvedValue({ id: STUDENT_ID, firstName: 'Anna', lastName: 'Smith' });
 
@@ -74,7 +74,7 @@ describe('StudentSettingsPage', () => {
 
     expect(screen.getByRole('link', { name: /Report a problem/ })).toHaveAttribute(
       'href',
-      'https://github.com/ivohofland/fair.yoga/blob/main/CONTRIBUTING.md#teachers-and-students',
+      'https://github.com/ivohofland/fair.yoga?tab=contributing-ov-file#contributing-to-fairyoga',
     );
   });
 
