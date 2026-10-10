@@ -24,6 +24,7 @@ export const POST = withErrorHandler(
     let form: FormData;
     try {
       form = await request.formData();
+    // eslint-disable-next-line no-restricted-syntax -- a body that is not a form is a 400, not a fault
     } catch {
       return respondError(BAD_BODY, 400);
     }
