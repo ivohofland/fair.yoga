@@ -50,6 +50,7 @@ async function venues(params: Record<string, string>): Promise<string[]> {
   const res = await search(params);
   expect(res.status).toBe(200);
   const { data } = (await res.json()) as { data: { rooms: { venueName: string }[]; truncated: boolean } };
+  expect(data.truncated).toBe(false);
   return data.rooms.map((r) => r.venueName);
 }
 
@@ -81,9 +82,10 @@ describe('GET /api/rooms?city=', () => {
   });
 
   it('matches a city by its start, not its middle', async () => {
-    // `uniqueSuffix()` is unique per run, so "zur" alone would also match other
-    // runs' rows; the prefix test uses the full stem instead.
-    expect(await venues({ city: `Züri` })).toEqual(expect.arrayContaining(['Bahnhof Yoga']));
+    // The stem keeps this run's suffix (minus its last character), so other
+    // runs' rows cannot reach it; the middle search drops the leading "Zü".
+    const stem = city.slice(0, -1);
+    expect(await venues({ city: stem })).toEqual(['Altstadt Studio', 'Bahnhof Yoga', 'Studio_1']);
     expect(await venues({ city: `rich-${suffix}` })).toEqual([]);
   });
 
