@@ -53,6 +53,8 @@ export function verifyUnsubscribeToken(token: string): UnsubscribeTarget | null 
   if (!/^[A-Za-z0-9_-]+$/.test(presented)) return null;
   const expected = mac(k, payload);
   const given = Buffer.from(presented, 'base64url');
+  // The last character of a MAC carries padding bits the decoder discards; only the canonical spelling verifies.
+  if (given.toString('base64url') !== presented) return null;
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   return parseUnsubscribePayload(payload);
 }
