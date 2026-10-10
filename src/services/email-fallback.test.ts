@@ -419,7 +419,7 @@ describe('processEmailFallback (DB)', () => {
       expect(after.emailSent).toBe(false);
     });
 
-    it('releases the claim when the send throws', async () => {
+    it('releases the claim when the adapter throws', async () => {
       const notification = await makeEligible();
       deliverMock.mockRejectedValueOnce(new Error('socket hang up'));
 

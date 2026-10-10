@@ -212,6 +212,11 @@ export async function deliverViaLettermint(
   → Lettermint returns the original response, no duplicate. Changed body (e.g.
   the teacher paused payments, so the Pay now button went) → a different key,
   a new send, never a 409 loop. Keeps the header within 255 characters.
+  Open before cut-over: Lettermint's docs say a repeated key and body "returns
+  the original response" ("response cached") but not whether an error response
+  (5xx, 429) is replayed. If it is, a transient provider error on a notification
+  is replayed for that notification until the 24 h window passes (health stays
+  red, the email is delayed, not lost). Confirm with Lettermint before cut-over.
 
 ### Text part — block model in `email-templates.ts`
 

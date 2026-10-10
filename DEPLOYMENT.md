@@ -24,8 +24,8 @@ Edit `.env` — every value matters in production:
 | `POSTGRES_PASSWORD` | generate one: `openssl rand -hex 24` |
 | `CRON_SECRET` | `openssl rand -hex 24` — without it the `/api/cron/*` endpoints stay disabled (the in-process scheduler runs regardless); it also unlocks `/api/health`'s per-job detail, and is checked there on a public path, so keep it high-entropy |
 | `LETTERMINT_API_TOKEN` / `EMAIL_FROM` | real token + a sender on the verified domain. Without the token production refuses every send; the failure reaches the logs and `/api/health` rather than "sending" silently |
-| `LETTERMINT_CLASS_ROUTE` | slug of a second **transactional** route for class mail (announcements, invitations, reminders). Unset, class mail shares the default route, so a spam complaint about an announcement or invitation suppresses that address's sign-in mail. Not a broadcast route: its hosted unsubscribe is an opt-out list the app cannot see |
-| `EMAIL_REPLY_TO` | default `hello@fair.yoga`; set on platform mail only (sign-in, security and payout notices), never on class mail |
+| `LETTERMINT_CLASS_ROUTE` | slug of a second **transactional** route for class mail (class mail; audience table: `docs/superpowers/specs/2026-10-10-email-provider-seam-design.md`). Unset, class mail shares the default route, so a spam complaint about an announcement or invitation suppresses that address's sign-in mail. Not a broadcast route: its hosted unsubscribe is an opt-out list the app cannot see |
+| `EMAIL_REPLY_TO` | default `hello@fair.yoga`; set on platform mail only, never on class mail (audience table: `docs/superpowers/specs/2026-10-10-email-provider-seam-design.md`) |
 | `OPERATOR_EMAIL` | required in production; the daily degradation digest goes here (§7). Unset, a degradation event fails the `daily-cleanup` job instead of reaching you |
 | `NEXT_PUBLIC_APP_URL` | `https://yourdomain.example` — used in magic-link emails |
 | `PASSKEY_RP_ID` | your bare domain |

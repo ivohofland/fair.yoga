@@ -39,7 +39,7 @@ export const UNREAD_FALLBACK_FOOTER =
 export const CLASS_REMINDER_EMAIL_FOOTER =
   'You get this email because you chose class reminders by email; change that in your notification settings. Replies to this email are not read.';
 
-/** Footer for an invitation: the reader has no account here and chose nothing. */
+/** Footer for an invitation: the reader did not ask for this mail. */
 export const INVITATION_FOOTER =
   'You get this email because a teacher on fair.yoga added your address. Replies to this email are not read.';
 

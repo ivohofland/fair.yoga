@@ -14,8 +14,9 @@ description: Build/launch/drive recipe for verifying fair.yoga changes in the ru
   their uncommitted edits; that instance not having the env var you want is not a reason to
   touch it. Need dry-run auth and the running one isn't dry-run? Use *Authenticate without
   email* below instead — it never touches the server at all.
-- Only if :3000 is genuinely empty: `EMAIL_DRY_RUN=1 pnpm run dev` — dry-run logs magic links
-  to stdout instead of Resend (`.env` only has a placeholder Resend key, so real sends fail).
+- Only if :3000 is genuinely empty: `EMAIL_DRY_RUN=1 pnpm run dev` — with no
+  `LETTERMINT_API_TOKEN` (or with `EMAIL_DRY_RUN=1`) outside production, email dry-runs and the
+  `[DEV] Magic link for …` line prints to stdout.
 - **In a worktree:** `pnpm install --frozen-lockfile` FIRST, then `pnpm run worktree:setup`
   (once), then `pnpm run worktree:up` —
   boots a private `next dev` on its own port against its own seeded database.
