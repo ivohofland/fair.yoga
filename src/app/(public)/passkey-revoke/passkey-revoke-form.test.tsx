@@ -168,6 +168,35 @@ describe('PasskeyRevokeForm', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Too many attempts from here');
   });
 
+  it('while the request is out, disables the button, says so and sends one request however often it is pressed', async () => {
+    window.history.replaceState(null, '', `/passkey-revoke#t=${TOKEN}`);
+    const fetchMock = stubFetch(() => new Promise<Response>(() => undefined));
+    render(<PasskeyRevokeForm />);
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: "This wasn't me" }));
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Signing you out…' }));
+    await settle();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Signing you out…' })).toBeDisabled();
+  });
+
+  it.each([
+    ['a fragment with an empty token', '#t='],
+    ['a fragment without a token', '#x=1'],
+  ])('shows the incomplete-link alert and no button for %s', async (_case, hash) => {
+    window.history.replaceState(null, '', `/passkey-revoke${hash}`);
+    const fetchMock = stubFetch(() => respond(200, {}));
+    render(<PasskeyRevokeForm />);
+    await settle();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('This link is incomplete');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('offers no button when the address carries no token', async () => {
     window.history.replaceState(null, '', '/passkey-revoke');
     const fetchMock = stubFetch(() => respond(200, {}));

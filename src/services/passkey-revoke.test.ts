@@ -10,12 +10,16 @@ const prisma = new PrismaClient();
 const accountIds: string[] = [];
 const teacherIds: string[] = [];
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Ends every email this file creates, so the cleanup below cannot reach a
+// sibling file's rows running in parallel.
+const FILE_SUFFIX = uniqueSuffix();
+const EMAIL_TAIL = `-${FILE_SUFFIX}@test.local`;
 
 interface Fixture { accountId: string; email: string }
 
 async function makeAccount(opts: { teacher?: boolean; pausedAt?: Date } = {}): Promise<Fixture> {
   const s = uniqueSuffix();
-  const email = `revoke-${s}@test.local`;
+  const email = `revoke-${s}${EMAIL_TAIL}`;
   if (opts.teacher === true) {
     const t = await prisma.teacher.create({
       data: {
@@ -58,7 +62,7 @@ afterAll(async () => {
   await prisma.passkeyRevokeToken.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.removedPasskey.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.passkeyCredential.deleteMany({ where: { accountId: { in: accountIds } } });
-  await prisma.magicLinkToken.deleteMany({ where: { email: { startsWith: 'revoke-' } } });
+  await prisma.magicLinkToken.deleteMany({ where: { email: { endsWith: EMAIL_TAIL } } });
   await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
   await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   await prisma.$disconnect();
@@ -154,5 +158,72 @@ describe('revokePasskeyByLink', () => {
     expect(out).toEqual({ status: 'revoked', removal: null });
     expect(await prisma.session.count({ where: { id: holderSession } })).toBe(0);
     expect(await prisma.passkeyCredential.count({ where: { id: theirCredential } })).toBe(1);
+  });
+
+  it('lets exactly one of two concurrent redemptions through, for a teacher account', async () => {
+    const { accountId } = await makeAccount({ teacher: true });
+    const credentialId = await passkey(accountId);
+    const raw = await mintPasskeyRevokeToken(prisma, { accountId, credentialId });
+
+    const outcomes = await Promise.all([revokePasskeyByLink(prisma, raw), revokePasskeyByLink(prisma, raw)]);
+
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['invalid', 'revoked']);
+    expect(await prisma.removedPasskey.count({ where: { accountId } })).toBe(1);
+  });
+
+  it('lets exactly one of two concurrent redemptions through, for an account with no teacher profile', async () => {
+    const { accountId } = await makeAccount();
+    const credentialId = await passkey(accountId);
+    const raw = await mintPasskeyRevokeToken(prisma, { accountId, credentialId });
+
+    const outcomes = await Promise.all([revokePasskeyByLink(prisma, raw), revokePasskeyByLink(prisma, raw)]);
+
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['invalid', 'revoked']);
+    expect(await prisma.removedPasskey.count({ where: { accountId } })).toBe(1);
+  });
+
+  it("leaves another account's sign-in links and sessions alone", async () => {
+    const mine = await makeAccount();
+    const other = await makeAccount();
+    const credentialId = await passkey(mine.accountId);
+    const otherLink = await signInLink(other.email);
+    const otherSession = await session(other.accountId);
+    const raw = await mintPasskeyRevokeToken(prisma, { accountId: mine.accountId, credentialId });
+
+    expect((await revokePasskeyByLink(prisma, raw)).status).toBe('revoked');
+
+    expect(await prisma.magicLinkToken.count({ where: { tokenHash: otherLink } })).toBe(1);
+    expect(await prisma.session.count({ where: { id: otherSession } })).toBe(1);
+  });
+
+  it("deletes the account's push subscriptions", async () => {
+    const { accountId } = await makeAccount();
+    const credentialId = await passkey(accountId);
+    const endpoint = `https://push.test/${uniqueSuffix()}`;
+    await prisma.pushSubscription.create({ data: { accountId, endpoint, p256dh: 'p', auth: 'a' } });
+    const raw = await mintPasskeyRevokeToken(prisma, { accountId, credentialId });
+
+    await revokePasskeyByLink(prisma, raw);
+
+    expect(await prisma.pushSubscription.count({ where: { endpoint } })).toBe(0);
+  });
+
+  it('treats the instant of expiry as expired and a millisecond before it as live', async () => {
+    const a = await makeAccount();
+    const credentialA = await passkey(a.accountId);
+    const rawA = await mintPasskeyRevokeToken(prisma, { accountId: a.accountId, credentialId: credentialA });
+    const rowA = await prisma.passkeyRevokeToken.findUniqueOrThrow({ where: { tokenHash: hashToken(rawA) } });
+
+    expect(await revokePasskeyByLink(prisma, rawA, rowA.expiresAt)).toEqual({ status: 'invalid' });
+    expect(await prisma.passkeyCredential.count({ where: { id: credentialA } })).toBe(1);
+
+    const b = await makeAccount();
+    const credentialB = await passkey(b.accountId);
+    const rawB = await mintPasskeyRevokeToken(prisma, { accountId: b.accountId, credentialId: credentialB });
+    const rowB = await prisma.passkeyRevokeToken.findUniqueOrThrow({ where: { tokenHash: hashToken(rawB) } });
+
+    const out = await revokePasskeyByLink(prisma, rawB, new Date(rowB.expiresAt.getTime() - 1));
+    expect(out.status).toBe('revoked');
+    expect(await prisma.passkeyCredential.count({ where: { id: credentialB } })).toBe(0);
   });
 });
