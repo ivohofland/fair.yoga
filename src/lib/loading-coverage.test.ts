@@ -25,6 +25,7 @@ const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '(public)/signup': 'none',
   '(public)/signup/profile': 'none',
   '(public)/start': 'none',
+  '(public)/unsubscribe': 'none',
   '(public)/verify': 'none',
   '(student)/account': 'none',
   '(student)/account/data': 'none',
