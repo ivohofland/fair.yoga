@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import type { SessionUser } from '@/lib/types';
 import { log } from '@/lib/log';
+import { notificationBus } from '@/lib/event-bus';
+import { beginShutdown } from '@/lib/shutdown';
 
 const { validateSession } = vi.hoisted(() => ({
   validateSession: vi.fn<(db: unknown, token: string) => Promise<SessionUser | null>>(),
@@ -58,6 +60,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   validateSession.mockReset();
   globalThis.__fairYogaSseCounts?.clear();
+  delete globalThis.__fairYogaShutdown;
 });
 
 describe('GET /api/notifications/stream keepalive tick', () => {
@@ -119,5 +122,80 @@ describe('GET /api/notifications/stream keepalive tick', () => {
 
     await vi.advanceTimersByTimeAsync(TICK_MS);
     expect(stream.isDone()).toBe(true);
+  });
+});
+
+describe('GET /api/notifications/stream shutdown', () => {
+  it('ends every open stream and releases its listener and count when shutdown begins', async () => {
+    validateSession.mockResolvedValue(SESSION);
+    const listenersBefore = notificationBus.listenerCount('notification');
+    const a = await open();
+    const b = await open();
+    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore + 2);
+
+    beginShutdown();
+    await vi.waitFor(() => {
+      expect(a.isDone()).toBe(true);
+      expect(b.isDone()).toBe(true);
+    });
+
+    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
+  });
+
+  it('refuses a request that arrives after shutdown began, subscribing and counting nothing', async () => {
+    validateSession.mockResolvedValue(SESSION);
+    const listenersBefore = notificationBus.listenerCount('notification');
+    beginShutdown();
+
+    const res = await GET(connectRequest());
+
+    expect(res.status).toBe(503);
+    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
+  });
+
+  it('refuses a request whose session check was still pending when shutdown began', async () => {
+    let resolveSession: (s: SessionUser) => void = () => undefined;
+    validateSession.mockReturnValue(
+      new Promise<SessionUser>((resolve) => {
+        resolveSession = resolve;
+      }),
+    );
+    const listenersBefore = notificationBus.listenerCount('notification');
+
+    const pending = GET(connectRequest());
+    beginShutdown();
+    resolveSession(SESSION);
+    const res = await pending;
+
+    expect(res.status).toBe(503);
+    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
+  });
+
+  it('runs each stream cleanup exactly once across abort and shutdown', async () => {
+    validateSession.mockResolvedValue(SESSION);
+    const off = vi.spyOn(notificationBus, 'offNotification');
+    const abortA = new AbortController();
+    const resA = await GET(
+      new NextRequest('http://localhost/api/notifications/stream', {
+        headers: { Cookie: 'fair_yoga_session=tok' },
+        signal: abortA.signal,
+      }),
+    );
+    const readerA = resA.body!.getReader();
+    const b = await open();
+    expect(globalThis.__fairYogaSseCounts?.get(SESSION.accountId)).toBe(2);
+
+    abortA.abort();
+    expect(globalThis.__fairYogaSseCounts?.get(SESSION.accountId)).toBe(1);
+
+    beginShutdown();
+    await vi.waitFor(() => expect(b.isDone()).toBe(true));
+
+    expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
+    expect(off).toHaveBeenCalledTimes(2);
+    await readerA.cancel();
   });
 });

@@ -3,6 +3,7 @@ import { validateSession, getSessionToken } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { notificationBus, type NotificationEvent } from '@/lib/event-bus';
+import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,13 @@ export async function GET(request: NextRequest) {
     return new Response('Session expired', { status: 401 });
   }
 
+  // Checked after the last await: everything below runs synchronously through
+  // `start`, so a stream can neither slip in after shutdown began nor be missed
+  // by its subscribers.
+  if (isShuttingDown()) {
+    return new Response('Shutting down', { status: 503 });
+  }
+
   const userKey = session.accountId;
   if ((sseCounts.get(userKey) ?? 0) >= MAX_STREAMS_PER_USER) {
     // The client's backoff reconnect retries once other tabs close.
@@ -37,6 +45,7 @@ export async function GET(request: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       let closed = false;
+      let unsubscribeShutdown: () => void = () => {};
 
       // enqueue can race the client closing the connection (a keepalive tick
       // or bus event landing after close, before the abort listener runs) —
@@ -87,6 +96,7 @@ export async function GET(request: NextRequest) {
         if (closed) return;
         closed = true;
         clearInterval(keepalive);
+        unsubscribeShutdown();
         notificationBus.offNotification(handler);
         const count = (sseCounts.get(userKey) ?? 1) - 1;
         if (count <= 0) sseCounts.delete(userKey);
@@ -104,6 +114,10 @@ export async function GET(request: NextRequest) {
 
       // Cleanup on client disconnect
       request.signal.addEventListener('abort', cleanup);
+
+      // Last, so a shutdown already under way runs `cleanup` against a fully
+      // built stream. Ending the stream lets the server's close complete.
+      unsubscribeShutdown = onShutdown(cleanup);
     },
   });
 
