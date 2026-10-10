@@ -115,7 +115,7 @@ describe('mintPasskeyRevokeToken', () => {
 
 - [ ] **Step 2: Run it and see it fail**
 
-Run: `pnpm exec vitest run --project integration src/services/passkey-revoke-token.test.ts`
+Run: `pnpm exec vitest run src/services/passkey-revoke-token.test.ts`
 Expected: FAIL, cannot resolve `./passkey-revoke-token` (and `prisma.passkeyRevokeToken` undefined).
 
 - [ ] **Step 3: Add the model and migration**
@@ -182,7 +182,7 @@ export async function mintPasskeyRevokeToken(
 
 - [ ] **Step 5: Run the mint test, expect PASS**
 
-Run: `pnpm exec vitest run --project integration src/services/passkey-revoke-token.test.ts`
+Run: `pnpm exec vitest run src/services/passkey-revoke-token.test.ts`
 
 - [ ] **Step 6: Failing cleanup assertions**
 
@@ -214,7 +214,7 @@ In the `scopeSweep` map add `PasskeyRevokeToken: { tokenHash: { in: [liveRevokeH
 
 Also delete both hashes in that file's `afterAll` the way the pause hashes are removed (follow the existing `payoutPauseToken.deleteMany` line there).
 
-Run: `pnpm exec vitest run --project integration src/services/auth-cleanup.test.ts`
+Run: `pnpm exec vitest run src/services/auth-cleanup.test.ts`
 Expected: FAIL (`passkeyRevokeTokens` is `undefined`).
 
 - [ ] **Step 7: Implement the cleanup**
@@ -236,7 +236,7 @@ In `src/services/gdpr.test.ts`, in the describe block whose `beforeAll` seeds `r
 
 Add the matching `prisma.passkeyRevokeToken.deleteMany({ where: { accountId: { in: [accountId, soloAccountId] } } })` to that block's `afterAll`. In its three tests, beside the `removedPasskey` assertions: the first (living teacher profile still uses the account) expects `await prisma.passkeyRevokeToken.count({ where: { accountId } })` to be `1`; the solo test expects `count({ where: { accountId: soloAccountId } })` to be `0`; the composed-order test expects `count({ where: { accountId } })` to be `0`.
 
-Run: `pnpm exec vitest run --project integration src/services/gdpr.test.ts -t "removedPasskey|composed route order|solo"` (use the describe's own name if the filter misses).
+Run: `pnpm exec vitest run src/services/gdpr.test.ts -t "removedPasskey|composed route order|solo"` (use the describe's own name if the filter misses).
 Expected: FAIL on the solo and composed assertions (tokens still present).
 
 - [ ] **Step 9: Implement the erasure**
@@ -320,7 +320,7 @@ describe('lockForPasskeyRemoval and removePasskeyLocked', () => {
 
 - [ ] **Step 2: Run, expect FAIL**
 
-Run: `pnpm exec vitest run --project integration src/services/passkey-credentials.test.ts`
+Run: `pnpm exec vitest run src/services/passkey-credentials.test.ts`
 Expected: FAIL, the two functions are not exported.
 
 - [ ] **Step 3: Extract**
@@ -591,7 +591,7 @@ describe('revokePasskeyByLink', () => {
 
 - [ ] **Step 2: Run, expect FAIL**
 
-Run: `pnpm exec vitest run --project integration src/services/passkey-revoke.test.ts`
+Run: `pnpm exec vitest run src/services/passkey-revoke.test.ts`
 Expected: FAIL, cannot resolve `./passkey-revoke`.
 
 - [ ] **Step 3: Implement**
@@ -663,11 +663,11 @@ export async function revokePasskeyByLink(
 
 - [ ] **Step 4: Run, expect PASS**
 
-Run: `pnpm exec vitest run --project integration src/services/passkey-revoke.test.ts`
+Run: `pnpm exec vitest run src/services/passkey-revoke.test.ts`
 
 - [ ] **Step 5: Prove each guard bites**
 
-For each mutation: apply it, run `pnpm exec vitest run --project integration src/services/passkey-revoke.test.ts`, record the failing test name and message here in the PR notes, restore the line, re-run to green.
+For each mutation: apply it, run `pnpm exec vitest run src/services/passkey-revoke.test.ts`, record the failing test name and message here in the PR notes, restore the line, re-run to green.
 
 | Guard | Mutation | Must fail |
 |---|---|---|
@@ -681,7 +681,7 @@ The mutations touch `passkey-credentials.ts` and `passkey-revoke.ts`; use a valu
 - [ ] **Step 6: Lock-order test**
 
 `src/services/passkey-revoke-lock-order.test.ts`, modelled on `payout-pause-lock-order.test.ts` (read its header, its `latch` helper and its second-connection pattern first, and carry its `@serial-tier lock-contention` header comment with this file's own reasoning). One case: a failure after the consume leaves the token usable. Hold one of the account's `Session` rows `FOR UPDATE` on a second connection so `signOutEverywhereTx`'s delete times out under the shared `lock_timeout` (`isLockTimeout` from `@/lib/api-errors`), assert `revokePasskeyByLink` rejects with that error, release the hold, and assert the same raw token now answers `revoked`.
-Run: `pnpm exec vitest run --project integration src/services/passkey-revoke-lock-order.test.ts`. Expected: PASS. Then break it (move the consume's `deleteMany` outside the transaction onto `db`), expect the second assertion to FAIL (the token was spent), restore.
+Run: `pnpm exec vitest run src/services/passkey-revoke-lock-order.test.ts`. Expected: PASS. Then break it (move the consume's `deleteMany` outside the transaction onto `db`), expect the second assertion to FAIL (the token was spent), restore.
 
 - [ ] **Step 7: Document the lock order**
 
@@ -689,7 +689,7 @@ In `docs/lock-order.md`, after the passkey removal's entry add one for the link:
 
 - [ ] **Step 8: Verify and commit**
 
-Run: `pnpm exec tsc --noEmit && pnpm exec vitest run --project integration src/services/passkey-revoke.test.ts src/services/passkey-revoke-lock-order.test.ts src/services/passkey-credentials.test.ts`
+Run: `pnpm exec tsc --noEmit && pnpm exec vitest run src/services/passkey-revoke.test.ts src/services/passkey-revoke-lock-order.test.ts src/services/passkey-credentials.test.ts`
 
 ```bash
 git add src/services/passkey-revoke.ts src/services/passkey-revoke.test.ts src/services/passkey-revoke-lock-order.test.ts docs/lock-order.md

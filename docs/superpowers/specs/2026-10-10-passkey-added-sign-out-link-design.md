@@ -108,7 +108,7 @@ Inherited claims, each checked against the code at `726627e8`:
    optional and renders the button only when given one; the existing
    word-for-word remedy stays in the body either way.
 
-10. **Copy.** The button reads **This wasn't me**. Above it: "If it was not,
+10. **Copy.** The button reads **This wasn't me**. Above it: "Or do it now:
     this signs you out on every device and removes this passkey. Anyone who can
     read this inbox can still ask for a new sign-in link, so check your
     email account too." The last sentence states the limit this link cannot
