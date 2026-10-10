@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 
-const sendPasskeyAddedEmail = vi.hoisted(() => vi.fn<(to: string, addedAt: Date) => Promise<void>>());
+const sendPasskeyAddedEmail = vi.hoisted(() => vi.fn<(to: string, addedAt: Date, revokeUrl?: string | null) => Promise<void>>());
 const sendPasskeyRemovedEmail = vi.hoisted(() => vi.fn<(to: string, removedAt: Date) => Promise<void>>());
 vi.mock('@/lib/email', () => ({ sendPasskeyAddedEmail, sendPasskeyRemovedEmail }));
 vi.mock('@/lib/log', () => ({
@@ -12,13 +12,16 @@ vi.mock('@/lib/log', () => ({
 const { deliverPasskeyAddedNotice, deliverPasskeyRemovedNotice } = await import('./passkey-notice');
 
 const findUniqueOrThrow = vi.fn<(args: unknown) => Promise<{ email: string }>>();
-const db = { account: { findUniqueOrThrow } } as unknown as PrismaClient;
-const input = { accountId: 'acct-1', addedAt: new Date('2026-10-06T14:03:00Z') };
+const create = vi.fn<(args: unknown) => Promise<unknown>>();
+const db = { account: { findUniqueOrThrow }, passkeyRevokeToken: { create } } as unknown as PrismaClient;
+const input = { accountId: 'acct-1', addedAt: new Date('2026-10-06T14:03:00Z'), credentialId: 'cred-1' };
 
 beforeEach(() => {
   sendPasskeyAddedEmail.mockReset();
   sendPasskeyRemovedEmail.mockReset();
   findUniqueOrThrow.mockReset();
+  create.mockReset();
+  create.mockResolvedValue({});
   findUniqueOrThrow.mockResolvedValue({ email: 'a@test.local' });
   vi.mocked(log.error).mockReset();
 });
@@ -29,8 +32,34 @@ describe('deliverPasskeyAddedNotice', () => {
 
     deliverPasskeyAddedNotice(db, input);
 
-    await vi.waitFor(() => expect(sendPasskeyAddedEmail).toHaveBeenCalledWith('a@test.local', input.addedAt));
+    await vi.waitFor(() => expect(sendPasskeyAddedEmail).toHaveBeenCalledWith('a@test.local', input.addedAt, expect.any(String)));
     expect(findUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'acct-1' } }));
+  });
+
+  it('mints a link for the credential and sends it with the notice', async () => {
+    sendPasskeyAddedEmail.mockResolvedValue(undefined);
+
+    deliverPasskeyAddedNotice(db, input);
+
+    await vi.waitFor(() => expect(sendPasskeyAddedEmail).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ accountId: 'acct-1', credentialId: 'cred-1' }),
+    });
+    expect(sendPasskeyAddedEmail).toHaveBeenCalledWith(
+      'a@test.local',
+      input.addedAt,
+      expect.stringMatching(/\/passkey-revoke#t=[0-9a-f]{64}$/),
+    );
+  });
+
+  it('still sends the notice, without a link, when the mint fails, and logs it', async () => {
+    create.mockRejectedValue(new Error('db down'));
+    sendPasskeyAddedEmail.mockResolvedValue(undefined);
+
+    deliverPasskeyAddedNotice(db, input);
+
+    await vi.waitFor(() => expect(sendPasskeyAddedEmail).toHaveBeenCalledWith('a@test.local', input.addedAt, null));
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acct-1' }), expect.stringContaining('revoke link'));
   });
 
   it('returns before a slow sender settles — the caller never waits for it', () => {

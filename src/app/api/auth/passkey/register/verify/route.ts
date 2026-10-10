@@ -62,6 +62,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   deliverPasskeyAddedNotice(prisma, {
     accountId: session.accountId,
     addedAt: credential.createdAt,
+    credentialId: result.credentialId,
   });
 
   return respondOk({ credentialId: result.credentialId });

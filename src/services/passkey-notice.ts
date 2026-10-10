@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { sendPasskeyAddedEmail, sendPasskeyRemovedEmail } from '@/lib/email';
+import { mintPasskeyRevokeToken } from '@/services/passkey-revoke-token';
 import { log } from '@/lib/log';
 import type { FireAndForget } from '@/lib/fire-and-forget';
 
@@ -12,19 +13,33 @@ import type { FireAndForget } from '@/lib/fire-and-forget';
  * `FireAndForget`, with the rejection owned here (`docs/technical-
  * architecture.md`, The Services Layer → Work that must not be awaited).
  *
+ * The revoke link's mint is inside the body for the same reason as the send:
+ * its latency and failure must not reach the response either. A failed mint
+ * sends the notice without the button.
+ *
  * Nothing sits before the IIFE: a statement there that threw would escape the
  * `.catch` into the caller.
  */
 export function deliverPasskeyAddedNotice(
   db: PrismaClient,
-  input: { accountId: string; addedAt: Date },
+  input: { accountId: string; addedAt: Date; credentialId: string },
 ): FireAndForget {
   void (async () => {
     const account = await db.account.findUniqueOrThrow({
       where: { id: input.accountId },
       select: { email: true },
     });
-    await sendPasskeyAddedEmail(account.email, input.addedAt);
+    let revokeUrl: string | null = null;
+    try {
+      const raw = await mintPasskeyRevokeToken(db, { accountId: input.accountId, credentialId: input.credentialId });
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      revokeUrl = `${baseUrl}/passkey-revoke#t=${raw}`;
+    } catch (err) {
+      // The notice is the signal and the button its convenience: a failed mint
+      // sends the notice with its remedy in words.
+      log.error({ err, accountId: input.accountId }, 'passkey-added notice sent without its revoke link');
+    }
+    await sendPasskeyAddedEmail(account.email, input.addedAt, revokeUrl);
   })().catch((err: unknown) => {
     log.error({ err, accountId: input.accountId }, 'passkey-added notice failed to send');
   });

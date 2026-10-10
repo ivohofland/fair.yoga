@@ -427,10 +427,25 @@ describe('renderDegradationDigestEmail', () => {
       expect(html).not.toContain('open Settings');
     });
 
-    it('carries no link, so there is no token to forward or phish with', () => {
+    it('carries no link when no revoke url is given, so the remedy stays in words', () => {
       const { html } = renderPasskeyAddedEmail(addedAt);
       expect(html).not.toContain('<a ');
-      expect(html).not.toContain('href');
+      expect(html).toContain('sign out everywhere');
+    });
+
+    it("carries one This wasn't me button to the given url, and keeps the remedy in words", () => {
+      const url = 'https://fair.yoga/passkey-revoke#t=abc123';
+      const { html } = renderPasskeyAddedEmail(addedAt, url);
+      expect(html.match(/<a /g)?.length).toBe(1);
+      expect(html).toContain(`href="${url}"`);
+      expect(html).toContain('This wasn&#39;t me');
+      expect(html).toContain('sign out everywhere');
+      expect(html).toContain('check your email account');
+    });
+
+    it('escapes the url as an attribute', () => {
+      const { html } = renderPasskeyAddedEmail(addedAt, 'https://x.test/p#t="><script>');
+      expect(html).not.toContain('<script>');
     });
   });
 
@@ -445,7 +460,7 @@ describe('renderDegradationDigestEmail', () => {
       expect(html).toContain('Settings → Profile');
     });
 
-    it('carries no link, like the passkey-added email', () => {
+    it('carries no link, since a removal is not undone by a button', () => {
       const { html } = renderPasskeyRemovedEmail(removedAt);
       expect(html).not.toContain('<a ');
       expect(html).not.toContain('href');
