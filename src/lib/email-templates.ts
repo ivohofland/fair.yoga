@@ -336,9 +336,9 @@ export function renderInvitationEmail(
  * The notice sent after a passkey is added: what happened, when, and how to
  * undo it. The remedy is always named in words; when the caller minted a
  * `revokeUrl`, a **This wasn't me** button to it follows. That link holds no
- * credential and signs no one in (`docs/superpowers/specs/2026-10-10-passkey-
- * added-sign-out-link-design.md`, Decisions 9 and 10), and `wrapEmail` escapes
- * it as an attribute.
+ * credential and signs no one in, and `wrapEmail` escapes it as an attribute.
+ * Design, Decisions 9 and 10:
+ * docs/superpowers/specs/2026-10-10-passkey-added-sign-out-link-design.md
  */
 export function renderPasskeyAddedEmail(addedAt: Date, revokeUrl: string | null = null): RenderedEmail {
   const when = new Intl.DateTimeFormat('en-GB', {
