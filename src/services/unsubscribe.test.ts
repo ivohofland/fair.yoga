@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { erasedAddress } from '@/lib/erased-address';
 import { invitationSubject } from '@/lib/unsubscribe-token';
+import { declinePending } from './invitations';
 import { unsubscribe } from './unsubscribe';
 import { uniqueSuffix } from '../../tests/helpers';
 
@@ -158,6 +159,17 @@ describe('unsubscribe', () => {
       const newEmail = `moved-${uniqueSuffix()}@test.local`;
       await prisma.invitation.update({ where: { id: inv.id }, data: { email: newEmail } });
       expect(await unsubscribe(prisma, { kind: 'invitation', subjectId })).toEqual({ status: 'invalid' });
+      expect((await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe('pending');
+      expect(await prisma.teacherBlock.count({ where: { teacherId } })).toBe(0);
+    });
+
+    it('declinePending with a stale address writes nothing', async () => {
+      const teacherId = await makeTeacher();
+      const inv = await makeInvitation(teacherId);
+      const newEmail = `moved-${uniqueSuffix()}@test.local`;
+      await prisma.invitation.update({ where: { id: inv.id }, data: { email: newEmail } });
+      const moved = await prisma.$transaction((tx) => declinePending(tx, { id: inv.id, teacherId, email: inv.email }));
+      expect(moved).toBe(false);
       expect((await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe('pending');
       expect(await prisma.teacherBlock.count({ where: { teacherId } })).toBe(0);
     });
