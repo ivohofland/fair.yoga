@@ -1,17 +1,13 @@
 /**
- * `searchPublicRooms` never throws — it returns which way it failed.
+ * `searchPublicRooms` and `searchRoomsByCity` never throw — each returns which
+ * way it failed.
  *
- * The two callers rely on that: `room-search-step.tsx` has no `try` around
- * the call at all, and `share-room-button.tsx` branches on `outcome.ok` from
- * a click handler whose promise nothing catches. If this function ever throws
- * again, the search button sticks on "Searching..." forever with no error,
- * and the share panel rejects into the void. So totality is the contract
- * under test here, not an implementation detail.
- *
- * The `http` vs `network` distinction is covered end-to-end in
- * `add-room-flow.test.tsx`; this file covers the branches no component test
- * can reach — in particular the malformed-but-OK body, which the module
- * deliberately reports as `network` and which nothing pinned before.
+ * Their callers branch on `outcome.ok` from event handlers whose promise
+ * nothing catches, so totality is the contract under test here, not an
+ * implementation detail: a throw would leave a search button stuck on
+ * "Searching..." with no error. This file covers the request each function
+ * builds, the `http` vs `network` split, and the malformed-but-OK body that
+ * is deliberately reported as `network`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { searchPublicRooms, searchRoomsByCity } from './room-search';

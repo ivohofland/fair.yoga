@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { z } from 'zod';
 import type { createRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
@@ -67,6 +67,8 @@ export function RoomCreateStep({
   form, onFormChange, onCreated, onBack,
 }: RoomCreateStepProps) {
   const { venueName, roomName, floor, address, city, postcode, maxCapacity, equipmentChecks, notes, isPublic } = form;
+  const houseNumberHintId = useId();
+  const showHouseNumberHint = address.trim() !== '' && !/\d/.test(address);
   const set = <K extends keyof NewRoomForm>(key: K, value: NewRoomForm[K]) => {
     onFormChange({ ...form, [key]: value });
     if (createError) setCreateError('');
@@ -157,9 +159,9 @@ export function RoomCreateStep({
   return (
     <form onSubmit={handleCreateRoom} className="flex flex-col gap-4">
       <Input label="Venue name" maxLength={VENUE_NAME_MAX} value={venueName} onChange={(e) => set('venueName', e.target.value)} placeholder="e.g. De Yogaschool" />
-      <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={address} onChange={(e) => set('address', e.target.value)} placeholder="e.g. Keizersgracht 123" />
-      {address.trim() !== '' && !/\d/.test(address) && (
-        <p className="type-caption">Did you include the house number?</p>
+      <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={address} onChange={(e) => set('address', e.target.value)} placeholder="e.g. Keizersgracht 123" aria-describedby={showHouseNumberHint ? houseNumberHintId : undefined} />
+      {showHouseNumberHint && (
+        <p id={houseNumberHintId} className="type-caption">Did you include the house number?</p>
       )}
       <Input label="City" maxLength={CITY_MAX} value={city} onChange={(e) => set('city', e.target.value)} />
       <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => set('postcode', e.target.value)} />
