@@ -2173,6 +2173,22 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   pause can reach it. `src/services/passkey-credentials-lock-order.test.ts`
   holds the teacher row and a pause's `UPDATE` on a second connection, and
   asserts the removal parks and then answers `payments_paused`.
+- The passkey-added email's "This wasn't me" link (`revokePasskeyByLink`,
+  `src/services/passkey-revoke.ts`): a plain read of the `PasskeyRevokeToken`
+  row by hash, then `lockForPasskeyRemoval` (the account's live teacher row
+  first, `lockTeacherForNoKeyUpdate`, when it has one). Under it the token's
+  `deleteMany`, a read of the `Account`, the `Session` and `PushSubscription`
+  deletes, the `MagicLinkToken` delete and, when the account is not paused, the
+  `PasskeyCredential` delete (its `SET NULL` reaches `Session`) and the
+  `RemovedPasskey` insert. It cannot deadlock against a pause: both serialise
+  on `Teacher` before touching a session or a passkey. A link redeemed during a
+  pause signs out and keeps the passkey. `src/services/passkey-revoke.test.ts`
+  holds the pause and the removal's outcomes, and
+  `src/services/passkey-revoke-lock-order.test.ts` holds a session row on a
+  second connection so the sign-out delete times out, and asserts the token is
+  still usable afterwards. An account with no teacher profile takes no teacher
+  lock and so sets no `lock_timeout`: its wait is bounded by the
+  transaction's own timeout instead.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
