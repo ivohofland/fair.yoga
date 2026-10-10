@@ -6,6 +6,7 @@ import {
   CLASS_TO_ENTRY_JOIN,
   CLASS_TO_WAITLIST_JOIN,
   LOCK_TIMEOUT_SQL,
+  lockAccountForSignOut,
   lockClassRow,
   lockClassRowsOrdered,
   lockLiveStudent,
@@ -25,7 +26,10 @@ import { claimStudioTemplateForGeneration } from '@/services/studio-class-genera
 import { closeQueueOnStart, withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
 import { readSeatCount } from '@/services/capacity';
 import { switchTeacherCurrency } from '@/services/currency-switch';
+import { signOutEverywhereTx } from '@/services/account-sign-out';
+import { deleteAccountPasskeys, removePasskeyLocked } from '@/services/passkey-credentials';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { seedSession, uniqueSuffix } from '../../tests/helpers';
 
 const prisma = new PrismaClient();
 
@@ -101,6 +105,24 @@ async function _theBrandRejectsABareClient(client: PrismaClient, lock: ClassLock
   // @ts-expect-error `FOR NO KEY UPDATE` on `Teacher`, then the template and
   // `Class` locks and the relabelling writes they protect (#758).
   await switchTeacherCurrency(client, 'never-called', 'EUR');
+  // @ts-expect-error `SET LOCAL` then `FOR NO KEY UPDATE` on `Account` (#811).
+  await lockAccountForSignOut(client, 'never-called');
+}
+
+/**
+ * The `AccountSignOutLock` twin of `_readSeatCountRequiresALock` below: each
+ * writer that deletes or nulls more than one of an account's sessions takes
+ * the lock, not an account id (#811). A lock that typechecks but was minted on
+ * another transaction client is the runtime case further down.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _signOutWritersRequireAnAccountLock(tx: TransactionClientOnly): Promise<void> {
+  // @ts-expect-error A raw account id is an account nobody locked.
+  await signOutEverywhereTx(tx, 'never-called');
+  // @ts-expect-error The same, for the passkey delete whose `SET NULL` writes sessions.
+  await removePasskeyLocked(tx, 'never-called', 'never-called');
+  // @ts-expect-error A hand-built token is the same thing with a costume on.
+  await deleteAccountPasskeys(tx, { accountId: 'never-called' }, null);
 }
 
 /**
@@ -128,6 +150,29 @@ async function _readSeatCountRequiresALock(tx: TransactionClientOnly): Promise<v
   // @ts-expect-error A hand-built token is the same thing with a costume on.
   await readSeatCount(tx, { classId: 'never-called' });
 }
+
+describe('AccountSignOutLock across a transaction boundary', () => {
+  it('a lock minted in one transaction is refused in another, and nothing is deleted', async () => {
+    const account = await prisma.account.create({
+      data: { email: `acct-lock-carry-${uniqueSuffix()}@test.local` },
+      select: { id: true },
+    });
+    try {
+      await seedSession(prisma, account.id);
+      await seedSession(prisma, account.id);
+      const carried = await prisma.$transaction((tx) => lockAccountForSignOut(tx, account.id));
+      if (carried === null) throw new Error('the account row was not found');
+
+      await expect(prisma.$transaction((tx) => signOutEverywhereTx(tx, carried))).rejects.toThrow(
+        /not minted by lockAccountForSignOut on this transaction client/,
+      );
+      expect(await prisma.session.count({ where: { accountId: account.id } })).toBe(2);
+    } finally {
+      await prisma.session.deleteMany({ where: { accountId: account.id } });
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+});
 
 describe('the shared lock timeout', () => {
   /**
