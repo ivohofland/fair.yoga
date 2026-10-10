@@ -201,6 +201,8 @@ Deleted by GDPR erasure (`deleteTeacherAccount`'s closing transaction), after th
 
 `PayoutPauseToken` holds the hash of the secret in the alert email's "This wasn't me" link: `token_hash` (unique), `teacher_id` (FK, `onDelete: Cascade`), `event_id` (FK to `PayoutChangeEvent`, `onDelete: Cascade`), `expires_at`, `created_at`. Both tables cascade because tests hard-delete `Teacher` rows; production erasure never deletes the teacher row, so `deleteTeacherAccount` deletes the tokens and then the events itself. The teacher export lists the events (kind, account currency, before, after, created at). The daily auth cleanup (`cleanupExpiredAuth`) deletes expired tokens.
 
+`PasskeyRevokeToken` holds the hash of the secret in the passkey-added email's "This wasn't me" link: `token_hash` (unique), `account_id`, `credential_id`, `expires_at`, `created_at`. Neither id is a foreign key: it is keyed by account because the email goes to students too, `PasskeyCredential` has no relation to `Account`, and the credential may already be gone when the link is used. Erasure deletes the account's rows and the daily auth cleanup (`cleanupExpiredAuth`) deletes the expired ones.
+
 ### TeacherBankAccount (Level 1 payout details, one per currency, #758)
 
 | Field | Type | Notes |

@@ -333,12 +333,14 @@ export function renderInvitationEmail(
 }
 
 /**
- * The notice sent after a passkey is added: what happened, when, and where to
- * undo it. No link and no token — a message about a credential being added is
- * exactly what a forged copy would imitate, so the way out is named in words
- * for the reader to navigate to themselves.
+ * The notice sent after a passkey is added: what happened, when, and how to
+ * undo it. The remedy is always named in words; when the caller minted a
+ * `revokeUrl`, a **This wasn't me** button to it follows. That link holds no
+ * credential and signs no one in (`docs/superpowers/specs/2026-10-10-passkey-
+ * added-sign-out-link-design.md`, Decisions 9 and 10), and `wrapEmail` escapes
+ * it as an attribute.
  */
-export function renderPasskeyAddedEmail(addedAt: Date): RenderedEmail {
+export function renderPasskeyAddedEmail(addedAt: Date, revokeUrl: string | null = null): RenderedEmail {
   const when = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'UTC',
     day: 'numeric',
@@ -348,25 +350,31 @@ export function renderPasskeyAddedEmail(addedAt: Date): RenderedEmail {
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(addedAt);
+  const blocks: EmailBlock[] = [
+    { kind: 'paragraph', lines: [`A passkey was added to your fair.yoga account on ${when} UTC. It can now sign in to your account.`] },
+    {
+      kind: 'paragraph',
+      lines: ['If that was you, there is nothing to do. If it was not, sign in, find your passkeys under Settings → Profile if you teach (under Account if you are a student), remove the passkey and choose sign out everywhere.'],
+    },
+  ];
+  if (revokeUrl) {
+    blocks.push(
+      {
+        kind: 'paragraph',
+        lines: ['Or do it now: this signs you out on every device and removes this passkey. Anyone who can read this inbox can still ask for a new sign-in link, so check your email account too.'],
+      },
+      { kind: 'button', label: "This wasn't me", href: revokeUrl },
+    );
+  }
   return {
     subject: 'A passkey was added to your fair.yoga account',
-    ...wrapEmail(
-      'A passkey was added',
-      [
-        { kind: 'paragraph', lines: [`A passkey was added to your fair.yoga account on ${when} UTC. It can now sign in to your account.`] },
-        {
-          kind: 'paragraph',
-          lines: ['If that was you, there is nothing to do. If it was not, sign in, find your passkeys under Settings → Profile if you teach (under Account if you are a student), remove the passkey and choose sign out everywhere.'],
-        },
-      ],
-      ACCOUNT_ACTIVITY_FOOTER,
-    ),
+    ...wrapEmail('A passkey was added', blocks, ACCOUNT_ACTIVITY_FOOTER),
   };
 }
 
 /**
- * The notice sent after a passkey is removed. No link, for the reason
- * `renderPasskeyAddedEmail` gives.
+ * The notice sent after a passkey is removed. No link: a removal is not undone
+ * by a button.
  */
 export function renderPasskeyRemovedEmail(removedAt: Date): RenderedEmail {
   const when = new Intl.DateTimeFormat('en-GB', {
@@ -482,7 +490,7 @@ function formatInZoneOrUtc(at: Date, timezone: string): string {
  * The alert sent when where a teacher's students pay changes: what changed,
  * the masked before and after, when, and a **This wasn't me** button.
  *
- * Unlike `renderPasskeyAddedEmail`, this one carries a link, on purpose
+ * It carries a link, on purpose
  * (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
  * Decision 2): the link holds no credential and signs no one in; all it can do
  * is pause payments, sign every device out and remove recent passkeys, each

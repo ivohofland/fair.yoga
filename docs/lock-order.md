@@ -2175,12 +2175,13 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   asserts the removal parks and then answers `payments_paused`.
 - The passkey-added email's "This wasn't me" link (`revokePasskeyByLink`,
   `src/services/passkey-revoke.ts`): a plain read of the `PasskeyRevokeToken`
-  row by hash, then `lockForPasskeyRemoval` (the account's live teacher row
-  first, `lockTeacherForNoKeyUpdate`, when it has one). Under it the token's
-  `deleteMany`, a read of the `Account`, the `Session` and `PushSubscription`
-  deletes, the `MagicLinkToken` delete and, when the account is not paused, the
-  `PasskeyCredential` delete (its `SET NULL` reaches `Session`) and the
-  `RemovedPasskey` insert. It cannot deadlock against a pause: both serialise
+  row by hash, then `lockForPasskeyRemoval`: a plain read of the account's
+  live teacher, then, when there is one, `lockTeacherForNoKeyUpdate` as the
+  first lock and a read of its `paymentsPausedAt` under it. Under it the
+  token's `deleteMany`, a read of the `Account`, the `Session` and
+  `PushSubscription` deletes, the `MagicLinkToken` delete and, when the account
+  is not paused, the `PasskeyCredential` read and delete (its `SET NULL`
+  reaches `Session`) and the `RemovedPasskey` insert. It cannot deadlock against a pause: both serialise
   on `Teacher` before touching a session or a passkey. A link redeemed during a
   pause signs out and keeps the passkey. `src/services/passkey-revoke.test.ts`
   holds the pause and the removal's outcomes, and
@@ -2200,17 +2201,18 @@ new currency.
 
 Re-derive the call sites with:
 
-    grep -rnE "(lockTeacherForNoKeyUpdate|lockTeacherForShare|lockLiveTeacher)\(" src | grep -v "\.test\." | grep -v "db-locks.ts" | grep -vE ":[0-9]+: *(\*|//)"
+    grep -rnE "(lockTeacherForNoKeyUpdate|lockTeacherForShare|lockLiveTeacher|lockForPasskeyRemoval)\(" src | grep -v "\.test\." | grep -v "db-locks.ts" | grep -v "export async function" | grep -vE ":[0-9]+: *(\*|//)"
 
 It prints call lines only: an import has no `(` after the name, and the last
-two filters drop the definitions and comment lines. Run on 2026-10-08 after
-the passkey removal joined them (#786), it printed `classes/route.ts`,
+three filters drop the definitions and comment lines. Run on 2026-10-10 after
+the passkey-added link joined them, it printed `classes/route.ts`,
 `studio-classes/route.ts`, `class-template-lifecycle.ts`,
 `studio-class-template-lifecycle.ts`, `gdpr.ts`, `currency-switch.ts`,
 `teacher-photo.ts`, `bank-accounts.ts` (its save and its removal),
 `payment-link.ts` (its save and its removal), `payout-pause.ts`,
-`payout-resume.ts` and `passkey-credentials.ts`, each a site with an entry
-above.
+`payout-resume.ts`, `passkey-credentials.ts` (the helper's own lock and
+`deletePasskey`'s call of it) and `passkey-revoke.ts`, each a site with an
+entry above.
 Re-derive the list rather than trusting it.
 
 ### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`

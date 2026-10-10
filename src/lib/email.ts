@@ -188,8 +188,8 @@ export async function sendInvitationEmail(
 }
 
 /** Sends the passkey-added notice. A failed send throws. */
-export async function sendPasskeyAddedEmail(to: string, addedAt: Date): Promise<void> {
-  const result = await sendEmail({ to, audience: 'platform', content: renderPasskeyAddedEmail(addedAt), unsubscribe: null });
+export async function sendPasskeyAddedEmail(to: string, addedAt: Date, revokeUrl: string | null = null): Promise<void> {
+  const result = await sendEmail({ to, audience: 'platform', content: renderPasskeyAddedEmail(addedAt, revokeUrl), unsubscribe: null });
   if (!result.ok) throw new Error(`Failed to send passkey-added email: ${result.reason}`);
 }
 

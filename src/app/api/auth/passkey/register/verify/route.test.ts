@@ -7,7 +7,8 @@ const m = vi.hoisted(() => ({
   hasRecentAuth: vi.fn<(db: unknown, sessionId: string) => Promise<boolean>>(),
   getAndDeleteChallenge: vi.fn<(purpose: string, accountId: string) => string | null>(),
   verifyPasskeyRegistration: vi.fn(),
-  sendPasskeyAddedEmail: vi.fn<(to: string, addedAt: Date) => Promise<void>>(),
+  sendPasskeyAddedEmail: vi.fn<(to: string, addedAt: Date, revokeUrl?: string | null) => Promise<void>>(),
+  mintCreate: vi.fn(),
   create: vi.fn(),
   findUniqueOrThrow: vi.fn(),
 }));
@@ -16,6 +17,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     passkeyCredential: { create: m.create },
     account: { findUniqueOrThrow: m.findUniqueOrThrow },
+    passkeyRevokeToken: { create: m.mintCreate },
   },
 }));
 vi.mock('@/lib/auth/session', async (importOriginal) => ({
@@ -62,6 +64,7 @@ beforeEach(() => {
     transports: [],
   });
   m.create.mockResolvedValue({ createdAt: new Date('2026-10-06T14:03:00Z') });
+  m.mintCreate.mockResolvedValue({});
   m.findUniqueOrThrow.mockResolvedValue({ email: 'a@test.local' });
   m.sendPasskeyAddedEmail.mockResolvedValue(undefined);
 });
@@ -71,7 +74,8 @@ describe('POST /api/auth/passkey/register/verify', () => {
     const res = await POST(request());
 
     expect(res.status).toBe(200);
-    await vi.waitFor(() => expect(m.sendPasskeyAddedEmail).toHaveBeenCalledWith('a@test.local', expect.any(Date)));
+    await vi.waitFor(() => expect(m.sendPasskeyAddedEmail).toHaveBeenCalledWith('a@test.local', expect.any(Date), expect.stringContaining('/passkey-revoke#t=')));
+    expect(m.mintCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ accountId: 'acct-1', credentialId: 'AAAA' }) });
     expect(m.create.mock.invocationCallOrder[0]).toBeLessThan(m.sendPasskeyAddedEmail.mock.invocationCallOrder[0] ?? 0);
   });
 
