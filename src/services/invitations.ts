@@ -600,9 +600,9 @@ function logUndeliveredTeacherInbox(
  * remembering to write its own `.catch`. That is deliberate: whatever this
  * function reads, or how long it takes, must never become the response's
  * status code or its latency. An earlier version of this function was
- * awaited by its caller, and that reopened the exact oracle #166 closed: a
- * Resend outage turned an unregistered address's failure into a 500 while a
- * registered address's plain INSERT still answered 201, and even with Resend
+ * awaited by its caller, and that reopened the exact oracle #166 closed: an
+ * email-provider outage turned an unregistered address's failure into a 500 while a
+ * registered address's plain INSERT still answered 201, and even with the provider
  * healthy, "no work" (blocked) vs. "one SELECT + one INSERT" (registered)
  * vs. "one HTTPS round trip" (stranger) is a timing channel carrying the
  * same bit. A future caller that awaits this — even just to inspect success
@@ -843,8 +843,8 @@ const DELIVERY_FAILURE_MESSAGE = {
  * whatever this function reads, or how long it takes, must never become the
  * caller's response status or its latency, and a function that hands back no
  * promise gives a caller nothing to wait for. Awaited, an earlier version of
- * this turned a Resend outage into a 500 for an unregistered address while a
- * registered one still answered 201 — and even with Resend healthy, "no
+ * this turned an email-provider outage into a 500 for an unregistered address while a
+ * registered one still answered 201 — and even with the provider healthy, "no
  * work" (blocked) vs. "one query" (registered) vs. "one HTTPS round trip"
  * (stranger) is a timing channel carrying the same bit. That is the oracle
  * #166 closed, and #391 is why it is now shut by the signature instead of by
@@ -865,8 +865,8 @@ const DELIVERY_FAILURE_MESSAGE = {
  *   `invitationId` alone said nothing about WHICH failures are safe to
  *   surface: only the stranger path (`sendInvitationEmail`, an HTTPS call)
  *   can throw under normal operation — the in-app path (`createNotification`,
- *   a local insert) essentially never does — and a Resend outage or a lapsed
- *   API key fails every stranger send alike, so an unguarded write turns this
+ *   a local insert) essentially never does — and an email-provider outage or a lapsed
+ *   API token fails every stranger send alike, so an unguarded write turns this
  *   column into a proxy for
  *   "does this address have a fair.yoga account," reopening #166 through a
  *   side door. See `notify-health.ts`'s own docblock.
