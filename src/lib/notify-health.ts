@@ -6,10 +6,10 @@ let recentFailures: number[] = [];
 /**
  * Whether the fire-and-forget dispatch failures piling up right now look
  * systemic rather than a one-off (#392 review, Critical #1). A single
- * stranger-path failure (a thrown `sendInvitationEmail`, i.e. a Resend
- * SDK/API rejection) is rare and carries no address-class signal on its own.
- * A burst of them in a short window is what a Resend outage or a lapsed API
- * key/sending domain looks like — and that failure mode hits every stranger
+ * stranger-path failure (a thrown `sendInvitationEmail`, i.e. an
+ * email-provider rejection) is rare and carries no address-class signal on its own.
+ * A burst of them in a short window is what an email-provider outage or a lapsed API
+ * token/sending domain looks like — and that failure mode hits every stranger
  * send alike, never the in-app path (`createNotification`, a local DB insert
  * that essentially never fails). Left unguarded,
  * `Invitation.lastNotifyFailedAt` would then read "failed" for every
@@ -21,10 +21,10 @@ let recentFailures: number[] = [];
  *
  * Global, not per-teacher — and NOT because a teacher can't cause a
  * `sendInvitationEmail` throw on demand (they can: `sendInvitationEmail`
- * throws on any Resend `{ error }`, including a rate-limit rejection, and
+ * throws on any provider failure, including a rate-limit rejection, and
  * `checkStudentWriteLimit`'s 50/hour sliding-log cap is looser than
- * Resend's own per-second send rate — a burst of 50 stranger invites in a
- * few seconds is within the app's own budget and can trip Resend's). What
+ * the provider's own send rate — a burst of 50 stranger invites in a
+ * few seconds is within the app's own budget and can trip the provider's). What
  * makes global the right scope regardless: an attacker trying to single out
  * one target address (`[decoy, decoy, target]`, hoping only the target's
  * throw gets suppressed) fills the SAME shared window with their own decoy
