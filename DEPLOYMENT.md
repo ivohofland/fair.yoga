@@ -127,7 +127,26 @@ reachable at the edge past the origin's own 404.
 
 ## 4. Backups
 
+Nightly `pg_dump | gzip | age` into `/var/backups/fairyoga`, 14-day rotation.
+Each dump is encrypted on the VPS to a public key whose private half never
+lives there, so the VPS cannot read its own backups and every copy of them —
+on its disk, pulled to a NAS, uploaded anywhere — is ciphertext. The
+private key is the one thing that can restore: without it no backup opens,
+for anyone. Keep it in two places, one of them offline.
+
+Once, where the private key will live (not the VPS):
+
 ```bash
+age-keygen -o fairyoga-backup.key     # the private key — store it, then delete this copy
+age-keygen -y fairyoga-backup.key     # prints the public key, age1…
+```
+
+On the VPS:
+
+```bash
+apt install age
+mkdir -p /etc/fairyoga
+echo 'age1…' > /etc/fairyoga/backup-recipients.txt   # one public key per line; several work
 chmod +x deploy/backup.sh
 crontab -e   # add:
 # 17 3 * * * /opt/fairyoga/deploy/backup.sh >> /var/log/fairyoga-backup.log 2>&1
@@ -137,8 +156,27 @@ That log path assumes root's crontab. From a non-root user in the `docker`
 group, log to a file that user can write (its home directory, say), and make
 sure it owns `/var/backups/fairyoga`.
 
-Nightly `pg_dump | gzip` into `/var/backups/fairyoga`, 14-day rotation.
-Restore: `gunzip -c backup.sql.gz | docker compose -f docker-compose.prod.yml exec -T db psql -U fairyoga fairyoga`.
+The script refuses — exit 1, nothing written — when `age` is missing or the
+recipients file is empty, rather than write a readable dump; a failed dump
+leaves no file behind either. Point a heartbeat monitor at its success (append
+`&& curl -fsS -m 10 <ping-url>` to the cron line) and both reach you as a
+missed ping. `AGE_RECIPIENTS_FILE`, `BACKUP_DIR`, `KEEP_DAYS` and
+`COMPOSE_FILE` override the defaults.
+
+**Restore** decrypts where the key is and streams the plaintext over SSH, so
+the key never touches the VPS:
+
+```bash
+age -d -i fairyoga-backup.key fairyoga-<stamp>.sql.gz.age \
+  | ssh <user>@<vps> 'cd /opt/fairyoga && gunzip | docker compose -f docker-compose.prod.yml exec -T db psql -U fairyoga fairyoga'
+```
+
+Test it once, before you need it, into a scratch database rather than the
+live one: create it with `docker compose -f docker-compose.prod.yml exec -T db createdb -U fairyoga restore_test`,
+put `restore_test` in place of the last `fairyoga` above, check the counts, then
+`dropdb -U fairyoga restore_test` the same way.
+A dump written before this script encrypted is plain `.sql.gz`:
+`gunzip -c` it into the same `psql`.
 
 ## 5. Scheduled jobs
 
