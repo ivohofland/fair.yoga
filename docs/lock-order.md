@@ -2118,24 +2118,31 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   hash, then `lockTeacherForNoKeyUpdate` as the first lock (#786). Under it:
   the token's `deleteMany` (the consume), reads of the teacher and of its
   earliest `PayoutChangeEvent`, a `Teacher` `UPDATE` of non-key columns
-  (which raises nothing) unless already paused, then deletes of the
-  account's `Session`, `PushSubscription` and `MagicLinkToken` rows and,
-  last, of its passkeys created at or after the cutoff (or the frozen one,
-  if later). Sessions go before passkeys: `Session.passkeyCredentialId` is
-  `ON DELETE SET NULL`, and the sessions that existed are deleted first, so
-  the passkey delete's `SET NULL` reaches only a session a passkey sign-in
-  inserted between the two statements. The session delete is a statement
-  snapshot, so a sign-in landing between the two statements leaves a live
-  session: one with a passkey this delete removes has its credential nulled,
-  and a session with no credential cannot satisfy a resume; one with a passkey
-  created before the cutoff keeps its credential, which is the teacher's own
-  by the trust model the cutoff states. None of
+  (which raises nothing) unless already paused, then a delete of the
+  account's passkeys created at or after the cutoff (or the frozen one, if
+  later), whose `ON DELETE SET NULL` updates every `Session` naming one of
+  them, then deletes of its `Session`, `PushSubscription` and
+  `MagicLinkToken` rows. Passkeys go before sessions so that a sign-in with a
+  removed passkey cannot outlive the pause: one that committed its `Session`
+  before the passkey delete is caught by the session delete (a later
+  `READ COMMITTED` statement sees it); one that arrives after it blocks on the
+  credential row, in its counter `update` or its `Session` insert's foreign
+  key, and fails once the pause commits, so that sign-in answers 500. A
+  sign-in with a passkey created before the cutoff is the teacher's own by the
+  trust model the cutoff states. `src/services/payout-pause-order.test.ts`
+  holds the order of the two deletes. A magic-link sign-in whose link was
+  consumed before the pause can still insert its `Session` after the session
+  delete, and that window is accepted, not closed: such a session is one a
+  holder of the inbox could start a second after the pause anyway, and the
+  resume's gate is the defence against it (`docs/technical-architecture.md`,
+  "Resuming paused payments"). None of
   those rows is locked by a transaction that then waits on
   `Teacher`. A pause arriving during an erasure waits on the lock, finds the
   row erased and answers `invalid` without consuming. A failure after the
   consume rolls it back: `src/services/payout-pause-lock-order.test.ts` holds
-  the passkey row so the last delete times out, and the link still pauses
-  afterwards.
+  the session row so the session delete times out after the passkey delete
+  has run, and asserts the passkey, the session and the token survive and the
+  link still pauses afterwards.
 - The resume (`resumePayments`, `src/services/payout-resume.ts`, behind
   `POST /api/teachers/[id]/payments-resume`): plain reads of the teacher and of
   the session's passkey before the transaction, then
@@ -2164,12 +2171,9 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   the refusal with nothing written. Then the `PasskeyCredential` read and
   delete, whose `ON DELETE SET NULL` updates every `Session` naming the
   credential, and the `RemovedPasskey` insert, which has no foreign key.
-  Without the teacher lock this deadlocks against the pause: the pause deletes
-  the sessions and then the passkeys, the removal deletes a passkey and then
-  sets its sessions' credential to null, so each can hold the row the other
-  waits on. With it, the two serialise on `Teacher` before either touches a
-  session or a passkey, and a removal that waited out a pause reads it
-  paused. An account with no live teacher profile takes no teacher lock: no
+  The teacher lock orders it against the pause: the two serialise on
+  `Teacher` before either touches a session or a passkey, and a removal that
+  waited out a pause reads it paused. An account with no live teacher profile takes no teacher lock: no
   pause can reach it. `src/services/passkey-credentials-lock-order.test.ts`
   holds the teacher row and a pause's `UPDATE` on a second connection, and
   asserts the removal parks and then answers `payments_paused`.
@@ -2185,7 +2189,9 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   sessions so that a passkey sign-in cannot slip a `Session` in between: one
   committed before the passkey delete is caught by the session delete (a later
   `READ COMMITTED` statement sees it), and one arriving after blocks on the
-  credential row and fails its foreign key once the redemption commits. It
+  credential row and fails its foreign key once the redemption commits. A
+  magic-link sign-in whose link was consumed before the redemption is the same
+  accepted window as the pause entry's, for the same reason. It
   cannot deadlock against a pause: both serialise on `Teacher` before touching
   a session or a passkey. Like `deletePasskey`, the link takes the teacher
   lock first and removes the credential before anything else touches

@@ -1,5 +1,10 @@
 # A sign-in racing a pause or a revoke link does not survive it (#811)
 
+**Status: considered and not built.** #811 took option 1: the pause removes
+recent passkeys before it ends sessions, and the magic-link window is accepted
+(`docs/lock-order.md`, the pause entry). This spec is kept for its survey of
+the sign-in paths.
+
 `pausePayments` (`src/services/payout-pause.ts`) and `revokePasskeyByLink`
 (`src/services/passkey-revoke.ts`) both end every session on an account, and
 both pages then say "Every device has been signed out". A sign-in that is
