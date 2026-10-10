@@ -8,15 +8,11 @@ import { log } from '@/lib/log';
 
 // The dry-run tests in email-fallback.test.ts can't tell "emailed" from
 // "skipped and marked" — both end in emailSent=true. This file makes the
-// send itself observable by mocking the Resend SDK, so the consent wiring
+// send itself observable by mocking the Lettermint adapter, so the consent wiring
 // (shouldEmailStudent) is pinned against both mutation directions.
 
-const sendMock = vi.hoisted(() => vi.fn());
-vi.mock('resend', () => ({
-  Resend: class {
-    emails = { send: sendMock };
-  },
-}));
+const deliverMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
 vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -27,7 +23,7 @@ const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const studentEmail = `consent-student-${uniqueSuffix}@test.local`;
 
 function sendsTo(email: string): number {
-  return sendMock.mock.calls.filter(([args]) => args.to === email).length;
+  return deliverMock.mock.calls.filter(([args]) => args.to === email).length;
 }
 
 describe('processEmailFallback consent wiring (mocked send)', () => {
@@ -38,7 +34,6 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
   const notificationIds: string[] = [];
   const extraStudentIds: string[] = [];
 
-  const savedApiKey = process.env.RESEND_API_KEY;
   const savedLettermintToken = process.env.LETTERMINT_API_TOKEN;
   const savedDryRun = process.env.EMAIL_DRY_RUN;
 
@@ -66,7 +61,6 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
 
   beforeAll(async () => {
     // Force the real-send path: a key is configured and dry-run is off.
-    process.env.RESEND_API_KEY = 're_test_dummy';
     process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
     delete process.env.EMAIL_DRY_RUN;
 
@@ -140,8 +134,6 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
 
-    if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
-    else process.env.RESEND_API_KEY = savedApiKey;
     if (savedLettermintToken === undefined) delete process.env.LETTERMINT_API_TOKEN;
     else process.env.LETTERMINT_API_TOKEN = savedLettermintToken;
     if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
@@ -149,8 +141,8 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
   });
 
   beforeEach(() => {
-    sendMock.mockReset();
-    sendMock.mockResolvedValue({ error: null });
+    deliverMock.mockReset();
+    deliverMock.mockResolvedValue({ ok: true });
   });
 
   it('sends the email for an essential type despite the opt-out', async () => {
@@ -230,10 +222,10 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
   });
 
   it('surfaces send failures instead of reporting a healthy run', async () => {
-    sendMock.mockImplementation((args: { to: string }) =>
+    deliverMock.mockImplementation((args: { to: string }) =>
       args.to === studentEmail
-        ? Promise.resolve({ error: { message: 'boom' } })
-        : Promise.resolve({ error: null }),
+        ? Promise.resolve({ ok: false, reason: 'lettermint 500: x' })
+        : Promise.resolve({ ok: true }),
     );
     const failing = await makeNotification({
       createdAt: new Date(Date.now() - 45 * 60 * 1000),
@@ -276,7 +268,6 @@ describe('processEmailFallback — teacher preferences (#49)', () => {
   }
 
   beforeAll(async () => {
-    process.env.RESEND_API_KEY = 're_test_dummy';
     process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
     delete process.env.EMAIL_DRY_RUN;
     const t = await prisma.teacher.create({
@@ -301,8 +292,8 @@ describe('processEmailFallback — teacher preferences (#49)', () => {
   });
 
   beforeEach(async () => {
-    sendMock.mockReset();
-    sendMock.mockResolvedValue({ error: null });
+    deliverMock.mockReset();
+    deliverMock.mockResolvedValue({ ok: true });
     vi.mocked(log.error).mockClear();
     await setPrefs({ bookingNotifications: 'inbox_and_email', emailOnClassCompleted: true, emailOnInvitation: true });
   });

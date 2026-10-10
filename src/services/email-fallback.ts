@@ -10,22 +10,14 @@
  */
 
 import type { NotificationType, PrismaClient } from '@prisma/client';
-import { Resend } from 'resend';
 import { getUnreadForEmailFallback, claimEmailFallback } from './notifications';
 import { shouldEmailStudent, shouldEmailTeacher, isTeacherNotificationType } from './notification-policy';
 import { renderNotificationEmail } from '@/lib/email-templates';
-import { emailDryRun } from '@/lib/email';
+import { sendEmail } from '@/lib/email';
 import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';
 import { isPaymentNotification } from '@/lib/notification-links';
 import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect, type PayGuidance } from '@/lib/payment-methods';
-
-// Lazy for the same reason as lib/email: a keyless environment must be
-// able to import this module (the dry-run path never constructs).
-let resendClient: Resend | null = null;
-function resend(): Resend {
-  return (resendClient ??= new Resend(process.env.RESEND_API_KEY));
-}
 
 /**
  * What the teacher of the class a student payment notification is about lets
@@ -85,18 +77,17 @@ export async function processEmailFallback(
   // the inbox record intact — the message survives, only its second delivery
   // channel does not.
   //
-  // The two non-send branches (opted-out, dry-run) mark AFTER their decision
-  // rather than claiming before it: there is no external effect to protect, so
-  // ordering buys nothing and a lost mark costs one reconsidered row.
+  // The one non-send branch (opted-out) marks AFTER its decision rather than
+  // claiming before it: there is no external effect to protect, so ordering
+  // buys nothing and a lost mark costs one reconsidered row.
   //
   // But it still reports a write failure, for the same reason `claimOne` does
   // below. It used to swallow one, and the argument for that ("a lost mark
   // only costs a duplicate") is about duplicates and silent about health:
   // `processEmailFallback` returning cleanly does not merely fail to raise the
   // outage, it makes `scheduler.ts` CLEAR `lastError`. So a sweep whose
-  // candidates are all opted-out — the ordinary shape under EMAIL_DRY_RUN —
-  // could turn a database that cannot accept writes into a green
-  // `/api/health`, one row at a time, every five minutes.
+  // candidates are all opted-out could turn a database that cannot accept
+  // writes into a green `/api/health`, one row at a time, every five minutes.
   const markOne = async (id: string): Promise<'marked' | 'error'> => {
     try {
       await claimEmailFallback(db, id);
@@ -280,13 +271,6 @@ export async function processEmailFallback(
       continue;
     }
 
-    if (emailDryRun()) {
-      log.info({ to: email, title: notification.title }, 'email fallback dry-run');
-      if ((await markOne(notification.id)) === 'error') failed++;
-      else sent++;
-      continue;
-    }
-
     // Claim before sending, per the block comment above: the row is the only
     // thing standing between two overlapping sweeps and two identical emails.
     //
@@ -338,21 +322,20 @@ export async function processEmailFallback(
     try {
       // Branded template; escapes teacher-authored bodies so markup or
       // phishing HTML never renders in a platform email.
-      const { subject, html } = renderNotificationEmail({
-        ...notification,
-        payGuidance: await studentPaymentEmailGuidance(db, notification),
-      });
-      const { error } = await resend().emails.send({
-        from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
+      const result = await sendEmail({
         to: email,
-        subject,
-        html,
+        audience: 'class',
+        content: renderNotificationEmail({
+          ...notification,
+          payGuidance: await studentPaymentEmailGuidance(db, notification),
+        }),
+        idempotencyKey: `notification-${notification.id}`,
       });
-      // The Resend SDK reports API failures via { error }, it does not throw —
-      // an unchecked result would leave the claim standing on a notification
+      // `sendEmail` reports a refusal as a value rather than throwing; an
+      // unchecked result would leave the claim standing on a notification
       // whose email never went out.
-      if (error) {
-        log.error({ notificationId: notification.id, reason: error.message }, 'email fallback send failed');
+      if (!result.ok) {
+        log.error({ notificationId: notification.id, reason: result.reason }, 'email fallback send failed');
         await releaseOne(notification.id);
         failed++;
         continue;
