@@ -1507,6 +1507,7 @@ PASSKEY_RP_NAME=            # Display name (e.g. "Ethical Yoga")
 # Email
 LETTERMINT_API_TOKEN=       # Transactional email provider; production refuses to send without it
 LETTERMINT_CLASS_ROUTE=     # Slug of a second transactional route for class mail
+UNSUBSCRIBE_SECRET=         # >=32 bytes; signs unsubscribe links. Unset in production: mail sends without them
 EMAIL_REPLY_TO=             # Platform mail's Reply-To; default hello@fair.yoga
 OPERATOR_EMAIL=             # Receives the daily degradation digest
 EMAIL_FROM=                 # e.g. "noreply@ethicalyoga.app"
