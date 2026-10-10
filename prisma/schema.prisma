@@ -310,6 +310,21 @@ model PayoutPauseToken {
   @@index([teacherId])
 }
 
+/// The hash of the secret in a passkey-added email's "This wasn't me" link.
+/// Keyed by account, not teacher: the email goes to students too. No foreign
+/// keys: `PasskeyCredential` has no relation to `Account`, and the credential
+/// may be gone by the time the link is used.
+model PasskeyRevokeToken {
+  id           String   @id @default(uuid())
+  tokenHash    String   @unique
+  accountId    String
+  credentialId String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([accountId])
+}
+
 /// A teacher's avatar, downscaled and re-encoded on upload. `id` is regenerated
 /// on every upload and is the photo's URL, so a replaced photo's old URL stops
 /// resolving.
