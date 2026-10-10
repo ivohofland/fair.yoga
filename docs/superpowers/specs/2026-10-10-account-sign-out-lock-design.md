@@ -73,7 +73,7 @@ account's sessions in different orders:
    transaction client, as `ClassLock` does:
    - `signOutEverywhereTx`;
    - `removePasskeyLocked`;
-   - a new `deleteRecentPasskeys`, which wraps the pause's passkey delete.
+   - a new `deleteAccountPasskeys`, which wraps the pause's passkey delete.
 
    Erasure's session, push-subscription and passkey deletes go through
    `signOutEverywhereTx` and these functions, so a new sign-out path that
