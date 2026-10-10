@@ -180,6 +180,9 @@ export const LOCK_CONTENTION_TESTS = [
   // row times its sign-out delete out under the shared lock bound; its header
   // carries the reason.
   'src/services/passkey-revoke-lock-order.test.ts',
+  // #811: the passkey removal's shape, for the `Account` row every
+  // multi-session sign-out writer takes first; its header carries the reason.
+  'src/services/account-sign-out-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
