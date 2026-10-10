@@ -41,10 +41,9 @@ services:
       context: .
       target: runner
     restart: unless-stopped
-    # On SIGTERM Next's production server waits for every open connection to
-    # end, and a notification stream never ends on its own, so a deploy would
-    # sit out Docker's 10 s default before the kill. Ordinary requests finish
-    # well inside this; a cut stream reconnects to the new container.
+    # On SIGTERM the app ends its notification streams and exits by itself
+    # (docs/technical-architecture.md, Shutdown). This is the backstop for a
+    # request that does not finish: Docker kills the container after it.
     stop_grace_period: 3s
     env_file: .env
     environment:
