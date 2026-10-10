@@ -6,6 +6,7 @@ import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { signUnsubscribeToken, invitationSubject } from '@/lib/unsubscribe-token';
 import { erasedAddress } from '@/lib/erased-address';
+import type { UnsubscribeTarget } from '@/lib/unsubscribe-kind';
 
 const prisma = new PrismaClient();
 const teacherIds: string[] = [];
@@ -37,8 +38,8 @@ async function makeTeacher(): Promise<string> {
   return t.id;
 }
 
-function mint(kind: 'student_notifications' | 'invitation', subjectId: string): string {
-  const token = signUnsubscribeToken({ kind, subjectId });
+function mint(target: UnsubscribeTarget): string {
+  const token = signUnsubscribeToken(target);
   if (token === null) throw new Error('unsubscribe token could not be signed; is UNSUBSCRIBE_SECRET set in only one process?');
   return token;
 }
@@ -66,7 +67,7 @@ afterAll(async () => {
 describe('POST /api/unsubscribe', () => {
   it('flips the preference with no session, and a repeat answers unchanged', async () => {
     const id = await makeStudent();
-    const token = mint('student_notifications', id);
+    const token = mint({ kind: 'student_notifications', subjectId: id });
 
     expect(await expectApplied(await post(token))).toEqual({ unsubscribed: true });
     expect(await studentFlag(id)).toBe(false);
@@ -78,13 +79,13 @@ describe('POST /api/unsubscribe', () => {
     const id = await makeStudent();
     const form = new FormData();
     form.set('List-Unsubscribe', 'One-Click');
-    await expectApplied(await post(mint('student_notifications', id), { body: form }));
+    await expectApplied(await post(mint({ kind: 'student_notifications', subjectId: id }), { body: form }));
     expect(await studentFlag(id)).toBe(false);
   });
 
   it('accepts a foreign Origin, since the token is the credential', async () => {
     const id = await makeStudent();
-    const res = await post(mint('student_notifications', id), {
+    const res = await post(mint({ kind: 'student_notifications', subjectId: id }), {
       headers: { Origin: 'https://mail.example.com', 'Sec-Fetch-Site': 'cross-site' },
     });
     await expectApplied(res);
@@ -93,7 +94,7 @@ describe('POST /api/unsubscribe', () => {
 
   it('refuses a body that is not the one-click form, changing nothing', async () => {
     const id = await makeStudent();
-    const token = mint('student_notifications', id);
+    const token = mint({ kind: 'student_notifications', subjectId: id });
 
     const json = await post(token, {
       body: JSON.stringify({ 'List-Unsubscribe': 'One-Click' }),
@@ -107,20 +108,20 @@ describe('POST /api/unsubscribe', () => {
 
   it('answers every token that cannot act with the same 404 and body', async () => {
     const live = await makeStudent();
-    const forged = mint('student_notifications', live).replace(/\.(.)/, (_m, c: string) => `.${c === 'A' ? 'B' : 'A'}`);
-    const unknown = mint('student_notifications', crypto.randomUUID());
-    const erased = mint('student_notifications', await makeStudent({ deletedAt: new Date() }));
+    const forged = mint({ kind: 'student_notifications', subjectId: live }).replace(/\.(.)/, (_m, c: string) => `.${c === 'A' ? 'B' : 'A'}`);
+    const unknown = mint({ kind: 'student_notifications', subjectId: crypto.randomUUID() });
+    const erased = mint({ kind: 'student_notifications', subjectId: await makeStudent({ deletedAt: new Date() }) });
     const teacherId = await makeTeacher();
     const tomb = await prisma.invitation.create({
       data: { teacherId, email: erasedAddress(crypto.randomUUID()) },
       select: { id: true, email: true },
     });
-    const tombstoned = mint('invitation', invitationSubject(tomb.id, tomb.email));
+    const tombstoned = mint({ kind: 'invitation', subjectId: invitationSubject(tomb.id, tomb.email) });
     const deleted = await prisma.invitation.create({
       data: { teacherId, email: `unsub-api-inv-${uniqueSuffix()}@test.local` },
       select: { id: true, email: true },
     });
-    const deletedToken = mint('invitation', invitationSubject(deleted.id, deleted.email));
+    const deletedToken = mint({ kind: 'invitation', subjectId: invitationSubject(deleted.id, deleted.email) });
     await prisma.invitation.delete({ where: { id: deleted.id } });
 
     const responses = [
@@ -153,7 +154,7 @@ describe('POST /api/unsubscribe', () => {
 describe('GET /api/unsubscribe', () => {
   it('redirects to the confirm page and changes nothing', async () => {
     const id = await makeStudent();
-    const token = mint('student_notifications', id);
+    const token = mint({ kind: 'student_notifications', subjectId: id });
     const res = await fetch(`${BASE_URL}/api/unsubscribe?t=${encodeURIComponent(token)}`, { redirect: 'manual', headers: freshIp() });
     expect(res.status).toBe(303);
     expect(res.headers.get('location')?.endsWith(`/unsubscribe#t=${token}`)).toBe(true);

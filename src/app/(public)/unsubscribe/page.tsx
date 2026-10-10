@@ -1,10 +1,6 @@
 import { UnsubscribeForm } from './unsubscribe-form';
 
-/**
- * Where an email's unsubscribe link lands. Public and the same for everyone:
- * the page names no one, and the token stays in the fragment until the
- * button sends it.
- */
+/** Where an email's unsubscribe link lands. Public and the same for everyone. */
 export default function UnsubscribePage() {
   return (
     <div className="flex-1 flex flex-col py-10">

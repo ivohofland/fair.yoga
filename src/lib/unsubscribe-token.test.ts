@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import type { UnsubscribeTarget } from './unsubscribe-kind';
 
 const SECRET = 'x'.repeat(32);
 async function load() {
@@ -60,18 +61,35 @@ describe('unsubscribe token', () => {
 
   it('in production without a secret: signs nothing, verifies nothing, warns once', async () => {
     vi.stubEnv('UNSUBSCRIBE_SECRET', '');
-    const devToken = (await load()).signUnsubscribeToken({ kind: 'invitation', subjectId: 'i' })!;
+    const devToken = (await load()).signUnsubscribeToken({ kind: 'teacher_bookings', subjectId: 'i' })!;
     expect(devToken).not.toBeNull();
     vi.stubEnv('NODE_ENV', 'production');
     const { signUnsubscribeToken, unsubscribeLinks, verifyUnsubscribeToken } = await load();
     const { log } = await import('@/lib/log');
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     expect(verifyUnsubscribeToken(devToken)).toBeNull();
-    expect(signUnsubscribeToken({ kind: 'invitation', subjectId: 'i' })).toBeNull();
-    expect(unsubscribeLinks({ kind: 'invitation', subjectId: 'i' })).toBeNull();
+    expect(signUnsubscribeToken({ kind: 'teacher_bookings', subjectId: 'i' })).toBeNull();
+    expect(unsubscribeLinks({ kind: 'teacher_bookings', subjectId: 'i' })).toBeNull();
     expect(
-      warn.mock.calls.filter(([, m]) => String(m).includes('UNSUBSCRIBE_SECRET')),
+      warn.mock.calls.filter(([, m]) => String(m).includes('mail is sent without unsubscribe links')),
     ).toHaveLength(1);
+  });
+
+  it('in production without a secret: says once that a link was refused, never logging the token', async () => {
+    vi.stubEnv('UNSUBSCRIBE_SECRET', '');
+    const devToken = (await load()).signUnsubscribeToken({ kind: 'teacher_bookings', subjectId: 't_1' })!;
+    vi.stubEnv('NODE_ENV', 'production');
+    const { verifyUnsubscribeToken } = await load();
+    const { log } = await import('@/lib/log');
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(verifyUnsubscribeToken(devToken)).toBeNull();
+    expect(verifyUnsubscribeToken(devToken)).toBeNull();
+    const refused = warn.mock.calls.filter(([, m]) =>
+      String(m).includes('unsubscribe link was refused because UNSUBSCRIBE_SECRET is not configured'),
+    );
+    expect(refused).toHaveLength(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(devToken);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(devToken.split('.')[0]);
   });
 
   it('treats a secret shorter than 32 bytes as unset in production', async () => {
@@ -80,15 +98,34 @@ describe('unsubscribe token', () => {
     const { signUnsubscribeToken } = await load();
     const { log } = await import('@/lib/log');
     vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    expect(signUnsubscribeToken({ kind: 'invitation', subjectId: 'i' })).toBeNull();
+    expect(signUnsubscribeToken({ kind: 'teacher_bookings', subjectId: 'i' })).toBeNull();
   });
 
   it('uses a development key outside production', async () => {
     vi.stubEnv('UNSUBSCRIBE_SECRET', '');
     const { signUnsubscribeToken, verifyUnsubscribeToken } = await load();
-    const token = signUnsubscribeToken({ kind: 'invitation', subjectId: 'i' })!;
-    expect(verifyUnsubscribeToken(token)).toEqual({ kind: 'invitation', subjectId: 'i' });
+    const token = signUnsubscribeToken({ kind: 'teacher_bookings', subjectId: 'i' })!;
+    expect(verifyUnsubscribeToken(token)).toEqual({ kind: 'teacher_bookings', subjectId: 'i' });
   });
+
+  it('verifies an invitation token signed for a well-formed subject', async () => {
+    vi.stubEnv('UNSUBSCRIBE_SECRET', SECRET);
+    const { invitationSubject, signUnsubscribeToken, verifyUnsubscribeToken } = await load();
+    const target = { kind: 'invitation', subjectId: invitationSubject('inv_1', 'a@test.local') } as const;
+    expect(verifyUnsubscribeToken(signUnsubscribeToken(target)!)).toEqual(target);
+  });
+
+  it.each(['inv_1', 'inv_1~', '~tag', 'inv_1~tag~more'])(
+    'refuses a validly signed invitation token whose subject is %j',
+    async (subjectId) => {
+      vi.stubEnv('UNSUBSCRIBE_SECRET', SECRET);
+      const { signUnsubscribeToken, verifyUnsubscribeToken } = await load();
+      // @ts-expect-error -- a hand-built invitation subject, which only a forged or old token could carry
+      const token = signUnsubscribeToken({ kind: 'invitation', subjectId });
+      expect(token).not.toBeNull();
+      expect(verifyUnsubscribeToken(token!)).toBeNull();
+    },
+  );
 
   it('binds an invitation subject to its address', async () => {
     const { invitationSubject, parseInvitationSubject, addressTag } = await load();
@@ -108,10 +145,19 @@ describe('unsubscribe token', () => {
     vi.stubEnv('UNSUBSCRIBE_SECRET', SECRET);
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://fair.yoga');
     const { unsubscribeLinks, signUnsubscribeToken } = await load();
-    const token = signUnsubscribeToken({ kind: 'invitation', subjectId: 'i' })!;
-    expect(unsubscribeLinks({ kind: 'invitation', subjectId: 'i' })).toEqual({
+    const token = signUnsubscribeToken({ kind: 'teacher_bookings', subjectId: 'i' })!;
+    expect(unsubscribeLinks({ kind: 'teacher_bookings', subjectId: 'i' })).toEqual({
       oneClick: `https://fair.yoga/api/unsubscribe?t=${token}`,
       page: `https://fair.yoga/unsubscribe#t=${token}`,
     });
+  });
+});
+
+describe('UnsubscribeTarget', () => {
+  it('refuses a hand-built invitation subject at compile time', () => {
+    // @ts-expect-error -- an invitation subject comes only from `invitationSubject`
+    const handBuilt: UnsubscribeTarget = { kind: 'invitation', subjectId: 'inv_1' };
+    const profile: UnsubscribeTarget = { kind: 'teacher_bookings', subjectId: 't_1' };
+    expect([handBuilt.kind, profile.kind]).toEqual(['invitation', 'teacher_bookings']);
   });
 });

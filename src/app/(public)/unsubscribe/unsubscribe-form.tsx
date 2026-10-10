@@ -13,7 +13,7 @@ const TEACHER_SETTINGS = '/settings/notifications';
 
 const COPY = {
   student_notifications: {
-    what: "You'll stop getting an email when a message in the app goes unread. Cancellations, waitlist spots and payment requests still come by email.",
+    what: "You'll stop getting an email when a message in the app goes unread. Class cancellations, waitlist spots and payment requests still come by email.",
     settings: STUDENT_SETTINGS,
   },
   teacher_bookings: {
@@ -53,6 +53,17 @@ function subscribeToHash(onChange: () => void): () => void {
   return () => window.removeEventListener('hashchange', onChange);
 }
 
+/** Whether a success body says the goal already held (`respondUnchanged`). */
+async function answeredUnchanged(res: Response): Promise<boolean> {
+  try {
+    const body: unknown = await res.json();
+    return typeof body === 'object' && body !== null && (body as { outcome?: unknown }).outcome === 'unchanged';
+  // eslint-disable-next-line no-restricted-syntax -- the opt-out committed; an unreadable body only loses the nuance
+  } catch {
+    return false;
+  }
+}
+
 const linkClass =
   'text-teal underline decoration-[0.5px] underline-offset-[3px] rounded-field focus:outline-none focus-visible:shadow-focus';
 const errorClass = 'text-[13px] leading-[1.4] text-danger';
@@ -64,10 +75,11 @@ function SettingsLink({ href }: { href: string }) {
 }
 
 /**
- * The one button that unsubscribes. The token is read from the fragment after
- * hydration and sent only when the button is pressed: a mail scanner that
- * opens the link changes nothing. Unsubscribing is idempotent, so a failed
- * attempt just offers the button again.
+ * The one button that unsubscribes. It names no one: the token stays in the
+ * fragment, which never reaches the server, is read after hydration and sent
+ * only when the button is pressed, so a mail scanner that opens the link
+ * changes nothing. Unsubscribing is idempotent, so a failed attempt just
+ * offers the button again.
  */
 export function UnsubscribeForm() {
   const [state, setState] = useState<State>('ready');
@@ -78,6 +90,7 @@ export function UnsubscribeForm() {
   const kind = token === null ? null : peekUnsubscribeKind(token);
   // Dropping the fragment on success empties the hash the kind was read from.
   const [doneKind, setDoneKind] = useState<UnsubscribeKind | null>(null);
+  const [doneUnchanged, setDoneUnchanged] = useState(false);
   const incomplete = hash !== undefined && (token === null || kind === null) && state !== 'done';
 
   async function handleUnsubscribe() {
@@ -95,6 +108,7 @@ export function UnsubscribeForm() {
       return;
     }
     if (res.ok) {
+      setDoneUnchanged(await answeredUnchanged(res));
       try {
         window.history.replaceState(null, '', window.location.pathname);
       } catch (err) {
@@ -147,6 +161,8 @@ export function UnsubscribeForm() {
             <>
               You can change this any time in your <SettingsLink href={copy.settings} />.
             </>
+          ) : doneUnchanged ? (
+            <>This invitation was already answered, so nothing changed.</>
           ) : (
             <>You&rsquo;ve declined the invitation. That teacher can&rsquo;t add your address again.</>
           )}
