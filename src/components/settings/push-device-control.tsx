@@ -1,27 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useInstallSupport } from '@/components/layout/install-store';
 import { canOfferInstall } from '@/lib/install-support';
-import { logRequestFailure } from '@/lib/client-errors';
-import {
-  classifyPushDevice,
-  currentPushSubscription,
-  disablePush,
-  enablePush,
-  subscriptionUsesKey,
-  syncPushSubscription,
-  type PushDeviceEnv,
-  type PushDeviceState,
-} from '@/lib/push-client';
-
-/** A line under the control, set by the last thing that did not go as asked. */
-type Notice = null | 'enable-failed' | 'disable-failed' | 'unconfirmed';
+import { disablePush, enablePush } from '@/lib/push-client';
+import { usePushDevice } from './use-push-device';
 
 /** The settings row that turns push on or off for this phone. Shows a
- *  placeholder until the effect below resolves the device's actual state. */
+ *  placeholder until `usePushDevice` resolves the device's actual state. */
 export function PushDeviceControl({
   vapidPublicKey,
   installHref,
@@ -31,67 +19,8 @@ export function PushDeviceControl({
   installHref: '/account' | '/settings';
 }) {
   const install = useInstallSupport();
-  const [state, setState] = useState<PushDeviceState | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
+  const { state, notice, setState, setNotice } = usePushDevice(vapidPublicKey, { resync: true });
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function resolve(): Promise<void> {
-      const hasServiceWorker = 'serviceWorker' in navigator;
-      const hasPushManager = 'PushManager' in window;
-      const hasNotification = 'Notification' in window;
-      let subscription: PushSubscription | null = null;
-      if (hasServiceWorker && hasPushManager) {
-        try {
-          subscription = await currentPushSubscription();
-        } catch (err) {
-          logRequestFailure('push-device-control', { step: 'read' }, err);
-          subscription = null;
-        }
-      }
-      if (cancelled) return;
-      const env: PushDeviceEnv = {
-        vapidConfigured: vapidPublicKey !== null,
-        install,
-        hasServiceWorker,
-        hasPushManager,
-        hasNotification,
-        permission: hasNotification ? Notification.permission : null,
-        subscribed: subscription !== null,
-      };
-      let resolved = classifyPushDevice(env);
-      let resolvedNotice: Notice = null;
-      // The browser's subscription says nothing about which account the
-      // server delivers it to, or whether the server still holds it — the
-      // previous account on a shared phone, or a row deleted since — so a
-      // subscription that may still be good is re-recorded for the account
-      // signed in now.
-      if (resolved === 'on' && subscription && vapidPublicKey) {
-        if (subscriptionUsesKey(subscription, vapidPublicKey) === 'mismatch') {
-          // Made with a key the server no longer signs with: it can receive
-          // nothing, and a new one needs the user's tap.
-          logRequestFailure('push-device-control', { step: 'stale-key' }, new Error('subscription made with another VAPID key'));
-          await disablePush();
-          resolved = 'off';
-        } else if (!(await syncPushSubscription(subscription)).ok) {
-          // Still subscribed in the browser, and possibly still held by the
-          // server; the next visit re-records it.
-          resolvedNotice = 'unconfirmed';
-        }
-        if (cancelled) return;
-      }
-      setNotice(resolvedNotice);
-      setState(resolved);
-    }
-    resolve().catch((err: unknown) => {
-      logRequestFailure('push-device-control', { step: 'resolve' }, err);
-      if (!cancelled) setState('unsupported');
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [install, vapidPublicKey]);
 
   async function handleEnable(): Promise<void> {
     if (!vapidPublicKey || busy) return;
