@@ -1,8 +1,7 @@
 /**
  * Process-wide shutdown signal. `installShutdownSignal` turns SIGTERM and
- * SIGINT into `beginShutdown`; anything holding work open (the notification
- * streams, the scheduler) reads `isShuttingDown` or subscribes with
- * `onShutdown`. Why it exists and what Next keeps owning:
+ * SIGINT into `beginShutdown`; `isShuttingDown` reads the flag and
+ * `onShutdown` subscribes to it. Why it exists and what Next keeps owning:
  * `docs/technical-architecture.md` (Shutdown).
  */
 
