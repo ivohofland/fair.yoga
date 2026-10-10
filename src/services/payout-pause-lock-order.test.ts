@@ -1,7 +1,7 @@
 /**
- * @serial-tier lock-contention — the case below holds one of the teacher's
- * passkey rows on a second connection until `pausePayments` gives up on it
- * under the shared `lock_timeout` (`LOCK_TIMEOUT_SQL`). Its assertion is that
+ * @serial-tier lock-contention — the case below holds the teacher's session
+ * row on a second connection until `pausePayments`' session delete gives up on
+ * it under the shared `lock_timeout` (`LOCK_TIMEOUT_SQL`). Its assertion is that
  * failure's SQLSTATE, and the whole transaction must reach that statement and
  * wait out the bound inside Prisma's interactive-transaction `timeout`: a
  * tier-mate's lock noise that pushed it past would answer `P2028` instead,
@@ -58,19 +58,21 @@ describe('pausePayments, failing after the consume', () => {
     await prisma.payoutPauseToken.create({
       data: { tokenHash: hashToken(raw), teacherId: t.id, eventId: ev.id, expiresAt: new Date(now.getTime() + DAY_MS) },
     });
-    // Recent, so the pause's last statement deletes it — every write before
-    // that one has run when it waits.
+    // Recent, so the pause deletes it before the sessions: it has gone when
+    // the session delete waits, and the rollback must bring it back.
     const pk = `pause-lock-pk-${s}`;
     await prisma.passkeyCredential.create({
       data: { id: pk, accountId: t.accountId, publicKey: Buffer.from('k'), counter: 0, transports: [], createdAt: now },
     });
-    await seedSession(prisma, t.accountId);
+    // Names no credential, so the passkey delete's `SET NULL` passes it by and
+    // the wait falls on the session delete.
+    const sessionId = hashToken(await seedSession(prisma, t.accountId));
 
     const holder = new PrismaClient();
     const held = latch();
     const release = latch();
     const holding = holder.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.$queryRaw`SELECT id FROM "PasskeyCredential" WHERE id = ${pk} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "Session" WHERE id = ${sessionId} FOR UPDATE`;
       held.open();
       await release.promise;
     }, { timeout: 30_000 });
@@ -89,6 +91,7 @@ describe('pausePayments, failing after the consume', () => {
     const state = await prisma.teacher.findUniqueOrThrow({ where: { id: t.id }, select: { paymentsPausedAt: true } });
     expect(state.paymentsPausedAt).toBeNull();
     expect(await prisma.session.count({ where: { accountId: t.accountId } })).toBe(1);
+    expect(await prisma.passkeyCredential.count({ where: { id: pk } })).toBe(1);
 
     expect(await pausePayments(prisma, raw, now)).toEqual({ status: 'paused' });
   }, 20_000);
