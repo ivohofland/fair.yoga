@@ -1,8 +1,7 @@
 /**
  * What an unsubscribe link can switch off, one member per preference it
  * flips (spec: docs/superpowers/specs/2026-10-10-list-unsubscribe-design.md,
- * Decision 3). Client-safe: the confirm page reads the kind to say what will
- * change.
+ * Decision 3). Imports nothing server-only.
  */
 export type UnsubscribeKind =
   | 'student_notifications'
@@ -45,7 +44,7 @@ function decodeBase64Url(segment: string): string | null {
   }
 }
 
-/** Splits a token payload into its target; shared by `peekUnsubscribeKind` and verification. */
+/** Splits a token payload into its target, or null when it is malformed. */
 export function parseUnsubscribePayload(encoded: string): UnsubscribeTarget | null {
   const payload = decodeBase64Url(encoded);
   if (payload === null) return null;

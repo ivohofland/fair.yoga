@@ -13,7 +13,7 @@ const TEACHER_SETTINGS = '/settings/notifications';
 
 const COPY = {
   student_notifications: {
-    what: "You'll stop getting an email when a message in the app goes unread. Messages about your own bookings, cancellations and payments still come by email.",
+    what: "You'll stop getting an email when a message in the app goes unread. Cancellations, waitlist spots and payment requests still come by email.",
     settings: STUDENT_SETTINGS,
   },
   teacher_bookings: {
@@ -124,7 +124,7 @@ export function UnsubscribeForm() {
       <div role="alert" className="flex flex-col gap-3">
         <p className="type-body">
           {state === 'invalid'
-            ? 'This link no longer works. It may have expired.'
+            ? 'This link no longer works. You can change what you get by email after signing in.'
             : 'This link is incomplete. Open it again from the email, or copy the whole address.'}
         </p>
         <p className="type-body">
