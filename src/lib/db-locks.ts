@@ -56,6 +56,14 @@ import { ClassStatus, Currency, Prisma } from '@prisma/client';
  *   adopt  `switchTeacherCurrency` (`currency-switch.ts`) — calls
  *          `lockTeacherForNoKeyUpdate` and `lockClassRowsOrdered` below and
  *          issues the template families' `FOR UPDATE OF` itself (#758).
+ *   adopt  `lockForPasskeyRemoval` (`passkey-credentials.ts`) — issues
+ *          `SET LOCAL` and a row lock on `Teacher` through
+ *          `lockTeacherForNoKeyUpdate`.
+ *   adopt  `removePasskeyLocked` (`passkey-credentials.ts`) — issues no
+ *          `SET LOCAL` and takes no row lock of its own: it is a WRITE that
+ *          trusts its caller to hold the lock `lockForPasskeyRemoval` takes,
+ *          the reason `closeQueueOnStart` is branded. On a bare client the
+ *          delete and the `RemovedPasskey` insert would commit separately.
  *   skip   `activateRegistration`, `hasActiveRegistration` and
  *          `reorderWaitingEntries` (`waitlist.ts`), and
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a
