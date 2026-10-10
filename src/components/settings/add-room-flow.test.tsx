@@ -41,11 +41,17 @@ describe('AddRoomFlow', () => {
     });
   }
 
+  async function searchCity(city = 'Amsterdam') {
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: city } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no shared rooms found/i);
+  }
+
   function stubFetch() {
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
       const url = String(input);
       if (url.startsWith('/api/rooms?')) {
-        return { ok: true, json: async () => ({ data: [] }) };
+        return { ok: true, json: async () => ({ data: { rooms: [], truncated: false } }) };
       }
       if (url === '/api/rooms' && init?.method === 'POST') {
         return {
@@ -77,10 +83,7 @@ describe('AddRoomFlow', () => {
     render(<AddRoomFlow currency="EUR" />);
 
     // Step 1: search. This is the only way to unlock "create new room".
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
     expect(fetchMock.mock.calls.length).toBe(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
@@ -146,10 +149,7 @@ describe('AddRoomFlow', () => {
     render(<AddRoomFlow currency="EUR" />);
 
     // Reach the create step exactly as the existing test does.
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
 
@@ -161,6 +161,8 @@ describe('AddRoomFlow', () => {
     // Fill required fields so the form passes validation.
     fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
@@ -192,29 +194,22 @@ describe('AddRoomFlow', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
     expect(await screen.findByText('Search failed. Please try again.')).toBeDefined();
     expect(screen.queryByText('Network error. Please try again.')).toBeNull();
   });
 
-  // Same reasoning as the sibling assertion in share-room-button.test.tsx:
-  // the fetch mock matches on `startsWith('/api/rooms?')`, so swapping
-  // `searchPublicRooms(postcode, street)` to `(street, postcode)` keeps every
-  // other test here green while the search matches nothing in production.
-  it('asks the search endpoint for the typed postcode and street', async () => {
+  it('asks the search endpoint for the typed city and street-or-venue', async () => {
     stubFetch();
     render(<AddRoomFlow currency="EUR" />);
-
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText(/Street or venue/), { target: { value: 'Keizersgracht' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
-
+    await screen.findByText(/no shared rooms found/i);
     const [url] = fetchMock.mock.calls[0] ?? [];
-    expect(String(url)).toBe('/api/rooms?postcode=1018+DT&street=Keizersgracht');
+    expect(String(url)).toBe('/api/rooms?city=Amsterdam&q=Keizersgracht');
   });
 
   // The ticked direction. The neighbouring test pins that an untouched box
@@ -227,15 +222,14 @@ describe('AddRoomFlow', () => {
     stubFetch();
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
 
     fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
 
     const checkbox = screen.getByRole('checkbox', {
@@ -271,10 +265,7 @@ describe('AddRoomFlow', () => {
     stubFetch();
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
     expect(fetchMock.mock.calls.length).toBe(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
@@ -286,7 +277,7 @@ describe('AddRoomFlow', () => {
 
     // The search survived: its result is still on screen and the way forward
     // is still offered, with no second request.
-    expect(screen.getByText(/no rooms found/i)).toBeDefined();
+    expect(screen.getByText(/no shared rooms found/i)).toBeDefined();
     expect(fetchMock.mock.calls.length).toBe(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
@@ -302,8 +293,7 @@ describe('AddRoomFlow', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeDefined();
@@ -320,21 +310,20 @@ describe('AddRoomFlow', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
       const url = String(input);
-      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: [] }) };
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: { rooms: [], truncated: false } }) };
       if (url === '/api/rooms' && init?.method === 'POST') return htmlResponse(502);
       throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
     fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
@@ -350,21 +339,20 @@ describe('AddRoomFlow', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
       const url = String(input);
-      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: [] }) };
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: { rooms: [], truncated: false } }) };
       if (url === '/api/rooms' && init?.method === 'POST') throw new TypeError('Failed to fetch');
       throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
     fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
@@ -387,21 +375,20 @@ describe('AddRoomFlow', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
       const url = String(input);
-      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: [] }) };
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: { rooms: [], truncated: false } }) };
       if (url === '/api/rooms' && init?.method === 'POST') return htmlResponse(201);
       throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
     fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
@@ -426,7 +413,7 @@ describe('AddRoomFlow', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
       const url = String(input);
-      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: [] }) };
+      if (url.startsWith('/api/rooms?')) return { ok: true, json: async () => ({ data: { rooms: [], truncated: false } }) };
       if (url === '/api/rooms' && init?.method === 'POST') {
         return { ok: true, status: 201, json: async () => ({ data: {} }) };
       }
@@ -435,14 +422,13 @@ describe('AddRoomFlow', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<AddRoomFlow currency="EUR" />);
 
-    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
-    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no rooms found/i);
+    await searchCity();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
     fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
     fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
@@ -456,5 +442,79 @@ describe('AddRoomFlow', () => {
     );
     expect(screen.queryByRole('button', { name: 'Add room' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create room/i })).toBeDisabled();
+  });
+
+  it('carries the city into the create form and leaves the address empty', async () => {
+    stubFetch();
+    render(<AddRoomFlow currency="EUR" />);
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText(/Street or venue/), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no shared rooms found/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+
+    expect((screen.getByLabelText('City') as HTMLInputElement).value).toBe('Amsterdam');
+    const address = screen.getByLabelText('Address') as HTMLInputElement;
+    expect(address.value).toBe('');
+    expect(address.placeholder).toBe('e.g. Keizersgracht 123');
+    expect((screen.getByLabelText('Postcode') as HTMLInputElement).value).toBe('');
+  });
+
+  it('hints at a missing house number without blocking the create', async () => {
+    stubFetch();
+    render(<AddRoomFlow currency="EUR" />);
+    await searchCity();
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht' } });
+    expect(screen.getByText('Did you include the house number?')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht 1' } });
+    expect(screen.queryByText('Did you include the house number?')).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Keizersgracht' } });
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create room' }));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+    const [, opts] = fetchMock.mock.calls[1] ?? [];
+    expect(JSON.parse((opts as { body: string }).body).address).toBe('Keizersgracht');
+  });
+
+  it('asks for address and postcode before posting', async () => {
+    stubFetch();
+    render(<AddRoomFlow currency="EUR" />);
+    await searchCity();
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create room' }));
+    expect(await screen.findByText('Venue name, address, city and postcode are required')).toBeInTheDocument();
+    expect(fetchMock.mock.calls).toHaveLength(1);
+  });
+
+  it('keeps the create form across Back and forward again', async () => {
+    stubFetch();
+    render(<AddRoomFlow currency="EUR" />);
+    await searchCity('Utrecht');
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Oudegracht 12' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Utrecht Centrum' } });
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '3511 AB' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    expect((screen.getByLabelText('Address') as HTMLInputElement).value).toBe('Oudegracht 12');
+    expect((screen.getByLabelText('City') as HTMLInputElement).value).toBe('Utrecht Centrum');
+    expect((screen.getByLabelText('Postcode') as HTMLInputElement).value).toBe('3511 AB');
+  });
+
+  it('says the list is cut off when the search was truncated', async () => {
+    const room = (i: number) => ({ id: `r${i}`, venueName: `V${i}`, roomName: '', address: `A ${i}`, city: 'Amsterdam', postcode: '1000', floor: '', maxCapacity: 5 });
+    fetchMock.mockImplementation(async () => ({ ok: true, json: async () => ({ data: { rooms: [room(1)], truncated: true } }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddRoomFlow currency="EUR" />);
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText('Showing the first 50. Add a street or venue to narrow it.')).toBeInTheDocument();
   });
 });

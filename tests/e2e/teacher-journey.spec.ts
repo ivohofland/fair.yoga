@@ -223,16 +223,16 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto('/settings/rooms/new');
 
-    // Step 1: search by address — nothing exists at this made-up street.
-    await page.getByLabel('Postcode').fill('9999JT');
-    await page.getByLabel('Street').fill(`Journeyweg-${suffix}`);
+    // Step 1: search by city — a made-up one, so nothing is shared there.
+    await page.getByLabel('City').fill(`Journeyville-${suffix}`);
     await page.getByRole('button', { name: 'Search' }).click();
-    await expect(page.getByText('No rooms found at this address.')).toBeVisible();
+    await expect(page.getByText('No shared rooms found in this city.')).toBeVisible();
     await page.getByRole('button', { name: 'Create new room' }).click();
 
-    // Step 2: the room itself.
+    // Step 2: the room itself. City arrives from the search.
     await page.getByLabel('Venue name').fill('Journey Venue');
-    await page.getByLabel('City', { exact: true }).fill('Testville');
+    await page.getByLabel('Address').fill(`Journeyweg-${suffix} 1`);
+    await page.getByLabel('Postcode').fill('9999JT');
     await page.getByLabel('Room name').fill('Main Studio');
     await page.getByLabel('Max capacity').fill('12');
     await page.getByRole('button', { name: 'Create room' }).click();

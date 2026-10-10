@@ -52,8 +52,6 @@ void _roomCoversCreate;
 void _roomHasNoExtras;
 
 interface RoomCreateStepProps {
-  postcode: string;
-  street: string;
   /**
    * Owned by the router, because this step unmounts on every step change and
    * a half-filled form must survive Back. See `NewRoomForm` in
@@ -61,17 +59,14 @@ interface RoomCreateStepProps {
    */
   form: NewRoomForm;
   onFormChange: (form: NewRoomForm) => void;
-  onPostcodeChange: (v: string) => void;
-  onStreetChange: (v: string) => void;
   onCreated: (room: RoomResult) => void;
   onBack: () => void;
 }
 
 export function RoomCreateStep({
-  postcode, street, form, onFormChange,
-  onPostcodeChange, onStreetChange, onCreated, onBack,
+  form, onFormChange, onCreated, onBack,
 }: RoomCreateStepProps) {
-  const { venueName, roomName, floor, city, maxCapacity, equipmentChecks, notes, isPublic } = form;
+  const { venueName, roomName, floor, address, city, postcode, maxCapacity, equipmentChecks, notes, isPublic } = form;
   const set = <K extends keyof NewRoomForm>(key: K, value: NewRoomForm[K]) => {
     onFormChange({ ...form, [key]: value });
     if (createError) setCreateError('');
@@ -91,8 +86,8 @@ export function RoomCreateStep({
 
   async function handleCreateRoom(e: React.FormEvent) {
     e.preventDefault();
-    if (!venueName.trim() || !city.trim()) {
-      setCreateError('Venue name and city are required');
+    if (!venueName.trim() || !address.trim() || !city.trim() || !postcode.trim()) {
+      setCreateError('Venue name, address, city and postcode are required');
       return;
     }
     const cap = Number(maxCapacity);
@@ -110,7 +105,7 @@ export function RoomCreateStep({
 
     const newRoom: NewRoomValues = {
       venueName: venueName.trim(),
-      address: street.trim(),
+      address: address.trim(),
       city: city.trim(),
       postcode: postcode.trim(),
       floor: floor.trim(),
@@ -162,9 +157,12 @@ export function RoomCreateStep({
   return (
     <form onSubmit={handleCreateRoom} className="flex flex-col gap-4">
       <Input label="Venue name" maxLength={VENUE_NAME_MAX} value={venueName} onChange={(e) => set('venueName', e.target.value)} placeholder="e.g. De Yogaschool" />
-      <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={street} onChange={(e) => { onStreetChange(e.target.value); if (createError) setCreateError(''); }} />
+      <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={address} onChange={(e) => set('address', e.target.value)} placeholder="e.g. Keizersgracht 123" />
+      {address.trim() !== '' && !/\d/.test(address) && (
+        <p className="type-caption">Did you include the house number?</p>
+      )}
       <Input label="City" maxLength={CITY_MAX} value={city} onChange={(e) => set('city', e.target.value)} />
-      <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => { onPostcodeChange(e.target.value); if (createError) setCreateError(''); }} />
+      <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => set('postcode', e.target.value)} />
       <Input label="Floor" maxLength={FLOOR_MAX} value={floor} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. Ground, 1st" />
       <Input label="Room name" maxLength={ROOM_NAME_MAX} value={roomName} onChange={(e) => set('roomName', e.target.value)} placeholder="e.g. Main Studio" />
       <Input label="Max capacity" type="number" max={CAPACITY_MAX} value={maxCapacity} onChange={(e) => set('maxCapacity', e.target.value)} />

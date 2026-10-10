@@ -14,7 +14,7 @@
  * deliberately reports as `network` and which nothing pinned before.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { searchPublicRooms } from './room-search';
+import { searchPublicRooms, searchRoomsByCity } from './room-search';
 
 function stubFetch(impl: () => unknown) {
   vi.stubGlobal('fetch', vi.fn(impl));
@@ -102,5 +102,42 @@ describe('searchPublicRooms', () => {
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith('[room-search-body] request failed', { err: unreadable });
     consoleError.mockRestore();
+  });
+});
+
+function stubFetchOk(body: unknown) {
+  stubFetch(async () => ({ ok: true, json: async () => body }));
+}
+
+function stubFetchStatus(status: number) {
+  stubFetch(async () => ({ ok: false, status, json: async () => ({}) }));
+}
+
+describe('searchRoomsByCity', () => {
+  it('asks for the trimmed city and q', async () => {
+    stubFetchOk({ data: { rooms: [], truncated: false } });
+    await searchRoomsByCity('  Zürich ', '  Bahnhof ');
+    const [url] = vi.mocked(global.fetch).mock.calls[0] ?? [];
+    expect(String(url)).toBe('/api/rooms?city=Z%C3%BCrich&q=Bahnhof');
+  });
+
+  it('leaves q off when it is blank', async () => {
+    stubFetchOk({ data: { rooms: [], truncated: false } });
+    await searchRoomsByCity('Utrecht', '   ');
+    const [url] = vi.mocked(global.fetch).mock.calls[0] ?? [];
+    expect(String(url)).toBe('/api/rooms?city=Utrecht');
+  });
+
+  it('returns rooms and truncated', async () => {
+    const found = { id: 'r', venueName: 'V', roomName: '', address: 'A 1', city: 'C', postcode: 'P', floor: '', maxCapacity: 5 };
+    stubFetchOk({ data: { rooms: [found], truncated: true } });
+    expect(await searchRoomsByCity('C', '')).toEqual({ ok: true, rooms: [found], truncated: true });
+  });
+
+  it('reports http on a refusal and network on a malformed body', async () => {
+    stubFetchStatus(400);
+    expect(await searchRoomsByCity('C', '')).toEqual({ ok: false, reason: 'http' });
+    stubFetchOk({ data: [] }); // the old bare-array shape is not this endpoint's
+    expect(await searchRoomsByCity('C', '')).toEqual({ ok: false, reason: 'network' });
   });
 });

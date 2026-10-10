@@ -56,6 +56,11 @@ export type RoomSearchOutcome =
   | { ok: true; rooms: RoomResult[] }
   | { ok: false; reason: 'http' | 'network' };
 
+/** `RoomSearchOutcome`'s counterpart for the city search. */
+export type RoomCitySearchOutcome =
+  | ({ ok: true } & RoomCitySearchResult)
+  | { ok: false; reason: 'http' | 'network' };
+
 /**
  * `res.json()` is `any`, so annotating its result is a cast, not a check —
  * and this module's whole contract is that it returns a value instead of
@@ -73,33 +78,48 @@ export type RoomSearchOutcome =
  * deeper check would duplicate `RoomResult` in a second place that could
  * drift from it.
  */
+function isRoomResult(room: unknown): boolean {
+  if (typeof room !== 'object' || room === null) return false;
+  const r = room as Record<string, unknown>;
+  return typeof r.id === 'string'
+    && typeof r.address === 'string'
+    && typeof r.floor === 'string'
+    && typeof r.roomName === 'string';
+}
+
 function readRoomResults(body: unknown): RoomResult[] | null {
   if (typeof body !== 'object' || body === null) return null;
   const data = (body as { data?: unknown }).data;
   if (!Array.isArray(data)) return null;
-  const ok = data.every((room) => {
-    if (typeof room !== 'object' || room === null) return false;
-    const r = room as Record<string, unknown>;
-    return typeof r.id === 'string'
-      && typeof r.address === 'string'
-      && typeof r.floor === 'string'
-      && typeof r.roomName === 'string';
-  });
-  return ok ? (data as RoomResult[]) : null;
+  return data.every(isRoomResult) ? (data as RoomResult[]) : null;
 }
 
-export async function searchPublicRooms(
-  postcode: string,
-  street: string,
-): Promise<RoomSearchOutcome> {
-  const params = new URLSearchParams({ postcode: postcode.trim(), street: street.trim() });
+/** The city search's body: `data` is `{ rooms, truncated }`, not a bare array. */
+function readRoomCitySearch(body: unknown): RoomCitySearchResult | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const data = (body as { data?: unknown }).data;
+  if (typeof data !== 'object' || data === null) return null;
+  const { rooms, truncated } = data as { rooms?: unknown; truncated?: unknown };
+  if (!Array.isArray(rooms) || !rooms.every(isRoomResult)) return null;
+  if (typeof truncated !== 'boolean') return null;
+  return { rooms: rooms as RoomResult[], truncated };
+}
 
+/**
+ * The request half both searches share: send, then hand back the parsed body
+ * or which way it failed. `logTag` prefixes the `logRequestFailure` tags so
+ * each search keeps its own.
+ */
+async function fetchRoomSearch(
+  params: URLSearchParams,
+  logTag: string,
+): Promise<{ ok: true; body: unknown } | { ok: false; reason: 'http' | 'network' }> {
   // Only the request itself is wrapped, so 'network' means exactly that.
   let res: Response;
   try {
     res = await fetch(`/api/rooms?${params}`);
   } catch (err) {
-    logRequestFailure('room-search-request', {}, err);
+    logRequestFailure(`${logTag}-request`, {}, err);
     return { ok: false, reason: 'network' };
   }
 
@@ -110,15 +130,35 @@ export async function searchPublicRooms(
   // refusing us. Both are reported as 'network': it is the honest description
   // of a reply that did not arrive intact, and because this is a read,
   // nothing was written, so retrying is always safe.
-  let body: unknown;
   try {
-    body = await res.json();
+    return { ok: true, body: await res.json() };
   } catch (err) {
-    logRequestFailure('room-search-body', {}, err);
+    logRequestFailure(`${logTag}-body`, {}, err);
     return { ok: false, reason: 'network' };
   }
+}
 
-  const rooms = readRoomResults(body);
+export async function searchPublicRooms(
+  postcode: string,
+  street: string,
+): Promise<RoomSearchOutcome> {
+  const params = new URLSearchParams({ postcode: postcode.trim(), street: street.trim() });
+  const fetched = await fetchRoomSearch(params, 'room-search');
+  if (!fetched.ok) return fetched;
+
+  const rooms = readRoomResults(fetched.body);
   if (rooms === null) return { ok: false, reason: 'network' };
   return { ok: true, rooms };
+}
+
+/** `GET /api/rooms?city=`: shared rooms in a city, optionally narrowed by `q`. */
+export async function searchRoomsByCity(city: string, q: string): Promise<RoomCitySearchOutcome> {
+  const params = new URLSearchParams({ city: city.trim() });
+  if (q.trim()) params.set('q', q.trim());
+  const fetched = await fetchRoomSearch(params, 'room-city-search');
+  if (!fetched.ok) return fetched;
+
+  const result = readRoomCitySearch(fetched.body);
+  if (result === null) return { ok: false, reason: 'network' };
+  return { ok: true, ...result };
 }

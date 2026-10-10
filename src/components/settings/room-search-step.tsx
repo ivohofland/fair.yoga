@@ -1,46 +1,47 @@
 'use client';
 
 import { useState } from 'react';
-import type { RoomResult, RoomSearchOutcome } from '@/lib/room-search';
+import type { RoomCitySearchOutcome, RoomCitySearchResult, RoomResult } from '@/lib/room-search';
 import type { NoneOf } from '@/lib/type-pins';
-import { searchPublicRooms } from '@/lib/room-search';
+import { ROOM_CITY_SEARCH_LIMIT, searchRoomsByCity } from '@/lib/room-search';
+import { CITY_MAX, ROOM_ADDRESS_MAX } from '@/lib/input-bounds';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { RoomMatchList } from './room-match-list';
 
 interface RoomSearchStepProps {
-  postcode: string;
-  street: string;
+  city: string;
+  q: string;
   /** Owned by the router: this step unmounts on every step change. */
-  results: RoomResult[] | null;
-  onResultsChange: (rooms: RoomResult[] | null) => void;
-  onPostcodeChange: (v: string) => void;
-  onStreetChange: (v: string) => void;
+  results: RoomCitySearchResult | null;
+  onResultsChange: (results: RoomCitySearchResult | null) => void;
+  onCityChange: (v: string) => void;
+  onQChange: (v: string) => void;
   onSelect: (room: RoomResult) => void;
   onCreateNew: () => void;
 }
 
 export function RoomSearchStep({
-  postcode, street, results, onResultsChange,
-  onPostcodeChange, onStreetChange, onSelect, onCreateNew,
+  city, q, results, onResultsChange,
+  onCityChange, onQChange, onSelect, onCreateNew,
 }: RoomSearchStepProps) {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!postcode.trim() || !street.trim()) return;
+    if (!city.trim()) return;
 
     setSearching(true);
     onResultsChange(null);
     setSearchError('');
 
-    // `searchPublicRooms` returns its failure rather than throwing it, so the
+    // `searchRoomsByCity` returns its failure rather than throwing it, so the
     // two cases cannot be collapsed into one `catch` — which is what happened
     // when this call was first extracted, and what these strings were before.
-    const outcome = await searchPublicRooms(postcode, street);
+    const outcome = await searchRoomsByCity(city, q);
     if (outcome.ok) {
-      onResultsChange(outcome.rooms);
+      onResultsChange({ rooms: outcome.rooms, truncated: outcome.truncated });
     } else {
       // The ternary below handles the union's two members by name, so adding
       // a third would silently route it to the network message — re-creating
@@ -49,7 +50,7 @@ export function RoomSearchStep({
       // the failure reasons are exactly these two, and to the unhandled
       // member's own name as soon as one is added.
       const _reasonsHandled: NoneOf<
-        Exclude<Extract<RoomSearchOutcome, { ok: false }>['reason'], 'http' | 'network'>
+        Exclude<Extract<RoomCitySearchOutcome, { ok: false }>['reason'], 'http' | 'network'>
       > = true;
       void _reasonsHandled;
 
@@ -66,18 +67,20 @@ export function RoomSearchStep({
     <>
       <form onSubmit={handleSearch} className="flex flex-col gap-4 mb-6">
         <Input
-          label="Postcode"
-          value={postcode}
-          onChange={(e) => { onPostcodeChange(e.target.value); if (searchError) setSearchError(''); }}
-          placeholder="e.g. 1018 DT"
+          label="City"
+          maxLength={CITY_MAX}
+          value={city}
+          onChange={(e) => { onCityChange(e.target.value); if (searchError) setSearchError(''); }}
+          placeholder="e.g. Amsterdam"
         />
         <Input
-          label="Street"
-          value={street}
-          onChange={(e) => { onStreetChange(e.target.value); if (searchError) setSearchError(''); }}
+          label="Street or venue (optional)"
+          maxLength={ROOM_ADDRESS_MAX}
+          value={q}
+          onChange={(e) => { onQChange(e.target.value); if (searchError) setSearchError(''); }}
           placeholder="e.g. Keizersgracht"
         />
-        <Button type="submit" disabled={searching || !postcode.trim() || !street.trim()}>
+        <Button type="submit" disabled={searching || !city.trim()}>
           {searching ? 'Searching...' : 'Search'}
         </Button>
       </form>
@@ -86,21 +89,24 @@ export function RoomSearchStep({
 
       {results !== null && (
         <div>
-          {results.length > 0 ? (
+          {results.rooms.length > 0 ? (
             <>
-              <p className="text-sm text-brown mb-3">Existing rooms found:</p>
-              <RoomMatchList rooms={results} onSelect={onSelect} />
+              <p className="text-sm text-brown mb-3">Shared rooms found:</p>
+              {results.truncated && (
+                <p className="type-caption mb-3">Showing the first {ROOM_CITY_SEARCH_LIMIT}. Add a street or venue to narrow it.</p>
+              )}
+              <RoomMatchList rooms={results.rooms} onSelect={onSelect} />
               <button
                 type="button"
                 onClick={onCreateNew}
                 className="text-teal text-sm"
               >
-                Or create a new room at this address
+                Or create a new room
               </button>
             </>
           ) : (
             <>
-              <p className="text-sm text-brown mb-3">No rooms found at this address.</p>
+              <p className="text-sm text-brown mb-3">No shared rooms found in this city.</p>
               <button
                 type="button"
                 onClick={onCreateNew}
