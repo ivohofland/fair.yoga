@@ -1,15 +1,10 @@
 /**
- * The shared-room lookup the two room flows run before contributing a room.
+ * Client for the shared-room lookups behind `GET /api/rooms`; the server's
+ * matching rules live on the route and on `searchSharedRoomsByCity`.
  *
- * Deliberately fuzzy: `GET /api/rooms` matches `postcode` and `address` with
- * `contains` + `mode: 'insensitive'`, and returns shared rooms only. That is
- * NOT the same question `Room_public_identity_unique` answers — see
- * `src/lib/room-identity.ts`. This one finds neighbours for a human to judge;
- * that one decides whether the database will accept the write.
- *
- * `searchRoomsByCity` asks the other question: `GET /api/rooms?city=` matches
- * the city as a prefix, accent- and case-insensitively on the server, and
- * says whether the list was cut off.
+ * `searchPublicRooms` finds neighbours of one known address for a human to
+ * judge; it is NOT the question `Room_public_identity_unique` answers — see
+ * `src/lib/room-identity.ts`. `searchRoomsByCity` browses by city.
  */
 import { logRequestFailure } from './client-errors';
 import type { RoomIdentity } from '@/lib/room-identity';
@@ -47,11 +42,9 @@ export interface RoomCitySearchResult {
  * A result, or which way it failed — never a throw.
  *
  * `reason` exists because a refused request and an unreachable server are
- * different problems for the teacher, and each caller has to say which one
- * happened. An earlier version of this module threw on `!res.ok`; every
- * caller then had one `catch`, and a 400 or a 500 was reported as a network
- * failure. Returning the distinction instead of throwing it means a caller
- * cannot collapse the two by accident — it has to read `reason` to compile.
+ * different problems for the teacher, so the type says which one happened.
+ * Returning the distinction instead of throwing it means a caller cannot
+ * collapse the two by accident — it has to read `reason` to compile.
  *
  * The same principle for a write, with the cost it exacted there, is in the
  * `undo` function in `src/lib/use-payment-actions.ts`.
@@ -66,10 +59,9 @@ export type RoomCitySearchOutcome =
   | { ok: false; reason: 'http' | 'network' };
 
 /**
- * Deliberately shallow: it checks the shape the callers actually consume —
- * the identity fields — not every field. A
- * deeper check would duplicate `RoomResult` in a second place that could
- * drift from it.
+ * Deliberately shallow: checks only `id` and the address/floor/room-name
+ * fields, not every `RoomResult` field. A deeper check would duplicate
+ * `RoomResult` in a second place that could drift from it.
  */
 function isRoomResult(room: unknown): room is RoomResult {
   if (typeof room !== 'object' || room === null) return false;
@@ -85,7 +77,7 @@ function isRoomResult(room: unknown): room is RoomResult {
  * and this module's whole contract is that it returns a value instead of
  * throwing. Without this, a 200 whose body has no `data` array yields
  * `rooms: undefined` typed as `RoomResult[]`, and the throw reappears in the
- * *render* path of the caller, where nothing catches it.
+ * *render* path of whoever consumes the result, where nothing catches it.
  *
  * The precedent this module cites for returning rather than throwing (the
  * `undo` function's `readUndoStatus` call in `src/lib/use-payment-actions.ts`)
@@ -111,8 +103,8 @@ function readRoomCitySearch(body: unknown): RoomCitySearchResult | null {
 }
 
 /**
- * The request half both searches share: send, then hand back the parsed body
- * or which way it failed. `logTag` prefixes the `logRequestFailure` tags so
+ * Send a room-search request, then hand back the parsed body or which way it
+ * failed. `logTag` prefixes the `logRequestFailure` tags so
  * each search keeps its own.
  */
 async function fetchRoomSearch(

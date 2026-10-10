@@ -30,7 +30,7 @@ export const SHARED_ROOM_SELECT = {
 } satisfies Record<keyof SharedRoom, true>;
 
 /**
- * The columns a shared-room search returns: exactly `RoomResult`'s keys.
+ * The columns a room search returns: exactly `RoomResult`'s keys.
  *
  * `satisfies Record<keyof RoomResult, true>` refuses a key `RoomResult` does
  * not name, and that is what keeps other teachers' `createdById`, `notes` and

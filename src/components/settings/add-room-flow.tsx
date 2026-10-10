@@ -15,14 +15,11 @@ type Step = 'search' | 'create' | 'settings';
  *
  * They live here because the router does not unmount and the steps do:
  * `{step === 'create' && <RoomCreateStep />}` destroys the component's state
- * every time the teacher goes Back. On `main` all of this sat in one
- * never-unmounting component, so stepping back and forward preserved a
- * half-filled form; pushing it into the step silently traded that away, and
- * no test noticed because none steps backwards.
+ * every time the teacher goes Back.
  *
- * Held as one object rather than eight `useState`s so the step takes one
- * value and one setter instead of sixteen props — the split's readability
- * goal without its state-loss cost. `createError` and `creating` stay inside
+ * Held as one object rather than one `useState` per field, so the step takes
+ * one value and one setter instead of a pair of props per field — the split's
+ * readability goal without its state-loss cost. `createError` and `creating` stay inside
  * the step: they describe one in-flight submission, and losing them on Back
  * is correct.
  */
@@ -66,11 +63,9 @@ const EMPTY_ROOM_FORM: NewRoomForm = {
  * produced by search or create and consumed by settings, and `step` is its
  * own.
  *
- * #136's two request-body pins used to live here, when this file also built
- * both bodies. They moved with the literals they annotate — the room's to
- * `room-create-step.tsx`, the link's to `room-settings-step.tsx` — because a
- * pin in a file that no longer constructs the body compiles and certifies
- * nothing.
+ * A request-body pin belongs beside the literal it annotates
+ * (`room-create-step.tsx`, `room-settings-step.tsx`); in a file that does not
+ * construct the body it compiles and certifies nothing.
  */
 export function AddRoomFlow({ currency }: { currency: Currency }) {
   const router = useRouter();
