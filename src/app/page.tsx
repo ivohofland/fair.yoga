@@ -181,8 +181,8 @@ export default async function LandingPage() {
           </p>
           <p className="type-body">
             Rooms cost more every year. Set your price low and you can’t cover the rent. Set it higher and the
-            people who’d benefit most quietly drift away. Add booking fees and platform commissions, and the two
-            people who matter, you and your students, are the ones left short.
+            people who’d benefit most quietly drift away. Add booking fees and platform commissions on top, and
+            it’s you and your students who end up short.
           </p>
           <p className="type-body text-ink">
             Nobody’s doing it wrong. The numbers were just never built to be fair to both sides at once.

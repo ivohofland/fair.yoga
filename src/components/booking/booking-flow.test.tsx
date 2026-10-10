@@ -59,6 +59,22 @@ describe('BookingFlow', () => {
     expect(document.body.textContent).not.toContain('€');
   });
 
+  it('introduces the picker in the product\'s own words, with no borrowed quote', () => {
+    stubFetch();
+    renderFlow({ currentTier: null, isFirstBooking: false });
+    expect(
+      screen.getByText(
+        'Your price is based on what you can comfortably contribute. Tiers are self-reported. No proof needed, and you can change yours at any time.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Pick the tier that fits your life right now, not the one you feel you should be in.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Lasater/)).not.toBeInTheDocument();
+    expect(screen.getByText('Bills covered, some left over')).toBeInTheDocument();
+    expect(screen.getByText('Money isn\u2019t a worry')).toBeInTheDocument();
+  });
+
   it('keeps the spread explanation with the picker it explains', () => {
     stubFetch();
     renderFlow({ currentTier: null, isFirstBooking: false });

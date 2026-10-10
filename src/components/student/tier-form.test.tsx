@@ -36,6 +36,22 @@ describe('TierForm', () => {
     };
   }
 
+  it('introduces the picker in the product\'s own words, with no borrowed quote', () => {
+    stubFetch();
+    render(<TierForm studentId="student-1" currentTier={3} />);
+    expect(
+      screen.getByText(
+        'Your price for every class is based on what you can comfortably contribute. Tiers are self-reported. No proof needed, and you can change yours here at any time.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Pick the tier that fits your life right now, not the one you feel you should be in.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Lasater/)).not.toBeInTheDocument();
+    expect(screen.getByText('Bills covered, some left over')).toBeInTheDocument();
+    expect(screen.getByText('Money isn\u2019t a worry')).toBeInTheDocument();
+  });
+
   it('sends exactly incomeTier', async () => {
     stubFetch();
     render(<TierForm studentId="student-1" currentTier={3} />);

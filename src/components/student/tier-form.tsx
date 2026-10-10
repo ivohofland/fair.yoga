@@ -5,7 +5,7 @@ import type { z } from 'zod';
 import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
-import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
+import { TIER_INFO, TIER_PROMPT, type IncomeTier } from '@/lib/tiers';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 interface TierFormProps {
@@ -77,12 +77,10 @@ export function TierForm({ studentId, currentTier }: TierFormProps) {
       <section>
         <p className="type-body max-w-[420px]">
           Your price for every class is based on what you can comfortably
-          contribute. Tiers are self-reported — no proof needed, and you can
+          contribute. Tiers are self-reported. No proof needed, and you can
           change yours here at any time.
         </p>
-        <p className="type-caption font-heading italic mt-3 mb-4 max-w-[420px]">
-          &ldquo;{TIER_QUOTE.text}&rdquo; — {TIER_QUOTE.author}
-        </p>
+        <p className="type-body font-semibold mt-3 mb-4 max-w-[420px]">{TIER_PROMPT}</p>
         <div className="flex flex-col gap-3" role="radiogroup" aria-label="Income tier">
           {TIER_INFO.map((t) => {
             const selected = tier === t.tier;

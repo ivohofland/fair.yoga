@@ -15,10 +15,10 @@
         </a>
         <h1 className="type-display" style={{ margin: '0 0 8px' }}>Your tier</h1>
         <p className="type-body" style={{ margin: 0 }}>
-          Your price for every class is based on what you can comfortably contribute. Tiers are self-reported — no proof needed, and you can change yours here at any time.
+          Your price for every class is based on what you can comfortably contribute. Tiers are self-reported. No proof needed, and you can change yours here at any time.
         </p>
-        <p className="type-caption" style={{ fontFamily: 'var(--font-heading)', fontStyle: 'italic', margin: '16px 0 24px' }}>
-          "Yoga is not about touching your toes. It is about what you learn on the way down." — Judith Hanson Lasater
+        <p className="type-body" style={{ fontWeight: 600, margin: '16px 0 24px' }}>
+          Pick the tier that fits your life right now, not the one you feel you should be in.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -30,8 +30,8 @@
                   <div className="type-caption" style={{ marginTop: 2 }}>
                     {t.tier === 1 && 'Money is tight right now'}
                     {t.tier === 2 && 'Covering the basics'}
-                    {t.tier === 3 && 'Comfortable, with some room'}
-                    {t.tier === 4 && 'Doing well financially'}
+                    {t.tier === 3 && 'Bills covered, some left over'}
+                    {t.tier === 4 && 'Money isn\u2019t a worry'}
                     {t.tier === 5 && 'Happy to support others'}
                   </div>
                 </div>
