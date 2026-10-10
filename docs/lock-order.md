@@ -3200,6 +3200,9 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `src/services/invitations-lock-order.test.ts` pins both halves, but only its
   first test drives this function — the second hand-rolls the decline side so
   it can vary the upsert payload, which is the thing under test there.
+- **`declineByToken`** (`src/services/unsubscribe.ts`) — `Invitation` then
+  `TeacherBlock`, through `declinePending`, the same helper and order
+  `declineInvitation` takes.
 - **`acceptInvitation`** (`src/services/invitations.ts`) — `TeacherStudent`
   then `Invitation`. Was the other way round until #174 task 7, and **the old
   order deadlocks against a real production writer**:

@@ -59,11 +59,14 @@ describe('unsubscribe token', () => {
   );
 
   it('in production without a secret: signs nothing, verifies nothing, warns once', async () => {
-    vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('UNSUBSCRIBE_SECRET', '');
-    const { signUnsubscribeToken, unsubscribeLinks } = await load();
+    const devToken = (await load()).signUnsubscribeToken({ kind: 'invitation', subjectId: 'i' })!;
+    expect(devToken).not.toBeNull();
+    vi.stubEnv('NODE_ENV', 'production');
+    const { signUnsubscribeToken, unsubscribeLinks, verifyUnsubscribeToken } = await load();
     const { log } = await import('@/lib/log');
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(verifyUnsubscribeToken(devToken)).toBeNull();
     expect(signUnsubscribeToken({ kind: 'invitation', subjectId: 'i' })).toBeNull();
     expect(unsubscribeLinks({ kind: 'invitation', subjectId: 'i' })).toBeNull();
     expect(

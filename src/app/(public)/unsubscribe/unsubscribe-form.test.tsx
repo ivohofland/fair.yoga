@@ -44,7 +44,7 @@ describe('UnsubscribeForm', () => {
   const REMINDERS = 'Class reminders stop coming by email. If email was the only way you got them, reminders turn off.';
   const EXPECTED = {
     student_notifications: {
-      what: "You'll stop getting an email when a message in the app goes unread. Messages about your own bookings, cancellations and payments still come by email.",
+      what: "You'll stop getting an email when a message in the app goes unread. Cancellations, waitlist spots and payment requests still come by email.",
       settings: '/account/notifications',
     },
     teacher_bookings: {
@@ -151,7 +151,9 @@ describe('UnsubscribeForm', () => {
     await open('teacher_bookings');
     fireEvent.click(screen.getByRole('button', BUTTON));
     await settle();
-    expect(screen.getByRole('alert')).toHaveTextContent('This link no longer works');
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'This link no longer works. You can change what you get by email after signing in.',
+    );
     expect(screen.getByRole('link', { name: 'sign in' })).toHaveAttribute('href', '/login');
     expect(screen.queryByRole('button', BUTTON)).not.toBeInTheDocument();
   });

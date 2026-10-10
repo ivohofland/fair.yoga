@@ -1518,12 +1518,12 @@ export async function declineInvitation(
     // roster-link write has already run by this point. Here nothing has been
     // written yet, so returning commits nothing.
     if (!(await declinePending(tx, { id: invitation.id, teacherId: invitation.teacherId, email }))) {
-      // No longer pending when the swap ran. Already `declined` is this
-      // request done: by this account, the only one the address match
-      // admits, or by its own unlink. Gone is an unknown id. `pending` again
-      // means the row moved away and back between the two statements, so a
-      // retry would meet a row it can write. Anything else was answered the
-      // other way.
+      // The swap wrote nothing. Already `declined` is this request done:
+      // by this account, the only one the address match admits, or by its
+      // own unlink. Gone is an unknown id. Still `pending` means the row
+      // moved between the two statements (away and back, or to another
+      // address), so a retry meets a row it can write or no longer matches.
+      // Anything else was answered the other way.
       const current = await tx.invitation.findUnique({
         where: { id: invitation.id },
         select: { status: true },
