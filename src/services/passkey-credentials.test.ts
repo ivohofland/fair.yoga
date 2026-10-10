@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { deletePasskey } from './passkey-credentials';
+import { deletePasskey, lockForPasskeyRemoval, removePasskeyLocked } from './passkey-credentials';
 import { uniqueSuffix } from '../../tests/helpers';
 
 const prisma = new PrismaClient();
@@ -83,5 +83,42 @@ describe('deletePasskey', () => {
 
     expect((await deletePasskey(prisma, { accountId: account.id, credentialId: id })).status).toBe('deleted');
     expect(await prisma.passkeyCredential.count({ where: { id } })).toBe(0);
+  });
+});
+
+describe('lockForPasskeyRemoval and removePasskeyLocked', () => {
+  it('report paused under the lock and leave a paused account untouched until the caller decides', async () => {
+    const accountId = await makeAccount({ pausedAt: new Date() });
+    const id = await passkey(accountId, new Date('2026-01-02T03:04:05Z'));
+
+    const paused = await prisma.$transaction(async (tx) => (await lockForPasskeyRemoval(tx, accountId)).paused);
+
+    expect(paused).toBe(true);
+    expect(await prisma.passkeyCredential.count({ where: { id } })).toBe(1);
+  });
+
+  it('reports not paused for an account with no teacher profile, and removes with a record', async () => {
+    const account = await prisma.account.create({ data: { email: `pk-lock-${uniqueSuffix()}@test.local` }, select: { id: true } });
+    accountIds.push(account.id);
+    const id = await passkey(account.id, new Date('2026-01-02T03:04:05Z'));
+
+    const out = await prisma.$transaction(async (tx) => {
+      expect((await lockForPasskeyRemoval(tx, account.id)).paused).toBe(false);
+      return removePasskeyLocked(tx, { accountId: account.id, credentialId: id });
+    });
+
+    expect(out.status).toBe('deleted');
+    expect(await prisma.removedPasskey.count({ where: { accountId: account.id } })).toBe(1);
+  });
+
+  it('answers not_found for a credential of another account', async () => {
+    const mine = await makeAccount();
+    const theirs = await makeAccount();
+    const id = await passkey(theirs, new Date('2026-01-02T03:04:05Z'));
+
+    const out = await prisma.$transaction((tx) => removePasskeyLocked(tx, { accountId: mine, credentialId: id }));
+
+    expect(out).toEqual({ status: 'not_found' });
+    expect(await prisma.passkeyCredential.count({ where: { id } })).toBe(1);
   });
 });
