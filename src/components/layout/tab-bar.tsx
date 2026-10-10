@@ -27,8 +27,9 @@ export function TabBar({ unreadCount }: TabBarProps) {
 
   return (
     <>
-      {/* In-flow spacer so page content never hides behind the fixed bar */}
-      <div className="h-16" aria-hidden="true" />
+      {/* In-flow spacer so page content never hides behind the fixed bar —
+          as tall as the bar, safe-area padding included */}
+      <div className="h-[calc(4rem+env(safe-area-inset-bottom))]" aria-hidden="true" />
       <nav className="fixed bottom-0 inset-x-0 z-40">
         <div className="mx-auto w-full max-w-content bg-cream border-t border-border pb-[env(safe-area-inset-bottom)]">
           <div className="grid grid-cols-4 h-16">
