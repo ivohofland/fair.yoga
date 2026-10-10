@@ -118,10 +118,10 @@ export default async function SchedulePage() {
       </div>
 
       <div className="flex flex-col items-start gap-3 mt-8">
-        <Link href="/studio-class/new" className="type-label text-teal no-underline">
+        <Link href="/studio-class/new" className="inline-flex items-center min-h-11 type-label text-teal no-underline">
           Log a studio class
         </Link>
-        <Link href="/schedule/past" className="type-label text-teal no-underline">
+        <Link href="/schedule/past" className="inline-flex items-center min-h-11 type-label text-teal no-underline">
           View past classes
         </Link>
       </div>

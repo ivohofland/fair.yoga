@@ -148,6 +148,14 @@
     color: var(--color-teal);
   }
 
+  /* No press-and-hold link preview in the installed app: it opens pages in a
+     browser sheet the app has no use for. Safari in a tab keeps it. */
+  @media (display-mode: standalone) {
+    a {
+      -webkit-touch-callout: none;
+    }
+  }
+
   /* Dims a control the offline snapshot's fieldset has disabled. This is in the base layer, so a control's own opacity or cursor utility takes precedence. */
   fieldset[data-offline-fieldset]:disabled :is(button, input, select, textarea):disabled {
     opacity: 0.5;
