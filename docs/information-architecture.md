@@ -252,6 +252,8 @@ Each row takes the teacher to the real screen where they'll do this task in the 
 
 **Install card.** Above the checklist, on a phone where the browser can install the app, a one-time card offers to add fair.yoga to the Home Screen. It does not wait for the checklist — a teacher who set up on a laptop meets it on their first phone visit — and it retires for good on Dismiss, on Done after the steps, on an accepted install prompt, or when the Schedule first opens inside the installed app. Its dismissal is the `install` member of `OnboardingStep`, stored on the teacher, so it holds across devices.
 
+**Push card.** Below the install card, inside the installed app on a phone whose browser has never been asked for notification permission, a one-time card offers to turn on push for this phone. Turn on asks the browser from the tap; once it is on, or the person declines in the browser's dialog, the card is gone without anything stored, because the device itself answers it. A failure leaves the card with a retry line. Dismiss retires it for good: its dismissal is the `push` member of `OnboardingStep`, stored on the teacher like `install`. A phone where push was turned off in Settings → Notifications has already granted permission, so the card never offers it again there; Settings → Notifications is where push is turned on or off afterwards.
+
 ---
 
 ## Flows

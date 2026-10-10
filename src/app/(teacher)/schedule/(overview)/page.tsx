@@ -4,10 +4,12 @@ import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
 import { InstallCard } from '@/components/schedule/install-card';
+import { PushCard } from '@/components/schedule/push-card';
 import { PaymentsPausedCard } from '@/components/schedule/payments-paused-card';
 import { ScheduleHeader } from '@/components/schedule/schedule-header';
 import { isOnboardingComplete } from '@/lib/onboarding';
 import { hasPayoutDetails } from '@/lib/payment-methods';
+import { readVapidConfig } from '@/lib/push/config';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
@@ -101,6 +103,11 @@ export default async function SchedulePage() {
       {teacher.paymentsPausedAt !== null && <PaymentsPausedCard />}
 
       <InstallCard dismissed={teacher.skippedOnboarding.includes('install')} />
+
+      <PushCard
+        dismissed={teacher.skippedOnboarding.includes('push')}
+        vapidPublicKey={readVapidConfig()?.publicKey ?? null}
+      />
 
       {!isOnboardingComplete(onboardingInput) && (
         <GettingStarted {...onboardingInput} pageSlug={teacher.pageSlug} />
