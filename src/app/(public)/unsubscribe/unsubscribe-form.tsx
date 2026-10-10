@@ -143,8 +143,13 @@ export function UnsubscribeForm() {
       <div role="status" className="flex flex-col gap-3">
         <p className="type-subtitle">You&rsquo;re unsubscribed</p>
         <p className="type-body">
-          You can change this any time in your{' '}
-          {copy?.settings ? <SettingsLink href={copy.settings} /> : 'notification settings'}.
+          {copy?.settings ? (
+            <>
+              You can change this any time in your <SettingsLink href={copy.settings} />.
+            </>
+          ) : (
+            <>You&rsquo;ve declined the invitation. That teacher can&rsquo;t add your address again.</>
+          )}
         </p>
       </div>
     );
