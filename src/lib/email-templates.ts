@@ -31,35 +31,95 @@ export function escapeHtml(text: string): string {
     .replaceAll("'", '&#39;');
 }
 
-const UNREAD_FALLBACK_FOOTER =
-  'You get emails like this when an in-app message goes unread; turn them off in your settings.';
+/** Footer for an email sent because an in-app message went unread. */
+export const UNREAD_FALLBACK_FOOTER =
+  'You get emails like this when an in-app message goes unread; turn them off in your settings. Replies to this email are not read.';
 
 /** Footer for a class reminder, sent at its moment because the reader chose email for reminders. */
 export const CLASS_REMINDER_EMAIL_FOOTER =
-  'You get this email because you chose class reminders by email; change that in your notification settings.';
+  'You get this email because you chose class reminders by email; change that in your notification settings. Replies to this email are not read.';
 
-/** The shared shell: wordmark, one content block, quiet footer. */
+/** Footer for an invitation: the reader has no account here and chose nothing. */
+export const INVITATION_FOOTER =
+  'You get this email because a teacher on fair.yoga added your address. Replies to this email are not read.';
+
+/** Footer for mail about the reader's own account: sign-in links and credential notices. */
+export const ACCOUNT_ACTIVITY_FOOTER = 'You get this email because of activity on your fair.yoga account.';
+
+export type RenderedEmail = { subject: string; html: string; text: string };
+export type ParagraphTone = 'body' | 'intro' | 'note' | 'strong';
+export type EmailBlock =
+  | { kind: 'paragraph'; lines: readonly string[]; tone?: ParagraphTone }
+  | { kind: 'button'; label: string; href: string };
+
+const WORDMARK_LINE = 'fair.yoga — free, open tools for independent yoga teachers.';
+const BUTTON_STYLE =
+  'display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;';
+const TONE_STYLE = {
+  body: '',
+  intro: 'color:#71645A;font-size:13px;',
+  note: 'color:#71645A;font-size:13px;',
+  strong: 'font-weight:700;color:#1A5653;',
+} satisfies Record<ParagraphTone, string>;
+
+function blockHtml(block: EmailBlock, last: boolean): string {
+  switch (block.kind) {
+    case 'paragraph': {
+      const tone = block.tone ?? 'body';
+      const margin = last ? '0' : tone === 'intro' ? '0 0 8px' : '0 0 16px';
+      return `<p style="margin:${margin};${TONE_STYLE[tone]}">${block.lines.map(escapeHtml).join('<br>')}</p>`;
+    }
+    case 'button':
+      return `<p style="margin:${last ? '0' : '0 0 16px'};"><a href="${escapeHtml(block.href)}" style="${BUTTON_STYLE}">${escapeHtml(block.label)}</a></p>`;
+    default: {
+      const unhandled: never = block;
+      return unhandled;
+    }
+  }
+}
+
+function blockText(block: EmailBlock): string {
+  switch (block.kind) {
+    case 'paragraph':
+      return block.lines.join('\n');
+    case 'button':
+      return `${block.label}: ${block.href}`;
+    default: {
+      const unhandled: never = block;
+      return unhandled;
+    }
+  }
+}
+
+/**
+ * The shared shell — wordmark, one content card, quiet footer — rendered as
+ * html and as text from the same blocks. Every string a block carries is
+ * plain text and is escaped here, once.
+ */
 export function wrapEmail(
   heading: string,
-  bodyHtml: string,
-  footer: string = UNREAD_FALLBACK_FOOTER,
-): string {
-  return `<!DOCTYPE html>
+  blocks: readonly EmailBlock[],
+  footer: string,
+): { html: string; text: string } {
+  const body = blocks.map((b, i) => blockHtml(b, i === blocks.length - 1)).join('\n      ');
+  const html = `<!DOCTYPE html>
 <html lang="en">
 <body style="margin:0;padding:0;background-color:#F7F4EF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif;color:#6B5B4E;">
   <div style="max-width:520px;margin:0 auto;padding:32px 16px;">
     <div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;color:#2D2D2D;margin-bottom:24px;">fair<span style="color:#1A5653;">.</span>yoga</div>
     <div style="background-color:#F0E9DC;border:1px solid #D4C9B8;border-radius:16px;padding:24px;">
-      <h1 style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:20px;line-height:1.3;color:#1A5653;margin:0 0 12px;">${heading}</h1>
-      <div style="font-size:16px;line-height:1.55;color:#6B5B4E;">${bodyHtml}</div>
+      <h1 style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:20px;line-height:1.3;color:#1A5653;margin:0 0 12px;">${escapeHtml(heading)}</h1>
+      <div style="font-size:16px;line-height:1.55;color:#6B5B4E;">${body}</div>
     </div>
     <p style="font-size:13px;line-height:1.4;color:#71645A;margin:24px 0 0;">
-      fair.yoga — free, open tools for independent yoga teachers.<br>
+      ${WORDMARK_LINE}<br>
       ${escapeHtml(footer)}
     </p>
   </div>
 </body>
 </html>`;
+  const text = [heading, ...blocks.map(blockText), `${WORDMARK_LINE}\n${footer}`].join('\n\n') + '\n';
+  return { html, text };
 }
 
 /**
@@ -176,6 +236,7 @@ function studentAction(
 /**
  * Renders the email for a notification: an unread one's layer 3 fallback, or
  * a class reminder sent directly. `footer` replaces the fallback footer.
+ * Every string is plain; `wrapEmail` escapes it.
  *
  * `baseUrl` defaults from the environment the same way `notifyInvitee`
  * (services/invitations.ts) builds its own sign-in link, so existing
@@ -184,11 +245,8 @@ function studentAction(
 export function renderNotificationEmail(
   notification: NotificationEmailInput,
   baseUrl: string = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-  footer?: string,
-): {
-  subject: string;
-  html: string;
-} {
+  footer: string = UNREAD_FALLBACK_FOOTER,
+): RenderedEmail {
   const intro =
     notification.recipientType === 'teacher'
       ? (TEACHER_INTROS[notification.type] ?? STUDENT_INTROS[notification.type])
@@ -197,27 +255,32 @@ export function renderNotificationEmail(
     notification.recipientType === 'teacher'
       ? TEACHER_ACTION_LINKS[notification.type]
       : studentAction(notification);
-  const actionHtml = action
-    ? `<p style="margin:16px 0 0;"><a href="${baseUrl}${action.path}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">${escapeHtml(action.label)}</a></p>`
-    : '';
-  const html = wrapEmail(
-    escapeHtml(notification.title),
-    `<p style="margin:0 0 8px;color:#71645A;font-size:13px;">${escapeHtml(intro)}</p>
-     <p style="margin:0;">${escapeHtml(notification.body)}</p>${actionHtml}`,
-    footer,
-  );
-  return { subject: notification.title, html };
+  const blocks: EmailBlock[] = [
+    { kind: 'paragraph', tone: 'intro', lines: [intro] },
+    { kind: 'paragraph', lines: [notification.body] },
+  ];
+  if (action) blocks.push({ kind: 'button', label: action.label, href: `${baseUrl}${action.path}` });
+  return { subject: notification.title, ...wrapEmail(notification.title, blocks, footer) };
 }
 
 /** The sign-in email: one link, one expiry note, nothing else. */
-export function renderMagicLinkEmail(magicLink: string): { subject: string; html: string } {
-  const html = wrapEmail(
-    'Sign in to fair.yoga',
-    `<p style="margin:0 0 16px;">Tap the button and you're in — no password.</p>
-     <p style="margin:0 0 16px;"><a href="${magicLink}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">Sign in</a></p>
-     <p style="margin:0;font-size:13px;color:#71645A;">This link works once and expires in 15 minutes. If you didn't request it, you can ignore this email.</p>`,
-  );
-  return { subject: 'Sign in to fair.yoga', html };
+export function renderMagicLinkEmail(magicLink: string): RenderedEmail {
+  return {
+    subject: 'Sign in to fair.yoga',
+    ...wrapEmail(
+      'Sign in to fair.yoga',
+      [
+        { kind: 'paragraph', lines: ["Tap the button and you're in — no password."] },
+        { kind: 'button', label: 'Sign in', href: magicLink },
+        {
+          kind: 'paragraph',
+          tone: 'note',
+          lines: ["This link works once and expires in 15 minutes. If you didn't request it, you can ignore this email."],
+        },
+      ],
+      ACCOUNT_ACTIVITY_FOOTER,
+    ),
+  };
 }
 
 /**
@@ -229,22 +292,27 @@ export function renderMagicLinkEmail(magicLink: string): { subject: string; html
  * elsewhere on fair.yoga — this function only ever runs for an address with
  * no in-app surface, but the wording itself must not carry a "welcome back"
  * that would leak that distinction if this ever gets reused. `teacherName` is
- * escaped: it is teacher-authored (their own first/last name), not sanitised
- * on write, same reasoning as `renderNotificationEmail` escaping a teacher's
- * announcement body.
+ * teacher-authored (their own first/last name) and not sanitised on write;
+ * `wrapEmail` escapes it for html and leaves it verbatim in the text.
  */
-export function renderInvitationEmail(
-  teacherName: string,
-  signInUrl: string,
-): { subject: string; html: string } {
-  const subject = `${teacherName} would like to connect on fair.yoga`;
-  const html = wrapEmail(
-    'A teacher would like to connect',
-    `<p style="margin:0 0 16px;">${escapeHtml(teacherName)} added you as a contact on fair.yoga, a free tool independent yoga teachers use to run their classes. You choose whether to connect.</p>
-     <p style="margin:0 0 16px;"><a href="${signInUrl}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">Sign in</a></p>
-     <p style="margin:0;font-size:13px;color:#71645A;">If you weren't expecting this, you can ignore this email.</p>`,
-  );
-  return { subject, html };
+export function renderInvitationEmail(teacherName: string, signInUrl: string): RenderedEmail {
+  return {
+    subject: `${teacherName} would like to connect on fair.yoga`,
+    ...wrapEmail(
+      'A teacher would like to connect',
+      [
+        {
+          kind: 'paragraph',
+          lines: [
+            `${teacherName} added you as a contact on fair.yoga, a free tool independent yoga teachers use to run their classes. You choose whether to connect.`,
+          ],
+        },
+        { kind: 'button', label: 'Sign in', href: signInUrl },
+        { kind: 'paragraph', tone: 'note', lines: ["If you weren't expecting this, you can ignore this email."] },
+      ],
+      INVITATION_FOOTER,
+    ),
+  };
 }
 
 /**
@@ -253,7 +321,7 @@ export function renderInvitationEmail(
  * exactly what a forged copy would imitate, so the way out is named in words
  * for the reader to navigate to themselves.
  */
-export function renderPasskeyAddedEmail(addedAt: Date): { subject: string; html: string } {
+export function renderPasskeyAddedEmail(addedAt: Date): RenderedEmail {
   const when = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'UTC',
     day: 'numeric',
@@ -263,20 +331,27 @@ export function renderPasskeyAddedEmail(addedAt: Date): { subject: string; html:
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(addedAt);
-  const subject = 'A passkey was added to your fair.yoga account';
-  const html = wrapEmail(
-    'A passkey was added',
-    `<p style="margin:0 0 16px;">A passkey was added to your fair.yoga account on ${escapeHtml(when)} UTC. It can now sign in to your account.</p>
-     <p style="margin:0;">If that was you, there is nothing to do. If it was not, sign in, find your passkeys under Settings → Profile if you teach (under Account if you are a student), remove the passkey and choose sign out everywhere.</p>`,
-  );
-  return { subject, html };
+  return {
+    subject: 'A passkey was added to your fair.yoga account',
+    ...wrapEmail(
+      'A passkey was added',
+      [
+        { kind: 'paragraph', lines: [`A passkey was added to your fair.yoga account on ${when} UTC. It can now sign in to your account.`] },
+        {
+          kind: 'paragraph',
+          lines: ['If that was you, there is nothing to do. If it was not, sign in, find your passkeys under Settings → Profile if you teach (under Account if you are a student), remove the passkey and choose sign out everywhere.'],
+        },
+      ],
+      ACCOUNT_ACTIVITY_FOOTER,
+    ),
+  };
 }
 
 /**
  * The notice sent after a passkey is removed. No link, for the reason
  * `renderPasskeyAddedEmail` gives.
  */
-export function renderPasskeyRemovedEmail(removedAt: Date): { subject: string; html: string } {
+export function renderPasskeyRemovedEmail(removedAt: Date): RenderedEmail {
   const when = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'UTC',
     day: 'numeric',
@@ -286,13 +361,20 @@ export function renderPasskeyRemovedEmail(removedAt: Date): { subject: string; h
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(removedAt);
-  const subject = 'A passkey was removed from your fair.yoga account';
-  const html = wrapEmail(
-    'A passkey was removed',
-    `<p style="margin:0 0 16px;">A passkey was removed from your fair.yoga account on ${escapeHtml(when)} UTC. It can no longer sign in to your account.</p>
-     <p style="margin:0;">If that was you, there is nothing to do. If it was not, someone else is signed in to your account: sign in, choose sign out everywhere under Settings → Profile if you teach (under Account if you are a student), and check your payment details.</p>`,
-  );
-  return { subject, html };
+  return {
+    subject: 'A passkey was removed from your fair.yoga account',
+    ...wrapEmail(
+      'A passkey was removed',
+      [
+        { kind: 'paragraph', lines: [`A passkey was removed from your fair.yoga account on ${when} UTC. It can no longer sign in to your account.`] },
+        {
+          kind: 'paragraph',
+          lines: ['If that was you, there is nothing to do. If it was not, someone else is signed in to your account: sign in, choose sign out everywhere under Settings → Profile if you teach (under Account if you are a student), and check your payment details.'],
+        },
+      ],
+      ACCOUNT_ACTIVITY_FOOTER,
+    ),
+  };
 }
 
 export interface PayoutChangedEmailInput {
@@ -390,11 +472,10 @@ function formatInZoneOrUtc(at: Date, timezone: string): string {
  * of which fails toward safety. The secret rides in
  * the URL fragment, so it never reaches a server log or a Referer.
  *
- * Every interpolated value is escaped. `before`/`after` are masked strings
- * built from teacher input, and `pauseUrl` is escaped as an attribute.
+ * `before`/`after` are masked strings built from teacher input; `wrapEmail`
+ * escapes every value, `pauseUrl` as an attribute included.
  */
-export function renderPayoutChangedEmail(input: PayoutChangedEmailInput): { subject: string; html: string } {
-  const subject = 'Your payout details changed on fair.yoga';
+export function renderPayoutChangedEmail(input: PayoutChangedEmailInput): RenderedEmail {
   const when = formatInZoneOrUtc(input.at, input.timezone);
   const isBank = input.kind.startsWith('bank_account');
   const what =
@@ -403,22 +484,30 @@ export function renderPayoutChangedEmail(input: PayoutChangedEmailInput): { subj
   const alike = payoutMasksAlikeNote(input);
   const lines: string[] = [];
   if (alike !== null) {
-    lines.push(`Shown as: ${escapeHtml(input.before ?? '')}`);
-    lines.push(escapeHtml(alike.text));
+    lines.push(`Shown as: ${input.before ?? ''}`);
+    lines.push(alike.text);
   } else {
-    if (input.before !== null) lines.push(`Before: ${escapeHtml(input.before)}`);
-    if (input.after !== null) lines.push(`After: ${escapeHtml(input.after)}`);
+    if (input.before !== null) lines.push(`Before: ${input.before}`);
+    if (input.after !== null) lines.push(`After: ${input.after}`);
   }
-  const html = wrapEmail(
-    'Your payout details changed',
-    `<p style="margin:0 0 16px;">${escapeHtml(what)} on your fair.yoga account on ${escapeHtml(when)}.</p>
-     <p style="margin:0 0 16px;">${lines.join('<br>')}</p>
-     <p style="margin:0 0 16px;">If that was you, there is nothing to do. If it was not, pause payments now: students are told to hold off, and every device is signed out.</p>
-     <p style="margin:0 0 16px;"><a href="${escapeHtml(input.pauseUrl)}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">This wasn't me</a></p>
-     <p style="margin:0;font-size:13px;color:#71645A;">The link works for ${PAUSE_TOKEN_TTL_DAYS} days. It can only pause payments and sign devices out; it never signs anyone in.</p>`,
-    PAYOUT_CHANGED_FOOTER,
+  const blocks: EmailBlock[] = [{ kind: 'paragraph', lines: [`${what} on your fair.yoga account on ${when}.`] }];
+  if (lines.length > 0) blocks.push({ kind: 'paragraph', lines });
+  blocks.push(
+    {
+      kind: 'paragraph',
+      lines: ['If that was you, there is nothing to do. If it was not, pause payments now: students are told to hold off, and every device is signed out.'],
+    },
+    { kind: 'button', label: "This wasn't me", href: input.pauseUrl },
+    {
+      kind: 'paragraph',
+      tone: 'note',
+      lines: [`The link works for ${PAUSE_TOKEN_TTL_DAYS} days. It can only pause payments and sign devices out; it never signs anyone in.`],
+    },
   );
-  return { subject, html };
+  return {
+    subject: 'Your payout details changed on fair.yoga',
+    ...wrapEmail('Your payout details changed', blocks, PAYOUT_CHANGED_FOOTER),
+  };
 }
 
 export interface DegradationDigestEntry {
@@ -434,31 +523,27 @@ const DEGRADATION_DIGEST_FOOTER =
   'You get this because OPERATOR_EMAIL is set on this server. What each code means: docs/degradation-sites.md.';
 
 /** The operator's digest: one block per degradation that fired since they were last told. */
-export function renderDegradationDigestEmail(entries: readonly DegradationDigestEntry[]): {
-  subject: string;
-  html: string;
-} {
+export function renderDegradationDigestEmail(entries: readonly DegradationDigestEntry[]): RenderedEmail {
   const subject =
     entries.length === 1
       ? `fair.yoga: ${entries[0]!.code} fired`
       : `fair.yoga: ${entries.length} degradations fired`;
 
-  const blocks = entries
-    .map((e) => {
-      const sample = Object.entries(e.sample)
-        .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`)
-        .join(' · ');
-      return `<div style="margin:0 0 16px;">
-        <p style="margin:0;font-weight:700;color:#1A5653;">${escapeHtml(e.code)}</p>
-        <p style="margin:4px 0;">${escapeHtml(e.description)}</p>
-        <p style="margin:0;color:#71645A;font-size:13px;">First seen ${escapeHtml(e.firstSeenAt.toISOString())} · last seen ${escapeHtml(e.lastSeenAt.toISOString())} · about ${e.occurrences} times</p>
-        ${sample ? `<p style="margin:4px 0 0;color:#71645A;font-size:13px;">Latest: ${sample}</p>` : ''}
-      </div>`;
-    })
-    .join('');
+  const blocks = entries.flatMap((e): EmailBlock[] => {
+    const sample = Object.entries(e.sample)
+      .map(([k, v]) => `${k}: ${String(v)}`)
+      .join(' · ');
+    return [
+      { kind: 'paragraph', tone: 'strong', lines: [e.code] },
+      { kind: 'paragraph', lines: [e.description] },
+      {
+        kind: 'paragraph',
+        tone: 'note',
+        lines: [`First seen ${e.firstSeenAt.toISOString()} · last seen ${e.lastSeenAt.toISOString()} · about ${e.occurrences} times`],
+      },
+      ...(sample ? [{ kind: 'paragraph', tone: 'note', lines: [`Latest: ${sample}`] } satisfies EmailBlock] : []),
+    ];
+  });
 
-  return {
-    subject,
-    html: wrapEmail('A fallback fired', blocks, DEGRADATION_DIGEST_FOOTER),
-  };
+  return { subject, ...wrapEmail('A fallback fired', blocks, DEGRADATION_DIGEST_FOOTER) };
 }
