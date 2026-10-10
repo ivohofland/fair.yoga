@@ -6,27 +6,24 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 
-// RESEND_API_KEY is unset in the test environment, so the service takes the
-// dev path (logs instead of sending) — what we assert is the bookkeeping:
-// which notifications get picked up and marked emailSent.
+// LETTERMINT_API_TOKEN is unset in the test environment, so `sendEmail`
+// outside production dry-runs (logs instead of delivering) and the adapter is
+// never called — what the first tests assert is the bookkeeping: which
+// notifications get picked up and marked emailSent.
 //
-// Except in the last describe, which forces the real-send path against this
-// mocked SDK. Claim-before-send is only observable where a send actually
+// Except in the last describe, which sets a token and mocks the Lettermint
+// adapter. Claim-before-send is only observable where a delivery actually
 // happens: on the dry-run path the mark still follows the decision, so
 // every ordering looks identical from the database alone.
-const sendMock = vi.hoisted(() => vi.fn());
-vi.mock('resend', () => ({
-  Resend: class {
-    emails = { send: sendMock };
-  },
-}));
+const deliverMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const teacherEmail = `fallback-teacher-${uniqueSuffix}@test.local`;
 
 function sendsTo(email: string): number {
-  return sendMock.mock.calls.filter(([args]) => args.to === email).length;
+  return deliverMock.mock.calls.filter(([args]) => args.to === email).length;
 }
 
 describe('processEmailFallback (DB)', () => {
@@ -313,7 +310,6 @@ describe('processEmailFallback (DB)', () => {
   // same row at once. What decides whether the recipient gets one email or
   // two is which side of the send the mark falls on.
   describe('claiming a notification before sending it', () => {
-    const savedApiKey = process.env.RESEND_API_KEY;
     const savedLettermintToken = process.env.LETTERMINT_API_TOKEN;
     const savedDryRun = process.env.EMAIL_DRY_RUN;
     const perTestNotificationIds: string[] = [];
@@ -330,14 +326,11 @@ describe('processEmailFallback (DB)', () => {
 
     beforeAll(() => {
       // Force the real-send path: a key is configured and dry-run is off.
-      process.env.RESEND_API_KEY = 're_test_dummy';
       process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
       delete process.env.EMAIL_DRY_RUN;
     });
 
     afterAll(() => {
-      if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
-      else process.env.RESEND_API_KEY = savedApiKey;
       if (savedLettermintToken === undefined) delete process.env.LETTERMINT_API_TOKEN;
       else process.env.LETTERMINT_API_TOKEN = savedLettermintToken;
       if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
@@ -345,8 +338,8 @@ describe('processEmailFallback (DB)', () => {
     });
 
     beforeEach(() => {
-      sendMock.mockReset();
-      sendMock.mockResolvedValue({ error: null });
+      deliverMock.mockReset();
+      deliverMock.mockResolvedValue({ ok: true });
     });
 
     // Hygiene: some tests here deliberately leave their row unsent. Every sweep
@@ -410,9 +403,9 @@ describe('processEmailFallback (DB)', () => {
       expect(after.emailSent).toBe(true);
     });
 
-    it('releases the claim when Resend reports a failure, so the next sweep retries', async () => {
+    it('releases the claim when the adapter reports a failure, so the next sweep retries', async () => {
       const notification = await makeEligible();
-      sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
+      deliverMock.mockResolvedValueOnce({ ok: false, reason: 'lettermint 500: x' });
 
       const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
       await expect(processEmailFallback(scoped.db)).rejects.toThrow(/1 of 1 sends failed$/);
@@ -428,7 +421,7 @@ describe('processEmailFallback (DB)', () => {
 
     it('releases the claim when the send throws', async () => {
       const notification = await makeEligible();
-      sendMock.mockRejectedValueOnce(new Error('socket hang up'));
+      deliverMock.mockRejectedValueOnce(new Error('socket hang up'));
 
       const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
       await expect(processEmailFallback(scoped.db)).rejects.toThrow(/1 of 1 sends failed$/);
@@ -439,9 +432,68 @@ describe('processEmailFallback (DB)', () => {
       expect(after.emailSent).toBe(false);
     });
 
+    it('sends nothing and releases the claim in production with no token, rather than marking it emailed', async () => {
+      const notification = await makeEligible();
+      const savedToken = process.env.LETTERMINT_API_TOKEN;
+      delete process.env.LETTERMINT_API_TOKEN;
+      delete process.env.EMAIL_DRY_RUN;
+      vi.stubEnv('NODE_ENV', 'production');
+      try {
+        const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
+        await expect(processEmailFallback(scoped.db)).rejects.toThrow(/1 of 1 sends failed$/);
+      } finally {
+        vi.unstubAllEnvs();
+        process.env.LETTERMINT_API_TOKEN = savedToken;
+      }
+
+      expect(deliverMock).not.toHaveBeenCalled();
+      const after = await prisma.notification.findUniqueOrThrow({
+        where: { id: notification.id },
+      });
+      expect(after.emailSent).toBe(false);
+    });
+
+    it('dry-runs outside production with no token: marked emailed, adapter not called', async () => {
+      const notification = await makeEligible();
+      const savedToken = process.env.LETTERMINT_API_TOKEN;
+      delete process.env.LETTERMINT_API_TOKEN;
+      try {
+        const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
+        await expect(processEmailFallback(scoped.db)).resolves.toBe(1);
+      } finally {
+        process.env.LETTERMINT_API_TOKEN = savedToken;
+      }
+
+      expect(deliverMock).not.toHaveBeenCalled();
+      const after = await prisma.notification.findUniqueOrThrow({
+        where: { id: notification.id },
+      });
+      expect(after.emailSent).toBe(true);
+    });
+
+    it('sends with a per-notification idempotency key, no Reply-To, and the class route when set', async () => {
+      const notification = await makeEligible();
+      const savedRoute = process.env.LETTERMINT_CLASS_ROUTE;
+      process.env.LETTERMINT_CLASS_ROUTE = 'class-route';
+      try {
+        const scoped = scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } });
+        await processEmailFallback(scoped.db);
+      } finally {
+        if (savedRoute === undefined) delete process.env.LETTERMINT_CLASS_ROUTE;
+        else process.env.LETTERMINT_CLASS_ROUTE = savedRoute;
+      }
+
+      expect(deliverMock).toHaveBeenCalledTimes(1);
+      const [payload] = deliverMock.mock.calls[0]!;
+      expect(payload.to).toBe(teacherEmail);
+      expect(payload.idempotencyKey).toBe(`notification-${notification.id}`);
+      expect(payload.replyTo).toBeUndefined();
+      expect(payload.route).toBe('class-route');
+    });
+
     it('names the stranded claim in the thrown error when the release itself fails', async () => {
       const notification = await makeEligible();
-      sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
+      deliverMock.mockResolvedValueOnce({ ok: false, reason: 'lettermint 500: x' });
 
       const unreleasable = prisma.$extends({
         query: {
@@ -546,7 +598,7 @@ describe('processEmailFallback (DB)', () => {
         await processEmailFallback(scoped.db);
 
         expect(sendsTo(studentEmail)).toBe(1);
-        const subjects = sendMock.mock.calls.map(([args]) => args.subject);
+        const subjects = deliverMock.mock.calls.map(([args]) => args.subject);
         expect(subjects).toContain('Class reminder control');
         expect(subjects).not.toContain('Class reminder');
       } finally {
@@ -660,7 +712,7 @@ describe('processEmailFallback (DB)', () => {
 
         expect(sendsTo(studentEmail)).toBe(3);
         const htmlFor = (subject: string): string => {
-          const call = sendMock.mock.calls.find(([args]) => args.subject === subject);
+          const call = deliverMock.mock.calls.find(([args]) => args.subject === subject);
           if (!call) throw new Error(`no email sent with subject "${subject}"`);
           return call[0].html as string;
         };
@@ -757,7 +809,7 @@ describe('processEmailFallback (DB)', () => {
 
         await processEmailFallback(scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } }).db);
 
-        const call = sendMock.mock.calls.find(([args]) => args.subject === 'Priced with a link');
+        const call = deliverMock.mock.calls.find(([args]) => args.subject === 'Priced with a link');
         if (!call) throw new Error('no email sent with subject "Priced with a link"');
         expect(call[0].html as string).toContain(`/bookings/${linkClass.id}/pay"`);
         expect(call[0].html as string).toContain('Pay now');
@@ -850,7 +902,7 @@ describe('processEmailFallback (DB)', () => {
 
         await processEmailFallback(scopeSweep(prisma, { Notification: { id: { in: [notification.id] } } }).db);
 
-        const call = sendMock.mock.calls.find(([args]) => args.subject === 'Priced while paused');
+        const call = deliverMock.mock.calls.find(([args]) => args.subject === 'Priced while paused');
         if (!call) throw new Error('no email sent with subject "Priced while paused"');
         expect(call[0].html as string).not.toContain('/pay"');
         expect(call[0].html as string).not.toContain('Pay now');
