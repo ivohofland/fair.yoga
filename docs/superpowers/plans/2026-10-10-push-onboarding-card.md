@@ -175,7 +175,7 @@ Expected: FAIL, because the module `./use-push-device` cannot be resolved.
 - [ ] **Step 3: Create the hook.** Write `src/components/settings/use-push-device.ts`. The effect body is `PushDeviceControl`'s, moved as-is, with three changes:
   - the re-sync branch is gated on `resync`;
   - `permission` is captured;
-  - the `logRequestFailure` tags stay `'push-device-control'`, so existing log consumers are unaffected.
+  - the `logRequestFailure` tags become `'push-device'`, since the schedule card now logs through the same hook.
 
 ```ts
 'use client';
@@ -199,7 +199,7 @@ export type PushNotice = null | 'enable-failed' | 'disable-failed' | 'unconfirme
 export interface PushDevice {
   /** null until the effect below has resolved the device. */
   state: PushDeviceState | null;
-  /** The permission read while resolving; null without `Notification` or before resolving. */
+  /** The permission read while resolving; null without `Notification`, before resolving, or when resolving threw. */
   permission: NotificationPermission | null;
   notice: PushNotice;
   setState: Dispatch<SetStateAction<PushDeviceState | null>>;
@@ -207,10 +207,11 @@ export interface PushDevice {
 }
 
 /**
- * This device's push state, resolved once per mount and again when the
- * install state or key changes. `resync` re-records a subscription that is
- * already on for the account signed in now; without it, resolving an `on`
- * device makes no request.
+ * This device's push state, resolved on mount and again whenever an effect
+ * dependency changes. With `resync`, an `on` subscription made with the
+ * current key is re-recorded for the account signed in now; without it, that
+ * case makes no request. A subscription made with another key is dropped
+ * either way.
  */
 export function usePushDevice(vapidPublicKey: string | null, { resync }: { resync: boolean }): PushDevice {
   const install = useInstallSupport();
@@ -229,7 +230,7 @@ export function usePushDevice(vapidPublicKey: string | null, { resync }: { resyn
         try {
           subscription = await currentPushSubscription();
         } catch (err) {
-          logRequestFailure('push-device-control', { step: 'read' }, err);
+          logRequestFailure('push-device', { step: 'read' }, err);
           subscription = null;
         }
       }
@@ -246,21 +247,21 @@ export function usePushDevice(vapidPublicKey: string | null, { resync }: { resyn
       };
       let resolved = classifyPushDevice(env);
       let resolvedNotice: PushNotice = null;
-      // The browser's subscription says nothing about which account the
-      // server delivers it to, or whether the server still holds it — the
-      // previous account on a shared phone, or a row deleted since — so a
-      // caller that asks to resync has a subscription that may still be
-      // good re-recorded for the account signed in now.
       if (resolved === 'on' && subscription && vapidPublicKey) {
         if (subscriptionUsesKey(subscription, vapidPublicKey) === 'mismatch') {
           // Made with a key the server no longer signs with: it can receive
           // nothing, and a new one needs the user's tap.
-          logRequestFailure('push-device-control', { step: 'stale-key' }, new Error('subscription made with another VAPID key'));
+          logRequestFailure('push-device', { step: 'stale-key' }, new Error('subscription made with another VAPID key'));
           await disablePush();
           resolved = 'off';
         } else if (resync && !(await syncPushSubscription(subscription)).ok) {
-          // Still subscribed in the browser, and possibly still held by the
-          // server; the next visit re-records it.
+          // The browser's subscription says nothing about which account the
+          // server delivers it to, or whether the server still holds it — the
+          // previous account on a shared phone, or a row deleted since — so
+          // with `resync` one that may still be good is re-recorded for the
+          // account signed in now. On failure it is still subscribed in the
+          // browser, and possibly still held by the server; the next resolve
+          // with `resync` re-records it.
           resolvedNotice = 'unconfirmed';
         }
         if (cancelled) return;
@@ -270,7 +271,7 @@ export function usePushDevice(vapidPublicKey: string | null, { resync }: { resyn
       setState(resolved);
     }
     resolve().catch((err: unknown) => {
-      logRequestFailure('push-device-control', { step: 'resolve' }, err);
+      logRequestFailure('push-device', { step: 'resolve' }, err);
       if (!cancelled) setState('unsupported');
     });
     return () => {
@@ -395,8 +396,12 @@ vi.mock('@/components/layout/install-store', () => ({
 }));
 
 let device: { state: PushDeviceState | null; permission: NotificationPermission | null } = { state: 'off', permission: 'default' };
+let hookArgs: unknown[] = [];
 vi.mock('@/components/settings/use-push-device', () => ({
-  usePushDevice: () => ({ ...device, notice: null, setState: vi.fn(), setNotice: vi.fn() }),
+  usePushDevice: (...args: unknown[]) => {
+    hookArgs = args;
+    return { ...device, notice: null, setState: vi.fn(), setNotice: vi.fn() };
+  },
 }));
 
 const enablePushMock = vi.fn<(vapidPublicKey: string) => Promise<'on' | 'blocked' | 'failed'>>();
@@ -423,6 +428,7 @@ describe('PushCard', () => {
   beforeEach(() => {
     coarse = true;
     device = { state: 'off', permission: 'default' };
+    hookArgs = [];
     enablePushMock.mockReset();
     fetchMock.mockReset();
     fetchMock.mockResolvedValue({ ok: true });
@@ -449,7 +455,12 @@ describe('PushCard', () => {
     });
   });
 
-  it('renders nothing without a VAPID key, whatever the device reports', () => {
+  it('resolves the device with the page\'s key and never re-records it', () => {
+    render(<PushCard dismissed={false} vapidPublicKey="KEY" />);
+    expect(hookArgs).toEqual(['KEY', { resync: false }]);
+  });
+
+  it('renders nothing without a VAPID key, even for a device reported off and never asked', () => {
     const { container } = render(<PushCard dismissed={false} vapidPublicKey={null} />);
     expect(container).toBeEmptyDOMElement();
   });
@@ -519,12 +530,12 @@ import { enablePush } from '@/lib/push-client';
 import { OnboardingSkipButton } from './onboarding-skip-button';
 
 /**
- * A one-time offer to turn on push, for a phone in the installed app whose
- * browser has never been asked. `permission === 'default'` is what separates
- * that phone from one where push was turned off on purpose: turning it off
- * drops the subscription but leaves the permission granted. Gated on a
- * coarse pointer because dismissal is per teacher, and a "no" in a desktop
- * window would otherwise retire the offer on the phone too.
+ * A one-time offer to turn on push, for a phone whose browser has never been
+ * asked. `permission === 'default'` is what "never asked" means: unsubscribing
+ * never revokes a granted permission, so a phone where push was switched off
+ * reads `granted`. Gated on a coarse pointer because `dismissed` holds for the
+ * teacher, not the device, and a "no" in a desktop window would otherwise
+ * retire the offer on the phone too.
  */
 export function PushCard({ dismissed, vapidPublicKey }: { dismissed: boolean; vapidPublicKey: string | null }) {
   const coarse = useCoarsePointer();
@@ -546,6 +557,9 @@ export function PushCard({ dismissed, vapidPublicKey }: { dismissed: boolean; va
     setFailed(false);
     const outcome = await enablePush(key);
     if (outcome === 'failed') {
+      // Kept only while the page is open: a failure after the browser granted
+      // permission reads `off` and `granted` on the next load, so the card does
+      // not return (docs/information-architecture.md, Push card).
       setFailed(true);
       setBusy(false);
       return;
@@ -612,7 +626,7 @@ Expected: PASS.
 - [ ] **Step 7: Document it.** In `docs/information-architecture.md`, after the **Install card.** paragraph, add:
 
 ```markdown
-**Push card.** Below the install card, inside the installed app on a phone whose browser has never been asked for notification permission, a one-time card offers to turn on push for this phone. Turn on asks the browser from the tap; once it is on, or the person declines in the browser's dialog, the card is gone without anything stored, because the device itself answers it. A failure leaves the card with a retry line. Dismiss retires it for good: its dismissal is the `push` member of `OnboardingStep`, stored on the teacher like `install`. A phone where push was turned off in Settings → Notifications has already granted permission, so the card never offers it again there; Settings → Notifications is where push is turned on or off afterwards.
+**Push card.** Below the install card, inside the installed app on a phone whose browser has never been asked for notification permission, a one-time card offers to turn on push for this phone. Turn on asks the browser from the tap; once it is on, or the person blocks notifications in the browser's dialog, the card is gone without anything stored, because the device itself answers it. A failure leaves the card with a retry line for as long as the page stays open; if the browser had already granted permission when it failed, the next visit sees a phone that is merely off and the card does not return there — Settings → Notifications is the way back. Dismiss retires it for good: its dismissal is the `push` member of `OnboardingStep`, stored on the teacher like `install`. A phone where push was turned off in Settings → Notifications has already granted permission, so the card never offers it again there; Settings → Notifications is where push is turned on or off afterwards.
 ```
 
 - [ ] **Step 8: Typecheck, lint, build.**

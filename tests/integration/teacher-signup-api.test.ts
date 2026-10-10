@@ -919,8 +919,10 @@ describe('POST /api/account/onboarding', () => {
   });
 
   /**
-   * `push` (#817) dismisses the push card on the schedule. Like `install`,
-   * it carries no settlement gate; a double post stores it once.
+   * `push` (#817) dismisses the push card. Its render rule lives in
+   * `docs/information-architecture.md` (Onboarding flow → Push card). The
+   * fixture is still unsettled here, so a 200 shows the step carries no
+   * settlement gate; a double post stores it once.
    */
   it('records push once, however often it is posted', async () => {
     for (let i = 0; i < 2; i += 1) {
