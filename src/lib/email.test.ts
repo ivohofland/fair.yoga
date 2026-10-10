@@ -42,6 +42,7 @@ beforeEach(() => {
   deliverMock.mockReset();
   vi.mocked(log.info).mockClear();
   vi.mocked(log.warn).mockClear();
+  vi.mocked(log.error).mockClear();
 });
 
 afterEach(() => {
@@ -92,10 +93,17 @@ describe('sendEmail', () => {
   it('turns an adapter throw into ok: false', async () => {
     deliverMock.mockRejectedValue(new Error('boom'));
 
+    const thrown = new Error('boom');
+    deliverMock.mockRejectedValue(thrown);
+
     await expect(sendEmail({ to: 'a@test.local', audience: 'platform', content })).resolves.toEqual({
       ok: false,
       reason: 'boom',
     });
+    expect(vi.mocked(log.error)).toHaveBeenCalledWith(
+      { err: thrown, subject: 'S', audience: 'platform' },
+      'email adapter threw',
+    );
   });
 
   it('passes EMAIL_FROM verbatim', async () => {
@@ -131,6 +139,32 @@ describe('sendEmail', () => {
     });
   });
 
+  describe('whitespace-only settings', () => {
+    it('treats a whitespace-only EMAIL_REPLY_TO as unset', async () => {
+      process.env.EMAIL_REPLY_TO = '  ';
+
+      await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+      expect(lastPayload().replyTo).toBe('hello@fair.yoga');
+    });
+
+    it('treats a whitespace-only LETTERMINT_CLASS_ROUTE as unset', async () => {
+      process.env.LETTERMINT_CLASS_ROUTE = '  ';
+
+      await sendEmail({ to: 'a@test.local', audience: 'class', content });
+
+      expect(lastPayload()).not.toHaveProperty('route');
+    });
+
+    it('sends the trimmed token', async () => {
+      process.env.LETTERMINT_API_TOKEN = ' lm_test\n';
+
+      await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+      expect(deliverMock.mock.calls[0]?.[1]).toBe('lm_test');
+    });
+  });
+
   describe('class audience', () => {
     it('sends on LETTERMINT_CLASS_ROUTE with no Reply-To', async () => {
       process.env.LETTERMINT_CLASS_ROUTE = 'class-mail';
@@ -160,6 +194,44 @@ describe('sendEmail', () => {
 
       expect(vi.mocked(freshLog.warn)).toHaveBeenCalledTimes(1);
       expect(String(vi.mocked(freshLog.warn).mock.calls[0]?.[1])).toContain('LETTERMINT_CLASS_ROUTE');
+    });
+
+    it('does not warn in production when the class route is set', async () => {
+      vi.resetModules();
+      vi.stubEnv('NODE_ENV', 'production');
+      process.env.LETTERMINT_CLASS_ROUTE = 'class-mail';
+      const fresh = await import('./email');
+      const { log: freshLog } = await import('@/lib/log');
+
+      await fresh.sendEmail({ to: 'a@test.local', audience: 'class', content });
+
+      expect(vi.mocked(freshLog.warn)).not.toHaveBeenCalled();
+    });
+
+    it('does not warn in production about the class route on platform mail', async () => {
+      vi.resetModules();
+      vi.stubEnv('NODE_ENV', 'production');
+      const fresh = await import('./email');
+      const { log: freshLog } = await import('@/lib/log');
+
+      await fresh.sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+      expect(vi.mocked(freshLog.warn)).not.toHaveBeenCalled();
+    });
+
+    it('does not let a throwing logger escape while resolving the class route', async () => {
+      vi.resetModules();
+      vi.stubEnv('NODE_ENV', 'production');
+      const fresh = await import('./email');
+      const { log: freshLog } = await import('@/lib/log');
+      vi.mocked(freshLog.warn).mockImplementation(() => {
+        throw new Error('logger down');
+      });
+
+      await expect(fresh.sendEmail({ to: 'a@test.local', audience: 'class', content })).resolves.toEqual({
+        ok: false,
+        reason: 'logger down',
+      });
     });
 
     it('does not warn outside production', async () => {
@@ -216,6 +288,16 @@ describe('sendEmail dry-run and the production rule', () => {
   it('treats an empty token as unset in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     process.env.LETTERMINT_API_TOKEN = '';
+
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(result).toEqual({ ok: false, reason: 'LETTERMINT_API_TOKEN is not configured' });
+    expect(deliverMock).not.toHaveBeenCalled();
+  });
+
+  it('treats a whitespace-only token as unset in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    process.env.LETTERMINT_API_TOKEN = '   ';
 
     const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
 

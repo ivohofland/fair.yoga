@@ -31,19 +31,22 @@ export interface EmailMessage {
   idempotencyKey?: string;
 }
 
+/**
+ * `delivery: 'sent'` means the provider accepted the message, not that it
+ * reached the inbox; `'dry-run'` means nothing left the process.
+ */
 export type SendResult =
   | { ok: true; delivery: 'sent' | 'dry-run' }
   | { ok: false; reason: string };
 
-/** An env var set to the empty string counts as unset. */
+/** An env var that is empty or only whitespace counts as unset; a set one is returned trimmed. */
 function env(name: string): string | undefined {
-  return process.env[name] || undefined;
+  return process.env[name]?.trim() || undefined;
 }
 
 /**
  * Dry-run mode logs emails instead of sending them. True when
- * EMAIL_DRY_RUN=1 (CI runs the production build without a real token) or when
- * no token is configured. `sendEmail` refuses rather than dry-runs in
+ * EMAIL_DRY_RUN=1 or when no token is configured. `sendEmail` refuses rather than dry-runs in
  * production without a token, unless EMAIL_DRY_RUN=1.
  */
 export function emailDryRun(): boolean {
@@ -66,9 +69,27 @@ function classRoute(): string | undefined {
   return route;
 }
 
+/** Reply-To and route for each audience; the `never` default makes a new audience a compile error here. */
+function routing(audience: EmailAudience): { replyTo?: string; route?: string } {
+  switch (audience) {
+    case 'platform': {
+      return { replyTo: env('EMAIL_REPLY_TO') ?? DEFAULT_REPLY_TO };
+    }
+    case 'class': {
+      const route = classRoute();
+      return route === undefined ? {} : { route };
+    }
+    default: {
+      const unhandled: never = audience;
+      return unhandled;
+    }
+  }
+}
+
 /**
  * Sends one email and reports the outcome; never throws. A provider refusal
- * and anything the adapter throws both come back as `ok: false`.
+ * and anything the adapter throws both come back as `ok: false`. A dry-run
+ * logs only the subject.
  *
  * In production with no token and no explicit EMAIL_DRY_RUN=1 it answers
  * `ok: false` rather than dry-running, so no caller can count an email that
@@ -83,9 +104,8 @@ export async function sendEmail(message: EmailMessage): Promise<SendResult> {
     log.info({ subject: message.content.subject }, 'email dry-run');
     return { ok: true, delivery: 'dry-run' };
   }
-  const replyTo = message.audience === 'platform' ? (env('EMAIL_REPLY_TO') ?? DEFAULT_REPLY_TO) : undefined;
-  const route = message.audience === 'class' ? classRoute() : undefined;
   try {
+    const { replyTo, route } = routing(message.audience);
     const result = await deliverViaLettermint(
       {
         from: env('EMAIL_FROM') ?? DEFAULT_FROM,
@@ -100,17 +120,17 @@ export async function sendEmail(message: EmailMessage): Promise<SendResult> {
     );
     return result.ok ? { ok: true, delivery: 'sent' } : result;
   } catch (err) {
+    log.error({ err, subject: message.content.subject, audience: message.audience }, 'email adapter threw');
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 }
 
 /**
- * Sends the sign-in link. A failed send throws. Production without a token
- * throws too, and never logs the link: logging a sign-in link to stdout while
- * telling the user "check your inbox" leaks auth tokens into logs and
- * silently breaks login. Explicit EMAIL_DRY_RUN=1 is the sanctioned
- * exception: a dry-run (outside production, or with EMAIL_DRY_RUN=1) prints
- * the link for the developer.
+ * Sends the sign-in link. A failed send throws, including production without
+ * a token. A dry-run prints the link for the developer; in production that
+ * happens only when EMAIL_DRY_RUN=1 was set explicitly. Production without a
+ * token never logs the link: logging it while telling the user to check their
+ * inbox leaks tokens and silently breaks login.
  */
 export async function sendMagicLinkEmail(
   to: string,
@@ -122,11 +142,10 @@ export async function sendMagicLinkEmail(
 }
 
 /**
- * Sends the invitation email — `notifyInvitee`'s (services/invitations.ts)
- * last-resort channel when the address has no in-app surface to notify
- * instead. Which addresses those are: `docs/data-model.md` (Invitation, "Who
- * an invitation reaches"). A failed send throws, including production without
- * a token; a dry-run prints the sign-in URL for the developer.
+ * Sends the invitation email. Which addresses it reaches: `docs/data-model.md`
+ * (Invitation, "Who an invitation reaches"). A failed send throws, including
+ * production without a token; a dry-run prints the sign-in URL for the
+ * developer.
  */
 export async function sendInvitationEmail(
   to: string,
@@ -140,10 +159,7 @@ export async function sendInvitationEmail(
   }
 }
 
-/**
- * Sends the passkey-added notice. A failed send throws. A dry-run logs no
- * address: a notice about a credential is not worth a PII entry.
- */
+/** Sends the passkey-added notice. A failed send throws. */
 export async function sendPasskeyAddedEmail(to: string, addedAt: Date): Promise<void> {
   const result = await sendEmail({ to, audience: 'platform', content: renderPasskeyAddedEmail(addedAt) });
   if (!result.ok) throw new Error(`Failed to send passkey-added email: ${result.reason}`);
@@ -155,11 +171,7 @@ export async function sendPasskeyRemovedEmail(to: string, removedAt: Date): Prom
   if (!result.ok) throw new Error(`Failed to send passkey-removed email: ${result.reason}`);
 }
 
-/**
- * Sends the payout-change alert. A failed send throws; the caller owns what
- * happens next. A dry-run logs neither the address nor the pause link: the
- * link's fragment is a bearer secret.
- */
+/** Sends the payout-change alert. A failed send throws; the caller owns what happens next. */
 export async function sendPayoutChangedEmail(to: string, input: PayoutChangedEmailInput): Promise<void> {
   const result = await sendEmail({ to, audience: 'platform', content: renderPayoutChangedEmail(input) });
   if (!result.ok) throw new Error(`Failed to send payout-changed email: ${result.reason}`);
