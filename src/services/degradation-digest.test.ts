@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterAll, onTestFinished } from '
 import { PrismaClient, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
 
-const sendHtmlEmail = vi.fn();
-vi.mock('@/lib/email', () => ({ sendHtmlEmail: (...a: unknown[]) => sendHtmlEmail(...a) }));
+const sendEmail = vi.fn();
+vi.mock('@/lib/email', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
 
 const { notifyOperatorOfDegradations, DegradationDigestError } = await import('./degradation-digest');
 
@@ -84,8 +84,8 @@ async function seed(
 }
 
 beforeEach(async () => {
-  sendHtmlEmail.mockReset();
-  sendHtmlEmail.mockResolvedValue({ ok: true });
+  sendEmail.mockReset();
+  sendEmail.mockResolvedValue({ ok: true });
   await prisma.degradationEvent.deleteMany({ where: { code: { startsWith: `${PREFIX}${run}` } } });
 });
 
@@ -101,9 +101,13 @@ describe('notifyOperatorOfDegradations', () => {
     const summary = await notifyOperatorOfDegradations(scoped(), OPERATOR);
 
     expect(summary.emailed).toBe(1);
-    expect(sendHtmlEmail).toHaveBeenCalledTimes(1);
-    expect(sendHtmlEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: OPERATOR, subject: expect.stringContaining(A) }),
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: OPERATOR,
+        audience: 'platform',
+        content: expect.objectContaining({ subject: expect.stringContaining(A) }),
+      }),
     );
     const row = await prisma.degradationEvent.findUniqueOrThrow({ where: { code: A } });
     expect(row.lastNotifiedAt).toEqual(T2);
@@ -115,7 +119,7 @@ describe('notifyOperatorOfDegradations', () => {
     const summary = await notifyOperatorOfDegradations(scoped(), OPERATOR);
 
     expect(summary.emailed).toBe(0);
-    expect(sendHtmlEmail).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it('emails again once the event fires after it was told, and only that one', async () => {
@@ -125,13 +129,13 @@ describe('notifyOperatorOfDegradations', () => {
     const summary = await notifyOperatorOfDegradations(scoped(), OPERATOR);
 
     expect(summary.emailed).toBe(1);
-    expect(JSON.stringify(sendHtmlEmail.mock.calls)).toContain(A);
-    expect(JSON.stringify(sendHtmlEmail.mock.calls)).not.toContain(B);
+    expect(JSON.stringify(sendEmail.mock.calls)).toContain(A);
+    expect(JSON.stringify(sendEmail.mock.calls)).not.toContain(B);
   });
 
   it('sends nothing, and needs no operator address, when nothing is due', async () => {
     await expect(notifyOperatorOfDegradations(scoped(), undefined)).resolves.toEqual({ emailed: 0 });
-    expect(sendHtmlEmail).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it('throws, and marks nothing told, when something is due and there is no operator address', async () => {
@@ -143,15 +147,15 @@ describe('notifyOperatorOfDegradations', () => {
 
     const row = await prisma.degradationEvent.findUniqueOrThrow({ where: { code: A } });
     expect(row.lastNotifiedAt).toBeNull();
-    expect(sendHtmlEmail).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it('releases its claim and throws when the provider refuses', async () => {
     await seed(A, T2, T1);
-    sendHtmlEmail.mockResolvedValue({ ok: false, reason: 'RESEND_API_KEY is not configured' });
+    sendEmail.mockResolvedValue({ ok: false, reason: 'LETTERMINT_API_TOKEN is not configured' });
 
     await expect(notifyOperatorOfDegradations(scoped(), OPERATOR)).rejects.toThrow(
-      /RESEND_API_KEY is not configured/,
+      /LETTERMINT_API_TOKEN is not configured/,
     );
 
     const row = await prisma.degradationEvent.findUniqueOrThrow({ where: { code: A } });
@@ -160,7 +164,7 @@ describe('notifyOperatorOfDegradations', () => {
 
   it('releases its claim and throws when the send itself throws', async () => {
     await seed(A, T2);
-    sendHtmlEmail.mockRejectedValue(new Error('network'));
+    sendEmail.mockRejectedValue(new Error('network'));
 
     await expect(notifyOperatorOfDegradations(scoped(), OPERATOR)).rejects.toThrow(/network/);
 
@@ -170,7 +174,7 @@ describe('notifyOperatorOfDegradations', () => {
 
   it('redacts a Prisma failure from the send before copying its message into the thrown error', async () => {
     await seed(A, T2);
-    sendHtmlEmail.mockRejectedValue(
+    sendEmail.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError(
         '\nInvalid `prisma.degradationEvent.updateMany()` invocation:\n\n\nRaw query failed. Message: `"Alicepii"`',
         { clientVersion: '6.19.3', code: 'P2010', meta: { code: '22P02', message: 'Alicepii' } },
@@ -200,7 +204,7 @@ describe('notifyOperatorOfDegradations', () => {
       OPERATOR,
     );
     expect(first.emailed).toBe(0);
-    expect(sendHtmlEmail).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
 
     const second = await notifyOperatorOfDegradations(scoped(), OPERATOR);
     expect(second.emailed).toBe(1);
@@ -248,7 +252,7 @@ describe('notifyOperatorOfDegradations', () => {
       notifyOperatorOfDegradations(scoped(barrier), OPERATOR),
     ]);
 
-    expect(sendHtmlEmail).toHaveBeenCalledTimes(1);
+    expect(sendEmail).toHaveBeenCalledTimes(1);
     expect([one.emailed, two.emailed].sort()).toEqual([0, 1]);
   });
 
@@ -257,7 +261,7 @@ describe('notifyOperatorOfDegradations', () => {
 
     await notifyOperatorOfDegradations(scoped(), OPERATOR);
 
-    expect(JSON.stringify(sendHtmlEmail.mock.calls)).toContain('no longer registered');
+    expect(JSON.stringify(sendEmail.mock.calls)).toContain('no longer registered');
   });
 
   it('describes a code named like an Object prototype key as unregistered', async () => {
@@ -265,8 +269,8 @@ describe('notifyOperatorOfDegradations', () => {
 
     await notifyOperatorOfDegradations(scoped({ alias: { [A]: 'toString' } }), OPERATOR);
 
-    expect(sendHtmlEmail).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(sendHtmlEmail.mock.calls)).toContain('no longer registered');
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(sendEmail.mock.calls)).toContain('no longer registered');
   });
 
   it.each([
@@ -277,7 +281,8 @@ describe('notifyOperatorOfDegradations', () => {
 
     await notifyOperatorOfDegradations(scoped(), OPERATOR);
 
-    const { html } = sendHtmlEmail.mock.calls[0]![0] as { html: string };
+    const { content } = sendEmail.mock.calls[0]![0] as { content: { html: string } };
+    const { html } = content;
     expect(html).not.toContain('Latest:');
   });
 
@@ -299,7 +304,7 @@ describe('notifyOperatorOfDegradations', () => {
 
     await expect(result).rejects.toBeInstanceOf(DegradationDigestError);
     await expect(result).rejects.toThrow(/claim failed/);
-    expect(sendHtmlEmail).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
     const rows = await prisma.degradationEvent.findMany({ where: { code: { in: [A, B] } } });
     expect(rows.map((r) => r.lastNotifiedAt)).toEqual([previous, previous]);
   });
@@ -308,7 +313,7 @@ describe('notifyOperatorOfDegradations', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     onTestFinished(() => error.mockRestore());
     await seed(A, T2, T1);
-    sendHtmlEmail.mockResolvedValue({ ok: false, reason: 'provider down' });
+    sendEmail.mockResolvedValue({ ok: false, reason: 'provider down' });
 
     const result = notifyOperatorOfDegradations(
       scoped({

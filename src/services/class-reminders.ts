@@ -5,7 +5,7 @@ import { reminderMoment } from '@/lib/reminder-moment';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { renderNotificationEmail, CLASS_REMINDER_EMAIL_FOOTER } from '@/lib/email-templates';
-import { sendHtmlEmail } from '@/lib/email';
+import { sendEmail } from '@/lib/email';
 import { log } from '@/lib/log';
 import { createNotification } from './notifications';
 
@@ -99,12 +99,12 @@ async function emailReminder(
   context: { classId: string; recipientId: string },
 ): Promise<boolean> {
   try {
-    const { subject, html } = renderNotificationEmail(
+    const content = renderNotificationEmail(
       { type: 'class_reminder', title, body, recipientType },
       undefined,
       CLASS_REMINDER_EMAIL_FOOTER,
     );
-    const result = await sendHtmlEmail({ to, subject, html });
+    const result = await sendEmail({ to, audience: 'class', content });
     if (!result.ok) {
       log.error({ ...context, recipientType, reason: result.reason }, 'class reminder email failed; not retried');
     }

@@ -21,7 +21,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { DEGRADATION_CODES, isDegradationCode } from '@/lib/degradation-codes';
-import { sendHtmlEmail } from '@/lib/email';
+import { sendEmail } from '@/lib/email';
 import { renderDegradationDigestEmail, type DegradationDigestEntry } from '@/lib/email-templates';
 import { log } from '@/lib/log';
 import { serializeErr, type SerializedErr } from '@/lib/log-serializers';
@@ -92,8 +92,7 @@ export async function notifyOperatorOfDegradations(
       occurrences: r.occurrences,
       sample: isPlainObject(r.sample) ? r.sample : {},
     }));
-    const { subject, html } = renderDegradationDigestEmail(entries);
-    const sent = await sendHtmlEmail({ to: operatorEmail, subject, html });
+    const sent = await sendEmail({ to: operatorEmail, audience: 'platform', content: renderDegradationDigestEmail(entries) });
     if (!sent.ok) failure = new Error(sent.reason);
   } catch (err) {
     failure = err;

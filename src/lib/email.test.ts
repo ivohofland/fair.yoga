@@ -1,387 +1,389 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sendHtmlEmail, sendMagicLinkEmail, sendInvitationEmail, sendPasskeyAddedEmail, sendPasskeyRemovedEmail, sendPayoutChangedEmail } from './email';
-import { renderMagicLinkEmail, renderInvitationEmail, renderPasskeyAddedEmail, renderPasskeyRemovedEmail, renderPayoutChangedEmail } from './email-templates';
+import {
+  sendEmail,
+  sendMagicLinkEmail,
+  sendInvitationEmail,
+  sendPasskeyAddedEmail,
+  sendPasskeyRemovedEmail,
+  sendPayoutChangedEmail,
+} from './email';
+import {
+  renderMagicLinkEmail,
+  renderInvitationEmail,
+  renderPasskeyAddedEmail,
+  renderPasskeyRemovedEmail,
+  renderPayoutChangedEmail,
+} from './email-templates';
 import { log } from '@/lib/log';
 import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 
-const sendMock = vi.hoisted(() => vi.fn());
-vi.mock('resend', () => ({
-  Resend: class {
-    emails = { send: sendMock };
-  },
-}));
+const deliverMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 vi.mock('@/lib/log', () => ({
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-let savedDryRun: string | undefined;
-let savedKey: string | undefined;
+const content = { subject: 'S', html: '<p>H</p>', text: 'H' };
+
+const ENV_NAMES = [
+  'LETTERMINT_API_TOKEN',
+  'LETTERMINT_CLASS_ROUTE',
+  'EMAIL_REPLY_TO',
+  'EMAIL_FROM',
+  'EMAIL_DRY_RUN',
+] as const;
+const saved: Partial<Record<(typeof ENV_NAMES)[number], string | undefined>> = {};
 
 beforeEach(() => {
-  savedDryRun = process.env.EMAIL_DRY_RUN;
-  savedKey = process.env.RESEND_API_KEY;
-  sendMock.mockReset();
+  for (const name of ENV_NAMES) {
+    saved[name] = process.env[name];
+    delete process.env[name];
+  }
+  deliverMock.mockReset();
+  vi.mocked(log.info).mockClear();
+  vi.mocked(log.warn).mockClear();
 });
 
 afterEach(() => {
-  if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
-  else process.env.EMAIL_DRY_RUN = savedDryRun;
-  if (savedKey === undefined) delete process.env.RESEND_API_KEY;
-  else process.env.RESEND_API_KEY = savedKey;
+  for (const name of ENV_NAMES) {
+    const value = saved[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
-describe('sendHtmlEmail', () => {
-  it('resolves ok without calling Resend when EMAIL_DRY_RUN is set', async () => {
-    process.env.EMAIL_DRY_RUN = '1';
-    process.env.RESEND_API_KEY = 're_real_looking_key';
+function lastPayload(): Record<string, unknown> {
+  const call = deliverMock.mock.calls.at(-1);
+  if (call === undefined) throw new Error('adapter not called');
+  return call[0] as Record<string, unknown>;
+}
 
-    const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
-
-    expect(result).toEqual({ ok: true });
-    expect(sendMock).not.toHaveBeenCalled();
+describe('sendEmail', () => {
+  beforeEach(() => {
+    process.env.LETTERMINT_API_TOKEN = 'lm_test';
+    deliverMock.mockResolvedValue({ ok: true });
   });
 
-  describe('with no key configured', () => {
-    beforeEach(() => {
-      delete process.env.EMAIL_DRY_RUN;
-      delete process.env.RESEND_API_KEY;
+  it('answers sent and hands the adapter the token and the rendered parts', async () => {
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(result).toEqual({ ok: true, delivery: 'sent' });
+    expect(deliverMock).toHaveBeenCalledTimes(1);
+    expect(deliverMock.mock.calls[0]?.[1]).toBe('lm_test');
+    expect(lastPayload()).toMatchObject({
+      from: 'noreply@fair.yoga',
+      to: 'a@test.local',
+      subject: 'S',
+      html: '<p>H</p>',
+      text: 'H',
+    });
+  });
+
+  it('returns the adapter refusal unchanged', async () => {
+    deliverMock.mockResolvedValue({ ok: false, reason: 'lettermint 422: x' });
+
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(result).toEqual({ ok: false, reason: 'lettermint 422: x' });
+  });
+
+  it('turns an adapter throw into ok: false', async () => {
+    deliverMock.mockRejectedValue(new Error('boom'));
+
+    await expect(sendEmail({ to: 'a@test.local', audience: 'platform', content })).resolves.toEqual({
+      ok: false,
+      reason: 'boom',
+    });
+  });
+
+  it('passes EMAIL_FROM verbatim', async () => {
+    process.env.EMAIL_FROM = 'fair.yoga <noreply@notify.fair.yoga>';
+
+    await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(lastPayload().from).toBe('fair.yoga <noreply@notify.fair.yoga>');
+  });
+
+  describe('platform audience', () => {
+    it('replies to hello@fair.yoga on the default route', async () => {
+      await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+      expect(lastPayload().replyTo).toBe('hello@fair.yoga');
+      expect(lastPayload()).not.toHaveProperty('route');
     });
 
-    it('fails in production rather than dry-running', async () => {
+    it('replies to EMAIL_REPLY_TO when set', async () => {
+      process.env.EMAIL_REPLY_TO = 'ops@x.test';
+
+      await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+      expect(lastPayload().replyTo).toBe('ops@x.test');
+    });
+
+    it('treats an empty EMAIL_REPLY_TO as unset', async () => {
+      process.env.EMAIL_REPLY_TO = '';
+
+      await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+      expect(lastPayload().replyTo).toBe('hello@fair.yoga');
+    });
+  });
+
+  describe('class audience', () => {
+    it('sends on LETTERMINT_CLASS_ROUTE with no Reply-To', async () => {
+      process.env.LETTERMINT_CLASS_ROUTE = 'class-mail';
+
+      await sendEmail({ to: 'a@test.local', audience: 'class', content });
+
+      expect(lastPayload().route).toBe('class-mail');
+      expect(lastPayload()).not.toHaveProperty('replyTo');
+    });
+
+    it('treats an empty LETTERMINT_CLASS_ROUTE as unset', async () => {
+      process.env.LETTERMINT_CLASS_ROUTE = '';
+
+      await sendEmail({ to: 'a@test.local', audience: 'class', content });
+
+      expect(lastPayload()).not.toHaveProperty('route');
+    });
+
+    it('warns once in production that the class route is unset', async () => {
+      vi.resetModules();
       vi.stubEnv('NODE_ENV', 'production');
+      const fresh = await import('./email');
+      const { log: freshLog } = await import('@/lib/log');
 
-      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+      await fresh.sendEmail({ to: 'a@test.local', audience: 'class', content });
+      await fresh.sendEmail({ to: 'b@test.local', audience: 'class', content });
 
-      expect(result).toEqual({ ok: false, reason: 'RESEND_API_KEY is not configured' });
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(vi.mocked(freshLog.warn)).toHaveBeenCalledTimes(1);
+      expect(String(vi.mocked(freshLog.warn).mock.calls[0]?.[1])).toContain('LETTERMINT_CLASS_ROUTE');
     });
 
-    it('fails in production on the placeholder key too', async () => {
-      vi.stubEnv('NODE_ENV', 'production');
-      process.env.RESEND_API_KEY = 're_placeholder';
+    it('does not warn outside production', async () => {
+      await sendEmail({ to: 'a@test.local', audience: 'class', content });
 
-      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+      expect(vi.mocked(log.warn)).not.toHaveBeenCalled();
+    });
+  });
 
-      expect(result).toEqual({ ok: false, reason: 'RESEND_API_KEY is not configured' });
-      expect(sendMock).not.toHaveBeenCalled();
+  it('passes headers and idempotencyKey through unchanged', async () => {
+    await sendEmail({
+      to: 'a@test.local',
+      audience: 'class',
+      content,
+      headers: { 'List-Unsubscribe': '<https://x.test/u>' },
+      idempotencyKey: 'key-1',
     });
 
-    it('dry-runs in production when EMAIL_DRY_RUN=1 asks for it', async () => {
-      vi.stubEnv('NODE_ENV', 'production');
-      process.env.EMAIL_DRY_RUN = '1';
+    expect(lastPayload().headers).toEqual({ 'List-Unsubscribe': '<https://x.test/u>' });
+    expect(lastPayload().idempotencyKey).toBe('key-1');
+  });
+});
 
-      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+describe('sendEmail dry-run and the production rule', () => {
+  it('dry-runs on EMAIL_DRY_RUN=1 even with a token, logging the subject but not the address', async () => {
+    process.env.LETTERMINT_API_TOKEN = 'lm_test';
+    process.env.EMAIL_DRY_RUN = '1';
 
-      expect(result).toEqual({ ok: true });
-      expect(sendMock).not.toHaveBeenCalled();
-    });
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
 
-    it('dry-runs outside production', async () => {
-      vi.stubEnv('NODE_ENV', 'development');
+    expect(result).toEqual({ ok: true, delivery: 'dry-run' });
+    expect(deliverMock).not.toHaveBeenCalled();
+    expect(vi.mocked(log.info)).toHaveBeenCalledWith({ subject: 'S' }, expect.any(String));
+  });
 
-      const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
+  it('dry-runs with no token outside production', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
 
-      expect(result).toEqual({ ok: true });
-      expect(sendMock).not.toHaveBeenCalled();
-    });
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(result).toEqual({ ok: true, delivery: 'dry-run' });
+    expect(deliverMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses with no token in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(result).toEqual({ ok: false, reason: 'LETTERMINT_API_TOKEN is not configured' });
+    expect(deliverMock).not.toHaveBeenCalled();
+  });
+
+  it('treats an empty token as unset in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    process.env.LETTERMINT_API_TOKEN = '';
+
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(result).toEqual({ ok: false, reason: 'LETTERMINT_API_TOKEN is not configured' });
+    expect(deliverMock).not.toHaveBeenCalled();
+  });
+
+  it('dry-runs in production when EMAIL_DRY_RUN=1 asks for it', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    process.env.EMAIL_DRY_RUN = '1';
+
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+
+    expect(result).toEqual({ ok: true, delivery: 'dry-run' });
+    expect(deliverMock).not.toHaveBeenCalled();
   });
 });
 
 const LINK = 'https://fair.test/verify?token=secret-token' as BoundSignInLink;
+const INVITE_URL = 'https://fair.test/sign-in?invite=abc';
+const WHEN = new Date('2026-10-06T14:03:00Z');
+const PAYOUT = {
+  kind: 'payment_link_added',
+  accountCurrency: null,
+  before: null,
+  after: 'pay.example',
+  identifierChanged: null,
+  at: WHEN,
+  timezone: 'UTC',
+  pauseUrl: 'https://fair.yoga/payout-pause#t=secret-token',
+} as const;
+
+const wrappers = [
+  {
+    name: 'magic link',
+    label: 'magic-link',
+    audience: 'platform',
+    send: () => sendMagicLinkEmail('a@test.local', LINK),
+    rendered: () => renderMagicLinkEmail(LINK),
+  },
+  {
+    name: 'invitation',
+    label: 'invitation',
+    audience: 'class',
+    send: () => sendInvitationEmail('a@test.local', 'Teacher T', INVITE_URL),
+    rendered: () => renderInvitationEmail('Teacher T', INVITE_URL),
+  },
+  {
+    name: 'passkey added',
+    label: 'passkey-added',
+    audience: 'platform',
+    send: () => sendPasskeyAddedEmail('a@test.local', WHEN),
+    rendered: () => renderPasskeyAddedEmail(WHEN),
+  },
+  {
+    name: 'passkey removed',
+    label: 'passkey-removed',
+    audience: 'platform',
+    send: () => sendPasskeyRemovedEmail('a@test.local', WHEN),
+    rendered: () => renderPasskeyRemovedEmail(WHEN),
+  },
+  {
+    name: 'payout changed',
+    label: 'payout-changed',
+    audience: 'platform',
+    send: () => sendPayoutChangedEmail('a@test.local', PAYOUT),
+    rendered: () => renderPayoutChangedEmail(PAYOUT),
+  },
+] as const;
 
 function logSpy() {
   return vi.spyOn(console, 'log').mockImplementation(() => {});
 }
 
-function loggedText(spy: ReturnType<typeof logSpy>): string {
-  return spy.mock.calls.flat().join(' ');
-}
-
-// The link is the credential: logging it is the leak the production guard
-// exists to stop, so every magic-link dry-run case checks what reached stdout.
-describe('sendMagicLinkEmail', () => {
-  describe('with no key configured', () => {
+describe.each(wrappers)('$name wrapper', ({ label, audience, send, rendered }) => {
+  describe('with a token', () => {
     beforeEach(() => {
-      delete process.env.EMAIL_DRY_RUN;
-      delete process.env.RESEND_API_KEY;
+      process.env.LETTERMINT_API_TOKEN = 'lm_test';
     });
 
-    it('throws in production without logging the link', async () => {
-      vi.stubEnv('NODE_ENV', 'production');
-      const spy = logSpy();
+    it(`sends the rendered content as ${audience} mail`, async () => {
+      deliverMock.mockResolvedValue({ ok: true });
+      const { subject, html, text } = rendered();
 
-      await expect(sendMagicLinkEmail('a@test.local', LINK)).rejects.toThrow(
-        'RESEND_API_KEY is not configured',
-      );
+      await send();
 
-      expect(loggedText(spy)).not.toContain('secret-token');
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(lastPayload()).toMatchObject({ to: 'a@test.local', subject, html, text });
+      if (audience === 'platform') expect(lastPayload()).toHaveProperty('replyTo');
+      else expect(lastPayload()).not.toHaveProperty('replyTo');
     });
 
-    it('throws in production on the placeholder key too', async () => {
-      vi.stubEnv('NODE_ENV', 'production');
-      process.env.RESEND_API_KEY = 're_placeholder';
-      const spy = logSpy();
+    it('throws with the reason when the adapter refuses', async () => {
+      deliverMock.mockResolvedValue({ ok: false, reason: 'r' });
 
-      await expect(sendMagicLinkEmail('a@test.local', LINK)).rejects.toThrow(
-        'RESEND_API_KEY is not configured',
-      );
-
-      expect(loggedText(spy)).not.toContain('secret-token');
+      await expect(send()).rejects.toThrow(new RegExp(`Failed to send ${label} email: r`));
     });
 
-    it('logs the link in production when EMAIL_DRY_RUN=1 asks for it', async () => {
-      vi.stubEnv('NODE_ENV', 'production');
-      process.env.EMAIL_DRY_RUN = '1';
-      const spy = logSpy();
+    it('throws when the adapter throws', async () => {
+      deliverMock.mockRejectedValue(new Error('network'));
 
-      await expect(sendMagicLinkEmail('a@test.local', LINK)).resolves.toBeUndefined();
-
-      expect(loggedText(spy)).toContain(LINK);
-      expect(sendMock).not.toHaveBeenCalled();
-    });
-
-    it('logs the link outside production', async () => {
-      vi.stubEnv('NODE_ENV', 'development');
-      const spy = logSpy();
-
-      await expect(sendMagicLinkEmail('a@test.local', LINK)).resolves.toBeUndefined();
-
-      expect(loggedText(spy)).toContain(LINK);
-      expect(sendMock).not.toHaveBeenCalled();
+      await expect(send()).rejects.toThrow(new RegExp(`Failed to send ${label} email: network`));
     });
   });
 
-  describe('with a key configured', () => {
-    beforeEach(() => {
-      delete process.env.EMAIL_DRY_RUN;
-      process.env.RESEND_API_KEY = 're_real_looking_key';
-    });
+  it('throws in production without a token', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
 
-    it('throws with the error message when Resend reports { error }', async () => {
-      sendMock.mockResolvedValue({ data: null, error: { message: 'domain not verified' } });
-
-      await expect(sendMagicLinkEmail('a@test.local', LINK)).rejects.toThrow(
-        'Failed to send magic-link email: domain not verified',
-      );
-    });
-
-    it('sends the rendered subject and html', async () => {
-      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
-      const { subject, html } = renderMagicLinkEmail(LINK);
-
-      await sendMagicLinkEmail('a@test.local', LINK);
-
-      expect(sendMock).toHaveBeenCalledTimes(1);
-      expect(sendMock).toHaveBeenCalledWith(
-        expect.objectContaining({ to: 'a@test.local', subject, html }),
-      );
-    });
+    await expect(send()).rejects.toThrow(/LETTERMINT_API_TOKEN is not configured/);
+    expect(deliverMock).not.toHaveBeenCalled();
   });
 });
 
-describe('sendInvitationEmail', () => {
-  const URL = 'https://fair.test/sign-in?invite=abc';
-
-  it('has no production throw: a missing key logs', async () => {
-    delete process.env.EMAIL_DRY_RUN;
-    delete process.env.RESEND_API_KEY;
+// The link is the credential: logging it is the leak the production refusal
+// exists to stop, so every dry-run case checks what reached stdout.
+describe('sendMagicLinkEmail dry-run', () => {
+  it('never logs the link when production has no token', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     const spy = logSpy();
 
-    await expect(sendInvitationEmail('a@test.local', 'Teacher T', URL)).resolves.toBeUndefined();
+    await expect(sendMagicLinkEmail('a@test.local', LINK)).rejects.toThrow();
 
-    expect(loggedText(spy)).toContain(URL);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(spy.mock.calls.flat().join(' ')).not.toContain('secret-token');
   });
 
-  describe('with a key configured', () => {
-    beforeEach(() => {
-      delete process.env.EMAIL_DRY_RUN;
-      process.env.RESEND_API_KEY = 're_real_looking_key';
-    });
+  it('logs the link outside production', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const spy = logSpy();
 
-    it('throws with the error message when Resend reports { error }', async () => {
-      sendMock.mockResolvedValue({ data: null, error: { message: 'rate limited' } });
+    await sendMagicLinkEmail('a@test.local', LINK);
 
-      await expect(sendInvitationEmail('a@test.local', 'Teacher T', URL)).rejects.toThrow(
-        'Failed to send invitation email: rate limited',
-      );
-    });
+    expect(spy).toHaveBeenCalledWith(`\n[DEV] Magic link for a@test.local: ${LINK}\n`);
+  });
 
-    it('sends the rendered subject and html', async () => {
-      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
-      const { subject, html } = renderInvitationEmail('Teacher T', URL);
+  it('logs the link in production when EMAIL_DRY_RUN=1 asks for it', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    process.env.EMAIL_DRY_RUN = '1';
+    const spy = logSpy();
 
-      await sendInvitationEmail('a@test.local', 'Teacher T', URL);
+    await expect(sendMagicLinkEmail('a@test.local', LINK)).resolves.toBeUndefined();
 
-      expect(sendMock).toHaveBeenCalledTimes(1);
-      expect(sendMock).toHaveBeenCalledWith(
-        expect.objectContaining({ to: 'a@test.local', subject, html }),
-      );
-    });
+    expect(spy).toHaveBeenCalledWith(`\n[DEV] Magic link for a@test.local: ${LINK}\n`);
   });
 });
 
-describe('sendPasskeyAddedEmail', () => {
-  const ADDED_AT = new Date('2026-10-06T14:03:00Z');
+describe('sendInvitationEmail dry-run', () => {
+  it('logs the sign-in URL outside production', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const spy = logSpy();
 
-  it('logs instead of sending without a key', async () => {
-    delete process.env.EMAIL_DRY_RUN;
-    delete process.env.RESEND_API_KEY;
+    await sendInvitationEmail('a@test.local', 'Teacher T', INVITE_URL);
 
-    await expect(sendPasskeyAddedEmail('a@test.local', ADDED_AT)).resolves.toBeUndefined();
-
-    expect(sendMock).not.toHaveBeenCalled();
-  });
-
-  it('keeps the address out of the dry-run log line', async () => {
-    delete process.env.EMAIL_DRY_RUN;
-    delete process.env.RESEND_API_KEY;
-    vi.mocked(log.info).mockClear();
-
-    await sendPasskeyAddedEmail('a@test.local', ADDED_AT);
-
-    expect(vi.mocked(log.info)).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(vi.mocked(log.info).mock.calls)).not.toContain('a@test.local');
-  });
-
-  describe('with a key configured', () => {
-    beforeEach(() => {
-      delete process.env.EMAIL_DRY_RUN;
-      process.env.RESEND_API_KEY = 're_real_looking_key';
-    });
-
-    it('throws with the error message when Resend reports { error }', async () => {
-      sendMock.mockResolvedValue({ data: null, error: { message: 'rate limited' } });
-
-      await expect(sendPasskeyAddedEmail('a@test.local', ADDED_AT)).rejects.toThrow(
-        'Failed to send passkey-added email: rate limited',
-      );
-    });
-
-    it('sends the rendered subject and html', async () => {
-      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
-      const { subject, html } = renderPasskeyAddedEmail(ADDED_AT);
-
-      await sendPasskeyAddedEmail('a@test.local', ADDED_AT);
-
-      expect(sendMock).toHaveBeenCalledWith(
-        expect.objectContaining({ to: 'a@test.local', subject, html }),
-      );
-    });
+    expect(spy).toHaveBeenCalledWith(
+      `\n[DEV] Invitation email for a@test.local from Teacher T: ${INVITE_URL}\n`,
+    );
   });
 });
 
-describe('sendPasskeyRemovedEmail', () => {
-  const REMOVED_AT = new Date('2026-10-06T14:03:00Z');
+describe('notice wrappers in dry-run', () => {
+  it('log neither the address nor the pause link', async () => {
+    const spy = logSpy();
 
-  it('logs instead of sending without a key, and keeps the address out of the line', async () => {
-    delete process.env.EMAIL_DRY_RUN;
-    delete process.env.RESEND_API_KEY;
-    vi.mocked(log.info).mockClear();
+    await sendPasskeyAddedEmail('a@test.local', WHEN);
+    await sendPasskeyRemovedEmail('a@test.local', WHEN);
+    await sendPayoutChangedEmail('a@test.local', PAYOUT);
 
-    await expect(sendPasskeyRemovedEmail('a@test.local', REMOVED_AT)).resolves.toBeUndefined();
-
-    expect(sendMock).not.toHaveBeenCalled();
-    expect(vi.mocked(log.info)).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(vi.mocked(log.info).mock.calls)).not.toContain('a@test.local');
-  });
-
-  describe('with a key configured', () => {
-    beforeEach(() => {
-      delete process.env.EMAIL_DRY_RUN;
-      process.env.RESEND_API_KEY = 're_real_looking_key';
-    });
-
-    it('throws with the error message when Resend reports { error }', async () => {
-      sendMock.mockResolvedValue({ data: null, error: { message: 'rate limited' } });
-
-      await expect(sendPasskeyRemovedEmail('a@test.local', REMOVED_AT)).rejects.toThrow(
-        'Failed to send passkey-removed email: rate limited',
-      );
-    });
-
-    it('sends the rendered subject and html', async () => {
-      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
-      const { subject, html } = renderPasskeyRemovedEmail(REMOVED_AT);
-
-      await sendPasskeyRemovedEmail('a@test.local', REMOVED_AT);
-
-      expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ to: 'a@test.local', subject, html }));
-    });
-  });
-});
-
-describe('sendPayoutChangedEmail', () => {
-  const input = {
-    kind: 'payment_link_added',
-    accountCurrency: null,
-    before: null,
-    after: 'pay.example',
-    identifierChanged: null,
-    at: new Date('2026-10-06T14:03:00Z'),
-    timezone: 'UTC',
-    pauseUrl: 'https://fair.yoga/payout-pause#t=secret-token',
-  } as const;
-
-  it('logs without the address or the pause link when no key is configured', async () => {
-    delete process.env.EMAIL_DRY_RUN;
-    delete process.env.RESEND_API_KEY;
-    vi.mocked(log.info).mockClear();
-
-    await expect(sendPayoutChangedEmail('a@test.local', input)).resolves.toBeUndefined();
-
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
     const logged = JSON.stringify(vi.mocked(log.info).mock.calls);
     expect(logged).not.toContain('a@test.local');
     expect(logged).not.toContain('secret-token');
-  });
-
-  describe('with a key configured', () => {
-    beforeEach(() => {
-      delete process.env.EMAIL_DRY_RUN;
-      process.env.RESEND_API_KEY = 're_real_looking_key';
-    });
-
-    it('throws with the error message when Resend reports { error }', async () => {
-      sendMock.mockResolvedValue({ data: null, error: { message: 'rate limited' } });
-      await expect(sendPayoutChangedEmail('a@test.local', input)).rejects.toThrow(
-        'Failed to send payout-changed email: rate limited',
-      );
-    });
-
-    it('sends the rendered subject and html', async () => {
-      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
-      const { subject, html } = renderPayoutChangedEmail(input);
-      await sendPayoutChangedEmail('a@test.local', input);
-      expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ to: 'a@test.local', subject, html }));
-    });
-  });
-});
-
-describe('sendHtmlEmail with a key configured', () => {
-  beforeEach(() => {
-    delete process.env.EMAIL_DRY_RUN;
-    process.env.RESEND_API_KEY = 're_real_looking_key';
-  });
-
-  it('answers { ok: false } with the message when Resend reports { error }', async () => {
-    sendMock.mockResolvedValue({ data: null, error: { message: 'bounced' } });
-
-    const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
-
-    expect(result).toEqual({ ok: false, reason: 'bounced' });
-  });
-
-  it('answers { ok: true } on success', async () => {
-    sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
-
-    const result = await sendHtmlEmail({ to: 'a@test.local', subject: 's', html: '<p>h</p>' });
-
-    expect(result).toEqual({ ok: true });
-    expect(sendMock).toHaveBeenCalledTimes(1);
   });
 });

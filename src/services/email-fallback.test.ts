@@ -314,6 +314,7 @@ describe('processEmailFallback (DB)', () => {
   // two is which side of the send the mark falls on.
   describe('claiming a notification before sending it', () => {
     const savedApiKey = process.env.RESEND_API_KEY;
+    const savedLettermintToken = process.env.LETTERMINT_API_TOKEN;
     const savedDryRun = process.env.EMAIL_DRY_RUN;
     const perTestNotificationIds: string[] = [];
 
@@ -330,12 +331,15 @@ describe('processEmailFallback (DB)', () => {
     beforeAll(() => {
       // Force the real-send path: a key is configured and dry-run is off.
       process.env.RESEND_API_KEY = 're_test_dummy';
+      process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
       delete process.env.EMAIL_DRY_RUN;
     });
 
     afterAll(() => {
       if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
       else process.env.RESEND_API_KEY = savedApiKey;
+      if (savedLettermintToken === undefined) delete process.env.LETTERMINT_API_TOKEN;
+      else process.env.LETTERMINT_API_TOKEN = savedLettermintToken;
       if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
       else process.env.EMAIL_DRY_RUN = savedDryRun;
     });

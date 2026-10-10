@@ -9,19 +9,15 @@ import { teardownTeacher } from '../../tests/helpers';
 // "not reached" — a dry run just logs either way. Proving the registered
 // path takes ONLY the notification branch, never also the direct email
 // (F4, #166 review), needs the real send observable — same technique as
-// `email-fallback.consent.test.ts`: mock the Resend SDK itself.
-const sendMock = vi.hoisted(() => vi.fn());
-vi.mock('resend', () => ({
-  Resend: class {
-    emails = { send: sendMock };
-  },
-}));
+// `email-fallback.consent.test.ts`: mock the Lettermint adapter itself.
+const deliverMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
 const prisma = new PrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', () => {
-  const savedApiKey = process.env.RESEND_API_KEY;
+  const savedApiKey = process.env.LETTERMINT_API_TOKEN;
   const savedDryRun = process.env.EMAIL_DRY_RUN;
   // A real row: `notifyInvitee`'s own `TeacherBlock` re-check (F3) only ever
   // READS this id (`findUnique`, no FK needed), but the blocked-address test
@@ -40,10 +36,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
 
   beforeAll(async () => {
     // Force the real-send path: a key is configured and dry-run is off —
-    // otherwise `sendInvitationEmail` never reaches `resend().emails.send`
-    // and `sendMock` would stay empty regardless of which branch ran,
+    // otherwise `sendInvitationEmail` never reaches the adapter
+    // and `deliverMock` would stay empty regardless of which branch ran,
     // making every assertion below vacuous.
-    process.env.RESEND_API_KEY = 're_test_dummy';
+    process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
     delete process.env.EMAIL_DRY_RUN;
 
     const teacher = await prisma.teacher.create({
@@ -98,16 +94,16 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       await prisma.account.deleteMany({ where: { id: { in: liveBesideErasedAccountIds } } });
     }
 
-    if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
-    else process.env.RESEND_API_KEY = savedApiKey;
+    if (savedApiKey === undefined) delete process.env.LETTERMINT_API_TOKEN;
+    else process.env.LETTERMINT_API_TOKEN = savedApiKey;
     if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
     else process.env.EMAIL_DRY_RUN = savedDryRun;
     await prisma.$disconnect();
   });
 
   beforeEach(() => {
-    sendMock.mockReset();
-    sendMock.mockResolvedValue({ error: null });
+    deliverMock.mockReset();
+    deliverMock.mockResolvedValue({ ok: true });
   });
 
   it('sends only the in-app notification for a registered invitee, never also the direct email', async () => {
@@ -139,7 +135,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // (services/invitations.ts) is the only thing stopping a registered
       // student from ALSO getting the direct email below — bypassing
       // `shouldEmailStudent` and their own `emailNotifications` preference.
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
@@ -150,7 +146,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   });
 
   it('sends the direct email for an unregistered address', async () => {
-    // Contrast case: proves `sendMock` above is wired to fire at all — the
+    // Contrast case: proves `deliverMock` above is wired to fire at all — the
     // double-send test's `not.toHaveBeenCalled()` would trivially pass if
     // this file's mock were simply never reached at all.
     const email = `notify-stranger-${suffix}@test.local`;
@@ -167,8 +163,8 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         claimedAt: new Date(),
       });
 
-      expect(sendMock).toHaveBeenCalledTimes(1);
-      const [args] = sendMock.mock.calls[0] as [{ to: string }];
+      expect(deliverMock).toHaveBeenCalledTimes(1);
+      const [args] = deliverMock.mock.calls[0] as [{ to: string }];
       expect(args.to).toBe(email);
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
@@ -205,7 +201,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
           claimedAt: new Date(),
         }),
       ).rejects.toThrow(/un-normalised/);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
     }
@@ -249,7 +245,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
       });
       expect(notifications).toHaveLength(0);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (blockId) await prisma.teacherBlock.deleteMany({ where: { id: blockId } });
@@ -297,7 +293,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // Not merely "no notification": the unregistered branch below it must
       // not fire either, or the student gets a stranger's sign-up email for
       // a teacher they already have.
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
@@ -351,7 +347,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // test's own `finally` has already deleted the row, `student.findUnique`
       // finds nothing and falls through to the stranger email path,
       // polluting whichever later test in this file next asserts on
-      // `sendMock`. Spying on the query itself and awaiting every call's own
+      // `deliverMock`. Spying on the query itself and awaiting every call's own
       // result removes the ordering assumption entirely.
       const studentFindSpy = vi.spyOn(prisma.student, 'findUnique');
 
@@ -398,7 +394,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
       });
       expect(notifications).toHaveLength(0);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (controlInvitationId) await prisma.invitation.deleteMany({ where: { id: controlInvitationId } });
       if (controlStudentId) {
@@ -447,7 +443,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
       });
       expect(notifications).toHaveLength(0);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
@@ -494,7 +490,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
       });
       expect(notifications).toHaveLength(1);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
@@ -557,7 +553,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         title: 'A teacher would like to connect',
         body: 'Some Teacher added you as a contact. Connecting adds a student side to your account, and you choose whether to.',
       }]);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await removeTeacherOnlyAccount(invitee);
@@ -601,7 +597,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(await prisma.notification.count({
         where: { recipientType: 'teacher', recipientId: teacher.id },
       })).toBe(0);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await prisma.notification.deleteMany({ where: { recipientId: { in: [student.id, teacher.id] } } });
@@ -635,7 +631,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(await prisma.notification.count({
         where: { recipientType: 'teacher', recipientId: invitee.teacherId },
       })).toBe(0);
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await prisma.teacherBlock.delete({ where: { id: block.id } });
@@ -693,7 +689,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // keeps it from falling through to `sendInvitationEmail` below it, and
       // that email tells its recipient to sign up at `/login` — the #172
       // stranger template, addressed to someone who already has an account.
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(deliverMock).not.toHaveBeenCalled();
 
       // A capped dispatch is the feature working, and a dispatch that matched
       // no row is a notification nobody got; only this line tells them apart
@@ -726,7 +722,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
         claimedAt: new Date(),
       });
-      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(deliverMock).toHaveBeenCalledTimes(1);
 
       const invitee = await prisma.teacher.create({
         data: {
@@ -854,7 +850,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       await dispatch();
       await dispatch();
-      expect(sendMock).toHaveBeenCalledTimes(2);
+      expect(deliverMock).toHaveBeenCalledTimes(2);
     } finally {
       await prisma.invitation.deleteMany({ where: { id: invitation.id } });
     }
