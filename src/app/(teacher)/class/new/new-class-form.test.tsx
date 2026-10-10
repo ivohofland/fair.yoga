@@ -572,6 +572,26 @@ describe('NewClassPage', () => {
     expect(routerPush).toHaveBeenCalledWith('/studio-class/new');
   });
 
+  it('offers the alternatives only on step 1, and again on returning to it', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" />);
+
+    fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    await screen.findByText('Step 2 of 4');
+
+    expect(screen.queryByText(/looking for something else/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /set up a recurring class/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /log a studio class/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /back/i }));
+    await screen.findByText('Step 1 of 4');
+    expect(screen.getByRole('button', { name: /set up a recurring class/i })).toBeInTheDocument();
+  });
+
   /**
    * Issue 76, added at PR review. `TemplateForm` got three tests for the
    * identical picker change; this wizard got none, and deleting BOTH the

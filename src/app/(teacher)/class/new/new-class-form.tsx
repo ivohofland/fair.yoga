@@ -5,12 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassSchema } from '@/lib/schemas';
-import {
-  CLASS_TYPE_MAX,
-  DURATION_MAX_MINUTES,
-  LONG_TEXT_MAX,
-  MONEY_MAX,
-} from '@/lib/input-bounds';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LONG_TEXT_MAX, MONEY_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Button } from '@/components/ui/button';
@@ -279,19 +274,25 @@ export function NewClassForm({ currency }: { currency: Currency }) {
       if (!form.date) errs.date = 'Select a date';
       if (!form.startTime) errs.startTime = 'Enter a start time';
       if (form.durationMinutes <= 0) errs.durationMinutes = 'Duration must be positive';
-      else if (!Number.isInteger(form.durationMinutes)) errs.durationMinutes = 'Duration must be whole minutes';
-      else if (form.durationMinutes > DURATION_MAX_MINUTES) errs.durationMinutes = DURATION_TOO_LONG;
+      else if (!Number.isInteger(form.durationMinutes))
+        errs.durationMinutes = 'Duration must be whole minutes';
+      else if (form.durationMinutes > DURATION_MAX_MINUTES)
+        errs.durationMinutes = DURATION_TOO_LONG;
     }
 
     if (s === 2) {
       if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
       else if (form.roomCost > MONEY_MAX) errs.roomCost = `Room cost cannot exceed ${MONEY_LIMIT}`;
-      if (Math.abs(form.minRate) > MONEY_MAX) errs.minRate = `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
-      if (Math.abs(form.targetRate) > MONEY_MAX) errs.targetRate = `Target rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
+      if (Math.abs(form.minRate) > MONEY_MAX)
+        errs.minRate = `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
+      if (Math.abs(form.targetRate) > MONEY_MAX)
+        errs.targetRate = `Target rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
       if (form.minStudents <= 0) errs.minStudents = 'Min students must be at least 1';
-      else if (!Number.isInteger(form.minStudents)) errs.minStudents = 'Min students must be a whole number';
+      else if (!Number.isInteger(form.minStudents))
+        errs.minStudents = 'Min students must be a whole number';
       if (form.maxStudents <= 0) errs.maxStudents = 'Max students must be at least 1';
-      else if (!Number.isInteger(form.maxStudents)) errs.maxStudents = 'Max students must be a whole number';
+      else if (!Number.isInteger(form.maxStudents))
+        errs.maxStudents = 'Max students must be a whole number';
       else if (form.maxStudents > Math.min(roomCapacity, MAX_CLASS_SIZE))
         errs.maxStudents =
           roomCapacity <= MAX_CLASS_SIZE
@@ -413,25 +414,28 @@ export function NewClassForm({ currency }: { currency: Currency }) {
       </button>
       <h1 className="type-display">New class</h1>
       <p className="type-caption mt-1">Step {step} of 4</p>
-      <p className="type-caption mt-2">
-        Looking for something else?{' '}
-        <button
-          type="button"
-          onClick={() => router.push('/settings/recurring/new')}
-          className="type-caption text-teal no-underline"
-        >
-          Set up a recurring class
-        </button>{' '}
-        or{' '}
-        <button
-          type="button"
-          onClick={() => router.push('/studio-class/new')}
-          className="type-caption text-teal no-underline"
-        >
-          log a studio class
-        </button>
-        .
-      </p>
+      {/* Only before the teacher has committed to this flow. */}
+      {step === 1 && (
+        <p className="type-caption mt-2">
+          Looking for something else?{' '}
+          <button
+            type="button"
+            onClick={() => router.push('/settings/recurring/new')}
+            className="type-caption text-teal no-underline"
+          >
+            Set up a recurring class
+          </button>{' '}
+          or{' '}
+          <button
+            type="button"
+            onClick={() => router.push('/studio-class/new')}
+            className="type-caption text-teal no-underline"
+          >
+            log a studio class
+          </button>
+          .
+        </p>
+      )}
     </div>
   );
 
@@ -677,9 +681,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
       {/* Step 4: Confirm */}
       {step === 4 && (
         <div className="flex flex-col gap-3">
-          <h2 className="type-subtitle mb-2">
-            Review your class
-          </h2>
+          <h2 className="type-subtitle mb-2">Review your class</h2>
 
           <div className="py-2 border-b border-border">
             <span className="type-label">Room</span>
@@ -698,7 +700,9 @@ export function NewClassForm({ currency }: { currency: Currency }) {
           {normalizeDescription(form.description) ? (
             <div className="py-2 border-b border-border">
               <span className="type-label">Description</span>
-              <p className="text-base text-ink whitespace-pre-wrap">{normalizeDescription(form.description)}</p>
+              <p className="text-base text-ink whitespace-pre-wrap">
+                {normalizeDescription(form.description)}
+              </p>
             </div>
           ) : null}
 
@@ -711,14 +715,16 @@ export function NewClassForm({ currency }: { currency: Currency }) {
                   accessors expect. Step 1's validateStep gates `date` as
                   required before this step is reachable, so it is never ''
                   here. */}
-              {formatDateWithYear(new Date(form.date))} at {form.startTime} &middot; {form.durationMinutes} min
+              {formatDateWithYear(new Date(form.date))} at {form.startTime} &middot;{' '}
+              {form.durationMinutes} min
             </p>
           </div>
 
           <div className="py-2 border-b border-border">
             <span className="type-label">Pricing</span>
             <p className="text-base text-ink">
-              Room cost: {formatMoney(form.roomCost, currency)} &middot; Rate: {formatMoney(form.minRate, currency)} &ndash; {formatMoney(form.targetRate, currency)}
+              Room cost: {formatMoney(form.roomCost, currency)} &middot; Rate:{' '}
+              {formatMoney(form.minRate, currency)} &ndash; {formatMoney(form.targetRate, currency)}
             </p>
           </div>
 
@@ -740,7 +746,9 @@ export function NewClassForm({ currency }: { currency: Currency }) {
           </div>
 
           {submitError && (
-            <p role="alert" className="text-sm text-danger mt-2">{submitError}</p>
+            <p role="alert" className="text-sm text-danger mt-2">
+              {submitError}
+            </p>
           )}
         </div>
       )}
