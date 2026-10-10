@@ -129,6 +129,7 @@ enum OnboardingStep {
   bank
   share
   install
+  push
 }
 
 /// What a MagicLinkToken authorises. Delivery differs by member —
