@@ -57,7 +57,7 @@ kept coming back wrong were the ones reaching past their own file.
   call-site roster left stale, and so described a state this repo was never in.
 - **Where membership matters, tether it to the compiler.**
   `satisfies Record<keyof T, true>` — `COUNT_KEYS`
-  (`template-action-messages.ts`), `ROOM_SEARCH_SELECT` (`api/rooms/route.ts`)
+  (`template-action-messages.ts`), `ROOM_SEARCH_SELECT` (`src/lib/room-projection.ts`)
   — or an exhaustive `switch` with a `never` default (`countSkipReasons`).
   `COUNT_KEYS` replaced an `&&` chain whose docblock promised a fourth member's
   check would land with it; #296 added the member, the promise did not, and the

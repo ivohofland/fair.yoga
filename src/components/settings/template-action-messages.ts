@@ -449,7 +449,7 @@ export type { TemplateToggleResponse, StudioTemplateToggleResponse };
  * The `SkipCounts` members, tethered so a new one cannot be forgotten here.
  *
  * `satisfies Record<keyof SkipCounts, true>` binds in both directions — the
- * same tether `ROOM_SEARCH_SELECT` (`api/rooms/route.ts`) uses, and for the
+ * same tether `ROOM_SEARCH_SELECT` (`src/lib/room-projection.ts`) uses, and for the
  * same reason. Add a member to `SkipCounts` and this object is missing a key;
  * remove one and the extra key is not in `keyof SkipCounts`. Either way the
  * build fails HERE rather than the guard below silently validating a subset.

@@ -1517,6 +1517,8 @@ const HIDDEN_CHARACTERS_ALLOWED: Record<string, string> = {
   'payoutPauseSchema.token': 'never stored or shown: hashed and looked up',
   'roomSearchQuerySchema.postcode': 'never stored or shown: a search query parameter',
   'roomSearchQuerySchema.street': 'never stored or shown: a search query parameter',
+  'roomSearchQuerySchema.city': 'never stored or shown: a search query parameter',
+  'roomSearchQuerySchema.q': 'never stored or shown: a search query parameter',
   'archiveStudentBodySchema.waivePaymentIds[*]': 'never stored or shown: matched against payment ids',
   'updateStudentSchema.birthday': 'transform-checked: parseBirthday accepts only a calendar date',
   'teacherProfileSchema.defaultTimezone': 'transform-checked: only a recognised IANA zone is kept',
