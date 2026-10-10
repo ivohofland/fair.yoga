@@ -88,4 +88,11 @@ describe('write handler wrap census', () => {
   it('every exported WRITE_METHODS handler is withErrorHandler(…)', () => {
     expect(census().unwrapped).toEqual([]);
   });
+
+  it('only the unsubscribe route opts out of the cross-origin refusal', () => {
+    const optedOut = routeFiles(API)
+      .filter((file) => readFileSync(file, 'utf8').includes("'token-authorised'"))
+      .map((file) => path.relative(API, file).split(path.sep).join('/'));
+    expect(optedOut).toEqual(['unsubscribe/route.ts']);
+  });
 });

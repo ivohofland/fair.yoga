@@ -50,6 +50,8 @@ in it cannot be regenerated without consequences (the VAPID row below).
 - Set **Bounce and complaint forwarding** to the operator address, so bounces and spam complaints reach a person.
 - Send from a subdomain (`notify.fair.yoga`) and publish the SPF and DKIM records Lettermint gives you for it.
 - Publish one DMARC record on the apex, starting at `p=none` with `rua=mailto:ops@fair.yoga`.
+- Check that Lettermint's DKIM signature covers `List-Unsubscribe` and `List-Unsubscribe-Post`: send one fallback email to a Gmail address and read *Show original* → `DKIM-Signature: h=`.
+- Before deploying, confirm no teacher holds the slug `unsubscribe`: `SELECT id FROM "Teacher" WHERE "pageSlug" = 'unsubscribe';`
 
 Then:
 

@@ -167,6 +167,37 @@ caller, escaping the `.catch` entirely.
 
 One seam: `sendEmail({ to, audience, content, unsubscribe, headers?, idempotencyKey? })` never throws and answers a `SendResult`. `unsubscribe` is required: `null` for mail the recipient cannot switch off, otherwise the target whose `List-Unsubscribe` headers `sendEmail` adds (see *One-click unsubscribe*). `audience` decides Reply-To and route: `platform` mail carries `EMAIL_REPLY_TO` and uses the default route; `class` mail carries no Reply-To and uses `LETTERMINT_CLASS_ROUTE` (the default route when unset). `delivery: 'sent'` in the result means the provider accepted the message, not that it was delivered. In production, with no `LETTERMINT_API_TOKEN` and `EMAIL_DRY_RUN` not `1`, it refuses with `ok: false` rather than pretending to send. The throwing per-email wrappers sit on top of it. Design and audience table: `docs/superpowers/specs/2026-10-10-email-provider-seam-design.md`.
 
+### One-click unsubscribe
+
+Opt-out-able mail carries `List-Unsubscribe` and `List-Unsubscribe-Post`
+headers plus a footer link, built by `sendEmail` from the `unsubscribe` target
+it is handed. The link's `t` is a signed token, `<payload>.<mac>`: the
+base64url of `v1.<kind>.<subject id>` and its HMAC-SHA256
+(`src/lib/unsubscribe-token.ts`), keyed by `UNSUBSCRIBE_SECRET`. With the
+secret unset in production, mail sends without the headers or the link and
+verification refuses every token. An invitation's subject also carries a tag
+of the address it was sent to, so a link at an address since edited away
+declines nothing.
+
+What each kind of link switches off is the table in
+`docs/superpowers/specs/2026-10-10-list-unsubscribe-design.md` (Decision 3);
+`src/services/unsubscribe.ts` is the only writer.
+
+- `POST /api/unsubscribe?t=<token>` with a form body `List-Unsubscribe=One-Click`
+  (urlencoded or multipart) performs the opt-out. It needs no session and
+  accepts a foreign Origin (see *Cross-site writes*). A change answers 200;
+  a repeat answers 200 `outcome: 'unchanged'`.
+- Every token that cannot act (forged, malformed, missing, unknown subject,
+  erased subject, readdressed or deleted invitation) answers the same 404
+  `UNSUBSCRIBE_LINK_INVALID` with the same body, so the answer says nothing
+  about which accounts exist.
+- `GET /api/unsubscribe?t=<token>` never mutates, because mail scanners and
+  link prefetchers issue GETs. It redirects (303) to `/unsubscribe#t=<token>`;
+  the fragment keeps the token out of server logs, and the page's button does
+  the POST.
+- Rotating `UNSUBSCRIBE_SECRET` invalidates every link already sent. Those
+  links answer the uniform 404, whose copy points to Settings.
+
 ### Error responses
 
 A refusal is `respondError(message, status, code)` for a single literal code
@@ -733,6 +764,10 @@ Writes are refused cross-origin in `withErrorHandler` (`src/lib/cross-origin.ts`
 403 `CROSS_ORIGIN`, logged at `warn` with the reason), so SameSite=Lax is not
 the only CSRF layer. `src/lib/write-handler-wrap-census.test.ts` fails when an
 exported write handler under `src/app/api` is not wrapped in it.
+`/api/unsubscribe` is the one route that opts out (`crossOrigin:
+'token-authorised'`): its credential is the signed token in the URL and it
+reads no session, so a foreign Origin forges nothing. The same test pins that
+no other route passes the option.
 
 `parseBody` also refuses any body not sent as `application/json` (415
 `UNSUPPORTED_MEDIA_TYPE`). That closes the content types a cross-site form can
@@ -745,10 +780,10 @@ body itself relies on the Origin check alone: the multipart photo upload
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **78** routes. **12** carry no session
-guard; **7** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
+`find src/app/api -name route.ts` finds **79** routes. **13** carry no session
+guard; **8** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
-`passkey/authenticate/options`, `payout-pause`), leaving **5** with neither:
+`passkey/authenticate/options`, `payout-pause`, `unsubscribe`), leaving **5** with neither:
 
 | route | why that is correct |
 |---|---|

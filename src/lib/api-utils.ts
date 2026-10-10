@@ -245,13 +245,18 @@ export function pick<T extends Record<string, unknown>>(
  *
  * `path` is `nextUrl.pathname` only, never `search`/`href` — the privacy
  * guard against query strings (tokens, search terms) reaching the log.
+ *
+ * `crossOrigin: 'token-authorised'` is for a route whose request carries its
+ * own credential and reads no session, so a foreign Origin forges nothing.
+ * A census test pins which routes may pass it.
  */
 export function withErrorHandler<Rest extends unknown[]>(
   handler: (request: NextRequest, ...rest: Rest) => Promise<NextResponse>,
+  options: { crossOrigin?: 'enforce' | 'token-authorised' } = {},
 ): (request: NextRequest, ...rest: Rest) => Promise<NextResponse> {
   return async (request: NextRequest, ...rest: Rest): Promise<NextResponse> => {
     try {
-      const refusal = crossOriginRefusal(request);
+      const refusal = options.crossOrigin === 'token-authorised' ? null : crossOriginRefusal(request);
       if (refusal !== null) {
         log.warn(
           {

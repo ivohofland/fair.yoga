@@ -48,7 +48,8 @@ export type RateLimitPrefix =
   | 'teacher-photo'
   | 'announcements'
   | 'push-subscriptions'
-  | 'payout-pause';
+  | 'payout-pause'
+  | 'unsubscribe';
 
 export const PREFIX_CAPACITIES = {
   'magic-link:email': 5_000,
@@ -65,6 +66,7 @@ export const PREFIX_CAPACITIES = {
   announcements: 1_000,
   'push-subscriptions': 2_000,
   'payout-pause': 1_000,
+  unsubscribe: 1_000,
 } as const satisfies Record<RateLimitPrefix, number>;
 
 // Longest first: this is now load-bearing, not inert. `'teacher-signup'` and
@@ -262,7 +264,7 @@ function warnUnresolvedClientIp(route: string, now: number): void {
   log.warn({ route }, 'Rate limit IP check degraded to a shared bucket: client IP could not be resolved');
 }
 
-export type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'magic-link:claim' | 'passkey-auth-options' | 'student-signup:ip' | 'teacher-signup' | 'slug-available' | 'payout-pause'>;
+export type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'magic-link:claim' | 'passkey-auth-options' | 'student-signup:ip' | 'teacher-signup' | 'slug-available' | 'payout-pause' | 'unsubscribe'>;
 
 /**
  * IP-keyed rate limit for an unauthenticated route. An unresolved IP is
