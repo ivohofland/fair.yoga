@@ -965,7 +965,11 @@ transaction through `signOutEverywhereTx`, the transaction-taking form of
 push subscriptions in one transaction (`signOutEverywhere`,
 `src/services/account-sign-out.ts`), because a subscription is keyed by
 account, not session, and would otherwise keep delivering to a device that was
-signed out. A successful registration emails the account address
+signed out. That transaction, and every other that writes more than one of an
+account's sessions (a passkey delete writes them through its `SET NULL`),
+first locks the `Account` row, and `signOutEverywhereTx` takes the proof of
+that lock rather than an account id (`docs/lock-order.md`, "The `Account` row
+orders multi-session sign-out writes"). A successful registration emails the account address
 (`deliverPasskeyAddedNotice`, `FireAndForget`: the registration has committed
 and its response must not depend on the provider, and the mint of the email's
 link sits inside that body for the same reason). The email carries a **This
