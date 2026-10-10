@@ -15,5 +15,10 @@
     "baselineSha256": "c405c17f0442fd3639744797ccb1862397606368e1994c8ff757e793fc446be9",
     "verifiedAt": "2026-10-06",
     "note": "Currency threaded through ClassPriceLine; EUR output is byte-identical"
+  },
+  "schedule": {
+    "sourceSha256": "4e385e13c2a7fde59e7b07c98b53ae382ed631fa72379552dabffc5baf8a43d1",
+    "baselineSha256": "d5697c592786a44090583406895c20fa4dca0094e9b3cd3144b71dfc4b5e0d0c",
+    "verifiedAt": "2026-10-10"
   }
 }
