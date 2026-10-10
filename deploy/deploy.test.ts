@@ -196,7 +196,9 @@ describe('deploy/deploy.sh', () => {
     // A separate process holds the lock, as a concurrent deploy's would. Not
     // `exec 9>…; flock 9; bash script` with the script last: bash execs a `-c`
     // string's last command, leaving the script as the lock's only holder.
-    const holder = spawnSync('bash', ['-c', `flock "${lock}" sleep 10 & sleep 0.5; bash "${SCRIPT}"; rc=$?; kill %1; exit $rc`], {
+    // The holder gets no stdio: spawnSync waits for every process holding its
+    // pipes, and the holder's `sleep` outlives a `kill` of `flock`.
+    const holder = spawnSync('bash', ['-c', `flock "${lock}" sleep 3 </dev/null >/dev/null 2>&1 & sleep 0.5; bash "${SCRIPT}"; rc=$?; kill %1 2>/dev/null; exit $rc`], {
       encoding: 'utf8',
       env: {
         NODE_ENV: 'test',
