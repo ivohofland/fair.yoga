@@ -558,3 +558,50 @@ jobs:
               exit 1
             fi
           done
+
+  # Deploys a main commit that passed every test job to the VPS
+  # (DEPLOYMENT.md §6). The key can do one thing: its authorized_keys entry
+  # forces deploy/deploy.sh, which takes only a full commit hash on
+  # origin/main and only moves forward. The host key is pinned from a secret,
+  # never scanned at run time. No third-party action: plain ssh.
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    # One deploy at a time, never cancelled halfway. A newer run waiting here
+    # replaces an older waiting one; deploy.sh answers success for a commit
+    # already passed, so runs finishing out of order cannot roll back.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy ${{ github.sha }}
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOY_SSH_KEY$DEPLOY_HOST$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::warning::Deploy is not configured (no production secrets); nothing was deployed. DEPLOYMENT.md §6."
+            exit 0
+          fi
+          for name in DEPLOY_SSH_KEY DEPLOY_HOST DEPLOY_KNOWN_HOSTS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set in the production environment."
+              exit 1
+            fi
+          done
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            "$DEPLOY_HOST" "$GITHUB_SHA"
