@@ -638,6 +638,24 @@ describe('paymentLinkSchema', () => {
   });
 });
 
+describe('passkeyRevokeSchema', () => {
+  it.each([
+    ['accepts 256 characters', { token: 'a'.repeat(256) }, { token: 'a'.repeat(256) }],
+    ['trims the token', { token: ' abc ' }, { token: 'abc' }],
+  ])('%s', (_name, input, expected) => {
+    expect(schemas.passkeyRevokeSchema.parse(input)).toEqual(expected);
+  });
+
+  it.each([
+    ['257 characters', { token: 'a'.repeat(257) }],
+    ['whitespace only', { token: '   ' }],
+    ['empty', { token: '' }],
+    ['a number', { token: 123 }],
+  ])('rejects %s', (_name, input) => {
+    expect(schemas.passkeyRevokeSchema.safeParse(input).success).toBe(false);
+  });
+});
+
 describe('updateTeacherSchema.pageSlug', () => {
   it('rejects reserved slugs on update, not just on signup', () => {
     expect(updateTeacherSchema.safeParse({ pageSlug: 'settings' }).success).toBe(false);

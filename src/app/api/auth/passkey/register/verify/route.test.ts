@@ -70,6 +70,22 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/passkey/register/verify', () => {
+  it('stores the credential and mints its revoke token under the one id the verification returned', async () => {
+    m.verifyPasskeyRegistration.mockResolvedValue({
+      verified: true,
+      credentialId: 'verified-credential-id',
+      publicKey: new Uint8Array([1]),
+      counter: 0,
+      transports: [],
+    });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(200);
+    expect(m.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ id: 'verified-credential-id' }) }));
+    await vi.waitFor(() => expect(m.mintCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ credentialId: 'verified-credential-id' }) }));
+  });
+
   it('answers 200 and emails the account address after the credential row exists', async () => {
     const res = await POST(request());
 
