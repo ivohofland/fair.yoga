@@ -1368,7 +1368,10 @@ itself:
 When no live teacher profile shares the account, `deleteStudentAccount` also
 takes the `Account` row, after its `Student` and `Class` locks and before it
 deletes the account's sessions and passkeys: `Student → Class → Account`
-(below, "The `Account` row orders multi-session sign-out writes").
+(below, "The `Account` row orders multi-session sign-out writes"). It deletes
+the sessions before the passkeys, so a passkey sign-in racing it can leave a
+session with a nulled credential on the erased account; `validateSession`
+deletes that session on first use, since the account has no live profile.
 
 **`Student → Class` at every site.** Each takes the `Student` row before its first
 `Class` row, so an erasure and a gated writer can meet only at the `Student`
@@ -2054,7 +2057,10 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   student profile shares the account, the erasure takes the `Account` row,
   after every `Teacher`, template and `Class` lock, before it deletes the
   account's sessions and passkeys (below, "The `Account` row orders
-  multi-session sign-out writes").
+  multi-session sign-out writes"). It deletes the sessions before the
+  passkeys, so a passkey sign-in racing it can leave a session with a nulled
+  credential on the erased account; `validateSession` deletes that session on
+  first use, since the account has no live profile.
 - `PUT /api/teachers/[id]`'s save (`updateTeacherProfile`,
   `src/services/teacher-profile.ts`) without a `currency` takes no explicit
   lock, but its `teacher.updateMany` waits on an erasure's hold and, scoped to
@@ -2156,12 +2162,13 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   resume's gate is the defence against it (`docs/technical-architecture.md`,
   "Resuming paused payments"). None of those rows, the `Account` row
   included, is locked by a transaction that then waits on `Teacher`, and a
-  sign-out everywhere in flight queues with the pause on the `Account` row. A pause arriving during an erasure waits on the lock, finds the
-  row erased and answers `invalid` without consuming. A failure after the
-  consume rolls it back: `src/services/payout-pause-lock-order.test.ts` holds
-  the session row so the session delete times out after the passkey delete
-  has run, and asserts the passkey, the session and the token survive and the
-  link still pauses afterwards.
+  sign-out everywhere in flight queues with the pause on the `Account` row.
+  A pause arriving during an erasure waits on the lock, finds the row erased
+  and answers `invalid` without consuming. A failure after the consume rolls
+  it back: `src/services/payout-pause-lock-order.test.ts` holds the session
+  row so the session delete times out after the passkey delete has run,
+  asserts the pause queued on that `Session` row, and asserts the passkey, the
+  session and the token survive and the link still pauses afterwards.
 - The resume (`resumePayments`, `src/services/payout-resume.ts`, behind
   `POST /api/teachers/[id]/payments-resume`): plain reads of the teacher and of
   the session's passkey before the transaction, then
@@ -2195,9 +2202,10 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   The teacher lock orders it against the pause: the two serialise on
   `Teacher` before either touches a session or a passkey, and a removal that
   waited out a pause reads it paused. An account with no live teacher profile
-  takes no teacher lock: no pause can reach it. `src/services/passkey-credentials-lock-order.test.ts`
-  holds the teacher row and a pause's `UPDATE` on a second connection, and
-  asserts the removal parks and then answers `payments_paused`.
+  takes no teacher lock: no pause can reach it.
+  `src/services/passkey-credentials-lock-order.test.ts` holds the teacher row
+  and a pause's `UPDATE` on a second connection, and asserts the removal parks
+  and then answers `payments_paused`.
 - The passkey-added email's "This wasn't me" link (`revokePasskeyByLink`,
   `src/services/passkey-revoke.ts`): a plain read of the `PasskeyRevokeToken`
   row by hash, then `lockForPasskeyRemoval`: a plain read of the account's
@@ -2412,26 +2420,44 @@ both erasures throw, since a live profile's account row cannot be gone.
 per statement and waits on nothing after it, so it cannot close a cycle:
 `validateSession`'s delete of an expired or profile-less session and its
 sliding-expiry `update`, single sign-out (`invalidateSession`),
-`revokeRequestSession`, `createSession`, and the passkey sign-in's counter
-`update`. The magic-link window the pause entry above accepts stays accepted;
-this lock is the one a sign-in would join if it ever needs closing.
+`revokeRequestSession` and `createSession`. The passkey sign-in's counter
+`update` writes no `Session` row: it writes one `PasskeyCredential` row in its
+own autocommit statement. The magic-link window the pause entry above accepts
+stays accepted; this lock is the one a sign-in would join if it ever needs
+closing.
 
 **Accepted: the daily sweep.** `cleanupExpiredAuth` (`auth-cleanup.ts`)
 deletes expired sessions across all accounts in one statement, which no
 per-account lock can order. It can cross a holder when an account has two
 expired sessions at the moment the sweep runs; Postgres aborts one side, and
-each retries: the sweep the next day, the sign-out on a click.
+the loser can be either. The loser retries: the sweep the next day; a
+sign-out, passkey removal, pause or revoke link on a second click (the link's
+consume rolls back with the rest); an erasure on a repeated request.
+
+**Accepted: push-subscription eviction.** `savePushSubscription`
+(`src/services/push-subscriptions.ts`) evicts the account's least recently
+active subscriptions by id list, in one `deleteMany`, without the `Account`
+lock. At the cap it evicts one row, which cannot close a cycle; an account
+over the cap, which two concurrent saves can leave since neither takes a lock,
+has two or more evicted, and that delete can cross a holder's
+`PushSubscription` delete. Postgres aborts one side, and either retries.
 
 **Pinned by** `src/services/account-sign-out-lock-order.test.ts`: a second
 connection holds the `Account` row, and each holder is asserted to park on it
 (`pg_locks` names `"Account"`) holding no `Session` or `PasskeyCredential` row
-lock, then to finish normally once released. The same file holds two
-concurrent sign-outs, a sign-out held past the 2s `lock_timeout`, and a revoke
-link whose account row is gone. `src/lib/db-locks.test.ts` pins the brand at
-compile time and refuses a lock carried into a second transaction. Mutations
-measured on 2026-10-10, each restored afterwards: `FOR KEY SHARE` in
+lock, then to finish normally once released. The same file holds the
+reported deadlock with the real writers: a second connection holds the
+magic-link session, the pause parks there on `"Session"` with the passkey
+deleted and its session's `SET NULL` taken, and the sign-out started then
+parks behind the pause on `"Account"`; both commit and no session is left.
+It also holds two concurrent sign-outs, a sign-out held past the 2s
+`lock_timeout`, and a revoke link whose account row is gone.
+`src/lib/db-locks.test.ts` pins the brand at compile time and refuses a lock
+carried into a second transaction. Mutations measured on 2026-10-10, each
+restored afterwards: `FOR KEY SHARE` in
 `lockAccountForSignOut` made every parking case fail with
-`expected null to be '"Account"'`, and an always-passing
+`expected null to be '"Account"'` and the reported-deadlock case with
+`expected '"Session"' to be '"Account"'`, and an always-passing
 `assertAccountSignOutLockHeldBy` made the carried-lock case fail with
 `promise resolved "{ sessions: 2, pushSubscriptions: +0 }" instead of rejecting`.
 
