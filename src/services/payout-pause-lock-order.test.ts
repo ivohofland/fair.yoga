@@ -1,9 +1,11 @@
 /**
  * @serial-tier lock-contention — the case below holds the teacher's session
  * row on a second connection until `pausePayments`' session delete gives up on
- * it under the shared `lock_timeout` (`LOCK_TIMEOUT_SQL`). Its assertion is that
- * failure's SQLSTATE, and the whole transaction must reach that statement and
- * wait out the bound inside Prisma's interactive-transaction `timeout`: a
+ * it under the shared `lock_timeout` (`LOCK_TIMEOUT_SQL`). It asserts, via
+ * `pg_blocking_pids` inside a bounded wait, that the pause queued on that
+ * `Session` row, then that failure's SQLSTATE; the whole transaction must
+ * reach that statement and wait out the bound inside Prisma's
+ * interactive-transaction `timeout`: a
  * tier-mate's lock noise that pushed it past would answer `P2028` instead,
  * which is not the failure this file stages.
  *
@@ -39,6 +41,24 @@ function latch(): { promise: Promise<void>; open: () => void } {
   return { promise, open };
 }
 
+/**
+ * The table of the row a connection blocked by `holderPid` is queued for,
+ * read from a third client within a bounded wait; `null` when none parks.
+ */
+async function parkedTableBehind(holderPid: number, stop: () => boolean): Promise<string | null> {
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline && !stop()) {
+    const [row] = await prisma.$queryRaw<Array<{ rel: string }>>`
+      SELECT l.relation::regclass::text AS rel
+        FROM pg_stat_activity a JOIN pg_locks l ON l.pid = a.pid AND l.locktype = 'tuple'
+       WHERE a.wait_event_type = 'Lock' AND ${holderPid} = ANY(pg_blocking_pids(a.pid))
+       LIMIT 1`;
+    if (row !== undefined) return row.rel;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return null;
+}
+
 describe('pausePayments, failing after the consume', () => {
   it('rolls the consume back with the rest, so the link still pauses afterwards', async () => {
     const s = uniqueSuffix();
@@ -71,21 +91,32 @@ describe('pausePayments, failing after the consume', () => {
     const holder = new PrismaClient();
     const held = latch();
     const release = latch();
+    let holderPid = 0;
     const holding = holder.$transaction(async (tx: Prisma.TransactionClient) => {
+      const [own] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+      if (own === undefined) throw new Error('pg_backend_pid returned no row');
+      holderPid = own.pid;
       await tx.$queryRaw`SELECT id FROM "Session" WHERE id = ${sessionId} FOR UPDATE`;
       held.open();
       await release.promise;
     }, { timeout: 30_000 });
     let failure: unknown = null;
+    let parkedOn: string | null = null;
     try {
       await held.promise;
-      failure = await pausePayments(prisma, raw, now).then(() => null, (err: unknown) => err);
+      let settled = false;
+      const pending = pausePayments(prisma, raw, now).then(() => null, (err: unknown) => err).finally(() => { settled = true; });
+      // The pause must be queued on the held session, not stopped earlier,
+      // for the survival assertions below to be about the session delete.
+      parkedOn = await parkedTableBehind(holderPid, () => settled);
+      failure = await pending;
     } finally {
       release.open();
       await holding;
       await holder.$disconnect();
     }
 
+    expect(parkedOn).toBe('"Session"');
     expect(isLockTimeout(failure)).toBe(true);
     expect(await prisma.payoutPauseToken.count({ where: { tokenHash: hashToken(raw) } })).toBe(1);
     const state = await prisma.teacher.findUniqueOrThrow({ where: { id: t.id }, select: { paymentsPausedAt: true } });
