@@ -1444,8 +1444,9 @@ export async function acceptInvitation(
 /**
  * The `pending → declined` write and the `TeacherBlock` that makes it a
  * refusal, for the caller's open transaction. True when it moved the row and
- * wrote the block; false when the row was no longer pending, in which case
- * nothing was written.
+ * wrote the block; false when the row was no longer pending or no longer at
+ * `invitation.email` (a readdress commits without leaving `pending`), in which
+ * case nothing was written.
  */
 export async function declinePending(
   tx: Prisma.TransactionClient,
@@ -1453,9 +1454,10 @@ export async function declinePending(
 ): Promise<boolean> {
   // Same reasoning as `acceptInvitation`: the pending check is the `where`
   // on this write, not a separate read beforehand, so a concurrent accept
-  // from the same account can't slip past it.
+  // from the same account can't slip past it. `email` is in the `where` for
+  // the same reason: the address the caller checked is the address declined.
   const updated = await tx.invitation.updateMany({
-    where: { id: invitation.id, status: 'pending' },
+    where: { id: invitation.id, email: invitation.email, status: 'pending' },
     data: { status: 'declined', respondedAt: new Date() },
   });
   if (updated.count === 0) return false;

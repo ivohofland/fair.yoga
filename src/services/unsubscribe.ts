@@ -120,18 +120,24 @@ async function teacherReminders(tx: Prisma.TransactionClient, id: string): Promi
 /**
  * The subject binds the address the invitation was sent to, so a row that has
  * since been readdressed or erased answers invalid rather than declining for
- * an address the link was never sent to.
+ * an address the link was never sent to. The decline write names that address
+ * too, so a readdress landing between the read and the write is a miss, which
+ * is classified again against the row as it now stands.
  */
 async function declineByToken(tx: Prisma.TransactionClient, subjectId: string): Promise<UnsubscribeOutcome> {
   const parsed = parseInvitationSubject(subjectId);
   if (parsed === null) return INVALID;
-  const invitation = await tx.invitation.findUnique({
-    where: { id: parsed.invitationId },
-    select: { id: true, teacherId: true, email: true, status: true },
-  });
-  if (invitation === null || isErasedAddress(invitation.email) || addressTag(invitation.email) !== parsed.tag) {
-    return INVALID;
-  }
+  const select = { id: true, teacherId: true, email: true, status: true } as const;
+  const invitation = await tx.invitation.findUnique({ where: { id: parsed.invitationId }, select });
+  if (invitation === null || !addressMatches(invitation.email, parsed.tag)) return INVALID;
   if (invitation.status !== 'pending') return UNCHANGED;
-  return (await declinePending(tx, invitation)) ? DONE : UNCHANGED;
+  if (await declinePending(tx, invitation)) return DONE;
+
+  const current = await tx.invitation.findUnique({ where: { id: parsed.invitationId }, select });
+  if (current === null || !addressMatches(current.email, parsed.tag)) return INVALID;
+  return UNCHANGED;
+}
+
+function addressMatches(email: string, tag: string): boolean {
+  return !isErasedAddress(email) && addressTag(email) === tag;
 }
