@@ -4,9 +4,12 @@
  * `pg_blocking_pids` inside a bounded wait, that the writer under test parked
  * on that row before touching a session or a passkey. The timeout case holds
  * it past the shared `lock_timeout` (`LOCK_TIMEOUT_SQL`) and asserts that
- * failure. Lock noise from a neighbour in the parallel tier would stretch the
- * first wait past the window the assertion allows, and the second past
- * Prisma's interactive-transaction `timeout`.
+ * failure. The reported-deadlock case holds a `Session` row instead, so the
+ * real pause parks on it holding the account row, and asserts the real
+ * sign-out then parks behind the pause on that row. Lock noise from a
+ * neighbour in the parallel tier would stretch a wait past the window the
+ * assertion allows, or the timeout case past Prisma's interactive-transaction
+ * `timeout`.
  *
  * Every transaction that writes more than one of an account's sessions,
  * directly or through a passkey delete's `ON DELETE SET NULL`, takes the
@@ -301,6 +304,78 @@ describe('every multi-session sign-out writer parks on the Account row', () => {
     expect(fulfilled(result)).toEqual({ erased: true });
     expect(await prisma.session.count({ where: { accountId: t.accountId } })).toBe(0);
     expect(await prisma.passkeyCredential.count({ where: { accountId: t.accountId } })).toBe(0);
+  }, 20_000);
+});
+
+describe('the reported deadlock: a pause and sign-out-everywhere on one account', () => {
+  it('queues the sign-out behind the pause on the Account row, and both commit', async () => {
+    const t = await seedTeacher('acct-pause-soe');
+    const now = new Date();
+    const ev = await prisma.payoutChangeEvent.create({
+      data: { teacherId: t.id, kind: 'bank_account_added', accountCurrency: 'EUR', after: '•••• 1234', createdAt: now },
+      select: { id: true },
+    });
+    const raw = crypto.randomBytes(32).toString('hex');
+    await prisma.payoutPauseToken.create({
+      data: { tokenHash: hashToken(raw), teacherId: t.id, eventId: ev.id, expiresAt: new Date(now.getTime() + DAY_MS) },
+    });
+    // P is recent, so the pause deletes it, and its `SET NULL` locks S_b
+    // before the pause reaches its session delete.
+    const credentialId = `acct-pause-soe-pk-${uniqueSuffix()}`;
+    await seedPasskey(t.accountId, credentialId, now);
+    const expiresAt = new Date(Date.now() + DAY_MS);
+    const sessionA = hashToken(crypto.randomBytes(32).toString('hex'));
+    await prisma.session.create({ data: { id: sessionA, accountId: t.accountId, expiresAt } });
+    await prisma.session.create({
+      data: { id: hashToken(crypto.randomBytes(32).toString('hex')), accountId: t.accountId, expiresAt, passkeyCredentialId: credentialId },
+    });
+
+    // Holds S_a, so the pause stops at its session delete with P gone and
+    // S_b locked: the moment the review's sign-out arrived.
+    const holder = new PrismaClient();
+    const held = latch();
+    const release = latch();
+    let holderPid = 0;
+    const holding = holder.$transaction(async (tx) => {
+      holderPid = await ownPid(tx);
+      await tx.$queryRaw`SELECT id FROM "Session" WHERE id = ${sessionA} FOR UPDATE`;
+      held.open();
+      await release.promise;
+    }, { timeout: 20_000 });
+
+    let pauseParkedOn: string | null = null;
+    let signOutParkedOn: string | null = null;
+    let outcomes: [PromiseSettledResult<unknown>, PromiseSettledResult<unknown>];
+    try {
+      await held.promise;
+      let pauseSettled = false;
+      const pause = pausePayments(prisma, raw, now).finally(() => { pauseSettled = true; });
+      void pause.catch(() => undefined);
+      const pausePid = await waiterOf(holderPid, () => pauseSettled);
+      if (pausePid !== null) pauseParkedOn = await waitedTable(pausePid);
+
+      let signOutSettled = false;
+      const signOut = signOutEverywhere(prisma, t.accountId).finally(() => { signOutSettled = true; });
+      void signOut.catch(() => undefined);
+      if (pausePid !== null) {
+        const signOutPid = await waiterOf(pausePid, () => signOutSettled);
+        if (signOutPid !== null) signOutParkedOn = await waitedTable(signOutPid);
+      }
+
+      release.open();
+      await holding;
+      outcomes = await Promise.allSettled([pause, signOut]);
+    } finally {
+      release.open();
+      await holding.catch(() => undefined);
+      await holder.$disconnect();
+    }
+
+    expect(pauseParkedOn).toBe('"Session"');
+    expect(signOutParkedOn).toBe('"Account"');
+    expect(fulfilled(outcomes[0])).toEqual({ status: 'paused' });
+    expect(fulfilled(outcomes[1])).toEqual({ sessions: 0, pushSubscriptions: 0 });
+    expect(await prisma.session.count({ where: { accountId: t.accountId } })).toBe(0);
   }, 20_000);
 });
 
