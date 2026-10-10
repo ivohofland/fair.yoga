@@ -43,8 +43,13 @@ account's sessions in different orders:
    other: one row, nothing to order.
    - **Why `FOR NO KEY UPDATE`:** it doesn't conflict with the `FOR KEY SHARE`
      that a foreign-key insert naming the account takes. Erasure's
-     `Account.email` update takes this same lock mode, so the update needs no
-     extra lock of its own.
+     `Account.email` update rewrites a unique column, so it raises the hold
+     to `FOR UPDATE` on a row the transaction already holds
+     (`docs/lock-order.md`, the `Account` entry). The raise waits only on
+     a `FOR KEY SHARE` holder, and no deadlock follows: no holder inserts
+     or re-points a row naming the account (`Teacher`, `Student` and
+     `AdminGrant` are the only foreign keys to it) before it takes the
+     `Account` lock, so a key-share holder never waits on the erasure.
    - **Why not session rows locked in id order:** that was considered and
      dropped (decided with the user). One row has no order to keep, it covers
      student-only accounts, and it is the lock a sign-in side would join if the
