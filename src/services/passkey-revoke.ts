@@ -24,9 +24,11 @@ export type RevokeOutcome =
  * later statement rolls the consume back and the link still works. The removal
  * is `removePasskeyLocked`, the step `deletePasskey` shares, so a removal by
  * link is recorded for the payout gate; a paused account keeps its passkey and
- * is still signed out. The sessions that existed are deleted before the
- * passkey, so the delete's `SET NULL` reaches only a session a passkey sign-in
- * inserted between the two.
+ * is still signed out. The passkey goes before the sessions: a passkey
+ * sign-in that inserts a `Session` after the passkey's delete fails its foreign
+ * key, and one that inserted before it is caught by the session delete that
+ * follows. Sessions first would let a sign-in land between the two deletes and
+ * survive, its `passkeyCredentialId` merely nulled.
  */
 export async function revokePasskeyByLink(
   db: PrismaClient,
@@ -47,14 +49,13 @@ export async function revokePasskeyByLink(
     if (consumed.count === 0) return { status: 'invalid' };
 
     const account = await tx.account.findUniqueOrThrow({ where: { id: token.accountId }, select: { email: true } });
+    const removed = paused ? null : await removePasskeyLocked(tx, token);
     await signOutEverywhereTx(tx, token.accountId);
     await tx.magicLinkToken.deleteMany({ where: { email: account.email } });
 
-    if (paused) return { status: 'revoked', removal: null };
-    const removed = await removePasskeyLocked(tx, token);
     return {
       status: 'revoked',
-      removal: removed.status === 'deleted' ? { accountId: token.accountId, removedAt: removed.removedAt } : null,
+      removal: removed !== null && removed.status === 'deleted' ? { accountId: token.accountId, removedAt: removed.removedAt } : null,
     };
   });
 }

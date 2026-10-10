@@ -1,7 +1,8 @@
 /**
  * @serial-tier lock-contention — the case below holds one of the account's
- * session rows on a second connection until `revokePasskeyByLink`'s sign-out
- * delete gives up on it under the shared `lock_timeout` (`LOCK_TIMEOUT_SQL`).
+ * session rows on a second connection until `revokePasskeyByLink`'s passkey
+ * delete, whose `SET NULL` updates that session, gives up on it under the
+ * shared `lock_timeout` (`LOCK_TIMEOUT_SQL`).
  * Its assertion is that failure's SQLSTATE, and the whole transaction must
  * reach that statement and wait out the bound inside Prisma's
  * interactive-transaction `timeout`: a tier-mate's lock noise that pushed it

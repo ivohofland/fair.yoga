@@ -321,6 +321,7 @@ describe('sendEmail dry-run and the production rule', () => {
 const LINK = 'https://fair.test/verify?token=secret-token' as BoundSignInLink;
 const INVITE_URL = 'https://fair.test/sign-in?invite=abc';
 const WHEN = new Date('2026-10-06T14:03:00Z');
+const REVOKE_URL = 'https://fair.yoga/passkey-revoke#t=secret-token';
 const PAYOUT = {
   kind: 'payment_link_added',
   accountCurrency: null,
@@ -356,8 +357,8 @@ const wrappers = [
     name: 'passkey added',
     label: 'passkey-added',
     audience: 'platform',
-    send: () => sendPasskeyAddedEmail('a@test.local', WHEN),
-    rendered: () => renderPasskeyAddedEmail(WHEN),
+    send: () => sendPasskeyAddedEmail('a@test.local', WHEN, REVOKE_URL),
+    rendered: () => renderPasskeyAddedEmail(WHEN, REVOKE_URL),
   },
   {
     name: 'passkey removed',
@@ -392,6 +393,7 @@ describe.each(wrappers)('$name wrapper', ({ label, audience, send, rendered }) =
       await send();
 
       expect(lastPayload()).toMatchObject({ to: 'a@test.local', subject, html, text });
+      if (label === 'passkey-added') expect(lastPayload()).toMatchObject({ html: expect.stringContaining(REVOKE_URL) });
       if (audience === 'platform') expect(lastPayload()).toHaveProperty('replyTo');
       else expect(lastPayload()).not.toHaveProperty('replyTo');
     });
@@ -463,10 +465,10 @@ describe('sendInvitationEmail dry-run', () => {
 });
 
 describe('notice wrappers in dry-run', () => {
-  it('log neither the address nor the pause link', async () => {
+  it('log neither the address nor a pause or revoke link', async () => {
     const spy = logSpy();
 
-    await sendPasskeyAddedEmail('a@test.local', WHEN);
+    await sendPasskeyAddedEmail('a@test.local', WHEN, REVOKE_URL);
     await sendPasskeyRemovedEmail('a@test.local', WHEN);
     await sendPayoutChangedEmail('a@test.local', PAYOUT);
 
