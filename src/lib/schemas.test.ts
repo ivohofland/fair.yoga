@@ -658,7 +658,7 @@ describe('pageSlugField', () => {
 
   // 'signup' is new here: a static /signup route shadows any teacher who
   // claimed it, because a static segment beats the [slug] dynamic one.
-  it.each(['signup', 'login', 'schedule', 'api', 'start', 'payout-pause'])('rejects the reserved slug %s', (slug) => {
+  it.each(['signup', 'login', 'schedule', 'api', 'start', 'payout-pause', 'passkey-revoke'])('rejects the reserved slug %s', (slug) => {
     expect(() => pageSlugField.parse(slug)).toThrow('This slug is reserved');
   });
 
