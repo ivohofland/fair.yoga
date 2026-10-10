@@ -589,6 +589,37 @@ describe('scheduleJobs', () => {
     expect(health['test-job']?.skippedTicks).toBe(0);
   });
 
+  describe('when shutdown begins', () => {
+    afterEach(() => {
+      delete globalThis.__fairYogaShutdown;
+    });
+
+    it('warns with the names of the jobs whose run is still in flight', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      onTestFinished(() => warn.mockRestore());
+      const { timers } = recordingTimers();
+      const busy: Job = { name: 'busy', intervalMs: MINUTE, run: async () => {}, running: true };
+      const idle: Job = { name: 'idle', intervalMs: MINUTE, run: async () => {}, running: false };
+      scheduleJobs([busy, idle], db, {}, timers);
+
+      beginShutdown();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith({ jobs: ['busy'] }, expect.any(String));
+    });
+
+    it('does not warn when no job is running', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      onTestFinished(() => warn.mockRestore());
+      const { timers } = recordingTimers();
+      scheduleJobs([{ name: 'idle', intervalMs: MINUTE, run: async () => {} }], db, {}, timers);
+
+      beginShutdown();
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     { intervalMs: 10 * 1000, oneOff: false },
     { intervalMs: 15 * 1000, oneOff: false },
