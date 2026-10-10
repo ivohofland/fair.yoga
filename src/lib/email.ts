@@ -33,7 +33,10 @@ export interface EmailMessage {
    * decides.
    */
   unsubscribe: UnsubscribeTarget | null;
-  /** Passed to the provider untouched. */
+  /**
+   * Passed to the provider, except that `sendEmail` sets `List-Unsubscribe`
+   * and `List-Unsubscribe-Post` over these when `unsubscribe` yields links.
+   */
   headers?: Record<string, string>;
   /** A caller-stable id for a send that may be retried (see `LettermintPayload`). */
   idempotencyKey?: string;

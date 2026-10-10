@@ -12,9 +12,9 @@ const BAD_BODY = 'Send List-Unsubscribe=One-Click as a form body.';
 
 /**
  * RFC 8058 one-click unsubscribe. Needs no session: the signed token is the
- * credential and can flip one preference. Mailbox providers POST here
- * server-side, webmail clients from the browser, hence the cross-origin
- * exemption. One 404 for every token that cannot act.
+ * credential, hence the cross-origin exemption. One 404 for every token that
+ * cannot act. Who calls this and why: `docs/technical-architecture.md`
+ * (One-click unsubscribe).
  */
 export const POST = withErrorHandler(
   async (request: NextRequest) => {
@@ -50,7 +50,7 @@ export const POST = withErrorHandler(
   { crossOrigin: 'token-authorised' },
 );
 
-/** A client that opens the header link in a browser lands on the confirm page; nothing changes on GET. */
+/** Redirects to `/unsubscribe` with the token in the fragment; nothing changes on GET. */
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const token = request.nextUrl.searchParams.get('t') ?? '';
   const base = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;

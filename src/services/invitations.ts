@@ -1485,14 +1485,15 @@ export async function declinePending(
  * Decline an invitation. Same ownership gate as `acceptInvitation` above,
  * and for the same reason — see its docblock.
  *
- * No link is created, and the row is not deleted. Two writes, saying two
- * different things. The declined `Invitation` row is what makes a re-invite
- * answer `DECLINED` — `PUT`/`DELETE /api/invitations/[id]` refuse to edit or
- * remove it for that reason. The `TeacherBlock` is the refusal itself: a
- * stored row rather than a key derived from an address the subject's own
- * erasure rewrites, which is what keeps the refusal working after they erase.
- * `unlinkTeacher` writes the same pair. `docs/data-model.md` (TeacherBlock)
- * states that rule and the check a new refusal is held to.
+ * No link is created, and the row is not deleted. The decline is two writes,
+ * saying two different things, and both are made by `declinePending` above,
+ * which `declineByToken` (src/services/unsubscribe.ts) also calls. The
+ * declined `Invitation` row is what makes a re-invite answer `DECLINED` —
+ * `PUT`/`DELETE /api/invitations/[id]` refuse to edit or remove it for that
+ * reason. The `TeacherBlock` is the refusal itself: a stored row rather than
+ * a key derived from an address the subject's own erasure rewrites, which is
+ * what keeps the refusal working after they erase. `docs/data-model.md`
+ * (TeacherBlock) states that rule and the check a new refusal is held to.
  */
 export async function declineInvitation(
   db: PrismaClient,
