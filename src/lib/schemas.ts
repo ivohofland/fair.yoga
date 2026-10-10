@@ -539,6 +539,8 @@ export const updateRoomSchema = z.object({
 export const roomSearchQuerySchema = z.object({
   postcode: z.string().optional(),
   street: z.string().optional(),
+  city: z.string().max(CITY_MAX).optional(),
+  q: z.string().max(ROOM_ADDRESS_MAX).optional(),
 });
 
 // ============================================================================

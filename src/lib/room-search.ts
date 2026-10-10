@@ -29,6 +29,16 @@ export interface RoomResult extends RoomIdentity {
   maxCapacity: number;
 }
 
+/** The most rooms one city search returns. */
+export const ROOM_CITY_SEARCH_LIMIT = 50;
+
+/** What `GET /api/rooms?city=` answers with. */
+export interface RoomCitySearchResult {
+  rooms: RoomResult[];
+  /** True when more rooms matched than `ROOM_CITY_SEARCH_LIMIT`. */
+  truncated: boolean;
+}
+
 /**
  * A result, or which way it failed — never a throw.
  *

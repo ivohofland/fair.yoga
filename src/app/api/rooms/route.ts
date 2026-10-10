@@ -10,30 +10,9 @@ import {
 } from '@/lib/api-utils';
 import { createRoomSchema, roomSearchQuerySchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
-import type { RoomResult } from '@/lib/room-search';
-import { SHARED_ROOM_SELECT, type SharedRoom } from '@/lib/room-projection';
-
-/**
- * The columns the shared-room search returns: exactly `RoomResult`'s keys.
- *
- * `satisfies Record<keyof RoomResult, true>` refuses a key `RoomResult` does
- * not name, and that is what keeps other teachers' `createdById`, `notes` and
- * timestamps out of the browser. `respondTyped<RoomResult[]>` below cannot:
- * the query result is not a fresh literal, so it gets no excess-property
- * check; what it adds is refusing a column whose type no longer matches
- * `RoomResult`. Pass this object to `select` as is — spreading extra
- * columns in beside it at the call site escapes both.
- */
-const ROOM_SEARCH_SELECT = {
-  id: true,
-  venueName: true,
-  roomName: true,
-  address: true,
-  city: true,
-  postcode: true,
-  floor: true,
-  maxCapacity: true,
-} satisfies Record<keyof RoomResult, true>;
+import type { RoomCitySearchResult, RoomResult } from '@/lib/room-search';
+import { ROOM_SEARCH_SELECT, SHARED_ROOM_SELECT, type SharedRoom } from '@/lib/room-projection';
+import { searchSharedRoomsByCity } from '@/services/shared-room-search';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -44,7 +23,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (!parsed.success) {
     return respondError('Invalid query parameters', 400);
   }
-  const { postcode, street } = parsed.data;
+  const { postcode, street, city, q } = parsed.data;
+
+  if (city !== undefined) {
+    if (!city.trim()) return respondError('Enter a city to search', 400);
+    const result = await searchSharedRoomsByCity(prisma, { city, q });
+    return respondTyped<RoomCitySearchResult>(result);
+  }
 
   // When both postcode and street provided, search public rooms
   if (postcode && street) {
