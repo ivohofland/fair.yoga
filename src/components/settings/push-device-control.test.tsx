@@ -245,7 +245,7 @@ describe('PushDeviceControl', () => {
       expect(enablePushMock).not.toHaveBeenCalled();
       expect(screen.getByRole('button', { name: 'Turn on for this phone' })).toBeInTheDocument();
       expect(screen.queryByText("Notifications weren't turned on. Try again.")).not.toBeInTheDocument();
-      expect(consoleError).toHaveBeenCalledWith('[push-device-control] request failed', expect.objectContaining({ step: 'stale-key' }));
+      expect(consoleError).toHaveBeenCalledWith('[push-device] request failed', expect.objectContaining({ step: 'stale-key' }));
     } finally {
       consoleError.mockRestore();
     }
@@ -286,7 +286,7 @@ describe('PushDeviceControl', () => {
     try {
       await renderResolved(CURRENT_KEY);
       expect(screen.getByText("This browser can't receive notifications.")).toBeInTheDocument();
-      expect(consoleError).toHaveBeenCalledWith('[push-device-control] request failed', expect.objectContaining({ step: 'resolve' }));
+      expect(consoleError).toHaveBeenCalledWith('[push-device] request failed', expect.objectContaining({ step: 'resolve' }));
     } finally {
       consoleError.mockRestore();
     }

@@ -19,7 +19,7 @@ export type PushNotice = null | 'enable-failed' | 'disable-failed' | 'unconfirme
 export interface PushDevice {
   /** null until the effect below has resolved the device. */
   state: PushDeviceState | null;
-  /** The permission read while resolving; null without `Notification` or before resolving. */
+  /** The permission read while resolving; null without `Notification`, before resolving, or when resolving threw. */
   permission: NotificationPermission | null;
   notice: PushNotice;
   setState: Dispatch<SetStateAction<PushDeviceState | null>>;
@@ -27,10 +27,11 @@ export interface PushDevice {
 }
 
 /**
- * This device's push state, resolved once per mount and again when the
- * install state or key changes. `resync` re-records a subscription that is
- * already on for the account signed in now; without it, resolving an `on`
- * device makes no request.
+ * This device's push state, resolved on mount and again whenever an effect
+ * dependency changes. With `resync`, an `on` subscription made with the
+ * current key is re-recorded for the account signed in now; without it, that
+ * case makes no request. A subscription made with another key is dropped
+ * either way.
  */
 export function usePushDevice(vapidPublicKey: string | null, { resync }: { resync: boolean }): PushDevice {
   const install = useInstallSupport();
@@ -49,7 +50,7 @@ export function usePushDevice(vapidPublicKey: string | null, { resync }: { resyn
         try {
           subscription = await currentPushSubscription();
         } catch (err) {
-          logRequestFailure('push-device-control', { step: 'read' }, err);
+          logRequestFailure('push-device', { step: 'read' }, err);
           subscription = null;
         }
       }
@@ -66,21 +67,21 @@ export function usePushDevice(vapidPublicKey: string | null, { resync }: { resyn
       };
       let resolved = classifyPushDevice(env);
       let resolvedNotice: PushNotice = null;
-      // The browser's subscription says nothing about which account the
-      // server delivers it to, or whether the server still holds it — the
-      // previous account on a shared phone, or a row deleted since — so a
-      // caller that asks to resync has a subscription that may still be
-      // good re-recorded for the account signed in now.
       if (resolved === 'on' && subscription && vapidPublicKey) {
         if (subscriptionUsesKey(subscription, vapidPublicKey) === 'mismatch') {
           // Made with a key the server no longer signs with: it can receive
           // nothing, and a new one needs the user's tap.
-          logRequestFailure('push-device-control', { step: 'stale-key' }, new Error('subscription made with another VAPID key'));
+          logRequestFailure('push-device', { step: 'stale-key' }, new Error('subscription made with another VAPID key'));
           await disablePush();
           resolved = 'off';
         } else if (resync && !(await syncPushSubscription(subscription)).ok) {
-          // Still subscribed in the browser, and possibly still held by the
-          // server; the next visit re-records it.
+          // The browser's subscription says nothing about which account the
+          // server delivers it to, or whether the server still holds it — the
+          // previous account on a shared phone, or a row deleted since — so
+          // with `resync` one that may still be good is re-recorded for the
+          // account signed in now. On failure it is still subscribed in the
+          // browser, and possibly still held by the server; the next resolve
+          // with `resync` re-records it.
           resolvedNotice = 'unconfirmed';
         }
         if (cancelled) return;
@@ -90,7 +91,7 @@ export function usePushDevice(vapidPublicKey: string | null, { resync }: { resyn
       setState(resolved);
     }
     resolve().catch((err: unknown) => {
-      logRequestFailure('push-device-control', { step: 'resolve' }, err);
+      logRequestFailure('push-device', { step: 'resolve' }, err);
       if (!cancelled) setState('unsupported');
     });
     return () => {

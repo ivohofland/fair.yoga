@@ -9,12 +9,12 @@ import { enablePush } from '@/lib/push-client';
 import { OnboardingSkipButton } from './onboarding-skip-button';
 
 /**
- * A one-time offer to turn on push, for a phone in the installed app whose
- * browser has never been asked. `permission === 'default'` is what separates
- * that phone from one where push was turned off on purpose: turning it off
- * drops the subscription but leaves the permission granted. Gated on a
- * coarse pointer because dismissal is per teacher, and a "no" in a desktop
- * window would otherwise retire the offer on the phone too.
+ * A one-time offer to turn on push, for a phone whose browser has never been
+ * asked. `permission === 'default'` is what "never asked" means: unsubscribing
+ * never revokes a granted permission, so a phone where push was switched off
+ * reads `granted`. Gated on a coarse pointer because `dismissed` holds for the
+ * teacher, not the device, and a "no" in a desktop window would otherwise
+ * retire the offer on the phone too.
  */
 export function PushCard({ dismissed, vapidPublicKey }: { dismissed: boolean; vapidPublicKey: string | null }) {
   const coarse = useCoarsePointer();
@@ -36,6 +36,9 @@ export function PushCard({ dismissed, vapidPublicKey }: { dismissed: boolean; va
     setFailed(false);
     const outcome = await enablePush(key);
     if (outcome === 'failed') {
+      // Kept only while the page is open: a failure after the browser granted
+      // permission reads `off` and `granted` on the next load, so the card does
+      // not return (docs/information-architecture.md, Push card).
       setFailed(true);
       setBusy(false);
       return;
