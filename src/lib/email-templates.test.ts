@@ -11,6 +11,8 @@ import {
   renderPasskeyRemovedEmail,
   renderPayoutChangedEmail,
   renderDegradationDigestEmail,
+  wrapEmail,
+  type RenderedEmail,
 } from './email-templates';
 import { STUDENT_INVITATION_PATH, STUDENT_BOOKINGS_PATH, TEACHER_INVITATION_PATH } from './notification-links';
 
@@ -531,7 +533,7 @@ describe('renderDegradationDigestEmail', () => {
     it('carries the pause link on its own button', () => {
       const { html } = renderPayoutChangedEmail(base);
       expect(html).toContain('href="https://fair.yoga/payout-pause#t=abc123"');
-      expect(html).toContain("This wasn't me");
+      expect(html).toContain('This wasn&#39;t me');
     });
 
     it('says how long the link works and everything it can do', () => {
@@ -549,5 +551,104 @@ describe('renderDegradationDigestEmail', () => {
       const { html } = renderPayoutChangedEmail({ ...base, timezone: 'Not/AZone' });
       expect(html).toContain('14:03');
     });
+  });
+});
+
+describe('wrapEmail', () => {
+  it('escapes once in html and keeps text verbatim', () => {
+    const { html, text } = wrapEmail('Tom & "Jerry" <b>', [
+      { kind: 'paragraph', lines: ['a < b & c'] },
+      { kind: 'button', label: 'Go & see', href: 'https://x.test/p?a=1&b=2' },
+    ], 'Footer & co');
+    expect(html).toContain('Tom &amp; &quot;Jerry&quot; &lt;b&gt;');
+    expect(html).toContain('a &lt; b &amp; c');
+    expect(html).toContain('href="https://x.test/p?a=1&amp;b=2"');
+    expect(html).not.toContain('&amp;amp;');
+    expect(text).toBe(
+      'Tom & "Jerry" <b>\n\na < b & c\n\nGo & see: https://x.test/p?a=1&b=2\n\n' +
+      'fair.yoga — free, open tools for independent yoga teachers.\nFooter & co\n',
+    );
+  });
+
+  it('joins paragraph lines with <br> in html and newlines in text', () => {
+    const { html, text } = wrapEmail('H', [{ kind: 'paragraph', lines: ['one', 'two'] }], 'F');
+    expect(html).toContain('one<br>two');
+    expect(text).toContain('one\ntwo');
+  });
+});
+
+/** Every href in the html, unescaped, appears in the text part. */
+function expectHrefsInText(email: RenderedEmail) {
+  const hrefs = [...email.html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]!.replaceAll('&amp;', '&'));
+  for (const href of hrefs) expect(email.text).toContain(href);
+}
+
+describe('text parts', () => {
+  const at = new Date('2026-10-10T09:30:00Z');
+
+  it('magic link: link in text, account footer, no unread/settings claim', () => {
+    const email = renderMagicLinkEmail('https://fair.yoga/verify?token=abc&x=1');
+    expect(email.text).toContain('Sign in: https://fair.yoga/verify?token=abc&x=1');
+    expect(email.text).toContain('expires in 15 minutes');
+    expect(email.text).toContain('You get this email because of activity on your fair.yoga account.');
+    expect(email.text).not.toMatch(/unread|settings/);
+    expectHrefsInText(email);
+  });
+
+  it('invitation: teacher name verbatim in text, replies-not-read footer', () => {
+    const email = renderInvitationEmail('Ana & <Bo>', 'https://fair.yoga/login');
+    expect(email.text).toContain('Ana & <Bo> added you as a contact');
+    expect(email.html).toContain('Ana &amp; &lt;Bo&gt;');
+    expect(email.text).toContain('Replies to this email are not read.');
+    expect(email.text).not.toMatch(/unread|turn them off/);
+    expectHrefsInText(email);
+  });
+
+  it.each([
+    ['added', renderPasskeyAddedEmail],
+    ['removed', renderPasskeyRemovedEmail],
+  ] as const)('passkey %s: account footer, no unread/settings claim', (_k, render) => {
+    const email = render(at);
+    expect(email.text).toContain('10 Oct 2026, 09:30 UTC');
+    expect(email.text).toContain('You get this email because of activity on your fair.yoga account.');
+    expect(email.text).not.toMatch(/unread|turn them off/);
+  });
+
+  it('notification fallback: body verbatim, button link, replies-not-read', () => {
+    const email = renderNotificationEmail(
+      { type: 'walk_in_added', title: 'Rain & mats', body: 'Bring <your> mat & towel', recipientType: 'student' },
+      'https://fair.yoga',
+    );
+    expect(email.text).toContain('Bring <your> mat & towel');
+    expect(email.text).toContain('Replies to this email are not read.');
+    expect(email.html).toContain('href="');
+    expectHrefsInText(email);
+  });
+
+  it('class reminder footer says replies are not read', () => {
+    const email = renderNotificationEmail(
+      { type: 'class_reminder', title: 'T', body: 'B', recipientType: 'student' }, 'https://fair.yoga', CLASS_REMINDER_EMAIL_FOOTER,
+    );
+    expect(email.text).toContain('Replies to this email are not read.');
+  });
+
+  it('payout changed: pause link and before/after lines in text', () => {
+    const email = renderPayoutChangedEmail({
+      kind: 'bank_account_changed', accountCurrency: 'EUR', before: 'NL•• •••• 1234', after: 'NL•• •••• 9876',
+      at: new Date('2026-10-06T14:03:00Z'), timezone: 'Europe/Amsterdam',
+      pauseUrl: 'https://fair.yoga/payout-pause#t=tok', identifierChanged: true,
+    });
+    expect(email.text).toContain("This wasn't me: https://fair.yoga/payout-pause#t=tok");
+    expect(email.text).toContain('Before: NL•• •••• 1234\nAfter: NL•• •••• 9876');
+    expectHrefsInText(email);
+  });
+
+  it('degradation digest: each code and its sample in text', () => {
+    const email = renderDegradationDigestEmail([{
+      code: 'X_FIRED', description: 'd & e', firstSeenAt: at, lastSeenAt: at, occurrences: 3, sample: { k: 'v<1>' },
+    }]);
+    expect(email.text).toContain('X_FIRED');
+    expect(email.text).toContain('d & e');
+    expect(email.text).toContain('Latest: k: v<1>');
   });
 });
