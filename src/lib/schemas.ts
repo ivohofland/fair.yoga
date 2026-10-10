@@ -255,7 +255,7 @@ export const passkeyAuthVerifySchema = z.object({
 const RESERVED_SLUGS = new Set([
   'login', 'verify', 'signup', 'bookings', 'settings', 'schedule', 'students',
   'inbox', 'class', 'studio-class', 'api', 'health', 'admin', 'account', 'updates', 'start',
-  'payout-pause',
+  'payout-pause', 'unsubscribe',
 ]);
 
 /**
