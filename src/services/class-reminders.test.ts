@@ -262,6 +262,23 @@ describe('processClassReminders (DB)', () => {
     expect(await stampOf(registration.id)).toEqual(MORNING);
   });
 
+  it('sends a reminder as class mail: no Reply-To, on the class route', async () => {
+    const savedRoute = process.env.LETTERMINT_CLASS_ROUTE;
+    process.env.LETTERMINT_CLASS_ROUTE = 'class-route-test';
+    onTestFinished(() => {
+      if (savedRoute === undefined) delete process.env.LETTERMINT_CLASS_ROUTE;
+      else process.env.LETTERMINT_CLASS_ROUTE = savedRoute;
+    });
+    const f = await seed({ classReminder: 'off' });
+    const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'email' });
+
+    await run(f, MORNING);
+
+    const payload = mailTo(student.email);
+    expect(payload).not.toHaveProperty('replyTo');
+    expect(payload).toHaveProperty('route', 'class-route-test');
+  });
+
   it('sends once across two runs', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });

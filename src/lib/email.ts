@@ -41,9 +41,10 @@ function env(name: string): string | undefined {
 }
 
 /**
- * Dry-run mode logs emails instead of sending them. Active when explicitly
- * requested (EMAIL_DRY_RUN=1 — CI runs the production build without a real
- * token) or when no token is configured.
+ * Dry-run mode logs emails instead of sending them. True when
+ * EMAIL_DRY_RUN=1 (CI runs the production build without a real token) or when
+ * no token is configured. `sendEmail` refuses rather than dry-runs in
+ * production without a token, unless EMAIL_DRY_RUN=1.
  */
 export function emailDryRun(): boolean {
   return process.env.EMAIL_DRY_RUN === '1' || env('LETTERMINT_API_TOKEN') === undefined;
@@ -108,8 +109,8 @@ export async function sendEmail(message: EmailMessage): Promise<SendResult> {
  * throws too, and never logs the link: logging a sign-in link to stdout while
  * telling the user "check your inbox" leaks auth tokens into logs and
  * silently breaks login. Explicit EMAIL_DRY_RUN=1 is the sanctioned
- * exception, and outside production a dry-run prints the link for the
- * developer.
+ * exception: a dry-run (outside production, or with EMAIL_DRY_RUN=1) prints
+ * the link for the developer.
  */
 export async function sendMagicLinkEmail(
   to: string,
