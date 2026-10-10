@@ -21,6 +21,7 @@ const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '(public)/[slug]': 'none',
   '(public)/[slug]/book/[classId]': 'none',
   '(public)/login': 'none',
+  '(public)/passkey-revoke': 'none',
   '(public)/payout-pause': 'none',
   '(public)/signup': 'none',
   '(public)/signup/profile': 'none',
