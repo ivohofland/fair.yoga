@@ -361,7 +361,7 @@ export function renderPasskeyAddedEmail(addedAt: Date, revokeUrl: string | null 
     blocks.push(
       {
         kind: 'paragraph',
-        lines: ['Or do it now: this signs you out on every device and removes this passkey. Anyone who can read this inbox can still ask for a new sign-in link, so check your email account too.'],
+        lines: ['Or do it now: this signs you out on every device, cancels any sign-in links already sent, and removes this passkey where it can. Anyone who can read this inbox can still ask for a new sign-in link, so check your email account too.'],
       },
       { kind: 'button', label: "This wasn't me", href: revokeUrl },
     );

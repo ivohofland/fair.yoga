@@ -10,8 +10,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Mints the secret behind one passkey-added email's "This wasn't me" link and
  * returns it raw. Only its SHA-256 is stored, so a database read cannot be
- * turned into a link; the raw value exists in the returned string and the
- * email it goes into, nowhere else. The stored row is found again by
+ * turned into a link; the raw value is never persisted, only its hash is
+ * stored. The stored row is found again by
  * `hashToken(raw)`, the unique `tokenHash`.
  */
 export async function mintPasskeyRevokeToken(

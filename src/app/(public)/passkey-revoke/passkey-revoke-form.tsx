@@ -22,7 +22,7 @@ const linkClass =
   'text-teal underline decoration-[0.5px] underline-offset-[3px] rounded-field focus:outline-none focus-visible:shadow-focus';
 
 /**
- * The one button that signs out and removes the added passkey. The token is
+ * The one button that signs out and removes the added passkey where it can. The token is
  * read from the fragment after hydration and sent only when the button is
  * pressed: a mail scanner that opens the link changes nothing. A success
  * drops the token from the address, so the history entry no longer carries it.

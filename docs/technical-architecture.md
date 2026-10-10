@@ -972,7 +972,7 @@ link sits inside that body for the same reason). The email carries a **This
 wasn't me** button to `/passkey-revoke`, minted per registration
 (`mintPasskeyRevokeToken`, a `PasskeyRevokeToken` row holding the hash of the
 secret, which rides in the URL fragment and lives
-`PASSKEY_REVOKE_TOKEN_TTL_DAYS`, fourteen days). Redeeming it
+`PASSKEY_REVOKE_TOKEN_TTL_DAYS`). Redeeming it
 (`POST /api/passkey-revoke`, `revokePasskeyByLink`) signs out everywhere,
 deletes the account's sign-in links, and removes that one passkey with a
 `RemovedPasskey` record; while payments are paused it signs out and keeps the
@@ -1013,10 +1013,12 @@ fourteen days, or with no cutoff, no passkey is required. One more case the
 gate trusts: a passkey an inbox thief registers more than
 `PAUSE_PASSKEY_LOOKBACK_DAYS` (7) before changing the details is older than
 the cutoff, so it is eligible; the passkey-added email to the account address
-is the signal for it, and its button acts on it: before a pause it removes that passkey, during one it signs out and keeps it. Its
-mirror: passkeys removed more than `PAUSE_PASSKEY_LOOKBACK_DAYS` before the details change leave a
-`RemovedPasskey` older than the cutoff, so the pause sets no requirement; the
-passkey-removed email, sent at the removal, is the signal for that. Both are
+is the signal for it, and while the link works its button acts on it: before
+a pause it removes that passkey, during one it signs out and keeps it. Its
+mirror: passkeys removed more than `PAUSE_PASSKEY_LOOKBACK_DAYS` before the
+details change leave a `RemovedPasskey` older than the cutoff, so the pause
+sets no requirement; the passkey-removed email, sent at the removal, is the
+signal for that. Both are
 the residual risk the design states
 (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
 Decisions 4 and 5). Last, under the teacher's `FOR NO KEY UPDATE` lock, it

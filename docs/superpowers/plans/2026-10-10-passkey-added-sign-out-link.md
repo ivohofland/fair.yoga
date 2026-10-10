@@ -159,9 +159,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Mints the secret behind one passkey-added email's "This wasn't me" link and
  * returns it raw. Only its SHA-256 is stored, so a database read cannot be
- * turned into a link; the raw value exists in the returned string and the
- * email it goes into, nowhere else. `revokePasskeyByLink` looks it up by
- * `hashToken(raw)`.
+ * turned into a link; the raw value is never persisted, only its hash is
+ * stored. `revokePasskeyByLink` looks it up by `hashToken(raw)`.
  */
 export async function mintPasskeyRevokeToken(
   db: PrismaClient,
@@ -977,7 +976,7 @@ In `renderPasskeyAddedEmail` add the parameter and, after the existing remedy pa
     blocks.push(
       {
         kind: 'paragraph',
-        lines: ['Or do it now: this signs you out on every device and removes this passkey. Anyone who can read this inbox can still ask for a new sign-in link, so check your email account too.'],
+        lines: ['Or do it now: this signs you out on every device, cancels any sign-in links already sent, and removes this passkey where it can. Anyone who can read this inbox can still ask for a new sign-in link, so check your email account too.'],
       },
       { kind: 'button', label: "This wasn't me", href: revokeUrl },
     );

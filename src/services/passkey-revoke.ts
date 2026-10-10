@@ -19,11 +19,11 @@ export type RevokeOutcome =
  * the email is about, in one transaction
  * (`docs/superpowers/specs/2026-10-10-passkey-added-sign-out-link-design.md`).
  *
- * The account's live teacher row is the first lock, as for `deletePasskey`
- * (`docs/lock-order.md`); the token is consumed under it, so a failure in any
- * later statement rolls the consume back and the link still works. The removal
- * is `removePasskeyLocked`, the step `deletePasskey` shares, so a removal by
- * link is recorded for the payout gate; a paused account keeps its passkey and
+ * The steps are `lockForPasskeyRemoval`, which takes the account's live
+ * teacher row as the first lock (`docs/lock-order.md`), and then
+ * `removePasskeyLocked`; the token is consumed under that lock, so a failure in
+ * any later statement rolls the consume back and the link still works. A
+ * removal by link is recorded for the payout gate; a paused account keeps its passkey and
  * is still signed out. The passkey goes before the sessions: a passkey
  * sign-in that inserts a `Session` after the passkey's delete fails its foreign
  * key, and one that inserted before it is caught by the session delete that

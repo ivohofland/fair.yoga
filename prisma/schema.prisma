@@ -312,8 +312,10 @@ model PayoutPauseToken {
 
 /// The hash of the secret in a passkey-added email's "This wasn't me" link.
 /// Keyed by account, not teacher: the email goes to students too. No foreign
-/// keys: `PasskeyCredential` has no relation to `Account`, and the credential
-/// may be gone by the time the link is used.
+/// key on `credentialId`: the credential may be gone by the time the link is
+/// used. None on `accountId` either: `PasskeyCredential` has no relation to
+/// `Account`, and erasure deletes the account's rows itself
+/// (`src/services/gdpr.ts`), as it does for `RemovedPasskey`.
 model PasskeyRevokeToken {
   id           String   @id @default(uuid())
   tokenHash    String   @unique
@@ -1340,10 +1342,10 @@ model PasskeyCredential {
 }
 
 /// A passkey its owner removed: when the removed credential was created and
-/// when it went. Written by `removePasskeyLocked`, for a Settings removal and
-/// for the passkey-added email's link alike. A pause reads these so that removing the passkeys before
-/// pausing does not lift the passkey requirement
-/// (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`, Decision 4).
+/// when it went. Written by `removePasskeyLocked`. A pause reads these so that
+/// removing the passkeys before pausing does not lift the passkey requirement
+/// (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
+/// Decision 4).
 model RemovedPasskey {
   id                  String   @id @default(uuid())
   accountId           String
