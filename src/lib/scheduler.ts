@@ -22,7 +22,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
-import { isShuttingDown } from '@/lib/shutdown';
+import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 
 export interface Job {
   name: string;
@@ -224,6 +224,14 @@ export function scheduleJobs(
   health: Record<string, JobHealth>,
   timers: SchedulerTimers = { setTimeout, setInterval },
 ): void {
+  // A run still in flight when shutdown begins is cut by the exit that follows.
+  onShutdown(() => {
+    const running = jobs.filter((job) => job.running).map((job) => job.name);
+    if (running.length > 0) {
+      log.warn({ jobs: running }, 'scheduler: shutdown begun with jobs in flight; the exit will cut them off');
+    }
+  });
+
   for (const job of jobs) {
     const jobHealth: JobHealth = {
       lastRunAt: null,

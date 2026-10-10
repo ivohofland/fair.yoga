@@ -14,9 +14,8 @@ interface ShutdownState {
 }
 
 declare global {
-  // Global so every bundle context shares one state (mirrors the SSE-counts
-  // registry in the stream route). Deleting it resets everything, guard
-  // included; the next access re-creates it.
+  // Global because separate bundle entries share one process; deleting it
+  // resets everything, guard included, and the next access re-creates it.
   var __fairYogaShutdown: ShutdownState | undefined;
 }
 
@@ -45,10 +44,11 @@ export function onShutdown(fn: () => void): () => void {
   };
 }
 
-export function beginShutdown(): void {
+export function beginShutdown(signal?: NodeJS.Signals): void {
   const s = state();
   if (s.shuttingDown) return;
   s.shuttingDown = true;
+  log.info({ signal, subscribers: s.subscribers.size }, 'shutdown begun');
   for (const fn of [...s.subscribers]) runSubscriber(fn);
 }
 
@@ -56,12 +56,15 @@ function runSubscriber(fn: () => void): void {
   try {
     fn();
   } catch (err) {
-    log.error({ err }, 'shutdown subscriber failed');
+    log.error(
+      { err },
+      'shutdown subscriber failed; the work it holds may stay open until the orchestrator kills the process',
+    );
   }
 }
 
 interface SignalTarget {
-  once(event: 'SIGTERM' | 'SIGINT', listener: () => void): unknown;
+  once(event: 'SIGTERM' | 'SIGINT', listener: (signal?: NodeJS.Signals) => void): unknown;
 }
 
 /** Installs once per process; a second call installs nothing. */
