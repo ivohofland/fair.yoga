@@ -16,12 +16,8 @@ import { STUDENT_BOOKINGS_PATH } from '@/lib/notification-links';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 
-const sendMock = vi.hoisted(() => vi.fn());
-vi.mock('resend', () => ({
-  Resend: class {
-    emails = { send: sendMock };
-  },
-}));
+const deliverMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
 vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -32,12 +28,12 @@ const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let n = 0;
 
 function sendsTo(email: string): number {
-  return sendMock.mock.calls.filter(([args]) => args.to === email).length;
+  return deliverMock.mock.calls.filter(([args]) => args.to === email).length;
 }
 
-/** The one email sent to `email`, as handed to Resend. */
+/** The one email sent to `email`, as handed to the adapter. */
 function mailTo(email: string): { subject: string; html: string } {
-  const calls = sendMock.mock.calls.filter(([args]) => args.to === email);
+  const calls = deliverMock.mock.calls.filter(([args]) => args.to === email);
   expect(calls).toHaveLength(1);
   return calls[0]![0] as { subject: string; html: string };
 }
@@ -63,7 +59,7 @@ describe('processClassReminders (DB)', () => {
   const classIds: string[] = [];
   const studentIds: string[] = [];
 
-  const savedApiKey = process.env.RESEND_API_KEY;
+  const savedApiKey = process.env.LETTERMINT_API_TOKEN;
   const savedDryRun = process.env.EMAIL_DRY_RUN;
 
   interface Fixture {
@@ -215,19 +211,19 @@ describe('processClassReminders (DB)', () => {
 
   beforeAll(() => {
     // Force the real-send path: a key is configured and dry-run is off.
-    process.env.RESEND_API_KEY = 're_test_dummy';
+    process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
     delete process.env.EMAIL_DRY_RUN;
   });
 
   beforeEach(() => {
-    sendMock.mockReset();
-    sendMock.mockResolvedValue({ error: null });
+    deliverMock.mockReset();
+    deliverMock.mockResolvedValue({ ok: true });
     vi.mocked(log.error).mockClear();
   });
 
   afterAll(async () => {
-    if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
-    else process.env.RESEND_API_KEY = savedApiKey;
+    if (savedApiKey === undefined) delete process.env.LETTERMINT_API_TOKEN;
+    else process.env.LETTERMINT_API_TOKEN = savedApiKey;
     if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
     else process.env.EMAIL_DRY_RUN = savedDryRun;
 
@@ -393,7 +389,7 @@ describe('processClassReminders (DB)', () => {
     expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
     expect(await studentRows(student.id)).toHaveLength(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(0);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(deliverMock).not.toHaveBeenCalled();
   });
 
   it('sends nothing at start', async () => {
@@ -406,7 +402,7 @@ describe('processClassReminders (DB)', () => {
     expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
     expect(await studentRows(student.id)).toHaveLength(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(0);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(deliverMock).not.toHaveBeenCalled();
     expect(await stampOf(registration.id)).toBeNull();
   });
 
@@ -420,7 +416,7 @@ describe('processClassReminders (DB)', () => {
     expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
     expect(await studentRows(student.id)).toHaveLength(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(0);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(deliverMock).not.toHaveBeenCalled();
   });
 
   it('skips a draft class', async () => {
@@ -433,7 +429,7 @@ describe('processClassReminders (DB)', () => {
     expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
     expect(await studentRows(student.id)).toHaveLength(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(0);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(deliverMock).not.toHaveBeenCalled();
   });
 
   it('skips an erased student', async () => {
@@ -578,7 +574,7 @@ describe('processClassReminders (DB)', () => {
   it('a sweep whose every send fails rejects, keeps the stamp, and does not retry', async () => {
     const f = await seed({ classReminder: 'off' });
     const { student, registration } = await book(f, { classReminderChannel: 'email' });
-    sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
+    deliverMock.mockResolvedValueOnce({ ok: false, reason: 'boom' });
 
     await expect(run(f, MORNING)).rejects.toThrow(
       'class reminders: 1 reminder email(s) failed and will not be retried, 0 class(es) failed (1 student, 0 teacher reminders claimed)',
@@ -598,20 +594,20 @@ describe('processClassReminders (DB)', () => {
     const a = await book(f, { classReminderChannel: 'email' });
     const b = await book(f, { classReminderChannel: 'email' });
     const thrown = new Error('socket hang up');
-    sendMock.mockRejectedValueOnce(thrown);
+    deliverMock.mockRejectedValueOnce(thrown);
 
     await expect(run(f, MORNING)).rejects.toThrow(
       'class reminders: 1 reminder email(s) failed and will not be retried, 0 class(es) failed (2 student, 0 teacher reminders claimed)',
     );
 
-    expect(sendMock).toHaveBeenCalledTimes(2);
+    expect(deliverMock).toHaveBeenCalledTimes(2);
     expect(sendsTo(a.student.email)).toBe(1);
     expect(sendsTo(b.student.email)).toBe(1);
     expect(await stampOf(a.registration.id)).toEqual(MORNING);
     expect(await stampOf(b.registration.id)).toEqual(MORNING);
-    // The error itself, so its stack and cause reach the log.
+    // The seam folds the throw into a reported failure, so its message is the reason.
     expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ classId: f.classId, recipientType: 'student', err: thrown }),
+      expect.objectContaining({ classId: f.classId, recipientType: 'student', reason: 'socket hang up' }),
       'class reminder email failed; not retried',
     );
   });
@@ -701,7 +697,7 @@ describe('processClassReminders (DB)', () => {
 
     expect(state).toEqual({ interposed: 1, sawFixture: true });
     expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(deliverMock).not.toHaveBeenCalled();
     expect(await studentRows(student.id)).toHaveLength(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(0);
     expect(await stampOf(registration.id)).toBeNull();
@@ -719,7 +715,7 @@ describe('processClassReminders (DB)', () => {
 
     expect(state).toEqual({ interposed: 1, sawFixture: true });
     expect(result).toEqual({ studentReminders: 0, teacherReminders: 0, emailFailures: 0 });
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(deliverMock).not.toHaveBeenCalled();
     expect(await studentRows(student.id)).toHaveLength(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(0);
     expect(await stampOf(registration.id)).toBeNull();
@@ -815,7 +811,7 @@ describe('processClassReminders (DB)', () => {
 
   it("a failed teacher send rejects the sweep and keeps the class's stamp; email-only writes no row", async () => {
     const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'email' });
-    sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
+    deliverMock.mockResolvedValueOnce({ ok: false, reason: 'boom' });
 
     await expect(run(f, MORNING)).rejects.toThrow(
       'class reminders: 1 reminder email(s) failed and will not be retried, 0 class(es) failed (0 student, 1 teacher reminders claimed)',

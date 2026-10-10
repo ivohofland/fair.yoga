@@ -11,14 +11,10 @@ import { teardownTeacher, waitFor } from '../../tests/helpers';
 // One test below needs a stranger-branch dispatch to actually fail, which
 // means reaching the real send rather than the dry-run branch that logs and
 // returns (src/lib/email.ts) — same technique `invitations.notify.test.ts`
-// uses: mock the Resend SDK itself. Every other test in this file fails
+// uses: mock the Lettermint adapter itself. Every other test in this file fails
 // before any send is attempted, so this mock is inert for them.
-const sendMock = vi.hoisted(() => vi.fn());
-vi.mock('resend', () => ({
-  Resend: class {
-    emails = { send: sendMock };
-  },
-}));
+const deliverMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
 // The teacher branch claims the cap and inserts the notification inside one
 // `db.$transaction` (#622), so the insert runs against the transaction client
@@ -47,7 +43,7 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 /**
  * `deliverInvitation` is the one function in this file a caller must not be
- * able to wait for: awaited, it turns a Resend outage into a 500 for an
+ * able to wait for: awaited, it turns a provider outage into a 500 for an
  * unregistered address while a registered one still answers normally, and
  * even healthy it is a timing channel (#166). The compiler holds the shape
  * (`FireAndForget`, plus the pin beside the function); these hold the
@@ -615,7 +611,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
     // the stranger branch: the address
     // held a teacher profile when an earlier dispatch capped this row and
     // holds none by the time of this one, which therefore dispatches by
-    // email — and Resend is down.
+    // email — and the provider is down.
     const email = `deliver-cap-noclaim-${suffix}@test.local`;
     const dispatchedAt = new Date();
     // An hour old, so the assertion below cannot pass by coincidentally
@@ -634,16 +630,16 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       },
       select: { id: true },
     });
-    const savedApiKey = process.env.RESEND_API_KEY;
+    const savedApiKey = process.env.LETTERMINT_API_TOKEN;
     const savedDryRun = process.env.EMAIL_DRY_RUN;
 
     try {
       vi.spyOn(log, 'error').mockImplementation(() => undefined);
       // Force the real-send path; dry-run logs and returns, and would never
       // reach the failure this test is about.
-      process.env.RESEND_API_KEY = 're_test_dummy';
+      process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
       delete process.env.EMAIL_DRY_RUN;
-      sendMock.mockResolvedValueOnce({ error: { message: 'resend is down' } });
+      deliverMock.mockResolvedValueOnce({ ok: false, reason: 'provider is down' });
       const updateManySpy = vi.spyOn(prisma.invitation, 'updateMany');
 
       deliverInvitation(prisma, {
@@ -661,11 +657,11 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       });
       expect(after.teacherInboxNotifiedAt).toEqual(markerFromAnotherAttempt);
     } finally {
-      if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
-      else process.env.RESEND_API_KEY = savedApiKey;
+      if (savedApiKey === undefined) delete process.env.LETTERMINT_API_TOKEN;
+      else process.env.LETTERMINT_API_TOKEN = savedApiKey;
       if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
       else process.env.EMAIL_DRY_RUN = savedDryRun;
-      sendMock.mockReset();
+      deliverMock.mockReset();
       await prisma.invitation.deleteMany({ where: { id: row.id } });
     }
   });
