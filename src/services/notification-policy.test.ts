@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { $Enums } from '@prisma/client';
 import {
   ESSENTIAL_NOTIFICATION_TYPES,
   isEssential,
@@ -6,7 +7,10 @@ import {
   shouldEmailStudent,
   shouldEmailTeacher,
   isTeacherNotificationType,
+  studentUnsubscribeKind,
+  teacherUnsubscribeKind,
   type TeacherNotificationPrefs,
+  type TeacherNotificationType,
 } from './notification-policy';
 
 const now = new Date('2026-07-21T12:00:00Z');
@@ -177,5 +181,35 @@ describe('isTeacherNotificationType', () => {
   it('rejects student-only types', () => {
     expect(isTeacherNotificationType('announcement')).toBe(false);
     expect(isTeacherNotificationType('walk_in_added')).toBe(false);
+  });
+});
+
+describe('unsubscribe classification', () => {
+  it('a student type carries an unsubscribe exactly when the student can switch its email off', () => {
+    for (const type of Object.values($Enums.NotificationType)) {
+      const optional = shouldEmailStudent(type, false) === false;
+      expect(studentUnsubscribeKind(type), type).toBe(optional ? 'student_notifications' : null);
+    }
+  });
+
+  it('a teacher type carries an unsubscribe exactly when its email depends on a preference', () => {
+    const on: TeacherNotificationPrefs = { bookingNotifications: 'inbox_and_email', emailOnClassCompleted: true, emailOnInvitation: true, classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' };
+    const off: TeacherNotificationPrefs = { ...on, bookingNotifications: 'inbox_only', emailOnClassCompleted: false, emailOnInvitation: false };
+    // Object, not array: `satisfies` fails here when a teacher type is added
+    // without being classified in this test too.
+    const teacherTypes = {
+      booking_confirmed: true,
+      class_cancelled: true,
+      payment_request: true,
+      teacher_invitation: true,
+      class_reminder: true,
+    } as const satisfies Record<TeacherNotificationType, true>;
+    for (const type of Object.keys(teacherTypes) as TeacherNotificationType[]) {
+      const dependsOnPreference = shouldEmailTeacher(type, on) !== shouldEmailTeacher(type, off);
+      expect(teacherUnsubscribeKind(type) !== null, type).toBe(dependsOnPreference);
+    }
+    expect(teacherUnsubscribeKind('booking_confirmed')).toBe('teacher_bookings');
+    expect(teacherUnsubscribeKind('payment_request')).toBe('teacher_class_completed');
+    expect(teacherUnsubscribeKind('teacher_invitation')).toBe('teacher_invitations');
   });
 });

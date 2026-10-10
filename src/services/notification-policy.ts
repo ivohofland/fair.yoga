@@ -21,6 +21,8 @@ import type {
   TeacherBookingNotifications,
 } from '@prisma/client';
 
+import type { UnsubscribeKind } from '@/lib/unsubscribe-kind';
+
 export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set([
   'class_cancelled',
   // Someone else ended the booking, so the student may otherwise turn up to a
@@ -128,4 +130,26 @@ export function shouldEmailTeacher(
   prefs: TeacherNotificationPrefs,
 ): boolean {
   return TEACHER_EMAIL_POLICY[type](prefs);
+}
+
+/** The student has one email switch, so every optional type unsubscribes through it. */
+export function studentUnsubscribeKind(type: NotificationType): UnsubscribeKind | null {
+  return isEssential(type) ? null : 'student_notifications';
+}
+
+/**
+ * Which preference a teacher's unsubscribe flips, per type; `null` where no
+ * preference governs the email. Kept beside `TEACHER_EMAIL_POLICY` so a new
+ * type is classified for both at once.
+ */
+const TEACHER_UNSUBSCRIBE = {
+  class_cancelled: null,
+  booking_confirmed: 'teacher_bookings',
+  payment_request: 'teacher_class_completed',
+  teacher_invitation: 'teacher_invitations',
+  class_reminder: null,
+} as const satisfies Record<TeacherNotificationType, UnsubscribeKind | null>;
+
+export function teacherUnsubscribeKind(type: TeacherNotificationType): UnsubscribeKind | null {
+  return TEACHER_UNSUBSCRIBE[type];
 }
