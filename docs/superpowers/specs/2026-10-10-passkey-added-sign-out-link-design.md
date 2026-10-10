@@ -62,13 +62,17 @@ Inherited claims, each checked against the code at `726627e8`:
       first (`docs/lock-order.md`, "The `Teacher` row is the first lock"); then
       consume the token (`deleteMany` where `expiresAt > now`, `count === 0`
       answers `invalid`).
-   3. `signOutEverywhereTx`, then delete the account's `MagicLinkToken` rows.
-   4. Remove the credential **only if** `deletePasskey`'s own rules allow it:
+   3. Remove the credential **only if** `deletePasskey`'s own rules allow it:
       it exists and belongs to the account, and the teacher (if any) is not
       paused. Removal writes a `RemovedPasskey` row, exactly as `deletePasskey`
       does. The rule is shared, not copied: the removal body is extracted from
       `deletePasskey` into a transaction-taking function both call, so the two
       cannot drift.
+   4. `signOutEverywhereTx`, then delete the account's `MagicLinkToken` rows.
+      The removal comes first because a passkey sign-in that inserts a
+      `Session` after the passkey's delete fails its foreign key, and one that
+      inserted before it is caught by this delete; the other order lets a
+      sign-in land between the two deletes and survive.
    5. If the removal wrote a row, `deliverPasskeyRemovedNotice` runs after
       commit, as for a Settings removal.
 

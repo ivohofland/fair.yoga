@@ -2178,19 +2178,32 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   row by hash, then `lockForPasskeyRemoval`: a plain read of the account's
   live teacher, then, when there is one, `lockTeacherForNoKeyUpdate` as the
   first lock and a read of its `paymentsPausedAt` under it. Under it the
-  token's `deleteMany`, a read of the `Account`, the `Session` and
-  `PushSubscription` deletes, the `MagicLinkToken` delete and, when the account
-  is not paused, the `PasskeyCredential` read and delete (its `SET NULL`
-  reaches `Session`) and the `RemovedPasskey` insert. It cannot deadlock
-  against a pause: both serialise on `Teacher` before touching a session or a
-  passkey. A link redeemed during a pause signs out and keeps the passkey.
+  token's `deleteMany`, a read of the `Account`, when the account is not paused
+  the `PasskeyCredential` read and delete (its `SET NULL` reaches `Session`)
+  and the `RemovedPasskey` insert, then the `Session` and `PushSubscription`
+  deletes and the `MagicLinkToken` delete. The passkey goes before the
+  sessions so that a passkey sign-in cannot slip a `Session` in between: one
+  committed before the passkey delete is caught by the session delete (a later
+  `READ COMMITTED` statement sees it), and one arriving after blocks on the
+  credential row and fails its foreign key once the redemption commits. It
+  cannot deadlock against a pause: both serialise on `Teacher` before touching
+  a session or a passkey. Passkey before sessions is also `deletePasskey`'s
+  order. An account with no live teacher profile takes no teacher lock, so
+  there the link can still deadlock with `deleteStudentAccount` (`gdpr.ts`,
+  student half), which deletes the sessions, then the passkeys, then rows of
+  its own tokens (`RemovedPasskey`, `PasskeyRevokeToken`, ...): each can hold
+  what the other waits on, and the loser answers 40P01. The link's side rolls
+  back, the consume with it, and the link can be used again; an erasure that
+  loses is a 500 and is retried. A link redeemed during a pause signs out and
+  keeps the passkey.
   `src/services/passkey-revoke.test.ts` holds the pause and the removal's
-  outcomes, and
+  outcomes, `src/services/passkey-revoke-order.test.ts` holds the order of the
+  two deletes, and
   `src/services/passkey-revoke-lock-order.test.ts` holds a session row on a
-  second connection so the sign-out delete times out, and asserts the token is
-  still usable afterwards. An account with no teacher profile takes no teacher
-  lock and so sets no `lock_timeout`: its wait is bounded by the
-  transaction's own timeout instead.
+  second connection so the passkey delete (whose `SET NULL` updates it) times
+  out, and asserts the token is still usable afterwards. An account with no
+  teacher profile takes no teacher lock and so sets no `lock_timeout`: its wait
+  is bounded by the transaction's own timeout instead.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that

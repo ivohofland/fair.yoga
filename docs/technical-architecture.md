@@ -1013,7 +1013,7 @@ fourteen days, or with no cutoff, no passkey is required. One more case the
 gate trusts: a passkey an inbox thief registers more than
 `PAUSE_PASSKEY_LOOKBACK_DAYS` (7) before changing the details is older than
 the cutoff, so it is eligible; the passkey-added email to the account address
-is the signal for it, and its button is how the owner acts on it. Its
+is the signal for it, and its button acts on it: before a pause it removes that passkey, during one it signs out and keeps it. Its
 mirror: passkeys removed more than `PAUSE_PASSKEY_LOOKBACK_DAYS` before the details change leave a
 `RemovedPasskey` older than the cutoff, so the pause sets no requirement; the
 passkey-removed email, sent at the removal, is the signal for that. Both are
