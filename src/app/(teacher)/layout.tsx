@@ -6,6 +6,7 @@ import { isSafeRelativePath } from '@/lib/schemas';
 import { TabBar } from '@/components/layout/tab-bar';
 import { LiveUpdates } from '@/components/layout/live-updates';
 import { OfflineWorker } from '@/components/layout/offline-worker';
+import { ContentColumn } from '@/components/layout/content-column';
 import {
   AttendanceSyncProvider,
   AttendanceSyncStatus,
@@ -42,7 +43,7 @@ export default async function TeacherLayout({
   });
 
   return (
-    <>
+    <ContentColumn>
       <LiveUpdates />
       <OfflineWorker />
       <AttendanceSyncProvider ownerId={session.accountId}>
@@ -50,6 +51,6 @@ export default async function TeacherLayout({
         <AttendanceSyncStatus />
       </AttendanceSyncProvider>
       <TabBar unreadCount={unreadCount} />
-    </>
+    </ContentColumn>
   );
 }

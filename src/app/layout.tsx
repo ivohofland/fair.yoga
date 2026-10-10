@@ -36,9 +36,7 @@ export default async function RootLayout({
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col">
         <InstallListener />
-        <div className="mx-auto w-full max-w-content px-4 sm:px-6 pt-6 pb-8 flex-1 flex flex-col">
-          {children}
-        </div>
+        {children}
       </body>
     </html>
   );

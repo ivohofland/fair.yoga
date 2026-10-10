@@ -29,6 +29,13 @@ describe('LandingPricingDemo', () => {
     expect(screen.getByText('Highest pays 2.1× the lowest')).toBeTruthy();
   });
 
+  it('leaves out rate progress, which only means something to a teacher with rates set', () => {
+    render(<LandingPricingDemo />);
+
+    expect(screen.getByText('Room cost')).toBeTruthy();
+    expect(screen.queryByText('Rate progress')).toBeNull();
+  });
+
   it('bounds its sliders to the example class', () => {
     render(<LandingPricingDemo />);
 
@@ -66,11 +73,35 @@ describe('LandingPricingDemo', () => {
     expect(screen.getByText('Highest pays 1.5× the lowest')).toBeTruthy();
   });
 
-  it('moves the registration bar with the student slider', () => {
+  it('moves the registration count with the student slider', () => {
     render(<LandingPricingDemo />);
     fireEvent.change(students(), { target: { value: '10' } });
 
     expect(screen.getByText('/ 4–12').previousElementSibling?.textContent).toBe('10');
+  });
+
+  it('draws registrations on the student slider itself, not on a second bar', () => {
+    const { container } = render(<LandingPricingDemo />);
+    const track = (slider: HTMLElement) => slider.parentElement;
+
+    // One track per slider, each owning its own fill
+    expect(container.querySelectorAll('[data-range-fill]')).toHaveLength(2);
+    const fill = track(students())?.querySelector<HTMLElement>('[data-range-fill]');
+    // 7 on a 2–12 slider is half way, measured between the thumb's two end stops
+    expect(fill?.style.width).toBe('calc(var(--thumb) / 2 + (100% - var(--thumb)) * 0.5)');
+    // The minimum of 4 sits a fifth of the way along that same travel
+    const tick = track(students())?.querySelector<HTMLElement>('[data-range-tick]');
+    expect(tick?.style.left).toBe('calc(var(--thumb) / 2 + (100% - var(--thumb)) * 0.2)');
+    expect(track(rate())?.querySelector('[data-range-tick]')).toBeNull();
+  });
+
+  it('fills the student slider in danger until the class can go ahead', () => {
+    render(<LandingPricingDemo />);
+    const fill = () => students().parentElement?.querySelector('[data-range-fill]');
+
+    expect(fill()?.className).toContain('bg-teal');
+    fireEvent.change(students(), { target: { value: '3' } });
+    expect(fill()?.className).toContain('bg-danger');
   });
 
   it('shows the cancellation instead of prices below the minimum', () => {
