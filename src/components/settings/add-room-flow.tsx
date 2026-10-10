@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Currency } from '@prisma/client';
-import type { RoomResult } from '@/lib/room-search';
+import type { RoomCitySearchResult, RoomResult } from '@/lib/room-search';
 import { RoomSearchStep } from './room-search-step';
 import { RoomSettingsStep } from './room-settings-step';
 import { RoomCreateStep } from './room-create-step';
@@ -30,7 +30,9 @@ export interface NewRoomForm {
   venueName: string;
   roomName: string;
   floor: string;
+  address: string;
   city: string;
+  postcode: string;
   maxCapacity: string;
   equipmentChecks: Record<string, boolean>;
   notes: string;
@@ -41,7 +43,9 @@ const EMPTY_ROOM_FORM: NewRoomForm = {
   venueName: '',
   roomName: '',
   floor: '',
+  address: '',
   city: '',
+  postcode: '',
   maxCapacity: '',
   equipmentChecks: {
     mats: false,
@@ -57,9 +61,9 @@ const EMPTY_ROOM_FORM: NewRoomForm = {
 
 /**
  * A router over the three steps. It owns only the state that crosses a step
- * boundary: `postcode`/`street` are typed in search and seed the create
- * form's address fields, `selectedRoom` is produced by search or create and
- * consumed by settings, and `step` is its own.
+ * boundary: `city` and `q` are typed in search, and `city` seeds the create
+ * form's city when that is empty; `selectedRoom` is produced by search or
+ * create and consumed by settings, and `step` is its own.
  *
  * #136's two request-body pins used to live here, when this file also built
  * both bodies. They moved with the literals they annotate — the room's to
@@ -71,8 +75,8 @@ export function AddRoomFlow({ currency }: { currency: Currency }) {
   const router = useRouter();
 
   // Shared across steps
-  const [postcode, setPostcode] = useState('');
-  const [street, setStreet] = useState('');
+  const [city, setCity] = useState('');
+  const [q, setQ] = useState('');
   const [selectedRoom, setSelectedRoom] = useState<RoomResult | null>(null);
   const [step, setStep] = useState<Step>('search');
 
@@ -81,7 +85,7 @@ export function AddRoomFlow({ currency }: { currency: Currency }) {
   // only renders once `results !== null`, so discarding it on Back strands
   // the teacher on a bare search form with no way forward but to re-run the
   // identical search.
-  const [results, setResults] = useState<RoomResult[] | null>(null);
+  const [results, setResults] = useState<RoomCitySearchResult | null>(null);
   const [roomForm, setRoomForm] = useState<NewRoomForm>(EMPTY_ROOM_FORM);
 
   // ---- Render ----
@@ -90,25 +94,26 @@ export function AddRoomFlow({ currency }: { currency: Currency }) {
     <div>
       {step === 'search' && (
         <RoomSearchStep
-          postcode={postcode}
-          street={street}
+          city={city}
+          q={q}
           results={results}
           onResultsChange={setResults}
-          onPostcodeChange={setPostcode}
-          onStreetChange={setStreet}
+          onCityChange={setCity}
+          onQChange={setQ}
           onSelect={(room) => { setSelectedRoom(room); setStep('settings'); }}
-          onCreateNew={() => setStep('create')}
+          onCreateNew={() => {
+            // Only an empty city is filled, so Back and forward keeps what
+            // the teacher typed in the create form.
+            setRoomForm((f) => (f.city.trim() ? f : { ...f, city: city.trim() }));
+            setStep('create');
+          }}
         />
       )}
 
       {step === 'create' && (
         <RoomCreateStep
-          postcode={postcode}
-          street={street}
           form={roomForm}
           onFormChange={setRoomForm}
-          onPostcodeChange={setPostcode}
-          onStreetChange={setStreet}
           onCreated={(room) => { setSelectedRoom(room); setStep('settings'); }}
           onBack={() => setStep('search')}
         />
