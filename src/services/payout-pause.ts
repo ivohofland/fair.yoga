@@ -63,17 +63,20 @@ async function heldPasskeyBefore(tx: Prisma.TransactionClient, accountId: string
 }
 
 /**
- * Redeems a "This wasn't me" link: pauses the teacher's payments, signs every
- * device out and removes the passkeys created at or after the cutoff, in one
+ * Redeems a "This wasn't me" link: pauses the teacher's payments, removes the
+ * passkeys created at or after the cutoff and signs every device out, in one
  * transaction (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`,
  * "2 · Pausing").
  *
  * The token is consumed inside that transaction, so a failure in any later
  * statement rolls the consume back and the link still works. The teacher row
  * is the first lock (`docs/lock-order.md`, "The `Teacher` row is the first
- * lock"). The sessions that existed are deleted before the passkeys, so a
- * sign-in with a passkey this delete removes, landing between the two, leaves
- * a session whose credential is nulled; what that means for a resume is
+ * lock"). The passkeys go before the sessions: a sign-in with a passkey this
+ * delete removes either committed its `Session` before the delete, and the
+ * session delete that follows catches it, or fails once the pause commits.
+ * Sessions first would let such a sign-in land between the two deletes and
+ * outlive the pause, its credential merely nulled. A magic-link sign-in that
+ * consumed its link before the pause is an accepted window, not closed here:
  * `docs/lock-order.md`'s pause entry.
  */
 export async function pausePayments(db: PrismaClient, rawToken: string, now: Date = new Date()): Promise<PauseOutcome> {
@@ -116,8 +119,6 @@ export async function pausePayments(db: PrismaClient, rawToken: string, now: Dat
       });
     }
 
-    await signOutEverywhereTx(tx, teacher.accountId);
-    await tx.magicLinkToken.deleteMany({ where: { email: teacher.account.email } });
     // A frozen cutoff later than this pause's own keeps every passkey it made
     // eligible to resume.
     const frozen = teacher.pausePasskeyCutoff;
@@ -125,6 +126,8 @@ export async function pausePayments(db: PrismaClient, rawToken: string, now: Dat
     // No `RemovedPasskey` for these: each was created at or after a cutoff, so
     // could never count toward one.
     await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId, createdAt: { gte: removeFrom } } });
+    await signOutEverywhereTx(tx, teacher.accountId);
+    await tx.magicLinkToken.deleteMany({ where: { email: teacher.account.email } });
     return { status: 'paused' };
   });
 }
