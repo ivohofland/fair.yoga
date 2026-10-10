@@ -60,11 +60,20 @@ import { ClassStatus, Currency, Prisma } from '@prisma/client';
  *          `SET LOCAL` and a row lock on `Teacher` through
  *          `lockTeacherForNoKeyUpdate` when the account has a live teacher
  *          profile.
+ *   adopt  `lockAccountForSignOut` below — issues `SET LOCAL` and then a
+ *          row lock on `Account` (#811).
  *   adopt  `removePasskeyLocked` (`passkey-credentials.ts`) — issues no
  *          `SET LOCAL` and takes no row lock of its own: it is a WRITE that
- *          trusts its caller to hold the lock `lockForPasskeyRemoval` takes,
- *          for the reason `closeQueueOnStart` is branded. On a bare client the
- *          delete and the `RemovedPasskey` insert would commit separately.
+ *          trusts its caller to hold the lock `lockForPasskeyRemoval` takes
+ *          and the `AccountSignOutLock` it is handed, for the reason
+ *          `closeQueueOnStart` is branded. On a bare client the delete and the
+ *          `RemovedPasskey` insert would commit separately.
+ *   adopt  `deleteAccountPasskeys` (`passkey-credentials.ts`) — issues no
+ *          `SET LOCAL` and takes no row lock of its own: a WRITE that trusts
+ *          the `AccountSignOutLock` it is handed, the same reason (#811).
+ *   adopt  `signOutEverywhereTx` (`account-sign-out.ts`) — the same shape as
+ *          the entry above, for the account's sessions and push
+ *          subscriptions (#811).
  *   skip   `activateRegistration`, `hasActiveRegistration` and
  *          `reorderWaitingEntries` (`waitlist.ts`), and
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a
@@ -354,6 +363,54 @@ export function assertClassLockHeldBy(tx: TransactionClientOnly, lock: ClassLock
   if (lockHolders.get(lock) !== tx) {
     throw new Error(
       `ClassLock for class ${lock.classId} was not minted by lockClassRow on this transaction client — it is forged, or was carried across a transaction boundary.`,
+    );
+  }
+}
+
+declare const accountSignOutLockBrand: unique symbol;
+
+/**
+ * Proof that a transaction holds `FOR NO KEY UPDATE` on an `Account` row, taken
+ * before it writes more than one of that account's sessions. Minted only by
+ * `lockAccountForSignOut` and bound at runtime to the transaction client that
+ * minted it, as `ClassLock` is. The rule and its holders:
+ * `docs/lock-order.md`, "The `Account` row orders multi-session sign-out writes".
+ */
+export type AccountSignOutLock = { readonly accountId: string; readonly [accountSignOutLockBrand]: true };
+
+/**
+ * Maps each live `AccountSignOutLock` to the transaction client that minted
+ * it, as `lockHolders` does for `ClassLock`.
+ */
+const accountSignOutHolders = new WeakMap<AccountSignOutLock, TransactionClientOnly>();
+
+/**
+ * The account row `FOR NO KEY UPDATE`, with the shared bounded wait, or `null`
+ * when the row is gone. `FOR NO KEY UPDATE` for the reason
+ * `lockTeacherForNoKeyUpdate` gives: it does not conflict with the
+ * `FOR KEY SHARE` a foreign-key insert naming the account takes.
+ */
+export async function lockAccountForSignOut(
+  tx: TransactionClientOnly,
+  accountId: string,
+): Promise<AccountSignOutLock | null> {
+  await setLockTimeout(tx);
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "Account" WHERE id = ${accountId} FOR NO KEY UPDATE`;
+  if (rows.length === 0) return null;
+  // The one mint site the AccountSignOutLock selector in eslint.config.mjs
+  // exists to be the sole exception to.
+  // eslint-disable-next-line no-restricted-syntax
+  const lock = Object.freeze({ accountId }) as AccountSignOutLock;
+  accountSignOutHolders.set(lock, tx);
+  return lock;
+}
+
+/** Throws unless `tx` minted `lock`; a programmer error, not a condition to handle. */
+export function assertAccountSignOutLockHeldBy(tx: TransactionClientOnly, lock: AccountSignOutLock): void {
+  if (accountSignOutHolders.get(lock) !== tx) {
+    throw new Error(
+      `AccountSignOutLock for account ${lock.accountId} was not minted by lockAccountForSignOut on this transaction client — it is forged, or was carried across a transaction boundary.`,
     );
   }
 }

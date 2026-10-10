@@ -1,7 +1,14 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { lockAccountForSignOut, type AccountSignOutLock, type TransactionClientOnly } from '@/lib/db-locks';
 import { deletePasskey, lockForPasskeyRemoval, removePasskeyLocked } from './passkey-credentials';
 import { uniqueSuffix } from '../../tests/helpers';
+
+async function accountLock(tx: TransactionClientOnly, accountId: string): Promise<AccountSignOutLock> {
+  const lock = await lockAccountForSignOut(tx, accountId);
+  if (lock === null) throw new Error(`account ${accountId} has no row`);
+  return lock;
+}
 
 const prisma = new PrismaClient();
 const accountIds: string[] = [];
@@ -104,7 +111,7 @@ describe('lockForPasskeyRemoval and removePasskeyLocked', () => {
 
     const out = await prisma.$transaction(async (tx) => {
       expect((await lockForPasskeyRemoval(tx, account.id)).paused).toBe(false);
-      return removePasskeyLocked(tx, { accountId: account.id, credentialId: id });
+      return removePasskeyLocked(tx, await accountLock(tx, account.id), id);
     });
 
     expect(out.status).toBe('deleted');
@@ -116,7 +123,7 @@ describe('lockForPasskeyRemoval and removePasskeyLocked', () => {
     const theirs = await makeAccount();
     const id = await passkey(theirs, new Date('2026-01-02T03:04:05Z'));
 
-    const out = await prisma.$transaction((tx) => removePasskeyLocked(tx, { accountId: mine, credentialId: id }));
+    const out = await prisma.$transaction(async (tx) => removePasskeyLocked(tx, await accountLock(tx, mine), id));
 
     expect(out).toEqual({ status: 'not_found' });
     expect(await prisma.passkeyCredential.count({ where: { id } })).toBe(1);
