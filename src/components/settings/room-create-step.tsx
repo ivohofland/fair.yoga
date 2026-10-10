@@ -159,10 +159,12 @@ export function RoomCreateStep({
   return (
     <form onSubmit={handleCreateRoom} className="flex flex-col gap-4">
       <Input label="Venue name" maxLength={VENUE_NAME_MAX} value={venueName} onChange={(e) => set('venueName', e.target.value)} placeholder="e.g. De Yogaschool" />
-      <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={address} onChange={(e) => set('address', e.target.value)} placeholder="e.g. Keizersgracht 123" aria-describedby={showHouseNumberHint ? houseNumberHintId : undefined} />
-      {showHouseNumberHint && (
-        <p id={houseNumberHintId} className="type-caption">Did you include the house number?</p>
-      )}
+      <div className="flex flex-col gap-2">
+        <Input label="Address" maxLength={ROOM_ADDRESS_MAX} value={address} onChange={(e) => set('address', e.target.value)} placeholder="e.g. Keizersgracht 123" aria-describedby={showHouseNumberHint ? houseNumberHintId : undefined} />
+        {showHouseNumberHint && (
+          <p id={houseNumberHintId} className="type-caption">Did you include the house number?</p>
+        )}
+      </div>
       <Input label="City" maxLength={CITY_MAX} value={city} onChange={(e) => set('city', e.target.value)} />
       <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => set('postcode', e.target.value)} />
       <Input label="Floor" maxLength={FLOOR_MAX} value={floor} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. Ground, 1st" />

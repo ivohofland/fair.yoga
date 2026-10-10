@@ -34,7 +34,7 @@ interface ChildByKind {
 /**
  * A third `ClassFamily` variant becomes a compile error HERE rather than a
  * silent gap — the tether `COUNT_KEYS` (`template-action-messages.ts`) and
- * `ROOM_SEARCH_SELECT` (`api/rooms/route.ts`) use, applied to families.
+ * `ROOM_SEARCH_SELECT` (`src/lib/room-projection.ts`) use, applied to families.
  *
  * `prisma/schema.prisma`'s own `ClassFamily` docblock anticipates a third
  * variant, which is why this is worth having rather than hypothetical.

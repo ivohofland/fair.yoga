@@ -62,8 +62,9 @@ const EMPTY_ROOM_FORM: NewRoomForm = {
 /**
  * A router over the three steps. It owns only the state that crosses a step
  * boundary: `city` and `q` are typed in search, and `city` seeds the create
- * form's city unless the teacher has typed their own there; `selectedRoom` is produced by search or
- * create and consumed by settings, and `step` is its own.
+ * form's city unless the teacher has typed their own there; `selectedRoom` is
+ * produced by search or create and consumed by settings, and `step` is its
+ * own.
  *
  * #136's two request-body pins used to live here, when this file also built
  * both bodies. They moved with the literals they annotate — the room's to
@@ -86,6 +87,8 @@ export function AddRoomFlow({ currency }: { currency: Currency }) {
   // the teacher on a bare search form with no way forward but to re-run the
   // identical search.
   const [results, setResults] = useState<RoomCitySearchResult | null>(null);
+  // The `q` that produced `results`, which the live field may have left behind.
+  const [searchedQ, setSearchedQ] = useState('');
   // The city last copied into the create form, so a later search can replace
   // it while a city the teacher typed there themselves is left alone.
   const seededCity = useRef('');
@@ -100,7 +103,8 @@ export function AddRoomFlow({ currency }: { currency: Currency }) {
           city={city}
           q={q}
           results={results}
-          onResultsChange={setResults}
+          searchedQ={searchedQ}
+          onResultsChange={(r, searched) => { setResults(r); setSearchedQ(searched); }}
           onCityChange={setCity}
           onQChange={setQ}
           onSelect={(room) => { setSelectedRoom(room); setStep('settings'); }}
@@ -110,7 +114,9 @@ export function AddRoomFlow({ currency }: { currency: Currency }) {
             const seed = city.trim();
             const previous = seededCity.current;
             seededCity.current = seed;
-            setRoomForm((f) => (f.city.trim() === '' || f.city === previous ? { ...f, city: seed } : f));
+            setRoomForm((f) => (
+              f.city.trim() === '' || f.city === previous ? { ...f, city: seed } : f
+            ));
             setStep('create');
           }}
         />

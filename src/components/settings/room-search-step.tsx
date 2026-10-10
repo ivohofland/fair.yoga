@@ -14,7 +14,9 @@ interface RoomSearchStepProps {
   q: string;
   /** Owned by the router: this step unmounts on every step change. */
   results: RoomCitySearchResult | null;
-  onResultsChange: (results: RoomCitySearchResult | null) => void;
+  /** The `q` that produced `results`; the live `q` may have moved on since. */
+  searchedQ: string;
+  onResultsChange: (results: RoomCitySearchResult | null, searchedQ: string) => void;
   onCityChange: (v: string) => void;
   onQChange: (v: string) => void;
   onSelect: (room: RoomResult) => void;
@@ -22,7 +24,7 @@ interface RoomSearchStepProps {
 }
 
 export function RoomSearchStep({
-  city, q, results, onResultsChange,
+  city, q, results, searchedQ, onResultsChange,
   onCityChange, onQChange, onSelect, onCreateNew,
 }: RoomSearchStepProps) {
   const [searching, setSearching] = useState(false);
@@ -33,7 +35,7 @@ export function RoomSearchStep({
     if (!city.trim()) return;
 
     setSearching(true);
-    onResultsChange(null);
+    onResultsChange(null, '');
     setSearchError('');
 
     // `searchRoomsByCity` returns its failure rather than throwing it, so the
@@ -41,7 +43,7 @@ export function RoomSearchStep({
     // when this call was first extracted, and what these strings were before.
     const outcome = await searchRoomsByCity(city, q);
     if (outcome.ok) {
-      onResultsChange({ rooms: outcome.rooms, truncated: outcome.truncated });
+      onResultsChange({ rooms: outcome.rooms, truncated: outcome.truncated }, q.trim());
     } else {
       // The ternary below handles the union's two members by name, so adding
       // a third would silently route it to the network message — re-creating
@@ -106,7 +108,7 @@ export function RoomSearchStep({
             </>
           ) : (
             <>
-              <p className="text-sm text-brown mb-3">No shared rooms found in this city.</p>
+              <p className="text-sm text-brown mb-3">{searchedQ ? 'No shared rooms match.' : 'No shared rooms found in this city.'}</p>
               <button
                 type="button"
                 onClick={onCreateNew}

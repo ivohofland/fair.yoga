@@ -45,11 +45,10 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 ## Phase 2: Room Setup
 
 ### 2.1 — Room Creation: Address Entry
-- Enter address (street, city, postcode)
-- System immediately searches for existing rooms at that address
-- Results appear inline below the address field
+- Search shared rooms by city, optionally narrowed by a street or venue
+- Results appear inline below the search fields; a long list says it is cut off
 - If matches found: show existing rooms with "Use this room" option
-- If no matches: proceed to create new room
+- If no matches, or none is the right one: create a new room, entering the full address (street with house number, city, postcode) on that step; the searched city is carried over
 - If clear duplicate: "Add to public library" checkbox is disabled
 - *Leads to:* 2.2 Room Details (new room) or 2.3 Room Override (existing room)
 

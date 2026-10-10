@@ -207,7 +207,7 @@ describe('AddRoomFlow', () => {
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
     fireEvent.change(screen.getByLabelText(/Street or venue/), { target: { value: 'Keizersgracht' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no shared rooms found/i);
+    await screen.findByText('No shared rooms match.');
     const [url] = fetchMock.mock.calls[0] ?? [];
     expect(String(url)).toBe('/api/rooms?city=Amsterdam&q=Keizersgracht');
   });
@@ -450,7 +450,7 @@ describe('AddRoomFlow', () => {
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
     fireEvent.change(screen.getByLabelText(/Street or venue/), { target: { value: 'Keizersgracht' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await screen.findByText(/no shared rooms found/i);
+    await screen.findByText('No shared rooms match.');
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
 
     expect((screen.getByLabelText('City') as HTMLInputElement).value).toBe('Amsterdam');
@@ -521,6 +521,17 @@ describe('AddRoomFlow', () => {
     await screen.findByText(/no shared rooms found/i);
     fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
     expect((screen.getByLabelText('City') as HTMLInputElement).value).toBe('Utrecht');
+  });
+
+  it('says no shared rooms match when a street or venue narrowed an empty search', async () => {
+    stubFetch();
+    render(<AddRoomFlow currency="EUR" />);
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText(/Street or venue/), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText('No shared rooms match.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Street or venue/), { target: { value: '' } });
+    expect(screen.getByText('No shared rooms match.')).toBeInTheDocument();
   });
 
   it('says the list is cut off when the search was truncated', async () => {
