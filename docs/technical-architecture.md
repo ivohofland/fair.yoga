@@ -170,8 +170,10 @@ One seam: `sendEmail({ to, audience, content, unsubscribe, headers?, idempotency
 ### One-click unsubscribe
 
 Opt-out-able mail carries `List-Unsubscribe` and `List-Unsubscribe-Post`
-headers plus a footer link, built by `sendEmail` from the `unsubscribe` target
-it is handed. The link's `t` is a signed token, `<payload>.<mac>`: the
+headers plus a footer link. `sendEmail` builds only the headers, from the
+`unsubscribe` target it is handed; each opt-out-able sender builds its own
+footer link with `unsubscribeLinks(target)?.page` and passes the same target
+to `sendEmail`. The link's `t` is a signed token, `<payload>.<mac>`: the
 base64url of `v1.<kind>.<subject id>` and its HMAC-SHA256
 (`src/lib/unsubscribe-token.ts`), keyed by `UNSUBSCRIBE_SECRET`. With the
 secret unset in production, mail sends without the headers or the link and

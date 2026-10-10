@@ -226,8 +226,9 @@ export function pick<T extends Record<string, unknown>>(
  * Wraps an API route handler in a try-catch to prevent unhandled exceptions
  * from leaking stack traces to the client. A cross-origin write
  * (`crossOriginRefusal`) is refused with `CROSS_ORIGIN` before the handler
- * runs, and logged at `warn` with why — so a deployment whose proxy rewrites
- * `Host` shows up in the log rather than only as refused writes.
+ * runs, unless the route opts out with `crossOrigin: 'token-authorised'`
+ * (below), and logged at `warn` with why — so a deployment whose proxy
+ * rewrites `Host` shows up in the log rather than only as refused writes.
  *
  * An uncaught error gets exactly one log call and one response, both
  * unconditional. Error-specific behaviour lives in `classifyApiError` (src/lib/api-errors.ts), so adding a

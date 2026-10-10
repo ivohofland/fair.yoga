@@ -303,6 +303,9 @@ export function renderMagicLinkEmail(magicLink: string): RenderedEmail {
  * that would leak that distinction if this ever gets reused. `teacherName` is
  * teacher-authored (their own first/last name) and not sanitised on write;
  * `wrapEmail` escapes it for html and leaves it verbatim in the text.
+ *
+ * `unsubscribeUrl`, when given, is passed to `wrapEmail` as the footer's
+ * unsubscribe link; without it the footer has none.
  */
 export function renderInvitationEmail(
   teacherName: string,
