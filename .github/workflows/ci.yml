@@ -279,6 +279,9 @@ jobs:
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       ADMIN_HOST: admin.localhost:3000
+      # The standalone server runs as production, where an unset secret refuses
+      # every unsubscribe link; the tests sign with this same value.
+      UNSUBSCRIBE_SECRET: ci-unsubscribe-secret-0123456789abcdef
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -381,6 +384,9 @@ jobs:
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       ADMIN_HOST: admin.localhost:3000
+      # The standalone server runs as production, where an unset secret refuses
+      # every unsubscribe link; the tests sign with this same value.
+      UNSUBSCRIBE_SECRET: ci-unsubscribe-secret-0123456789abcdef
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
