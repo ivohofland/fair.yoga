@@ -181,7 +181,7 @@ declines nothing.
 
 What each kind of link switches off is the table in
 `docs/superpowers/specs/2026-10-10-list-unsubscribe-design.md` (Decision 3);
-`src/services/unsubscribe.ts` is the only writer.
+`src/services/unsubscribe.ts` is the only writer on the unsubscribe path.
 
 - `POST /api/unsubscribe?t=<token>` with a form body `List-Unsubscribe=One-Click`
   (urlencoded or multipart) performs the opt-out. It needs no session and
@@ -193,8 +193,9 @@ What each kind of link switches off is the table in
   about which accounts exist.
 - `GET /api/unsubscribe?t=<token>` never mutates, because mail scanners and
   link prefetchers issue GETs. It redirects (303) to `/unsubscribe#t=<token>`;
-  the fragment keeps the token out of server logs, and the page's button does
-  the POST.
+  the app's own logs carry only the pathname, and the fragment keeps the token
+  out of logs from the redirect onward (the `?t=` URL itself still reaches the
+  proxy's access log on GET and POST). The page's button does the POST.
 - Rotating `UNSUBSCRIBE_SECRET` invalidates every link already sent. Those
   links answer the uniform 404, whose copy points to Settings.
 

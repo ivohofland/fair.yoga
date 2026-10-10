@@ -22,6 +22,20 @@ describe('unsubscribe token', () => {
     });
   });
 
+  it('refuses a MAC spelled with different padding bits', async () => {
+    vi.stubEnv('UNSUBSCRIBE_SECRET', SECRET);
+    const { signUnsubscribeToken, verifyUnsubscribeToken } = await load();
+    const [payload, mac] = signUnsubscribeToken({ kind: 'student_reminders', subjectId: 'stu_1' })!.split('.');
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const head = mac!.slice(0, -1);
+    const variant = [...alphabet].find(
+      (c) => c !== mac!.slice(-1) && Buffer.from(head + c, 'base64url').equals(Buffer.from(mac!, 'base64url')),
+    );
+    expect(variant).toBeDefined();
+    expect(verifyUnsubscribeToken(`${payload}.${head}${variant}`)).toBeNull();
+    expect(verifyUnsubscribeToken(`${payload}.${mac}`)).not.toBeNull();
+  });
+
   it('refuses a tampered payload, a tampered MAC, and another key', async () => {
     vi.stubEnv('UNSUBSCRIBE_SECRET', SECRET);
     const mod = await load();
@@ -29,7 +43,7 @@ describe('unsubscribe token', () => {
     const [payload, mac] = token.split('.');
     const forgedPayload = Buffer.from('v1.teacher_bookings.t_2').toString('base64url');
     expect(mod.verifyUnsubscribeToken(`${forgedPayload}.${mac}`)).toBeNull();
-    expect(mod.verifyUnsubscribeToken(`${payload}.${mac!.slice(0, -2)}AA`)).toBeNull();
+    expect(mod.verifyUnsubscribeToken(`${payload}.${(mac![0] === 'A' ? 'B' : 'A') + mac!.slice(1)}`)).toBeNull();
     vi.stubEnv('UNSUBSCRIBE_SECRET', 'y'.repeat(32));
     const other = await load();
     expect(other.verifyUnsubscribeToken(token)).toBeNull();

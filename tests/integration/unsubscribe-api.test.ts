@@ -107,7 +107,7 @@ describe('POST /api/unsubscribe', () => {
 
   it('answers every token that cannot act with the same 404 and body', async () => {
     const live = await makeStudent();
-    const forged = mint('student_notifications', live).replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'));
+    const forged = mint('student_notifications', live).replace(/\.(.)/, (_m, c: string) => `.${c === 'A' ? 'B' : 'A'}`);
     const unknown = mint('student_notifications', crypto.randomUUID());
     const erased = mint('student_notifications', await makeStudent({ deletedAt: new Date() }));
     const teacherId = await makeTeacher();
