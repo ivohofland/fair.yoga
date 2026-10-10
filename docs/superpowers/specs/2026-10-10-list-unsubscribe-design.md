@@ -131,7 +131,11 @@ List-Unsubscribe-Post: List-Unsubscribe=One-Click
 Framework-agnostic; one transaction.
 
 - Resolves the subject: a `Student`/`Teacher` with `deletedAt` null, or an
-  `Invitation` whose address is not a tombstone. Missing, erased and tombstoned
+  `Invitation` whose address is not a tombstone **and is still the address the
+  email went to**. An invitation's subject is `<invitationId>~<addressTag>`
+  (a truncated SHA-256 of the address): a teacher can correct an address after
+  sending, and without the tag a stranger at the old address could decline the
+  invitation and `TeacherBlock` the new one. Missing, erased and tombstoned
   all answer `invalid` — one answer, so the route cannot tell "never existed"
   from "erased" (the uniform-answer rule of
   `2026-10-07-sign-in-oracles-design.md`, as `PAUSE_LINK_INVALID` applies it).
