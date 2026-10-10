@@ -1340,7 +1340,8 @@ model PasskeyCredential {
 }
 
 /// A passkey its owner removed: when the removed credential was created and
-/// when it went. A pause reads these so that removing the passkeys before
+/// when it went. Written by `removePasskeyLocked`, for a Settings removal and
+/// for the passkey-added email's link alike. A pause reads these so that removing the passkeys before
 /// pausing does not lift the passkey requirement
 /// (`docs/superpowers/specs/2026-10-08-payout-change-alert-design.md`, Decision 4).
 model RemovedPasskey {

@@ -4,7 +4,7 @@
 
 **Goal:** The email sent when a passkey is added carries a **This wasn't me** button that signs the account out everywhere, deletes its pending sign-in links and removes that one passkey.
 
-**Architecture:** A new account-keyed `PasskeyRevokeToken` (hash only, no foreign keys) is minted when the notice is delivered. A public page reads the token from the URL fragment and posts it on a button press to `POST /api/passkey-revoke`, which calls `revokePasskeyByLink`: one transaction that takes the account's teacher lock first (if any), consumes the token, signs out, deletes sign-in links, and removes the passkey through the same locked removal `deletePasskey` uses, so the two cannot drift.
+**Architecture:** A new account-keyed `PasskeyRevokeToken` (hash only, no foreign keys) is minted when the notice is delivered. A public page reads the token from the URL fragment and posts it on a button press to `POST /api/passkey-revoke`, which calls `revokePasskeyByLink`: one transaction that takes the account's teacher lock first (if any), consumes the token, removes the passkey through the same locked removal `deletePasskey` uses (so the two cannot drift), then signs out and deletes sign-in links.
 
 **Tech Stack:** Next.js 16 App Router, TypeScript strict, Prisma/PostgreSQL, Vitest (unit, components, integration), Zod.
 
@@ -625,9 +625,11 @@ export type RevokeOutcome =
  * later statement rolls the consume back and the link still works. The removal
  * is `removePasskeyLocked`, the step `deletePasskey` shares, so a removal by
  * link is recorded for the payout gate; a paused account keeps its passkey and
- * is still signed out. The sessions that existed are deleted before the
- * passkey, so the delete's `SET NULL` reaches only a session a passkey sign-in
- * inserted between the two.
+ * is still signed out. The passkey goes before the sessions: a passkey
+ * sign-in that inserts a `Session` after the passkey's delete fails its foreign
+ * key, and one that inserted before it is caught by the session delete that
+ * follows. Sessions first would let a sign-in land between the two deletes and
+ * survive, its `passkeyCredentialId` merely nulled.
  */
 export async function revokePasskeyByLink(
   db: PrismaClient,
@@ -648,14 +650,13 @@ export async function revokePasskeyByLink(
     if (consumed.count === 0) return { status: 'invalid' };
 
     const account = await tx.account.findUniqueOrThrow({ where: { id: token.accountId }, select: { email: true } });
+    const removed = paused ? null : await removePasskeyLocked(tx, token);
     await signOutEverywhereTx(tx, token.accountId);
     await tx.magicLinkToken.deleteMany({ where: { email: account.email } });
 
-    if (paused) return { status: 'revoked', removal: null };
-    const removed = await removePasskeyLocked(tx, token);
     return {
       status: 'revoked',
-      removal: removed.status === 'deleted' ? { accountId: token.accountId, removedAt: removed.removedAt } : null,
+      removal: removed !== null && removed.status === 'deleted' ? { accountId: token.accountId, removedAt: removed.removedAt } : null,
     };
   });
 }
@@ -672,7 +673,7 @@ For each mutation: apply it, run `pnpm exec vitest run src/services/passkey-revo
 | Guard | Mutation | Must fail |
 |---|---|---|
 | `RemovedPasskey` is written | in `removePasskeyLocked`, comment out the `tx.removedPasskey.create` call and return `removedAt: new Date()` | `signs out, deletes sign-in links, removes the passkey and records the removal` (`removedPasskey.count` is 0, not 1); and `passkey-credentials.test.ts`'s first case |
-| a pause skips the removal | in `revokePasskeyByLink`, delete the `if (paused) return …` line | `while payments are paused: signs out, keeps the passkey, records nothing` |
+| a pause skips the removal | in `revokePasskeyByLink`, make the removal unconditional (drop `paused ? null :`) | `while payments are paused: signs out, keeps the passkey, records nothing` |
 | the credential filter carries `accountId` | in `removePasskeyLocked`, change `owned` to `{ id: input.credentialId }` | `cannot remove a credential of another account, even from a forged token row` |
 | the token is consumed once | replace the `deleteMany` consume with a `count` read | `answers invalid for a second use…` |
 
@@ -680,12 +681,12 @@ The mutations touch `passkey-credentials.ts` and `passkey-revoke.ts`; use a valu
 
 - [ ] **Step 6: Lock-order test**
 
-`src/services/passkey-revoke-lock-order.test.ts`, modelled on `payout-pause-lock-order.test.ts` (read its header, its `latch` helper and its second-connection pattern first, and carry its `@serial-tier lock-contention` header comment with this file's own reasoning). One case: a failure after the consume leaves the token usable. Hold one of the account's `Session` rows `FOR UPDATE` on a second connection so `signOutEverywhereTx`'s delete times out under the shared `lock_timeout` (`isLockTimeout` from `@/lib/api-errors`), assert `revokePasskeyByLink` rejects with that error, release the hold, and assert the same raw token now answers `revoked`.
+`src/services/passkey-revoke-lock-order.test.ts`, modelled on `payout-pause-lock-order.test.ts` (read its header, its `latch` helper and its second-connection pattern first, and carry its `@serial-tier lock-contention` header comment with this file's own reasoning). One case: a failure after the consume leaves the token usable. Hold one of the account's `Session` rows `FOR UPDATE` on a second connection so the passkey delete (whose `SET NULL` updates it) times out under the shared `lock_timeout` (`isLockTimeout` from `@/lib/api-errors`), assert `revokePasskeyByLink` rejects with that error, release the hold, and assert the same raw token now answers `revoked`.
 Run: `pnpm exec vitest run src/services/passkey-revoke-lock-order.test.ts`. Expected: PASS. Then break it (move the consume's `deleteMany` outside the transaction onto `db`), expect the second assertion to FAIL (the token was spent), restore.
 
 - [ ] **Step 7: Document the lock order**
 
-In `docs/lock-order.md`, after the passkey removal's entry add one for the link: a plain read of the `PasskeyRevokeToken` row by hash; then `lockForPasskeyRemoval` (the teacher row first, when the account has a live teacher profile, `lockTeacherForNoKeyUpdate`); under it the token's `deleteMany`, a read of the `Account`, the `Session` and `PushSubscription` deletes, the `MagicLinkToken` delete, and, when not paused, the `PasskeyCredential` delete (its `SET NULL` reaches `Session`) and the `RemovedPasskey` insert. Say why it cannot deadlock against a pause (both serialise on `Teacher` before touching a session or passkey) and name the two test files that hold it. Cite `passkey-revoke-lock-order.test.ts`. Do not add a count; if a call-site list is needed, it is the existing `grep` that section already ships.
+In `docs/lock-order.md`, after the passkey removal's entry add one for the link: a plain read of the `PasskeyRevokeToken` row by hash; then `lockForPasskeyRemoval` (the teacher row first, when the account has a live teacher profile, `lockTeacherForNoKeyUpdate`); under it the token's `deleteMany`, a read of the `Account`, when not paused the `PasskeyCredential` delete (its `SET NULL` reaches `Session`) and the `RemovedPasskey` insert, then the `Session` and `PushSubscription` deletes and the `MagicLinkToken` delete (the passkey first, so a passkey sign-in cannot insert a surviving `Session` between the two deletes). Say why it cannot deadlock against a pause (both serialise on `Teacher` before touching a session or passkey) and name the test files that hold it. Cite `passkey-revoke-lock-order.test.ts`. Do not add a count; if a call-site list is needed, it is the existing `grep` that section already ships.
 
 - [ ] **Step 8: Verify and commit**
 
@@ -1050,7 +1051,7 @@ Update the function's docblock to say the mint is inside the body for the same r
 
 - [ ] **Step 5: Docs, replaced not annotated**
 
-- `docs/technical-architecture.md`, the passage ending "A successful registration emails the account address (`deliverPasskeyAddedNotice`…": add that the email carries a **This wasn't me** button to `/passkey-revoke` and what redeeming does (`revokePasskeyByLink`: sign out everywhere, delete sign-in links, remove the one passkey with a `RemovedPasskey` record, keep it while paused), and that a failed mint sends the email without it. Update the "passkey-added email … is the signal" sentence to say the button is how the owner acts on it. In "Unauthenticated API routes" re-run that section's own two commands and update the counts it states with the arithmetic (78 routes + 1; no-session-guard + 1; rate-limited + 1; the unprotected remainder is unchanged), and add `passkey-revoke` to its list of rate-limited routes and to the rate-limiting paragraph beside `payout-pause`.
+- `docs/technical-architecture.md`, the passage ending "A successful registration emails the account address (`deliverPasskeyAddedNotice`…": add that the email carries a **This wasn't me** button to `/passkey-revoke` and what redeeming does (`revokePasskeyByLink`: sign out everywhere, delete sign-in links, remove the one passkey with a `RemovedPasskey` record, keep it while paused), and that a failed mint sends the email without it. Update the "passkey-added email … is the signal" sentence to say the button acts on it: before a pause it removes that passkey, during one it signs out and keeps it. In "Unauthenticated API routes" re-run that section's own two commands and update the counts it states with the arithmetic (78 routes + 1; no-session-guard + 1; rate-limited + 1; the unprotected remainder is unchanged), and add `passkey-revoke` to its list of rate-limited routes and to the rate-limiting paragraph beside `payout-pause`.
 - `docs/data-model.md`: a paragraph after `PayoutPauseToken`'s: `PasskeyRevokeToken` holds the hash of the secret in the passkey-added email's link: `token_hash` (unique), `account_id`, `credential_id` (neither a foreign key, and why), `expires_at`, `created_at`; erasure deletes the account's rows and `cleanupExpiredAuth` the expired ones.
 
 - [ ] **Step 6: Commit**
