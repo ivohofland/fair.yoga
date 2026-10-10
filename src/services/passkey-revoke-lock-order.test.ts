@@ -61,7 +61,9 @@ describe('revokePasskeyByLink, failing after the consume', () => {
       data: { id: credentialId, accountId: account.id, publicKey: Buffer.from('k'), counter: 0, transports: [] },
     });
     const sessionId = crypto.randomBytes(16).toString('hex');
-    await prisma.session.create({ data: { id: sessionId, accountId: account.id, expiresAt: new Date(Date.now() + DAY_MS) } });
+    await prisma.session.create({
+      data: { id: sessionId, accountId: account.id, expiresAt: new Date(Date.now() + DAY_MS), passkeyCredentialId: credentialId },
+    });
     const raw = await mintPasskeyRevokeToken(prisma, { accountId: account.id, credentialId });
 
     const holder = new PrismaClient();
