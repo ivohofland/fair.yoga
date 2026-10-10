@@ -85,7 +85,9 @@ export async function deliverViaLettermint(
       signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
   } catch (err) {
-    return { ok: false, reason: `lettermint request failed: ${err instanceof Error ? err.message : String(err)}` };
+    // The name only: a rejection's message can quote the token (an invalid
+    // header character makes fetch echo the header value).
+    return { ok: false, reason: `lettermint request failed (${err instanceof Error ? err.name : 'unknown'})` };
   }
   if (res.ok) return { ok: true };
   return { ok: false, reason: `lettermint ${res.status}: ${await errorMessage(res)}` };

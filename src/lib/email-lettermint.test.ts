@@ -65,7 +65,19 @@ describe('deliverViaLettermint', () => {
 
   it('answers ok:false when fetch rejects', async () => {
     fetchMock.mockRejectedValue(new TypeError('fetch failed'));
-    expect(await deliverViaLettermint(base, 'lm_tok')).toEqual({ ok: false, reason: 'lettermint request failed: fetch failed' });
+    expect(await deliverViaLettermint(base, 'lm_tok')).toEqual({ ok: false, reason: 'lettermint request failed (TypeError)' });
+  });
+
+  it('never puts the rejection message, which can carry the token, into the reason', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Headers.append: "lm_ab\ncd" is an invalid header value.'));
+    const result = await deliverViaLettermint(base, 'lm_ab\ncd');
+    expect(result).toEqual({ ok: false, reason: 'lettermint request failed (TypeError)' });
+    expect(JSON.stringify(result)).not.toContain('lm_ab');
+  });
+
+  it('names a non-Error rejection as unknown', async () => {
+    fetchMock.mockRejectedValue('nope');
+    expect(await deliverViaLettermint(base, 'lm_tok')).toEqual({ ok: false, reason: 'lettermint request failed (unknown)' });
   });
 
   it('aborts a request that never answers and answers ok:false', async () => {
@@ -74,7 +86,7 @@ describe('deliverViaLettermint', () => {
     }));
     const result = await deliverViaLettermint(base, 'lm_tok', { timeoutMs: 10 });
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.reason).toMatch(/^lettermint request failed: /);
+    expect(result.ok === false && result.reason).toMatch(/^lettermint request failed \(\w+\)$/);
   });
 
   describe('idempotency', () => {
