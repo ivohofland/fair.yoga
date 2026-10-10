@@ -783,8 +783,8 @@ body itself relies on the Origin check alone: the multipart photo upload
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **79** routes. **13** carry no session
-guard; **8** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
+`find src/app/api -name route.ts` finds **80** routes. **14** carry no session
+guard; **9** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
 `passkey/authenticate/options`, `payout-pause`, `unsubscribe`, `passkey-revoke`), leaving
 **5** with neither:
