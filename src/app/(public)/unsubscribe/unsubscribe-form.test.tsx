@@ -41,10 +41,55 @@ describe('UnsubscribeForm', () => {
     window.history.replaceState(null, '', '/');
   });
 
-  it.each(Object.keys(UNSUBSCRIBE_KINDS) as UnsubscribeKind[])('describes what %s changes', async (kind) => {
+  const REMINDERS = 'Class reminders stop coming by email. If email was the only way you got them, reminders turn off.';
+  const EXPECTED = {
+    student_notifications: {
+      what: "You'll stop getting an email when a message in the app goes unread. Messages about your own bookings, cancellations and payments still come by email.",
+      settings: '/account/notifications',
+    },
+    teacher_bookings: {
+      what: "You'll stop getting booking emails. New bookings still show in your inbox.",
+      settings: '/settings/notifications',
+    },
+    teacher_class_completed: {
+      what: "You'll stop getting an email when a class completes.",
+      settings: '/settings/notifications',
+    },
+    teacher_invitations: {
+      what: "You'll stop getting an email when someone invites you to connect.",
+      settings: '/settings/notifications',
+    },
+    student_reminders: { what: REMINDERS, settings: '/account/notifications' },
+    teacher_reminders: { what: REMINDERS, settings: '/settings/notifications' },
+    invitation: {
+      what: "This declines the invitation, and that teacher can't add your address again.",
+      settings: null,
+    },
+  } as const satisfies Record<UnsubscribeKind, { what: string; settings: string | null }>;
+
+  it.each(Object.keys(UNSUBSCRIBE_KINDS) as UnsubscribeKind[])('describes what %s changes and where its settings are', async (kind) => {
     await open(kind);
-    const description = screen.getByTestId('unsubscribe-what');
-    expect((description.textContent ?? '').length).toBeGreaterThan(10);
+    expect(screen.getByTestId('unsubscribe-what').textContent).toBe(EXPECTED[kind].what);
+    const link = screen.queryByRole('link', { name: 'notification settings' });
+    if (EXPECTED[kind].settings === null) expect(link).not.toBeInTheDocument();
+    else expect(link).toHaveAttribute('href', EXPECTED[kind].settings);
+  });
+
+  it.each(Object.keys(UNSUBSCRIBE_KINDS) as UnsubscribeKind[])('confirms %s truthfully after unsubscribing', async (kind) => {
+    stubFetch(() => respond(200, { data: { unsubscribed: true } }));
+    await open(kind);
+    fireEvent.click(screen.getByRole('button', BUTTON));
+    await settle();
+    const status = screen.getByRole('status');
+    const settings = EXPECTED[kind].settings;
+    if (settings === null) {
+      expect(status).toHaveTextContent('You\u2019ve declined the invitation. That teacher can\u2019t add your address again.');
+      expect(status).not.toHaveTextContent('change this');
+      expect(screen.queryByRole('link', { name: 'notification settings' })).not.toBeInTheDocument();
+    } else {
+      expect(status).toHaveTextContent('You can change this any time in your notification settings.');
+      expect(screen.getByRole('link', { name: 'notification settings' })).toHaveAttribute('href', settings);
+    }
   });
 
   it('describes an invitation unsubscribe as a decline', async () => {
