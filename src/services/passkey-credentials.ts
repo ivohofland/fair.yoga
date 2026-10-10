@@ -1,5 +1,11 @@
 import type { PrismaClient } from '@prisma/client';
-import { lockTeacherForNoKeyUpdate, type TransactionClientOnly } from '@/lib/db-locks';
+import {
+  assertAccountSignOutLockHeldBy,
+  lockAccountForSignOut,
+  lockTeacherForNoKeyUpdate,
+  type AccountSignOutLock,
+  type TransactionClientOnly,
+} from '@/lib/db-locks';
 
 /** What a person may see of one of their own passkeys — never key material. */
 export interface PasskeySummary {
@@ -50,27 +56,49 @@ export async function lockForPasskeyRemoval(
  * `RemovedPasskey`, so the passkey is never neither standing nor recorded as
  * removed. The filter carries `accountId`: another account's credential is
  * indistinguishable from one that does not exist. The caller holds the lock
- * `lockForPasskeyRemoval` takes and has refused a paused account.
+ * `lockForPasskeyRemoval` takes and has refused a paused account, and holds
+ * `lock`, because the delete's `SET NULL` writes every session signed in with
+ * the passkey (`docs/lock-order.md`, "The `Account` row orders multi-session
+ * sign-out writes").
  */
 export async function removePasskeyLocked(
   tx: TransactionClientOnly,
-  input: { accountId: string; credentialId: string },
+  lock: AccountSignOutLock,
+  credentialId: string,
 ): Promise<{ status: 'deleted'; removedAt: Date } | { status: 'not_found' }> {
-  const owned = { id: input.credentialId, accountId: input.accountId };
+  assertAccountSignOutLockHeldBy(tx, lock);
+  const owned = { id: credentialId, accountId: lock.accountId };
   const credential = await tx.passkeyCredential.findFirst({ where: owned, select: { createdAt: true } });
   if (credential === null) return { status: 'not_found' };
   const { count } = await tx.passkeyCredential.deleteMany({ where: owned });
   if (count === 0) return { status: 'not_found' };
   const removal = await tx.removedPasskey.create({
-    data: { accountId: input.accountId, credentialCreatedAt: credential.createdAt },
+    data: { accountId: lock.accountId, credentialCreatedAt: credential.createdAt },
     select: { removedAt: true },
   });
   return { status: 'deleted', removedAt: removal.removedAt };
 }
 
 /**
+ * All the account's passkeys, or those created at or after `createdFrom`. No
+ * `RemovedPasskey` row: the caller decides none is owed. Held under `lock` for
+ * the reason `removePasskeyLocked` is.
+ */
+export async function deleteAccountPasskeys(
+  tx: TransactionClientOnly,
+  lock: AccountSignOutLock,
+  createdFrom: Date | null,
+): Promise<number> {
+  assertAccountSignOutLockHeldBy(tx, lock);
+  const { count } = await tx.passkeyCredential.deleteMany({
+    where: { accountId: lock.accountId, ...(createdFrom === null ? {} : { createdAt: { gte: createdFrom } }) },
+  });
+  return count;
+}
+
+/**
  * Remove one of the account's passkeys: `lockForPasskeyRemoval`, then
- * `removePasskeyLocked` (what reads the record it leaves:
+ * `lockAccountForSignOut`, then `removePasskeyLocked` (what reads the record it leaves:
  * `docs/technical-architecture.md`, "Resuming paused payments"). A credential
  * of another account is indistinguishable from one that does not exist: both
  * answer `not_found`.
@@ -92,6 +120,8 @@ export async function deletePasskey(
         ? { status: 'payments_paused' }
         : { status: 'not_found' };
     }
-    return removePasskeyLocked(tx, input);
+    const lock = await lockAccountForSignOut(tx, input.accountId);
+    if (lock === null) return { status: 'not_found' };
+    return removePasskeyLocked(tx, lock, input.credentialId);
   });
 }

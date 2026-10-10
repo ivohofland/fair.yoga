@@ -23,6 +23,7 @@ import { handleSpotFreed, reorderWaitingEntries, SpotFreedError, spotFreedLoss }
 import {
   CLASS_TO_ENTRY_JOIN,
   CLASS_TO_WAITLIST_JOIN,
+  lockAccountForSignOut,
   lockClassRowsOrdered,
   lockStudentForErasure,
   lockTeacherForNoKeyUpdate,
@@ -37,6 +38,8 @@ import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 import { startOfLocalDay } from '@/lib/timezone';
 import { withSlot as withClassSlot } from './class-template-lifecycle';
 import { withSlot as withStudioSlot } from './studio-class-template-lifecycle';
+import { signOutEverywhereTx } from './account-sign-out';
+import { deleteAccountPasskeys } from './passkey-credentials';
 
 // ---------------------------------------------------------------------------
 // Push preference columns — the export's copy and the erased value
@@ -810,11 +813,14 @@ export async function deleteStudentAccount(
         select: { id: true },
       });
       if (!teacherOnAccount) {
-        await tx.session.deleteMany({ where: { accountId: student.accountId } });
-        await tx.passkeyCredential.deleteMany({ where: { accountId: student.accountId } });
+        // `docs/lock-order.md`, "The `Account` row orders multi-session
+        // sign-out writes".
+        const lock = await lockAccountForSignOut(tx, student.accountId);
+        if (lock === null) throw new Error(`student ${studentId}'s account row is gone`);
+        await signOutEverywhereTx(tx, lock);
+        await deleteAccountPasskeys(tx, lock, null);
         await tx.removedPasskey.deleteMany({ where: { accountId: student.accountId } });
         await tx.passkeyRevokeToken.deleteMany({ where: { accountId: student.accountId } });
-        await tx.pushSubscription.deleteMany({ where: { accountId: student.accountId } });
         // Last live profile erased: the account email is PII too.
         await tx.account.update({
           where: { id: student.accountId },
@@ -1570,11 +1576,13 @@ export async function deleteTeacherAccount(
           select: { id: true },
         });
         if (!studentOnAccount) {
-          await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
-          await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
+          // The same lock as the student erasure's block above.
+          const lock = await lockAccountForSignOut(tx, teacher.accountId);
+          if (lock === null) throw new Error(`teacher ${teacherId}'s account row is gone`);
+          await signOutEverywhereTx(tx, lock);
+          await deleteAccountPasskeys(tx, lock, null);
           await tx.removedPasskey.deleteMany({ where: { accountId: teacher.accountId } });
           await tx.passkeyRevokeToken.deleteMany({ where: { accountId: teacher.accountId } });
-          await tx.pushSubscription.deleteMany({ where: { accountId: teacher.accountId } });
           // Last live profile erased: the account email is PII too.
           await tx.account.update({
             where: { id: teacher.accountId },

@@ -31,6 +31,21 @@ const classLockCastSelector = {
     'Only lockClassRow (src/lib/db-locks.ts) mints a ClassLock — take the lock instead of casting one (#219).',
 };
 
+// `AccountSignOutLock` is minted in exactly one place — `lockAccountForSignOut`
+// (src/lib/db-locks.ts), which `assertAccountSignOutLockHeldBy` checks at
+// runtime. Like `classLockCastSelector`, an early signal against a cast that
+// names it, with the same blind spots (#811).
+const accountSignOutLockCastSelector = {
+  selector: [
+    "TSAsExpression[typeAnnotation.typeName.name='AccountSignOutLock']",
+    "TSTypeAssertion[typeAnnotation.typeName.name='AccountSignOutLock']",
+    "TSAsExpression[typeAnnotation.typeName.right.name='AccountSignOutLock']",
+    "TSTypeAssertion[typeAnnotation.typeName.right.name='AccountSignOutLock']",
+  ].join(', '),
+  message:
+    'Only lockAccountForSignOut (src/lib/db-locks.ts) mints an AccountSignOutLock — take the lock instead of casting one (#811).',
+};
+
 // `AdminProof` is minted in exactly one place — `resolveAdminAccess`
 // (src/lib/admin-access.ts), which `assertAdminProof` checks at runtime. Like
 // `classLockCastSelector`, an early signal against a cast that names it.
@@ -115,7 +130,7 @@ const eslintConfig = defineConfig([
     files: ['src/**/*.ts', 'src/**/*.tsx'],
     ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     rules: {
-      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector, adminProofCastSelector],
+      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector, accountSignOutLockCastSelector, adminProofCastSelector],
     },
   },
   // Client and route code refuses an unbound `catch` and a parameterless
@@ -130,6 +145,7 @@ const eslintConfig = defineConfig([
         'error',
         teacherStudentWriteSelector,
         classLockCastSelector,
+        accountSignOutLockCastSelector,
         adminProofCastSelector,
         bareCatchSelector,
         discardedRejectionSelector,
@@ -145,14 +161,14 @@ const eslintConfig = defineConfig([
   {
     files: ['src/services/roster-link.ts'],
     rules: {
-      'no-restricted-syntax': ['error', classLockCastSelector, adminProofCastSelector],
+      'no-restricted-syntax': ['error', classLockCastSelector, accountSignOutLockCastSelector, adminProofCastSelector],
     },
   },
   // `resolveAdminAccess` is the one place that mints an `AdminProof`.
   {
     files: ['src/lib/admin-access.ts'],
     rules: {
-      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector],
+      'no-restricted-syntax': ['error', teacherStudentWriteSelector, classLockCastSelector, accountSignOutLockCastSelector],
     },
   },
   // A hardcoded dev-server origin in a test file breaks against any server

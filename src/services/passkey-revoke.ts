@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
+import { lockAccountForSignOut } from '@/lib/db-locks';
 import { signOutEverywhereTx } from '@/services/account-sign-out';
 import { lockForPasskeyRemoval, removePasskeyLocked } from '@/services/passkey-credentials';
 
@@ -20,8 +21,10 @@ export type RevokeOutcome =
  * (`docs/superpowers/specs/2026-10-10-passkey-added-sign-out-link-design.md`).
  *
  * The steps are `lockForPasskeyRemoval`, which takes the account's live
- * teacher row as the first lock (`docs/lock-order.md`), and then
- * `removePasskeyLocked`; the token is consumed under that lock, so a failure in
+ * teacher row as the first lock (`docs/lock-order.md`), then
+ * `lockAccountForSignOut` (`docs/lock-order.md`, "The `Account` row orders
+ * multi-session sign-out writes"), and then `removePasskeyLocked`; the token
+ * is consumed under those locks, so a failure in
  * any later statement rolls the consume back and the link still works. A
  * removal by link is recorded for the payout gate; a paused account keeps its passkey and
  * is still signed out. The passkey goes before the sessions: a passkey
@@ -44,13 +47,15 @@ export async function revokePasskeyByLink(
     if (token === null) return { status: 'invalid' };
 
     const { paused } = await lockForPasskeyRemoval(tx, token.accountId);
+    const lock = await lockAccountForSignOut(tx, token.accountId);
+    if (lock === null) return { status: 'invalid' };
 
     const consumed = await tx.passkeyRevokeToken.deleteMany({ where: { tokenHash, expiresAt: { gt: now } } });
     if (consumed.count === 0) return { status: 'invalid' };
 
     const account = await tx.account.findUniqueOrThrow({ where: { id: token.accountId }, select: { email: true } });
-    const removed = paused ? null : await removePasskeyLocked(tx, token);
-    await signOutEverywhereTx(tx, token.accountId);
+    const removed = paused ? null : await removePasskeyLocked(tx, lock, token.credentialId);
+    await signOutEverywhereTx(tx, lock);
     await tx.magicLinkToken.deleteMany({ where: { email: account.email } });
 
     return {
