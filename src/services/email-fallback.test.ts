@@ -425,6 +425,46 @@ describe('processEmailFallback (DB)', () => {
 
         expect(unsubscribeTargetSentTo(teacherEmail)).toEqual({ kind: 'teacher_bookings', subjectId: teacherId });
       });
+
+      async function teacherFallback(type: 'payment_request' | 'teacher_invitation' | 'class_cancelled') {
+        const n = await prisma.notification.create({
+          data: {
+            recipientType: 'teacher',
+            recipientId: teacherId,
+            type,
+            title: 'Teacher fallback',
+            body: 'Unread',
+            createdAt: new Date(Date.now() - 45 * 60 * 1000),
+          },
+        });
+        notificationIds.push(n.id);
+        await sweepOnly(n.id);
+      }
+
+      it('a teacher payment_request carries teacher_class_completed, and its footer links the unsubscribe page', async () => {
+        await teacherFallback('payment_request');
+
+        expect(unsubscribeTargetSentTo(teacherEmail)).toEqual({ kind: 'teacher_class_completed', subjectId: teacherId });
+        const [mail] = deliverMock.mock.calls.find(([args]) => args.to === teacherEmail)! as [{ html: string; headers?: Record<string, string> }];
+        const oneClick = /^<(.+)>$/.exec(mail.headers?.['List-Unsubscribe'] ?? '')?.[1];
+        const token = oneClick === undefined ? null : new URL(oneClick).searchParams.get('t');
+        expect(token).not.toBeNull();
+        expect(mail.html).toContain(`/unsubscribe#t=${token}`);
+      });
+
+      it('a teacher teacher_invitation carries teacher_invitations', async () => {
+        await teacherFallback('teacher_invitation');
+
+        expect(unsubscribeTargetSentTo(teacherEmail)).toEqual({ kind: 'teacher_invitations', subjectId: teacherId });
+      });
+
+      it('a teacher class_cancelled carries no unsubscribe, and no footer link', async () => {
+        await teacherFallback('class_cancelled');
+
+        expect(unsubscribeTargetSentTo(teacherEmail)).toBeNull();
+        const [mail] = deliverMock.mock.calls.find(([args]) => args.to === teacherEmail)! as [{ html: string }];
+        expect(mail.html).not.toContain('/unsubscribe#t=');
+      });
     });
 
     it('sends one email when two sweeps overlap on the same notification', async () => {

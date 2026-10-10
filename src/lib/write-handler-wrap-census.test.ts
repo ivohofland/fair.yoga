@@ -91,7 +91,7 @@ describe('write handler wrap census', () => {
 
   it('only the unsubscribe route opts out of the cross-origin refusal', () => {
     const optedOut = routeFiles(API)
-      .filter((file) => readFileSync(file, 'utf8').includes("'token-authorised'"))
+      .filter((file) => /crossOrigin\s*:/.test(readFileSync(file, 'utf8')))
       .map((file) => path.relative(API, file).split(path.sep).join('/'));
     expect(optedOut).toEqual(['unsubscribe/route.ts']);
   });
