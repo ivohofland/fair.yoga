@@ -87,7 +87,7 @@ describe('deletePasskey', () => {
 });
 
 describe('lockForPasskeyRemoval and removePasskeyLocked', () => {
-  it('report paused under the lock and leave a paused account untouched until the caller decides', async () => {
+  it('lockForPasskeyRemoval reports a paused account as paused and removes nothing itself', async () => {
     const accountId = await makeAccount({ pausedAt: new Date() });
     const id = await passkey(accountId, new Date('2026-01-02T03:04:05Z'));
 

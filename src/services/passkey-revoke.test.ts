@@ -147,8 +147,12 @@ describe('revokePasskeyByLink', () => {
       data: { tokenHash: hashToken(raw), accountId: mine.accountId, credentialId: theirCredential, expiresAt: new Date(Date.now() + DAY_MS) },
     });
 
-    await revokePasskeyByLink(prisma, raw);
+    const holderSession = await session(mine.accountId);
 
+    const out = await revokePasskeyByLink(prisma, raw);
+
+    expect(out).toEqual({ status: 'revoked', removal: null });
+    expect(await prisma.session.count({ where: { id: holderSession } })).toBe(0);
     expect(await prisma.passkeyCredential.count({ where: { id: theirCredential } })).toBe(1);
   });
 });

@@ -13,7 +13,7 @@ export default function PasskeyRevokePage() {
       <ul className="type-body list-disc pl-5 mb-6 flex flex-col gap-1">
         <li>signs you out on every device,</li>
         <li>cancels any sign-in links already sent,</li>
-        <li>removes the passkey that was added.</li>
+        <li>removes the passkey that was added, where it can.</li>
       </ul>
       <p className="type-body mb-8">You can sign in again afterwards with a new link.</p>
       <PasskeyRevokeForm />
