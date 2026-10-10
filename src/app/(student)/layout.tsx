@@ -2,6 +2,7 @@ import { headers } from 'next/headers';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { LiveUpdates } from '@/components/layout/live-updates';
+import { ContentColumn } from '@/components/layout/content-column';
 
 export default async function StudentLayout({
   children,
@@ -17,9 +18,9 @@ export default async function StudentLayout({
   }
 
   return (
-    <>
+    <ContentColumn>
       <LiveUpdates />
       {children}
-    </>
+    </ContentColumn>
   );
 }

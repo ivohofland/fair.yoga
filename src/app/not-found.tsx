@@ -1,16 +1,19 @@
 import Link from 'next/link';
+import { ContentColumn } from '@/components/layout/content-column';
 
 export default function NotFound() {
   return (
-    <div className="py-16 px-4 text-center">
-      <p className="type-subtitle">This page doesn&apos;t exist</p>
-      <p className="type-body mt-2">The link may be old, or the page may have moved.</p>
-      <Link
-        href="/"
-        className="mt-5 inline-flex items-center justify-center rounded-pill px-6 min-h-12 text-base font-semibold text-teal no-underline hover:bg-teal-tint"
-      >
-        Go to fair.yoga
-      </Link>
-    </div>
+    <ContentColumn>
+      <div className="py-16 px-4 text-center">
+        <p className="type-subtitle">This page doesn&apos;t exist</p>
+        <p className="type-body mt-2">The link may be old, or the page may have moved.</p>
+        <Link
+          href="/"
+          className="mt-5 inline-flex items-center justify-center rounded-pill px-6 min-h-12 text-base font-semibold text-teal no-underline hover:bg-teal-tint"
+        >
+          Go to fair.yoga
+        </Link>
+      </div>
+    </ContentColumn>
   );
 }

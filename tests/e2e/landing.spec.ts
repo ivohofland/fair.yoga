@@ -14,7 +14,7 @@ test.describe('Landing page', () => {
 
   test('the hero sends a teacher to signup', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('link', { name: 'Set up your first class' }).click();
+    await page.getByRole('link', { name: 'Set up your first class' }).first().click();
     await expect(page).toHaveURL(/\/signup$/);
   });
 
@@ -24,12 +24,20 @@ test.describe('Landing page', () => {
     await expect(page).toHaveURL(/\/#pricing$/);
     await expect(page.locator('#pricing')).toBeInViewport();
 
-    await page.getByRole('link', { name: 'Get started — it’s free' }).click();
+    await page.getByRole('link', { name: 'Set up your first class' }).last().click();
     await expect(page).toHaveURL(/\/signup$/);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/#pricing$/);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^Look around the room\./);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^A free booking system/);
+  });
+
+  test('lays out its own column, wider than the app’s', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/');
+    const panel = page.getByRole('region', { name: 'What it does' }).getByRole('list');
+    const box = await panel.boundingBox();
+    expect(box?.width).toBeGreaterThan(640);
   });
 
   test('the demo answers its sliders', async ({ page }) => {

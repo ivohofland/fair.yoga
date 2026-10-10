@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { getSession } from '@/lib/session';
-import { Card } from '@/components/ui/card';
+import { Icon } from '@/components/ui/icon';
 import { Wordmark } from '@/components/layout/wordmark';
 import { LandingPricingDemo } from '@/components/landing/landing-pricing-demo';
 
@@ -10,71 +10,97 @@ const REPO_URL = 'https://github.com/ivohofland/fair.yoga';
 const CONTACT_HREF = 'mailto:hello@fair.yoga';
 
 const PRIMARY_LINK =
-  'inline-flex items-center justify-center text-center bg-teal text-cream hover:bg-teal-hover active:bg-teal-pressed rounded-pill px-6 min-h-12 font-semibold text-base no-underline';
+  'inline-flex items-center justify-center text-center bg-teal text-cream hover:bg-teal-hover hover:text-cream active:bg-teal-pressed rounded-pill px-6 min-h-12 font-semibold text-base no-underline';
+const SECONDARY_LINK =
+  'inline-flex items-center justify-center text-center border-[1.5px] border-teal text-teal hover:bg-teal-tint hover:text-teal rounded-pill px-6 min-h-12 font-semibold text-base no-underline';
+const QUIET_LINK = 'inline-flex items-center min-h-11 no-underline hover:text-teal';
 
-const VALUES = [
+/** The landing page's own column: wider than the app's, for a desktop reader. */
+const COLUMN = 'mx-auto w-full max-w-[960px] px-4 sm:px-10';
+const KICKER = 'text-sm font-medium text-brown';
+const HEADING = 'font-heading font-bold text-[28px] leading-[1.25]';
+const LEAD = 'type-body text-lg leading-[1.6]';
+
+const FEATURES = [
   {
-    title: 'You earn your rate',
-    body: 'Set a minimum and a target. Every price is worked out to pay you between the two.',
+    area: 'Scheduling',
+    title: 'Plan your classes',
+    body: 'Add your room, what it costs and what you’d like to earn. The prices are worked out for you.',
   },
   {
-    title: 'Prices you can stand behind',
-    body: 'See exactly what each class size means before you publish — no surprises, no discounts to manage.',
+    area: 'Bookings',
+    title: 'Share one link',
+    body: 'Students book in a few taps. They share which income tier fits them, and their price is set from that.',
   },
   {
-    title: 'No one priced out',
-    body: 'The lowest tier keeps the practice within reach for people on a tight budget.',
+    area: 'Payments',
+    title: 'Get paid after class',
+    body: 'Students pay you directly once class is done. No lock-in, and fair.yoga takes no percentage.',
   },
+] as const;
+
+const PRICING_POINTS = [
+  { title: 'You earn your rate', body: 'Prices are set so you always land between your minimum and your target.' },
+  { title: 'No surprises', body: 'See what every class size means for you before you publish. No discounts to manage.' },
+  { title: 'No one priced out', body: 'The lowest tier keeps your classes within reach for people on a tight budget.' },
 ] as const;
 
 const PROMISES = [
   {
-    lead: 'Your students are yours.',
-    body: 'Your contacts and relationships stay with you — not a platform’s list to be marketed to.',
+    lead: 'Your students stay yours',
+    body: 'Your contacts and relationships stay with you, never on a platform’s list to market to.',
   },
   {
-    lead: 'Students pay you directly.',
-    body: 'The app works out the price; the money goes straight from student to you. We’re never in the middle of your income.',
+    lead: 'Money goes straight to you',
+    body: 'Payments go straight from student to you. Only your provider’s usual fee applies; we add nothing.',
   },
   {
-    lead: 'Bill after class, not before.',
-    body: 'Prices settle once the class has happened, based on who registered. No upfront packages, no lock-in.',
+    lead: 'Paid after class, not before',
+    body: 'Prices settle after class, based on who registered. No upfront packages, no lock-in.',
   },
   {
-    lead: 'Works alongside what you already have.',
-    body: 'It sits next to your website, your studio work, your existing following — it doesn’t replace them.',
+    lead: 'Works with what you have',
+    body: 'Keep your website, your studio work and your following. fair.yoga sits next to them.',
   },
   {
-    lead: 'Private by default.',
-    body: 'We collect as little as possible, and the most private settings are the ones already switched on.',
+    lead: 'Private by default',
+    body: 'We collect as little as possible, and the most private settings are on by default.',
   },
 ] as const;
 
-const YAMAS = [
-  { name: 'Satya', gloss: 'truthfulness', body: 'Income tiers are self-reported. We trust, we don’t verify.' },
-  { name: 'Asteya', gloss: 'non-stealing', body: 'No one is priced out of practice, and no one takes a cut of your work.' },
-  { name: 'Aparigraha', gloss: 'non-hoarding', body: 'We hold as little of your data as we can, and the platform stays free.' },
-  { name: 'Ahimsa', gloss: 'non-harm', body: 'The math never squeezes one side to favour the other — student, teacher, or studio.' },
+const PRINCIPLES = [
+  { title: 'Trust, not checks', body: 'Students tell us which income tier fits them. Nobody asks them for proof.' },
+  { title: 'We don’t take a cut', body: 'No one is priced out of class, and fair.yoga never takes a share of your earnings.' },
+  { title: 'Only what’s needed', body: 'We hold as little data as we can, and the platform stays free.' },
+  {
+    title: 'No side gets squeezed',
+    body: 'The numbers never favour one side over another: student, teacher or studio.',
+  },
 ] as const;
 
-const STEPS = ['Profile', 'How students pay', 'Room', 'Class', 'Share'] as const;
+const STEPS = [
+  { title: 'Profile', body: 'Who you are and what you teach' },
+  { title: 'Payments', body: 'How students pay you' },
+  { title: 'Room', body: 'Where you teach and what it costs' },
+  { title: 'Class', body: 'Time, size and what you’d like to earn' },
+  { title: 'Share', body: 'Send your page to your students' },
+] as const;
 
-function Section({
+/** A full-width band under a hairline, holding one column of content. */
+function Band({
   id,
-  kicker,
-  title,
+  className = '',
+  bottom = 'pb-16 sm:pb-24',
   children,
 }: {
   id?: string;
-  kicker: string;
-  title: string;
+  className?: string;
+  bottom?: string;
   children: ReactNode;
 }) {
   return (
-    <section id={id} className="py-8">
-      <p className="type-caption mb-1.5">{kicker}</p>
-      <h2 className="type-title mb-4">{title}</h2>
-      {children}
+    <section id={id} className="border-t border-border">
+      <div className={`${COLUMN} pt-16 sm:pt-24 ${bottom} ${className}`.trim()}>{children}</div>
     </section>
   );
 }
@@ -89,148 +115,213 @@ export default async function LandingPage() {
   if (session?.studentId) redirect('/bookings');
 
   return (
-    <div className="flex flex-col">
-      <nav aria-label="Site" className="flex items-center justify-between gap-4 pb-6">
+    // text-pretty is inherited: no paragraph on the page ends on a lone word
+    <div className="flex flex-col flex-1 text-pretty">
+      <header className={`${COLUMN} pt-4 sm:pt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2`}>
         <Wordmark />
-        <Link href="/login" className="type-label text-teal inline-flex items-center min-h-11">
-          Sign in
-        </Link>
-      </nav>
-
-      <header className="pt-6 pb-10">
-        <p className="type-label mb-4">Making the economics of yoga fair for everyone involved</p>
-        <h1 className="type-display text-ink mb-5">
-          <em className="text-teal">Look around the room.</em> Do the people on the mats look like
-          your neighbourhood?
-        </h1>
-        <p className="type-body mb-7">
-          For most of us, the honest answer is no — not because we want it that way, but because
-          price quietly decides who gets to walk in. This is a free toolkit for independent teachers
-          who’d rather it didn’t: everyone pays what they can, you still earn a living, and no one
-          takes a cut.
-        </p>
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-          <Link href="/signup" className={PRIMARY_LINK}>
-            Set up your first class
+        <nav aria-label="Site" className="flex flex-wrap items-center gap-x-6 text-sm">
+          <Link href="#pricing" className={`${QUIET_LINK} hidden sm:inline-flex`}>
+            How the pricing works
           </Link>
-          <Link href="#pricing" className="type-body text-center sm:text-left">
-            See how the pricing works <span aria-hidden="true">↓</span>
+          <Link href="#open-source" className={`${QUIET_LINK} hidden sm:inline-flex`}>
+            Open source
           </Link>
-        </div>
-        <p className="type-caption mt-4">Free forever · No commission · Bring your own students</p>
+          <Link href="/login" className="inline-flex items-center min-h-11 text-teal">
+            Sign in
+          </Link>
+        </nav>
       </header>
 
-      <Section
-        kicker="The problem"
-        title="Somewhere along the way, teaching became a business you never signed up for"
-      >
-        <p className="type-body mb-3.5">
-          Rooms cost more every year. Set your price low and you can’t cover rent. Set it higher and
-          you watch the people who need the practice most quietly drift away. Between room rent,
-          booking fees, and platform commissions, the two people who matter — you and your students
-          — are the ones left short.
-        </p>
-        <p className="type-body">
-          It isn’t that anyone’s doing it wrong. It’s that the numbers were never built to be fair to
-          both sides at once.
-        </p>
-      </Section>
-
-      <Section kicker="A different starting point" title="A free toolkit for independent teachers">
-        <p className="type-body mb-3.5">
-          You bring your own students. It handles the scheduling, the pricing, who’s paid and who
-          hasn’t, and the admin that eats your evenings. It isn’t a marketplace and isn’t a directory
-          — no one browses for a cheaper teacher, and no one takes a percentage of what you earn.
-        </p>
-        <p className="type-body font-semibold text-ink mb-5">It’s free, and it stays free.</p>
-        <p className="type-caption mb-2.5">The only thing we ask in return</p>
-        <p className="type-title italic">Let people pay according to what they can afford.</p>
-      </Section>
-
-      <Section id="pricing" kicker="How it works" title="Fair pricing, worked out for you">
-        <p className="type-body mb-6">
-          Everyone books the same class. Behind the scenes, each student pays a little more or a
-          little less depending on what they can afford — but the highest earner never pays more
-          than about twice the lowest. You set the room cost and what you’d like to earn; the app
-          calculates every price and shows its work. Nothing hidden, nothing to haggle over.
-        </p>
-        <LandingPricingDemo />
-        <div className="grid gap-3 sm:grid-cols-3 mt-6">
-          {VALUES.map((v) => (
-            <Card key={v.title}>
-              <h3 className="type-subtitle mb-1.5">{v.title}</h3>
-              <p className="type-body">{v.body}</p>
-            </Card>
-          ))}
+      <section className={`${COLUMN} pt-12 sm:pt-16 pb-12`}>
+        <div className="max-w-[680px] flex flex-col gap-5">
+          <p className={KICKER}>For independent yoga teachers.</p>
+          <h1 className="font-heading font-bold text-[clamp(28px,4.2vw,44px)] leading-[1.2] text-ink">
+            <em className="text-teal">A free booking system</em> that prices no one out.
+          </h1>
+          <p className={LEAD}>
+            Plan your classes, take bookings and get paid, all in one place. Prices follow income, so your room
+            fills with your whole neighbourhood, not just the people who can afford it.
+          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 pt-2">
+            <Link href="/signup" className={PRIMARY_LINK}>
+              Set up your first class
+            </Link>
+            <Link href="#pricing" className="type-body text-center sm:text-left">
+              See how the pricing works <span aria-hidden="true">↓</span>
+            </Link>
+          </div>
         </div>
-      </Section>
+      </section>
 
-      <Section kicker="Your practice, your rules" title="It’s your practice. It stays yours.">
-        <ul className="flex flex-col">
-          {PROMISES.map((p) => (
-            <li key={p.lead} className="type-body py-4 border-b border-border last:border-b-0">
-              <strong className="font-semibold text-ink">{p.lead}</strong> {p.body}
+      <section aria-label="What it does" className={`${COLUMN} pb-16 sm:pb-24`}>
+        <ul className="bg-sand border border-border rounded-card py-2 grid sm:grid-cols-3">
+          {FEATURES.map((f) => (
+            <li
+              key={f.title}
+              className="p-6 flex flex-col gap-2 border-border not-first:border-t sm:not-first:border-t-0 sm:not-first:border-l"
+            >
+              <p className="text-[13px] font-medium text-brown">{f.area}</p>
+              <h3 className="type-subtitle text-teal">{f.title}</h3>
+              <p className="type-body">{f.body}</p>
             </li>
           ))}
         </ul>
-      </Section>
-
-      <Section kicker="Why it’s built this way" title="Built on yoga’s own values">
-        <div className="grid gap-3 sm:grid-cols-2">
-          {YAMAS.map((y) => (
-            <Card key={y.name}>
-              <h3 className="flex items-baseline gap-2 mb-1.5">
-                <span className="type-subtitle">{y.name}</span>
-                <span className="type-caption">{y.gloss}</span>
-              </h3>
-              <p className="type-body">{y.body}</p>
-            </Card>
-          ))}
-        </div>
-        <p className="type-body mt-5">
-          The app is open source, built by volunteers, and honest about what it costs to run —
-          supported by teachers who choose to give back, never by fees.
-        </p>
-        <p className="type-caption mt-3">Open source · No fees</p>
-      </Section>
-
-      <section id="start" className="pt-10 pb-8">
-        <Card className="px-6 py-8">
-          <p className="type-caption mb-1.5">Get started</p>
-          <h2 className="type-title mb-3">Set up your first class in a few minutes</h2>
-          <p className="type-body mb-5">
-            Fill in your profile and how students pay you, add your room, create your first class, and share
-            your page. That’s it.
-          </p>
-          <ol className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-7 type-body text-ink">
-            {STEPS.map((step, i) => (
-              <li key={step}>
-                {i > 0 && (
-                  <span aria-hidden="true" className="text-brown-light mr-3">
-                    →
-                  </span>
-                )}
-                <span className="font-semibold text-teal">{i + 1}</span>&nbsp;{step}
-              </li>
-            ))}
-          </ol>
-          <Link href="/signup" className={PRIMARY_LINK}>
-            Get started — it’s free
-          </Link>
-          <p className="type-caption mt-3.5">No fees. No commission. No catch.</p>
-        </Card>
       </section>
 
-      <footer className="border-t border-border pt-6 flex flex-col gap-2.5">
-        <Wordmark />
-        <p className="type-caption">Making the economics of yoga fair for everyone involved.</p>
-        <p className="type-caption flex flex-wrap gap-2">
-          <a href={REPO_URL}>Open source</a>
-          <span aria-hidden="true">·</span>
-          <a href={CONTACT_HREF}>Contact</a>
-          <span aria-hidden="true">·</span>
-          <Link href="/login">Sign in</Link>
-        </p>
+      <Band bottom="pb-12 sm:pb-16">
+        <div className="max-w-[680px] flex flex-col gap-5">
+          <p className={KICKER}>Why it exists</p>
+          <h2 className={`${HEADING} text-ink`}>
+            <em className="text-teal">Look around the room.</em> Do the people on the mats look like your
+            neighbourhood?
+          </h2>
+          <p className={LEAD}>
+            For most of us, the honest answer is no. Not because we want it that way, but because price quietly
+            decides who gets to walk in.
+          </p>
+          <p className="type-body">
+            Rooms cost more every year. Set your price low and you can’t cover the rent. Set it higher and the
+            people who’d benefit most quietly drift away. Add booking fees and platform commissions, and the two
+            people who matter, you and your students, are the ones left short.
+          </p>
+          <p className="type-body text-ink">
+            Nobody’s doing it wrong. The numbers were just never built to be fair to both sides at once.
+          </p>
+        </div>
+      </Band>
+
+      <section className={`${COLUMN} pb-16 sm:pb-24`}>
+        <div className="bg-teal-tint rounded-card px-6 py-10 sm:p-14 flex flex-col items-center text-center gap-3">
+          <p className="type-body text-ink">fair.yoga is free, and it stays free. The only thing we ask in return:</p>
+          <p className="font-heading font-bold italic text-[clamp(22px,3vw,28px)] leading-[1.3] text-teal max-w-[22em]">
+            Let people pay according to what they can afford.
+          </p>
+        </div>
+      </section>
+
+      <Band id="pricing" className="flex flex-col lg:flex-row gap-12 lg:items-start">
+        <div className="flex-1 min-w-0 flex flex-col gap-5">
+          <p className={KICKER}>How the pricing works</p>
+          <h2 className={`${HEADING} text-teal`}>Same class, a fair price for each person in it</h2>
+          <p className="type-body">
+            Everyone books the same class. Each student shares which income tier fits them, and pays a little
+            more or a little less accordingly. The highest tier never pays more than about twice the lowest.
+          </p>
+          <p className="type-body">
+            You enter the room cost, the least you need to earn and what you’d like to earn. The app works out
+            every price and shows its sums. Nothing hidden, nothing to haggle over.
+          </p>
+          <ul className="flex flex-col gap-5 mt-2">
+            {PRICING_POINTS.map((p) => (
+              <li key={p.title} className="border-t border-border pt-4 flex flex-col gap-1">
+                <h3 className="type-subtitle text-teal">{p.title}</h3>
+                <p className="type-body">{p.body}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="flex-1 min-w-0">
+          <LandingPricingDemo />
+        </div>
+      </Band>
+
+      <Band className="flex flex-col gap-10">
+        <div className="max-w-[680px] flex flex-col gap-5">
+          <p className={KICKER}>Not a marketplace</p>
+          <h2 className={`${HEADING} text-teal`}>Your students, your income, your rules</h2>
+          <p className="type-body">
+            You bring your own students. fair.yoga takes care of the scheduling, the pricing, who’s paid and
+            who hasn’t, and the admin that eats your evenings. Nobody browses for a cheaper teacher, and
+            fair.yoga never takes a percentage of what you earn.
+          </p>
+        </div>
+        <ul className="grid sm:grid-cols-2 gap-x-12 gap-y-8">
+          {PROMISES.map((p) => (
+            <li key={p.lead} className="flex gap-3 items-start">
+              <Icon name="check" size={20} className="text-teal shrink-0 mt-0.5" />
+              <p className="type-body flex flex-col gap-1">
+                <strong className="font-semibold text-ink">{p.lead}</strong>
+                <span>{p.body}</span>
+              </p>
+            </li>
+          ))}
+        </ul>
+      </Band>
+
+      <Band id="open-source" className="flex flex-col gap-10">
+        <div className="max-w-[680px] flex flex-col gap-5">
+          <p className={KICKER}>What it’s built on</p>
+          <h2 className={`${HEADING} text-teal`}>Fair to everyone in the room</h2>
+        </div>
+        <ul className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8">
+          {PRINCIPLES.map((p) => (
+            <li key={p.title} className="border-t border-border pt-5 flex flex-col gap-2">
+              <h3 className="type-subtitle text-teal">{p.title}</h3>
+              <p className="type-body">{p.body}</p>
+            </li>
+          ))}
+        </ul>
+        <div className="bg-sand border border-border rounded-card p-6 sm:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+          <div className="flex flex-col gap-2 md:max-w-[34em]">
+            <h3 className="type-title text-ink">Open source, built by volunteers</h3>
+            <p className="type-body">
+              The code is public and we’re open about what it costs to run. fair.yoga is kept going by teachers
+              who choose to give something back, never by fees.
+            </p>
+          </div>
+          <a href={REPO_URL} className={`${SECONDARY_LINK} shrink-0`}>
+            See the code on GitHub
+          </a>
+        </div>
+      </Band>
+
+      <Band id="start" bottom="pb-16 sm:pb-20" className="flex flex-col gap-8">
+        <div className="max-w-[680px] flex flex-col gap-5">
+          <p className={KICKER}>Get started</p>
+          <h2 className={`${HEADING} text-teal`}>Your first class, ready in a few minutes</h2>
+          <p className="type-body">Five short steps, then you have a page to share with your students.</p>
+        </div>
+        <ol className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {STEPS.map((step, i) => (
+            <li
+              key={step.title}
+              className="bg-sand border border-border rounded-field p-4 flex sm:flex-col gap-3 items-start"
+            >
+              <span className="size-8 shrink-0 rounded-full bg-teal-tint text-teal font-semibold flex items-center justify-center">
+                {i + 1}
+              </span>
+              <span className="flex flex-col">
+                <span className="font-semibold text-ink">{step.title}</span>
+                <span className="text-[13px] text-brown">{step.body}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+        <div>
+          <Link href="/signup" className={PRIMARY_LINK}>
+            Set up your first class
+          </Link>
+        </div>
+      </Band>
+
+      <footer className="border-t border-border">
+        <div className={`${COLUMN} pt-8 pb-12 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4`}>
+          <div className="flex flex-col gap-1">
+            <Wordmark />
+            <p className="text-[13px] text-brown">A free, open source booking system for independent yoga teachers.</p>
+          </div>
+          <nav aria-label="Footer" className="flex gap-4 text-[13px]">
+            <a href={REPO_URL} className="inline-flex items-center min-h-11">
+              Open source
+            </a>
+            <a href={CONTACT_HREF} className="inline-flex items-center min-h-11">
+              Contact
+            </a>
+            <Link href="/login" className="inline-flex items-center min-h-11">
+              Sign in
+            </Link>
+          </nav>
+        </div>
       </footer>
     </div>
   );

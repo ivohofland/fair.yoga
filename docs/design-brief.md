@@ -10,7 +10,7 @@ The working design reference for the codebase. Source of truth: the **v2 design 
 
 A thoughtful yoga teacher who happens to be good with numbers. Like a clean, well-organized studio — not a tech product. Reference mood: Headspace's warmth, Notion's utility, Linear's clarity, Wise's transparency.
 
-- Mobile-first — a phone held in one hand between classes. Content column max 640px, centered.
+- Mobile-first — a phone held in one hand between classes. Content column max 640px, centered (`ContentColumn`, applied by each route group's layout). The public landing page at `/` is the exception: it has its own 960px column and its own section styles.
 - Depth = sand surface on cream + 1px border. **No shadows** except one soft shadow reserved for sheets/modals.
 - **Essentially no motion.** No transitions, no hover lift, no confetti. Hover/press = defined color steps only.
 - Warm palette only; **no pure white, no gradients, no dark mode.**

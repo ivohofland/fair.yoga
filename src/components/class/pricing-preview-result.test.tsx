@@ -37,6 +37,16 @@ describe('PricingPreviewResult', () => {
     expect(screen.getByText('50%')).toBeTruthy();
   });
 
+  it('shows rate progress unless the caller leaves it out', () => {
+    const { unmount } = render(<PricingPreviewResult {...EXAMPLE} distribution={EIGHT} />);
+    expect(screen.getByText('Rate progress')).toBeTruthy();
+    unmount();
+
+    render(<PricingPreviewResult {...EXAMPLE} distribution={EIGHT} showRateProgress={false} />);
+    expect(screen.queryByText('Rate progress')).toBeNull();
+    expect(screen.getByText('Total class cost')).toBeTruthy();
+  });
+
   it('dims only the tiers nobody is in', () => {
     render(<PricingPreviewResult {...EXAMPLE} distribution={EIGHT} />);
 

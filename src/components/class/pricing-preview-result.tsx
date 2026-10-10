@@ -19,6 +19,8 @@ interface PricingPreviewResultProps extends PricingPreviewInputs {
   distribution: TierCounts;
   /** Rendered between "What students pay" and the tier rows. */
   distributionControl?: ReactNode;
+  /** Where the rate sits between minimum and target; meaningless to a reader who set neither. */
+  showRateProgress?: boolean;
 }
 
 /** What the class in `distribution` earns the teacher and costs each tier. */
@@ -31,6 +33,7 @@ export function PricingPreviewResult({
   maxStudents,
   distribution,
   distributionControl,
+  showRateProgress = true,
 }: PricingPreviewResultProps) {
   const teacherRate = calculateEffectiveTeacherRate({
     studentCount: studentsIn(distribution),
@@ -68,10 +71,12 @@ export function PricingPreviewResult({
             <p className="type-caption">Total class cost</p>
             <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(totalCost, currency)}</p>
           </div>
-          <div>
-            <p className="type-caption">Rate progress</p>
-            <p className="text-sm font-medium text-ink tabular-nums">{rateProgress}%</p>
-          </div>
+          {showRateProgress && (
+            <div>
+              <p className="type-caption">Rate progress</p>
+              <p className="text-sm font-medium text-ink tabular-nums">{rateProgress}%</p>
+            </div>
+          )}
         </div>
       </div>
 

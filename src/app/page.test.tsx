@@ -20,6 +20,7 @@ const ALLOWED_HREFS = new Set([
   '/signup',
   '/login',
   '#pricing',
+  '#open-source',
   'https://github.com/ivohofland/fair.yoga',
   'mailto:hello@fair.yoga',
 ]);
@@ -57,10 +58,14 @@ describe('LandingPage', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Site' });
     const footer = screen.getByRole('contentinfo');
+    const hrefs = (name: string | RegExp) =>
+      screen.getAllByRole('link', { name }).map((a) => a.getAttribute('href'));
     expect(href(nav, 'Sign in')).toBe('/login');
-    expect(href(document.body, 'Set up your first class')).toBe('/signup');
+    expect(href(nav, 'How the pricing works')).toBe('#pricing');
+    expect(href(nav, 'Open source')).toBe('#open-source');
+    expect(hrefs('Set up your first class')).toEqual(['/signup', '/signup']);
     expect(href(document.body, /See how the pricing works/)).toBe('#pricing');
-    expect(href(document.body, 'Get started — it’s free')).toBe('/signup');
+    expect(href(document.body, 'See the code on GitHub')).toBe('https://github.com/ivohofland/fair.yoga');
     expect(href(footer, 'Open source')).toBe('https://github.com/ivohofland/fair.yoga');
     expect(href(footer, 'Contact')).toBe('mailto:hello@fair.yoga');
     expect(href(footer, 'Sign in')).toBe('/login');
@@ -73,24 +78,30 @@ describe('LandingPage', () => {
     expect(pricing?.contains(screen.getByRole('slider', { name: 'Students registered' }))).toBe(true);
   });
 
-  it('opens on the question in the room', async () => {
+  it('opens on what it is and who it is for', async () => {
     await renderAsVisitor();
 
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
-      'Look around the room. Do the people on the mats look like your neighbourhood?',
+      'A free booking system that prices no one out.',
     );
   });
 
-  it('tells the story in the wireframe’s order', async () => {
+  it('lands the open source link on the open source section', async () => {
+    await renderAsVisitor();
+
+    const section = document.getElementById('open-source');
+    expect(section?.contains(screen.getByRole('link', { name: 'See the code on GitHub' }))).toBe(true);
+  });
+
+  it('tells the story in the design’s order', async () => {
     await renderAsVisitor();
 
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
-      'Somewhere along the way, teaching became a business you never signed up for',
-      'A free toolkit for independent teachers',
-      'Fair pricing, worked out for you',
-      'It’s your practice. It stays yours.',
-      'Built on yoga’s own values',
-      'Set up your first class in a few minutes',
+      'Look around the room. Do the people on the mats look like your neighbourhood?',
+      'Same class, a fair price for each person in it',
+      'Your students, your income, your rules',
+      'Fair to everyone in the room',
+      'Your first class, ready in a few minutes',
     ]);
   });
 
@@ -108,8 +119,9 @@ describe('LandingPage', () => {
     const text = document.body.textContent ?? '';
 
     expect(text).toContain('who’s paid and who hasn’t');
-    expect(text).toContain('Set a minimum and a target. Every price is worked out to pay you between the two.');
-    expect(text).toContain('Fill in your profile and how students pay you, add your room, create your first class, and share your page.');
+    expect(text).toContain('Prices are set so you always land between your minimum and your target.');
+    expect(text).toContain('Students tell us which income tier fits them. Nobody asks them for proof.');
+    expect(text).toContain('Five short steps, then you have a page to share with your students.');
     expect(text).not.toContain('Transparent costs');
     expect(text).not.toContain('The app protects it');
   });

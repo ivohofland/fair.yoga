@@ -240,7 +240,7 @@ Key design decisions:
 
 Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be good with numbers. The v2 design system lives in `docs/design_handoff_fairyoga/`; tokens are in `src/app/globals.css` (Tailwind v4 `@theme`, no tailwind.config).
 
-- **Mobile-first** — teachers use this on their phone between and during classes; 640px content column
+- **Mobile-first** — teachers use this on their phone between and during classes; 640px content column, applied by each route group's layout (`ContentColumn`) — the landing page at `/` sits outside every group and lays out its own 960px one
 - **Essentially no motion** — no transitions or hover lift; hover/press are defined color steps
 - **Depth without shadows** — sand-soft cards (radius 16) + 1px border on cream; the only shadow is reserved for sheets/modals
 - **Cards for classes, rows for directories** — class cards carry the signature registration progress bar (danger→teal fill, ink tick at minimum); directories use ≥56px chevron rows

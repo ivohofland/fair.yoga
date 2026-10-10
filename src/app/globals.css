@@ -163,3 +163,62 @@
   }
 }
 
+
+/* ============================================================
+   Landing — a range input drawn as its own progress bar
+   (components/landing/range-track.tsx). The track and fill sit
+   underneath; the input shows only its thumb, on a 44px row.
+   ============================================================ */
+
+@layer components {
+  .range-track {
+    --thumb: 22px;
+  }
+
+  .range-track-input {
+    appearance: none;
+    height: 44px;
+    margin: 0;
+    background: transparent;
+  }
+
+  .range-track-input::-webkit-slider-runnable-track {
+    height: var(--thumb);
+    background: transparent;
+  }
+
+  .range-track-input::-moz-range-track {
+    height: var(--thumb);
+    background: transparent;
+  }
+
+  .range-track-input::-webkit-slider-thumb {
+    appearance: none;
+    width: var(--thumb);
+    height: var(--thumb);
+    border-radius: 999px;
+    background: var(--color-cream);
+    border: 2px solid var(--color-teal);
+  }
+
+  .range-track-input::-moz-range-thumb {
+    box-sizing: border-box;
+    width: var(--thumb);
+    height: var(--thumb);
+    border-radius: 999px;
+    background: var(--color-cream);
+    border: 2px solid var(--color-teal);
+  }
+
+  .range-track-input:focus {
+    outline: none;
+  }
+
+  .range-track-input:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px var(--color-teal-tint), 0 0 0 4px var(--color-teal);
+  }
+
+  .range-track-input:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 3px var(--color-teal-tint), 0 0 0 4px var(--color-teal);
+  }
+}
