@@ -493,9 +493,10 @@ describe('PushCard', () => {
     render(<PushCard dismissed={false} vapidPublicKey="KEY" />);
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss the notifications card' }));
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('/api/account/onboarding');
-    expect(JSON.parse(String(init?.body))).toEqual({ step: 'push' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/account/onboarding',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ step: 'push' }) }),
+    );
   });
 });
 ```
@@ -509,7 +510,7 @@ Expected: FAIL, because `./push-card` cannot be resolved.
 ```tsx
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useCoarsePointer } from '@/components/layout/install-store';
@@ -531,9 +532,6 @@ export function PushCard({ dismissed, vapidPublicKey }: { dismissed: boolean; va
   const [answered, setAnswered] = useState(false);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Set synchronously: a second tap can land before the re-render that
-  // disables the button, and a second permission request must not follow.
-  const inFlight = useRef(false);
 
   if (dismissed || answered || !coarse || vapidPublicKey === null) return null;
   if (state !== 'off' || permission !== 'default') return null;
@@ -543,13 +541,11 @@ export function PushCard({ dismissed, vapidPublicKey }: { dismissed: boolean; va
   // click and never on load. `on` and `blocked` both end the offer; neither
   // is stored, since the device state answers it on the next load.
   async function handleEnable(): Promise<void> {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    if (busy) return;
     setBusy(true);
     setFailed(false);
     const outcome = await enablePush(key);
     if (outcome === 'failed') {
-      inFlight.current = false;
       setFailed(true);
       setBusy(false);
       return;
@@ -598,7 +594,7 @@ Expected: PASS.
   - (a) remove `|| permission !== 'default'`: the matrix case `state=off permission=granted coarse=true dismissed=false` FAILS;
   - (b) remove `|| !coarse`: the `coarse=false` / `off` / `default` / not-dismissed case FAILS;
   - (c) change the `failed` branch to `setAnswered(true)`: `stays, with a retry line` FAILS;
-  - (d) delete the `if (inFlight.current) return;` line: `asks once on a double tap` FAILS (`toHaveBeenCalledTimes(1)`, received 2).
+  - (d) delete `disabled={busy}` from the Turn on button: `asks once on a double tap` FAILS.
 
   After restoring, rerun and confirm PASS.
 
