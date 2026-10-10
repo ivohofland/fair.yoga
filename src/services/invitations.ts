@@ -1442,6 +1442,44 @@ export async function acceptInvitation(
 }
 
 /**
+ * The `pending → declined` write and the `TeacherBlock` that makes it a
+ * refusal, for the caller's open transaction. True when it moved the row and
+ * wrote the block; false when the row was no longer pending, in which case
+ * nothing was written.
+ */
+export async function declinePending(
+  tx: Prisma.TransactionClient,
+  invitation: { id: string; teacherId: string; email: string },
+): Promise<boolean> {
+  // Same reasoning as `acceptInvitation`: the pending check is the `where`
+  // on this write, not a separate read beforehand, so a concurrent accept
+  // from the same account can't slip past it.
+  const updated = await tx.invitation.updateMany({
+    where: { id: invitation.id, status: 'pending' },
+    data: { status: 'declined', respondedAt: new Date() },
+  });
+  if (updated.count === 0) return false;
+
+  // `Invitation` before `TeacherBlock`, per `docs/lock-order.md`.
+  //
+  // `update: {}` is load-bearing, not laziness. Whenever the block row
+  // already exists, an empty update keeps Prisma on the non-atomic,
+  // non-locking path — `resolveInvitationOnLink` (services/link-consent.ts)
+  // takes these two tables in the opposite order, and that path is what
+  // keeps an UPDATE-branch race from deadlocking. A first decline for this
+  // pair still INSERTs (no existing row to match), and that INSERT still
+  // takes a row lock and joins the wait graph like any other write —
+  // `unlinkTeacher`'s identical upsert carries the same exposure.
+  // `docs/lock-order.md` covers both paths.
+  await tx.teacherBlock.upsert({
+    where: { teacherId_email: { teacherId: invitation.teacherId, email: invitation.email } },
+    update: {},
+    create: { teacherId: invitation.teacherId, email: invitation.email },
+  });
+  return true;
+}
+
+/**
  * Decline an invitation. Same ownership gate as `acceptInvitation` above,
  * and for the same reason — see its docblock.
  *
@@ -1474,17 +1512,10 @@ export async function declineInvitation(
   // them would leave a declined row whose refusal is once again derived from
   // an `email` erasure can rewrite, and nothing downstream would say so.
   return db.$transaction(async (tx) => {
-    // Same reasoning as `acceptInvitation`: the pending check is the `where`
-    // on this write, not a separate read beforehand, so a concurrent accept
-    // from the same account can't slip past it.
-    const updated = await tx.invitation.updateMany({
-      where: { id: invitation.id, status: 'pending' },
-      data: { status: 'declined', respondedAt: new Date() },
-    });
     // No sentinel error, unlike `acceptInvitation`'s: those exist because its
     // roster-link write has already run by this point. Here nothing has been
     // written yet, so returning commits nothing.
-    if (updated.count === 0) {
+    if (!(await declinePending(tx, { id: invitation.id, teacherId: invitation.teacherId, email }))) {
       // No longer pending when the swap ran. Already `declined` is this
       // request done: by this account, the only one the address match
       // admits, or by its own unlink. Gone is an unknown id. `pending` again
@@ -1503,22 +1534,6 @@ export async function declineInvitation(
       return { ok: false, reason: 'NOT_PENDING' } as const;
     }
 
-    // `Invitation` before `TeacherBlock`, per `docs/lock-order.md`.
-    //
-    // `update: {}` is load-bearing, not laziness. Whenever the block row
-    // already exists, an empty update keeps Prisma on the non-atomic,
-    // non-locking path — `resolveInvitationOnLink` (services/link-consent.ts)
-    // takes these two tables in the opposite order, and that path is what
-    // keeps an UPDATE-branch race from deadlocking. A first decline for this
-    // pair still INSERTs (no existing row to match), and that INSERT still
-    // takes a row lock and joins the wait graph like any other write —
-    // `unlinkTeacher`'s identical upsert carries the same exposure.
-    // `docs/lock-order.md` covers both paths.
-    await tx.teacherBlock.upsert({
-      where: { teacherId_email: { teacherId: invitation.teacherId, email } },
-      update: {},
-      create: { teacherId: invitation.teacherId, email },
-    });
     return { ok: true, outcome: 'applied' } as const;
   });
 }
