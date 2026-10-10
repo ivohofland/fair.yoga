@@ -1514,6 +1514,7 @@ const UNBOUNDED_STRING_ALLOWED: Record<string, string> = {
 const HIDDEN_CHARACTERS_ALLOWED: Record<string, string> = {
   'magicLinkVerifySchema.token': 'never stored or shown: hashed and looked up',
   'passkeyAuthVerifySchema.challengeId': 'never stored or shown: a lookup key',
+  'passkeyRevokeSchema.token': 'never stored or shown: hashed and looked up',
   'payoutPauseSchema.token': 'never stored or shown: hashed and looked up',
   'roomSearchQuerySchema.postcode': 'never stored or shown: a search query parameter',
   'roomSearchQuerySchema.street': 'never stored or shown: a search query parameter',
