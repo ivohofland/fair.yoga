@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 /**
@@ -15,10 +17,17 @@ const NS_PER_SECOND = 1_000_000_000;
 
 describe.skipIf(!HAS_COMPOSE)('docker-compose.prod.yml', () => {
   it('stops the app within a few seconds instead of Docker\'s ten', () => {
-    const result = spawnSync('docker', ['compose', '-f', COMPOSE_FILE, 'config', '--format', 'json'], {
+    // The app service names `env_file: .env`, which config insists exists; a
+    // copy beside an empty one resolves without touching a real .env.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fy-compose-'));
+    fs.copyFileSync(COMPOSE_FILE, path.join(dir, 'docker-compose.prod.yml'));
+    fs.writeFileSync(path.join(dir, '.env'), '');
+    const result = spawnSync('docker', ['compose', '-f', 'docker-compose.prod.yml', 'config', '--format', 'json'], {
+      cwd: dir,
       encoding: 'utf8',
       env: { ...process.env, POSTGRES_PASSWORD: 'compose-config-test' },
     });
+    fs.rmSync(dir, { recursive: true, force: true });
     expect(result.status, result.stderr).toBe(0);
 
     const config = JSON.parse(result.stdout) as {
