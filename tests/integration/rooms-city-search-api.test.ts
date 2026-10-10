@@ -61,6 +61,8 @@ beforeAll(async () => {
   await makeRoom({ venueName: 'Bahnhof Yoga', address: 'Bahnhofstrasse 1', city }, creator.id);
   await makeRoom({ venueName: 'Altstadt Studio', address: 'Niederdorfstraße 5', city }, creator.id);
   await makeRoom({ venueName: 'Studio_1', address: 'Seestrasse 9', city }, creator.id);
+  await makeRoom({ venueName: 'StudioX', address: 'Limmatquai 4', city }, creator.id);
+  await makeRoom({ venueName: 'Yoga 100%', address: 'Rennweg 7', city }, creator.id);
   await makeRoom({ venueName: 'Hidden Room', address: 'Privatweg 2', city, isPublic: false }, creator.id);
   await makeRoom({ venueName: 'Bern Loft', address: 'Marktgasse 3', city: otherCity }, creator.id);
 });
@@ -74,18 +76,18 @@ afterAll(async () => {
 
 describe('GET /api/rooms?city=', () => {
   it('lists the shared rooms in a city, by venue name, without private ones', async () => {
-    expect(await venues({ city })).toEqual(['Altstadt Studio', 'Bahnhof Yoga', 'Studio_1']);
+    expect((await venues({ city })).sort()).toEqual(['Altstadt Studio', 'Bahnhof Yoga', 'Studio_1', 'StudioX', 'Yoga 100%'].sort());
   });
 
   it('matches without the accent, in any case, with surrounding spaces', async () => {
-    expect(await venues({ city: `  zurich-${suffix} ` })).toHaveLength(3);
+    expect(await venues({ city: `  zurich-${suffix} ` })).toHaveLength(5);
   });
 
   it('matches a city by its start, not its middle', async () => {
     // The stem keeps this run's suffix (minus its last character), so other
     // runs' rows cannot reach it; the middle search drops the leading "Zü".
     const stem = city.slice(0, -1);
-    expect(await venues({ city: stem })).toEqual(['Altstadt Studio', 'Bahnhof Yoga', 'Studio_1']);
+    expect((await venues({ city: stem })).sort()).toEqual(['Altstadt Studio', 'Bahnhof Yoga', 'Studio_1', 'StudioX', 'Yoga 100%'].sort());
     expect(await venues({ city: `rich-${suffix}` })).toEqual([]);
   });
 
@@ -96,7 +98,13 @@ describe('GET /api/rooms?city=', () => {
 
   it('treats % and _ as literal characters', async () => {
     expect(await venues({ city, q: 'Studio_' })).toEqual(['Studio_1']);
-    expect(await venues({ city, q: '%' })).toEqual([]);
+    expect(await venues({ city, q: '%' })).toEqual(['Yoga 100%']);
+    expect(await venues({ city, q: '\\' })).toEqual([]);
+  });
+
+  it('does not let a character that folds to a backslash escape the pattern', async () => {
+    // unaccent maps U+2216 to a backslash; escaping before folding left it as LIKE's escape.
+    expect(await venues({ city, q: '\u2216' })).toEqual([]);
   });
 
   it('returns only RoomResult columns', async () => {
@@ -126,5 +134,25 @@ describe('GET /api/rooms?city=', () => {
     const { data } = (await res.json()) as { data: { rooms: unknown[]; truncated: boolean } };
     expect(data.rooms).toHaveLength(50);
     expect(data.truncated).toBe(true);
+    const names = (data.rooms as { venueName: string }[]).map((r) => r.venueName);
+    expect(names[49]).toBe('Cap 49');
+    expect(names).not.toContain('Cap 50');
+  });
+
+  it('does not call exactly 50 rooms truncated', async () => {
+    const exactCity = `Exactville-${suffix}`;
+    const creator = await makeTeacher('exact');
+    await prisma.room.createMany({
+      data: Array.from({ length: 50 }, (_, i) => ({
+        venueName: `Exact ${String(i).padStart(2, '0')}`,
+        address: `Exactweg ${i} ${suffix}`,
+        city: exactCity, postcode: '1000', floor: '', roomName: '',
+        maxCapacity: 10, createdById: creator.id, isPublic: true,
+      })),
+    });
+    const res = await search({ city: exactCity });
+    const { data } = (await res.json()) as { data: { rooms: unknown[]; truncated: boolean } };
+    expect(data.rooms).toHaveLength(50);
+    expect(data.truncated).toBe(false);
   });
 });

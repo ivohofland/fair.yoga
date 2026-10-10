@@ -2,12 +2,8 @@
  * `searchPublicRooms` and `searchRoomsByCity` never throw — each returns which
  * way it failed.
  *
- * Their callers branch on `outcome.ok` from event handlers whose promise
- * nothing catches, so totality is the contract under test here, not an
- * implementation detail: a throw would leave a search button stuck on
- * "Searching..." with no error. This file covers the request each function
- * builds, the `http` vs `network` split, and the malformed-but-OK body that
- * is deliberately reported as `network`.
+ * Totality is the contract under test: a caller branching on `outcome.ok` from
+ * an event handler has no `catch` to fall back on.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { searchPublicRooms, searchRoomsByCity } from './room-search';
@@ -133,7 +129,26 @@ describe('searchRoomsByCity', () => {
   it('reports http on a refusal and network on a malformed body', async () => {
     stubFetchStatus(400);
     expect(await searchRoomsByCity('C', '')).toEqual({ ok: false, reason: 'http' });
-    stubFetchOk({ data: [] }); // the old bare-array shape is not this endpoint's
+    stubFetchOk({ data: [] }); // a bare array is the postcode search's shape, not this endpoint's
     expect(await searchRoomsByCity('C', '')).toEqual({ ok: false, reason: 'network' });
+  });
+
+  it.each([
+    ['a non-boolean truncated', { data: { rooms: [], truncated: 'yes' } }],
+    ['no truncated', { data: { rooms: [] } }],
+    ['a room missing the identity fields', { data: { rooms: [{ id: 'r' }], truncated: false } }],
+  ])('reports network for %s', async (_label, body) => {
+    stubFetchOk(body);
+    expect(await searchRoomsByCity('C', '')).toEqual({ ok: false, reason: 'network' });
+  });
+
+  it('reports network when the request never lands, and logs under its own tag', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failed = new TypeError('Failed to fetch');
+    stubFetch(() => { throw failed; });
+
+    expect(await searchRoomsByCity('C', '')).toEqual({ ok: false, reason: 'network' });
+    expect(consoleError).toHaveBeenCalledWith('[room-city-search-request] request failed', { err: failed });
+    consoleError.mockRestore();
   });
 });

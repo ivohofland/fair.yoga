@@ -38,9 +38,8 @@ export function RoomSearchStep({
     onResultsChange(null, '');
     setSearchError('');
 
-    // `searchRoomsByCity` returns its failure rather than throwing it, so the
-    // two cases cannot be collapsed into one `catch` — which is what happened
-    // when this call was first extracted, and what these strings were before.
+    // `searchRoomsByCity` returns its failure rather than throwing it, so
+    // `http` and `network` are told apart by `reason`, not by a shared `catch`.
     const outcome = await searchRoomsByCity(city, q);
     if (outcome.ok) {
       onResultsChange({ rooms: outcome.rooms, truncated: outcome.truncated }, q.trim());
