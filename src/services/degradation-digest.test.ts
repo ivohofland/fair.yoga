@@ -107,6 +107,7 @@ describe('notifyOperatorOfDegradations', () => {
         to: OPERATOR,
         audience: 'platform',
         content: expect.objectContaining({ subject: expect.stringContaining(A) }),
+        unsubscribe: null,
       }),
     );
     const row = await prisma.degradationEvent.findUniqueOrThrow({ where: { code: A } });

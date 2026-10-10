@@ -43,7 +43,7 @@ function sentRequest(): { url: string; headers: Record<string, string>; body: Re
 
 describe('sendEmail on the wire', () => {
   it('posts platform mail to Lettermint with the token and Reply-To', async () => {
-    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content });
+    const result = await sendEmail({ to: 'a@test.local', audience: 'platform', content, unsubscribe: null });
 
     expect(result).toEqual({ ok: true, delivery: 'sent' });
     const { url, headers, body } = sentRequest();
@@ -56,7 +56,7 @@ describe('sendEmail on the wire', () => {
   it('posts class mail on the class route with no reply_to', async () => {
     process.env.LETTERMINT_CLASS_ROUTE = 'class-mail';
 
-    await sendEmail({ to: 'a@test.local', audience: 'class', content });
+    await sendEmail({ to: 'a@test.local', audience: 'class', content, unsubscribe: null });
 
     const { body } = sentRequest();
     expect(body.route).toBe('class-mail');

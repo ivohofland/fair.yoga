@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { verifyUnsubscribeToken } from '@/lib/unsubscribe-token';
 import { scopeSweep } from '../../tests/scoped-sweep';
 
 // LETTERMINT_API_TOKEN is unset in the test environment, so `sendEmail`
@@ -347,6 +348,82 @@ describe('processEmailFallback (DB)', () => {
     afterEach(async () => {
       await prisma.notification.deleteMany({
         where: { id: { in: perTestNotificationIds.splice(0) } },
+      });
+    });
+
+    /** The target the one mail to `email` signed its List-Unsubscribe header for, or null when it has none. */
+    function unsubscribeTargetSentTo(email: string) {
+      const calls = deliverMock.mock.calls.filter(([args]) => args.to === email);
+      expect(calls).toHaveLength(1);
+      const header = (calls[0]![0] as { headers?: Record<string, string> }).headers?.['List-Unsubscribe'];
+      const url = /^<(.+)>$/.exec(header ?? '')?.[1];
+      const token = url === undefined ? null : new URL(url).searchParams.get('t');
+      return token === null ? null : verifyUnsubscribeToken(token);
+    }
+
+    async function sweepOnly(id: string) {
+      await processEmailFallback(scopeSweep(prisma, { Notification: { id: { in: [id] } } }).db);
+    }
+
+    describe('unsubscribe target', () => {
+      const studentIds: string[] = [];
+
+      async function makeStudent() {
+        const email = `fallback-unsub-${uniqueSuffix}-${studentIds.length}@test.local`;
+        const student = await prisma.student.create({ data: { firstName: 'Unsub', lastName: 'Student', email } });
+        studentIds.push(student.id);
+        return student;
+      }
+
+      afterAll(async () => {
+        await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+        await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+      });
+
+      it('an opt-out-able student fallback carries student_notifications', async () => {
+        const student = await makeStudent();
+        const n = await makeNotification({
+          recipientType: 'student',
+          recipientId: student.id,
+          createdAt: new Date(Date.now() - 45 * 60 * 1000),
+          type: 'announcement',
+        });
+
+        await sweepOnly(n.id);
+
+        expect(unsubscribeTargetSentTo(student.email)).toEqual({ kind: 'student_notifications', subjectId: student.id });
+      });
+
+      it('an essential type carries no unsubscribe', async () => {
+        const student = await makeStudent();
+        const n = await makeNotification({
+          recipientType: 'student',
+          recipientId: student.id,
+          createdAt: new Date(Date.now() - 45 * 60 * 1000),
+          type: 'class_cancelled',
+        });
+
+        await sweepOnly(n.id);
+
+        expect(unsubscribeTargetSentTo(student.email)).toBeNull();
+      });
+
+      it('a teacher booking_confirmed carries teacher_bookings, whatever the student mapping says', async () => {
+        const n = await prisma.notification.create({
+          data: {
+            recipientType: 'teacher',
+            recipientId: teacherId,
+            type: 'booking_confirmed',
+            title: 'Booking',
+            body: 'Someone booked',
+            createdAt: new Date(Date.now() - 45 * 60 * 1000),
+          },
+        });
+        notificationIds.push(n.id);
+
+        await sweepOnly(n.id);
+
+        expect(unsubscribeTargetSentTo(teacherEmail)).toEqual({ kind: 'teacher_bookings', subjectId: teacherId });
       });
     });
 

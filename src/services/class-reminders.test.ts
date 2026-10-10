@@ -12,6 +12,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import * as timezone from '@/lib/timezone';
 import * as emailTemplates from '@/lib/email-templates';
+import { verifyUnsubscribeToken } from '@/lib/unsubscribe-token';
 import { STUDENT_BOOKINGS_PATH } from '@/lib/notification-links';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
@@ -32,10 +33,17 @@ function sendsTo(email: string): number {
 }
 
 /** The one email sent to `email`, as handed to the adapter. */
-function mailTo(email: string): { subject: string; html: string } {
+function mailTo(email: string): { subject: string; html: string; headers?: Record<string, string> } {
   const calls = deliverMock.mock.calls.filter(([args]) => args.to === email);
   expect(calls).toHaveLength(1);
-  return calls[0]![0] as { subject: string; html: string };
+  return calls[0]![0] as { subject: string; html: string; headers?: Record<string, string> };
+}
+
+/** The target the mail's List-Unsubscribe header was signed for. */
+function unsubscribeTargetOf(mail: { headers?: Record<string, string> }) {
+  const url = /^<(.+)>$/.exec(mail.headers?.['List-Unsubscribe'] ?? '')?.[1];
+  const token = url === undefined ? null : new URL(url).searchParams.get('t');
+  return token === null ? null : verifyUnsubscribeToken(token);
 }
 
 const START = new Date('2099-06-10T18:00:00Z');
@@ -259,6 +267,8 @@ describe('processClassReminders (DB)', () => {
     expect(mail.html).toContain(CLASS_REMINDER_EMAIL_FOOTER);
     expect(mail.html).toContain(`${STUDENT_BOOKINGS_PATH}"`);
     expect(mail.html).not.toContain('/schedule"');
+    expect(unsubscribeTargetOf(mail)).toEqual({ kind: 'student_reminders', subjectId: student.id });
+    expect(mail.html).toContain('>Unsubscribe</a>');
     expect(await stampOf(registration.id)).toEqual(MORNING);
   });
 
@@ -486,6 +496,7 @@ describe('processClassReminders (DB)', () => {
     expect(mail.html).toContain(CLASS_REMINDER_EMAIL_FOOTER);
     expect(mail.html).toContain('/schedule"');
     expect(mail.html).not.toContain(`${STUDENT_BOOKINGS_PATH}"`);
+    expect(unsubscribeTargetOf(mail)).toEqual({ kind: 'teacher_reminders', subjectId: f.teacherId });
     const cls = await prisma.class.findUniqueOrThrow({ where: { id: f.classId } });
     expect(cls.teacherReminderSentAt).toEqual(MORNING);
 

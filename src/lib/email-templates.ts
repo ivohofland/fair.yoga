@@ -94,12 +94,14 @@ function blockText(block: EmailBlock): string {
 /**
  * The shared shell — wordmark, one content card, quiet footer — rendered as
  * html and as text from the same blocks. Every string a block carries is
- * plain text and is escaped here, once.
+ * plain text and is escaped here, once. `unsubscribeUrl`, when given, adds an
+ * Unsubscribe link under the footer in both renderings.
  */
 export function wrapEmail(
   heading: string,
   blocks: readonly EmailBlock[],
   footer: string,
+  unsubscribeUrl?: string,
 ): { html: string; text: string } {
   const body = blocks.map((b, i) => blockHtml(b, i === blocks.length - 1)).join('\n      ');
   const html = `<!DOCTYPE html>
@@ -113,12 +115,17 @@ export function wrapEmail(
     </div>
     <p style="font-size:13px;line-height:1.4;color:#71645A;margin:24px 0 0;">
       ${WORDMARK_LINE}<br>
-      ${escapeHtml(footer)}
+      ${escapeHtml(footer)}${
+        unsubscribeUrl === undefined
+          ? ''
+          : `<br><a href="${escapeHtml(unsubscribeUrl)}" style="color:#1A5653;">Unsubscribe</a>`
+      }
     </p>
   </div>
 </body>
 </html>`;
-  const text = [heading, ...blocks.map(blockText), `${WORDMARK_LINE}\n${footer}`].join('\n\n') + '\n';
+  const footerText = unsubscribeUrl === undefined ? footer : `${footer}\nUnsubscribe: ${unsubscribeUrl}`;
+  const text = [heading, ...blocks.map(blockText), `${WORDMARK_LINE}\n${footerText}`].join('\n\n') + '\n';
   return { html, text };
 }
 
@@ -235,7 +242,8 @@ function studentAction(
 
 /**
  * Renders the email for a notification: an unread one's layer 3 fallback, or
- * a class reminder sent directly. `footer` replaces the fallback footer.
+ * a class reminder sent directly. `footer` replaces the fallback footer;
+ * `unsubscribeUrl` adds the footer's Unsubscribe link.
  * Every string is plain; `wrapEmail` escapes it.
  *
  * `baseUrl` defaults from the environment the same way `notifyInvitee`
@@ -246,6 +254,7 @@ export function renderNotificationEmail(
   notification: NotificationEmailInput,
   baseUrl: string = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
   footer: string = UNREAD_FALLBACK_FOOTER,
+  unsubscribeUrl?: string,
 ): RenderedEmail {
   const intro =
     notification.recipientType === 'teacher'
@@ -260,7 +269,7 @@ export function renderNotificationEmail(
     { kind: 'paragraph', lines: [notification.body] },
   ];
   if (action) blocks.push({ kind: 'button', label: action.label, href: `${baseUrl}${action.path}` });
-  return { subject: notification.title, ...wrapEmail(notification.title, blocks, footer) };
+  return { subject: notification.title, ...wrapEmail(notification.title, blocks, footer, unsubscribeUrl) };
 }
 
 /** The sign-in email: one link, one expiry note, nothing else. */
@@ -295,7 +304,11 @@ export function renderMagicLinkEmail(magicLink: string): RenderedEmail {
  * teacher-authored (their own first/last name) and not sanitised on write;
  * `wrapEmail` escapes it for html and leaves it verbatim in the text.
  */
-export function renderInvitationEmail(teacherName: string, signInUrl: string): RenderedEmail {
+export function renderInvitationEmail(
+  teacherName: string,
+  signInUrl: string,
+  unsubscribeUrl?: string,
+): RenderedEmail {
   return {
     subject: `${teacherName} would like to connect on fair.yoga`,
     ...wrapEmail(
@@ -311,6 +324,7 @@ export function renderInvitationEmail(teacherName: string, signInUrl: string): R
         { kind: 'paragraph', tone: 'note', lines: ["If you weren't expecting this, you can ignore this email."] },
       ],
       INVITATION_FOOTER,
+      unsubscribeUrl,
     ),
   };
 }

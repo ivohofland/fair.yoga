@@ -3,6 +3,7 @@ import { log } from '@/lib/log';
 import { PAUSE_TOKEN_TTL_DAYS } from '@/services/payout-pause-token';
 import {
   CLASS_REMINDER_EMAIL_FOOTER,
+  UNREAD_FALLBACK_FOOTER,
   escapeHtml,
   renderNotificationEmail,
   renderMagicLinkEmail,
@@ -568,6 +569,29 @@ describe('wrapEmail', () => {
       'Tom & "Jerry" <b>\n\na < b & c\n\nGo & see: https://x.test/p?a=1&b=2\n\n' +
       'fair.yoga — free, open tools for independent yoga teachers.\nFooter & co\n',
     );
+  });
+
+  it('renders an unsubscribe link in the footer, html and text, when given one', () => {
+    const r = renderNotificationEmail(
+      { type: 'announcement', title: 't', body: 'b' },
+      'https://fair.yoga',
+      UNREAD_FALLBACK_FOOTER,
+      'https://fair.yoga/unsubscribe#t=abc.def',
+    );
+    expect(r.html).toContain('href="https://fair.yoga/unsubscribe#t=abc.def"');
+    expect(r.html).toContain('>Unsubscribe</a>');
+    expect(r.text).toContain('Unsubscribe: https://fair.yoga/unsubscribe#t=abc.def');
+  });
+
+  it('renders the invitation email with an unsubscribe link when given one', () => {
+    const r = renderInvitationEmail('Ana', 'https://fair.yoga/login', 'https://fair.yoga/unsubscribe#t=abc.def');
+    expect(r.html).toContain('>Unsubscribe</a>');
+    expect(r.text).toContain('Unsubscribe: https://fair.yoga/unsubscribe#t=abc.def');
+  });
+
+  it('renders no unsubscribe link without one', () => {
+    expect(renderMagicLinkEmail('https://x').html).not.toContain('Unsubscribe');
+    expect(renderMagicLinkEmail('https://x').text).not.toContain('Unsubscribe');
   });
 
   it('joins paragraph lines with <br> in html and newlines in text', () => {

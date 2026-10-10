@@ -165,7 +165,7 @@ caller, escaping the `.catch` entirely.
 
 ### Email (`lib/email.ts`)
 
-One seam: `sendEmail({ to, audience, content, headers?, idempotencyKey? })` never throws and answers a `SendResult`. `audience` decides Reply-To and route: `platform` mail carries `EMAIL_REPLY_TO` and uses the default route; `class` mail carries no Reply-To and uses `LETTERMINT_CLASS_ROUTE` (the default route when unset). `delivery: 'sent'` in the result means the provider accepted the message, not that it was delivered. In production, with no `LETTERMINT_API_TOKEN` and `EMAIL_DRY_RUN` not `1`, it refuses with `ok: false` rather than pretending to send. The throwing per-email wrappers sit on top of it. Design and audience table: `docs/superpowers/specs/2026-10-10-email-provider-seam-design.md`.
+One seam: `sendEmail({ to, audience, content, unsubscribe, headers?, idempotencyKey? })` never throws and answers a `SendResult`. `unsubscribe` is required: `null` for mail the recipient cannot switch off, otherwise the target whose `List-Unsubscribe` headers `sendEmail` adds (see *One-click unsubscribe*). `audience` decides Reply-To and route: `platform` mail carries `EMAIL_REPLY_TO` and uses the default route; `class` mail carries no Reply-To and uses `LETTERMINT_CLASS_ROUTE` (the default route when unset). `delivery: 'sent'` in the result means the provider accepted the message, not that it was delivered. In production, with no `LETTERMINT_API_TOKEN` and `EMAIL_DRY_RUN` not `1`, it refuses with `ok: false` rather than pretending to send. The throwing per-email wrappers sit on top of it. Design and audience table: `docs/superpowers/specs/2026-10-10-email-provider-seam-design.md`.
 
 ### Error responses
 
