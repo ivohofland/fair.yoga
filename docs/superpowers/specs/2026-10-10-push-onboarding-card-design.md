@@ -86,7 +86,11 @@ plus a quiet `OnboardingSkipButton`).
   disabled while busy. `on` or `blocked` → the card hides (local state; nothing
   stored — the device state answers it on the next load). `failed` → the card
   stays, with *"Notifications weren't turned on. Try again."* (`role="alert"`,
-  the settings control's line).
+  the settings control's line), for as long as the page stays open. A failure
+  after the browser granted permission does not bring the card back on the
+  next visit — `granted` with no subscription is the turned-off-in-Settings
+  signature — so Settings is the way back there; accepted rather than adding
+  a per-device flag to re-offer a nudge after a rare failure.
 - **Dismiss** → `<OnboardingSkipButton step="push">`.
 - **Copy:** heading *Get notifications on this phone*; body *A heads-up when a
   student books or a class changes. Email still comes as it does now — you
