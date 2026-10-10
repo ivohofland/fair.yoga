@@ -2173,8 +2173,8 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   credential, and the `RemovedPasskey` insert, which has no foreign key.
   The teacher lock orders it against the pause: the two serialise on
   `Teacher` before either touches a session or a passkey, and a removal that
-  waited out a pause reads it paused. An account with no live teacher profile takes no teacher lock: no
-  pause can reach it. `src/services/passkey-credentials-lock-order.test.ts`
+  waited out a pause reads it paused. An account with no live teacher profile
+  takes no teacher lock: no pause can reach it. `src/services/passkey-credentials-lock-order.test.ts`
   holds the teacher row and a pause's `UPDATE` on a second connection, and
   asserts the removal parks and then answers `payments_paused`.
 - The passkey-added email's "This wasn't me" link (`revokePasskeyByLink`,
