@@ -1509,16 +1509,16 @@ The production stack is `docker-compose.prod.yml`; read it there rather than in 
 
 ### Shutdown
 
-On SIGTERM (or SIGINT) the app ends its notification streams and exits by itself, without waiting for Docker's kill. Next 16's production server already owns the exit: its signal listener calls `server.close()`, which refuses new connections and waits for every open one to end, and then calls `process.exit(143)`. A notification stream never ends on its own, so before this was handled the close hung until `stop_grace_period` ran out.
+On SIGTERM (or SIGINT) the app ends its notification streams and exits by itself, without waiting for Docker's kill. Next 16's production server already owns the exit: its signal listener calls `server.close()`, which refuses new connections and waits for every open one to end, and then calls `process.exit` with 128 plus the signal number: 143 on SIGTERM, 130 on SIGINT. A notification stream never ends on its own, so without the sequence below the close would wait on it until `stop_grace_period` ran out.
 
 The sequence, in order:
 
 1. The signal arrives. Next's listener begins `server.close()`. `src/instrumentation.ts` installs a second listener (`installShutdownSignal`, `src/lib/shutdown.ts`) that calls `beginShutdown`. Next registers its listener before instrumentation loads, so its listener runs first; the order does not matter to the rest.
 2. Every open stream, subscribed with `onShutdown`, runs the same `cleanup` an abort runs and ends. A request for a new stream that arrives after shutdown began is answered 503, checked after the session lookup so no stream can slip in between the check and its subscription (`src/app/api/notifications/stream/route.ts`).
 3. `makeTick` (`src/lib/scheduler.ts`) starts no tick once shutdown has begun, and a refused tick does not count toward `skippedTicks`.
-4. With the streams gone, `server.close()` completes as soon as ordinary requests finish, and Next exits 143.
+4. With the streams gone, `server.close()` completes as soon as ordinary requests finish, and Next exits (143 on SIGTERM, 130 on SIGINT).
 
-`NEXT_MANUAL_SIG_HANDLE` stays unset: setting it would hand the whole sequence to the app, including a `server` handle that the generated standalone `server.js` does not expose. A tick already running is abandoned rather than awaited, because nothing in this sequence is a place to wait: Next awaits nothing the app registers in production, and holding the streams open until ticks finish would wait only when a stream happened to be open. The cost is what a SIGKILL always cost: Postgres rolls back the tick's open transaction and the next container's scheduler repeats the sweep.
+`NEXT_MANUAL_SIG_HANDLE` stays unset: setting it would hand the whole sequence to the app, including a `server` handle that the generated standalone `server.js` does not expose. Once our listener exists Node no longer exits on SIGTERM by default, so the exit depends on Next's own listener; with `NEXT_MANUAL_SIG_HANDLE` set Next registers none, and SIGTERM would be ignored until the orchestrator's kill. A tick already running is abandoned rather than awaited, because nothing in this sequence is a place to wait: Next awaits nothing the app registers in production, and holding the streams open until ticks finish would wait only when a stream happened to be open. Work a request started without awaiting (`FireAndForget`, see "Work that must not be awaited" above) is cut by `process.exit` the same way. The cost is what a SIGKILL always cost: Postgres rolls back the tick's open transaction and the next container's scheduler repeats the sweep.
 
 `stop_grace_period` in `docker-compose.prod.yml` is the backstop, not the mechanism: it bounds a request that does not finish. A stream cut this way reconnects to the new container.
 
