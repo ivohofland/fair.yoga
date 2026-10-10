@@ -193,7 +193,10 @@ describe('deploy/deploy.sh', () => {
   it.skipIf(!HAS_FLOCK)('refuses to run while another deploy holds the lock', () => {
     const v2 = commitToOrigin('v2');
     const lock = path.join(root, 'deploy.lock');
-    const holder = spawnSync('bash', ['-c', `exec 9>"${lock}"; flock 9; bash "${SCRIPT}"`], {
+    // A separate process holds the lock, as a concurrent deploy's would. Not
+    // `exec 9>…; flock 9; bash script` with the script last: bash execs a `-c`
+    // string's last command, leaving the script as the lock's only holder.
+    const holder = spawnSync('bash', ['-c', `flock "${lock}" sleep 10 & sleep 0.5; bash "${SCRIPT}"; rc=$?; kill %1; exit $rc`], {
       encoding: 'utf8',
       env: {
         NODE_ENV: 'test',
