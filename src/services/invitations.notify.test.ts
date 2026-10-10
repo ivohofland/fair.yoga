@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { notifyInvitee, deliverInvitation, inviteContact } from './invitations';
 import { log } from '@/lib/log';
+import { invitationSubject, verifyUnsubscribeToken } from '@/lib/unsubscribe-token';
 import { teardownTeacher } from '../../tests/helpers';
 
 // `notifyInvitee`'s dry-run branch (src/lib/email.ts) can't tell "sent" from
@@ -166,6 +167,34 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(deliverMock).toHaveBeenCalledTimes(1);
       const [args] = deliverMock.mock.calls[0] as [{ to: string }];
       expect(args.to).toBe(email);
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+    }
+  });
+
+  it('signs the direct email\'s unsubscribe link for this invitation and its address (#801)', async () => {
+    const email = `notify-unsub-${suffix}@test.local`;
+    let invitationId: string | undefined;
+    try {
+      const row = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'Unsub' },
+        select: { id: true, email: true },
+      });
+      invitationId = row.id;
+
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: row.id,
+        claimedAt: new Date(),
+      });
+
+      expect(deliverMock).toHaveBeenCalledTimes(1);
+      const [args] = deliverMock.mock.calls[0] as [{ headers?: Record<string, string> }];
+      const header = args.headers?.['List-Unsubscribe'] ?? '';
+      const token = new URL(header.replace(/^<|>$/g, '')).searchParams.get('t') ?? '';
+      expect(verifyUnsubscribeToken(token)).toEqual({
+        kind: 'invitation',
+        subjectId: invitationSubject(row.id, row.email),
+      });
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
     }
