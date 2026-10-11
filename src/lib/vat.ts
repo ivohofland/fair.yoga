@@ -9,6 +9,7 @@ const SCALE = 10 ** VAT_PERCENT_DECIMALS;
  * value rather than refuse it.
  */
 export function vatPercentViolation(value: number): string | null {
+  if (!Number.isFinite(value)) return 'Enter a number for VAT.';
   if (value < 0) return "VAT can't be negative.";
   if (value > VAT_PERCENT_MAX) return `Keep VAT to ${VAT_PERCENT_MAX}% or less.`;
   const scaled = value * SCALE;

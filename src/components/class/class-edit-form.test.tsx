@@ -197,8 +197,7 @@ describe('ClassEditForm', () => {
   );
 
   /**
-   * #702. The number inputs store `Number(value)`, so a cleared one is `0`,
-   * and nothing native bounds them: this form has no `<form>` element. The
+   * #702. A cleared number field holds `0`, and nothing native bounds them: this form has no `<form>` element. The
    * first number field out of range, in this form's copy, is refused before
    * the request leaves. Duration is a detail, sent and checked at any lock
    * state. Room cost and the student counts are economics, checked only while
@@ -266,6 +265,41 @@ describe('ClassEditForm', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent(copy);
     },
   );
+
+  // A browser reports text it cannot read ("4,5") as '' with badInput set;
+  // jsdom sanitizes without setting it, so the flag is stubbed.
+  it.each([
+    ['Room cost (€)', 'room cost'],
+    ['Min rate (€)', 'min rate'],
+    ['Target rate (€)', 'target rate'],
+  ])('refuses a %s the browser cannot read, rather than saving 0', async (fieldName, name) => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    const field = screen.getByLabelText(fieldName);
+    Object.defineProperty(field, 'validity', { value: { badInput: true }, configurable: true });
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toHaveTextContent(new RegExp(`^Enter a number for ${name}$`));
+  });
+
+  it('lets a cleared min rate be retyped, sending the new rate', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    const field = screen.getByLabelText('Min rate (€)') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '' } });
+    expect(field.value).toBe('');
+    fireEvent.change(field, { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, options] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse((options as { body: string }).body)).toMatchObject({ minRate: 5 });
+    expect(field.value).toBe('5');
+  });
 
   /** #702. Each bound is inclusive: every field at its edge still saves. */
   it.each([

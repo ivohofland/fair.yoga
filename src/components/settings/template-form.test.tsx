@@ -483,7 +483,7 @@ describe('TemplateForm', () => {
   );
 
   /**
-   * #702. The number inputs store `Number(value)`, so a cleared one is `0`,
+   * #702. A cleared number field holds `0`,
    * and none carries a native `min`. The first number field out of range, in
    * this form's copy, is refused before any request leaves, on create and on
    * edit.
@@ -565,6 +565,25 @@ describe('TemplateForm', () => {
         expect(screen.getByRole('alert')).toHaveTextContent(copy);
       },
     );
+
+    // A browser reports text it cannot read ("4,5") as '' with badInput set;
+    // jsdom sanitizes without setting it, so the flag is stubbed.
+    it.each([
+      ['Room cost', 'room cost'],
+      ['Min rate', 'min rate'],
+      ['Target rate', 'target rate'],
+    ])('refuses a %s the browser cannot read, rather than saving 0', async (fieldName, name) => {
+      await renderReady(mode);
+      const field = screen.getByLabelText(new RegExp('^' + fieldName));
+      Object.defineProperty(field, 'validity', { value: { badInput: true }, configurable: true });
+      fireEvent.change(field, { target: { value: '' } });
+
+      const callsBefore = fetchMock.mock.calls.length;
+      submitForm();
+
+      expect(fetchMock.mock.calls.length).toBe(callsBefore);
+      expect(screen.getByRole('alert')).toHaveTextContent(new RegExp(`^Enter a number for ${name}$`));
+    });
 
     /** Each bound is inclusive: every field at its edge still sends. */
     it('sends every number field at its bound, with no alert', async () => {

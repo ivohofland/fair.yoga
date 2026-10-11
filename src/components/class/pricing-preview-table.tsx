@@ -64,6 +64,14 @@ export function PricingPreviewTable({
     updateDistribution(studentCount, newMode);
   }
 
+  if (![roomCost, minRate, targetRate].every(Number.isFinite)) {
+    return (
+      <p className="text-sm text-brown py-2">
+        Enter valid amounts to see pricing preview.
+      </p>
+    );
+  }
+
   if (effectiveMin <= 0 || effectiveMax <= 0 || effectiveMax < effectiveMin) {
     return (
       <p className="text-sm text-brown py-2">

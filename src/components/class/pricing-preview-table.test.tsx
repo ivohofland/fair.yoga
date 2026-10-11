@@ -37,6 +37,15 @@ describe('PricingPreviewTable', () => {
     expect(container.textContent).not.toContain('€');
   });
 
+  it.each(['roomCost', 'minRate', 'targetRate'] as const)(
+    'shows no prices while %s is not a number',
+    (field) => {
+      render(<PricingPreviewTable {...EXAMPLE} {...{ [field]: Number.NaN }} />);
+      expect(screen.getByText('Enter valid amounts to see pricing preview.')).toBeInTheDocument();
+      expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+    },
+  );
+
   it('opens at the midpoint class size with the normal spread', () => {
     render(<PricingPreviewTable {...EXAMPLE} />);
 
