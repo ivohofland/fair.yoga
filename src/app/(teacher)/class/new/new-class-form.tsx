@@ -18,7 +18,14 @@ import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { currencyLabel, formatRoomLocation, formatDateWithYear, formatMoney } from '@/lib/format';
 import { useTodayLocal } from '@/lib/use-today-local';
-import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
+import {
+  CANCEL_DEADLINE_OPTIONS,
+  AUTO_CANCEL_OPTIONS,
+  cancelDeadlineHint,
+  autoCancelHint,
+  type CancelDeadlineOption,
+  type AutoCancelOption,
+} from '@/lib/class-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
 // ---------------------------------------------------------------------------
@@ -653,6 +660,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
           <Select
             id="cancelDeadline"
             label="Cancellation deadline"
+            hint={cancelDeadlineHint(form.cancelDeadline as CancelDeadlineOption)}
             value={form.cancelDeadline}
             onChange={(e) => updateField('cancelDeadline', e.target.value)}
           >
@@ -666,6 +674,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
           <Select
             id="autoCancelCheck"
             label="Auto-cancel check"
+            hint={autoCancelHint(form.autoCancelCheck as AutoCancelOption, form.minStudents)}
             value={form.autoCancelCheck}
             onChange={(e) => updateField('autoCancelCheck', e.target.value)}
           >

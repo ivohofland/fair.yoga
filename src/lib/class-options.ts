@@ -34,6 +34,28 @@ export const AUTO_CANCEL_OPTIONS = [
   { value: 'HOURS_1', label: '1 hour before' },
 ] as const;
 
+/** What the "Cancellation deadline" picker means, for the line under it. */
+export function cancelDeadlineHint(value: CancelDeadlineOption): string {
+  const label = CANCEL_DEADLINE_OPTIONS.find((o) => o.value === value)?.label ?? value;
+  return `Students can cancel for free until ${label} before the class starts. After that they are still charged their share of the class cost.`;
+}
+
+/**
+ * What the "Auto-cancel check" picker means, for the line under it. Names the
+ * minimum from the pricing step so the teacher reads the actual threshold.
+ */
+export function autoCancelHint(value: AutoCancelOption, minStudents: number): string {
+  const label = AUTO_CANCEL_OPTIONS.find((o) => o.value === value)?.label ?? value;
+  const lead = `${label.charAt(0).toUpperCase()}${label.slice(1)} the class starts, we check the registrations.`;
+  const outcome = 'the class is cancelled and everyone is notified.';
+  if (!Number.isInteger(minStudents) || minStudents < 1) {
+    return `${lead} If they are below the minimum number of students, ${outcome}`;
+  }
+  const shortfall =
+    minStudents === 1 ? 'nobody has registered' : `fewer than ${minStudents} students have registered`;
+  return `${lead} If ${shortfall}, ${outcome}`;
+}
+
 export type CancelDeadlineOption = (typeof CANCEL_DEADLINE_OPTIONS)[number]['value'];
 export type AutoCancelOption = (typeof AUTO_CANCEL_OPTIONS)[number]['value'];
 
