@@ -32,9 +32,10 @@ Measured against `main` at `021aeea6`.
    It inherits #817's first correction: `off` includes a phone where push was
    switched off in Settings (permission stays `granted`). The card shows only
    for `off` **and** `Notification.permission === 'default'`, as the teacher's does.
-2. **"e2e dismiss" cannot run.** No VAPID key is set in CI or `.env.example`, so
-   every e2e run resolves `unavailable` and the card never renders — the same
-   finding as #817's correction 4. Covered by component and integration tests
+2. **"e2e dismiss" cannot run.** Playwright's browser never runs in standalone
+   display mode, so the device resolves `needs-install` — with or without a
+   VAPID key, and none is set in CI or `.env.example` — and the card never
+   renders. #817's correction 4 reached the same conclusion. Covered by component and integration tests
    instead.
 3. **"Reuse the card component from #817" is not possible as it stands.**
    `PushCard` hard-codes the teacher's copy, the `/settings/notifications` link
@@ -84,7 +85,7 @@ that is what proves the extraction preserves behaviour.
 Wraps `PushOfferCard` with:
 
 - **Copy:** *A heads-up when a waitlist spot opens for you or a class you booked
-  changes. Booking emails still come as they do now — you choose which messages
+  is cancelled. Booking emails still come as they do now — you choose which messages
   in Settings.* — "Settings" links to `/account/notifications`. The two named
   groups are the student push groups that are on by default — waitlist
   promotions and spots, and class cancellations (`STUDENT_PUSH_GROUP`), so the
