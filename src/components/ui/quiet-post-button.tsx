@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { logRequestFailure } from '@/lib/client-errors';
+import { logRequestFailure, type RequestFailureContext } from '@/lib/client-errors';
 
 interface QuietPostButtonProps {
   url: string;
@@ -13,7 +13,7 @@ interface QuietPostButtonProps {
   /** Names the caller in the console lines a failed request writes. */
   logTag: string;
   /** Extra fields on those console lines. */
-  logContext?: Record<string, unknown>;
+  logContext?: RequestFailureContext;
   children: ReactNode;
 }
 
