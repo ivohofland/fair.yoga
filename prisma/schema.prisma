@@ -369,6 +369,7 @@ model Student {
   pushClassReminders   Boolean         @default(false)
   pushAnnouncements    Boolean         @default(false)
   pushInvitations      Boolean         @default(false)
+  dismissedPushCard    Boolean         @default(false)
   claimedAt            DateTime?
   tierSelectedAt       DateTime?
   deletedAt            DateTime?

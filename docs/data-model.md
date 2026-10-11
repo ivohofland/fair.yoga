@@ -250,6 +250,7 @@ The teacher's payment link (`Teacher.paymentLink`) is offered beside the bank me
 | push_class_reminders | boolean, default false | Push for the student's own class reminder |
 | push_announcements | boolean, default false | Push for a teacher announcement |
 | push_invitations | boolean, default false | Push for an invitation from a teacher |
+| dismissed_push_card | boolean, default false | Set once when the student dismisses the push card on `/bookings` (#818); only that card reads it. |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
