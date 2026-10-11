@@ -138,6 +138,8 @@ async function makeLateCancelClass(
       // auto-cancel window, so an active count that dips to 0 mid-test must
       // never read as below minimum.
       minStudents: 0,
+      // Decided already, as production leaves a class opened inside its check window: the live sweep never selects or locks it.
+      autoCancelDecidedAt: new Date(),
       maxStudents,
       cancelDeadline,
       status: 'open',
@@ -215,6 +217,7 @@ async function makeClaimWindowClass(maxStudents: number, minutesUntilStart: numb
       minRate: 15,
       targetRate: 25,
       minStudents: 0,
+      autoCancelDecidedAt: new Date(),
       maxStudents,
       status: 'open',
     });
@@ -252,6 +255,7 @@ async function makeAttendanceClass(
     minRate: 15,
     targetRate: 25,
     minStudents: 0,
+    autoCancelDecidedAt: new Date(),
     maxStudents,
     status,
   });
@@ -2195,7 +2199,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
         classType: 'Race Cancel', date: new Date(`${date}T00:00:00Z`), startTime: hhmmToTime(startTime),
         durationMinutes: 1, roomCost: 20, minRate: 30, targetRate: 60,
         minStudents: 0, maxStudents: 1, cancelDeadline: 'HOURS_48',
-        autoCancelCheck: 'HOURS_2', status: 'open',
+        autoCancelCheck: 'HOURS_2', autoCancelDecidedAt: new Date(), status: 'open',
       });
     raceClassIds.push(cls.id);
     const reg = await prisma.registration.create({

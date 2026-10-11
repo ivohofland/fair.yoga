@@ -1095,6 +1095,8 @@ describe('POST /api/classes/[id]/transition', () => {
         // smallest `fillSeats` has to fill.
         minStudents: 1,
         maxStudents: 1,
+        // Decided already, as production leaves a class opened inside its check window: the live sweep never selects or locks it.
+        autoCancelDecidedAt: new Date(),
         status: 'open',
       });
     let fillerIds: string[] = [];
