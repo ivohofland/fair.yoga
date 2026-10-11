@@ -24,6 +24,9 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
 import { createClassFixture, slotDate, slotTime, wallSlotAt } from '../../tests/class-fixtures';
+import { estimateTierPrices } from '@/lib/tier-estimates';
+import { calculateClassPricing } from './pricing';
+import type { IncomeTier } from '@/lib/tiers';
 
 // We use string literals matching the Prisma ClassStatus enum values.
 // This keeps tests independent of the Prisma client being generated.
@@ -1425,12 +1428,73 @@ describe('completeClass (DB)', () => {
       const teacherNote = await prisma.notification.findFirstOrThrow({
         where: { relatedClassId: cls.id, recipientType: 'teacher', type: 'payment_request' },
       });
-      expect(teacherNote.body).toMatch(/completed — CHF \d+\.\d{2} earnings, 2 payment requests sent\.$/);
+      // Two students under a minimum of four, priced at the minimum (#836):
+      // the teacher absorbs the shortfall, so the earnings carry a sign.
+      expect(teacherNote.body).toMatch(/completed — −CHF \d+\.\d{2} earnings, 2 payment requests sent\.$/);
       expect(teacherNote.body).not.toContain('€');
     } finally {
       await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     }
+  });
+
+  describe('pricing below the minimum (#836)', () => {
+    // `makeClass`: roomCost 35, minRate 15, targetRate 25, minStudents 4.
+    const economics = { roomCost: 35, minRate: 15, targetRate: 25, minStudents: 4, maxStudents: 12 };
+
+    const completeWith = async (tiers: readonly IncomeTier[]) => {
+      const cls = await makeClass({ status: 'in_progress' });
+      for (const [i, tier] of tiers.entries()) {
+        await prisma.registration.create({
+          data: { classId: cls.id, studentId: studentIds[i]!, status: 'registered', tierAtBooking: tier },
+        });
+      }
+      expect((await completeClass(prisma, cls.id, { finishedEarly: true })).ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({
+        where: { id: cls.id },
+        include: { registrations: { include: { payment: true }, orderBy: { tierAtBooking: 'asc' } } },
+      });
+      const teacherNote = await prisma.notification.findFirstOrThrow({
+        where: { relatedClassId: cls.id, recipientType: 'teacher', type: 'payment_request' },
+      });
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      return { after, teacherNote };
+    };
+
+    it('prices a class below its minimum as if it had its minimum, billing only the real students', async () => {
+      // Padded to [2, 4, 3, 3]: a ratio sum of exactly 4, so every share is a
+      // whole cent and no leftover cent decides the comparison below.
+      const { after, teacherNote } = await completeWith([2, 4]);
+
+      const billed = after.registrations.map((r) => Number(r.payment?.amount));
+      expect(billed).toEqual([10, 15]);
+      expect(after.registrations.map((r) => Number(r.price))).toEqual([10, 15]);
+
+      // The ceiling each student was shown with the other already booked.
+      const quotedFor = (tier: IncomeTier, others: IncomeTier[]) =>
+        estimateTierPrices({ ...economics, registeredTiers: others })[tier - 1];
+      expect(billed[0]).toBeLessThanOrEqual(quotedFor(2, [4])!);
+      expect(billed[1]).toBeLessThanOrEqual(quotedFor(4, [2])!);
+
+      // Money actually billed, students actually charged; the teacher absorbs
+      // the shortfall, so their rate is what is left after the room.
+      expect(Number(after.totalRevenue)).toBe(25);
+      expect(after.totalStudents).toBe(2);
+      expect(Number(after.effectiveTeacherRate)).toBe(-10);
+      expect(teacherNote.body).toContain('completed — −€10.00 earnings, 2 payment requests sent.');
+    });
+
+    it('prices a class at its minimum exactly as the engine does unpadded', async () => {
+      const tiers: IncomeTier[] = [1, 2, 3, 4];
+      const { after } = await completeWith(tiers);
+
+      const engine = calculateClassPricing({ ...economics, studentTiers: tiers });
+      expect(after.registrations.map((r) => Number(r.payment?.amount))).toEqual(engine.students.map((s) => s.price));
+      expect(after.registrations.map((r) => Number(r.payment?.amount))).toEqual([8.9, 10.96, 13.7, 16.44]);
+      expect(Number(after.totalRevenue)).toBe(50);
+      expect(Number(after.effectiveTeacherRate)).toBe(15);
+      expect(after.totalStudents).toBe(4);
+    });
   });
 
   it('returns error for non-existent class', async () => {

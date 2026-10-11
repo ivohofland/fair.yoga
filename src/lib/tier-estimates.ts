@@ -16,6 +16,20 @@ export interface TierEstimateInput {
 export type TierPrices = [number, number, number, number, number];
 
 /**
+ * The tiers a class is priced on: the real ones, then `DEFAULT_INCOME_TIER`
+ * seats until the class reaches its minimum. Both the booking page's quote and
+ * `completeClass` price through this, so the bill below the minimum is the
+ * quote's own arithmetic. The minimum is capped at `MAX_CLASS_SIZE` before it
+ * sizes the loop, because the quote runs on a public page.
+ */
+export function padTiersToMinimum(tiers: readonly IncomeTier[], minStudents: number): IncomeTier[] {
+  const target = Math.min(minStudents, MAX_CLASS_SIZE);
+  const padded = [...tiers];
+  while (padded.length < target) padded.push(DEFAULT_INCOME_TIER);
+  return padded;
+}
+
+/**
  * "What would I pay?" — for each tier 1..5, the price if the class ran with
  * today's sign-ups plus you. The real formula on real registrations, with
  * one honest assumption: a class below its minimum is padded with
@@ -24,14 +38,8 @@ export type TierPrices = [number, number, number, number, number];
  * technically true and practically wrong.
  */
 export function estimateTierPrices(input: TierEstimateInput): TierPrices {
-  // The schema caps minStudents, but this runs on a public page — never
-  // trust a stored value enough to size an allocation loop with it.
-  const paddedMin = Math.min(input.minStudents, MAX_CLASS_SIZE);
   const priceForTier = (tier: IncomeTier): number => {
-    const tiers: IncomeTier[] = [...input.registeredTiers, tier];
-    while (tiers.length < paddedMin) {
-      tiers.push(DEFAULT_INCOME_TIER);
-    }
+    const tiers = padTiersToMinimum([...input.registeredTiers, tier], input.minStudents);
     const pricing = calculateClassPricing({
       roomCost: input.roomCost,
       minRate: input.minRate,

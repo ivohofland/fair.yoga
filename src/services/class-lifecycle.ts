@@ -21,6 +21,7 @@ import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { calculateClassPricing } from './pricing';
+import { padTiersToMinimum } from '@/lib/tier-estimates';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isBeforeOpening, isoOrNull } from '@/lib/timezone';
@@ -855,24 +856,40 @@ export async function completeClass(
       return { ok: true, newStatus: 'completed' as ClassStatus };
     }
 
+    // #836. A class below its minimum is priced as if it had its minimum,
+    // through the same padding as the booking page's quote, so no student is
+    // billed above the share that quote was built on. The padding seats come
+    // after the real ones and bill no one; the teacher absorbs the shortfall.
     const pricing = calculateClassPricing({
       roomCost: Number(cls.roomCost),
       minRate: Number(cls.minRate),
       targetRate: Number(cls.targetRate),
       minStudents: cls.minStudents,
       maxStudents: cls.maxStudents,
-      studentTiers: chargedRegistrations.map((r) =>
-        toIncomeTierOrThrow(r.tierAtBooking, { registrationId: r.id }),
+      studentTiers: padTiersToMinimum(
+        chargedRegistrations.map((r) => toIncomeTierOrThrow(r.tierAtBooking, { registrationId: r.id })),
+        cls.minStudents,
       ),
     });
+    const billed = pricing.students.slice(0, chargedRegistrations.length);
+
+    // The snapshot is what was billed, not what the padded pool cost: revenue
+    // is the sum of the real payments, in whole cents, the students are the
+    // real charged ones, and the teacher's rate is what that revenue leaves
+    // after the room. Unpadded, these are the engine's own total and rate,
+    // rounded to the cent.
+    const billedCents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
+    const roomCents = Math.round(Number(cls.roomCost) * 100);
+    const totalRevenue = billedCents / 100;
+    const teacherEarnings = (billedCents - roomCents) / 100;
 
     await tx.class.update({
       where: { id: classId },
       data: {
         status: 'completed',
-        effectiveTeacherRate: pricing.effectiveTeacherRate,
-        totalStudents: pricing.studentCount,
-        totalRevenue: pricing.totalCost,
+        effectiveTeacherRate: teacherEarnings,
+        totalStudents: chargedRegistrations.length,
+        totalRevenue,
       },
     });
 
@@ -880,7 +897,7 @@ export async function completeClass(
     // ratio arrive together, so they cannot skew apart. What assertions remain
     // are on chargedRegistrations, this function's own array — never on the
     // pricing engine's output.
-    for (const [i, s] of pricing.students.entries()) {
+    for (const [i, s] of billed.entries()) {
       const reg = chargedRegistrations[i]!;
       await tx.registration.update({
         where: { id: reg.id },
@@ -895,7 +912,7 @@ export async function completeClass(
     // In the Level 1 model this notification IS the payment request.
     // A paused teacher's students still get the request, told to hold off.
     const guidance = payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
-    const notifications: CreateNotificationInput[] = pricing.students.map((s, i) => {
+    const notifications: CreateNotificationInput[] = billed.map((s, i) => {
       const reg = chargedRegistrations[i]!;
       return {
         recipientType: 'student' as const,
@@ -911,7 +928,7 @@ export async function completeClass(
       recipientId: cls.calendarEntry.teacherId,
       type: 'payment_request' as const,
       title: 'Class completed',
-      body: `${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} completed — ${formatMoney(pricing.totalCost - Number(cls.roomCost), cls.currency)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
+      body: `${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} completed — ${formatMoney(teacherEarnings, cls.currency)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
       relatedClassId: cls.id,
     });
     await createBulkNotifications(tx, notifications);
