@@ -141,8 +141,22 @@ describe('NumberInput', () => {
 
     it('refuses min, max and step beside decimals at compile time', () => {
       // @ts-expect-error min does nothing on a text field
-      const element = <NumberInput label="Amount" decimals={2} min={0} value={1} onValueChange={vi.fn()} />;
-      expect(element).toBeTruthy();
+      const withMin = <NumberInput label="Amount" decimals={2} min={0} value={1} onValueChange={vi.fn()} />;
+      // @ts-expect-error max does nothing on a text field
+      const withMax = <NumberInput label="Amount" decimals={2} max={9} value={1} onValueChange={vi.fn()} />;
+      // @ts-expect-error step does nothing on a text field
+      const withStep = <NumberInput label="Amount" decimals={2} step={1} value={1} onValueChange={vi.fn()} />;
+      expect([withMin, withMax, withStep]).toHaveLength(3);
+    });
+
+    it('rewrites the field when the value is replaced from outside', () => {
+      const onValueChange = vi.fn();
+      const { rerender } = render(<NumberInput label="Amount" decimals={2} value={4.5} onValueChange={onValueChange} />);
+      const input = screen.getByLabelText('Amount') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '4,5' } });
+      expect(input.value).toBe('4,5');
+      rerender(<NumberInput label="Amount" decimals={2} value={9} onValueChange={onValueChange} />);
+      expect(input.value).toBe('9');
     });
   });
 });

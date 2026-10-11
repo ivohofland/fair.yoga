@@ -38,7 +38,7 @@ function parse(text: string, decimals: number | undefined): number {
  * field holds, so a caller's validation can refuse it.
  *
  * With `decimals` the field is a text field read by `parseDecimal`, which
- * takes `,` or `.` as the separator; a browser number input drops a typed
+ * takes `,` or `.` as the separator; Chromium's number input drops a typed
  * comma. Unreadable text is reported as NaN and left as typed.
  */
 export function NumberInput({ value, onValueChange, onBlur, decimals, ...props }: NumberInputProps) {
