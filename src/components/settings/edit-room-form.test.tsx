@@ -64,8 +64,7 @@ describe('EditRoomForm', () => {
     renderForm();
     setRate('4,5');
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const [, options] = fetchMock.mock.calls[1] ?? [];
-    expect((JSON.parse((options as { body: string }).body) as Record<string, unknown>).rentalRate).toBe(4.5);
+    expect(sentRate()).toBe(4.5);
   });
 
   it('refuses a grouped rental rate such as 1.000 and sends nothing (#844)', async () => {
@@ -89,7 +88,7 @@ describe('EditRoomForm', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderForm();
     setRate('');
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(sentRate()).toBe(0);
   });
 
