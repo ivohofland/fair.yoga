@@ -1204,6 +1204,35 @@ describe('PUT /api/classes/[id]', () => {
     expect(after.calendarEntry.startTime.toISOString()).toBe(before.calendarEntry.startTime.toISOString());
   });
 
+  it('locked class: an unchanged date and start time beside a description edit succeed (#836)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+
+    const res = await put(ownerToken, lockedClassId, {
+      date: before.calendarEntry.date.toISOString().slice(0, 10),
+      startTime: timeToHHmm(before.calendarEntry.startTime),
+      description: 'Resent whole form',
+    });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+    expect(after.description).toBe('Resent whole form');
+    expect(after.calendarEntry.date.toISOString()).toBe(before.calendarEntry.date.toISOString());
+    expect(after.calendarEntry.startTime.toISOString()).toBe(before.calendarEntry.startTime.toISOString());
+  });
+
+  it('locked class: an unchanged date and start time beside a price edit are refused for the price, SETTINGS_LOCKED', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+
+    const res = await put(ownerToken, lockedClassId, {
+      date: before.calendarEntry.date.toISOString().slice(0, 10),
+      startTime: timeToHHmm(before.calendarEntry.startTime),
+      targetRate: Number(before.targetRate) + 1,
+    });
+    const message = ((await res.clone().json()) as { error?: { message?: string } }).error?.message;
+    await expectRefusal(res, 'SETTINGS_LOCKED');
+    expect(message).toBe('Prices and capacity are locked once the first student books.');
+  });
+
   it('locked class: a duration edit still succeeds (#836)', async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     // Shorter, not longer: the fixtures sit 15 minutes apart, so a longer

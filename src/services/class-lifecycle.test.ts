@@ -2016,14 +2016,41 @@ describe('updateClass (DB)', () => {
       expect(timeToHHmm(stored.calendarEntry.startTime)).toBe(timeToHHmm(cls.calendarEntry.startTime));
     });
 
-    it('refuses a resend of the stored date and start time, as the economics lock does', async () => {
+    it('ignores a resend of the stored date and start time beside an edit it allows, and writes no schedule', async () => {
       const cls = await makeClass(true, 'open');
 
       const result = await updateClass(prisma, cls.id, {
-        date: cls.calendarEntry.date,
-        startTime: cls.calendarEntry.startTime,
+        date: new Date(cls.calendarEntry.date),
+        startTime: new Date(cls.calendarEntry.startTime),
+        description: 'Same slot, new words',
       });
-      expect(result).toEqual({ ok: false, reason: 'locked', fields: ['date', 'startTime'] });
+      expect(result.ok).toBe(true);
+
+      const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(stored.description).toBe('Same slot, new words');
+      expect(stored.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
+      expect(timeToHHmm(stored.calendarEntry.startTime)).toBe(timeToHHmm(cls.calendarEntry.startTime));
+    });
+
+    it('names only the economic field when the date and start time are resent unchanged', async () => {
+      const cls = await makeClass(true, 'open');
+
+      const result = await updateClass(prisma, cls.id, {
+        date: new Date(cls.calendarEntry.date),
+        startTime: new Date(cls.calendarEntry.startTime),
+        targetRate: 999,
+      });
+      expect(result).toEqual({ ok: false, reason: 'locked', fields: ['targetRate'] });
+    });
+
+    it('still names a changed date when the start time is resent unchanged', async () => {
+      const cls = await makeClass(true, 'open');
+
+      const result = await updateClass(prisma, cls.id, {
+        date: new Date('2099-03-09'),
+        startTime: new Date(cls.calendarEntry.startTime),
+      });
+      expect(result).toEqual({ ok: false, reason: 'locked', fields: ['date'] });
     });
 
     it('lists the economic fields before the schedule ones in one refusal', async () => {
