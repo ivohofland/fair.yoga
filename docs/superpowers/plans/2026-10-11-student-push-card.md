@@ -12,7 +12,7 @@ for this phone, with its dismissal stored per student.
 - Services/route conventions: thin route, `withErrorHandler`, `requireStudent`,
   `respondOk` / `respondUnchanged` (`src/lib/api-utils.ts`). "Already done"
   answers `respondUnchanged`, never an error.
-- Migration only via `pnpm exec prisma migrate dev --name student_push_card_dismissed`;
+- Migration only via `pnpm exec prisma migrate dev --name student_dismissed_push_card`;
   never `db push`, never hand-edit an applied migration.
 - Comment discipline (CLAUDE.md): comments annotate their own code; no counts or
   rosters in prose; no correction history.
@@ -33,32 +33,35 @@ for this phone, with its dismissal stored per student.
 under `tests/integration/` (new, e.g. `student-push-card-api.test.ts`),
 `docs/data-model.md`.
 
-1. Add `pushCardDismissed Boolean @default(false)` to `model Student`, placed
+1. Add `dismissedPushCard Boolean @default(false)` to `model Student`, placed
    with the other preference columns (after `pushInvitations`). Generate the
    migration with the command above.
 2. Integration tests first (follow the session/fixture helpers the existing
    integration files use, e.g. `tests/integration/teacher-signup-api.test.ts`
    and `tests/helpers.ts`):
-   - a student session POSTs → 200, `Student.pushCardDismissed` is true;
+   - a student session POSTs → 200, `Student.dismissedPushCard` is true;
    - a second POST → 200 with `outcome: 'unchanged'`, flag still true;
    - a teacher-only session → 403, and an unauthenticated request → 401;
-   - **one account with both a Teacher and a Student**: the student POST
+   - **one account with both a Teacher and a Student** (create both rows on
+     the same `accountId`, then `seedSession(db, accountId)` from
+     `tests/helpers.ts` — the session derives both ids from live profiles;
+     tear down as `teacher-signup-api.test.ts` does): the student POST
      leaves `Teacher.skippedOnboarding` unchanged; a teacher
      `POST /api/account/onboarding { step: 'push' }` leaves
-     `Student.pushCardDismissed` false.
+     `Student.dismissedPushCard` false.
 3. Route: `POST` only, no body read. `requireStudent`; then
-   `prisma.student.updateMany({ where: { id, deletedAt: null, pushCardDismissed: false }, data: { pushCardDismissed: true } })`.
+   `prisma.student.updateMany({ where: { id, deletedAt: null, dismissedPushCard: false }, data: { dismissedPushCard: true } })`.
    `count === 1` → `respondOk({ dismissed: true })`; `count === 0` →
    `respondUnchanged<{ dismissed: boolean }>({ dismissed: true })`. A short
    docblock stating what the route records and why the write is conditional.
-   If the project keeps a census of API routes or signed-in sections
-   (`src/proxy.ts`, any route-census test), register the route there as the
-   neighbours in `src/app/api/account/` are.
+   No API route census exists (`src/proxy.ts`'s matcher excludes `api/`), so
+   there is nothing to register. Do not add the column to GDPR export or
+   erasure (`src/services/gdpr.ts`) — the spec's GDPR decision.
 4. `docs/data-model.md`, Student (core) table: one row for
-   `push_card_dismissed` — boolean, default false — "Set once when the student
+   `dismissed_push_card` — boolean, default false — "Set once when the student
    dismisses the push card on `/bookings` (#818); only that card reads it."
    Match the table's existing column-name style.
-5. **Break the guard:** remove `pushCardDismissed: false` from the `where`
+5. **Break the guard:** remove `dismissedPushCard: false` from the `where`
    → the "second POST is unchanged" test fails; record the exact failure text
    in the report; restore; re-run green.
 
@@ -102,20 +105,20 @@ under `tests/integration/` (new, e.g. `student-push-card-api.test.ts`),
      (`routerRefresh` from `tests/setup/components`); a non-ok response leaves
      the Dismiss button enabled and does not refresh.
 2. `StudentPushCard({ dismissed, vapidPublicKey })` renders `PushOfferCard` with:
-   - description: `A heads-up when a waitlist spot opens for you or a class you booked changes. Booking emails still come as they do now — you choose which messages in ` + link "Settings" → `/account/notifications` + `.`
+   - description: `A heads-up when a waitlist spot opens for you or a class you booked is cancelled. Booking emails still come as they do now — you choose which messages in ` + link "Settings" → `/account/notifications` + `.`
    - dismissControl: a `button type="button"`, label "Dismiss",
      `aria-label="Dismiss the notifications card"`, same classes as the
      teacher's Dismiss, disabled while posting; on ok → `router.refresh()`;
      on a non-ok response → `console.error('[student-push-card] refused', { status })`
      and re-enable; on a throw → `logRequestFailure('student-push-card', {}, err)`
      (`@/lib/client-errors`) and re-enable.
-3. `/bookings`: select `pushCardDismissed` in the existing `student` query and
-   render `<StudentPushCard dismissed={student.pushCardDismissed} vapidPublicKey={readVapidConfig()?.publicKey ?? null} />`
+3. `/bookings`: select `dismissedPushCard` in the existing `student` query and
+   render `<StudentPushCard dismissed={student.dismissedPushCard} vapidPublicKey={readVapidConfig()?.publicKey ?? null} />`
    between the heading row and `<UpdatesStrip>`.
 4. `docs/information-architecture.md`: a **Student push card** paragraph right
    after the **Push card** paragraph: on the student's home (`/bookings`),
    same eligibility and Turn on behaviour as the teacher's card; Dismiss is
-   stored on the student (`pushCardDismissed`), independent of the teacher's
+   stored on the student (`dismissedPushCard`), independent of the teacher's
    dismissal on a two-hat account; Settings → Notifications (`/account/notifications`)
    is the way back.
 5. **Break the guard:** change the Dismiss URL to a different path → the
