@@ -15,6 +15,7 @@ import { formatEconomicsViolations } from '@/lib/class-economics';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { frozenClassMessage } from '@/lib/transition-refusal';
+import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy';
 import { log } from '@/lib/log';
 import { CLASS_GONE } from './shared';
 
@@ -117,7 +118,7 @@ export const PUT = withErrorHandler(async (
     const movesBookedClass = result.fields.some((f) => f === 'date' || f === 'startTime');
     return respondError(
       movesBookedClass
-        ? 'This class has bookings, so its date and time are fixed. To change them, cancel it and create a new one.'
+        ? BOOKED_SCHEDULE_FIXED_MESSAGE
         : 'Prices and capacity are locked once the first student books.',
       409,
       'SETTINGS_LOCKED',
