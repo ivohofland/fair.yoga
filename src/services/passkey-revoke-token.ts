@@ -11,8 +11,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Mints the secret behind one passkey-added email's "This wasn't me" link and
  * returns it raw. Only its SHA-256 is stored, so a database read cannot be
  * turned into a revoke link: the raw value is never persisted, only its hash.
- * `revokePasskeyByLink` looks it up by `hashToken(raw)`, the unique
- * `tokenHash`.
+ * `revokePasskeyByLink` looks it up by `hashToken(raw)`.
  */
 export async function mintPasskeyRevokeToken(
   db: PrismaClient,
