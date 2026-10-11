@@ -370,7 +370,7 @@ export const DELETE = withErrorHandler(async (
       // reach `promoteAfterCancel` — the loser matches no row, re-reads and is
       // answered as unchanged, as the sibling branch's is.
       //
-      // Money: `late_cancel` is in `CHARGED_STATUSES` (`class-lifecycle.ts`)
+      // Money: `late_cancel` is in `CHARGED_STATUSES` (`registration-status.ts`)
       // and `cancelled` is not, so an unscoped write here can land *after* a
       // teacher's free cancel and silently rewrite `cancelled` → `late_cancel`,
       // billing a student for a class the teacher had let them out of.

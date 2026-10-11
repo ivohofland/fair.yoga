@@ -26,7 +26,7 @@ export interface ResolvePriceLineInput {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
-  /** Charged-status registrations for this class — see CHARGED_STATUSES (services/class-lifecycle.ts). */
+  /** Charged-status registrations for this class — see CHARGED_STATUSES (lib/registration-status.ts). */
   registrations: PriceLineRegistration[];
   /** null when signed out, or signed in without a student profile. */
   viewer: PriceLineViewer | null;

@@ -82,15 +82,12 @@ export const ACTIVE_REGISTRATION_STATUSES: readonly RegistrationStatus[] = Objec
 
 /**
  * Registration statuses that represent a real obligation: the student is
- * charged for these when the class completes. Exported because the teacher's estimate
- * (`pricing-preview.tsx`) bills the same rows and the archive
- * rule in `class-template-lifecycle.ts` decides what is safe to delete by the
- * same list — a class carrying any of these is one a student is still on the
- * hook for, and must not be removed silently.
+ * charged for these when the class completes. A class carrying any of these
+ * is one a student is still on the hook for, and must not be removed silently.
  *
- * Frozen, like `ECONOMIC_FIELDS` above: this list now gates a destructive
- * `deleteMany` in two services, so a mutation anywhere in the process would
- * silently widen what archiving is allowed to destroy. Prisma's `in` filter
+ * Frozen, like `ECONOMIC_FIELDS` (`src/lib/class-fields.ts`): this list gates
+ * destructive deletes, so a mutation anywhere in the process would silently
+ * widen what they are allowed to destroy. Prisma's `in` filter
  * does want a mutable `RegistrationStatus[]` and will not accept a readonly
  * one — that is a constraint on the call site, not on the source of truth, so
  * callers spread (`in: [...CHARGED_STATUSES]`) exactly as the callers of
