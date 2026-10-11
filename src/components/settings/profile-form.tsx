@@ -255,7 +255,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
           min={0}
           max={VAT_PERCENT_MAX}
           step="any"
-          value={String(form.defaultVatPercent)}
+          value={form.defaultVatPercent}
           onChange={(e) => update('defaultVatPercent', Number(e.target.value))}
           hint="It's your responsibility to set the right VAT rate. You can change it on each class. This is only the default for new classes. Use 0 if you don't charge VAT."
         />

@@ -294,6 +294,21 @@ describe('ProfileForm', () => {
       expect(sentBody().defaultVatPercent).toBe(0);
     });
 
+    it('leaves a decimal the teacher is still typing alone', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      const input = screen.getByLabelText('Default VAT %') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '5.0' } });
+      expect(input.value).toBe('5.0');
+      fireEvent.change(input, { target: { value: '5.05' } });
+      expect(input.value).toBe('5.05');
+      save();
+
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody().defaultVatPercent).toBe(5.05);
+    });
+
     it('refuses four decimals before sending', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
