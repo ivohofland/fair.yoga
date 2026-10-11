@@ -14,6 +14,7 @@ import {
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { LOCKED_FIELDS } from '@/lib/class-fields';
+import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy';
 import { currencyLabel } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
@@ -259,8 +260,7 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
         </div>
         {settingsLocked && (
           <p className="type-caption -mt-2 max-w-[420px]">
-            This class has bookings, so its date and time are fixed. To change
-            them, cancel it and create a new one.
+            {BOOKED_SCHEDULE_FIXED_MESSAGE}
           </p>
         )}
         <div className="max-w-[200px]">

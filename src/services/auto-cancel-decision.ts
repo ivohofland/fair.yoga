@@ -3,6 +3,7 @@ import { isPastCancelCheck } from '@/lib/auto-cancel-check';
 
 const DECISION_SELECT = {
   status: true,
+  settingsLocked: true,
   autoCancelCheck: true,
   autoCancelDecidedAt: true,
   calendarEntry: {
@@ -12,9 +13,10 @@ const DECISION_SELECT = {
 
 /**
  * Marks the auto-cancel decision as made for an open, live, undecided class
- * whose check time has already been reached. A teacher who publishes a
- * class inside its own check window has chosen to run it, so the
- * sweep must not judge it. The caller holds the class row lock.
+ * whose check time has already been reached: a teacher who publishes a class
+ * inside its own check window has chosen to run it, so the sweep must not
+ * judge it. Resolves to `true` when it stamped the class and `false` when it
+ * left the class alone. Precondition: the caller holds `classId`'s row lock.
  */
 export async function stampIfPastCancelCheck(
   tx: Prisma.TransactionClient,
@@ -32,12 +34,14 @@ export async function stampIfPastCancelCheck(
 }
 
 /**
- * Re-decides an open, live class after its start moved, because its check
- * time moved with it. A new check time already reached is the teacher choosing
- * to run the class inside its window, so an undecided class is stamped and a
- * decided one stays decided. A new check time still ahead clears the marker,
- * and the sweep judges the class when it arrives. A draft has no decision to
- * make. The caller holds the class row lock.
+ * Re-decides an open, live, unbooked class after its start moved, because its
+ * check time moved with it. A new check time already reached is the teacher
+ * choosing to run the class inside its window, so an undecided class is
+ * stamped and a decided one stays decided. A new check time still ahead clears
+ * the marker, and the sweep judges the class when it arrives. A draft has no
+ * decision to make, and a booked class (`settingsLocked`) is left as it is.
+ * Resolves to nothing; the marker is the result. Precondition: the caller
+ * holds `classId`'s row lock.
  */
 export async function redecideAfterMove(
   tx: Prisma.TransactionClient,
@@ -45,7 +49,7 @@ export async function redecideAfterMove(
   now: Date,
 ): Promise<void> {
   const cls = await tx.class.findUnique({ where: { id: classId }, select: DECISION_SELECT });
-  if (!cls || cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) return;
+  if (!cls || cls.status !== 'open' || cls.settingsLocked || cls.calendarEntry.cancelledAt !== null) return;
   const past = isPastCancelCheck(cls.calendarEntry, cls.autoCancelCheck, cls.calendarEntry.teacher.defaultTimezone, now);
   if (past && cls.autoCancelDecidedAt === null) {
     await tx.class.update({ where: { id: classId }, data: { autoCancelDecidedAt: now } });
