@@ -1007,14 +1007,11 @@ export async function handleSpotFreed(
     // registration takes this same row lock, so they serialise against this
     // transaction: one arriving after the count blocks until this commits.
     //
-    // Three writers sit outside that. `autoCancelClasses`'s own comment in
-    // `class-transitions.ts` names two beside its own count-under-lock —
-    // `PUT /api/registrations/[id]` (attendance) and `DELETE
-    // /api/registrations/[id]` (cancel) — and its enumeration is short by one:
-    // `deleteStudentAccount` (`gdpr.ts`) cancels registrations in every
-    // draft/open class of the erased student while locking only the classes
-    // they were QUEUED in, so a class they were registered in but not queued
-    // in is written unlocked too. QUEUED, not WAITING: that lock set spans
+    // Writers outside that: `PUT /api/registrations/[id]` (attendance),
+    // `DELETE /api/registrations/[id]` (cancel), and `deleteStudentAccount`
+    // (`gdpr.ts`), which cancels registrations in every draft/open class of the
+    // erased student while locking only the classes they were QUEUED in, so a
+    // class they were registered in but not queued in is written unlocked too. QUEUED, not WAITING: that lock set spans
     // every `WaitlistEntry` status (#216/#182), and the capitalised literal
     // would name the one enum value it is not scoped to.
     //
