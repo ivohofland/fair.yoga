@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTierPrices, estimateAttendanceSpread, type TierEstimateInput } from './tier-estimates';
+import { estimateTierPrices, estimateAttendanceSpread, padTiersToMinimum, type TierEstimateInput } from './tier-estimates';
+import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { calculateClassPricing } from '@/services/pricing';
-import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
+import { DEFAULT_INCOME_TIER, INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 
 // The layer between the pricing engine and the public price quote: the
 // engine itself is covered in services/pricing.test.ts, so these tests pin
@@ -165,5 +166,22 @@ describe('estimateAttendanceSpread', () => {
       const spread = estimateAttendanceSpread({ ...base, registeredTiers: [2, 4], viewerTier });
       expect(spread.low).toBeLessThanOrEqual(spread.high);
     }
+  });
+});
+
+describe('padTiersToMinimum (#836)', () => {
+  it('appends default-tier seats after the real ones until the minimum', () => {
+    expect(padTiersToMinimum([1, 5], 4)).toEqual([1, 5, DEFAULT_INCOME_TIER, DEFAULT_INCOME_TIER]);
+  });
+
+  it('leaves a list at or above the minimum as it is, and does not mutate its input', () => {
+    const tiers: IncomeTier[] = [1, 2, 3, 4, 5];
+    expect(padTiersToMinimum(tiers, 4)).toEqual([1, 2, 3, 4, 5]);
+    expect(padTiersToMinimum(tiers, 5)).toEqual([1, 2, 3, 4, 5]);
+    expect(tiers).toHaveLength(5);
+  });
+
+  it('caps the minimum at MAX_CLASS_SIZE', () => {
+    expect(padTiersToMinimum([], Number.MAX_SAFE_INTEGER)).toHaveLength(MAX_CLASS_SIZE);
   });
 });
