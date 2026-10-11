@@ -19,6 +19,8 @@ import {
   UpdateClassInvariantError,
   type EconomicField,
 } from './class-lifecycle';
+import { autoCancelClasses } from './class-transitions';
+import { scopeSweep } from '../../tests/scoped-sweep';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
 import { createClassFixture, slotDate, slotTime, wallSlotAt } from '../../tests/class-fixtures';
@@ -937,6 +939,34 @@ describe('transitionClass (DB)', () => {
     // passes against an implementation that returns `ok` and writes nothing.
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('in_progress');
+  });
+
+  describe('publishing and the auto-cancel decision (#836)', () => {
+    const MINUTE = 60_000;
+
+    it('stamps the decision when a class is published inside its check window, and the sweep then leaves it', async () => {
+      // HOURS_2 check, start 90 minutes out: the check time passed 30 minutes ago.
+      const now = new Date();
+      const cls = await makeClassStartingAt('draft', new Date(now.getTime() + 90 * MINUTE));
+
+      const result = await transitionClass(prisma, cls.id, 'open');
+      expect(result.ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).not.toBeNull();
+
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      expect(await autoCancelClasses(scoped.db, now)).toBe(0);
+      const swept = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(swept.calendarEntry.cancelledAt).toBeNull();
+      expect(swept.status).toBe('open');
+    });
+
+    it('leaves the decision open when a class is published before its check time', async () => {
+      const cls = await makeClassStartingAt('draft', new Date(Date.now() + 3 * 24 * 60 * MINUTE));
+      await transitionClass(prisma, cls.id, 'open');
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).toBeNull();
+    });
   });
 });
 
@@ -2039,6 +2069,41 @@ describe('updateClass (DB)', () => {
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(35);
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
+  });
+
+  describe('the auto-cancel decision (#836)', () => {
+    const MINUTE = 60_000;
+
+    it('stamps the decision when a reschedule puts the start inside the check window', async () => {
+      const cls = await makeClass(false, 'open');
+      const { date, startTime } = wallSlotAt(new Date(Date.now() + 90 * MINUTE), 'Europe/Amsterdam');
+
+      const result = await updateClass(prisma, cls.id, { date, startTime });
+      expect(result.ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).not.toBeNull();
+    });
+
+    it('leaves a decided class on its original instant when it is moved a week later', async () => {
+      const cls = await makeClass(false, 'open');
+      const decidedAt = new Date('2026-01-02T03:04:05.000Z');
+      await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: decidedAt } });
+      const { date, startTime } = wallSlotAt(new Date(Date.now() + 7 * 24 * 60 * MINUTE), 'Europe/Amsterdam');
+
+      const result = await updateClass(prisma, cls.id, { date, startTime });
+      expect(result.ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt?.toISOString()).toBe(decidedAt.toISOString());
+    });
+
+    it('does not stamp an undecided class moved to a start days ahead', async () => {
+      const cls = await makeClass(false, 'open');
+      const { date, startTime } = wallSlotAt(new Date(Date.now() + 3 * 24 * 60 * MINUTE), 'Europe/Amsterdam');
+
+      expect((await updateClass(prisma, cls.id, { date, startTime })).ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).toBeNull();
+    });
   });
 
   it("reads the start in the teacher's zone, not UTC, when rescheduling (#249)", async () => {

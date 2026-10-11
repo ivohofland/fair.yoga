@@ -36,6 +36,7 @@ import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { log } from '@/lib/log';
+import { stampIfPastCancelCheck } from './auto-cancel-decision';
 
 export { ECONOMIC_FIELDS, type EconomicField };
 
@@ -602,6 +603,9 @@ export async function transitionClass(
         data: { status: targetStatus },
       });
       if (updated.count !== 1) return false;
+      // #836. Publishing inside the class's own check window is the teacher
+      // choosing to run it; the stamp keeps the sweep from judging it.
+      if (targetStatus === 'open') await stampIfPastCancelCheck(tx, classId, new Date());
       // #216. Predicated on the TARGET: `draft -> open` must not expire a queue,
       // and `cancelled` is not a `ClassStatus` since #327 — it cannot be named
       // here at all. Cancelling closes the queue in its own door,
@@ -1689,6 +1693,11 @@ export async function updateClass(
           throw new UpdateClassRefusal({ ok: false, reason: 'frozen' });
         }
       }
+
+      // #836. A schedule edit that lands the start inside the check window is
+      // the teacher choosing to run the class. Already-decided classes keep
+      // their original instant: the stamp only writes an undecided one.
+      if (hasEntryEdit) await stampIfPastCancelCheck(tx, classId, new Date());
 
       // Re-read under the lock this transaction still holds, so what comes
       // back cannot be a version another writer produced after the write.
