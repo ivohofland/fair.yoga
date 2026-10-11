@@ -35,7 +35,7 @@ describe('ClassInfoSkeleton', () => {
 
 describe('ClassInfo "needs N to go ahead"', () => {
   const NEEDS = /needs 4 to go ahead/;
-  const render1 = (status: 'open' | 'in_progress' | 'completed', decided: boolean, cancelled = false) => {
+  const render1 = (status: 'draft' | 'open' | 'in_progress' | 'completed', decided: boolean, cancelled = false) => {
     const cls = classRow('c-n', status, [], { cancelled });
     cls.autoCancelDecidedAt = decided ? new Date('2026-06-12T07:30:00.000Z') : null;
     return render(<ClassInfo cls={cls} registrationCount={2} waitlistCount={0} />);
@@ -43,6 +43,11 @@ describe('ClassInfo "needs N to go ahead"', () => {
 
   it('shows while open and not yet decided', () => {
     const { container } = render1('open', false);
+    expect(container.textContent).toMatch(NEEDS);
+  });
+
+  it('shows on a draft, which the check has yet to judge', () => {
+    const { container } = render1('draft', false);
     expect(container.textContent).toMatch(NEEDS);
   });
 

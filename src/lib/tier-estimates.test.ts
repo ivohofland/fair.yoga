@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTierPrices, estimateAttendanceSpread, padTiersToMinimum, type TierEstimateInput } from './tier-estimates';
+import { estimateTierPrices, estimateAttendanceSpread, padTiersToMinimum, billAtLeastMinimum, type TierEstimateInput } from './tier-estimates';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { calculateClassPricing } from '@/services/pricing';
 import { DEFAULT_INCOME_TIER, INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
@@ -183,5 +183,28 @@ describe('padTiersToMinimum (#836)', () => {
 
   it('caps the minimum at MAX_CLASS_SIZE', () => {
     expect(padTiersToMinimum([], Number.MAX_SAFE_INTEGER)).toHaveLength(MAX_CLASS_SIZE);
+  });
+});
+
+describe('billAtLeastMinimum (#836)', () => {
+  // The live run (verify836 S5): two students under a minimum of four.
+  const live = { roomCost: 30, minRate: 10, targetRate: 40, minStudents: 4, maxStudents: 10 };
+
+  it('bills the real students 7.12 and 10.96 and the teacher -11.92', () => {
+    const { billed, billedCents, earningsCents } = billAtLeastMinimum(live, [1, 3]);
+    expect(billed.map((s) => s.price)).toEqual([7.12, 10.96]);
+    expect(billedCents / 100).toBe(18.08);
+    expect(earningsCents / 100).toBe(-11.92);
+  });
+
+  it('bills the unpadded pool at or above the minimum', () => {
+    const { billed, billedCents, earningsCents } = billAtLeastMinimum({ ...live, minStudents: 2 }, [1, 3]);
+    expect(billed).toHaveLength(2);
+    expect(earningsCents).toBe(billedCents - 3000);
+  });
+
+  it('caps the padding at MAX_CLASS_SIZE', () => {
+    const { billed } = billAtLeastMinimum({ ...live, minStudents: Number.MAX_SAFE_INTEGER, maxStudents: MAX_CLASS_SIZE }, [3]);
+    expect(billed).toHaveLength(1);
   });
 });

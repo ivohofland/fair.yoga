@@ -2,9 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { Prisma } from '@prisma/client';
 import { PricingPreview } from './pricing-preview';
-import { calculateClassPricing } from '@/services/pricing';
+import { billAtLeastMinimum } from '@/lib/tier-estimates';
 import { formatMoney } from '@/lib/format';
-import type { IncomeTier } from '@/lib/tiers';
 
 type PricingPreviewCls = Parameters<typeof PricingPreview>[0]['cls'];
 
@@ -79,44 +78,36 @@ describe('PricingPreview', () => {
     expect(screen.getByText(/−€20\.00\s+–\s+€60\.00/)).toBeInTheDocument();
   });
 
-  // What completeClass bills: the real students priced inside a pool padded
-  // with tier-3 seats up to the minimum, the teacher absorbing the shortfall.
-  function completionOf(tiers: IncomeTier[], cls: PricingPreviewCls) {
-    const pool = [...tiers];
-    while (pool.length < cls.minStudents) pool.push(3);
-    const pricing = calculateClassPricing({
-      roomCost: Number(cls.roomCost),
-      minRate: Number(cls.minRate),
-      targetRate: Number(cls.targetRate),
-      minStudents: cls.minStudents,
-      maxStudents: cls.maxStudents,
-      studentTiers: pool,
-    });
-    const billed = pricing.students.slice(0, tiers.length);
-    const cents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
-    return { billed, earnings: (cents - Math.round(Number(cls.roomCost) * 100)) / 100 };
-  }
-
-  it('below the minimum, estimates what completion would bill and pay', () => {
+  it('below the minimum, shows what completion bills and pays (the live S5 numbers)', () => {
     const cls = makePreviewClass({
-      roomCost: new Prisma.Decimal('60.00'),
-      minRate: new Prisma.Decimal('40.00'),
-      targetRate: new Prisma.Decimal('80.00'),
+      roomCost: new Prisma.Decimal('30.00'),
+      minRate: new Prisma.Decimal('10.00'),
+      targetRate: new Prisma.Decimal('40.00'),
       minStudents: 4,
       maxStudents: 10,
       registrations: [
-        { id: 'r1', status: 'registered', tierAtBooking: 2 },
-        { id: 'r2', status: 'registered', tierAtBooking: 4 },
+        { id: 'r1', status: 'registered', tierAtBooking: 1 },
+        { id: 'r2', status: 'registered', tierAtBooking: 3 },
       ],
     });
-    const { billed, earnings } = completionOf([2, 4], cls);
-    expect(earnings).toBeLessThan(0);
     render(<PricingPreview cls={cls} />);
-    expect(screen.getByText(formatMoney(earnings, 'EUR'))).toBeInTheDocument();
-    expect(screen.getByText(formatMoney(billed[0]!.price, 'EUR'))).toBeInTheDocument();
-    expect(screen.getByText(formatMoney(billed[1]!.price, 'EUR'))).toBeInTheDocument();
-    // The padding seats are not students: no tier row counts them.
-    expect(screen.queryByText('Tier 3')).toBeNull();
+    expect(screen.getByText('−€11.92')).toBeInTheDocument();
+    expect(screen.getByText('€7.12')).toBeInTheDocument();
+    expect(screen.getByText('€10.96')).toBeInTheDocument();
+    // The padding seats are not students: only the two real tiers get a row.
+    expect(screen.getAllByText(/^Tier \d/)).toHaveLength(2);
+  });
+
+  it('prices only the charged statuses, as completion does', () => {
+    const cls = makePreviewClass({
+      minStudents: 1,
+      registrations: [
+        { id: 'r1', status: 'registered', tierAtBooking: 3 },
+        { id: 'r2', status: 'cancelled', tierAtBooking: 1 },
+      ],
+    });
+    render(<PricingPreview cls={cls} />);
+    expect(screen.getByText(/Based on 1 registered student$/)).toBeInTheDocument();
   });
 
   it('at the minimum, estimates the unpadded pool', () => {
@@ -131,8 +122,10 @@ describe('PricingPreview', () => {
         { id: 'r2', status: 'registered', tierAtBooking: 4 },
       ],
     });
-    const { billed, earnings } = completionOf([2, 4], cls);
-    expect(earnings).toBe(40);
+    const { billed } = billAtLeastMinimum(
+      { roomCost: 20, minRate: 40, targetRate: 80, minStudents: 2, maxStudents: 10 },
+      [2, 4],
+    );
     render(<PricingPreview cls={cls} />);
     expect(screen.getByText('€40.00')).toBeInTheDocument();
     expect(screen.getByText(formatMoney(billed[0]!.price, 'EUR'))).toBeInTheDocument();
