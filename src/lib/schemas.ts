@@ -6,6 +6,7 @@ import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
 import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations } from '@/lib/class-economics';
+import { vatPercentViolation } from '@/lib/vat';
 import {
   singleLineText,
   multiLineText,
@@ -327,6 +328,10 @@ export const updateTeacherSchema = z.object({
   bio: multiLineText(250).optional(),
   pageSlug: pageSlugField.optional(),
   currency: z.enum(Currency).optional(),
+  defaultVatPercent: z.number().superRefine((v, ctx) => {
+    const message = vatPercentViolation(v);
+    if (message) ctx.addIssue({ code: 'custom', message });
+  }).optional(),
   defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').transform(modernTimeZone).optional(),
   classReminder: z.enum(ReminderTiming).optional(),
   classReminderChannel: z.enum(ReminderChannel).optional(),

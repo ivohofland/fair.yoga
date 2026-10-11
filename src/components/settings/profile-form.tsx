@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 import { CURRENCIES, currencyLabel } from '@/lib/format';
+import { vatPercentViolation, VAT_PERCENT_MAX } from '@/lib/vat';
 import type { CurrencySwitchResult } from '@/services/currency-switch';
 
 type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
@@ -25,6 +26,7 @@ export interface ProfileFormValues {
   bio: string;
   pageSlug: string;
   currency: Currency;
+  defaultVatPercent: number;
   defaultTimezone: string;
 }
 
@@ -136,6 +138,11 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       setError('Page slug is required');
       return;
     }
+    const vatMessage = vatPercentViolation(form.defaultVatPercent);
+    if (vatMessage) {
+      setError(vatMessage);
+      return;
+    }
 
     setSubmitting(true);
     setError('');
@@ -149,6 +156,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         bio: form.bio.trim(),
         pageSlug: form.pageSlug.trim(),
         ...(sentCurrency !== undefined ? { currency: sentCurrency } : {}),
+        defaultVatPercent: form.defaultVatPercent,
         defaultTimezone: form.defaultTimezone,
       };
       const res = await fetch(`/api/teachers/${teacherId}`, {
@@ -239,6 +247,18 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
             <option key={value} value={value}>{label}</option>
           ))}
         </Select>
+        <Input
+          id="defaultVatPercent"
+          label="Default VAT %"
+          type="number"
+          inputMode="decimal"
+          min={0}
+          max={VAT_PERCENT_MAX}
+          step="any"
+          value={String(form.defaultVatPercent)}
+          onChange={(e) => update('defaultVatPercent', Number(e.target.value))}
+          hint="It's your responsibility to set the right VAT rate. You can change it on each class. This is only the default for new classes. Use 0 if you don't charge VAT."
+        />
         <Select
           id="timezone"
           label="Timezone"

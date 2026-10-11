@@ -303,6 +303,7 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
 
 describe('Teacher.defaultVatPercent (#833)', () => {
   let vatTeacherId: string;
+  let vatToken: string;
 
   beforeAll(async () => {
     const t = await prisma.teacher.create({
@@ -316,6 +317,7 @@ describe('Teacher.defaultVatPercent (#833)', () => {
       },
     });
     vatTeacherId = t.id;
+    vatToken = await seedSession(prisma, t.accountId);
   });
 
   afterAll(async () => {
@@ -333,5 +335,20 @@ describe('Teacher.defaultVatPercent (#833)', () => {
       .update({ where: { id: vatTeacherId }, data: { defaultVatPercent: value } })
       .then(() => null, (e: unknown) => e);
     expect(isCheckViolationOn(err, 'Teacher_default_vat_percent_range_check')).toBe(true);
+  });
+
+  it('saves 14.975 exactly through PUT', async () => {
+    const res = await putTeacher(vatTeacherId, { defaultVatPercent: 14.975 }, vatToken);
+    expect(res.status).toBe(200);
+    const t = await prisma.teacher.findUniqueOrThrow({ where: { id: vatTeacherId } });
+    expect(t.defaultVatPercent.toString()).toBe('14.975');
+  });
+
+  it.each([[8.1234], [-1], [101], ['9']])('answers 400 for %s and writes nothing', async (value) => {
+    await prisma.teacher.update({ where: { id: vatTeacherId }, data: { defaultVatPercent: 21 } });
+    const res = await putTeacher(vatTeacherId, { defaultVatPercent: value }, vatToken);
+    expect(res.status).toBe(400);
+    const t = await prisma.teacher.findUniqueOrThrow({ where: { id: vatTeacherId } });
+    expect(t.defaultVatPercent.toString()).toBe('21');
   });
 });

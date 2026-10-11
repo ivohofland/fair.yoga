@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { Prisma } from '@prisma/client';
 
 const { requireTeacherSession, findUniqueOrThrow } = vi.hoisted(() => ({
   requireTeacherSession: vi.fn(),
@@ -8,7 +9,11 @@ const { requireTeacherSession, findUniqueOrThrow } = vi.hoisted(() => ({
 
 vi.mock('@/lib/session', () => ({ requireTeacherSession }));
 vi.mock('@/lib/db', () => ({ prisma: { teacher: { findUniqueOrThrow } } }));
-vi.mock('@/components/settings/profile-form', () => ({ ProfileForm: () => null }));
+vi.mock('@/components/settings/profile-form', () => ({
+  ProfileForm: (props: { initial: Record<string, unknown> }) => (
+    <span data-testid="profile-form" data-initial={JSON.stringify(props.initial)} />
+  ),
+}));
 vi.mock('@/components/settings/profile-photo-field', () => ({ ProfilePhotoField: () => null }));
 vi.mock('@/components/settings/bank-account-form', () => ({
   BankAccountForm: (props: { currency: string; initial: Record<string, string>; others: unknown[] }) => (
@@ -40,6 +45,7 @@ describe('ProfilePage', () => {
       bio: null,
       pageSlug: 'ada',
       currency: 'EUR',
+      defaultVatPercent: new Prisma.Decimal(9),
       defaultTimezone: 'Europe/Amsterdam',
       photo: null,
       paymentLink: null,
@@ -49,6 +55,8 @@ describe('ProfilePage', () => {
     render(await ProfilePage());
 
     expect(screen.getByTestId('data-and-deletion')).toHaveAttribute('data-account-id', 'acct-1');
+    const initial = JSON.parse(screen.getByTestId('profile-form').getAttribute('data-initial') ?? '{}') as Record<string, unknown>;
+    expect(initial.defaultVatPercent).toBe(9);
   });
 
   it('hands the bank block the current currency’s account and masks the others', async () => {
@@ -56,7 +64,7 @@ describe('ProfilePage', () => {
     const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
-      currency: 'GBP', defaultTimezone: 'Europe/London', photo: null, paymentLink: null,
+      currency: 'GBP', defaultVatPercent: new Prisma.Decimal(9), defaultTimezone: 'Europe/London', photo: null, paymentLink: null,
       bankAccounts: [
         { ...none, currency: 'EUR', holderName: 'Ada L', iban: 'NL91ABNA0417164300' },
         { ...none, currency: 'GBP', holderName: 'Ada Lovelace', sortCode: '123456', accountNumber: '12345678' },
@@ -80,7 +88,7 @@ describe('ProfilePage', () => {
     const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
-      currency: 'GBP', defaultTimezone: 'Europe/London', photo: null, paymentLink: null,
+      currency: 'GBP', defaultVatPercent: new Prisma.Decimal(9), defaultTimezone: 'Europe/London', photo: null, paymentLink: null,
       bankAccounts: [{ ...none, currency: 'EUR', holderName: 'Ada L', iban: 'NL91ABNA0417164300' }],
     });
 
@@ -94,7 +102,7 @@ describe('ProfilePage', () => {
     requireTeacherSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
-      currency: 'EUR', defaultTimezone: 'Europe/Amsterdam', photo: null, paymentLink: null, bankAccounts: [],
+      currency: 'EUR', defaultVatPercent: new Prisma.Decimal(9), defaultTimezone: 'Europe/Amsterdam', photo: null, paymentLink: null, bankAccounts: [],
     });
 
     render(await ProfilePage());
@@ -107,7 +115,7 @@ describe('ProfilePage', () => {
     requireTeacherSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
-      currency: 'EUR', defaultTimezone: 'Europe/Amsterdam', photo: null, paymentLink: 'https://paypal.me/ada', bankAccounts: [],
+      currency: 'EUR', defaultVatPercent: new Prisma.Decimal(9), defaultTimezone: 'Europe/Amsterdam', photo: null, paymentLink: 'https://paypal.me/ada', bankAccounts: [],
     });
 
     render(await ProfilePage());

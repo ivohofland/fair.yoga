@@ -42,6 +42,7 @@ export default async function ProfilePage() {
           bio: teacher.bio,
           pageSlug: teacher.pageSlug,
           currency: teacher.currency,
+          defaultVatPercent: teacher.defaultVatPercent.toNumber(),
           defaultTimezone: teacher.defaultTimezone,
         }}
       />
