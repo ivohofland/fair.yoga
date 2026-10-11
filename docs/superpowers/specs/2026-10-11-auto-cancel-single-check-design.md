@@ -99,7 +99,10 @@ edit.
 **A class with registrations cannot be moved** (decided in PR review). `date`
 and `startTime` join the `settingsLocked` freeze that already covers
 `ECONOMIC_FIELDS`: from the first registration, `updateClass` refuses them with
-409 `SETTINGS_LOCKED`, and the edit form disables both fields. Both settings
+409 `SETTINGS_LOCKED`, and the edit form disables both fields. The freeze
+refuses a move, not a resend: a `date` or `startTime` equal to the stored one is
+ignored, so a client that resends the whole form is told about the fields it
+actually changed. Both settings
 are measured from the start, so moving a booked class would move every
 student's free-cancel deadline and leave a decided class undecided in fact —
 everyone could cancel free and nothing would judge the class again. A teacher

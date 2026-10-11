@@ -1342,7 +1342,8 @@ export type UpdateClassResult =
  *
  * The FREEZES gate on different events and cover different things. The
  * BOOKING freeze (`settingsLocked`) starts at the first registration and
- * covers `LOCKED_FIELDS`: the economics and the schedule. The TERMINAL freeze
+ * covers `LOCKED_FIELDS`: every economic field sent, and a MOVE of `date` or
+ * `startTime` (a value equal to the stored one is ignored, not refused). The TERMINAL freeze
  * (#247) starts when the class completes or is cancelled and covers EVERY field — it is the class that is
  * frozen, not a list of columns. Since #327 its two halves are read from two
  * different rows (`Class.status`, `CalendarEntry.cancelledAt`), which is what
@@ -1588,20 +1589,40 @@ export async function updateClass(
     }
   }
 
+  // A `date` or `startTime` equal to the stored one is not an edit: it is
+  // dropped here, so it is neither a locked field nor a write, and a client
+  // that resends the whole form (`ClassEditForm` does) is not told its date is
+  // fixed when it changed a price. Compared on the calendar day and on the
+  // time of day, the representations the two columns store. Against the
+  // opening read: the stored schedule moves only through this function, and a
+  // first booking landing since is caught under the lock below.
+  const movedData: ClassUpdateData = {
+    ...data,
+    date:
+      data.date !== undefined && data.date.getTime() !== entry.date.getTime()
+        ? data.date
+        : undefined,
+    startTime:
+      data.startTime !== undefined &&
+      timeToHHmm(data.startTime) !== timeToHHmm(entry.startTime)
+        ? data.startTime
+        : undefined,
+  };
+
   // Destructured rather than length-checked, so the non-empty tuples below
   // are proven to the compiler (via noUncheckedIndexedAccess) instead of
-  // asserted. A locked field counts as sent when its value is defined, even if
-  // it equals the stored one: the form strips locked fields, so a resend is a
-  // client that does not know the class is booked.
+  // asserted. An economic field counts as sent when its value is defined, even
+  // if it equals the stored one: the form strips locked fields, so a resend is
+  // a client that does not know the class is booked.
   const [firstEconomic, ...otherEconomic] = ECONOMIC_FIELDS.filter(
-    (f) => data[f] !== undefined,
+    (f) => movedData[f] !== undefined,
   );
   const sentEconomic: readonly [EconomicField, ...EconomicField[]] | null =
     firstEconomic === undefined ? null : [firstEconomic, ...otherEconomic];
-  const [firstLocked, ...otherLocked] = LOCKED_FIELDS.filter((f) => data[f] !== undefined);
+  const [firstLocked, ...otherLocked] = LOCKED_FIELDS.filter((f) => movedData[f] !== undefined);
   const sentLocked: readonly [LockedField, ...LockedField[]] | null =
     firstLocked === undefined ? null : [firstLocked, ...otherLocked];
-  const movesSchedule = data.date !== undefined || data.startTime !== undefined;
+  const movesSchedule = movedData.date !== undefined || movedData.startTime !== undefined;
 
   if (cls.settingsLocked && sentLocked !== null) {
     return { ok: false, reason: 'locked', fields: sentLocked };
@@ -1610,7 +1631,7 @@ export async function updateClass(
   // The split, by destructuring rather than by iterating a name list, so the
   // compiler types each half and `classFields` is the remainder BY
   // CONSTRUCTION — nothing can fall into neither.
-  const { classType, date, startTime, durationMinutes, ...classFields } = data;
+  const { classType, date, startTime, durationMinutes, ...classFields } = movedData;
   const entryFields = { classType, date, startTime, durationMinutes };
 
   // Compile-time pin: the destructure above and `EntryUpdateField` name the
@@ -1637,7 +1658,9 @@ export async function updateClass(
   // which this function would then read as a lost race.
   const hasEntryEdit = Object.values(entryFields).some((v) => v !== undefined);
   const hasClassEdit = Object.values(classFields).some((v) => v !== undefined);
-  if (!hasEntryEdit && !hasClassEdit) {
+  // What was SENT, not what remains to write: a body of only unchanged
+  // schedule values asked for something and gets the row back untouched.
+  if (!Object.values(data).some((v) => v !== undefined)) {
     return { ok: false, reason: 'no_fields' };
   }
 
@@ -1745,7 +1768,8 @@ export async function updateClass(
 
       // #836. Moving the start moves the check time, so the move re-decides
       // the class: `redecideAfterMove` has the rule. Reachable only before
-      // the first registration, since `settingsLocked` freezes both fields.
+      // the first registration, since `settingsLocked` freezes a move of
+      // either field.
       if (movesSchedule) await redecideAfterMove(tx, classId, new Date());
 
       // Re-read under the lock this transaction still holds, so what comes
