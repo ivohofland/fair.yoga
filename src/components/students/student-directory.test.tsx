@@ -10,7 +10,7 @@ import { StudentDirectory } from './student-directory';
  * composed `displayName`; this pins that the component stopped composing.
  *
  * The fixture below is a full name (`'Anna Bakker'`), not an already-truncated
- * one (`'Anna b.'`): a truncated name is a fixed point of `formatStudentName` —
+ * one (`'Anna B.'`): a truncated name is a fixed point of `formatStudentName` —
  * composing it again returns it unchanged — so a mutation that reintroduced
  * composition would pass against that fixture for the same reason the
  * original code did. A full name is not a fixed point, so recomposing it
@@ -122,7 +122,7 @@ describe('StudentDirectory', () => {
       },
       {
         id: 'student-2',
-        displayName: 'Bob c.',
+        displayName: 'Bob C.',
         email: 'bob@example.com',
         phone: null,
         birthday: null,
@@ -135,7 +135,7 @@ describe('StudentDirectory', () => {
       },
       {
         id: 'student-3',
-        displayName: 'Carla d.',
+        displayName: 'Carla D.',
         email: null,
         phone: null,
         birthday: null,
@@ -157,8 +157,8 @@ describe('StudentDirectory', () => {
 
     expect(screen.getAllByRole('link').map(nameColumn)).toEqual([
       ['Anna Bakker', 'anna@example.com'],
-      ['Bob c.', 'bob@example.com'],
-      ['Carla d.'],
+      ['Bob C.', 'bob@example.com'],
+      ['Carla D.'],
     ]);
   });
 
@@ -172,7 +172,7 @@ describe('StudentDirectory', () => {
   it('narrows the list on a first-name fragment', async () => {
     stubStudents([
       student({ id: 'student-1', displayName: 'Anna Bakker' }),
-      student({ id: 'student-2', displayName: 'Bram k.' }),
+      student({ id: 'student-2', displayName: 'Bram K.' }),
     ]);
     render(<StudentDirectory />);
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
@@ -180,13 +180,13 @@ describe('StudentDirectory', () => {
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'ann' } });
 
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
-    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram K.')).not.toBeInTheDocument();
   });
 
   it('finds a student on a shared surname fragment', async () => {
     stubStudents([
       student({ id: 'student-1', displayName: 'Anna Bakker' }),
-      student({ id: 'student-2', displayName: 'Bram k.' }),
+      student({ id: 'student-2', displayName: 'Bram K.' }),
     ]);
     render(<StudentDirectory />);
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
@@ -194,11 +194,11 @@ describe('StudentDirectory', () => {
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'bakker' } });
 
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
-    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram K.')).not.toBeInTheDocument();
   });
 
   /**
-   * The privacy property: 'Bram k.' is what the server sent for a student
+   * The privacy property: 'Bram K.' is what the server sent for a student
    * who withheld his surname — 'kramer' is nowhere in the response for this
    * test to match. This isn't extra filtering logic holding the line; it's
    * that the data literally isn't there.
@@ -206,7 +206,7 @@ describe('StudentDirectory', () => {
   it('finds nothing when searching a withheld surname', async () => {
     stubStudents([
       student({ id: 'student-1', displayName: 'Anna Bakker' }),
-      student({ id: 'student-2', displayName: 'Bram k.' }),
+      student({ id: 'student-2', displayName: 'Bram K.' }),
     ]);
     render(<StudentDirectory />);
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
@@ -214,7 +214,7 @@ describe('StudentDirectory', () => {
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'kramer' } });
 
     expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
-    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram K.')).not.toBeInTheDocument();
     expect(screen.getByText(`No students matching 'kramer'.`)).toBeInTheDocument();
   });
 
@@ -229,7 +229,7 @@ describe('StudentDirectory', () => {
   it('matches a composed name spanning first and last name', async () => {
     stubStudents([
       student({ id: 'student-1', displayName: 'Anna Bakker' }),
-      student({ id: 'student-2', displayName: 'Bram k.' }),
+      student({ id: 'student-2', displayName: 'Bram K.' }),
     ]);
     render(<StudentDirectory />);
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
@@ -237,18 +237,18 @@ describe('StudentDirectory', () => {
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'anna b' } });
 
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
-    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram K.')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'anna bakker' } });
 
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
-    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram K.')).not.toBeInTheDocument();
   });
 
   it('matches an email fragment, and never matches a withheld (null) email', async () => {
     stubStudents([
       student({ id: 'student-1', displayName: 'Anna Bakker', email: 'anna@example.com' }),
-      student({ id: 'student-2', displayName: 'Carla d.', email: null }),
+      student({ id: 'student-2', displayName: 'Carla D.', email: null }),
     ]);
     render(<StudentDirectory />);
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
@@ -256,7 +256,7 @@ describe('StudentDirectory', () => {
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'example.com' } });
 
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
-    expect(screen.queryByText('Carla d.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Carla D.')).not.toBeInTheDocument();
   });
 
   it('paginates more than PAGE_SIZE rows, and hides the pager once a search narrows below it', async () => {
@@ -598,7 +598,7 @@ describe('StudentDirectory', () => {
             data: {
               students: [
                 student({ id: 'student-1', displayName: 'Anna Bakker' }),
-                student({ id: 'student-2', displayName: 'Bram k.' }),
+                student({ id: 'student-2', displayName: 'Bram K.' }),
               ],
             },
           }),
@@ -615,14 +615,14 @@ describe('StudentDirectory', () => {
 
     const dimmedWrap = screen.getByRole('link', { name: /Anna Bakker/ }).parentElement?.parentElement;
     expect(dimmedWrap?.className).toContain('opacity-50');
-    expect(screen.getByText('Bram k.')).toBeInTheDocument();
+    expect(screen.getByText('Bram K.')).toBeInTheDocument();
 
     // A search typed while that reload is still in flight narrows the same
     // still-dimmed, previously-loaded roster — not a skeleton, not a fresh
     // empty state.
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'anna' } });
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
-    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram K.')).not.toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: /Anna Bakker/ }).parentElement?.parentElement?.className,
     ).toContain('opacity-50');

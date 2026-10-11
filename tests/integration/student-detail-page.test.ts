@@ -14,7 +14,7 @@ const suffix = uniqueSuffix();
  * Covers:
  * - Access control & ownership redirects (non-owner / non-existent student)
  * - Privacy projection (`projectStudentForTeacher`) for claimed students:
- *   - Full name vs truncated name (`shareFullName: false` -> `First l.`)
+ *   - Full name vs truncated name (`shareFullName: false` -> `First L.`)
  *   - Contact field gating & `formatDateShort` birthday (`15 Jun`, no year)
  *   - "No contact information to show" empty state
  * - Unclaimed students: caption notice, contact through their privacy row, and the same
@@ -212,8 +212,8 @@ describe('GET /students/[id] (student detail page)', () => {
       expect(res.status).toBe(200);
       const html = await res.text();
 
-      // Name truncated to "Anna d." (lowercase initial per formatStudentName)
-      expect(html).toContain('Anna d.');
+      // Name truncated to "Anna D." (uppercase initial per formatStudentName)
+      expect(html).toContain('Anna D.');
       expect(html).not.toContain('Anna de Vries');
 
       // Shared contact fields
@@ -384,7 +384,7 @@ describe('GET /students/[id] (student detail page)', () => {
       expect(res.status).toBe(200);
       const html = await res.text();
 
-      expect(html).toContain('Clara c.');
+      expect(html).toContain('Clara C.');
       expect(html).toContain('No contact information to show.');
       expect(html).not.toContain(email);
       expect(html).not.toContain('+31611112222');

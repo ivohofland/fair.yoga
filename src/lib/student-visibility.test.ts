@@ -50,7 +50,7 @@ function claimedStudent(
 
 describe('teacherVisibleName', () => {
   it('gives a last initial when the surname is not shared', () => {
-    expect(teacherVisibleName(claimedStudent(), TEACHER)).toBe('Anna b.');
+    expect(teacherVisibleName(claimedStudent(), TEACHER)).toBe('Anna B.');
   });
 
   it('gives the full name when shareFullName is true', () => {
@@ -60,12 +60,12 @@ describe('teacherVisibleName', () => {
 
   it('treats a missing privacy row as maximum privacy', () => {
     expect(teacherVisibleName(claimedStudent({ studentPrivacy: [] }), TEACHER)).toBe(
-      'Anna b.',
+      'Anna B.',
     );
   });
 
   it('gives an unclaimed student a last initial when the surname is not shared', () => {
-    expect(teacherVisibleName(claimedStudent({ claimedAt: null }), TEACHER)).toBe('Anna b.');
+    expect(teacherVisibleName(claimedStudent({ claimedAt: null }), TEACHER)).toBe('Anna B.');
   });
 
   // Multi-row inputs. In production the nested `where: { teacherId }` on
@@ -85,7 +85,7 @@ describe('teacherVisibleName', () => {
   // `ScopedVisibilityFlags`.
   it('ignores a privacy row belonging to another teacher', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER] });
-    expect(teacherVisibleName(s, TEACHER)).toBe('Anna b.');
+    expect(teacherVisibleName(s, TEACHER)).toBe('Anna B.');
   });
 
   // Both directions on purpose. The first assertion is the fail-closed one;
@@ -95,7 +95,7 @@ describe('teacherVisibleName', () => {
   // this file and fail here.
   it('picks this teacher\'s row out of several, not the first one', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER, ALL_FALSE] });
-    expect(teacherVisibleName(s, TEACHER)).toBe('Anna b.');
+    expect(teacherVisibleName(s, TEACHER)).toBe('Anna B.');
     expect(teacherVisibleName(s, OTHER_TEACHER)).toBe('Anna Bakker');
   });
 });
@@ -105,7 +105,7 @@ describe('projectStudentForTeacher', () => {
     const result = projectStudentForTeacher(claimedStudent(), TEACHER);
     expect(result).toStrictEqual({
       id: 'student-1',
-      displayName: 'Anna b.',
+      displayName: 'Anna B.',
       email: null,
       phone: null,
       birthday: null,
@@ -151,7 +151,7 @@ describe('projectStudentForTeacher', () => {
       },
       't1',
     );
-    expect(projected.displayName).toBe('Anna b.');
+    expect(projected.displayName).toBe('Anna B.');
     expect(projected.email).toBeNull();
     expect(projected.age).toBeNull();
   });
@@ -216,7 +216,7 @@ describe('projectStudentForTeacher', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER] });
     expect(projectStudentForTeacher(s, TEACHER)).toStrictEqual({
       id: 'student-1',
-      displayName: 'Anna b.',
+      displayName: 'Anna B.',
       email: null,
       phone: null,
       birthday: null,

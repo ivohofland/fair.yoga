@@ -1368,7 +1368,7 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
         tierRatio?: string;
       }[];
     };
-    expect(body.data[0]!.student.displayName).toBe('RegStudent0 t.');
+    expect(body.data[0]!.student.displayName).toBe('RegStudent0 T.');
     expect(body.data[0]!.student.email).toBeNull();
     expect(Object.keys(body.data[0]!.student).sort()).toEqual(PROJECTED_STUDENT_KEYS);
     expect(body.data[0]!.tierAtBooking).toBeUndefined();
@@ -1390,7 +1390,7 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
         tierAtBooking?: number;
       };
     };
-    expect(body.data.student.displayName).toBe('RegStudent0 t.');
+    expect(body.data.student.displayName).toBe('RegStudent0 T.');
     expect(body.data.student.email).toBeNull();
     expect(Object.keys(body.data.student).sort()).toEqual(PROJECTED_STUDENT_KEYS);
     expect(body.data.tierAtBooking).toBeUndefined();

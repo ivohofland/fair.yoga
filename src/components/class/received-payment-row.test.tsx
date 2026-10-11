@@ -21,7 +21,7 @@ import { ReceivedPaymentRow } from './received-payment-row';
 describe('ReceivedPaymentRow', () => {
   const base = {
     paymentId: 'pay-1',
-    studentName: 'Ana d.',
+    studentName: 'Ana D.',
     classType: 'Vinyasa',
     classDate: new Date('2026-06-12T00:00:00.000Z'),
     startTime: new Date('1970-01-01T09:30:00.000Z'),
@@ -74,7 +74,7 @@ describe('ReceivedPaymentRow', () => {
     render(<ReceivedPaymentRow currency="EUR" {...base} paidAt={null} timeZone="America/Los_Angeles" />);
 
     expect(
-      screen.getByRole('button', { name: 'Mark unpaid — Ana d., Vinyasa · 12 Jun · 09:30' }),
+      screen.getByRole('button', { name: 'Mark unpaid — Ana D., Vinyasa · 12 Jun · 09:30' }),
     ).toBeInTheDocument();
   });
 });
