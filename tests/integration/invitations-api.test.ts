@@ -2825,6 +2825,8 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Claim',
         date: claimDate, startTime: hhmmToTime(claimStartTime), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 0, maxStudents: 1,
+        // Decided already, as production leaves a class opened inside its check window: the live sweep never selects or locks it.
+        autoCancelDecidedAt: new Date(),
         cancelDeadline: 'HOURS_6', status: 'open',
       });
     claimClassId = claimClass.id;

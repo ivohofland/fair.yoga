@@ -4158,7 +4158,7 @@ That is the case for every regular-entry `cancelledAt` writer in `src/`:
 | writer | `Class` lock | entry write |
 |---|---|---|
 | `POST /api/classes/[id]/cancel` | `:61` `lockClassRow` | `:72` |
-| `autoCancelClasses` (`class-transitions.ts`) | `:431` `lockClassRow` | `:520` |
+| `autoCancelClasses` (`class-transitions.ts`) | `:416` `lockClassRow` | `:499` |
 | `deleteTeacherAccount` erasure (`gdpr.ts`) | `:1120` `lockClassRowsOrdered` | `:1209` |
 | `deleteTeacherAccount` studio cancel (`gdpr.ts:1292`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
 | `PUT /api/studio-classes/[id]` (`route.ts:192-198`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |

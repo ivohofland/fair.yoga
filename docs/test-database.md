@@ -275,6 +275,12 @@ benefit from an empty database — assertion scoping becomes trivial.
   `class.update` raising `maxStudents`, by deleting a student who is not a
   filler, or by raw SQL shows up in none of them and is found only by
   reading.
+
+  **Fixture cleanup should delete `Class` rows before their `CalendarEntry`**, the
+  order `docs/lock-order.md` fixes, because a cascade from the entry takes the
+  two rows backwards against the live sweep. A fixture that starts inside the
+  auto-cancel window is also created with `autoCancelDecidedAt` set, so the
+  sweep never locks it.
 - **Playwright e2e** — same coupling, same targeted-fixture pattern.
 
 Accepted trade-off: these two tiers can still *see* seed rows (they

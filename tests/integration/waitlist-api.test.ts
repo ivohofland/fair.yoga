@@ -184,6 +184,8 @@ beforeAll(async () => {
       // tick, and the fixture starts inside its check window, so zero active
       // registrations must not read as below minimum.
       minStudents: 0,
+      // Decided already, as production leaves a class opened inside its check window: the live sweep never selects or locks it.
+      autoCancelDecidedAt: new Date(),
       maxStudents: 1, // no active registrations below → the one spot reads as freed
       cancelDeadline: 'HOURS_6',
       status: 'open',
@@ -235,6 +237,7 @@ beforeAll(async () => {
     minRate: 15,
     targetRate: 25,
     minStudents: 0, // stays open under the live scheduler's auto-cancel sweep — see freedSpotClassId's comment
+    autoCancelDecidedAt: new Date(),
     maxStudents: 1,
     status: 'open',
   });
@@ -620,6 +623,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         minRate: 15,
         targetRate: 25,
         minStudents: 0, // stays open under the live scheduler's auto-cancel sweep — see freedSpotClassId's comment
+        autoCancelDecidedAt: new Date(),
         maxStudents: 1,
         cancelDeadline: 'HOURS_6',
         status: 'open',
@@ -873,6 +877,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         minRate: 15,
         targetRate: 25,
         minStudents: 0, // stays open under the live scheduler's auto-cancel sweep — see freedSpotClassId's comment
+        autoCancelDecidedAt: new Date(),
         maxStudents: 1, // no active registrations → the one spot reads as freed
         cancelDeadline: 'HOURS_6',
         status: 'open',
