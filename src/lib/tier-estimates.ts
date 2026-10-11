@@ -1,6 +1,7 @@
 import { calculateClassPricing } from '@/services/pricing';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { DEFAULT_INCOME_TIER, type IncomeTier } from '@/lib/tiers';
+import type { ClassPricingInput, PricedStudent } from '@/services/pricing';
 
 export interface TierEstimateInput {
   roomCost: number;
@@ -27,6 +28,35 @@ export function padTiersToMinimum(tiers: readonly IncomeTier[], minStudents: num
   const padded = [...tiers];
   while (padded.length < target) padded.push(DEFAULT_INCOME_TIER);
   return padded;
+}
+
+export interface Billing {
+  /** One record per real student, in the order given. Padding seats are not here. */
+  billed: PricedStudent[];
+  billedCents: number;
+  /** What the billed students pay, less the room, in whole cents. */
+  earningsCents: number;
+}
+
+/**
+ * What a class bills when it ends: the real students priced inside a pool
+ * padded to the minimum, so nobody pays above the quote's share, and the
+ * teacher absorbs the shortfall. `completeClass` writes these values and the
+ * teacher's estimate shows them, so the two cannot disagree. Padding seats
+ * follow every real student, so they only ever take the leftover cents the
+ * real students' order would not.
+ */
+export function billAtLeastMinimum(
+  input: Omit<ClassPricingInput, 'studentTiers'>,
+  chargedTiers: readonly IncomeTier[],
+): Billing {
+  const pricing = calculateClassPricing({
+    ...input,
+    studentTiers: padTiersToMinimum(chargedTiers, input.minStudents),
+  });
+  const billed = pricing.students.slice(0, chargedTiers.length);
+  const billedCents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
+  return { billed, billedCents, earningsCents: billedCents - Math.round(input.roomCost * 100) };
 }
 
 /**

@@ -50,8 +50,12 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
 
   // The minimum is a promise only until the class's check judges it (#836):
   // once the check has decided, or the class has started or finished, a short
-  // count is no longer waiting on anything.
-  const awaitingCheck = !cancelled && cls.status === 'open' && cls.autoCancelDecidedAt === null;
+  // count is no longer waiting on anything. A draft is still waiting: the
+  // check judges it once it is published.
+  const awaitingCheck =
+    !cancelled &&
+    (cls.status === 'draft' || cls.status === 'open') &&
+    cls.autoCancelDecidedAt === null;
 
   // Two different sets, so two different sentences — and the sentence has to
   // describe the set the caller actually counted, or it goes stale as the

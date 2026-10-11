@@ -1,9 +1,9 @@
 import type { Class, Registration } from '@prisma/client';
 import { formatMoney } from '@/lib/format';
-import { calculateClassPricing } from '@/services/pricing';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';
-import { padTiersToMinimum } from '@/lib/tier-estimates';
+import { billAtLeastMinimum } from '@/lib/tier-estimates';
+import { CHARGED_STATUSES } from '@/lib/registration-status';
 
 /**
  * Only the three registration columns this component reads. It used to ask for
@@ -30,7 +30,7 @@ interface PricingPreviewProps {
 
 export function PricingPreview({ cls }: PricingPreviewProps) {
   const activeRegistrations = cls.registrations.filter(
-    (r) => r.status !== 'cancelled',
+    (r) => CHARGED_STATUSES.includes(r.status),
   );
 
   if (activeRegistrations.length === 0) {
@@ -48,18 +48,16 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
   );
 
-  // The same filling `completeClass` bills through: below the minimum the
-  // pool is padded, only the real students are billed, and the teacher
-  // absorbs the shortfall.
-  const pricing = calculateClassPricing({
-    roomCost: Number(cls.roomCost),
-    minRate: Number(cls.minRate),
-    targetRate: Number(cls.targetRate),
-    minStudents: cls.minStudents,
-    maxStudents: cls.maxStudents,
-    studentTiers: padTiersToMinimum(studentTiers, cls.minStudents),
-  });
-  const billed = pricing.students.slice(0, studentTiers.length);
+  const { billed, earningsCents } = billAtLeastMinimum(
+    {
+      roomCost: Number(cls.roomCost),
+      minRate: Number(cls.minRate),
+      targetRate: Number(cls.targetRate),
+      minStudents: cls.minStudents,
+      maxStudents: cls.maxStudents,
+    },
+    studentTiers,
+  );
 
   // Build a summary by tier for preview display. Each priced record carries
   // its own tier and ratio, so there is no index to match up and no undefined
@@ -74,9 +72,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     }
   }
 
-  // Whole cents, as completion writes the teacher's earnings.
-  const billedCents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
-  const estimatedEarnings = (billedCents - Math.round(Number(cls.roomCost) * 100)) / 100;
+  const estimatedEarnings = earningsCents / 100;
 
   return (
     <div className="py-6">

@@ -9,7 +9,7 @@
  * state — `services/capacity.ts` is where that derivation lives.
  */
 
-import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus } from '@prisma/client';
+import type { PrismaClient, Prisma, ClassStatus } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
@@ -20,8 +20,8 @@ import { lockClassRow } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isCheckViolationOn } from '@/lib/check-violation';
-import { calculateClassPricing } from './pricing';
-import { padTiersToMinimum } from '@/lib/tier-estimates';
+import { billAtLeastMinimum } from '@/lib/tier-estimates';
+import { CHARGED_STATUSES } from '@/lib/registration-status';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isBeforeOpening, isoOrNull } from '@/lib/timezone';
@@ -680,29 +680,9 @@ export async function transitionClass(
 // Class completion
 // ---------------------------------------------------------------------------
 
-/**
- * Registration statuses that represent a real obligation: the student is
- * charged for these when the class completes. Exported because the archive
- * rule in `class-template-lifecycle.ts` decides what is safe to delete by the
- * same list — a class carrying any of these is one a student is still on the
- * hook for, and must not be removed silently.
- *
- * Frozen, like `ECONOMIC_FIELDS` above: this list now gates a destructive
- * `deleteMany` in two services, so a mutation anywhere in the process would
- * silently widen what archiving is allowed to destroy. Prisma's `in` filter
- * does want a mutable `RegistrationStatus[]` and will not accept a readonly
- * one — that is a constraint on the call site, not on the source of truth, so
- * callers spread (`in: [...CHARGED_STATUSES]`) exactly as the callers of
- * `ACTIVE_REGISTRATION_STATUSES` (`@/lib/registration-status`) do. That set
- * is this one minus `late_cancel`: it asks who occupies a seat, this one asks
- * who gets billed.
- */
-export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
-  'registered',
-  'attended',
-  'no_show',
-  'late_cancel',
-]);
+// `CHARGED_STATUSES` lives in `@/lib/registration-status` so the teacher's
+// client-side estimate filters by the same set; re-exported for its callers.
+export { CHARGED_STATUSES };
 
 /**
  * Who is finishing the class, which decides which clock edge applies.
@@ -864,28 +844,18 @@ export async function completeClass(
     // through the same padding as the booking page's quote, so no student is
     // billed above the share that quote was built on. The padding seats come
     // after the real ones and bill no one; the teacher absorbs the shortfall.
-    const pricing = calculateClassPricing({
-      roomCost: Number(cls.roomCost),
-      minRate: Number(cls.minRate),
-      targetRate: Number(cls.targetRate),
-      minStudents: cls.minStudents,
-      maxStudents: cls.maxStudents,
-      studentTiers: padTiersToMinimum(
-        chargedRegistrations.map((r) => toIncomeTierOrThrow(r.tierAtBooking, { registrationId: r.id })),
-        cls.minStudents,
-      ),
-    });
-    const billed = pricing.students.slice(0, chargedRegistrations.length);
-
-    // The snapshot is what was billed, not what the padded pool cost: revenue
-    // is the sum of the real payments, in whole cents, the students are the
-    // real charged ones, and the teacher's rate is what that revenue leaves
-    // after the room. Unpadded, these are the engine's own total and rate,
-    // rounded to the cent.
-    const billedCents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
-    const roomCents = Math.round(Number(cls.roomCost) * 100);
+    const { billed, billedCents, earningsCents } = billAtLeastMinimum(
+      {
+        roomCost: Number(cls.roomCost),
+        minRate: Number(cls.minRate),
+        targetRate: Number(cls.targetRate),
+        minStudents: cls.minStudents,
+        maxStudents: cls.maxStudents,
+      },
+      chargedRegistrations.map((r) => toIncomeTierOrThrow(r.tierAtBooking, { registrationId: r.id })),
+    );
     const totalRevenue = billedCents / 100;
-    const teacherEarnings = (billedCents - roomCents) / 100;
+    const teacherEarnings = earningsCents / 100;
 
     await tx.class.update({
       where: { id: classId },
