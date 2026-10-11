@@ -50,6 +50,7 @@ describe('limit values', () => {
       PAYMENT_LINK_MAX: 500,
       DURATION_MAX_MINUTES: 1440,
       MONEY_MAX: 100000,
+      MONEY_DECIMALS: 2,
       CAPACITY_MAX: 1000,
     });
   });
