@@ -7,6 +7,8 @@ import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CancelBookingButton } from '@/components/student/cancel-booking-button';
+import { StudentPushCard } from '@/components/student/push-card';
+import { readVapidConfig } from '@/lib/push/config';
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { ClassPriceLine } from '@/components/booking/price-range';
@@ -163,7 +165,7 @@ export default async function StudentBookingsPage() {
     }),
     prisma.student.findUnique({
       where: { id: session.studentId },
-      select: { incomeTier: true, tierSelectedAt: true },
+      select: { incomeTier: true, tierSelectedAt: true, dismissedPushCard: true },
     }),
   ]);
 
@@ -204,6 +206,11 @@ export default async function StudentBookingsPage() {
           Settings
         </Link>
       </div>
+
+      <StudentPushCard
+        dismissed={student.dismissedPushCard}
+        vapidPublicKey={readVapidConfig()?.publicKey ?? null}
+      />
 
       <UpdatesStrip updates={updates} hasHistory={notificationCount > 0} />
 
