@@ -9,6 +9,7 @@ import {
   CLASS_TYPE_MAX,
   DURATION_MAX_MINUTES,
   LONG_TEXT_MAX,
+  MONEY_DECIMALS,
   MONEY_MAX,
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
@@ -288,23 +289,21 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
         <div className="grid grid-cols-3 gap-3">
           <NumberInput
             label={`Room cost (${currencyLabel(currency)})`}
-            max={MONEY_MAX}
+            decimals={MONEY_DECIMALS}
             value={form.roomCost}
             disabled={settingsLocked}
             onValueChange={(n) => set('roomCost', n)}
           />
           <NumberInput
             label={`Min rate (${currencyLabel(currency)})`}
-            min={-MONEY_MAX}
-            max={MONEY_MAX}
+            decimals={MONEY_DECIMALS}
             value={form.minRate}
             disabled={settingsLocked}
             onValueChange={(n) => set('minRate', n)}
           />
           <NumberInput
             label={`Target rate (${currencyLabel(currency)})`}
-            min={-MONEY_MAX}
-            max={MONEY_MAX}
+            decimals={MONEY_DECIMALS}
             value={form.targetRate}
             disabled={settingsLocked}
             onValueChange={(n) => set('targetRate', n)}

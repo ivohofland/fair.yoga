@@ -266,23 +266,36 @@ describe('ClassEditForm', () => {
     },
   );
 
-  // A browser reports text it cannot read ("4,5") as '' with badInput set;
-  // jsdom sanitizes without setting it, so the flag is stubbed.
   it.each([
     ['Room cost (€)', 'room cost'],
     ['Min rate (€)', 'min rate'],
     ['Target rate (€)', 'target rate'],
-  ])('refuses a %s the browser cannot read, rather than saving 0', async (fieldName, name) => {
+  ])('refuses a %s that is not one amount, rather than saving 0', async (fieldName, name) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
-    const field = screen.getByLabelText(fieldName);
-    Object.defineProperty(field, 'validity', { value: { badInput: true }, configurable: true });
-    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText(fieldName), { target: { value: '4,5,6' } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await screen.findByRole('alert')).toHaveTextContent(new RegExp(`^Enter a number for ${name}$`));
+  });
+
+  it.each([
+    ['Room cost (€)', 'roomCost'],
+    ['Min rate (€)', 'minRate'],
+    ['Target rate (€)', 'targetRate'],
+  ])('sends 4.5 for a %s typed as 4,5', async (fieldName, key) => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    if (key === 'targetRate') fireEvent.change(screen.getByLabelText('Min rate (€)'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText(fieldName), { target: { value: '4,5' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, options] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse((options as { body: string }).body)).toMatchObject({ [key]: 4.5 });
   });
 
   it('lets a cleared min rate be retyped, sending the new rate', async () => {

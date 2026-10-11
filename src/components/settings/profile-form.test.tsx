@@ -264,7 +264,7 @@ describe('ProfileForm', () => {
   describe('default VAT % (#833)', () => {
     it('shows the stored rate and the responsibility hint', () => {
       renderForm({ defaultVatPercent: 14.975 });
-      expect(screen.getByLabelText('Default VAT %')).toHaveValue(14.975);
+      expect(screen.getByLabelText('Default VAT %')).toHaveValue('14.975');
       expect(
         screen.getByText(
           "It's your responsibility to set the right VAT rate. You can change it on each class. This is only the default for new classes. Use 0 if you don't charge VAT.",
@@ -294,13 +294,22 @@ describe('ProfileForm', () => {
       expect(sentBody().defaultVatPercent).toBe(0);
     });
 
-    it('refuses a rate the browser cannot read as a number, rather than saving 0', async () => {
+    it('sends 4.5 for a rate typed as 4,5', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '4,5' } });
+      save();
+
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody().defaultVatPercent).toBe(4.5);
+    });
+
+    it('refuses a rate that is not one number, rather than saving 0', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
       renderForm({ defaultVatPercent: 21 });
-      const input = screen.getByLabelText('Default VAT %');
-      Object.defineProperty(input, 'validity', { value: { badInput: true }, configurable: true });
-      fireEvent.change(input, { target: { value: '' } });
+      fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '4,5,6' } });
       save();
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Enter a number for VAT.');

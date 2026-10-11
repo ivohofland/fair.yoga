@@ -9,6 +9,7 @@ import {
   CLASS_TYPE_MAX,
   DURATION_MAX_MINUTES,
   LONG_TEXT_MAX,
+  MONEY_DECIMALS,
   MONEY_MAX,
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
@@ -669,24 +670,19 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
       <div className="grid grid-cols-3 gap-3">
         <NumberInput
           label={`Room cost (${currencyLabel(currency)})`}
-          step="0.01"
-          max={MONEY_MAX}
+          decimals={MONEY_DECIMALS}
           value={form.roomCost}
           onValueChange={(n) => update('roomCost', n)}
         />
         <NumberInput
           label={`Min rate (${currencyLabel(currency)})`}
-          step="0.01"
-          min={-MONEY_MAX}
-          max={MONEY_MAX}
+          decimals={MONEY_DECIMALS}
           value={form.minRate}
           onValueChange={(n) => update('minRate', n)}
         />
         <NumberInput
           label={`Target rate (${currencyLabel(currency)})`}
-          step="0.01"
-          min={-MONEY_MAX}
-          max={MONEY_MAX}
+          decimals={MONEY_DECIMALS}
           value={form.targetRate}
           onValueChange={(n) => update('targetRate', n)}
         />

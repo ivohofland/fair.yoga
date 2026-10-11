@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 import { CURRENCIES, currencyLabel } from '@/lib/format';
-import { vatPercentViolation, VAT_PERCENT_MAX } from '@/lib/vat';
+import { vatPercentViolation } from '@/lib/vat';
 import type { CurrencySwitchResult } from '@/services/currency-switch';
 
 type UpdateTeacherWire = z.infer<typeof updateTeacherSchema>;
@@ -251,10 +251,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         <NumberInput
           id="defaultVatPercent"
           label="Default VAT %"
-          inputMode="decimal"
-          min={0}
-          max={VAT_PERCENT_MAX}
-          step="any"
+          decimals={Infinity}
           value={form.defaultVatPercent}
           onValueChange={(n) => update('defaultVatPercent', n)}
           hint="It's your responsibility to set the right VAT rate. You can change it on each class. This is only the default for new classes. Use 0 if you don't charge VAT."

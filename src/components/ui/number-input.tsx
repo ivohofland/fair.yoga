@@ -1,16 +1,28 @@
 'use client';
 
 import { useState, type ComponentProps } from 'react';
+import { parseDecimal } from '@/lib/decimal-input';
 import { Input } from './input';
 
-type NumberInputProps = Omit<ComponentProps<typeof Input>, 'type' | 'value' | 'onChange'> & {
+type BaseProps = Omit<ComponentProps<typeof Input>, 'type' | 'value' | 'onChange'> & {
   value: number;
   onValueChange: (value: number) => void;
 };
 
+type NumberInputProps =
+  | (BaseProps & { decimals?: undefined })
+  | (Omit<BaseProps, 'min' | 'max' | 'step' | 'inputMode'> & {
+      /** Most fraction digits an amount may carry; `Infinity` sets no limit. */
+      decimals: number;
+      min?: never;
+      max?: never;
+      step?: never;
+    });
+
 /** An empty or blank field holds 0. */
-function parse(text: string): number {
-  return text.trim() === '' ? 0 : Number(text);
+function parse(text: string, decimals: number | undefined): number {
+  if (text.trim() === '') return 0;
+  return decimals === undefined ? Number(text) : parseDecimal(text, decimals);
 }
 
 /**
@@ -20,25 +32,32 @@ function parse(text: string): number {
  * longer parses to `value` — the form clamped it, or replaced it — so a "5.0"
  * still being typed is left alone.
  *
- * Text the browser cannot read as a number ("4,5", a lone "-") reaches the
- * page as `''` with `validity.badInput` set; it is reported as NaN, never as
- * the 0 an empty field holds, so a caller's validation can refuse it.
+ * Without `decimals` the field is an integer `type="number"`. Text the
+ * browser cannot read as a number (a lone "-") reaches the page as `''` with
+ * `validity.badInput` set; it is reported as NaN, never as the 0 an empty
+ * field holds, so a caller's validation can refuse it.
+ *
+ * With `decimals` the field is a text field read by `parseDecimal`, which
+ * takes `,` or `.` as the separator; a browser number input drops a typed
+ * comma. Unreadable text is reported as NaN and left as typed.
  */
-export function NumberInput({ value, onValueChange, onBlur, ...props }: NumberInputProps) {
+export function NumberInput({ value, onValueChange, onBlur, decimals, ...props }: NumberInputProps) {
   const [text, setText] = useState(String(value));
-  // A NaN `value` equals no parse of any text, so rewriting would re-render
-  // forever; the text is left as typed instead.
-  if (parse(text) !== value && !Number.isNaN(value)) {
+  // A NaN `value` equals no parse of any text, and a `String(value)` that does
+  // not parse back (4.555 at 2 decimals) would rewrite on every render; both
+  // are left as they are.
+  if (parse(text, decimals) !== value && !Number.isNaN(value) && text !== String(value)) {
     setText(String(value));
   }
+  const typeProps = decimals === undefined ? { type: 'number' } : { type: 'text', inputMode: 'decimal' as const };
   return (
     <Input
       {...props}
-      type="number"
+      {...typeProps}
       value={text}
       onChange={(e) => {
         setText(e.target.value);
-        onValueChange(e.currentTarget.validity.badInput ? Number.NaN : parse(e.target.value));
+        onValueChange(e.currentTarget.validity.badInput ? Number.NaN : parse(e.target.value, decimals));
       }}
       onBlur={(e) => {
         if (text.trim() === '' && !e.currentTarget.validity.badInput) setText(String(value));

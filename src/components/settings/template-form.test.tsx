@@ -135,6 +135,19 @@ describe('TemplateForm', () => {
     expect(body).toEqual(EDIT_BODY_WITHOUT_ROOM);
   });
 
+  it.each([
+    ['Room cost', 'roomCost'],
+    ['Min rate', 'minRate'],
+    ['Target rate', 'targetRate'],
+  ])('sends 4.5 for a %s typed as 4,5', async (label, key) => {
+    stubFetch();
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    if (key === 'targetRate') fireEvent.change(await screen.findByLabelText(/^Min rate/), { target: { value: '1' } });
+    fireEvent.change(await screen.findByLabelText(new RegExp('^' + label)), { target: { value: '4,5' } });
+    const { body } = await submit();
+    expect(body[key]).toBe(4.5);
+  });
+
   it('sends the room when the teacher changed it', async () => {
     stubFetchTwoRooms();
     render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
@@ -566,17 +579,13 @@ describe('TemplateForm', () => {
       },
     );
 
-    // A browser reports text it cannot read ("4,5") as '' with badInput set;
-    // jsdom sanitizes without setting it, so the flag is stubbed.
     it.each([
       ['Room cost', 'room cost'],
       ['Min rate', 'min rate'],
       ['Target rate', 'target rate'],
-    ])('refuses a %s the browser cannot read, rather than saving 0', async (fieldName, name) => {
+    ])('refuses a %s that is not one amount, rather than saving 0', async (fieldName, name) => {
       await renderReady(mode);
-      const field = screen.getByLabelText(new RegExp('^' + fieldName));
-      Object.defineProperty(field, 'validity', { value: { badInput: true }, configurable: true });
-      fireEvent.change(field, { target: { value: '' } });
+      fireEvent.change(screen.getByLabelText(new RegExp('^' + fieldName)), { target: { value: '4,5,6' } });
 
       const callsBefore = fetchMock.mock.calls.length;
       submitForm();
