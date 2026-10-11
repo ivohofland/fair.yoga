@@ -154,13 +154,16 @@ describe('AudiencePicker', () => {
     const onLoadStateChange = vi.fn();
     render(<AudiencePicker selected={[]} onChange={vi.fn()} onLoadStateChange={onLoadStateChange} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-    await screen.findByLabelText('Anna K.');
-    expect(onLoadStateChange.mock.calls.map(([state]) => state)).toEqual([
-      'loading',
-      'failed',
-      'loading',
-      'ready',
-    ]);
+    // 'ready' is reported from an effect that runs after the row renders, so
+    // wait on the reports themselves rather than on the row.
+    await waitFor(() =>
+      expect(onLoadStateChange.mock.calls.map(([state]) => state)).toEqual([
+        'loading',
+        'failed',
+        'loading',
+        'ready',
+      ]),
+    );
   });
 
   it('says how many ticks it removed because they left the audience', async () => {
