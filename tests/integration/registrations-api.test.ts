@@ -1616,16 +1616,12 @@ describe('registration writes return no stored income tier', () => {
 
 describe('PUT /api/registrations/[id] — attendance is scoped by source status (#182)', () => {
   /**
-   * The moves this endpoint refuses, and only while the class is still `open`.
-   *
-   * `late_cancel` is outside `ACTIVE_REGISTRATION_STATUSES`; `attended` AND
-   * `no_show` are both inside it. So there are TWO schema-accepted transitions
-   * that raise the seat count, not one — a fact worth pinning, because the
-   * guard works by scoping the SOURCE and would silently lose half its coverage
-   * if anyone re-keyed it on the target. A rise landing between
-   * `autoCancelClasses`' count and its CAS cancels a class that had enough
-   * students. That sweep selects `status: 'open'`, so `open` is the entire
-   * window in which the race exists.
+   * The moves this endpoint refuses, and only while the class is still `open`:
+   * a `late_cancel` booking cannot be marked `attended` or `no_show` until the
+   * class has started. Each is its own test because the clause scopes the
+   * SOURCE status, and a guard re-keyed on the requested status would pass one
+   * of them and fail the other. The auto-cancel count ranges over
+   * `CHARGED_STATUSES`, so none of these moves changes it.
    */
   it('409s marking a late-cancelled student attended while the class is still open', async () => {
     const classId = await makeAttendanceClass(4);
@@ -1653,8 +1649,8 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
   /**
    * The second half of that pair, and the reason it is a separate test: keying
    * the guard on `parsed.data.status === 'attended'` — a natural-looking
-   * simplification — passes every other test in this file while reopening the
-   * `autoCancelClasses` race through this transition.
+   * simplification — passes every other test in this file while leaving
+   * `no_show` open.
    */
   it('409s marking a late-cancelled student a no-show while the class is still open', async () => {
     const classId = await makeAttendanceClass(4);
@@ -1683,10 +1679,9 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
    * them in. `activeRegistrations` (`class/[id]/(overview)/page.tsx`) keeps `late_cancel`
    * rows deliberately, so the check-in list renders them with a live checkbox.
    *
-   * Once the class is `in_progress`, `autoCancelClasses` no longer looks at it
-   * — that sweep both selects and CASes on `status: 'open'` — so the count race
-   * this scope exists to close cannot happen, and refusing the write would only
-   * stop a teacher recording what actually happened in their own room. Nobody's
+   * Once the class is `in_progress` the refusal no longer applies, and
+   * refusing the write would only stop a teacher recording what actually
+   * happened in their own room. Nobody's
    * price moves either: `late_cancel` and `attended` are both in
    * `CHARGED_STATUSES`, so the pricing divisor is identical before and after.
    */

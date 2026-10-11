@@ -18,6 +18,12 @@ describe('autoCancelHint', () => {
     expect(hint).toMatch(/cancelled/i);
   });
 
+  it('says late cancellations count, because they still pay', () => {
+    expect(autoCancelHint('HOURS_2', 4)).toMatch(
+      / Late cancellations count, because they still pay\.$/,
+    );
+  });
+
   it('uses the singular for a minimum of one', () => {
     expect(autoCancelHint('HOURS_1', 1)).toContain('nobody has registered');
   });

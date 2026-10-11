@@ -358,7 +358,7 @@ whole platform — paged through `readInPages`:
 
 | Function | File | Note |
 |---|---|---|
-| `autoCancelClasses` | `class-transitions.ts` | windowed (`cancelCandidateDates`) and the registration count moved to a separate per-page `groupBy` |
+| `autoCancelClasses` | `class-transitions.ts` | windowed (`cancelCandidateDates`); the page reads no registrations, the deciding count is taken per class under its row lock |
 | `autoTransitionToInProgress` | `class-transitions.ts` | |
 | `autoCompleteClasses` | `class-transitions.ts` | |
 | `reconcileWaitlists` | `waitlist-reconciliation.ts` | |

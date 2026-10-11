@@ -164,26 +164,20 @@ export const PUT = withErrorHandler(async (
   // read-then-write that races. The DELETE branches below scope their writes
   // for the same reason.
   //
-  // What the scope closes: `autoCancelClasses` (`class-transitions.ts`) counts
-  // registrations in `ACTIVE_REGISTRATION_STATUSES` under its row lock, then
-  // CASes. This route takes no `Class` lock, so it can commit between the two.
-  // A registration moving INTO that set makes the count too LOW and cancels a
-  // class that had enough students. Moves OUT are harmless — the count reads
-  // too high and the class merely survives a sweep, a one-tick delay.
+  // The scope, and what it no longer guards: a `late_cancel` source is refused
+  // while the class is `open`, and allowed once it has started. The count in
+  // `autoCancelClasses` (`class-transitions.ts`) ranges over
+  // `CHARGED_STATUSES`, and both the source this clause refuses and every
+  // status `updateRegistrationSchema` lets this route write are members, so
+  // no move here changes that count: the clause no longer guards it.
   //
-  // TWO accepted transitions move INTO the set, not one: `late_cancel ->
-  // attended` and `late_cancel -> no_show`, because `no_show` is in
-  // `ACTIVE_REGISTRATION_STATUSES` too. That is why this scopes the SOURCE
-  // rather than the target — keying it on `attended` would leave the other one
-  // open with every test still green. Both are refused only while the class is
-  // `open`, because that is the only window in which the race exists: `autoCancelClasses` both selects
-  // and CASes on `status: 'open'`. Once the class has started, a student who
-  // late-cancelled and turned up anyway is the teacher's call to record, and
-  // costs nothing to allow — `late_cancel` and `attended` are both in
-  // `CHARGED_STATUSES`, so the pricing divisor does not move and no price
-  // changes for anyone. The check-in list renders those students deliberately
-  // (`activeRegistrations`, `class/[id]/(overview)/page.tsx`); refusing the write would
-  // only stop a teacher recording what happened in their own room.
+  // Once the class has started, a student who late-cancelled and turned up
+  // anyway is the teacher's call to record, and costs nothing to allow:
+  // `late_cancel` and `attended` are both in `CHARGED_STATUSES`, so the pricing
+  // divisor does not move and no price changes for anyone. The check-in list
+  // renders those students deliberately (`activeRegistrations`,
+  // `class/[id]/(overview)/page.tsx`); refusing the write would only stop a
+  // teacher recording what happened in their own room.
   //
   // `completed` is DELIBERATELY absent from the class clause. A teacher learns
   // the exact no-shows after the class, not during it. All three values
@@ -206,9 +200,6 @@ export const PUT = withErrorHandler(async (
   // which also carry `cancelledAt` (a free cancel, an erasure), and re-booking
   // clears it (`activateRegistration`).
   //
-  // A `Class` row lock would also close the race and is not used: this write
-  // moves no money, and locking the hottest row in the app to protect a
-  // one-tick scheduling delay is not proportionate.
   const requested = parsed.data.status;
   const updated = await prisma.registration.updateMany({
     where: {

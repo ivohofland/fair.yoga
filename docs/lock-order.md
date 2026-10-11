@@ -3641,8 +3641,9 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `lockClassRow` that already guards the status re-read, rather than in a
   second lock the sweep would otherwise need to take.
 - **`autoCancelClasses`** (`src/services/class-transitions.ts`) — `Class` via
-  `lockClassRow` (#174 task 6), then a `Registration` count read, then the
-  CAS `class.updateMany`. Matches `transitionClass`'s docblock.
+  `lockClassRow` (#174 task 6), then a `Registration` count read, then either
+  the `autoCancelDecidedAt` stamp (the class survives) or the CAS on the entry
+  and then the stamp (it is cancelled). Matches `transitionClass`'s docblock.
 - **`autoTransitionToInProgress`** (`src/services/class-transitions.ts`) —
   `Class` via `lockClassRow` (#216/#182), then a fresh re-read of `status`,
   `date` and `startTime` to recompute the class's start instant from the
@@ -4157,7 +4158,7 @@ That is the case for every regular-entry `cancelledAt` writer in `src/`:
 | writer | `Class` lock | entry write |
 |---|---|---|
 | `POST /api/classes/[id]/cancel` | `:61` `lockClassRow` | `:72` |
-| `autoCancelClasses` (`class-transitions.ts`) | `:410` `lockClassRow` | `:493` |
+| `autoCancelClasses` (`class-transitions.ts`) | `:431` `lockClassRow` | `:520` |
 | `deleteTeacherAccount` erasure (`gdpr.ts`) | `:1120` `lockClassRowsOrdered` | `:1209` |
 | `deleteTeacherAccount` studio cancel (`gdpr.ts:1292`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
 | `PUT /api/studio-classes/[id]` (`route.ts:192-198`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |

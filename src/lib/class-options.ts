@@ -48,12 +48,13 @@ export function autoCancelHint(value: AutoCancelOption, minStudents: number): st
   const label = AUTO_CANCEL_OPTIONS.find((o) => o.value === value)?.label ?? value;
   const lead = `${label.charAt(0).toUpperCase()}${label.slice(1)} the class starts, we check the registrations.`;
   const outcome = 'the class is cancelled and everyone is notified.';
+  const lateCancellations = ' Late cancellations count, because they still pay.';
   if (!Number.isInteger(minStudents) || minStudents < 1) {
-    return `${lead} If they are below the minimum number of students, ${outcome}`;
+    return `${lead} If they are below the minimum number of students, ${outcome}${lateCancellations}`;
   }
   const shortfall =
     minStudents === 1 ? 'nobody has registered' : `fewer than ${minStudents} students have registered`;
-  return `${lead} If ${shortfall}, ${outcome}`;
+  return `${lead} If ${shortfall}, ${outcome}${lateCancellations}`;
 }
 
 export type CancelDeadlineOption = (typeof CANCEL_DEADLINE_OPTIONS)[number]['value'];
