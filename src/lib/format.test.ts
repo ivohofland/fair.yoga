@@ -317,7 +317,7 @@ describe('formatStudentName', () => {
   });
 
   /**
-   * A surname stored lowercase, because the case above cannot see this:
+   * A surname that begins lowercase, because the case above cannot see this:
    * `Vries` already starts uppercase, so it passes against an implementation
    * with the `.toUpperCase()` deleted. This one fails.
    */
