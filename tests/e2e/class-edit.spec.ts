@@ -132,7 +132,10 @@ test.describe('Class edit screen', () => {
     await page.waitForURL(`**/class/${draftClassId}/edit`);
 
     await page.getByLabel('Class type').fill('Morning Hatha');
-    await page.getByLabel('Target rate (€)').fill('24');
+    // Typed key by key: a decimal comma is what a Dutch teacher types, and
+    // `fill` is not a stand-in for it.
+    await page.getByLabel('Target rate (€)').clear();
+    await page.getByLabel('Target rate (€)').pressSequentially('24,5');
     // The date field is the one whose route conversion this PR fixed —
     // change it explicitly so the round trip is canonical coverage.
     await page.getByLabel('Date').fill('2099-07-02');
@@ -141,7 +144,7 @@ test.describe('Class edit screen', () => {
 
     const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true } });
     expect(cls.calendarEntry.classType).toBe('Morning Hatha');
-    expect(Number(cls.targetRate)).toBe(24);
+    expect(Number(cls.targetRate)).toBe(24.5);
     expect(cls.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-07-02');
   });
 
@@ -164,7 +167,7 @@ test.describe('Class edit screen', () => {
     ).toBeVisible();
 
     const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true } });
-    expect(Number(cls.targetRate)).toBe(24); // untouched
+    expect(Number(cls.targetRate)).toBe(24.5); // untouched
   });
 
   test("another teacher's session is redirected away from the editor", async ({
