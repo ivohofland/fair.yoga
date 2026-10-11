@@ -72,9 +72,11 @@ Related facts from the census:
 ## Options
 
 **A. Text field, own parser (chosen).** Render decimal fields as
-`type="text" inputMode="decimal"` and parse the text ourselves. The browser
-cannot drop or reinterpret a character it does not parse. The mobile decimal
-keypad stays, through `inputMode`. Costs:
+`type="text"` and parse the text ourselves. The browser cannot drop or
+reinterpret a character it does not parse. Unsigned fields keep the mobile
+decimal keypad through `inputMode="decimal"`. Signed fields omit `inputMode`,
+because iOS's decimal keypad has no minus key; a plain text field's number
+layer has both `-` and `,`. Costs:
 
 - No desktop spinner arrows. This product is mobile-first, and the spinner
   steps a money field by 0.01, which nobody uses.
@@ -128,12 +130,17 @@ A money-decimals constant, `MONEY_DECIMALS = 2`, joins `MONEY_MAX` in
 ### `NumberInput`, decimal mode
 
 `NumberInput` gains an optional `decimals` prop. With it, the field renders
-`type="text" inputMode="decimal"` and parses with
-`parseDecimal(text, decimals)`, keeping its blank-holds-0 rule. Without it, the
+`type="text"` (with `inputMode="decimal"` unless `signed`, below) and parses
+with `parseDecimal(text, decimals)`, keeping its blank-holds-0 rule. Without it, the
 field is the integer `type="number"` it is today, `badInput` path included. The
 prop type makes `min`, `max` and `step` impossible alongside `decimals` (a union
 with `?: never`). Those attributes do nothing on a text field, so the compiler
-rules them out instead of letting them mislead.
+rules them out instead of letting them mislead. `inputMode` is ruled out the
+same way, because the field chooses its own keyboard.
+
+An optional `signed` prop, allowed only beside `decimals`, marks a field whose
+amount may be negative (min and target rate); it renders `type="text"` with no
+`inputMode`, so iOS offers a keyboard with a minus key.
 
 The rewrite rule ("rewrite the text only when it no longer parses to `value`")
 keeps working: `"4,5"` parses to 4.5, so a held 4.5 leaves the comma as typed.

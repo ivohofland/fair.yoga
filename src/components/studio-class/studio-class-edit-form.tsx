@@ -59,13 +59,15 @@ void _formCoversSchema;
 void _formHasNoExtras;
 
 /**
- * The two numeric fields are held as STRINGS and parsed once, at submit.
+ * The numeric fields are held as STRINGS, so what the teacher typed stays as
+ * typed, and are converted once, at submit.
  *
- * `hourlyRate` renders as a text input, so what the teacher typed is kept
- * exactly, including a half-typed `45.` or an emptied box, and `parseDecimal`
- * reads a decimal comma or point. `durationMinutes` renders as a number input,
- * which reports `''` for anything that is not a valid number. The typed text
- * stays as typed and is converted once, at submit.
+ * `durationMinutes` renders as a number input, which reports `''` for an
+ * emptied box and for anything that is not a valid number; converted per
+ * keystroke, that blank would become `Number('') === 0`. `hourlyRate` renders
+ * as a text input, which keeps a half-typed `45.` or an emptied box exactly,
+ * and is read by `parseDecimal`, which takes a decimal comma or point and
+ * reads blank text as NaN.
  */
 type FormState = Record<keyof StudioClassEditInitial, string>;
 
