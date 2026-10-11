@@ -72,8 +72,8 @@ the next tick, as it would have been today.
    - The class generator (`class-generator.ts`), which inserts `open` rows
      directly. A new template's first candidate can fall inside its window, and
      the generator may insert a class whose start has already passed.
-   - `updateClass` editing `date`, `startTime` or `autoCancelCheck` on an
-     undecided open class so that its check time is now behind it.
+   - `updateClass` moving `date` or `startTime` on an undecided open class so
+     that its check time is now behind it.
 
    `POST /api/classes` creates `draft` rows and is not a writer of this state.
 
@@ -83,8 +83,15 @@ the next tick, as it would have been today.
 
 ## Edits after the decision
 
-A decided class stays decided. Moving it later or changing `autoCancelCheck`
-does not clear the marker: reopening the decision would bring back the very
+A class's `cancelDeadline` and `autoCancelCheck` are fixed when it is created:
+`updateClassSchema` (`src/lib/schemas.ts`) is `.strict()` and accepts neither,
+so they cannot change on a class at all — stricter than the `settingsLocked`
+freeze on `ECONOMIC_FIELDS`, which starts at the first registration. On a
+template they are editable, but a template is a stamp and never touches classes
+it already made. So the only edit that moves a class's check time is a schedule
+edit.
+
+A decided class stays decided. Moving it later does not clear the marker: reopening the decision would bring back the very
 late cancellation this issue removes. An **undecided** class follows its
 current schedule, because its check time is computed from the live row on every
 tick.
@@ -123,7 +130,4 @@ tick.
 
 ## Out of scope
 
-- Whether a teacher should be able to change `autoCancelCheck` on a decided
-  class at all. The edit is harmless now (it changes nothing), so it stays
-  allowed.
 - Studio classes have no auto-cancel.
