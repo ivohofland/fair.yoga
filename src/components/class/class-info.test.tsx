@@ -32,3 +32,40 @@ describe('ClassInfoSkeleton', () => {
     expect(container.querySelector(INTERACTIVE)).toBeNull();
   });
 });
+
+describe('ClassInfo "needs N to go ahead"', () => {
+  const NEEDS = /needs 4 to go ahead/;
+  const render1 = (status: 'open' | 'in_progress' | 'completed', decided: boolean, cancelled = false) => {
+    const cls = classRow('c-n', status, [], { cancelled });
+    cls.autoCancelDecidedAt = decided ? new Date('2026-06-12T07:30:00.000Z') : null;
+    return render(<ClassInfo cls={cls} registrationCount={2} waitlistCount={0} />);
+  };
+
+  it('shows while open and not yet decided', () => {
+    const { container } = render1('open', false);
+    expect(container.textContent).toMatch(NEEDS);
+  });
+
+  it('hides once decided, keeping the registered count', () => {
+    const { container } = render1('open', true);
+    expect(container.textContent).not.toMatch(NEEDS);
+    expect(container.textContent).toContain('2 registered');
+  });
+
+  it('hides while in progress', () => {
+    const { container } = render1('in_progress', false);
+    expect(container.textContent).not.toMatch(NEEDS);
+    expect(container.textContent).toContain('2 registered');
+  });
+
+  it('hides once completed', () => {
+    const { container } = render1('completed', false);
+    expect(container.textContent).not.toMatch(NEEDS);
+    expect(container.textContent).toContain('2 registered');
+  });
+
+  it('hides on a cancelled class', () => {
+    const { container } = render1('open', false, true);
+    expect(container.textContent).not.toMatch(NEEDS);
+  });
+});

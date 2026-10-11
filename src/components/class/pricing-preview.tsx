@@ -3,6 +3,7 @@ import { formatMoney } from '@/lib/format';
 import { calculateClassPricing } from '@/services/pricing';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';
+import { padTiersToMinimum } from '@/lib/tier-estimates';
 
 /**
  * Only the three registration columns this component reads. It used to ask for
@@ -47,14 +48,18 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
   );
 
+  // The same filling `completeClass` bills through: below the minimum the
+  // pool is padded, only the real students are billed, and the teacher
+  // absorbs the shortfall.
   const pricing = calculateClassPricing({
     roomCost: Number(cls.roomCost),
     minRate: Number(cls.minRate),
     targetRate: Number(cls.targetRate),
     minStudents: cls.minStudents,
     maxStudents: cls.maxStudents,
-    studentTiers,
+    studentTiers: padTiersToMinimum(studentTiers, cls.minStudents),
   });
+  const billed = pricing.students.slice(0, studentTiers.length);
 
   // Build a summary by tier for preview display. Each priced record carries
   // its own tier and ratio, so there is no index to match up and no undefined
@@ -62,14 +67,16 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
   // and the ratio came from different places.
   const tierSummary: { tier: IncomeTier; ratio: number; price: number; count: number }[] = [];
   for (const tier of INCOME_TIERS) {
-    const forTier = pricing.students.filter((s) => s.tier === tier);
+    const forTier = billed.filter((s) => s.tier === tier);
     const first = forTier[0];
     if (first) {
       tierSummary.push({ tier, ratio: first.ratio, price: first.price, count: forTier.length });
     }
   }
 
-  const estimatedEarnings = pricing.totalCost - Number(cls.roomCost);
+  // Whole cents, as completion writes the teacher's earnings.
+  const billedCents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
+  const estimatedEarnings = (billedCents - Math.round(Number(cls.roomCost) * 100)) / 100;
 
   return (
     <div className="py-6">

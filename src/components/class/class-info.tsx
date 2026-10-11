@@ -48,6 +48,11 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
   // the other.
   const queueIsLive = !cancelled && (cls.status === 'open' || cls.status === 'in_progress');
 
+  // The minimum is a promise only until the class's check judges it (#836):
+  // once the check has decided, or the class has started or finished, a short
+  // count is no longer waiting on anything.
+  const awaitingCheck = !cancelled && cls.status === 'open' && cls.autoCancelDecidedAt === null;
+
   // Two different sets, so two different sentences — and the sentence has to
   // describe the set the caller actually counted, or it goes stale as the
   // number moves.
@@ -77,7 +82,8 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
       </p>
       <p className={`type-caption ${COUNT_LINE_GAP}`}>
-        {registrationCount} registered &middot; needs {cls.minStudents} to go ahead
+        {registrationCount} registered
+        {awaitingCheck && <> &middot; needs {cls.minStudents} to go ahead</>}
         {queueIsLive && waitlistCount > 0 && <> &middot; {waitlistLabel}</>}
       </p>
       {showProgress && (
