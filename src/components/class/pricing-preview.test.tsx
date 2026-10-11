@@ -28,6 +28,7 @@ function makePreviewClass(overrides: Partial<PricingPreviewCls> = {}): PricingPr
     totalRevenue: null,
     totalStudents: null,
     spotBroadcastAt: null,
+    autoCancelDecidedAt: null,
     teacherReminderSentAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),

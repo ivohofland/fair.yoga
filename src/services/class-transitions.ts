@@ -20,24 +20,17 @@ import { lockClassRow } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { closeQueueOnStart } from './waitlist';
 import { readInPages } from '@/lib/read-in-pages';
+import {
+  DEFAULT_CANCEL_CHECK_HOURS,
+  MAX_CANCEL_CHECK_HOURS,
+  isPastCancelCheck,
+} from '@/lib/auto-cancel-check';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const CANCEL_CHECK_HOURS: Record<string, number> = {
-  HOURS_4: 4,
-  HOURS_2: 2,
-  HOURS_1: 1,
-} satisfies Record<AutoCancelCheck, number>;
-
-/** The check hours `inCancelWindow` uses for an `autoCancelCheck` the record
- * does not name. */
-export const DEFAULT_CANCEL_CHECK_HOURS = 2;
-
-/** The widest check window: the furthest ahead of `now` a start can be and
- * still be cancelled. */
-export const MAX_CANCEL_CHECK_HOURS = Math.max(...Object.values(CANCEL_CHECK_HOURS));
+export { DEFAULT_CANCEL_CHECK_HOURS, MAX_CANCEL_CHECK_HOURS };
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -61,8 +54,8 @@ export function cancelCandidateDates(now: Date): { from: Date; to: Date } {
 }
 
 /** Whether `at` falls inside a class's auto-cancel window: past the check
- * time, before the start. Shared by the sweep's pre-filter and the decision
- * under the lock, for the same reason the status set they filter on is named
+ * time (`isPastCancelCheck` is the one spelling of that), before the start.
+ * Shared by the sweep's pre-filter and the decision under the lock, for the same reason the status set they filter on is named
  * once (`@/lib/registration-status`) — two spellings of one window is how a
  * stale-snapshot bug comes back.
  *
@@ -72,14 +65,14 @@ export function cancelCandidateDates(now: Date): { from: Date; to: Date } {
  * stops a caller passing a spread-together object that silently lost one. */
 function inCancelWindow(
   entry: { date: Date; startTime: Date },
-  cls: { autoCancelCheck: string },
+  cls: { autoCancelCheck: AutoCancelCheck },
   timezone: string,
   at: Date,
 ): boolean {
-  const start = classStartInstant(entry, timezone);
-  const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? DEFAULT_CANCEL_CHECK_HOURS;
-  const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
-  return at >= checkTime && at < start;
+  return (
+    isPastCancelCheck(entry, cls.autoCancelCheck, timezone, at) &&
+    at < classStartInstant(entry, timezone)
+  );
 }
 
 // ---------------------------------------------------------------------------
