@@ -183,8 +183,9 @@ Locale-aware display belongs with i18n, which CLAUDE.md defers.
   `4,555` (NaN at 2, 4.555 at 3), and blank.
 - **Component:** each changed form, with `"4,5"` typed into a decimal field,
   sends 4.5. `NumberInput` keeps `"4,5"` as typed while holding 4.5. The
-  `badInput` tests on decimal fields go: `badInput` cannot occur on a text
-  input. The comments claiming `"4,5"` produces it go too. The integer
+  `badInput` tests on decimal fields type genuinely unreadable text
+  (`"4,5,6"`), so they still prove the "Enter a number for ..." refusal. The
+  comments claiming `"4,5"` produces `badInput` go. The integer
   `badInput` test in `number-input.test.tsx` stays.
 - **e2e, real Chromium:** jsdom does not reproduce Chromium's comma-dropping,
   so one spec per path: a `NumberInput` field (class-edit target rate) and a

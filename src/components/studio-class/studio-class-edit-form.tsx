@@ -64,15 +64,8 @@ void _formHasNoExtras;
  * `hourlyRate` renders as a text input, so what the teacher typed is kept
  * exactly, including a half-typed `45.` or an emptied box, and `parseDecimal`
  * reads a decimal comma or point. `durationMinutes` renders as a number input,
- * which reports `''` for anything that is not a valid number. Converting
- * either per keystroke would turn those states into a number the teacher did
- * not type, and `hourlyRate` is `z.number().nonnegative()`, so a blank read as
- * 0 would be ACCEPTED: the rate would silently become 0 and reporting would
- * count the class as zero income.
- *
- * The create screen for this same entity (`studio-class/new/new-studio-class-form.tsx`),
- * `StudentCountEditor` and `EditRoomForm` all hold strings and convert at send.
- * This is that pattern, not a new one.
+ * which reports `''` for anything that is not a valid number. The typed text
+ * stays as typed and is converted once, at submit.
  */
 type FormState = Record<keyof StudioClassEditInitial, string>;
 

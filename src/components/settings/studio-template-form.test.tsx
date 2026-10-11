@@ -979,7 +979,7 @@ describe('StudioTemplateForm', () => {
 
       const input = screen.getByLabelText(new RegExp('^' + field.replace(/[()]/g, '\\$&')));
       fireEvent.change(input, { target: { value } });
-      // A submit event, not a click: jsdom's native `max` check would block the click.
+      // A submit event, not a click: the duration field's native `max` would block the click in jsdom.
       const form = input.closest('form');
       if (!form) throw new Error('expected the field to be inside a form');
       fireEvent.submit(form);

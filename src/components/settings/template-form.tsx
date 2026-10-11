@@ -152,8 +152,9 @@ const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocal
 
 /**
  * #702. The first number field out of range, in this form's copy, or
- * `undefined`. A cleared number field holds `0`, and one the browser cannot
- * read holds NaN. Where an input carries a native `min` or `max`, a browser stops an
+ * `undefined`. A cleared number field holds `0`, and one that does not read
+ * as a number holds NaN. Where an input carries a native `min` or `max` (the
+ * integer fields; the money fields carry none), a browser stops an
  * out-of-range submit before this runs; this states the same rules in the
  * form's own words, and is the guard when the submit event is dispatched
  * directly. No class-size branch: the handlers that write Max students clamp
