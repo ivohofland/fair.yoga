@@ -20,6 +20,7 @@ import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 
@@ -264,12 +265,11 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           </p>
         )}
         <div className="max-w-[200px]">
-          <Input
+          <NumberInput
             label="Duration (minutes)"
-            type="number"
             max={DURATION_MAX_MINUTES}
-            value={String(form.durationMinutes)}
-            onChange={(e) => set('durationMinutes', Number(e.target.value))}
+            value={form.durationMinutes}
+            onValueChange={(n) => set('durationMinutes', n)}
           />
         </div>
       </section>
@@ -283,47 +283,42 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           </p>
         )}
         <div className="grid grid-cols-3 gap-3">
-          <Input
+          <NumberInput
             label={`Room cost (${currencyLabel(currency)})`}
-            type="number"
             max={MONEY_MAX}
-            value={String(form.roomCost)}
+            value={form.roomCost}
             disabled={settingsLocked}
-            onChange={(e) => set('roomCost', Number(e.target.value))}
+            onValueChange={(n) => set('roomCost', n)}
           />
-          <Input
+          <NumberInput
             label={`Min rate (${currencyLabel(currency)})`}
-            type="number"
             min={-MONEY_MAX}
             max={MONEY_MAX}
-            value={String(form.minRate)}
+            value={form.minRate}
             disabled={settingsLocked}
-            onChange={(e) => set('minRate', Number(e.target.value))}
+            onValueChange={(n) => set('minRate', n)}
           />
-          <Input
+          <NumberInput
             label={`Target rate (${currencyLabel(currency)})`}
-            type="number"
             min={-MONEY_MAX}
             max={MONEY_MAX}
-            value={String(form.targetRate)}
+            value={form.targetRate}
             disabled={settingsLocked}
-            onChange={(e) => set('targetRate', Number(e.target.value))}
+            onValueChange={(n) => set('targetRate', n)}
           />
         </div>
         <div className="grid grid-cols-2 gap-3 mt-3 max-w-[320px]">
-          <Input
+          <NumberInput
             label="Min students"
-            type="number"
-            value={String(form.minStudents)}
+            value={form.minStudents}
             disabled={settingsLocked}
-            onChange={(e) => set('minStudents', Number(e.target.value))}
+            onValueChange={(n) => set('minStudents', n)}
           />
-          <Input
+          <NumberInput
             label="Max students"
-            type="number"
-            value={String(form.maxStudents)}
+            value={form.maxStudents}
             disabled={settingsLocked}
-            onChange={(e) => set('maxStudents', Number(e.target.value))}
+            onValueChange={(n) => set('maxStudents', n)}
           />
         </div>
         <div className="mt-4">
