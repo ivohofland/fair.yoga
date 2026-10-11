@@ -580,18 +580,28 @@ describe('TemplateForm', () => {
     );
 
     it.each([
-      ['Room cost', 'room cost'],
-      ['Min rate', 'min rate'],
-      ['Target rate', 'target rate'],
-    ])('refuses a %s that is not one amount, rather than saving 0', async (fieldName, name) => {
+      ['Room cost', '4,5,6', 'room cost'],
+      ['Room cost', '1.000', 'room cost'],
+      ['Min rate', '4,5,6', 'min rate'],
+      ['Min rate', '1.000', 'min rate'],
+      ['Target rate', '4,5,6', 'target rate'],
+      ['Target rate', '1.000', 'target rate'],
+    ])('refuses a %s of %s, rather than reading it as some other amount', async (fieldName, text, name) => {
       await renderReady(mode);
-      fireEvent.change(screen.getByLabelText(new RegExp('^' + fieldName)), { target: { value: '4,5,6' } });
+      fireEvent.change(screen.getByLabelText(new RegExp('^' + fieldName)), { target: { value: text } });
 
       const callsBefore = fetchMock.mock.calls.length;
       submitForm();
 
       expect(fetchMock.mock.calls.length).toBe(callsBefore);
       expect(screen.getByRole('alert')).toHaveTextContent(new RegExp(`^Enter a number for ${name}$`));
+    });
+
+    it('keeps the minus key on the signed rate fields and the decimal keypad on room cost', async () => {
+      await renderReady(mode);
+      expect(screen.getByLabelText(/^Min rate/)).not.toHaveAttribute('inputmode');
+      expect(screen.getByLabelText(/^Target rate/)).not.toHaveAttribute('inputmode');
+      expect(screen.getByLabelText(/^Room cost/)).toHaveAttribute('inputmode', 'decimal');
     });
 
     /** Each bound is inclusive: every field at its edge still sends. */

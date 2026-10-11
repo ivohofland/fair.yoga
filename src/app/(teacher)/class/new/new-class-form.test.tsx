@@ -834,15 +834,25 @@ describe('NewClassPage', () => {
     });
 
     it.each([
-      ['Room cost', 'room cost'],
-      ['Min rate', 'min rate'],
-      ['Target rate', 'target rate'],
-    ])('refuses a %s that is not one amount, rather than taking 0', async (label, name) => {
+      ['Room cost', '4,5,6', 'room cost'],
+      ['Room cost', '1.000', 'room cost'],
+      ['Min rate', '4,5,6', 'min rate'],
+      ['Min rate', '1.000', 'min rate'],
+      ['Target rate', '4,5,6', 'target rate'],
+      ['Target rate', '1.000', 'target rate'],
+    ])('refuses a %s of %s, rather than reading it as some other amount', async (label, text, name) => {
       await renderAtStep2();
-      set(label, '4,5,6');
+      set(label, text);
       next();
       expect(screen.getByLabelText(new RegExp('^' + label))).toHaveAccessibleDescription(`Enter a number for ${name}`);
       expectStillOnStep2();
+    });
+
+    it('keeps the minus key on the signed rate fields and the decimal keypad on room cost', async () => {
+      await renderAtStep2();
+      expect(screen.getByLabelText(/^Min rate/)).not.toHaveAttribute('inputmode');
+      expect(screen.getByLabelText(/^Target rate/)).not.toHaveAttribute('inputmode');
+      expect(screen.getByLabelText(/^Room cost/)).toHaveAttribute('inputmode', 'decimal');
     });
 
     it.each([
