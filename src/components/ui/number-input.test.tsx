@@ -17,6 +17,16 @@ function Harness({ initial, clampTo }: { initial: number; clampTo?: number }) {
   );
 }
 
+function DecimalHarness({ initial }: { initial: number }) {
+  const [value, setValue] = useState(initial);
+  return (
+    <>
+      <NumberInput label="Amount" decimals={2} value={value} onValueChange={setValue} />
+      <output data-testid="held">{String(value)}</output>
+    </>
+  );
+}
+
 describe('NumberInput', () => {
   it('stays empty when cleared, holding 0, so the next digit replaces the 0', () => {
     render(<Harness initial={0} />);
@@ -62,7 +72,7 @@ describe('NumberInput', () => {
   it('holds NaN, not 0, for text the browser cannot read as a number', () => {
     render(<Harness initial={5} />);
     const input = screen.getByLabelText('Amount') as HTMLInputElement;
-    // jsdom sanitizes '4,5' to '' without flagging it; a browser flags it.
+    // jsdom does not flag unreadable text, so the flag is set by hand.
     Object.defineProperty(input, 'validity', { value: { badInput: true }, configurable: true });
     fireEvent.change(input, { target: { value: '' } });
     expect(screen.getByTestId('held')).toHaveTextContent('NaN');
@@ -88,5 +98,51 @@ describe('NumberInput', () => {
     const { rerender } = render(<NumberInput label="Amount" value={3} onValueChange={onValueChange} />);
     rerender(<NumberInput label="Amount" value={7} onValueChange={onValueChange} />);
     expect(screen.getByLabelText('Amount')).toHaveValue(7);
+  });
+
+  describe('decimal mode', () => {
+    it('renders a text field with the decimal keyboard', () => {
+      render(<DecimalHarness initial={0} />);
+      const input = screen.getByLabelText('Amount');
+      expect(input).toHaveAttribute('type', 'text');
+      expect(input).toHaveAttribute('inputmode', 'decimal');
+    });
+
+    it('reads a decimal comma and leaves it as typed', () => {
+      render(<DecimalHarness initial={0} />);
+      const input = screen.getByLabelText('Amount') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '4,5' } });
+      expect(input.value).toBe('4,5');
+      expect(screen.getByTestId('held')).toHaveTextContent('4.5');
+    });
+
+    it('holds NaN for more decimals than allowed and leaves the text as typed', () => {
+      render(<DecimalHarness initial={0} />);
+      const input = screen.getByLabelText('Amount') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '4,555' } });
+      expect(input.value).toBe('4,555');
+      expect(screen.getByTestId('held')).toHaveTextContent('NaN');
+    });
+
+    it('holds 0 when cleared and shows the 0 once the field is left', () => {
+      render(<DecimalHarness initial={21} />);
+      const input = screen.getByLabelText('Amount') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '' } });
+      expect(input.value).toBe('');
+      expect(screen.getByTestId('held')).toHaveTextContent('0');
+      fireEvent.blur(input);
+      expect(input.value).toBe('0');
+    });
+
+    it('renders a held value that does not parse back without re-rendering forever', () => {
+      render(<NumberInput label="Amount" decimals={2} value={4.555} onValueChange={vi.fn()} />);
+      expect(screen.getByLabelText('Amount')).toHaveValue('4.555');
+    });
+
+    it('refuses min, max and step beside decimals at compile time', () => {
+      // @ts-expect-error min does nothing on a text field
+      const element = <NumberInput label="Amount" decimals={2} min={0} value={1} onValueChange={vi.fn()} />;
+      expect(element).toBeTruthy();
+    });
   });
 });

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassSchema } from '@/lib/schemas';
-import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LONG_TEXT_MAX, MONEY_MAX } from '@/lib/input-bounds';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LONG_TEXT_MAX, MONEY_DECIMALS, MONEY_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Button } from '@/components/ui/button';
@@ -596,8 +596,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             <NumberInput
               id="roomCost"
               label={`Room cost (${currencyLabel(currency)})`}
-              step="0.01"
-              max={MONEY_MAX}
+              decimals={MONEY_DECIMALS}
               value={form.roomCost}
               onValueChange={(n) => updateField('roomCost', n)}
               error={errors.roomCost}
@@ -605,9 +604,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             <NumberInput
               id="minRate"
               label={`Min rate (${currencyLabel(currency)})`}
-              step="0.01"
-              min={-MONEY_MAX}
-              max={MONEY_MAX}
+              decimals={MONEY_DECIMALS}
               value={form.minRate}
               onValueChange={(n) => updateField('minRate', n)}
               error={errors.minRate}
@@ -615,9 +612,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             <NumberInput
               id="targetRate"
               label={`Target rate (${currencyLabel(currency)})`}
-              step="0.01"
-              min={-MONEY_MAX}
-              max={MONEY_MAX}
+              decimals={MONEY_DECIMALS}
               value={form.targetRate}
               onValueChange={(n) => updateField('targetRate', n)}
               error={errors.targetRate}
