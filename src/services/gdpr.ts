@@ -300,6 +300,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       bio: teacher.bio,
       pageSlug: teacher.pageSlug,
       currency: teacher.currency,
+      defaultVatPercent: teacher.defaultVatPercent.toNumber(),
       paymentLink: teacher.paymentLink,
       defaultTimezone: teacher.defaultTimezone,
       bookingNotifications: teacher.bookingNotifications,

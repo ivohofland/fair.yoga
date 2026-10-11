@@ -209,6 +209,7 @@ model Teacher {
   customDomain          String?
   paymentLink           String?
   currency              Currency                    @default(EUR)
+  defaultVatPercent     Decimal                     @default(0) @db.Decimal(6, 3)
   defaultTimezone       String                      @default("Europe/Amsterdam")
   classReminder         ReminderTiming              @default(morning_of)
   classReminderChannel  ReminderChannel             @default(inbox_and_email)

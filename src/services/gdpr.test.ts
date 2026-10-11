@@ -3654,6 +3654,13 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     expect(exported.profile.paymentLink).toBe('https://revolut.me/photo-teacher');
   });
 
+  it('exports the default VAT percent as stored (#833)', async () => {
+    const teacherId = await makeTeacher();
+    await prisma.teacher.update({ where: { id: teacherId }, data: { defaultVatPercent: new Prisma.Decimal(9) } });
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.profile.defaultVatPercent).toBe(9);
+  });
+
   it('exports photo: null for a teacher without one', async () => {
     const teacherId = await makeTeacher();
     const exported = await exportTeacherData(prisma, teacherId);

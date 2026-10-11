@@ -300,3 +300,38 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
     });
   });
 });
+
+describe('Teacher.defaultVatPercent (#833)', () => {
+  let vatTeacherId: string;
+
+  beforeAll(async () => {
+    const t = await prisma.teacher.create({
+      data: {
+        firstName: 'Vat',
+        lastName: 'Teacher',
+        email: `vat-teacher-${suffix}@test.local`,
+        account: { create: { email: `vat-teacher-${suffix}@test.local` } },
+        bio: 'VAT default tests',
+        pageSlug: `vat-teacher-${suffix}`,
+      },
+    });
+    vatTeacherId = t.id;
+  });
+
+  afterAll(async () => {
+    await prisma.teacher.delete({ where: { id: vatTeacherId } });
+    await prisma.account.deleteMany({ where: { email: `vat-teacher-${suffix}@test.local` } });
+  });
+
+  it('is 0 for a teacher created without it', async () => {
+    const t = await prisma.teacher.findUniqueOrThrow({ where: { id: vatTeacherId } });
+    expect(t.defaultVatPercent.toString()).toBe('0');
+  });
+
+  it.each([-0.001, 100.001])('refuses %s at the database', async (value) => {
+    const err = await prisma.teacher
+      .update({ where: { id: vatTeacherId }, data: { defaultVatPercent: value } })
+      .then(() => null, (e: unknown) => e);
+    expect(isCheckViolationOn(err, 'Teacher_default_vat_percent_range_check')).toBe(true);
+  });
+});
