@@ -110,6 +110,7 @@ export function classRow(
     totalStudents: null,
     totalRevenue: null,
     spotBroadcastAt: null,
+    autoCancelDecidedAt: null,
     teacherReminderSentAt: null,
     createdAt: AT,
     updatedAt: AT,
