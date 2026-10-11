@@ -12,7 +12,7 @@ function Harness({ initial, clampTo }: { initial: number; clampTo?: number }) {
         value={value}
         onValueChange={(n) => setValue(clampTo === undefined ? n : Math.min(n, clampTo))}
       />
-      <output data-testid="held">{value}</output>
+      <output data-testid="held">{String(value)}</output>
     </>
   );
 }
