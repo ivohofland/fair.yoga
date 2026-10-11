@@ -758,7 +758,7 @@ child, and the reverse does not.
 | status | enum | draft → open → in_progress → completed. `full` is derived, not stored; cancellation is the entry's `cancelled_at`, not a member |
 | settings_locked | boolean | Flips to true on first registration |
 | spot_broadcast_at | datetime, nullable | When the first-come-first-claimed broadcast last went out for the seat that is currently free (#220) |
-| auto_cancel_decided_at | timestamp, nullable | When the auto-cancel decision was made; set means never judged again |
+| auto_cancel_decided_at | datetime, nullable | When the auto-cancel decision was made; set means never judged again |
 | teacher_reminder_sent_at | datetime, nullable | Set when the teacher's reminder for this class is claimed, before it is delivered; a failed email leaves it set (at most once) |
 | **Calculated** | | Populated after class ends |
 | effective_teacher_rate | decimal, nullable | What the teacher actually earned per student |
