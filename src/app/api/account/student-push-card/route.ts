@@ -3,8 +3,8 @@ import { respondOk, respondUnchanged, requireStudent, isErrorResponse, withError
 import { prisma } from '@/lib/db';
 
 /**
- * Records that the student dismissed the push card on `/bookings` (#818), on
- * their `Student` row. The write is conditional on the flag still being false,
+ * Records that the student dismissed the push-notification card (#818), on
+ * their own `Student` row. The write is conditional on the flag still being false,
  * so a repeat answers unchanged instead of rewriting a row whose goal already
  * holds. Reads no body.
  */
