@@ -6,8 +6,9 @@ import type { Currency } from '@prisma/client';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { parseDecimal } from '@/lib/decimal-input';
 import { currencyLabel } from '@/lib/format';
-import { CAPACITY_MAX, CITY_MAX, FLOOR_MAX, LONG_TEXT_MAX, MONEY_MAX, POSTCODE_MAX, ROOM_ADDRESS_MAX, ROOM_NAME_MAX, VENUE_NAME_MAX } from '@/lib/input-bounds';
+import { MONEY_DECIMALS, CAPACITY_MAX, CITY_MAX, FLOOR_MAX, LONG_TEXT_MAX, MONEY_MAX, POSTCODE_MAX, ROOM_ADDRESS_MAX, ROOM_NAME_MAX, VENUE_NAME_MAX } from '@/lib/input-bounds';
 
 const EQUIPMENT_OPTIONS = [
   { key: 'mats', label: 'Mats' },
@@ -69,9 +70,17 @@ export function EditRoomForm({ roomId, teacherRoomId, currency, initial }: EditR
       setError('Max capacity must be a positive number');
       return;
     }
-    const rate = Number(rentalRate);
-    if (isNaN(rate) || rate < 0) {
+    const rate = rentalRate.trim() === '' ? 0 : parseDecimal(rentalRate, MONEY_DECIMALS);
+    if (Number.isNaN(rate)) {
+      setError('Enter a number for rental rate');
+      return;
+    }
+    if (rate < 0) {
       setError('Rental rate must be 0 or more');
+      return;
+    }
+    if (rate > MONEY_MAX) {
+      setError(`Rental rate cannot exceed ${MONEY_MAX.toLocaleString('en-US')}`);
       return;
     }
 
@@ -145,7 +154,7 @@ export function EditRoomForm({ roomId, teacherRoomId, currency, initial }: EditR
       <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => { setPostcode(e.target.value); clearStatus(); }} />
       <Input label="Floor" maxLength={FLOOR_MAX} value={floor} onChange={(e) => { setFloor(e.target.value); clearStatus(); }} placeholder="e.g. Ground, 1st" />
       <Input label="Max capacity" type="number" max={CAPACITY_MAX} value={maxCapacity} onChange={(e) => { setMaxCapacity(e.target.value); clearStatus(); }} />
-      <Input label={`Rental rate (${currencyLabel(currency)})`} type="number" step="0.01" max={MONEY_MAX} value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
+      <Input label={`Rental rate (${currencyLabel(currency)})`} type="text" inputMode="decimal" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
 
       <fieldset className="flex flex-col gap-1">
         <legend className="text-brown mb-2">Available props</legend>

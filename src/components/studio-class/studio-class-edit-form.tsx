@@ -7,9 +7,10 @@ import type { Currency } from '@prisma/client';
 import type { updateStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
+import { parseDecimal } from '@/lib/decimal-input';
 import { Input } from '@/components/ui/input';
 import { currencyLabel } from '@/lib/format';
-import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
@@ -58,19 +59,19 @@ void _formCoversSchema;
 void _formHasNoExtras;
 
 /**
- * The two numeric fields are held as STRINGS and coerced once, at submit.
+ * The two numeric fields are held as STRINGS and parsed once, at submit.
  *
- * `<input type="number">` reports `''` for anything that is not a valid
- * floating-point number — an emptied field, and every intermediate state of
- * typing `45.` on a `step="0.01"` field. Coercing per keystroke turns each of
- * those into `Number('') === 0`, and `hourlyRate` is
- * `z.number().nonnegative()`, so 0 is ACCEPTED: the rate silently becomes 0,
- * the form says "Saved", and reporting counts the class as zero income.
- * `durationMinutes` is `.positive()` and merely rejects, loudly and in Zod's
- * own words.
+ * Both render as text inputs, so what the teacher typed is kept exactly,
+ * including a half-typed `45.` or an emptied box. Converting per keystroke
+ * would turn each of those into a number the teacher did not type, and
+ * `hourlyRate` is `z.number().nonnegative()`, so a blank read as 0 would be
+ * ACCEPTED: the rate would silently become 0 and reporting would count the
+ * class as zero income. `hourlyRate` is read by `parseDecimal`, which takes a
+ * decimal comma or point; `durationMinutes` is an integer and stays a number
+ * input.
  *
  * The create screen for this same entity (`studio-class/new/new-studio-class-form.tsx`),
- * `StudentCountEditor` and `EditRoomForm` all hold strings and coerce at send.
+ * `StudentCountEditor` and `EditRoomForm` all hold strings and convert at send.
  * This is that pattern, not a new one.
  */
 type FormState = Record<keyof StudioClassEditInitial, string>;
@@ -119,7 +120,7 @@ function validate(form: FormState, dateEditable: boolean): FieldErrors {
 
   // Empty is rejected rather than read as 0. Sending 0 should be something a
   // teacher types, never something a cleared field produces.
-  const rate = Number(form.hourlyRate);
+  const rate = parseDecimal(form.hourlyRate, MONEY_DECIMALS);
   if (!form.hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
     errors.hourlyRate = 'Enter an hourly rate — 0 if this class is unpaid.';
   } else if (rate > MONEY_MAX) {
@@ -185,7 +186,7 @@ export function StudioClassEditForm({
         location: form.location.trim(),
         startTime: form.startTime,
         durationMinutes: Number(form.durationMinutes),
-        hourlyRate: Number(form.hourlyRate),
+        hourlyRate: parseDecimal(form.hourlyRate, MONEY_DECIMALS),
       };
       if (dateEditable) {
         payload.date = form.date;
@@ -286,9 +287,8 @@ export function StudioClassEditForm({
           />
           <Input
             label={`Hourly rate (${currencyLabel(currency)})`}
-            type="number"
-            step="0.01"
-            max={MONEY_MAX}
+            type="text"
+            inputMode="decimal"
             value={form.hourlyRate}
             error={fieldErrors.hourlyRate}
             onChange={(e) => set('hourlyRate', e.target.value)}

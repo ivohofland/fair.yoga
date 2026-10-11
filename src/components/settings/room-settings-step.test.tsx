@@ -98,8 +98,6 @@ describe('RoomSettingsStep', () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  // `fireEvent.submit`, not a click: the input's native `max` would block a
-  // click-submit before the form's own copy runs.
   it('refuses a rental rate one past the cap without posting, and posts the cap itself', async () => {
     fetchMock.mockResolvedValue(jsonResponse(201, { data: { id: 'tr-1' } }));
     vi.stubGlobal('fetch', fetchMock);
@@ -120,6 +118,36 @@ describe('RoomSettingsStep', () => {
     fireEvent.submit(form);
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
     expect(JSON.parse(String(fetchMock.mock.calls.at(0)?.[1]?.body)).rentalRate).toBe(MONEY_MAX);
+  });
+
+  it('reads a decimal comma in the rental rate (#844)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(201, { data: { id: 'tr-1' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSaved = vi.fn();
+    render(<RoomSettingsStep currency="EUR" selectedRoom={selectedRoom} onSaved={onSaved} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: '4,5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add room' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(fetchMock.mock.calls.at(0)?.[1]?.body)).rentalRate).toBe(4.5);
+  });
+
+  it('refuses a grouped rental rate such as 1.000 and sends nothing (#844)', async () => {
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RoomSettingsStep currency="EUR" selectedRoom={selectedRoom} onSaved={vi.fn()} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: '1.000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add room' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a number for rental rate');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends a blank rental rate as 0 (#844)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(201, { data: { id: 'tr-1' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSaved = vi.fn();
+    render(<RoomSettingsStep currency="EUR" selectedRoom={selectedRoom} onSaved={onSaved} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add room' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(fetchMock.mock.calls.at(0)?.[1]?.body)).rentalRate).toBe(0);
   });
 
   it('shows network copy and logs when the request itself fails', async () => {

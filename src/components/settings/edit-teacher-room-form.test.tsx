@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MONEY_MAX } from '@/lib/input-bounds';
 import { EditTeacherRoomForm } from './edit-teacher-room-form';
 
 /**
@@ -66,6 +67,40 @@ describe('EditTeacherRoomForm', () => {
       rentalRate: 15,
       equipmentNotes: 'Bring your own mat',
     });
+  });
+
+  it('reads a decimal comma in the rental rate (#844)', async () => {
+    stubFetch();
+    render(<EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={initial} />);
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: '4,5' } });
+    const { body } = await submit();
+    expect(body.rentalRate).toBe(4.5);
+  });
+
+  it('refuses a grouped rental rate such as 1.000 and sends nothing (#844)', async () => {
+    stubFetch();
+    render(<EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={initial} />);
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: '1.000' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    expect(await screen.findByText('Enter a number for rental rate')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a rental rate above the cap and sends nothing (#844)', async () => {
+    stubFetch();
+    render(<EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={initial} />);
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: String(MONEY_MAX + 1) } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    expect(await screen.findByText('Rental rate cannot exceed 100,000')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends a blank rental rate as 0 (#844)', async () => {
+    stubFetch();
+    render(<EditTeacherRoomForm currency="EUR" teacherRoomId="tr-1" initial={initial} />);
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value: '' } });
+    const { body } = await submit();
+    expect(body.rentalRate).toBe(0);
   });
 
   it('trims equipmentNotes before sending', async () => {

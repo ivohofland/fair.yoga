@@ -113,6 +113,27 @@ describe('NewStudioClassPage', () => {
     });
   });
 
+  it('reads a decimal comma in the hourly rate (#844)', async () => {
+    stubFetch();
+    render(<NewStudioClassForm currency="EUR" />);
+    fillRequired();
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '4,5' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, options] = fetchMock.mock.calls.at(-1) ?? [];
+    expect(JSON.parse((options as { body: string }).body).hourlyRate).toBe(4.5);
+  });
+
+  it('refuses a grouped hourly rate such as 1.000 and sends nothing (#844)', async () => {
+    stubFetch();
+    render(<NewStudioClassForm currency="EUR" />);
+    fillRequired();
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '1.000' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    expect(await screen.findByText('Enter an hourly rate — 0 if this class is unpaid.')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   /**
    * Fills everything `handleSubmit` gates before the request — class type,
    * location, and date — so the settled-state tests below reach the POST for

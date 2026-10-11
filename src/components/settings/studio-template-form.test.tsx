@@ -236,6 +236,27 @@ describe('StudioTemplateForm', () => {
     expect(rateInput.value).toBe('22.5');
   });
 
+  it('reads a decimal comma in the hourly rate (#844)', async () => {
+    stubFetch();
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '4,5' } });
+    const created = await submit();
+    expect(created.body.hourlyRate).toBe(4.5);
+  });
+
+  it('refuses a grouped hourly rate such as 1.000 and sends nothing (#844)', async () => {
+    stubFetch();
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText(/^Hourly rate/), { target: { value: '1.000' } });
+    fireEvent.click(await screen.findByRole('button', { name: /save|create/i }));
+    expect(await screen.findByText('Enter an hourly rate — 0 if this class is unpaid.')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('allows 0 as an explicit hourly rate', async () => {
     stubFetch();
     render(<StudioTemplateForm currency="EUR" mode="create" />);
