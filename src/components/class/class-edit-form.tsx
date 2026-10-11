@@ -51,12 +51,12 @@ const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
 
 /**
- * #702. A cleared number field holds `0`, one that does not read as a number
- * holds NaN, and the integer fields' `min`/`max` attributes enforce nothing:
- * the browser checks them only on a `<form>` submit, and this form has no
- * `<form>` element. The money fields carry no `min`/`max`. The first
- * number field out of range, in this form's copy, or `undefined`. Duration is
- * always sent. The rest are economics, sent only while unlocked.
+ * #702. A cleared number field holds `0`, and one that does not read as a
+ * number holds NaN. Only Duration carries a native `max`, and it enforces
+ * nothing: the browser checks it only on a `<form>` submit, and this form has
+ * no `<form>` element. The first number field out of range, in this form's
+ * copy, or `undefined`. Duration is always sent. The rest are economics, sent
+ * only while unlocked.
  */
 function numberFieldError(form: ClassEditInitial, settingsLocked: boolean): string | undefined {
   if (form.durationMinutes <= 0) return 'Duration must be positive';

@@ -153,11 +153,10 @@ const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocal
 /**
  * #702. The first number field out of range, in this form's copy, or
  * `undefined`. A cleared number field holds `0`, and one that does not read
- * as a number holds NaN. Where an input carries a native `min` or `max` (the
- * integer fields; the money fields carry none), a browser stops an
- * out-of-range submit before this runs; this states the same rules in the
- * form's own words, and is the guard when the submit event is dispatched
- * directly. No class-size branch: the handlers that write Max students clamp
+ * as a number holds NaN. Only Duration carries a native `max`, so a browser
+ * stops a too-long Duration at submit before this runs; this states that rule
+ * in the form's own words too, and is its guard when the submit event is
+ * dispatched directly. No class-size branch: the handlers that write Max students clamp
  * it to `MAX_CLASS_SIZE`, the Min students input clamps to Max, and an edit's
  * `initial` is a saved template.
  */
