@@ -164,12 +164,12 @@ export const PUT = withErrorHandler(async (
   // read-then-write that races. The DELETE branches below scope their writes
   // for the same reason.
   //
-  // The scope, and what it does not guard: a `late_cancel` source is refused
-  // while the class is `open`, and allowed once it has started. The count in
-  // `autoCancelClasses` (`class-transitions.ts`) ranges over
-  // `CHARGED_STATUSES`, and both the source this clause refuses and every
-  // status `updateRegistrationSchema` lets this route write are members, so
-  // no move here changes that count: the clause does not guard it.
+  // The scope: a `late_cancel` source is refused while the class is `open`,
+  // and allowed once it has started. While the class is `open`, a
+  // `late_cancel -> attended` write would move a row from outside
+  // `ACTIVE_REGISTRATION_STATUSES` into it, and so change the seat count the
+  // waitlist broadcast (`handleSpotFreed`, `waitlist.ts`) takes under the
+  // class lock; refusing the source keeps that count from moving here.
   //
   // Once the class has started, a student who late-cancelled and turned up
   // anyway is the teacher's call to record, and costs nothing to allow:

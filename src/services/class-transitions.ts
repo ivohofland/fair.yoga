@@ -371,28 +371,13 @@ export async function autoCancelClasses(
         // not enough by itself, only serializing every writer against it
         // is.
         //
-        // Two writers are outside that: `PUT /api/registrations/[id]`
-        // (attendance) and `DELETE /api/registrations/[id]` (cancel) both
-        // write `Registration.status` with no `Class` lock at all.
-        //
-        // `DELETE` writes `late_cancel` or `cancelled`. `late_cancel` is
-        // inside `CHARGED_STATUSES`, the set this count filters on, so a
-        // racing late cancel leaves the count unchanged. A racing free
-        // `cancelled` (an auto-promoted student inside their grace) lowers
-        // it, and since `DELETE` takes no `Class` lock, whether it commits
-        // before or after the count decides the outcome — the same outcome
-        // as if the cancel had arrived a moment earlier or later.
-        //
-        // `PUT` cannot move the count while the class is `open`. Its
-        // `updateMany` WHERE (`registrations/[id]/route.ts`) refuses a
-        // `cancelled` source always and a `late_cancel` source while the
-        // class is `open`, so every row it can write here already holds
-        // `registered`, `attended` or `no_show` — all in `CHARGED_STATUSES`
-        // — and the status it writes is the request's, which
-        // `updateRegistrationSchema` (`@/lib/schemas`) limits to members of
-        // `CHARGED_STATUSES`. A counted row stays counted. `open` is the
-        // whole of this sweep's reach: it selects on `status: 'open'` and
-        // its CAS requires it.
+        // The count filters on `CHARGED_STATUSES`, so a registration write
+        // that takes no `Class` lock still leaves it coherent. A write that
+        // stays inside that set leaves the count unchanged. A cancel that
+        // leaves it (a free `cancelled`, from a promotion grace or a teacher's
+        // `DELETE`) lowers the count, and whether it commits before or after
+        // the count decides the outcome, the same as if it had arrived a
+        // moment earlier or later.
         //
         // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
         // `removeFromWaitlist` each carry at their own `lockClassRow` call:

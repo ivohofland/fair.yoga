@@ -697,9 +697,10 @@ model Class {
   /// the sweep's repair of a dropped second broadcast. The flag was cleared by
   /// the fill, so the null check does not.
   spotBroadcastAt DateTime?
-  /// When the auto-cancel decision for this class was made: by the sweep at
-  /// the check time, or by a teacher write that put the class past it.
-  /// Non-null means the sweep never judges this class again.
+  /// When the auto-cancel decision for this class was made. Non-null means
+  /// the sweep never judges this class again. Moving the start of an unbooked
+  /// class re-decides it: the marker is set or cleared against the new check
+  /// time.
   autoCancelDecidedAt DateTime?
 
   /// Set once when the teacher's class reminder for this class is claimed,
