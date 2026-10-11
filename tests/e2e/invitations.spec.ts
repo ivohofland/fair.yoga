@@ -176,15 +176,15 @@ test.describe('Invitations — add, accept, decline', () => {
     // contact-list.tsx), not merely relabelled.
     await signInAs(context, teacherToken);
     await page.goto('/students');
-    // "Accept r." — the real Student row's own name, privacy-masked to a
+    // "Accept R." — the real Student row's own name, privacy-masked to a
     // last initial by default (`formatStudentName`, no `StudentPrivacy` row
     // exists yet). Distinct from "Accept Student", the Invitation's own
     // firstName/lastName typed into the form above, which `ContactList`
     // always renders in full (`formatStudentName(..., true)`).
-    await expect(page.getByText('Accept r.')).toBeVisible();
+    await expect(page.getByText('Accept R.')).toBeVisible();
     const contactsAfterAccept = page.locator('section').filter({ hasText: 'Contacts' });
     await expect(contactsAfterAccept.getByText('Accept Student')).toHaveCount(0);
-    await expect(contactsAfterAccept.getByText('Accept r.')).toHaveCount(0);
+    await expect(contactsAfterAccept.getByText('Accept R.')).toHaveCount(0);
 
     const link = await prisma.teacherStudent.findUniqueOrThrow({
       where: { teacherId_studentId: { teacherId, studentId: acceptingStudentId } },

@@ -283,17 +283,17 @@ describe('AddWalkIn', () => {
 
   it('narrows the options as the teacher types in the filter, matching only the name part', async () => {
     stubLists(
-      [{ id: 's1', displayName: 'Bram k.' }],
+      [{ id: 's1', displayName: 'Bram K.' }],
       [{ id: 'i1', firstName: 'Anna', lastName: 'Bakker' }],
     );
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
-    await screen.findByText('Bram k.');
+    await screen.findByText('Bram K.');
 
     fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'ann' } });
 
     expect(screen.getByText('Anna Bakker · invited')).toBeInTheDocument();
-    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram K.')).not.toBeInTheDocument();
 
     // "invited" itself must not spuriously match every invitee row — the
     // filter matches the name part of the label, not the suffix.
@@ -327,7 +327,7 @@ describe('AddWalkIn', () => {
    * hidden — maximally conservative, and trivially safe to verify here.
    */
   it('clears the selection on any filter change, so a hidden selection can never be submitted', async () => {
-    stubLists([{ id: 's1', displayName: 'Anna Bakker' }, { id: 's2', displayName: 'Bram k.' }], []);
+    stubLists([{ id: 's1', displayName: 'Anna Bakker' }, { id: 's2', displayName: 'Bram K.' }], []);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
     await screen.findByText('Anna Bakker');

@@ -313,16 +313,16 @@ describe('formatRoomLocation', () => {
  */
 describe('formatStudentName', () => {
   it('abbreviates the surname by default', () => {
-    expect(formatStudentName('Ana', 'de Vries')).toBe('Ana d.');
+    expect(formatStudentName('Ana', 'Vries')).toBe('Ana V.');
   });
 
   /**
-   * A capitalised surname, because the case above cannot see this: `de Vries`
-   * already starts lowercase, so it passes against an implementation with the
-   * `.toLowerCase()` deleted. This one fails.
+   * A surname stored lowercase, because the case above cannot see this:
+   * `Vries` already starts uppercase, so it passes against an implementation
+   * with the `.toUpperCase()` deleted. This one fails.
    */
-  it('lower-cases the initial', () => {
-    expect(formatStudentName('Ana', 'Vries')).toBe('Ana v.');
+  it('upper-cases the initial', () => {
+    expect(formatStudentName('Ana', 'de Vries')).toBe('Ana D.');
   });
 
   it('gives the full name only when sharing is on', () => {

@@ -473,7 +473,7 @@ describe('Payment Service (DB)', () => {
   it('projects the student under the OWNING teacher\'s privacy flags', async () => {
     const [outstanding] = await getOutstandingPayments(prisma, teacherId);
     if (!outstanding) throw new Error('expected an outstanding payment');
-    expect(outstanding.registration.student.displayName).toBe('PaymentStudent t.');
+    expect(outstanding.registration.student.displayName).toBe('PaymentStudent T.');
     expect(outstanding.registration.student.email).toBe(
       `payment-student-${uniqueSuffix}@test.local`,
     );
@@ -482,7 +482,7 @@ describe('Payment Service (DB)', () => {
 
     const [forClass] = await getPaymentsForClass(prisma, classId, teacherId);
     if (!forClass) throw new Error('expected a payment for the class');
-    expect(forClass.registration.student.displayName).toBe('PaymentStudent t.');
+    expect(forClass.registration.student.displayName).toBe('PaymentStudent T.');
     expect(forClass.registration.student.email).toBe(
       `payment-student-${uniqueSuffix}@test.local`,
     );

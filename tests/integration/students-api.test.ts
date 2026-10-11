@@ -1006,7 +1006,7 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     // open flags must not reach this response. `email` is present and null
     // rather than absent: an absent key cannot be told apart from a route that
     // forgot to select the field (#167).
-    expect(body.data.displayName).toBe('Rostered p.');
+    expect(body.data.displayName).toBe('Rostered P.');
     expect(body.data.email).toBeNull();
     // No tier: there is no shareIncomeTier flag and #167 decided against one.
     expect(body.data.incomeTier).toBeUndefined();
@@ -1099,7 +1099,7 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     };
     const row = body.data.students.find((s) => s.displayName?.startsWith('Rostered'));
     expect(row).toBeDefined();
-    expect(row!.displayName).toBe('Rostered p.');
+    expect(row!.displayName).toBe('Rostered P.');
     expect(row!.email).toBeNull();
   });
 });

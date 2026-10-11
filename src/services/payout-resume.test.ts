@@ -156,7 +156,7 @@ describe('readResumeReview', () => {
     expect(review?.events.map((e) => e.id)).not.toContain(before.id);
     expect(review?.outstanding.map((p) => p.id)).toEqual([owedBefore.paymentId]);
     expect(review?.outstanding.map((p) => p.id)).not.toContain(owedAfter.paymentId);
-    expect(review?.outstanding[0]).toMatchObject({ studentName: 'Owed e.', classType: 'Resume Hatha', amount: 12.5, currency: 'EUR', status: 'pending' });
+    expect(review?.outstanding[0]).toMatchObject({ studentName: 'Owed E.', classType: 'Resume Hatha', amount: 12.5, currency: 'EUR', status: 'pending' });
     expect(new Set(review?.settled.map((p) => p.id))).toEqual(new Set([paidInWindow.paymentId, waivedInWindow.paymentId]));
     expect(review?.settled.map((p) => p.id)).not.toContain(paidBeforeWindow.paymentId);
     expect(review?.settled.map((p) => p.id)).not.toContain(paidAfterPause.paymentId);

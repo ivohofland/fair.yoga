@@ -147,7 +147,7 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     };
     const row = body.data.find((p) => p.registration.student.displayName?.startsWith('Reminder'));
     expect(row).toBeDefined();
-    expect(row!.registration.student.displayName).toBe('Reminder s.');
+    expect(row!.registration.student.displayName).toBe('Reminder S.');
     expect(row!.registration.student.email).toBeNull();
     // The key set, not just the values — see PROJECTED_STUDENT_KEYS. This
     // route reads `services/payments.ts`'s `getOutstandingPayments`, where the
@@ -175,7 +175,7 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
         };
       };
     };
-    expect(body.data.registration.student.displayName).toBe('Reminder s.');
+    expect(body.data.registration.student.displayName).toBe('Reminder S.');
     expect(body.data.registration.student.email).toBeNull();
     // This route projects inline (`api/payments/[id]/route.ts`) rather than
     // through the service, so it needs its own key-set assertion.
@@ -214,7 +214,7 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
         };
       }[];
     };
-    expect(body.data[0]!.registration.student.displayName).toBe('Reminder s.');
+    expect(body.data[0]!.registration.student.displayName).toBe('Reminder S.');
     // Was missing, unlike both siblings above: this test asserted the name and
     // nothing about the email, so half the gate went unpinned on this route.
     expect(body.data[0]!.registration.student.email).toBeNull();

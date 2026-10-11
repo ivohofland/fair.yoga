@@ -12,7 +12,7 @@ export function formatStudentName(firstName: string, lastName: string, shareFull
     return `${firstName}${lastName ? ` ${lastName}` : ''}`.trim();
   }
   const lastInitial = lastName.length > 0 ? lastName[0] : '';
-  return `${firstName} ${lastInitial ? lastInitial.toLowerCase() + '.' : ''}`.trim();
+  return `${firstName} ${lastInitial ? lastInitial.toUpperCase() + '.' : ''}`.trim();
 }
 
 /** Compact relative time for notification rows: "just now", "5m ago", "3h ago", "2d ago". */

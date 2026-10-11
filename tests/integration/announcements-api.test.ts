@@ -857,7 +857,7 @@ describe('GET /api/announcements/audience (#48)', () => {
   it('shows first name plus initial unless the student shares their full name', async () => {
     const res = await getAudience();
     const s1 = (await res.json()).data.students.find((s: { id: string }) => s.id === s1Id);
-    expect(s1.displayName).toBe('Dedup s.'); // surname withheld by default
+    expect(s1.displayName).toBe('Dedup S.'); // surname withheld by default
 
     await prisma.studentPrivacy.create({
       data: { studentId: s4Id, teacherId, shareFullName: true },

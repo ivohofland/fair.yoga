@@ -66,11 +66,11 @@ test.describe('Teacher journey', () => {
 
     // This student signs in to book, so they are claimed, and their privacy
     // row shares NOTHING — so wherever this spec renders their name through
-    // the projection it must read "Journey s.", never "Journey Student".
+    // the projection it must read "Journey S.", never "Journey Student".
     //
     // Be exact about where that is, because an earlier version of this comment
     // said "every teacher-facing surface in this spec", and it is not. All six
-    // `Journey s.` assertions are on `/class/[id]` — the roster, the two
+    // `Journey S.` assertions are on `/class/[id]` — the roster, the two
     // attendance buttons and the three payment-row buttons. `/inbox` asserts
     // "Journey booked Journey Flow.", a raw first name baked into a
     // notification body at write time, which never passes through
@@ -322,7 +322,7 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto(`/class/${classId}`);
     await expect(page.getByRole('heading', { name: 'Registered students' })).toBeVisible();
-    await expect(page.getByText('Journey s.')).toBeVisible();
+    await expect(page.getByText('Journey S.')).toBeVisible();
   });
 
   test('the booking lands in the inbox and can be marked read', async ({ page, context }) => {
@@ -379,7 +379,7 @@ test.describe('Teacher journey', () => {
     // slow CI runners.
     await expect(page.getByLabel('Walk-in student')).toBeHidden({ timeout: 10_000 });
     await page.reload();
-    await expect(page.getByText('Walkin g.')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Walkin G.')).toBeVisible({ timeout: 10_000 });
 
     // A pending invitee, picked from the merged picker's invitee half —
     // spec §Testing's own case, distinct from both the roster pick above
@@ -416,10 +416,10 @@ test.describe('Teacher journey', () => {
       page.waitForResponse(
         (r) => r.url().includes('/api/registrations/') && r.request().method() === 'PUT',
       ),
-      page.getByRole('button', { name: 'Mark Journey s. as present' }).click(),
+      page.getByRole('button', { name: 'Mark Journey S. as present' }).click(),
     ]);
     await expect(
-      page.getByRole('button', { name: 'Mark Journey s. as no-show' }),
+      page.getByRole('button', { name: 'Mark Journey S. as no-show' }),
     ).toBeVisible();
   });
 
@@ -436,22 +436,22 @@ test.describe('Teacher journey', () => {
     // Attendance survives completion, read-only until the teacher asks to correct it.
     await expect(page.getByRole('heading', { name: 'Attendance' })).toBeVisible();
     await page.getByRole('button', { name: 'Edit attendance' }).click();
-    await expect(page.getByRole('button', { name: 'Mark Journey s. as no-show' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mark Journey S. as no-show' })).toBeVisible();
 
     // Every charged registration starts unpaid, walked-in people included;
     // payment state is text, not a badge.
     await expect(page.getByText('○ Unpaid')).toHaveCount(4);
     await page
-      .getByRole('button', { name: 'Mark paid — Journey s.' })
+      .getByRole('button', { name: 'Mark paid — Journey S.' })
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
     await expect(page.getByText('○ Unpaid')).toHaveCount(3);
 
     // A mis-tap is recoverable: transient Undo restores the record.
-    await page.getByRole('button', { name: 'Undo marking Journey s. as paid' }).click();
+    await page.getByRole('button', { name: 'Undo marking Journey S. as paid' }).click();
     await expect(page.getByText('○ Unpaid')).toHaveCount(4, { timeout: 10_000 });
     await page
-      .getByRole('button', { name: 'Mark paid — Journey s.' })
+      .getByRole('button', { name: 'Mark paid — Journey S.' })
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
   });
@@ -463,12 +463,12 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto(`/class/${classId}`);
 
-    // The walk-in's payment is the unpaid row; the paid row (Journey s.)
+    // The walk-in's payment is the unpaid row; the paid row (Journey S.)
     // offers no reminder — you can't dun someone you've marked as paid.
     await expect(
-      page.getByRole('button', { name: /Send reminder to Journey s\./ }),
+      page.getByRole('button', { name: /Send reminder to Journey S\./ }),
     ).toHaveCount(0);
-    await page.getByRole('button', { name: 'Send reminder to Walkin g.' }).click();
+    await page.getByRole('button', { name: 'Send reminder to Walkin G.' }).click();
     await expect(page.getByText(/Reminded just now/)).toBeVisible();
 
     const reminded = await prisma.payment.findFirst({
@@ -522,7 +522,7 @@ test.describe('Teacher journey', () => {
     // separator or the order — the format stays free to change.
     await expect(
       page.getByRole('button', {
-        name: new RegExp(`Send reminder to Walkin g\\. for .*${slot.startTime}`),
+        name: new RegExp(`Send reminder to Walkin G\\. for .*${slot.startTime}`),
       }),
     ).toBeVisible();
     // The caption from the class-page send above survives the server read.
@@ -546,20 +546,20 @@ test.describe('Teacher journey', () => {
   test('a payment can be marked not charged and put back', async ({ page, context }) => {
     await signInTeacher(context);
     await page.goto('/settings/payments');
-    await page.getByRole('button', { name: /^Not charged — Walkin g\./ }).click();
+    await page.getByRole('button', { name: /^Not charged — Walkin G\./ }).click();
     await expect(page.getByText('⊘ Not charged')).toBeVisible();
 
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Not charged' })).toBeVisible();
 
-    await page.getByRole('button', { name: /Mark unpaid — Walkin g\./ }).click();
+    await page.getByRole('button', { name: /Mark unpaid — Walkin G\./ }).click();
     // Wait for the POST, then reload (see the publish test): the router can
     // drop a post-action refresh commit, so assert server-rendered truth
     // instead of the client's own repaint.
     const unpaid = page.waitForResponse(
       (resp) => resp.url().includes('/unpaid') && resp.ok(),
     );
-    await page.getByRole('button', { name: /Confirm unpaid — Walkin g\./ }).click();
+    await page.getByRole('button', { name: /Confirm unpaid — Walkin G\./ }).click();
     await unpaid;
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Not charged' })).toBeHidden();
