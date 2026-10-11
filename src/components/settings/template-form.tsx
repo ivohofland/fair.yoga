@@ -20,7 +20,12 @@ import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation } from '@/lib/format';
-import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
+import {
+  CANCEL_DEADLINE_OPTIONS,
+  AUTO_CANCEL_OPTIONS,
+  cancelDeadlineHint,
+  autoCancelHint,
+} from '@/lib/class-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
   resumeMessage,
@@ -719,6 +724,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
       <Select
         id="cancelDeadline"
         label="Cancellation deadline"
+        hint={cancelDeadlineHint(form.cancelDeadline)}
         value={form.cancelDeadline}
         onChange={(e) => {
           if (isCancelDeadline(e.target.value)) update('cancelDeadline', e.target.value);
@@ -732,6 +738,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
       <Select
         id="autoCancelCheck"
         label="Auto-cancel check"
+        hint={autoCancelHint(form.autoCancelCheck, form.minStudents)}
         value={form.autoCancelCheck}
         onChange={(e) => {
           if (isAutoCancelCheck(e.target.value)) update('autoCancelCheck', e.target.value);
