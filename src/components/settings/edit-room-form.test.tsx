@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MONEY_MAX } from '@/lib/input-bounds';
 import { EditRoomForm } from './edit-room-form';
 
 /**
@@ -46,6 +47,51 @@ describe('EditRoomForm', () => {
   function renderForm() {
     render(<EditRoomForm currency="EUR" roomId="room-1" teacherRoomId="tr-1" initial={initial} />);
   }
+
+  function setRate(value: string) {
+    fireEvent.change(screen.getByLabelText(/^Rental rate/), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+  }
+
+  function sentRate(): unknown {
+    const [, options] = fetchMock.mock.calls[1] ?? [];
+    return (JSON.parse((options as { body: string }).body) as Record<string, unknown>).rentalRate;
+  }
+
+  it('reads a decimal comma in the rental rate (#844)', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderForm();
+    setRate('4,5');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const [, options] = fetchMock.mock.calls[1] ?? [];
+    expect((JSON.parse((options as { body: string }).body) as Record<string, unknown>).rentalRate).toBe(4.5);
+  });
+
+  it('refuses a grouped rental rate such as 1.000 and sends nothing (#844)', async () => {
+    vi.stubGlobal('fetch', fetchMock);
+    renderForm();
+    setRate('1.000');
+    expect(await screen.findByText('Enter a number for rental rate')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a rental rate above the cap and sends nothing (#844)', async () => {
+    vi.stubGlobal('fetch', fetchMock);
+    renderForm();
+    setRate(String(MONEY_MAX + 1));
+    expect(await screen.findByText('Rental rate cannot exceed 100,000')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends a blank rental rate as 0 (#844)', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderForm();
+    setRate('');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(sentRate()).toBe(0);
+  });
 
   it('shows the fallback and logs when the room refusal body is unreadable', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});

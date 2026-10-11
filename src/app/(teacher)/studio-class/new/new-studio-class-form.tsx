@@ -8,10 +8,11 @@ import type { Currency } from '@prisma/client';
 import type { createStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { currencyLabel } from '@/lib/format';
-import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { parseDecimal } from '@/lib/decimal-input';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PageHeader } from '@/components/layout/page-header';
 
@@ -120,7 +121,7 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
       return;
     }
 
-    const rate = Number(hourlyRate);
+    const rate = parseDecimal(hourlyRate, MONEY_DECIMALS);
     if (!hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
       setError('Enter an hourly rate — 0 if this class is unpaid.');
       return;
@@ -210,7 +211,7 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
         <Input label="Date" type="date" value={date} onChange={updateField(setDate)} />
         <Input label="Start time" type="time" value={startTime} onChange={updateField(setStartTime)} />
         <Input label="Duration (minutes)" type="number" max={DURATION_MAX_MINUTES} value={durationMinutes} onChange={updateField(setDurationMinutes)} />
-        <Input label={`Hourly rate (${currencyLabel(currency)})`} type="number" step="0.01" max={MONEY_MAX} value={hourlyRate} onChange={updateField(setHourlyRate)} />
+        <Input label={`Hourly rate (${currencyLabel(currency)})`} type="text" inputMode="decimal" value={hourlyRate} onChange={updateField(setHourlyRate)} />
 
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 

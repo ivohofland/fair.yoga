@@ -9,8 +9,9 @@ import type { NoneOf } from '@/lib/type-pins';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { parseDecimal } from '@/lib/decimal-input';
 import { currencyLabel } from '@/lib/format';
-import { CAPACITY_MAX, LONG_TEXT_MAX, MONEY_MAX } from '@/lib/input-bounds';
+import { CAPACITY_MAX, LONG_TEXT_MAX, MONEY_DECIMALS, MONEY_MAX } from '@/lib/input-bounds';
 
 interface EditTeacherRoomFormProps {
   teacherRoomId: string;
@@ -60,14 +61,22 @@ export function EditTeacherRoomForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const cap = Number(capacityOverride);
-    const rate = Number(rentalRate);
+    const rate = rentalRate.trim() === '' ? 0 : parseDecimal(rentalRate, MONEY_DECIMALS);
 
     if (!cap || cap <= 0) {
       setError('Capacity must be a positive number');
       return;
     }
-    if (isNaN(rate) || rate < 0) {
+    if (Number.isNaN(rate)) {
+      setError('Enter a number for rental rate');
+      return;
+    }
+    if (rate < 0) {
       setError('Rental rate must be 0 or more');
+      return;
+    }
+    if (rate > MONEY_MAX) {
+      setError(`Rental rate cannot exceed ${MONEY_MAX.toLocaleString('en-US')}`);
       return;
     }
 
@@ -119,9 +128,8 @@ export function EditTeacherRoomForm({
       />
       <Input
         label={`Rental rate (${currencyLabel(currency)})`}
-        type="number"
-        step="0.01"
-        max={MONEY_MAX}
+        type="text"
+        inputMode="decimal"
         value={rentalRate}
         onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }}
       />

@@ -68,7 +68,7 @@ describe('StudioClassEditForm', () => {
     expect(screen.getByLabelText('Date')).toHaveValue('2099-06-01');
     expect(screen.getByLabelText('Start time')).toHaveValue('09:30');
     expect(screen.getByLabelText('Duration (minutes)')).toHaveValue(60);
-    expect(screen.getByLabelText(/Hourly rate/)).toHaveValue(45);
+    expect(screen.getByLabelText(/Hourly rate/)).toHaveValue('45');
   });
 
   it('sends every field it owns when the date may move', async () => {
@@ -122,6 +122,21 @@ describe('StudioClassEditForm', () => {
       durationMinutes: 75,
       hourlyRate: 52.5,
     });
+  });
+
+  it('reads a decimal comma in the hourly rate (#844)', async () => {
+    renderForm();
+    fireEvent.change(screen.getByLabelText(/Hourly rate/), { target: { value: '4,5' } });
+    save();
+    expect((await sentBody()).hourlyRate).toBe(4.5);
+  });
+
+  it('refuses a grouped hourly rate such as 1.000 and sends nothing (#844)', async () => {
+    renderForm();
+    fireEvent.change(screen.getByLabelText(/Hourly rate/), { target: { value: '1.000' } });
+    save();
+    expect(await screen.findByText('Enter an hourly rate — 0 if this class is unpaid.')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('trims the two free-text fields — `min(1)` counts a space', async () => {

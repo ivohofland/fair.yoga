@@ -9,8 +9,9 @@ import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { parseDecimal } from '@/lib/decimal-input';
 import { currencyLabel } from '@/lib/format';
-import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
+import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
@@ -144,7 +145,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       return;
     }
 
-    const rate = Number(form.hourlyRate);
+    const rate = parseDecimal(form.hourlyRate, MONEY_DECIMALS);
     if (!form.hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
       setError('Enter an hourly rate — 0 if this class is unpaid.');
       return;
@@ -426,9 +427,8 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
 
       <Input
         label={`Hourly rate (${currencyLabel(currency)})`}
-        type="number"
-        step="0.01"
-        max={MONEY_MAX}
+        type="text"
+        inputMode="decimal"
         value={form.hourlyRate}
         onChange={(e) => update('hourlyRate', e.target.value)}
       />

@@ -9,8 +9,9 @@ import type { RoomResult } from '@/lib/room-search';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { parseDecimal } from '@/lib/decimal-input';
 import { currencyLabel, formatRoomLocation } from '@/lib/format';
-import { LONG_TEXT_MAX, MONEY_MAX } from '@/lib/input-bounds';
+import { LONG_TEXT_MAX, MONEY_DECIMALS, MONEY_MAX } from '@/lib/input-bounds';
 
 /**
  * #136. This step's enumeration of the teacher-room link it posts. Beside its
@@ -58,7 +59,7 @@ export function RoomSettingsStep({ selectedRoom, currency, onSaved, onBack }: Ro
     e.preventDefault();
 
     const cap = Number(capacityOverride);
-    const rate = Number(rentalRate);
+    const rate = rentalRate.trim() === '' ? 0 : parseDecimal(rentalRate, MONEY_DECIMALS);
 
     if (!cap || cap <= 0) {
       setSettingsError('Capacity must be a positive number');
@@ -68,7 +69,11 @@ export function RoomSettingsStep({ selectedRoom, currency, onSaved, onBack }: Ro
       setSettingsError(`Capacity cannot exceed room maximum (${selectedRoom.maxCapacity})`);
       return;
     }
-    if (isNaN(rate) || rate < 0) {
+    if (Number.isNaN(rate)) {
+      setSettingsError('Enter a number for rental rate');
+      return;
+    }
+    if (rate < 0) {
       setSettingsError('Rental rate must be 0 or more');
       return;
     }
@@ -126,9 +131,8 @@ export function RoomSettingsStep({ selectedRoom, currency, onSaved, onBack }: Ro
         />
         <Input
           label={`Rental rate (${currencyLabel(currency)})`}
-          type="number"
-          step="0.01"
-          max={MONEY_MAX}
+          type="text"
+          inputMode="decimal"
           value={rentalRate}
           onChange={(e) => { setRentalRate(e.target.value); if (settingsError) setSettingsError(''); }}
         />
