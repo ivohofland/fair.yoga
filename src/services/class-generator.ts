@@ -74,8 +74,9 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         maxStudents: template.maxStudents,
         cancelDeadline: template.cancelDeadline,
         autoCancelCheck: template.autoCancelCheck,
-        // Born inside its own check window: the generator is not asking the
-        // sweep to judge a class that was never given the chance to fill.
+        // Inserted inside its own check window, or after its start has passed:
+        // the generator is not asking the sweep to judge a class that was
+        // never given the chance to fill.
         autoCancelDecidedAt: isPastCancelCheck(
           entry,
           template.autoCancelCheck,

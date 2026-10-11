@@ -335,8 +335,8 @@ export async function autoCancelClasses(
   for (const cls of openClasses) {
     try {
       // From the snapshot, an optimisation only: the window is re-checked
-      // from the locked row below, so a stale read here costs a round trip,
-      // never a wrong decision.
+      // from the locked row below, so a stale read here costs a round trip
+      // or delays a judgment by one tick, never a wrong decision.
       if (
         !inCancelWindow(
           cls.calendarEntry,
