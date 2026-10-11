@@ -127,6 +127,18 @@ describe('StudentPushCard', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/account/student-push-card', expect.objectContaining({ method: 'POST' }));
   });
 
+  it('keeps Dismiss enabled and does not refresh when the request throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new Error('offline'));
+    render(<StudentPushCard dismissed={false} vapidPublicKey="KEY" />);
+    const button = screen.getByRole('button', { name: 'Dismiss the notifications card' });
+    fireEvent.click(button);
+    await waitFor(() => expect(error).toHaveBeenCalled());
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(routerRefresh).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it('keeps Dismiss enabled and does not refresh when the server refuses', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue({ ok: false, status: 500 } as never);
