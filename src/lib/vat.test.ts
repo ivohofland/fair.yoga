@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { vatPercentViolation } from './vat';
 
 describe('vatPercentViolation', () => {
-  it.each([0, 9, 21, 8.1, 14.975, 100])('accepts %s', (v) => {
+  it.each([0, 9, 21, 8.1, 1.001, 14.975, 100])('accepts %s', (v) => {
     expect(vatPercentViolation(v)).toBeNull();
   });
   it('refuses a negative rate', () => {
@@ -13,6 +13,9 @@ describe('vatPercentViolation', () => {
   });
   it('refuses four decimals rather than letting the column round them', () => {
     expect(vatPercentViolation(8.1234)).toBe('Use at most 3 decimals for VAT.');
+  });
+  it('refuses a fourth decimal too small for a loose tolerance to see', () => {
+    expect(vatPercentViolation(8.0000000004)).toBe('Use at most 3 decimals for VAT.');
   });
   it('refuses a non-finite number', () => {
     expect(vatPercentViolation(Number.NaN)).toBe('Use at most 3 decimals for VAT.');

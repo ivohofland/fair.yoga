@@ -344,6 +344,13 @@ describe('Teacher.defaultVatPercent (#833)', () => {
     expect(t.defaultVatPercent.toString()).toBe('14.975');
   });
 
+  it.each([[0], [100]])('accepts the boundary %s through PUT', async (value) => {
+    const res = await putTeacher(vatTeacherId, { defaultVatPercent: value }, vatToken);
+    expect(res.status).toBe(200);
+    const t = await prisma.teacher.findUniqueOrThrow({ where: { id: vatTeacherId } });
+    expect(t.defaultVatPercent.toString()).toBe(String(value));
+  });
+
   it.each([[8.1234], [-1], [101], ['9']])('answers 400 for %s and writes nothing', async (value) => {
     await prisma.teacher.update({ where: { id: vatTeacherId }, data: { defaultVatPercent: 21 } });
     const res = await putTeacher(vatTeacherId, { defaultVatPercent: value }, vatToken);
