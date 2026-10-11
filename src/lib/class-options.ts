@@ -37,7 +37,7 @@ export const AUTO_CANCEL_OPTIONS = [
 /** What the "Cancellation deadline" picker means, for the line under it. */
 export function cancelDeadlineHint(value: CancelDeadlineOption): string {
   const label = CANCEL_DEADLINE_OPTIONS.find((o) => o.value === value)?.label ?? value;
-  return `Students can cancel for free until ${label} before the class starts. After that they are still charged their share of the class cost.`;
+  return `Students can cancel for free until ${label} before the class starts. After that, they still pay their share if the class goes ahead.`;
 }
 
 /**
@@ -46,9 +46,9 @@ export function cancelDeadlineHint(value: CancelDeadlineOption): string {
  */
 export function autoCancelHint(value: AutoCancelOption, minStudents: number): string {
   const label = AUTO_CANCEL_OPTIONS.find((o) => o.value === value)?.label ?? value;
-  const lead = `${label.charAt(0).toUpperCase()}${label.slice(1)} the class starts, we check the registrations.`;
+  const lead = `${label.charAt(0).toUpperCase()}${label.slice(1)} the class starts, we check the registrations once.`;
   const outcome = 'the class is cancelled and everyone is notified.';
-  const lateCancellations = ' Late cancellations count, because they still pay.';
+  const lateCancellations = ' Otherwise it goes ahead, even if someone cancels after that. Late cancellations count, because they still pay.';
   if (!Number.isInteger(minStudents) || minStudents < 1) {
     return `${lead} If they are below the minimum number of students, ${outcome}${lateCancellations}`;
   }
