@@ -20,6 +20,7 @@ import {
   type EconomicField,
 } from './class-lifecycle';
 import { autoCancelClasses } from './class-transitions';
+import { redecideAfterMove } from './auto-cancel-decision';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
@@ -2207,6 +2208,19 @@ describe('updateClass (DB)', () => {
       expect(result.ok).toBe(true);
       const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(after.autoCancelDecidedAt).toBeNull();
+    });
+
+    it('redecideAfterMove leaves a booked class\'s decision alone, even from a caller that holds no lock', async () => {
+      const cls = await makeClass(true, 'open');
+      const decidedAt = new Date('2026-01-02T03:04:05.000Z');
+      await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: decidedAt } });
+
+      // The check time of this 2099 class is far ahead, so an unbooked class
+      // would have its marker cleared here.
+      await prisma.$transaction((tx) => redecideAfterMove(tx, cls.id, new Date()));
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt?.toISOString()).toBe(decidedAt.toISOString());
     });
 
     it('clears the decision on a start-time-only move too', async () => {
