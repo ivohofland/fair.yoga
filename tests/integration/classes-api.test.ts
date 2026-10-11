@@ -1210,11 +1210,19 @@ describe('PUT /api/classes/[id]', () => {
     // class would collide with the next one's slot.
     const durationMinutes = before.calendarEntry.durationMinutes - 5;
 
-    const res = await put(ownerToken, lockedClassId, { durationMinutes });
-    expect(res.status).toBe(200);
+    try {
+      const res = await put(ownerToken, lockedClassId, { durationMinutes });
+      expect(res.status).toBe(200);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
-    expect(after.calendarEntry.durationMinutes).toBe(durationMinutes);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+      expect(after.calendarEntry.durationMinutes).toBe(durationMinutes);
+    } finally {
+      // The fixture is shared; later tests read it as it was built.
+      await prisma.calendarEntry.update({
+        where: { id: before.calendarEntryId },
+        data: { durationMinutes: before.calendarEntry.durationMinutes },
+      });
+    }
   });
 
   it("403s another teacher's cookie on a locked class with an economic body — proves the ownership guard fires before the lock check", async () => {
