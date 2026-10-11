@@ -44,9 +44,19 @@ Measured against `main` at `021aeea6`.
 
 ## Decisions
 
-- **Store:** `Student.pushCardDismissed Boolean @default(false)`. Students have
+- **Store:** `Student.dismissedPushCard Boolean @default(false)`. Students have
   no other onboarding steps, so an enum array would be a list of one; a
-  boolean matches the row's other preference columns.
+  boolean matches the row's other preference columns. **The name must not
+  start with `push`:** `StudentPushColumn` (`src/lib/push-policy.ts`) is
+  `Extract<keyof Student, \`push${string}\`>`, so a `push…` column would join
+  the push preferences and break every tether built on them (the group map,
+  GDPR erasure and export, the notifications form).
+- **GDPR:** the flag is neither exported nor reset on erasure. It records a UI
+  answer, not something about the person, and an erased row has no session to
+  read it.
+- **Two-hat accounts:** `/start` sends them to `/schedule`, so they meet the
+  teacher card first; the student card appears if they open `/bookings`. Turning
+  push on from either card makes the device `on`, which retires both.
 - **Route:** `POST /api/account/student-push-card`, `requireStudent`, no body.
   A second post answers `respondUnchanged` (the "already done answers 200"
   rule). The write is scoped to `deletedAt: null`, as the student self-update
@@ -76,7 +86,9 @@ Wraps `PushOfferCard` with:
 - **Copy:** *A heads-up when a waitlist spot opens for you or a class you booked
   changes. Booking emails still come as they do now — you choose which messages
   in Settings.* — "Settings" links to `/account/notifications`. The two named
-  groups are the student push groups on by default (`pushWaitlist`,
+  groups are the student push groups that are on by default — waitlist
+  promotions and spots, and class cancellations (`STUDENT_PUSH_GROUP`), so the
+  copy names a cancellation rather than any change (`pushWaitlist`,
   `pushClassChanges`).
 - **Dismiss:** a quiet button that POSTs to `/api/account/student-push-card`
   and `router.refresh()`es on success; on failure it re-enables and logs, as
@@ -97,7 +109,7 @@ the Push card one; `docs/data-model.md`'s Student (core) table gets the column.
 - **Integration**: the route stores the flag, answers `unchanged` on a second
   post, refuses a teacher-only session with 403, and — for one account with
   both hats — leaves `Teacher.skippedOnboarding` untouched, while a teacher
-  `push` skip leaves `pushCardDismissed` false.
+  `push` skip leaves `dismissedPushCard` false.
 - Each guard is broken once and its failure recorded (plan).
 
 ## Not in scope
