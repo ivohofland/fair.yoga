@@ -1,5 +1,7 @@
 # Default VAT % Implementation Plan (#833)
 
+> Written before implementation; the code is authoritative where they differ.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A teacher can store a default VAT percentage in Settings → Profile, next to currency, that #819 will later use to pre-fill each new class and class template.
@@ -110,8 +112,8 @@ export function vatPercentViolation(value: number): string | null {
   if (value < 0) return "VAT can't be negative.";
   if (value > VAT_PERCENT_MAX) return `Keep VAT to ${VAT_PERCENT_MAX}% or less.`;
   const scaled = value * SCALE;
-  // Tolerance absorbs binary representation: 14.975 * 1000 is 14974.999999999998.
-  if (!Number.isFinite(scaled) || Math.abs(scaled - Math.round(scaled)) > 1e-6) {
+  // Tolerance absorbs binary representation: 1.001 * 1000 is 1000.9999999999999.
+  if (!Number.isFinite(scaled) || Math.abs(scaled - Math.round(scaled)) > 1e-9) {
     return `Use at most ${VAT_PERCENT_DECIMALS} decimals for VAT.`;
   }
   return null;
