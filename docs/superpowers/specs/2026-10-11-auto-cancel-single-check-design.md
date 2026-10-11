@@ -77,8 +77,8 @@ the next tick, as it would have been today.
    - The class generator (`class-generator.ts`), which inserts `open` rows
      directly. A new template's first candidate can fall inside its window, and
      the generator may insert a class whose start has already passed.
-   - `updateClass` moving `date` or `startTime` on an undecided open class so
-     that its check time is now behind it.
+   - `updateClass` moving `date` or `startTime` on an open class with no
+     registrations (see "Edits after the decision").
 
    `POST /api/classes` creates `draft` rows and is not a writer of this state.
 
@@ -96,10 +96,36 @@ template they are editable, but a template is a stamp and never touches classes
 it already made. So the only edit that moves a class's check time is a schedule
 edit.
 
-A decided class stays decided. Moving it later does not clear the marker: reopening the decision would bring back the very
-late cancellation this issue removes. An **undecided** class follows its
-current schedule, because its check time is computed from the live row on every
-tick.
+**A class with registrations cannot be moved** (decided in PR review). `date`
+and `startTime` join the `settingsLocked` freeze that already covers
+`ECONOMIC_FIELDS`: from the first registration, `updateClass` refuses them with
+409 `SETTINGS_LOCKED`, and the edit form disables both fields. Both settings
+are measured from the start, so moving a booked class would move every
+student's free-cancel deadline and leave a decided class undecided in fact —
+everyone could cancel free and nothing would judge the class again. A teacher
+who needs another time cancels the class (students are told) and creates a new
+one. `durationMinutes` stays editable: it moves neither deadline.
+
+A class with no registrations can still be moved. The move re-decides it: if
+the new check time has passed, the class is stamped (the teacher chose to run
+it inside its window); if it is still ahead, the marker is cleared and the
+sweep judges the class at its new check time. An undecided class follows its
+current schedule, because its check time is computed from the live row on
+every tick.
+
+## Pricing below the minimum
+
+Auto-cancel used to guarantee that a class at completion had at least its
+minimum of payers, and the booking page's price ceiling
+(`estimateTierPrices`, `src/lib/tier-estimates.ts`) is built on that: it pads
+the pool to `minStudents` with median-tier students. A class can now complete
+below its minimum — mainly one published inside its own check window, rarely
+one that lost payers to free cancellations after its check. **`completeClass`
+prices such a class as if it had its minimum** (decided in PR review), padding
+the charged tiers with `DEFAULT_INCOME_TIER` up to `minStudents` exactly as the
+estimate does. Each real student pays the share the pricing engine gives them in
+that padded pool, so no one pays more than the ceiling they were shown; the
+padding seats bill no one, and the teacher absorbs the shortfall.
 
 ## Copy and docs
 
