@@ -1191,6 +1191,32 @@ describe('PUT /api/classes/[id]', () => {
     expect(after.maxStudents).toBe(before.maxStudents);
   });
 
+  it.each([
+    ['date', { date: '2099-03-09' }],
+    ['start time', { startTime: '18:30' }],
+  ])('locked class: a %s edit is refused with SETTINGS_LOCKED and the class does not move (#836)', async (_label, body) => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+
+    await expectRefusal(await put(ownerToken, lockedClassId, body), 'SETTINGS_LOCKED');
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+    expect(after.calendarEntry.date.toISOString()).toBe(before.calendarEntry.date.toISOString());
+    expect(after.calendarEntry.startTime.toISOString()).toBe(before.calendarEntry.startTime.toISOString());
+  });
+
+  it('locked class: a duration edit still succeeds (#836)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+    // Shorter, not longer: the fixtures sit 15 minutes apart, so a longer
+    // class would collide with the next one's slot.
+    const durationMinutes = before.calendarEntry.durationMinutes - 5;
+
+    const res = await put(ownerToken, lockedClassId, { durationMinutes });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
+    expect(after.calendarEntry.durationMinutes).toBe(durationMinutes);
+  });
+
   it("403s another teacher's cookie on a locked class with an economic body — proves the ownership guard fires before the lock check", async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
 

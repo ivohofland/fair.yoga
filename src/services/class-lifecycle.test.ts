@@ -1935,6 +1935,56 @@ describe('updateClass (DB)', () => {
     expect(Number(stored.roomCost)).toBe(35);
   });
 
+  describe('a booked class cannot be moved (#836)', () => {
+    it.each([
+      ['date', { date: new Date('2099-03-09') }, ['date']],
+      ['startTime', { startTime: hhmmToTime('18:30') }, ['startTime']],
+      ['both', { date: new Date('2099-03-09'), startTime: hhmmToTime('18:30') }, ['date', 'startTime']],
+    ] as const)('refuses a %s edit on a locked class as locked, and writes nothing', async (_label, edit, fields) => {
+      const cls = await makeClass(true, 'open');
+
+      const result = await updateClass(prisma, cls.id, edit);
+      expect(result).toEqual({ ok: false, reason: 'locked', fields });
+
+      const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(stored.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
+      expect(timeToHHmm(stored.calendarEntry.startTime)).toBe(timeToHHmm(cls.calendarEntry.startTime));
+    });
+
+    it('refuses a resend of the stored date and start time, as the economics lock does', async () => {
+      const cls = await makeClass(true, 'open');
+
+      const result = await updateClass(prisma, cls.id, {
+        date: cls.calendarEntry.date,
+        startTime: cls.calendarEntry.startTime,
+      });
+      expect(result).toEqual({ ok: false, reason: 'locked', fields: ['date', 'startTime'] });
+    });
+
+    it('lists the economic fields before the schedule ones in one refusal', async () => {
+      const cls = await makeClass(true, 'open');
+
+      const result = await updateClass(prisma, cls.id, { date: new Date('2099-03-09'), roomCost: 999 });
+      expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost', 'date'] });
+    });
+
+    it('still lets a locked class change its duration, type and description', async () => {
+      const cls = await makeClass(true, 'open');
+
+      const result = await updateClass(prisma, cls.id, {
+        durationMinutes: 75,
+        classType: 'Yin',
+        description: 'Longer today',
+      });
+      expect(result.ok).toBe(true);
+
+      const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(stored.calendarEntry.durationMinutes).toBe(75);
+      expect(stored.calendarEntry.classType).toBe('Yin');
+      expect(stored.description).toBe('Longer today');
+    });
+  });
+
   it('returns no_fields for an empty body', async () => {
     const cls = await makeClass(false);
 
@@ -2084,16 +2134,59 @@ describe('updateClass (DB)', () => {
       expect(after.autoCancelDecidedAt).not.toBeNull();
     });
 
-    it('leaves a decided class on its original instant when it is moved a week later', async () => {
+    it('clears the decision when an unbooked decided class is moved to a check time still ahead', async () => {
       const cls = await makeClass(false, 'open');
-      const decidedAt = new Date('2026-01-02T03:04:05.000Z');
-      await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: decidedAt } });
+      await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: new Date('2026-01-02T03:04:05.000Z') } });
       const { date, startTime } = wallSlotAt(new Date(Date.now() + 7 * 24 * 60 * MINUTE), 'Europe/Amsterdam');
 
       const result = await updateClass(prisma, cls.id, { date, startTime });
       expect(result.ok).toBe(true);
       const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).toBeNull();
+    });
+
+    it('clears the decision on a start-time-only move too', async () => {
+      const cls = await makeClass(false, 'open');
+      await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: new Date('2026-01-02T03:04:05.000Z') } });
+
+      const result = await updateClass(prisma, cls.id, { startTime: hhmmToTime('18:30') });
+      expect(result.ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).toBeNull();
+    });
+
+    it('keeps a decided class decided when it is moved within its check window', async () => {
+      const cls = await makeClass(false, 'open');
+      await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: new Date('2026-01-02T03:04:05.000Z') } });
+      // Short and early, so it shares the window with the 90-minute slot the
+      // stamp test above takes without overlapping it.
+      const { date, startTime } = wallSlotAt(new Date(Date.now() + 20 * MINUTE), 'Europe/Amsterdam');
+
+      expect((await updateClass(prisma, cls.id, { date, startTime, durationMinutes: 15 })).ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).not.toBeNull();
+    });
+
+    it.each([
+      ['duration', { durationMinutes: 75 }],
+      ['class type', { classType: 'Yin' }],
+    ] as const)('leaves the decision as it was on a %s-only edit', async (_label, edit) => {
+      const cls = await makeClass(false, 'open');
+      const decidedAt = new Date('2026-01-02T03:04:05.000Z');
+      await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: decidedAt } });
+
+      expect((await updateClass(prisma, cls.id, edit)).ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(after.autoCancelDecidedAt?.toISOString()).toBe(decidedAt.toISOString());
+    });
+
+    it('leaves a draft undecided when it is moved inside its check window', async () => {
+      const cls = await makeClass(false, 'draft');
+      const { date, startTime } = wallSlotAt(new Date(Date.now() + 50 * MINUTE), 'Europe/Amsterdam');
+
+      expect((await updateClass(prisma, cls.id, { date, startTime, durationMinutes: 15 })).ok).toBe(true);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.autoCancelDecidedAt).toBeNull();
     });
 
     it('does not stamp an undecided class moved to a start days ahead', async () => {
@@ -2470,6 +2563,9 @@ describe('updateClass — the count === 0 branches', () => {
 
   function stubDb(opts: {
     settingsLocked: boolean;
+    // What a read under the lock sees; defaults to `settingsLocked`. Set it
+    // true to stage a first registration landing after the opening read.
+    settingsLockedAfter?: boolean;
     rowSurvives: boolean;
     // Reported by updateClass's opening read. Defaults to a non-terminal value
     // so every pre-#247 case in this block behaves exactly as it did.
@@ -2538,6 +2634,9 @@ describe('updateClass — the count === 0 branches', () => {
     const readEconomics = async (args: FindFirstArgs) => {
       reads += 1;
       findFirstCalls.push(args);
+      // #836's booked-since read asks for a locked row; this stub's row is
+      // locked only when the fixture says so.
+      if (args.where.settingsLocked === true && !(opts.settingsLockedAfter ?? opts.settingsLocked)) return null;
       return opts.rowSurvives
         ? { roomCost: 35, minRate: 15, targetRate: 25, minStudents: 4, maxStudents: 12 }
         : null;
@@ -2711,6 +2810,18 @@ describe('updateClass — the count === 0 branches', () => {
       classCompletedAt: null,
       NOT: { kind: 'regular', cancelledAt: { not: null } },
     });
+  });
+
+  it('reports locked when a first booking lands between the read and a schedule-only write (#836)', async () => {
+    const stub = stubDb({ settingsLocked: false, settingsLockedAfter: true, rowSurvives: true });
+    const { db, updateManyCalls, entryUpdateManyCalls } = stub;
+
+    const result = await updateClass(db, 'stub-class', { date: new Date('2099-07-01') });
+    expect(result).toEqual({ ok: false, reason: 'locked', fields: ['date'] });
+
+    // Answered under the lock, before either row was written.
+    expect(updateManyCalls).toHaveLength(0);
+    expect(entryUpdateManyCalls).toHaveLength(0);
   });
 
   it('constrains the write to non-terminal rows under both filter shapes', async () => {

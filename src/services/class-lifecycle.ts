@@ -13,7 +13,7 @@ import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus } from '@pri
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
-import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
+import { ECONOMIC_FIELDS, LOCKED_FIELDS, type EconomicField, type LockedField } from '@/lib/class-fields';
 import { economicsViolations, type EconomicsViolation } from '@/lib/class-economics';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { lockClassRow } from '@/lib/db-locks';
@@ -36,9 +36,9 @@ import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { log } from '@/lib/log';
-import { stampIfPastCancelCheck } from './auto-cancel-decision';
+import { redecideAfterMove, stampIfPastCancelCheck } from './auto-cancel-decision';
 
-export { ECONOMIC_FIELDS, type EconomicField };
+export { ECONOMIC_FIELDS, LOCKED_FIELDS, type EconomicField, type LockedField };
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -1269,7 +1269,7 @@ class UpdateClassRefusal extends Error {
  * Why an update did or did not happen. Callers own the user-facing wording;
  * this type owns the distinction.
  *
- * `locked` carries a NON-EMPTY tuple of the economic fields the request sent.
+ * `locked` carries a NON-EMPTY tuple of the `LOCKED_FIELDS` the request sent.
  * The bug this type replaced (#72) reported "locked" for a request that sent
  * none — the compiler now refuses to construct that.
  *
@@ -1295,7 +1295,7 @@ class UpdateClassRefusal extends Error {
 export type UpdateClassResult =
   | { ok: true; cls: ClassWithEntry }
   | { ok: false; reason: 'not_found' }
-  | { ok: false; reason: 'locked'; fields: readonly [EconomicField, ...EconomicField[]] }
+  | { ok: false; reason: 'locked'; fields: readonly [LockedField, ...LockedField[]] }
   | { ok: false; reason: 'terminal'; state: TerminalClassState }
   | { ok: false; reason: 'no_fields' }
   | {
@@ -1320,8 +1320,8 @@ export type UpdateClassResult =
  * scheduling rule and the cross-field economics.
  *
  * The FREEZES gate on different events and cover different things. The
- * ECONOMIC freeze (`settingsLocked`) starts at the first registration and
- * covers `ECONOMIC_FIELDS`. The TERMINAL freeze (#247) starts when the class
+ * BOOKING freeze (`settingsLocked`) starts at the first registration and
+ * covers `LOCKED_FIELDS`: the economics, and since #836 the schedule. The TERMINAL freeze (#247) starts when the class
  * completes or is cancelled and covers EVERY field — it is the class that is
  * frozen, not a list of columns. Since #327 its two halves are read from two
  * different rows (`Class.status`, `CalendarEntry.cancelledAt`), which is what
@@ -1567,16 +1567,23 @@ export async function updateClass(
     }
   }
 
-  // Destructured rather than length-checked, so the non-empty tuple below is
-  // proven to the compiler (via noUncheckedIndexedAccess) instead of asserted.
+  // Destructured rather than length-checked, so the non-empty tuples below
+  // are proven to the compiler (via noUncheckedIndexedAccess) instead of
+  // asserted. A locked field counts as sent when its value is defined, even if
+  // it equals the stored one: the form strips locked fields, so a resend is a
+  // client that does not know the class is booked.
   const [firstEconomic, ...otherEconomic] = ECONOMIC_FIELDS.filter(
     (f) => data[f] !== undefined,
   );
   const sentEconomic: readonly [EconomicField, ...EconomicField[]] | null =
     firstEconomic === undefined ? null : [firstEconomic, ...otherEconomic];
+  const [firstLocked, ...otherLocked] = LOCKED_FIELDS.filter((f) => data[f] !== undefined);
+  const sentLocked: readonly [LockedField, ...LockedField[]] | null =
+    firstLocked === undefined ? null : [firstLocked, ...otherLocked];
+  const movesSchedule = data.date !== undefined || data.startTime !== undefined;
 
-  if (cls.settingsLocked && sentEconomic !== null) {
-    return { ok: false, reason: 'locked', fields: sentEconomic };
+  if (cls.settingsLocked && sentLocked !== null) {
+    return { ok: false, reason: 'locked', fields: sentLocked };
   }
 
   // The split, by destructuring rather than by iterating a name list, so the
@@ -1632,8 +1639,29 @@ export async function updateClass(
         id: classId,
         status: { notIn: [...TERMINAL_CLASS_STATUSES] },
         calendarEntry: { cancelledAt: null },
-        ...(sentEconomic !== null ? { settingsLocked: false } : {}),
+        ...(sentLocked !== null ? { settingsLocked: false } : {}),
       } satisfies Prisma.ClassWhereInput;
+
+      // A schedule-only edit writes no `Class` row, so the CAS below never
+      // runs for it; this read is what catches a first registration landing
+      // since the opening read. Under the lock, which `POST /api/registrations`
+      // also takes before it locks settings. Live rows only: a class that
+      // froze in the meantime is left to the CASes below, so it keeps its
+      // `terminal` or `frozen` answer rather than the narrower `locked`.
+      if (movesSchedule && sentLocked !== null) {
+        const bookedSince = await tx.class.findFirst({
+          where: {
+            id: classId,
+            settingsLocked: true,
+            status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+            calendarEntry: { cancelledAt: null },
+          },
+          select: { id: true },
+        });
+        if (bookedSince !== null) {
+          throw new UpdateClassRefusal({ ok: false, reason: 'locked', fields: sentLocked });
+        }
+      }
 
       // The cross-field economics are checked on the row the write would
       // leave, read under the lock just taken, and BEFORE the write: the
@@ -1671,7 +1699,7 @@ export async function updateClass(
       if (hasClassEdit) {
         const written = await tx.class.updateMany({ where: casWhere, data: classFields });
         if (written.count !== 1) {
-          throw new UpdateClassRefusal(await explainClassCasMiss(tx, classId, sentEconomic));
+          throw new UpdateClassRefusal(await explainClassCasMiss(tx, classId, sentLocked));
         }
       }
 
@@ -1694,10 +1722,10 @@ export async function updateClass(
         }
       }
 
-      // #836. A schedule edit that lands the start inside the check window is
-      // the teacher choosing to run the class. Already-decided classes keep
-      // their original instant: the stamp only writes an undecided one.
-      if (hasEntryEdit) await stampIfPastCancelCheck(tx, classId, new Date());
+      // #836. Moving the start moves the check time, so the move re-decides
+      // the class: `redecideAfterMove` has the rule. Reachable only before
+      // the first registration, since `settingsLocked` freezes both fields.
+      if (movesSchedule) await redecideAfterMove(tx, classId, new Date());
 
       // Re-read under the lock this transaction still holds, so what comes
       // back cannot be a version another writer produced after the write.
@@ -1759,7 +1787,7 @@ export async function updateClass(
 async function explainClassCasMiss(
   tx: Prisma.TransactionClient,
   classId: string,
-  sentEconomic: readonly EconomicField[] | null,
+  sentLocked: readonly LockedField[] | null,
 ): Promise<UpdateClassResult> {
   // Every filter shape constrains `id`, so a deleted row explains a zero count
   // under any of them — find out which happened rather than assuming. #72 was
@@ -1776,7 +1804,7 @@ async function explainClassCasMiss(
   // The class froze between the opening read and the write — the race the CAS
   // exists to lose. This branch is NOT optional cleanup: without it a
   // `description`-only edit on a completed class reaches the throw below (the
-  // row exists, and `description` is not economic, so `sentEconomic` is null)
+  // row exists, and `description` is not locked, so `sentLocked` is null)
   // and `withErrorHandler` answers 500 — for the single most likely request
   // #247 is about.
   const frozenState = frozenStateOf(stillExists.status, stillExists.calendarEntry.cancelledAt);
@@ -1784,8 +1812,8 @@ async function explainClassCasMiss(
 
   // The row survives and is live, so the only other conjunct that can have
   // failed is `settingsLocked: false` — which is only ever in the filter when
-  // economic fields were sent.
-  const [firstField, ...otherFields] = sentEconomic ?? [];
+  // locked fields were sent.
+  const [firstField, ...otherFields] = sentLocked ?? [];
   if (firstField !== undefined) {
     return { ok: false, reason: 'locked', fields: [firstField, ...otherFields] };
   }
@@ -1795,7 +1823,7 @@ async function explainClassCasMiss(
   // value, so Prisma issues a real UPDATE, and every conjunct that UPDATE can
   // fail on has just been re-read — the row exists, it is neither completed
   // nor cancelled, and `settingsLocked: false` is only ever in the filter when
-  // economic fields were sent. Loud rather than silently returning a
+  // locked fields were sent. Loud rather than silently returning a
   // plausible-but-wrong reason.
   throw new UpdateClassInvariantError(
     `updateClass: class ${classId} matched no rows but still exists`,

@@ -96,14 +96,29 @@ describe('ClassEditForm', () => {
    * differ. It would be testing the mechanism rather than what is sent, which
    * is why this file does not.
    */
-  it('omits the economic fields when settings are locked', async () => {
+  it('omits the economic fields and the schedule when settings are locked', async () => {
     const body = await saveWith(true);
     expect(Object.keys(body).sort()).toEqual([
-      'classType', 'date', 'description', 'durationMinutes', 'startTime',
+      'classType', 'description', 'durationMinutes',
     ]);
-    for (const f of ['roomCost', 'minRate', 'targetRate', 'minStudents', 'maxStudents']) {
+    for (const f of ['roomCost', 'minRate', 'targetRate', 'minStudents', 'maxStudents', 'date', 'startTime']) {
       expect(body).not.toHaveProperty(f);
     }
+  });
+
+  it('disables the date and start time once booked, and says how to change the time (#836)', () => {
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
+    expect(screen.getByLabelText('Date')).toBeDisabled();
+    expect(screen.getByLabelText('Start time')).toBeDisabled();
+    expect(screen.getByLabelText('Duration (minutes)')).not.toBeDisabled();
+    expect(screen.getByText(/cancel it and create a new one/)).toBeInTheDocument();
+  });
+
+  it('leaves the date and start time editable while unbooked', () => {
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    expect(screen.getByLabelText('Date')).not.toBeDisabled();
+    expect(screen.getByLabelText('Start time')).not.toBeDisabled();
+    expect(screen.queryByText(/cancel it and create a new one/)).not.toBeInTheDocument();
   });
 
   /**
@@ -155,18 +170,17 @@ describe('ClassEditForm', () => {
    * order (class type, then date, then start time) before the request ever
    * leaves, with this form's own prose.
    *
-   * Checked regardless of `settingsLocked`: these three are DETAILS, always
-   * editable and always sent regardless of lock state (see the file-level
-   * comment above the component), unlike the five economic fields the block
-   * below strips when locked. The final case pins exactly that — clearing
-   * start time with `settingsLocked={true}` still refuses, which a guard
-   * placed inside the unlocked branch would fail to do.
+   * Class type is a DETAIL, checked and sent at any lock state. Date and
+   * start time are checked only while unlocked: once booked they are
+   * disabled and stripped from the payload (#836). The final case pins the
+   * class-type check under `settingsLocked={true}`, which a guard placed
+   * inside the unlocked branch would fail to do.
    */
   it.each([
     ['class type', 'Class type', '   ', false, /^Enter a class type$/],
     ['date', 'Date', '', false, /^Select a date$/],
     ['start time', 'Start time', '', false, /^Enter a start time$/],
-    ['start time, settings locked', 'Start time', '', true, /^Enter a start time$/],
+    ['class type, settings locked', 'Class type', '   ', true, /^Enter a class type$/],
   ] as const)(
     'refuses a cleared %s before any request, with product copy',
     async (_label, fieldName, clearedValue, settingsLocked, copy) => {

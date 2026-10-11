@@ -19,3 +19,18 @@ export const ECONOMIC_FIELDS = Object.freeze([
 ] as const);
 
 export type EconomicField = (typeof ECONOMIC_FIELDS)[number];
+
+/**
+ * The schedule fields that become immutable at the same moment (#836). A
+ * class's free-cancel deadline and auto-cancel check are both measured from
+ * its start, so moving a booked class would move every student's deadline
+ * under them.
+ */
+export const SCHEDULE_LOCKED_FIELDS = Object.freeze(['date', 'startTime'] as const);
+
+export type ScheduleLockedField = (typeof SCHEDULE_LOCKED_FIELDS)[number];
+
+/** Everything `settingsLocked` freezes: the economics, then the schedule. */
+export const LOCKED_FIELDS = Object.freeze([...ECONOMIC_FIELDS, ...SCHEDULE_LOCKED_FIELDS] as const);
+
+export type LockedField = (typeof LOCKED_FIELDS)[number];
