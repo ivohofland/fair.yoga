@@ -9,7 +9,7 @@
  */
 
 import type { AutoCancelCheck, PrismaClient } from '@prisma/client';
-import { completeClass } from './class-lifecycle';
+import { completeClass, CHARGED_STATUSES } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt } from '@/lib/finish-window';
@@ -55,9 +55,8 @@ export function cancelCandidateDates(now: Date): { from: Date; to: Date } {
 
 /** Whether `at` falls inside a class's auto-cancel window: past the check
  * time (`isPastCancelCheck` is the one spelling of that), before the start.
- * Shared by the sweep's pre-filter and the decision under the lock, for the same reason the status set they filter on is named
- * once (`@/lib/registration-status`) — two spellings of one window is how a
- * stale-snapshot bug comes back.
+ * Shared by the sweep's pre-filter and the decision under the lock: two
+ * spellings of one window is how a stale-snapshot bug comes back.
  *
  * Two arguments rather than one row since #327: the window is computed from
  * `date`/`startTime` on the `CalendarEntry` and `autoCancelCheck` on the
@@ -260,16 +259,16 @@ export async function autoTransitionToInProgress(
 // ---------------------------------------------------------------------------
 
 /**
- * One page of `autoCancelClasses`'s snapshot: open, live classes stored on a
- * date in `[from, to]`, after `afterId` in id order, each with its count of
- * active registrations.
+ * One page of `autoCancelClasses`'s snapshot: open, live, undecided classes
+ * stored on a date in `[from, to]`, after `afterId` in id order. It reads no
+ * registrations: the count that decides is taken under the lock.
  *
  * Windowed by `cancelCandidateDates` because only a class starting within
  * `MAX_CANCEL_CHECK_HOURS` can be cancelled, and paged because the
  * `calendarEntry` relation load grows with the parent set — see
  * `docs/technical-architecture.md` ("Relation loads over platform-wide sets").
  */
-async function readCancelCandidatePage(
+function readCancelCandidatePage(
   db: PrismaClient,
   from: Date,
   to: Date,
@@ -278,10 +277,13 @@ async function readCancelCandidatePage(
 ) {
   // `cancelledAt: null` beside the status (#327): a cancelled class keeps its
   // `open` status, so without it this sweep would re-cancel — and re-notify —
-  // classes a teacher has already called off.
-  const page = await db.class.findMany({
+  // classes a teacher has already called off. `autoCancelDecidedAt: null`
+  // because a class is judged once: one stamped by an earlier tick, or by a
+  // teacher's write that put it past its check, is never judged again.
+  return db.class.findMany({
     where: {
       status: 'open',
+      autoCancelDecidedAt: null,
       calendarEntry: { cancelledAt: null, date: { gte: from, lte: to } },
       ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
     },
@@ -293,39 +295,15 @@ async function readCancelCandidatePage(
       },
     },
   });
-  // A per-page `groupBy` over the page's ids, and it feeds a PRE-FILTER and
-  // nothing else — see the `continue` in `autoCancelClasses`. A count rather
-  // than loaded registration rows: the recipient list is read inside the
-  // transaction under the lock, and having no `studentId`s here at all is what
-  // stops a future reader rebuilding it from the snapshot without noticing.
-  //
-  // The status filter is load-bearing, not tidiness. An UNfiltered count would
-  // be wrong rather than merely coarse: a class whose registrations are all
-  // cancelled would count above its minimum and never be swept again. The
-  // filter is `ACTIVE_REGISTRATION_STATUSES`, the constant the authoritative
-  // count under the lock also uses. The two must answer the same question, or
-  // the pre-filter skips classes the locked check would have cancelled.
-  const counts =
-    page.length === 0
-      ? []
-      : await db.registration.groupBy({
-          by: ['classId'],
-          where: {
-            classId: { in: page.map((c) => c.id) },
-            status: { in: [...ACTIVE_REGISTRATION_STATUSES] },
-          },
-          _count: { _all: true },
-        });
-  const active = new Map(counts.map((c) => [c.classId, c._count._all]));
-  return page.map((c) => ({ ...c, activeRegistrations: active.get(c.id) ?? 0 }));
 }
 
 type CancelCandidate = Awaited<ReturnType<typeof readCancelCandidatePage>>[number];
 
 /**
- * Finds open classes within their auto-cancel check window and cancels
- * them if registered students are below min_students.
- * Creates notifications for affected students.
+ * Judges each open, undecided class once, at its check time: cancels it when
+ * its charged registrations are below `minStudents`, and stamps
+ * `autoCancelDecidedAt` either way, so it is never judged again. Creates
+ * notifications for affected students when it cancels.
  *
  * Each class gets its own `db.$transaction`, so each also gets its own
  * `lockClassRow` wait and its own Prisma-default transaction budget — not a
@@ -334,13 +312,12 @@ type CancelCandidate = Awaited<ReturnType<typeof readCancelCandidatePage>>[numbe
  * transaction — one ordered statement through `lockClassRowsOrdered` rather
  * than a loop (#216/#182 made it one statement, #237 moved it into the shared
  * helper), under a flat `{ timeout: 20_000 }` rather than a budget sized from
- * a count (#240 removed the sizing term). An earlier version of this sentence
- * described both the loop and the sizing, and outlived both. The contrast is
- * what survives them and is the reason for this paragraph: `lock_timeout` is
- * armed per lock ACQUISITION, so that single statement's waits still
- * accumulate across N contended rows inside one budget. Nothing here
- * accumulates that way, so a slow lock wait on one class costs only that
- * class's own transaction, not the ones before or after it in this loop.
+ * a count (#240 removed the sizing term). The contrast is the reason for
+ * this paragraph: `lock_timeout` is armed per lock ACQUISITION, so that
+ * single statement's waits still accumulate across N contended rows inside
+ * one budget. Nothing here accumulates that way, so a slow lock wait on one
+ * class costs only that class's own transaction, not the ones before or after
+ * it in this loop.
  */
 export async function autoCancelClasses(
   db: PrismaClient,
@@ -357,27 +334,9 @@ export async function autoCancelClasses(
 
   for (const cls of openClasses) {
     try {
-      // Two pre-filters, both from this snapshot, both optimisations only —
-      // the same shape `updateClass` (`class-lifecycle.ts`) documents for its
-      // own double check: "Deleting the first check would cost round trips,
-      // not correctness."
-      //
-      // Removing them was not free. Without a pre-filter this sweep opens a
-      // transaction, issues a `SET LOCAL` and takes a `FOR UPDATE` on EVERY
-      // in-window open class every 60 seconds, including the healthy majority
-      // that will never be cancelled — and every concurrent registration on
-      // one of those classes queues behind a lock taken purely to confirm
-      // nothing needed doing. On a single 2GB VPS with one connection pool
-      // (`CLAUDE.md`: "VPS budget") that is not a rounding error.
-      //
-      // What a stale pre-filter can cost, by contrast, is one tick: the
-      // authoritative check is inside the lock, the window spans hours, and
-      // the sweep runs every minute — so a class that drops below its minimum
-      // between this read and the next sweep is cancelled on the next sweep
-      // instead of this one. A pre-filter can only ever DELAY a cancellation,
-      // never cause a wrong one, because nothing here cancels: it only
-      // decides whether to look properly.
-      if (cls.activeRegistrations >= cls.minStudents) continue;
+      // From the snapshot, an optimisation only: the window is re-checked
+      // from the locked row below, so a stale read here costs a round trip,
+      // never a wrong decision.
       if (
         !inCancelWindow(
           cls.calendarEntry,
@@ -407,7 +366,7 @@ export async function autoCancelClasses(
         // transaction starts is finished (committed or rolled back) before
         // this count runs; one arriving after this count has been read
         // blocks here until this transaction ends — it cannot land between
-        // the count and the update below either way. Without this lock,
+        // the count and the write below either way. Without this lock,
         // nothing stops it doing exactly that: reading the count first is
         // not enough by itself, only serializing every writer against it
         // is.
@@ -416,51 +375,39 @@ export async function autoCancelClasses(
         // (attendance) and `DELETE /api/registrations/[id]` (cancel) both
         // write `Registration.status` with no `Class` lock at all.
         //
-        // `DELETE` is harmless here, and the direction is why: it only ever
-        // writes `cancelled` or `late_cancel`, both OUTSIDE the set this
-        // count filters on, so a racing cancel makes the count too HIGH and
-        // the class merely survives a sweep it might have been cancelled in
-        // — a one-tick delay, the same cost as a stale pre-filter above.
+        // `DELETE` writes `late_cancel` or `cancelled`. `late_cancel` is
+        // inside `CHARGED_STATUSES`, the set this count filters on, so a
+        // racing late cancel leaves the count unchanged. A racing free
+        // `cancelled` (an auto-promoted student inside their grace) lowers
+        // it, and since `DELETE` takes no `Class` lock, whether it commits
+        // before or after the count decides the outcome — the same outcome
+        // as if the cancel had arrived a moment earlier or later.
         //
-        // `PUT` is closed too, and closed exactly where the risk is. Its
-        // `updateMany` WHERE (`registrations/[id]/route.ts`) scopes the SOURCE,
-        // so it refuses every move INTO the counted set — both
-        // `late_cancel -> attended` and `late_cancel -> no_show`, since
-        // `no_show` is in the set as well — while the class is still `open`,
-        // which
-        // is the whole of this sweep's reach, since it both selects and CASes
-        // on `status: 'open'`. Once a class has started, that same move is
-        // allowed and cannot affect this count, because this sweep will never
-        // look at the class again.
-        //
-        // An earlier version of this comment claimed the check-in UI could
-        // never send that request, on the grounds that its toggle writes only
-        // `attended <-> no_show`. That was wrong, and worth recording because
-        // it is a tempting mistake: the toggle's TARGET is always
-        // attended/no_show, but its SOURCE is whatever the row already is, and
-        // `activeRegistrations` (`class/[id]/(overview)/page.tsx`) deliberately keeps
-        // `late_cancel` rows in the check-in list. A student who cancelled late
-        // and turned up anyway is one tap away, every class. The guard is
-        // server-side precisely so it does not depend on what the UI happens
-        // to send.
+        // `PUT` cannot move the count while the class is `open`. Its
+        // `updateMany` WHERE (`registrations/[id]/route.ts`) refuses a
+        // `cancelled` source always and a `late_cancel` source while the
+        // class is `open`, so every row it can write here already holds
+        // `registered`, `attended` or `no_show` — all in `CHARGED_STATUSES`
+        // — and the status it writes is the request's, which
+        // `updateRegistrationSchema` (`@/lib/schemas`) limits to members of
+        // `CHARGED_STATUSES`. A counted row stays counted. `open` is the
+        // whole of this sweep's reach: it selects on `status: 'open'` and
+        // its CAS requires it.
         //
         // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
         // `removeFromWaitlist` each carry at their own `lockClassRow` call:
         // `SET LOCAL lock_timeout = '2s'` bounds every statement left in
-        // this transaction, not just the two `FOR UPDATE`s inside the helper
-        // (`Class` then its `CalendarEntry`, since #327). So
-        // the 2s also governs the `registration.count`, the CAS, the
-        // recipient `findMany`, and — since #112 — the `waitlistEntry`
-        // `findMany`, the `waitlistEntry.updateMany` that closes the queue,
-        // and `createBulkNotifications`. Six statements, not four.
+        // this transaction, not just the `FOR UPDATE`s inside the helper
+        // (`Class` then its `CalendarEntry`, since #327) — the re-read, the
+        // count, and every write and read on whichever branch follows it.
         //
-        // Still benign, unlike at the erasure sites, but the argument is
-        // longer now because one of the six is a WRITE that takes row locks.
-        // It cannot be the first place THIS transaction blocks, because this
-        // transaction is already holding the `Class` row lock from the line
-        // below — so any contention materialises at `lockClassRow`, exactly as
-        // it did before #112. That is the whole argument, and it depends only
-        // on this function's own lock, not on a property of every other writer.
+        // Still benign, unlike at the erasure sites, though some of those
+        // statements are WRITES that take row locks. None of them can be
+        // the first place THIS transaction blocks, because this transaction
+        // is already holding the `Class` row lock from the line below — so
+        // any contention materialises at `lockClassRow`. That is the whole
+        // argument, and it depends only on this function's own lock, not on
+        // a property of every other writer.
         //
         // Stated that narrowly on purpose: which writers of `WaitlistEntry`
         // take which lock is `docs/lock-order.md`'s to say. A rule about every
@@ -478,37 +425,33 @@ export async function autoCancelClasses(
         // If one did time out, the per-class `catch` at the bottom of this
         // loop logs it and the sweep moves to the next class — no partial
         // write survives, because the whole transaction rolls back, INCLUDING
-        // the cancellation itself. That is deliberate and predates #112: a
-        // cancelled class nobody was told about is worse than one that stays
-        // open for one more 60-second tick.
+        // the cancellation and the stamp. The class stays undecided and the
+        // next tick judges it: a cancelled class nobody was told about is
+        // worse than one judged a minute later.
         await lockClassRow(tx, cls.id);
 
         // Re-read HERE, under the lock, and decide from THIS row — not from
-        // the snapshot the loop is walking. Round 1 review moved the count
-        // in and stopped there, which left the WINDOW itself still decided
-        // from the pre-lock read: `date`, `startTime`, `autoCancelCheck`
-        // and `minStudents` all still came from the snapshot. Only
-        // `minStudents` is economic; `date` and `startTime` are NOT, so a
-        // teacher can reschedule an `open` class with registrations at any
-        // time, including while this sweep is mid-flight. The result was a
-        // class rescheduled out of its window being cancelled against the
-        // old one — and every student emailed about it — with `cancelled`
-        // now terminal in Postgres, so the teacher cannot undo it in the
-        // app.
+        // the snapshot the loop is walking. `date` and `startTime` are not
+        // economic fields, so a teacher can reschedule an `open` class with
+        // registrations at any time, including while this sweep is
+        // mid-flight; a window decided from the snapshot would cancel a class
+        // rescheduled out of it and tell every student. `autoCancelDecidedAt`
+        // is re-read for the same reason: another writer may have stamped it
+        // since the snapshot, and a decided class is never judged again.
         //
-        // The identical stale-window race no longer sits open in either
-        // sibling. `autoTransitionToInProgress` above now re-reads `date` and
-        // `startTime` from the fresh, locked row before recomputing its own
-        // start instant, the same shape as this function. `autoCompleteClasses`
-        // below takes no lock of its own; the equivalent decision moved into
-        // `completeClass` (`class-lifecycle.ts`), which holds the lock and
-        // compares its caller's `sweepAt` against `autoFinishAt` of the fresh
-        // row's recomputed end before completing.
+        // The siblings take the same shape. `autoTransitionToInProgress`
+        // above re-reads `date` and `startTime` from the fresh, locked row
+        // before recomputing its start instant. `autoCompleteClasses` below
+        // takes no lock of its own; its decision lives in `completeClass`
+        // (`class-lifecycle.ts`), which holds the lock and compares its
+        // caller's `sweepAt` against `autoFinishAt` of the fresh row's
+        // recomputed end before completing.
         const fresh = await tx.class.findUnique({
           where: { id: cls.id },
           select: {
             status: true,
             autoCancelCheck: true,
+            autoCancelDecidedAt: true,
             minStudents: true,
             calendarEntry: {
               select: {
@@ -523,12 +466,14 @@ export async function autoCancelClasses(
             },
           },
         });
-        // Deleted, no longer open, or already cancelled — a concurrent cancel,
-        // completion or teacher action got here first. Not an error; the same
-        // outcome by a different route. The cancellation half is read from the
-        // entry since #327; `status` cannot answer it.
+        // Deleted, no longer open, already cancelled or already decided — a
+        // concurrent cancel, completion, teacher action or earlier judgment
+        // got here first. Not an error; the same outcome by a different
+        // route. The cancellation half is read from the entry since #327;
+        // `status` cannot answer it.
         if (!fresh || fresh.status !== 'open') return false;
         if (fresh.calendarEntry.cancelledAt !== null) return false;
+        if (fresh.autoCancelDecidedAt !== null) return false;
         if (
           !inCancelWindow(
             fresh.calendarEntry,
@@ -540,34 +485,49 @@ export async function autoCancelClasses(
           return false;
         }
 
-        // Counted HERE, not from the paged snapshot (`readCancelCandidatePage`)
-        // the loop is walking. That snapshot was read before this transaction
-        // began, so a registration committing in between is invisible to it —
-        // and cancelling a class that has just reached its minimum tells every
-        // student it is off when it is not.
-        const activeCount = await tx.registration.count({
-          where: { classId: cls.id, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
+        // Counted HERE, not from the paged snapshot the loop is walking: a
+        // registration committing after that read would be invisible to it,
+        // and cancelling a class that has just reached its minimum tells
+        // every student it is off when it is not. Over `CHARGED_STATUSES`:
+        // a late cancellation still pays, so it is in the price, and the
+        // teacher loses nothing by running the class.
+        const chargedCount = await tx.registration.count({
+          where: { classId: cls.id, status: { in: [...CHARGED_STATUSES] } },
         });
-        if (activeCount >= fresh.minStudents) return false;
+        if (chargedCount >= fresh.minStudents) {
+          // Survives, and the judgment is final: stamped in the same
+          // transaction as the count, so no later tick reopens it.
+          await tx.class.update({
+            where: { id: cls.id },
+            data: { autoCancelDecidedAt: currentTime },
+          });
+          return false;
+        }
 
-        // Cancellation writes the ENTRY now (#327), not a status — one
-        // spelling for both families. The class-side conjunct is carried
-        // through the relation so the CAS still says what it used to: cancel
-        // this class only while it is still open. Redundant with the two
-        // checks above, kept anyway for the same reason it always was — it
-        // costs nothing inside a statement that has to run regardless, and it
-        // is the guard that survives if someone later moves or drops the
+        // Cancellation writes the ENTRY (#327), not a status — one spelling
+        // for both families. The class-side conjunct is carried through the
+        // relation so the CAS says: cancel this class only while it is still
+        // open and undecided. Redundant with the checks above, kept anyway —
+        // it costs nothing inside a statement that has to run regardless, and
+        // it is the guard that survives if someone later moves or drops the
         // re-read.
         const updated = await tx.calendarEntry.updateMany({
           where: {
             id: fresh.calendarEntry.id,
             cancelledAt: null,
-            classes: { some: { status: 'open' } },
+            classes: { some: { status: 'open', autoCancelDecidedAt: null } },
           },
           data: { cancelledAt: new Date() },
         });
         if (updated.count === 0) return false;
+        await tx.class.update({
+          where: { id: cls.id },
+          data: { autoCancelDecidedAt: currentTime },
+        });
 
+        // The recipients are the students holding a seat, not the charged
+        // set: a late canceller of a cancelled class pays nothing and has
+        // already left, so they are not told.
         const registrations = await tx.registration.findMany({
           where: { classId: cls.id, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
           select: { studentId: true },
@@ -630,7 +590,7 @@ export async function autoCancelClasses(
           recipientId: fresh.calendarEntry.teacherId,
           type: 'class_cancelled',
           title: 'Class auto-cancelled',
-          body: `${fresh.calendarEntry.classType} class on ${formatDayHeader(fresh.calendarEntry.date)} at ${timeToHHmm(fresh.calendarEntry.startTime)} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
+          body: `${fresh.calendarEntry.classType} class on ${formatDayHeader(fresh.calendarEntry.date)} at ${timeToHHmm(fresh.calendarEntry.startTime)} was cancelled — only ${chargedCount} of ${fresh.minStudents} minimum students registered.`,
           relatedClassId: cls.id,
         });
         await createBulkNotifications(tx, notifications);

@@ -11,6 +11,7 @@ import {
 import { classStartInstant } from '@/lib/timezone';
 import { lockClassRow } from '@/lib/db-locks';
 import { getWaitlistWindow } from './waitlist';
+import { CHARGED_STATUSES } from './class-lifecycle';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -611,10 +612,9 @@ describe('class transitions (DB, timezone-aware)', () => {
    * PINNED at max, and the queue drains to empty before the count can fall far
    * enough to auto-cancel. The one thing that suspends that drain is the final
    * hour before start: `handleSpotFreed` broadcasts there instead of
-   * auto-promoting (#236), so a seat a late-cancel frees goes unfilled.
-   * `CANCEL_CHECK_HOURS`'s smallest configured value (`HOURS_1`) still opens
-   * its check window a full hour before start, so that window always reaches
-   * into the final hour whatever `autoCancelCheck` this fixture picks — the
+   * auto-promoting (#236), so a seat freed there goes unfilled. A class is
+   * judged once, at its check time, so the seat has to be free by then:
+   * `HOURS_1` puts the check exactly at the start of the final hour, and the
    * explicit window assertion below pins the instant this test chose inside
    * both, rather than trusting the arithmetic.
    *
@@ -624,16 +624,17 @@ describe('class transitions (DB, timezone-aware)', () => {
    * assertion below — it fails loudly if a later edit moves the clock out of
    * the claim window and quietly turns this into that weaker test.
    *
-   * What makes the count fall is the status asymmetry: `late_cancel` is in
-   * `CHARGED_STATUSES` (`class-lifecycle.ts`) but not in
-   * `ACTIVE_REGISTRATION_STATUSES` (`@/lib/registration-status`), which is what
-   * the sweep counts by. The seat is released; the registration stays billable.
+   * What makes the count fall is a FREE cancel: the sweep counts
+   * `CHARGED_STATUSES` (`class-lifecycle.ts`), which holds `late_cancel`, so a
+   * late cancel would leave the count where it was. A student auto-promoted
+   * just before the final hour cancels inside their 15-minute grace as
+   * `cancelled`, which releases the seat and the charge both.
    */
   it('tells the waitlist when it auto-cancels, and closes the queue', async () => {
     const cls = await makeClass({
       minStudents: 2,
       maxStudents: 2,
-      autoCancelCheck: 'HOURS_2',
+      autoCancelCheck: 'HOURS_1',
       cancelDeadline: 'HOURS_24',
     });
     // `finally`, not a trailing statement — the convention
@@ -642,9 +643,10 @@ describe('class transitions (DB, timezone-aware)', () => {
     // the class, or the next run of this file starts with a stray cancelled
     // class on the shared fixture teacher.
     try {
-      // Full at 2/2 when the queue formed; one seat later released by a
-      // late-cancel, which nothing promoted into because the window only
-      // allows a claim, not an auto-promotion.
+      // Full at 2/2 when the queue formed; one seat released by a free
+      // cancel inside a promotion's grace, just after the final hour began,
+      // which nothing promoted into because the window only allows a claim,
+      // not an auto-promotion.
       await prisma.registration.create({
         data: { classId: cls.id, studentId, tierAtBooking: 3, status: 'registered' },
       });
@@ -653,8 +655,8 @@ describe('class transitions (DB, timezone-aware)', () => {
           classId: cls.id,
           studentId: secondStudentId,
           tierAtBooking: 3,
-          status: 'late_cancel',
-          cancelledAt: new Date('2026-07-20T10:00:00Z'),
+          status: 'cancelled',
+          cancelledAt: new Date('2026-07-20T15:00:10Z'),
         },
       });
       const entry = await prisma.waitlistEntry.create({
@@ -666,14 +668,14 @@ describe('class transitions (DB, timezone-aware)', () => {
         data: { classId: cls.id, studentId: secondStudentId, position: 2, status: 'removed' },
       });
 
-      // 15:30Z is inside the HOURS_2 check window (14:00Z–16:00Z) AND inside
-      // the final hour before start (15:00Z–16:00Z). Assert the second half
-      // rather than trusting the arithmetic.
+      // 15:00:30Z is inside the HOURS_1 check window (15:00Z–16:00Z) AND
+      // inside the final hour before start (15:00Z–16:00Z). Assert the second
+      // half rather than trusting the arithmetic.
       //
       // The zone comes from the teacher row, not a literal: production derives
       // the window from `teacher.defaultTimezone`, so a literal here would keep
       // asserting about a zone the code had stopped using.
-      const at = new Date('2026-07-20T15:30:00Z');
+      const at = new Date('2026-07-20T15:00:30Z');
       const { defaultTimezone } = await prisma.teacher.findUniqueOrThrow({
         where: { id: teacherId },
         select: { defaultTimezone: true },
@@ -769,11 +771,9 @@ describe('class transitions (DB, timezone-aware)', () => {
   // code alike. `calls` is asserted so a structural change here fails
   // loudly instead of quietly no-op'ing.
   //
-  // The hook sits on the snapshot's registration `groupBy`, the last read of
-  // the snapshot, so the insert lands after the snapshot's count and before
-  // the transaction's. A hook on the class read would land the insert before
-  // the `groupBy`, the snapshot would count 2, and the pre-filter would skip
-  // the class without ever reaching the locked count.
+  // The hook sits on the snapshot's class read, the sweep's only read before
+  // the transaction, so the insert lands after the snapshot and before the
+  // transaction's count.
   it('does not cancel a class a registration brought up to minimum after the sweep read it', async () => {
     // minStudents 2, one registration up front — below minimum at the
     // moment the sweep's outer read runs. Same HOURS_2 window as the tests
@@ -787,21 +787,18 @@ describe('class transitions (DB, timezone-aware)', () => {
     let calls = 0;
     const racing = prisma.$extends({
       query: {
-        registration: {
-          async groupBy({ args, query }) {
-            // Shape, not order: a count grouped by class over an id list
-            // holding this test's class.
-            const where = args.where as { classId?: { in?: unknown } } | undefined;
-            const ids = where?.classId?.in;
-            const isSnapshotCount =
-              Array.isArray(args.by) && args.by.includes('classId') && Array.isArray(ids) && ids.includes(cls.id);
-            if (!isSnapshotCount) return query(args);
+        class: {
+          async findMany({ args, query }) {
+            // Shape, not order: `autoCancelClasses`'s own sweep read filters
+            // on `status: 'open'`; the transaction re-reads with `findUnique`.
+            const where = args.where as { status?: unknown } | undefined;
+            if (where?.status !== 'open') return query(args);
 
             calls += 1;
             const rows = await query(args);
-            // Lands after the sweep's outer read has already resolved, so
-            // the sweep's snapshot holds 1 registration while the database
-            // holds 2 by the time the transaction's count runs.
+            // Lands after the sweep's outer read has already resolved: the
+            // class held 1 registration when the sweep read it, and holds 2
+            // by the time the transaction's count runs.
             await prisma.registration.create({
               data: { classId: cls.id, studentId: secondStudentId, status: 'registered', tierAtBooking: 3 },
             });
@@ -1071,27 +1068,16 @@ describe('class transitions (DB, timezone-aware)', () => {
   });
 
   /**
-   * #174 four-specialist review, Important 4. The pre-gate this sweep used to
-   * have (`activeCount < minStudents`, from the eager-loaded registrations)
-   * was deleted along with the eager-load when the count moved under the
-   * lock. Without it the sweep opens a transaction, issues a `SET LOCAL` and
-   * takes a `FOR UPDATE` on every in-window open class every 60 seconds —
-   * the healthy majority included — and every concurrent registration on one
-   * of those classes queues behind a lock taken to confirm nothing needed
-   * doing.
+   * A class at or above its minimum is judged in one transaction and stamped,
+   * and the stamp is what keeps it out of every later tick — the sweep's read
+   * filters on `autoCancelDecidedAt: null`, so a healthy class takes the
+   * `Class` row lock once, not once a minute for the length of its window.
    *
-   * `registration.count` is the observable: it is the first statement the
-   * transaction issues after the lock, and this class is `open` and inside
-   * its window, so if the transaction had opened at all that count would have
-   * run. Zero calls therefore means the transaction never opened — no
-   * transaction, no `SET LOCAL`, no `FOR UPDATE`.
-   *
-   * Correctness is unaffected either way, which is why this is an
-   * optimisation and not a fix: the authoritative check is still inside the
-   * lock, so a pre-filter reading a stale snapshot can only delay a
-   * cancellation to the next tick, never cause a wrong one.
+   * `registration.count` over `CHARGED_STATUSES` is the observable: it is the
+   * decision count and runs only inside the transaction, so the number of
+   * times it ran is the number of transactions this class opened.
    */
-  it('does not open a transaction for a class that already meets its minimum', async () => {
+  it('judges a class that meets its minimum in one transaction, then never again', async () => {
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 1 });
     await prisma.registration.create({
       data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
@@ -1102,13 +1088,19 @@ describe('class transitions (DB, timezone-aware)', () => {
       query: {
         registration: {
           async count({ args, query }) {
-            // Same shape key as the interleaving test above: a single class
-            // id plus the active-status set is `autoCancelClasses`'s own
-            // decision count and nothing else.
+            // Shape-keyed like the interleaving tests above: a single class
+            // id plus exactly the charged-status set is `autoCancelClasses`'s
+            // own decision count and nothing else.
             const where = args.where as
               | { classId?: unknown; status?: { in?: unknown } }
               | undefined;
-            if (where?.classId === cls.id && Array.isArray(where?.status?.in)) {
+            const statuses = where?.status?.in;
+            if (
+              where?.classId === cls.id &&
+              Array.isArray(statuses) &&
+              statuses.length === CHARGED_STATUSES.length &&
+              CHARGED_STATUSES.every((s) => statuses.includes(s))
+            ) {
               decisionCounts += 1;
             }
             return query(args);
@@ -1120,16 +1112,17 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     try {
       const scoped = scopeSweep(watched, { Class: { id: { in: [cls.id] } } });
-      // 15:00Z is inside the 14:00Z–16:00Z window, so the window is not what
-      // skips this class — the pre-filter is.
-      await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'));
+      // 15:00Z is inside the 14:00Z–16:00Z window.
+      expect(await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'))).toBe(0);
+      expect(decisionCounts).toBe(1);
 
-      // The sweep read the class, so the zero below is the pre-filter's.
-      expect(scoped.rowsRead('Class')).toBe(1);
-      expect(decisionCounts).toBe(0);
+      const judged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(judged.autoCancelDecidedAt).not.toBeNull();
+      expect(judged.calendarEntry.cancelledAt).toBeNull();
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-      expect(updated.calendarEntry.cancelledAt).toBeNull();
+      // Still inside the window, and not judged again.
+      await autoCancelClasses(scoped.db, new Date('2026-07-20T15:10:00Z'));
+      expect(decisionCounts).toBe(1);
     } finally {
       await prisma.registration.deleteMany({ where: { classId: cls.id } });
       await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
@@ -1137,25 +1130,20 @@ describe('class transitions (DB, timezone-aware)', () => {
   });
 
   /**
-   * The pre-filter's `_count` is FILTERED, and the filter is the difference
-   * between an optimisation and a bug. An unfiltered `_count` counts
-   * cancelled and late-cancelled registrations too, so a class everybody
-   * dropped out of would count above its minimum forever and never be swept
-   * again — it would sit `open` until it started, with nobody in it and
-   * nobody told.
+   * The decision count is FILTERED, and the filter is what separates a
+   * registration that holds a seat or pays from one that freed its seat for
+   * nothing. An unfiltered count would count a free `cancelled` row too, so a
+   * class everybody dropped out of for free would count above its minimum and
+   * survive its check with nobody in it.
    *
-   * Two inactive registrations (one `cancelled`, one `late_cancel`) against
-   * `minStudents: 1`: unfiltered that is
-   * 2 >= 1 and the class survives; filtered it is 0 < 1 and the class is
+   * One `cancelled` registration against `minStudents: 1`: unfiltered that is
+   * 1 >= 1 and the class survives; filtered it is 0 < 1 and the class is
    * cancelled, which is correct.
    */
   it('still cancels a class whose only registrations are cancelled', async () => {
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 1 });
     await prisma.registration.create({
       data: { classId: cls.id, studentId, status: 'cancelled', tierAtBooking: 3 },
-    });
-    await prisma.registration.create({
-      data: { classId: cls.id, studentId: secondStudentId, status: 'late_cancel', tierAtBooking: 3 },
     });
 
     try {
@@ -1166,6 +1154,85 @@ describe('class transitions (DB, timezone-aware)', () => {
     } finally {
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  it('judges a class at its minimum once: a later late cancel does not cancel it', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 1 });
+    const reg = await prisma.registration.create({
+      data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
+    });
+    try {
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      expect(await autoCancelClasses(scoped.db, new Date('2026-07-20T14:00:30Z'))).toBe(0);
+      const judged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(judged.autoCancelDecidedAt).not.toBeNull();
+
+      // A free cancel would also not matter now; `cancelled` is the strongest case
+      // because it leaves the charged count below the minimum.
+      await prisma.registration.update({ where: { id: reg.id }, data: { status: 'cancelled' } });
+      expect(await autoCancelClasses(scoped.db, new Date('2026-07-20T15:50:00Z'))).toBe(0);
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(after.calendarEntry.cancelledAt).toBeNull();
+    } finally {
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  it('counts late cancellations toward the minimum at the check', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 2 });
+    await prisma.registration.create({ data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 } });
+    await prisma.registration.create({ data: { classId: cls.id, studentId: secondStudentId, status: 'late_cancel', tierAtBooking: 3 } });
+    try {
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      expect(await autoCancelClasses(scoped.db, new Date('2026-07-20T14:00:30Z'))).toBe(0);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(after.calendarEntry.cancelledAt).toBeNull();
+      expect(after.autoCancelDecidedAt).not.toBeNull();
+    } finally {
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  it('keeps a class every registrant cancelled late', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 1 });
+    await prisma.registration.create({ data: { classId: cls.id, studentId, status: 'late_cancel', tierAtBooking: 3 } });
+    try {
+      await autoCancelClasses(scopeSweep(prisma, { Class: { id: { in: [cls.id] } } }).db, new Date('2026-07-20T15:00:00Z'));
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(after.calendarEntry.cancelledAt).toBeNull();
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  it('does not judge a class whose check passed while the sweep was down, once it has started', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 4 });
+    try {
+      expect(await autoCancelClasses(scopeSweep(prisma, { Class: { id: { in: [cls.id] } } }).db, new Date('2026-07-20T16:01:00Z'))).toBe(0);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(after.calendarEntry.cancelledAt).toBeNull();
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+    }
+  });
+
+  it('never selects a decided class again', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 4 });
+    await prisma.class.update({ where: { id: cls.id }, data: { autoCancelDecidedAt: new Date('2026-07-20T14:00:00Z') } });
+    try {
+      const scoped = scopeSweep(prisma, { Class: { id: { in: [cls.id] } } });
+      expect(await autoCancelClasses(scoped.db, new Date('2026-07-20T15:00:00Z'))).toBe(0);
+      expect(scoped.rowsRead('Class')).toBe(0);
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
