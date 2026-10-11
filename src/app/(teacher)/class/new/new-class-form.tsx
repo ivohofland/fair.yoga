@@ -10,6 +10,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
@@ -574,13 +575,12 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             error={errors.startTime}
           />
 
-          <Input
+          <NumberInput
             id="durationMinutes"
             label="Duration (minutes)"
-            type="number"
             max={DURATION_MAX_MINUTES}
-            value={String(form.durationMinutes)}
-            onChange={(e) => updateField('durationMinutes', Number(e.target.value))}
+            value={form.durationMinutes}
+            onValueChange={(n) => updateField('durationMinutes', n)}
             error={errors.durationMinutes}
           />
         </div>
@@ -590,55 +590,50 @@ export function NewClassForm({ currency }: { currency: Currency }) {
       {step === 2 && (
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-3 gap-3">
-            <Input
+            <NumberInput
               id="roomCost"
               label={`Room cost (${currencyLabel(currency)})`}
-              type="number"
               step="0.01"
               max={MONEY_MAX}
-              value={String(form.roomCost)}
-              onChange={(e) => updateField('roomCost', Number(e.target.value))}
+              value={form.roomCost}
+              onValueChange={(n) => updateField('roomCost', n)}
               error={errors.roomCost}
             />
-            <Input
+            <NumberInput
               id="minRate"
               label={`Min rate (${currencyLabel(currency)})`}
-              type="number"
               step="0.01"
               min={-MONEY_MAX}
               max={MONEY_MAX}
-              value={String(form.minRate)}
-              onChange={(e) => updateField('minRate', Number(e.target.value))}
+              value={form.minRate}
+              onValueChange={(n) => updateField('minRate', n)}
               error={errors.minRate}
             />
-            <Input
+            <NumberInput
               id="targetRate"
               label={`Target rate (${currencyLabel(currency)})`}
-              type="number"
               step="0.01"
               min={-MONEY_MAX}
               max={MONEY_MAX}
-              value={String(form.targetRate)}
-              onChange={(e) => updateField('targetRate', Number(e.target.value))}
+              value={form.targetRate}
+              onValueChange={(n) => updateField('targetRate', n)}
               error={errors.targetRate}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <Input
+            <NumberInput
               id="minStudents"
               label="Min students"
-              type="number"
-              value={String(form.minStudents)}
-              onChange={(e) => updateField('minStudents', Number(e.target.value))}
+              value={form.minStudents}
+              onValueChange={(n) => updateField('minStudents', n)}
               error={errors.minStudents}
             />
-            <Input
+            <NumberInput
               id="maxStudents"
               label="Max students"
-              type="number"
-              value={String(form.maxStudents)}
-              onChange={(e) => updateField('maxStudents', Number(e.target.value))}
+              value={form.maxStudents}
+              onValueChange={(n) => updateField('maxStudents', n)}
               error={errors.maxStudents}
             />
           </div>

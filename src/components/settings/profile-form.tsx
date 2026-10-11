@@ -9,6 +9,7 @@ import type { NotificationPrefsBody } from '@/components/settings/notification-p
 import { NAME_MAX, PAGE_SLUG_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
@@ -247,16 +248,15 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
             <option key={value} value={value}>{label}</option>
           ))}
         </Select>
-        <Input
+        <NumberInput
           id="defaultVatPercent"
           label="Default VAT %"
-          type="number"
           inputMode="decimal"
           min={0}
           max={VAT_PERCENT_MAX}
           step="any"
           value={form.defaultVatPercent}
-          onChange={(e) => update('defaultVatPercent', Number(e.target.value))}
+          onValueChange={(n) => update('defaultVatPercent', n)}
           hint="It's your responsibility to set the right VAT rate. You can change it on each class. This is only the default for new classes. Use 0 if you don't charge VAT."
         />
         <Select
