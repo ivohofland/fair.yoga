@@ -61,14 +61,14 @@ void _formHasNoExtras;
 /**
  * The two numeric fields are held as STRINGS and parsed once, at submit.
  *
- * Both render as text inputs, so what the teacher typed is kept exactly,
- * including a half-typed `45.` or an emptied box. Converting per keystroke
- * would turn each of those into a number the teacher did not type, and
- * `hourlyRate` is `z.number().nonnegative()`, so a blank read as 0 would be
- * ACCEPTED: the rate would silently become 0 and reporting would count the
- * class as zero income. `hourlyRate` is read by `parseDecimal`, which takes a
- * decimal comma or point; `durationMinutes` is an integer and stays a number
- * input.
+ * `hourlyRate` renders as a text input, so what the teacher typed is kept
+ * exactly, including a half-typed `45.` or an emptied box, and `parseDecimal`
+ * reads a decimal comma or point. `durationMinutes` renders as a number input,
+ * which reports `''` for anything that is not a valid number. Converting
+ * either per keystroke would turn those states into a number the teacher did
+ * not type, and `hourlyRate` is `z.number().nonnegative()`, so a blank read as
+ * 0 would be ACCEPTED: the rate would silently become 0 and reporting would
+ * count the class as zero income.
  *
  * The create screen for this same entity (`studio-class/new/new-studio-class-form.tsx`),
  * `StudentCountEditor` and `EditRoomForm` all hold strings and convert at send.
