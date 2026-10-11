@@ -40,6 +40,7 @@ export const PAYMENT_LINK_MAX = 500;
 
 export const DURATION_MAX_MINUTES = 1440;
 export const MONEY_MAX = 100000;
+export const MONEY_DECIMALS = 2;
 export const CAPACITY_MAX = 1000;
 
 // ---------------------------------------------------------------------------
