@@ -124,8 +124,12 @@ one that lost payers to free cancellations after its check. **`completeClass`
 prices such a class as if it had its minimum** (decided in PR review), padding
 the charged tiers with `DEFAULT_INCOME_TIER` up to `minStudents` exactly as the
 estimate does. Each real student pays the share the pricing engine gives them in
-that padded pool, so no one pays more than the ceiling they were shown; the
-padding seats bill no one, and the teacher absorbs the shortfall.
+that padded pool — the same pool the booking page's estimate prices, so the
+shortfall below the minimum never reaches a student's price. Two things move a
+price from its quote, both already true at or above the minimum: a later
+booker's tier changes everyone's share, and the rounding cent can land on a
+different student. The padding seats bill no one, and the teacher absorbs the
+shortfall.
 
 ## Copy and docs
 
