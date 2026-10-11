@@ -1590,7 +1590,7 @@ function isFixedShape(pattern: RegExp): boolean {
  */
 const UNBOUNDED_NUMBER_ALLOWED: Record<string, string> = {
   'updateStudentSchema.incomeTier': 'refine-bounded: isIncomeTier accepts only 1 to 5',
-  'updateTeacherSchema.defaultVatPercent': 'refine-bounded: vatPercentViolation accepts only 0 to 100',
+  'updateTeacherSchema.defaultVatPercent': 'refine-bounded: vatPercentViolation accepts only a bounded percentage',
 };
 
 /** Zod 4's `.int()` seeds the bag with the safe-integer range, which is not a bound the product chose. */
