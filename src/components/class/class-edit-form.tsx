@@ -13,7 +13,7 @@ import {
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
-import { ECONOMIC_FIELDS } from '@/lib/class-fields';
+import { LOCKED_FIELDS } from '@/lib/class-fields';
 import { currencyLabel } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
@@ -100,7 +100,8 @@ interface ClassEditFormProps {
   initial: ClassEditInitial;
 }
 
-// Details always editable, the five economic fields only while unlocked.
+// Details always editable; the economics, date and start time only while
+// unlocked (`LOCKED_FIELDS`).
 // Policies aren't part of the update schema, so they aren't part of this form.
 export function ClassEditForm({ classId, settingsLocked, currency, initial }: ClassEditFormProps) {
   const router = useRouter();
@@ -120,17 +121,18 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
   async function handleSave() {
     // #700. The payload below spreads all of `form`, so a cleared input or
     // whitespace-only class type is sent as `''` rather than omitted. Refused
-    // here first, with this form's own copy, in field order and regardless of
-    // `settingsLocked`, since these three are always-sent details.
+    // here first, with this form's own copy, in field order.
     if (!form.classType.trim()) {
       setError('Enter a class type');
       return;
     }
-    if (!form.date) {
+    // Date and start time are locked once booked and stripped below, so
+    // they are checked only while they will be sent.
+    if (!settingsLocked && !form.date) {
       setError('Select a date');
       return;
     }
-    if (!form.startTime) {
+    if (!settingsLocked && !form.startTime) {
       setError('Enter a start time');
       return;
     }
@@ -174,7 +176,7 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
     // isn't declared on the type.
     const payload: UpdateClassWire = { ...form, description: form.description.trim() || null };
     if (settingsLocked) {
-      for (const f of ECONOMIC_FIELDS) delete payload[f];
+      for (const f of LOCKED_FIELDS) delete payload[f];
     }
 
     let res: Response;
@@ -244,15 +246,23 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
             // measurement.
             min={minDate}
             value={form.date}
+            disabled={settingsLocked}
             onChange={(e) => set('date', e.target.value)}
           />
           <Input
             label="Start time"
             type="time"
             value={form.startTime}
+            disabled={settingsLocked}
             onChange={(e) => set('startTime', e.target.value)}
           />
         </div>
+        {settingsLocked && (
+          <p className="type-caption -mt-2 max-w-[420px]">
+            This class has bookings, so its date and time are fixed. To change
+            them, cancel it and create a new one.
+          </p>
+        )}
         <div className="max-w-[200px]">
           <Input
             label="Duration (minutes)"

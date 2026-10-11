@@ -112,10 +112,13 @@ export const PUT = withErrorHandler(async (
     // The fields go to the log, not into the sentence.
     log.info(
       { classId: id, teacherId: session.teacherId, fields: result.fields },
-      'class edit refused: its economics are locked',
+      'class edit refused: its settings are locked since the first booking',
     );
+    const movesBookedClass = result.fields.some((f) => f === 'date' || f === 'startTime');
     return respondError(
-      'Prices and capacity are locked once the first student books.',
+      movesBookedClass
+        ? 'This class has bookings, so its date and time are fixed. To change them, cancel it and create a new one.'
+        : 'Prices and capacity are locked once the first student books.',
       409,
       'SETTINGS_LOCKED',
     );

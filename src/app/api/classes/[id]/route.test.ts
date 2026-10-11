@@ -88,6 +88,16 @@ describe('PUT /api/classes/[id] — refusals', () => {
     }
   });
 
+  it('answers a locked schedule edit with SETTINGS_LOCKED (#836)', async () => {
+    updateClass.mockResolvedValueOnce({ ok: false, reason: 'locked', fields: ['date', 'startTime'] });
+    const info = vi.spyOn(log, 'info').mockImplementation(() => log);
+    try {
+      await expectRefusal(await put({ date: '2099-03-09', startTime: '18:30' }), 'SETTINGS_LOCKED');
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   /**
    * #72's invariant, on this side of the seam: the refusal names every
    * economic field the request sent, in the order the service tuple carries
@@ -112,7 +122,7 @@ describe('PUT /api/classes/[id] — refusals', () => {
           teacherId: 'teacher-1',
           fields: ['roomCost', 'minRate'],
         }),
-        'class edit refused: its economics are locked',
+        'class edit refused: its settings are locked since the first booking',
       );
     } finally {
       info.mockRestore();
