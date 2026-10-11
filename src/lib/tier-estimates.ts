@@ -41,10 +41,9 @@ export interface Billing {
 /**
  * What a class bills when it ends: the real students priced inside a pool
  * padded to the minimum, so nobody pays above the quote's share, and the
- * teacher absorbs the shortfall. `completeClass` writes these values and the
- * teacher's estimate shows them, so the two cannot disagree. Padding seats
- * follow every real student, so they only ever take the leftover cents the
- * real students' order would not.
+ * teacher absorbs the shortfall. Leftover cents go to the largest remainders
+ * (`calculateClassPricing`), so a padding seat can take one ahead of a real
+ * student; padding seats follow every real student, so they lose only ties.
  */
 export function billAtLeastMinimum(
   input: Omit<ClassPricingInput, 'studentTiers'>,

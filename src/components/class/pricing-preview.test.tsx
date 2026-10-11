@@ -104,10 +104,11 @@ describe('PricingPreview', () => {
       registrations: [
         { id: 'r1', status: 'registered', tierAtBooking: 3 },
         { id: 'r2', status: 'cancelled', tierAtBooking: 1 },
+        { id: 'r3', status: 'late_cancel', tierAtBooking: 2 },
       ],
     });
     render(<PricingPreview cls={cls} />);
-    expect(screen.getByText(/Based on 1 registered student$/)).toBeInTheDocument();
+    expect(screen.getByText(/Based on 2 registered students$/)).toBeInTheDocument();
   });
 
   it('at the minimum, estimates the unpadded pool', () => {

@@ -628,7 +628,7 @@ describe('class transitions (DB, timezone-aware)', () => {
    * the claim window and quietly turns this into that weaker test.
    *
    * What makes the count fall is a FREE cancel: the sweep counts
-   * `CHARGED_STATUSES` (`class-lifecycle.ts`), which holds `late_cancel`, so a
+   * `CHARGED_STATUSES` (`registration-status.ts`), which holds `late_cancel`, so a
    * late cancel would leave the count where it was. A student auto-promoted
    * just before the final hour cancels inside their 15-minute grace as
    * `cancelled`, which releases the seat and the charge both.

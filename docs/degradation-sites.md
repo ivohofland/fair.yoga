@@ -612,7 +612,7 @@ know.
 ### `CHARGED_REGISTRATION_WITHOUT_PAYMENT`
 
 **What happened.** The student pay page met a registration in a charged status
-(`CHARGED_STATUSES`, `src/services/class-lifecycle.ts`) on a completed class,
+(`CHARGED_STATUSES`, `src/lib/registration-status.ts`) on a completed class,
 with no `Payment` row. `completeClass` creates one for every charged
 registration in the transaction that completes the class, so either the
 payment was deleted or the registration became charged after completion. The

@@ -501,9 +501,11 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     expect(res.status).toBe(200);
     const html = normalise(await res.text());
 
-    // Proves the page rendered rather than redirecting — `class-info.tsx`
-    // always emits this clause, and only for a class this teacher owns.
-    expect(html).toContain('registered · needs');
+    // Proves the page rendered rather than redirecting: `class-info.tsx` emits
+    // the registered count for a class this teacher owns. The "to go ahead"
+    // clause is not the anchor — it shows only while the class is undecided.
+    expect(html).toMatch(/\d+ registered/);
+    expect(html).not.toContain('to go ahead');
     expect(html).not.toContain('on waitlist');
   });
 });

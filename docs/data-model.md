@@ -368,7 +368,7 @@ every teacher-facing route.
 
 **The invariant: an archived link has nothing live.** For the pair `(teacher, student)`, nothing is live when neither of these exists:
 
-- a **live registration** — `status` in `CHARGED_STATUSES` (`src/services/class-lifecycle.ts`), on a class whose `status` is not `completed` and whose `CalendarEntry` has `cancelled_at IS NULL` and belongs to this teacher. The charged set, not `ACTIVE_REGISTRATION_STATUSES`: the question is "will completion still bill this?", and a `late_cancel` frees its seat but is still billed;
+- a **live registration** — `status` in `CHARGED_STATUSES` (`src/lib/registration-status.ts`), on a class whose `status` is not `completed` and whose `CalendarEntry` has `cancelled_at IS NULL` and belongs to this teacher. The charged set, not `ACTIVE_REGISTRATION_STATUSES`: the question is "will completion still bill this?", and a `late_cancel` frees its seat but is still billed;
 - an **open payment** — `status` in `OUTSTANDING_STATUSES` (`src/lib/payment-status.ts`), on a registration of this student, on a class of this teacher. The same predicate as `countOutstandingPaymentsForStudent` (`src/services/payments.ts`).
 
 Waitlist entries are not live: they carry no money, and every way from a waitlist onto a roster links, and so un-archives. A debt to a different teacher is outside the pair and does not block.
