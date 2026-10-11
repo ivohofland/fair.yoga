@@ -50,8 +50,8 @@ const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
 
 /**
- * #702. The number inputs store `Number(value)`, so a cleared one is `0`, and
- * their `min`/`max` attributes enforce nothing: the browser checks them only
+ * #702. A cleared number field holds `0`, one the browser cannot read holds
+ * NaN, and their `min`/`max` attributes enforce nothing: the browser checks them only
  * on a `<form>` submit, and this form has no `<form>` element. The first
  * number field out of range, in this form's copy, or `undefined`. Duration is
  * always sent. The rest are economics, sent only while unlocked.
@@ -61,6 +61,9 @@ function numberFieldError(form: ClassEditInitial, settingsLocked: boolean): stri
   if (!Number.isInteger(form.durationMinutes)) return 'Duration must be whole minutes';
   if (form.durationMinutes > DURATION_MAX_MINUTES) return DURATION_TOO_LONG;
   if (settingsLocked) return undefined;
+  if (!Number.isFinite(form.roomCost)) return 'Enter a number for room cost';
+  if (!Number.isFinite(form.minRate)) return 'Enter a number for min rate';
+  if (!Number.isFinite(form.targetRate)) return 'Enter a number for target rate';
   if (form.roomCost < 0) return 'Room cost cannot be negative';
   if (form.roomCost > MONEY_MAX) return `Room cost cannot exceed ${MONEY_LIMIT}`;
   if (Math.abs(form.minRate) > MONEY_MAX) return `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;

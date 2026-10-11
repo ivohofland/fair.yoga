@@ -17,7 +17,8 @@ describe('vatPercentViolation', () => {
   it('refuses a fourth decimal too small for a loose tolerance to see', () => {
     expect(vatPercentViolation(8.0000000004)).toBe('Use at most 3 decimals for VAT.');
   });
-  it('refuses a non-finite number', () => {
-    expect(vatPercentViolation(Number.NaN)).toBe('Use at most 3 decimals for VAT.');
+  it('asks for a number when given a non-finite one', () => {
+    expect(vatPercentViolation(Number.NaN)).toBe('Enter a number for VAT.');
+    expect(vatPercentViolation(Number.POSITIVE_INFINITY)).toBe('Enter a number for VAT.');
   });
 });

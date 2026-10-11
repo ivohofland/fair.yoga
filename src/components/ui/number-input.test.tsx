@@ -51,6 +51,38 @@ describe('NumberInput', () => {
     expect(input.value).toBe('10');
   });
 
+  it('rewrites the text when the form clamps to the value it already held', () => {
+    render(<Harness initial={10} clampTo={10} />);
+    const input = screen.getByLabelText('Amount') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '12' } });
+    expect(input.value).toBe('10');
+    expect(screen.getByTestId('held')).toHaveTextContent('10');
+  });
+
+  it('holds NaN, not 0, for text the browser cannot read as a number', () => {
+    render(<Harness initial={5} />);
+    const input = screen.getByLabelText('Amount') as HTMLInputElement;
+    // jsdom sanitizes '4,5' to '' without flagging it; a browser flags it.
+    Object.defineProperty(input, 'validity', { value: { badInput: true }, configurable: true });
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.getByTestId('held')).toHaveTextContent('NaN');
+    fireEvent.blur(input);
+    expect(input.value).toBe('');
+  });
+
+  it('shows the 0 an empty field holds once the field is left', () => {
+    render(<Harness initial={21} />);
+    const input = screen.getByLabelText('Amount') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(input.value).toBe('0');
+  });
+
+  it('renders a NaN value without re-rendering forever', () => {
+    render(<NumberInput label="Amount" value={Number.NaN} onValueChange={vi.fn()} />);
+    expect(screen.getByLabelText('Amount')).toBeInTheDocument();
+  });
+
   it('follows a value replaced from outside', () => {
     const onValueChange = vi.fn();
     const { rerender } = render(<NumberInput label="Amount" value={3} onValueChange={onValueChange} />);

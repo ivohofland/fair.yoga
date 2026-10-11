@@ -833,6 +833,22 @@ describe('NewClassPage', () => {
       expectStillOnStep2();
     });
 
+    // A browser reports text it cannot read ("4,5") as '' with badInput set;
+    // jsdom sanitizes without setting it, so the flag is stubbed.
+    it.each([
+      ['Room cost', 'room cost'],
+      ['Min rate', 'min rate'],
+      ['Target rate', 'target rate'],
+    ])('refuses a %s the browser cannot read, rather than taking 0', async (label, name) => {
+      await renderAtStep2();
+      const field = screen.getByLabelText(new RegExp('^' + label));
+      Object.defineProperty(field, 'validity', { value: { badInput: true }, configurable: true });
+      fireEvent.change(field, { target: { value: '' } });
+      next();
+      expect(screen.getByLabelText(new RegExp('^' + label))).toHaveAccessibleDescription(`Enter a number for ${name}`);
+      expectStillOnStep2();
+    });
+
     it('refuses min students below 1', async () => {
       await renderAtStep2();
       set('Min students', '0');

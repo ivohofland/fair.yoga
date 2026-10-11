@@ -289,11 +289,14 @@ export function NewClassForm({ currency }: { currency: Currency }) {
     }
 
     if (s === 2) {
-      if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
+      if (!Number.isFinite(form.roomCost)) errs.roomCost = 'Enter a number for room cost';
+      else if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
       else if (form.roomCost > MONEY_MAX) errs.roomCost = `Room cost cannot exceed ${MONEY_LIMIT}`;
-      if (Math.abs(form.minRate) > MONEY_MAX)
+      if (!Number.isFinite(form.minRate)) errs.minRate = 'Enter a number for min rate';
+      else if (Math.abs(form.minRate) > MONEY_MAX)
         errs.minRate = `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
-      if (Math.abs(form.targetRate) > MONEY_MAX)
+      if (!Number.isFinite(form.targetRate)) errs.targetRate = 'Enter a number for target rate';
+      else if (Math.abs(form.targetRate) > MONEY_MAX)
         errs.targetRate = `Target rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
       if (form.minStudents <= 0) errs.minStudents = 'Min students must be at least 1';
       else if (!Number.isInteger(form.minStudents))

@@ -294,7 +294,20 @@ describe('ProfileForm', () => {
       expect(sentBody().defaultVatPercent).toBe(0);
     });
 
-    it('stays empty when cleared, so a new rate replaces the 0 rather than following it', async () => {
+    it('refuses a rate the browser cannot read as a number, rather than saving 0', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm({ defaultVatPercent: 21 });
+      const input = screen.getByLabelText('Default VAT %');
+      Object.defineProperty(input, 'validity', { value: { badInput: true }, configurable: true });
+      fireEvent.change(input, { target: { value: '' } });
+      save();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Enter a number for VAT.');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('stays empty when cleared, so a new rate replaces the 0 instead of landing after it', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
       renderForm({ defaultVatPercent: 0 });
