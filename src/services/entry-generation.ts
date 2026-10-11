@@ -290,7 +290,7 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = R
   createChildren: (
     db: PrismaClient | Prisma.TransactionClient,
     template: ChildWithRule<TChild>,
-    entries: readonly { id: string; date: Date }[],
+    entries: readonly { id: string; date: Date; startTime: Date }[],
   ) => Promise<void>;
 }>;
 
@@ -834,7 +834,7 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
             scheduleRuleId: template.scheduleRuleId,
           })),
           skipDuplicates: true,
-          select: { id: true, date: true },
+          select: { id: true, date: true, startTime: true },
         });
 
   if (inserted.length > 0) {

@@ -25,6 +25,7 @@ import {
   type ContentionStreaks,
 } from './generation-contention';
 import { readInPages } from '@/lib/read-in-pages';
+import { isPastCancelCheck } from '@/lib/auto-cancel-check';
 
 // ---------------------------------------------------------------------------
 // generateClassInstances
@@ -53,6 +54,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     }),
   createChildren: async (db, template, entries) => {
+    const now = new Date();
     await db.class.createMany({
       data: entries.map((entry) => ({
         calendarEntryId: entry.id,
@@ -72,6 +74,16 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         maxStudents: template.maxStudents,
         cancelDeadline: template.cancelDeadline,
         autoCancelCheck: template.autoCancelCheck,
+        // Born inside its own check window: the generator is not asking the
+        // sweep to judge a class that was never given the chance to fill.
+        autoCancelDecidedAt: isPastCancelCheck(
+          entry,
+          template.autoCancelCheck,
+          template.scheduleRule.teacher.defaultTimezone,
+          now,
+        )
+          ? now
+          : null,
         status: 'open' as const,
       })),
     });

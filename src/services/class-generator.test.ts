@@ -1404,14 +1404,14 @@ describe('generateClassInstances (per-template isolation)', () => {
         createManyAndReturn: async ({
           data,
         }: {
-          data: Array<{ scheduleRuleId: string; date: Date }>;
+          data: Array<{ scheduleRuleId: string; date: Date; startTime: Date }>;
         }) => {
           for (const row of data) {
             if (row.scheduleRuleId === 'rule-A') throw new Error('boom-A');
             if (row.scheduleRuleId === 'rule-C') throw new Error('boom-C');
             created.push(row.scheduleRuleId.replace('rule-', ''));
           }
-          return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date }));
+          return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date, startTime: row.startTime }));
         },
       },
       class: {
@@ -1465,7 +1465,7 @@ describe('generateClassInstances (per-template isolation)', () => {
         createManyAndReturn: async ({
           data,
         }: {
-          data: Array<{ scheduleRuleId: string; date: Date }>;
+          data: Array<{ scheduleRuleId: string; date: Date; startTime: Date }>;
         }) => {
           for (const row of data) {
             const id = row.scheduleRuleId.replace('rule-', '');
@@ -1473,7 +1473,7 @@ describe('generateClassInstances (per-template isolation)', () => {
             if (failing.has(id)) throw failure;
             created.push(id);
           }
-          return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date }));
+          return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date, startTime: row.startTime }));
         },
       },
       class: {
@@ -1550,3 +1550,96 @@ describe('generateClassInstances (per-template isolation)', () => {
   });
 });
 
+
+// ===========================================================================
+// #836 — a candidate generated inside its own check window is born decided
+// ===========================================================================
+
+describe('generateClassInstances — the auto-cancel decision (#836)', () => {
+  const suffix = `gen836-${Date.now()}`;
+  let teacherId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let scheduleRuleId: string;
+
+  beforeAll(async () => {
+    // UTC, so a wall slot names exactly one instant.
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Decided',
+        lastName: 'Generator',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Test teacher for the auto-cancel decision stamp',
+        pageSlug: suffix,
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Decided Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234GN',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 40 },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    // Next candidate starts 90 minutes from now, with a two-hour check.
+    const start = new Date(Date.now() + 90 * 60_000);
+    const startTime = hhmmToTime(
+      `${String(start.getUTCHours()).padStart(2, '0')}:${String(start.getUTCMinutes()).padStart(2, '0')}`,
+    );
+    const template = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'regular', classType: 'Vinyasa',
+            dayOfWeek: (start.getUTCDay() + 6) % 7,
+            startTime, durationMinutes: 60, isActive: true,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
+        roomCost: 40, minRate: 15, targetRate: 30, minStudents: 4, maxStudents: 12,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck: 'HOURS_2',
+      },
+    });
+    scheduleRuleId = template.scheduleRuleId;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { scheduleRuleId } });
+    await prisma.scheduleRule.delete({ where: { id: scheduleRuleId } });
+    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+  });
+
+  it('stamps the class that starts inside its check window and leaves the later ones undecided', async () => {
+    const count = await generateClassInstances(prisma, {
+      streaks: createContentionStreaks(),
+      from: new Date(),
+      teacherId,
+    });
+    expect(count).toBeGreaterThan(1);
+
+    const classes = await prisma.class.findMany({
+      where: { calendarEntry: { scheduleRuleId } },
+      orderBy: { calendarEntry: { date: 'asc' } },
+    });
+    const [first, ...later] = classes;
+    expect(first?.autoCancelDecidedAt).not.toBeNull();
+    expect(later.length).toBeGreaterThan(0);
+    for (const cls of later) expect(cls.autoCancelDecidedAt).toBeNull();
+  });
+});
