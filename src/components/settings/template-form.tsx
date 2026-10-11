@@ -678,12 +678,14 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
         <NumberInput
           label={`Min rate (${currencyLabel(currency)})`}
           decimals={MONEY_DECIMALS}
+          signed
           value={form.minRate}
           onValueChange={(n) => update('minRate', n)}
         />
         <NumberInput
           label={`Target rate (${currencyLabel(currency)})`}
           decimals={MONEY_DECIMALS}
+          signed
           value={form.targetRate}
           onValueChange={(n) => update('targetRate', n)}
         />

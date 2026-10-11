@@ -149,6 +149,30 @@ describe('NumberInput', () => {
       expect([withMin, withMax, withStep]).toHaveLength(3);
     });
 
+    it('renders a signed field with no inputmode, so a phone keyboard offers the minus key', () => {
+      render(<NumberInput label="Amount" decimals={2} signed value={0} onValueChange={vi.fn()} />);
+      const input = screen.getByLabelText('Amount');
+      expect(input).toHaveAttribute('type', 'text');
+      expect(input).not.toHaveAttribute('inputmode');
+    });
+
+    it('reads a negative decimal comma in a signed field', () => {
+      const onValueChange = vi.fn();
+      render(<NumberInput label="Amount" decimals={2} signed value={0} onValueChange={onValueChange} />);
+      fireEvent.change(screen.getByLabelText('Amount'), { target: { value: '-4,5' } });
+      expect(onValueChange).toHaveBeenLastCalledWith(-4.5);
+    });
+
+    it('refuses inputMode beside decimals, and signed without them, at compile time', () => {
+      const withInputMode = (
+        // @ts-expect-error the field chooses its own keyboard in decimal mode
+        <NumberInput label="Amount" decimals={2} inputMode="numeric" value={1} onValueChange={vi.fn()} />
+      );
+      // @ts-expect-error signed only means something on a text field
+      const signedInteger = <NumberInput label="Amount" signed value={1} onValueChange={vi.fn()} />;
+      expect([withInputMode, signedInteger]).toHaveLength(2);
+    });
+
     it('rewrites the field when the value is replaced from outside', () => {
       const onValueChange = vi.fn();
       const { rerender } = render(<NumberInput label="Amount" decimals={2} value={4.5} onValueChange={onValueChange} />);

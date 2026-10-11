@@ -605,6 +605,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
               id="minRate"
               label={`Min rate (${currencyLabel(currency)})`}
               decimals={MONEY_DECIMALS}
+              signed
               value={form.minRate}
               onValueChange={(n) => updateField('minRate', n)}
               error={errors.minRate}
@@ -613,6 +614,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
               id="targetRate"
               label={`Target rate (${currencyLabel(currency)})`}
               decimals={MONEY_DECIMALS}
+              signed
               value={form.targetRate}
               onValueChange={(n) => updateField('targetRate', n)}
               error={errors.targetRate}

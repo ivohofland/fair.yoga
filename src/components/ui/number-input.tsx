@@ -10,13 +10,16 @@ type BaseProps = Omit<ComponentProps<typeof Input>, 'type' | 'value' | 'onChange
 };
 
 type NumberInputProps =
-  | (BaseProps & { decimals?: undefined })
-  | (Omit<BaseProps, 'min' | 'max' | 'step' | 'inputMode'> & {
+  | (BaseProps & { decimals?: undefined; signed?: never })
+  | (BaseProps & {
       /** Most fraction digits an amount may carry; `Infinity` sets no limit. */
       decimals: number;
+      /** The amount may be negative. */
+      signed?: boolean;
       min?: never;
       max?: never;
       step?: never;
+      inputMode?: never;
     });
 
 /** An empty or blank field holds 0. */
@@ -39,9 +42,12 @@ function parse(text: string, decimals: number | undefined): number {
  *
  * With `decimals` the field is a text field read by `parseDecimal`, which
  * takes `,` or `.` as the separator; Chromium's number input drops a typed
- * comma. Unreadable text is reported as NaN and left as typed.
+ * comma. Unreadable text is reported as NaN and left as typed. It asks for
+ * the decimal keypad, unless `signed`: iOS's decimal keypad has no minus key,
+ * so a signed field sets no `inputMode` and gets the plain keyboard, whose
+ * number layer has both `-` and `,`.
  */
-export function NumberInput({ value, onValueChange, onBlur, decimals, ...props }: NumberInputProps) {
+export function NumberInput({ value, onValueChange, onBlur, decimals, signed, ...props }: NumberInputProps) {
   const [text, setText] = useState(String(value));
   // A NaN `value` equals no parse of any text, and a `String(value)` that does
   // not parse back (4.555 at 2 decimals) would rewrite on every render; both
@@ -49,7 +55,12 @@ export function NumberInput({ value, onValueChange, onBlur, decimals, ...props }
   if (parse(text, decimals) !== value && !Number.isNaN(value) && text !== String(value)) {
     setText(String(value));
   }
-  const typeProps = decimals === undefined ? { type: 'number' } : { type: 'text', inputMode: 'decimal' as const };
+  const typeProps =
+    decimals === undefined
+      ? { type: 'number' }
+      : signed
+        ? { type: 'text' }
+        : { type: 'text', inputMode: 'decimal' as const };
   return (
     <Input
       {...props}

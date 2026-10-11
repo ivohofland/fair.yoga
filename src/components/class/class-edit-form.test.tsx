@@ -267,18 +267,28 @@ describe('ClassEditForm', () => {
   );
 
   it.each([
-    ['Room cost (€)', 'room cost'],
-    ['Min rate (€)', 'min rate'],
-    ['Target rate (€)', 'target rate'],
-  ])('refuses a %s that is not one amount, rather than saving 0', async (fieldName, name) => {
+    ['Room cost (€)', '4,5,6', 'room cost'],
+    ['Room cost (€)', '1.000', 'room cost'],
+    ['Min rate (€)', '4,5,6', 'min rate'],
+    ['Min rate (€)', '1.000', 'min rate'],
+    ['Target rate (€)', '4,5,6', 'target rate'],
+    ['Target rate (€)', '1.000', 'target rate'],
+  ])('refuses a %s of %s, rather than reading it as some other amount', async (fieldName, text, name) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
-    fireEvent.change(screen.getByLabelText(fieldName), { target: { value: '4,5,6' } });
+    fireEvent.change(screen.getByLabelText(fieldName), { target: { value: text } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await screen.findByRole('alert')).toHaveTextContent(new RegExp(`^Enter a number for ${name}$`));
+  });
+
+  it('keeps the minus key on the signed rate fields and the decimal keypad on room cost', () => {
+    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    expect(screen.getByLabelText('Min rate (€)')).not.toHaveAttribute('inputmode');
+    expect(screen.getByLabelText('Target rate (€)')).not.toHaveAttribute('inputmode');
+    expect(screen.getByLabelText('Room cost (€)')).toHaveAttribute('inputmode', 'decimal');
   });
 
   it.each([

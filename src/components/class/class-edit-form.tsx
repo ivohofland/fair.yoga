@@ -298,6 +298,7 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           <NumberInput
             label={`Min rate (${currencyLabel(currency)})`}
             decimals={MONEY_DECIMALS}
+            signed
             value={form.minRate}
             disabled={settingsLocked}
             onValueChange={(n) => set('minRate', n)}
@@ -305,6 +306,7 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
           <NumberInput
             label={`Target rate (${currencyLabel(currency)})`}
             decimals={MONEY_DECIMALS}
+            signed
             value={form.targetRate}
             disabled={settingsLocked}
             onValueChange={(n) => set('targetRate', n)}
