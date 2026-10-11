@@ -62,6 +62,11 @@ the next tick, as it would have been today.
    the count, so a concurrent registration cannot land between them. The
    cancel CAS also requires `autoCancelDecidedAt IS NULL`.
 
+   The sweep's registration-count pre-filter goes. It existed so a healthy
+   class did not take a lock every minute of its window; a healthy class
+   must now be stamped, which needs the lock, and after that one transaction
+   it is never selected again. The window pre-filter stays.
+
 2. **A teacher's write that puts an undecided open class past its check time.**
    The teacher chose to run the class inside its own window, so the class counts
    as already judged (agreed in brainstorming, option A). Otherwise the next
