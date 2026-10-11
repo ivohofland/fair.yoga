@@ -366,6 +366,10 @@ export const STARTS_IN_PAST_MESSAGE = "This class's start time has already passe
  * blocked behind it. `POST /api/classes/[id]/cancel` (#327) closes the same
  * queue in the same shape, having inherited it from the transition route's
  * cancel branch when that branch became its own door.
+ *
+ * A publish (`draft -> open`) of a class already past its auto-cancel check
+ * also stamps `autoCancelDecidedAt` in the same transaction
+ * (`stampIfPastCancelCheck`), so the sweep never judges it.
  */
 export async function transitionClass(
   db: PrismaClient,
@@ -1338,8 +1342,8 @@ export type UpdateClassResult =
  *
  * The FREEZES gate on different events and cover different things. The
  * BOOKING freeze (`settingsLocked`) starts at the first registration and
- * covers `LOCKED_FIELDS`: the economics, and since #836 the schedule. The TERMINAL freeze (#247) starts when the class
- * completes or is cancelled and covers EVERY field — it is the class that is
+ * covers `LOCKED_FIELDS`: the economics and the schedule. The TERMINAL freeze
+ * (#247) starts when the class completes or is cancelled and covers EVERY field — it is the class that is
  * frozen, not a list of columns. Since #327 its two halves are read from two
  * different rows (`Class.status`, `CalendarEntry.cancelledAt`), which is what
  * `frozenStateOf` above exists to keep in one place.
