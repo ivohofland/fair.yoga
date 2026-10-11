@@ -504,7 +504,8 @@ test.describe('One-off studio classes', () => {
     await page.getByLabel('Date').fill(pastIso);
     await page.getByLabel('Start time').fill('19:30');
     await page.getByLabel('Duration (minutes)').fill('75');
-    await page.getByLabel('Hourly rate').fill('40');
+    await page.getByLabel('Hourly rate').clear();
+    await page.getByLabel('Hourly rate').pressSequentially('40,5');
     await page.getByRole('button', { name: 'Log class' }).click();
 
     // Wait on the destination, not the `Created` notice: asserting the
@@ -515,6 +516,7 @@ test.describe('One-off studio classes', () => {
 
     const created = await prisma.studioClass.findFirstOrThrow({ where: { calendarEntry: { teacherId: soloTeacherId, classType: 'Cover Class' } }, include: { calendarEntry: true } });
     expect(page.url()).toBe(`${BASE_URL}/studio-class/${created.id}`);
+    expect(Number(created.hourlyRate)).toBe(40.5);
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // Issue 304, manual half: the page the log form lands on heads with the
