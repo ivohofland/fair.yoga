@@ -13,6 +13,7 @@ const initial = {
   bio: 'Slow flow on Tuesdays.',
   pageSlug: 'anna',
   currency: 'EUR' as Currency,
+  defaultVatPercent: 0,
   defaultTimezone: 'Europe/Amsterdam',
 };
 
@@ -257,6 +258,51 @@ describe('ProfileForm', () => {
       await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
       const second = JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string) as Record<string, unknown>;
       expect(second).not.toHaveProperty('currency');
+    });
+  });
+
+  describe('default VAT % (#833)', () => {
+    it('shows the stored rate and the responsibility hint', () => {
+      renderForm({ defaultVatPercent: 14.975 });
+      expect(screen.getByLabelText('Default VAT %')).toHaveValue(14.975);
+      expect(
+        screen.getByText(
+          "It's your responsibility to set the right VAT rate. You can change it on each class. This is only the default for new classes. Use 0 if you don't charge VAT.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('sends the rate as a number', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '9' } });
+      save();
+
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody().defaultVatPercent).toBe(9);
+    });
+
+    it('sends 0 when the field is cleared', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm({ defaultVatPercent: 21 });
+      fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '' } });
+      save();
+
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody().defaultVatPercent).toBe(0);
+    });
+
+    it('refuses four decimals before sending', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '8.1234' } });
+      save();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Use at most 3 decimals for VAT.');
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 

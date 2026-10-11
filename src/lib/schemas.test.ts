@@ -507,6 +507,24 @@ describe('updateTeacherSchema.defaultTimezone', () => {
   });
 });
 
+describe('updateTeacherSchema.defaultVatPercent (#833)', () => {
+  it.each([0, 9, 14.975, 100])('accepts %s', (v) => {
+    expect(updateTeacherSchema.safeParse({ defaultVatPercent: v }).success).toBe(true);
+  });
+  it.each([
+    [-1, "VAT can't be negative."],
+    [101, 'Keep VAT to 100% or less.'],
+    [8.1234, 'Use at most 3 decimals for VAT.'],
+  ])('refuses %s with its copy', (v, message) => {
+    const r = updateTeacherSchema.safeParse({ defaultVatPercent: v });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues[0]?.message).toBe(message);
+  });
+  it('refuses a string', () => {
+    expect(updateTeacherSchema.safeParse({ defaultVatPercent: '9' }).success).toBe(false);
+  });
+});
+
 describe('teacherProfileSchema.defaultTimezone', () => {
   const base = { firstName: 'A', lastName: 'B', bio: '', pageSlug: 'zone-test' };
 
@@ -1572,6 +1590,7 @@ function isFixedShape(pattern: RegExp): boolean {
  */
 const UNBOUNDED_NUMBER_ALLOWED: Record<string, string> = {
   'updateStudentSchema.incomeTier': 'refine-bounded: isIncomeTier accepts only 1 to 5',
+  'updateTeacherSchema.defaultVatPercent': 'refine-bounded: vatPercentViolation accepts only 0 to 100',
 };
 
 /** Zod 4's `.int()` seeds the bag with the safe-integer range, which is not a bound the product chose. */
