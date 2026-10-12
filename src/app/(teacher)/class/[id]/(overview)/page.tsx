@@ -176,10 +176,7 @@ export default async function ClassDetailPage({
         checkAt: cancelCheckInstant(cls.calendarEntry, cls.autoCancelCheck, tz),
       }
     : null;
-  // An unreadable instant is left out: its `toISOString()` throws.
-  const pageRefreshInstants = lateInstants
-    ? latePublishRefreshInstants(lateInstants).filter((d) => !Number.isNaN(d.getTime()))
-    : refreshInstants;
+  const pageRefreshInstants = lateInstants ? latePublishRefreshInstants(lateInstants) : refreshInstants;
 
   const stamp = offlineSnapshotStamp(session, new Date(now));
 
