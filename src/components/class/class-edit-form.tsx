@@ -120,7 +120,7 @@ interface ClassEditFormProps {
   classId: string;
   settingsLocked: boolean;
   currency: Currency;
-  /** `null` where no move can late-publish: a draft, or a class that is booked. */
+  /** `null`: no notice, however the start moves. */
   moveWarning: MoveWarning | null;
   initial: ClassEditInitial;
 }
@@ -401,7 +401,15 @@ export function ClassEditForm({
       </section>
 
       <div>
-        <LatePublishNotice action="move" state={moveState} minStudents={form.minStudents} />
+        <LatePublishNotice
+          action="move"
+          state={moveState}
+          minStudents={
+            Number.isInteger(form.minStudents) && form.minStudents >= 1
+              ? form.minStudents
+              : initial.minStudents
+          }
+        />
         <div className="flex items-center gap-3">
           <Button variant="primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save changes'}

@@ -666,6 +666,14 @@ describe('ClassEditForm, late-move notice', () => {
     );
   });
 
+  it('names the stored min students while the Min students field is cleared', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    move('2026-06-11', '23:30');
+    fireEvent.change(screen.getByLabelText('Min students'), { target: { value: '' } });
+    expect(notice()?.textContent).toContain('If fewer than 4 students book');
+  });
+
   it('moving further away than the deadline shows nothing, and moving back out removes it', () => {
     vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
     open(warning);
