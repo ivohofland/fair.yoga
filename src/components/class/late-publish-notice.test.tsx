@@ -48,6 +48,35 @@ describe('LatePublishNotice', () => {
   });
 });
 
+describe('LatePublishNotice, action publish, exact copy', () => {
+  it('past_deadline reads exactly', () => {
+    const { container } = render(
+      <LatePublishNotice action="publish" state="past_deadline" minStudents={4} />,
+    );
+    expect(container.textContent).toBe(
+      "This class starts inside its cancellation deadline. Students who book after you publish can't cancel for free.",
+    );
+  });
+
+  it('past_check reads exactly, plural', () => {
+    const { container } = render(
+      <LatePublishNotice action="publish" state="past_check" minStudents={4} />,
+    );
+    expect(container.textContent).toBe(
+      "This class starts inside its cancellation deadline and its auto-cancel check has passed. Students who book after you publish can't cancel for free, and the class goes ahead however few book. If fewer than 4 students book, you cover what the missing students would have paid.",
+    );
+  });
+
+  it('past_check reads exactly, singular', () => {
+    const { container } = render(
+      <LatePublishNotice action="publish" state="past_check" minStudents={1} />,
+    );
+    expect(container.textContent).toBe(
+      "This class starts inside its cancellation deadline and its auto-cancel check has passed. Students who book after you publish can't cancel for free, and the class goes ahead however few book. If nobody books, you cover what that student would have paid.",
+    );
+  });
+});
+
 describe('LatePublishNotice, action move', () => {
   it('renders nothing for none', () => {
     const { container } = render(<LatePublishNotice action="move" state="none" minStudents={4} />);

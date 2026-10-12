@@ -20,7 +20,9 @@ const CLIENT_IMPORTED = [
   'src/components/class/class-edit-form.tsx',
 ];
 
-// Imports only `@/lib/tiers`, no I/O, so the form's price preview may use it.
+// Exempt from the "nothing under src/services" rule only: the walk still reads
+// these files' imports, so a service that stays client-safe is held to that by
+// what it imports rather than by this list.
 const PURE_SERVICES = ['src/services/pricing.ts'];
 
 const FORBIDDEN_FILES = ['src/lib/log.ts', 'src/lib/degradation.ts', 'src/lib/db.ts'];
@@ -67,10 +69,8 @@ function forbiddenReached(entry: string): string[] {
     seen.add(file);
     const rel = path.relative(ROOT, file);
     const here = [...chain, rel];
-    if (
-      !PURE_SERVICES.includes(rel) &&
-      (FORBIDDEN_FILES.includes(rel) || rel.startsWith(`src${path.sep}services${path.sep}`))
-    ) {
+    const underServices = rel.startsWith(`src${path.sep}services${path.sep}`);
+    if (FORBIDDEN_FILES.includes(rel) || (underServices && !PURE_SERVICES.includes(rel))) {
       found.push(here.join(' -> '));
       return;
     }
@@ -90,5 +90,13 @@ function forbiddenReached(entry: string): string[] {
 describe('the modules a client component imports for class instants', () => {
   it.each(CLIENT_IMPORTED)('%s reaches no server-only module at runtime', (entry) => {
     expect(forbiddenReached(entry)).toEqual([]);
+  });
+});
+
+describe('the walk itself', () => {
+  it('finds a forbidden module from a module that imports one', () => {
+    expect(forbiddenReached('src/lib/timezone.ts')).toContain(
+      'src/lib/timezone.ts -> src/lib/log.ts',
+    );
   });
 });

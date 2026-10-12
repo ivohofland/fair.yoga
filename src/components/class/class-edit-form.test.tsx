@@ -7,7 +7,8 @@ import { todayLocal } from '@/lib/format';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { DURATION_MAX_MINUTES, MONEY_MAX } from '@/lib/input-bounds';
 import { routerRefresh } from '../../../tests/setup/components';
-import { ClassEditForm, type ClassEditInitial, type MoveWarning } from './class-edit-form';
+import type { MoveWarning } from '@/lib/late-publish';
+import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
 
 /**
  * A real `Response` whose `json()` genuinely throws — the shape a proxy's
@@ -688,6 +689,23 @@ describe('ClassEditForm, late-move notice', () => {
     open(warning);
     move('2026-06-12', '02:30');
     fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '' } });
+    expect(notice()).toBeNull();
+  });
+
+  it('shows nothing while the date field is cleared', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    move('2026-06-12', '02:30');
+    expect(notice()).not.toBeNull();
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '' } });
+    expect(notice()).toBeNull();
+  });
+
+  it('shows nothing when the timezone cannot be read, though UTC would put the move inside the deadline', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open({ ...warning, timeZone: 'Not/AZone' });
+    // Read as UTC, 02:30 on the 12th is 6.5 h out: inside the 12 h deadline, before the 00:30Z check.
+    move('2026-06-12', '02:30');
     expect(notice()).toBeNull();
   });
 

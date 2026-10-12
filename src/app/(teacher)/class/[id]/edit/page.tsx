@@ -5,6 +5,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { ClassEditForm } from '@/components/class/class-edit-form';
 import { timeToHHmm } from '@/lib/time-of-day';
+import { moveWarningFor } from '@/lib/late-publish';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,15 +44,13 @@ export default async function ClassEditPage({
         classId={cls.id}
         settingsLocked={cls.settingsLocked}
         currency={cls.currency}
-        moveWarning={
-          cls.status === 'open' && !cls.settingsLocked
-            ? {
-                timeZone: entry.teacher.defaultTimezone,
-                cancelDeadline: cls.cancelDeadline,
-                autoCancelCheck: cls.autoCancelCheck,
-              }
-            : null
-        }
+        moveWarning={moveWarningFor({
+          status: cls.status,
+          settingsLocked: cls.settingsLocked,
+          cancelDeadline: cls.cancelDeadline,
+          autoCancelCheck: cls.autoCancelCheck,
+          timeZone: entry.teacher.defaultTimezone,
+        })}
         initial={{
           classType: entry.classType,
           description: cls.description ?? '',
