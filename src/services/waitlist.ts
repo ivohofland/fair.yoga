@@ -11,7 +11,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, CancelDeadline, WaitlistEntry, WaitlistStatus } from '@prisma/client';
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
-import { freeCancelUntil } from '@/lib/cancel-deadline';
+import { cancelDeadlineFrom, freeCancelUntil } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
@@ -203,31 +203,17 @@ export type WaitlistWindow = 'auto_promote' | 'first_come_first_claimed' | 'froz
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maps CancelDeadline enum to hours before class start. */
-export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
-  HOURS_48: 48,
-  HOURS_24: 24,
-  HOURS_12: 12,
-  HOURS_6: 6,
-};
-
 // ---------------------------------------------------------------------------
 // Pure functions
 // ---------------------------------------------------------------------------
 
-/**
- * The cancel-deadline instant for a class: its start, minus the deadline
- * enum's hours, as a real elapsed-time subtraction (not a wall-clock-preserved
- * one — a class near a DST transition can have a different UTC offset at its
- * deadline instant than at its own start).
- */
+/** The cancel-deadline instant for a class: `cancelDeadlineFrom` its start in `timeZone`. */
 export function cancelDeadlineInstant(
   entry: { date: Date; startTime: Date },
   cancelDeadline: CancelDeadline,
   timeZone: string,
 ): Date {
-  const classStart = classStartInstant(entry, timeZone);
-  return new Date(classStart.getTime() - DEADLINE_HOURS[cancelDeadline] * 60 * 60 * 1000);
+  return cancelDeadlineFrom(classStartInstant(entry, timeZone), cancelDeadline);
 }
 
 export { CLAIM_WINDOW_MINUTES };

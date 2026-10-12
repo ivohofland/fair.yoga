@@ -20,17 +20,12 @@ import { lockClassRow } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { closeQueueOnStart } from './waitlist';
 import { readInPages } from '@/lib/read-in-pages';
-import {
-  DEFAULT_CANCEL_CHECK_HOURS,
-  MAX_CANCEL_CHECK_HOURS,
-  isPastCancelCheck,
-} from '@/lib/auto-cancel-check';
+import { MAX_CANCEL_CHECK_HOURS } from '@/lib/cancel-check';
+import { isPastCancelCheck } from '@/lib/auto-cancel-check';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-export { DEFAULT_CANCEL_CHECK_HOURS, MAX_CANCEL_CHECK_HOURS };
 
 const HOUR_MS = 60 * 60 * 1000;
 

@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { DEADLINE_HOURS, cancelDeadlineInstant } from '@/services/waitlist';
-import { isPastCancelDeadline } from '@/lib/cancel-deadline';
-import { cancelCheckInstant, isPastCancelCheck, MAX_CANCEL_CHECK_HOURS } from '@/lib/auto-cancel-check';
+import type { AutoCancelCheck, CancelDeadline } from '@prisma/client';
+import { cancelDeadlineInstant } from '@/services/waitlist';
+import { DEADLINE_HOURS, isPastCancelDeadline } from '@/lib/cancel-deadline';
+import { CANCEL_CHECK_HOURS, MAX_CANCEL_CHECK_HOURS } from '@/lib/cancel-check';
+import { cancelCheckInstant, isPastCancelCheck } from '@/lib/auto-cancel-check';
 import { classStartInstant, startsInPast } from '@/lib/timezone';
-import { latePublishState, latePublishRefreshInstants } from './late-publish';
+import { latePublishState, latePublishRefreshInstants, latePublishInstants } from './late-publish';
 
 const HOUR = 60 * 60 * 1000;
 const start = new Date('2030-01-10T18:00:00Z');
@@ -81,5 +83,22 @@ describe('agreement with the predicates it restates', () => {
 describe('ordering', () => {
   it('every cancel deadline is earlier than every check, so past_check implies past the deadline', () => {
     expect(Math.min(...Object.values(DEADLINE_HOURS))).toBeGreaterThan(MAX_CANCEL_CHECK_HOURS);
+  });
+});
+
+describe('latePublishInstants', () => {
+  const entry = { date: new Date('2030-03-31T00:00:00Z'), startTime: new Date('1970-01-01T18:30:00Z') };
+  const timeZone = 'Europe/Amsterdam';
+  const realStart = classStartInstant(entry, timeZone);
+  const deadlines = Object.keys(DEADLINE_HOURS) as CancelDeadline[];
+  const checks = Object.keys(CANCEL_CHECK_HOURS) as AutoCancelCheck[];
+  const pairs = deadlines.flatMap((d) => checks.map((c) => [d, c] as const));
+
+  it.each(pairs)('agrees with the server wrappers for %s and %s', (cancelDeadline, autoCancelCheck) => {
+    expect(latePublishInstants({ start: realStart, cancelDeadline, autoCancelCheck })).toEqual({
+      start: realStart,
+      deadline: cancelDeadlineInstant(entry, cancelDeadline, timeZone),
+      checkAt: cancelCheckInstant(entry, autoCancelCheck, timeZone),
+    });
   });
 });

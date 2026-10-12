@@ -5,10 +5,9 @@ import {
   autoCancelClasses,
   autoCompleteClasses,
   cancelCandidateDates,
-  DEFAULT_CANCEL_CHECK_HOURS,
-  MAX_CANCEL_CHECK_HOURS,
 } from './class-transitions';
 import { classStartInstant } from '@/lib/timezone';
+import { DEFAULT_CANCEL_CHECK_HOURS, MAX_CANCEL_CHECK_HOURS } from '@/lib/cancel-check';
 import { lockClassRow } from '@/lib/db-locks';
 import { getWaitlistWindow } from './waitlist';
 import { CHARGED_STATUSES } from './class-lifecycle';

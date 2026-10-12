@@ -1,4 +1,23 @@
-import type { WaitlistStatus } from '@prisma/client';
+import type { CancelDeadline, WaitlistStatus } from '@prisma/client';
+
+/** Maps CancelDeadline enum to hours before class start. */
+export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
+  HOURS_48: 48,
+  HOURS_24: 24,
+  HOURS_12: 12,
+  HOURS_6: 6,
+};
+
+/**
+ * The cancel-deadline instant for a class that starts at `start`: the start,
+ * minus the deadline enum's hours, as a real elapsed-time subtraction (not a
+ * wall-clock-preserved one — a class near a DST transition can have a
+ * different UTC offset at its deadline instant than at its own start).
+ * An Invalid `start` gives an Invalid Date.
+ */
+export function cancelDeadlineFrom(start: Date, cancelDeadline: CancelDeadline): Date {
+  return new Date(start.getTime() - DEADLINE_HOURS[cancelDeadline] * 60 * 60 * 1000);
+}
 
 /**
  * Whether `now` is strictly after the cancel deadline — the deadline instant

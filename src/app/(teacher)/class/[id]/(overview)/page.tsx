@@ -29,9 +29,7 @@ import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
 import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
 import { LatePublishNotice } from '@/components/class/late-publish-notice';
-import { latePublishState, latePublishRefreshInstants } from '@/lib/late-publish';
-import { cancelDeadlineInstant } from '@/services/waitlist';
-import { cancelCheckInstant } from '@/lib/auto-cancel-check';
+import { latePublishState, latePublishRefreshInstants, latePublishInstants } from '@/lib/late-publish';
 
 export default async function ClassDetailPage({
   params,
@@ -170,11 +168,11 @@ export default async function ClassDetailPage({
   // window, and refreshes at the instants that warning can change.
   const draft = !cancelled && cls.status === 'draft';
   const lateInstants = draft
-    ? {
+    ? latePublishInstants({
         start,
-        deadline: cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz),
-        checkAt: cancelCheckInstant(cls.calendarEntry, cls.autoCancelCheck, tz),
-      }
+        cancelDeadline: cls.cancelDeadline,
+        autoCancelCheck: cls.autoCancelCheck,
+      })
     : null;
   const pageRefreshInstants = lateInstants ? latePublishRefreshInstants(lateInstants) : refreshInstants;
 

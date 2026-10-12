@@ -5,7 +5,6 @@ import {
   getWaitlistWindow,
   CLAIM_WINDOW_MINUTES,
   cancelDeadlineInstant,
-  DEADLINE_HOURS,
   addToWaitlist,
   removeFromWaitlist,
   promoteNext,
@@ -19,7 +18,7 @@ import {
   SpotFreedError,
 } from './waitlist';
 import { isTransientDbError } from '@/lib/api-errors';
-import { freeCancelUntil } from '@/lib/cancel-deadline';
+import { DEADLINE_HOURS, freeCancelUntil } from '@/lib/cancel-deadline';
 import { formatInstantInZone } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
