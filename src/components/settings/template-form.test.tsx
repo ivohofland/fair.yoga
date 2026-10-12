@@ -792,6 +792,8 @@ describe('TemplateForm', () => {
     fireEvent.click(button);
     expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
     expect(await screen.findByRole('alert')).toHaveTextContent(/^Min rate cannot exceed target rate$/);
+    // The pricing preview names the rule instead of pricing it.
+    expect(screen.queryByRole('slider')).not.toBeInTheDocument();
   });
 
   /**

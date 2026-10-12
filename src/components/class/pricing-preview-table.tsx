@@ -6,6 +6,7 @@ import { isIncomeTier } from '@/lib/tiers';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { PricingPreviewResult, type PricingPreviewInputs } from './pricing-preview-result';
 
+/** The preview's own wording for each rule `economicsViolations` can report. */
 const ECONOMICS_COPY = {
   students_order: 'Min students cannot exceed max students',
   rate_order: 'Min rate cannot exceed target rate',
@@ -79,7 +80,8 @@ export function PricingPreviewTable({
     );
   }
 
-  // Ahead of the rules: every comparison against NaN is false, so they would pass it.
+  // Before the rules: `<` and `>` against NaN are false, so a NaN count breaks none of
+  // them and would reach the slider as "NaN students".
   if (![minStudents, maxStudents].every(Number.isFinite)) {
     return (
       <p className="text-sm text-brown py-2">

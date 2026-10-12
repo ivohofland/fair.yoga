@@ -166,7 +166,8 @@ describe('PricingPreviewTable', () => {
       ).toBeInTheDocument();
       expect(screen.queryByRole('slider')).not.toBeInTheDocument();
       expect(screen.queryByText('1 · Getting by')).not.toBeInTheDocument();
-      // No amount at all: the opening size (8) prices positive, so a sign check alone would pass.
+      // No amount at all: the opening size, round((6 + 9) / 2) = 8, prices positive, so a
+      // check for negative amounts would pass even with the gate removed.
       expect(container.textContent).not.toContain('€');
     });
 

@@ -10,7 +10,8 @@ would accept, and says which rule the numbers break instead.
   `economicsViolations` (`src/lib/class-economics.ts`). Room 30 / min rate −40 reaches
   the engine and renders negative totals and tier prices.
 - Its three callers (new-class, class-edit, template form) are the only importers
-  (`grep -rln PricingPreviewTable src`), so the fix covers them all.
+  besides the component and its own test (`grep -rln PricingPreviewTable src` lists
+  5 files = 3 callers + 2), so the fix covers them all.
 - Wider than the issue says: the gate covers every `EconomicsRule`, not just
   `room_subsidy`. `rate_order` (min rate above target) also feeds the engine an inverted
   slope. `students_order` is silently clamped today: `effectiveMax = max(effectiveMin,
@@ -18,7 +19,8 @@ would accept, and says which rule the numbers break instead.
 
 ## Design
 
-- After the finite-amounts gate and before the student-count gate, compute
+- After the finite-amounts gate and before the student-count gate (shipped the other
+  way round; see What shipped), compute
   `economicsViolations({ roomCost, minRate, targetRate, minStudents, maxStudents })`
   on the raw props. When it is non-empty, render each violation's sentence-case copy
   in place of the slider and table, styled like the existing gate messages.
@@ -56,7 +58,9 @@ Files: `src/components/class/pricing-preview-table.tsx`, its `.test.tsx`.
   tests in `class-edit-form.test.tsx` and `template-form.test.tsx` found the sentence
   twice, once in the form's own `role="alert"` and once in the preview. They are now
   scoped to the alert.
-- Test 5 asserts that every rule shows its sentence when all three fire.
+- A fifth test asserts that every rule shows its sentence when all three fire.
+- Both forms' rate-order tests also assert that no slider renders. That pins the gate
+  inside the forms: none of them has a slider of its own.
 - **The student-count gate was dead, all three of its arms** (whole-branch review).
   `effectiveMin = max(1, minStudents)` is ≥ 1 or NaN, and `effectiveMax` is
   ≥ `effectiveMin` or NaN, so `<= 0`, `<= 0` and `<` could never be true. A NaN count,
