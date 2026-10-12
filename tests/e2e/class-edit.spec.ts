@@ -8,6 +8,27 @@ const prisma = createGuardedPrismaClient();
 
 const suffix = uniqueSuffix();
 
+const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+
+async function mkNearClass(startAt: Date, status: 'draft' | 'open') {
+  return createClassFixture(prisma, {
+    teacherId,
+    teacherRoomId,
+    classType: 'Late Hatha',
+    ...wallSlotAt(startAt, teacherTimezone),
+    durationMinutes: 60,
+    roomCost: 30,
+    minRate: 12,
+    targetRate: 20,
+    minStudents: 2,
+    maxStudents: 10,
+    status,
+    cancelDeadline: 'HOURS_12',
+    autoCancelCheck: 'HOURS_2',
+  });
+}
+
 let teacherId: string;
 let teacherToken: string;
 let otherTeacherId: string;
@@ -18,7 +39,11 @@ let lockedClassId: string;
 let cancelledClassId: string;
 let pastDeadlineDraftId: string;
 let pastCheckDraftId: string;
+let openInsideDeadlineId: string;
+let crossingDraftId: string;
 let studentId: string;
+let teacherRoomId: string;
+let teacherTimezone: string;
 
 test.describe('Class edit screen', () => {
   test.describe.configure({ mode: 'serial' });
@@ -65,6 +90,8 @@ test.describe('Class edit screen', () => {
     const teacherRoom = await prisma.teacherRoom.create({
       data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
     });
+    teacherRoomId = teacherRoom.id;
+    teacherTimezone = teacher.defaultTimezone;
 
     async function mkClass(status: 'draft' | 'open' | 'cancelled', locked: boolean, day: string) {
       return createClassFixture(prisma, {
@@ -88,28 +115,10 @@ test.describe('Class edit screen', () => {
     lockedClassId = (await mkClass('open', true, '2099-07-08')).id;
     cancelledClassId = (await mkClass('cancelled', false, '2099-07-15')).id;
 
-    // Two drafts near now, an hour apart so their windows never overlap.
-    const HOUR = 60 * 60 * 1000;
-    async function mkNearDraft(hoursFromNow: number) {
-      const slot = wallSlotAt(new Date(Date.now() + hoursFromNow * HOUR), teacher.defaultTimezone);
-      return createClassFixture(prisma, {
-        teacherId,
-        teacherRoomId: teacherRoom.id,
-        classType: 'Late Hatha',
-        ...slot,
-        durationMinutes: 60,
-        roomCost: 30,
-        minRate: 12,
-        targetRate: 20,
-        minStudents: 2,
-        maxStudents: 10,
-        status: 'draft',
-        cancelDeadline: 'HOURS_12',
-        autoCancelCheck: 'HOURS_2',
-      });
-    }
-    pastDeadlineDraftId = (await mkNearDraft(3)).id;
-    pastCheckDraftId = (await mkNearDraft(1)).id;
+    // Near-now classes an hour or more apart, so their windows never overlap.
+    pastDeadlineDraftId = (await mkNearClass(new Date(Date.now() + 3 * HOUR), 'draft')).id;
+    pastCheckDraftId = (await mkNearClass(new Date(Date.now() + 1 * HOUR), 'draft')).id;
+    openInsideDeadlineId = (await mkNearClass(new Date(Date.now() + 5 * HOUR), 'open')).id;
 
     const student = await prisma.student.create({
       data: {
@@ -135,6 +144,8 @@ test.describe('Class edit screen', () => {
       cancelledClassId,
       pastDeadlineDraftId,
       pastCheckDraftId,
+      openInsideDeadlineId,
+      crossingDraftId,
     ].filter(Boolean);
     if (classIds.length) {
       await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
@@ -173,6 +184,24 @@ test.describe('Class edit screen', () => {
     await page.goto(`/class/${pastCheckDraftId}`);
     await expect(page.getByText(/can't cancel for free/)).toBeVisible();
     await expect(page.getByText(/goes ahead/)).toBeVisible();
+  });
+
+  test('an open class inside its deadline shows no late-publish notice', async ({ page }) => {
+    await page.goto(`/class/${openInsideDeadlineId}`);
+    await expect(page.getByRole('link', { name: 'Edit class' })).toBeVisible();
+    await expect(page.getByText(/can't cancel for free/)).toHaveCount(0);
+  });
+
+  test('a draft left open across its deadline picks up the notice without a reload', async ({ page }) => {
+    test.setTimeout(150_000);
+    // The first whole minute whose deadline (12 h before) is at least 15 s away.
+    const start = new Date(Math.ceil((Date.now() + 12 * HOUR + 15_000) / MINUTE) * MINUTE);
+    crossingDraftId = (await mkNearClass(start, 'draft')).id;
+
+    await page.goto(`/class/${crossingDraftId}`);
+    await expect(page.getByRole('button', { name: 'Publish' })).toBeVisible();
+    await expect(page.getByText(/can't cancel for free/)).toHaveCount(0);
+    await expect(page.getByText(/can't cancel for free/)).toBeVisible({ timeout: 100_000 });
   });
 
   test('a draft edits fully — details and economics', async ({ page }) => {
