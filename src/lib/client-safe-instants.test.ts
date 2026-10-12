@@ -17,7 +17,11 @@ const CLIENT_IMPORTED = [
   'src/lib/cancel-deadline.ts',
   'src/lib/cancel-check.ts',
   'src/lib/late-publish.ts',
+  'src/components/class/class-edit-form.tsx',
 ];
+
+// Imports only `@/lib/tiers`, no I/O, so the form's price preview may use it.
+const PURE_SERVICES = ['src/services/pricing.ts'];
 
 const FORBIDDEN_FILES = ['src/lib/log.ts', 'src/lib/degradation.ts', 'src/lib/db.ts'];
 
@@ -63,7 +67,10 @@ function forbiddenReached(entry: string): string[] {
     seen.add(file);
     const rel = path.relative(ROOT, file);
     const here = [...chain, rel];
-    if (FORBIDDEN_FILES.includes(rel) || rel.startsWith(`src${path.sep}services${path.sep}`)) {
+    if (
+      !PURE_SERVICES.includes(rel) &&
+      (FORBIDDEN_FILES.includes(rel) || rel.startsWith(`src${path.sep}services${path.sep}`))
+    ) {
       found.push(here.join(' -> '));
       return;
     }
