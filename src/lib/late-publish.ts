@@ -57,9 +57,8 @@ export interface MoveWarning {
 }
 
 /**
- * The edit form's `moveWarning`: a value for a class that can still move and
- * whose move `redecideAfterMove` re-decides (an `open`, unlocked class), `null`
- * for every other class, which no move can put inside its window.
+ * The edit form's `moveWarning`: a value for an `open`, unlocked class — one
+ * that is bookable now and can still move — and `null` for every other class.
  */
 export function moveWarningFor(cls: {
   status: ClassStatus;
