@@ -5,7 +5,8 @@ import { cancelCheckFrom } from '@/lib/cancel-check';
 export type LatePublishState = 'none' | 'past_deadline' | 'past_check';
 
 /**
- * What publishing a draft at `now` would do to its first bookers. `past_check`
+ * What a class's first bookers face if it becomes bookable at `now` (a draft
+ * published, or an open class moved). `past_check`
  * names both consequences; that the check always follows the deadline is
  * pinned in `late-publish.test.ts`. A start that has passed reads `none`.
  */
