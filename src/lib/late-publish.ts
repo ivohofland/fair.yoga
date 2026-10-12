@@ -4,8 +4,8 @@ export type LatePublishState = 'none' | 'past_deadline' | 'past_check';
 
 /**
  * What publishing a draft at `now` would do to its first bookers. `past_check`
- * implies `past_deadline`: the check runs after the deadline. The start
- * instant itself still publishes; only strictly after it is `none`.
+ * implies `past_deadline`: the check runs after the deadline. A start that
+ * has passed reads `none`.
  */
 export function latePublishState(args: {
   now: Date;
@@ -20,11 +20,14 @@ export function latePublishState(args: {
   return 'none';
 }
 
-/** The instants at which `latePublishState` can change: deadline, checkAt, start. */
+/**
+ * The instants at which `latePublishState` can change: deadline, checkAt,
+ * start. An unreadable instant is left out; its `toISOString()` throws.
+ */
 export function latePublishRefreshInstants(args: {
   start: Date;
   deadline: Date;
   checkAt: Date;
 }): Date[] {
-  return [args.deadline, args.checkAt, args.start];
+  return [args.deadline, args.checkAt, args.start].filter((d) => !Number.isNaN(d.getTime()));
 }

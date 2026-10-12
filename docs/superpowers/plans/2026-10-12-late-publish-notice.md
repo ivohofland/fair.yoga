@@ -32,7 +32,7 @@
 1. **Exactly at the deadline instant**: still free to cancel (`isPastCancelDeadline` is strict). Expect state `none`. Pinned in Task 1.
 2. **Exactly at the check instant**: publishing stamps the decision (`isPastCancelCheck` is inclusive). Expect state `past_check`. Pinned in Task 1.
 3. **Start already passed**: expect `none` and no notice. Pinned in Task 1, and the page renders nothing for `none` (Task 2).
-4. **A cancelled draft**: no notice (the page renders no Publish button for it). Pinned by the page condition in Task 3; the e2e covers only the live draft.
+4. **A cancelled draft**: no notice (the page renders no Publish button for it). Pinned by the page condition in Task 2; the e2e covers only the live draft.
 5. **`minStudents` of 1**: copy reads "nobody books", not "fewer than 1 students book". Pinned in Task 2.
 
 ---

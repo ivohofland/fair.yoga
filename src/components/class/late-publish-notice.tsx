@@ -17,8 +17,10 @@ export function LatePublishNotice({
         "This class starts inside its cancellation deadline. Students who book after you publish can't cancel for free.";
       break;
     case 'past_check': {
-      const shortfall = minStudents === 1 ? 'nobody books' : `fewer than ${minStudents} students book`;
-      text = `This class starts inside its cancellation deadline and its auto-cancel check has passed. Students who book after you publish can't cancel for free, and the class goes ahead however few book. If ${shortfall}, you cover what the missing students would have paid.`;
+      const single = minStudents === 1;
+      const shortfall = single ? 'nobody books' : `fewer than ${minStudents} students book`;
+      const missing = single ? 'that student' : 'the missing students';
+      text = `This class starts inside its cancellation deadline and its auto-cancel check has passed. Students who book after you publish can't cancel for free, and the class goes ahead however few book. If ${shortfall}, you cover what ${missing} would have paid.`;
       break;
     }
     default: {

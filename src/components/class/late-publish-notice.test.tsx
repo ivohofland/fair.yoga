@@ -25,6 +25,8 @@ describe('LatePublishNotice', () => {
     const { container } = render(<LatePublishNotice state="past_check" minStudents={1} />);
     expect(container.textContent).toContain('nobody books');
     expect(container.textContent).not.toContain('fewer than 1');
+    expect(container.textContent).toContain('you cover what that student would have paid');
+    expect(container.textContent).not.toContain('the missing students');
   });
 
   it('is gold, not danger', () => {
