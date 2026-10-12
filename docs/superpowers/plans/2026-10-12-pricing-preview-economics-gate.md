@@ -14,8 +14,7 @@ would accept, and says which rule the numbers break instead.
 - Wider than the issue says: the gate covers every `EconomicsRule`, not just
   `room_subsidy`. `rate_order` (min rate above target) also feeds the engine an inverted
   slope. `students_order` is silently clamped today: `effectiveMax = max(effectiveMin,
-  maxStudents)` turns min 9 / max 6 into a one-position slider at 9, so the
-  student-count gate's `effectiveMax < effectiveMin` arm can never fire.
+  maxStudents)` turns min 9 / max 6 into a one-position slider at 9.
 
 ## Design
 
@@ -58,3 +57,10 @@ Files: `src/components/class/pricing-preview-table.tsx`, its `.test.tsx`.
   twice, once in the form's own `role="alert"` and once in the preview. They are now
   scoped to the alert.
 - Test 5 asserts that every rule shows its sentence when all three fire.
+- **The student-count gate was dead, all three of its arms** (whole-branch review).
+  `effectiveMin = max(1, minStudents)` is ≥ 1 or NaN, and `effectiveMax` is
+  ≥ `effectiveMin` or NaN, so `<= 0`, `<= 0` and `<` could never be true. A NaN count,
+  which `NumberInput` emits on bad input (`validity.badInput`), therefore reached the
+  slider as "NaN students". The gate now checks `Number.isFinite` on both counts and
+  runs before the economics gate, because `economicsViolations` passes NaN. Clamping a
+  minimum below one stays as it was.
