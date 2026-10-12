@@ -19,6 +19,7 @@ import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy'
 import { currencyLabel } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
+import { MAX_TIMEOUT_MS } from '@/lib/timer-bounds';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { readClassStart } from '@/lib/class-start';
 import {
@@ -115,9 +116,6 @@ export interface MoveWarning {
   autoCancelCheck: AutoCancelCheck;
 }
 
-/** `setTimeout` holds a delay in a signed 32-bit integer. */
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
-
 interface ClassEditFormProps {
   classId: string;
   settingsLocked: boolean;
@@ -166,17 +164,21 @@ export function ClassEditForm({
   const nextRefreshMs = instants
     ? latePublishRefreshInstants(instants)
         .map((d) => d.getTime())
-        .filter((t) => t > now)
+        .filter((t) => t >= now)
         .sort((a, b) => a - b)[0]
     : undefined;
   useEffect(() => {
     if (nextRefreshMs === undefined) return;
-    // The deadline is passed only strictly after it, so wake one ms later.
+    // The deadline is passed only strictly after it, so wake one ms later. An
+    // instant is kept until `now` is past it (`t >= now` above, wake at `t + 1`),
+    // so a timer that fires early, or a wake that is already due, re-arms or
+    // advances `now` instead of dropping the instant. Once `now` reaches the
+    // wake the instant is gone, so nothing re-arms from it.
     const delay = nextRefreshMs + 1 - Date.now();
-    if (delay <= 0 || delay > MAX_TIMEOUT_MS) return;
-    const timer = setTimeout(() => setNow(Date.now()), delay);
+    if (delay > MAX_TIMEOUT_MS) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(delay, 0));
     return () => clearTimeout(timer);
-  }, [nextRefreshMs]);
+  }, [nextRefreshMs, now]);
 
   function set<K extends keyof ClassEditInitial>(key: K, value: ClassEditInitial[K]) {
     setForm((f) => ({ ...f, [key]: value }));
