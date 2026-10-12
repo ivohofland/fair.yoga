@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import { createGuardedPrismaClient } from './prisma';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { createClassFixture } from '../class-fixtures';
+import { createClassFixture, wallSlotAt } from '../class-fixtures';
 
 const prisma = createGuardedPrismaClient();
 
@@ -16,6 +16,8 @@ let roomId: string;
 let draftClassId: string;
 let lockedClassId: string;
 let cancelledClassId: string;
+let pastDeadlineDraftId: string;
+let pastCheckDraftId: string;
 let studentId: string;
 
 test.describe('Class edit screen', () => {
@@ -86,6 +88,29 @@ test.describe('Class edit screen', () => {
     lockedClassId = (await mkClass('open', true, '2099-07-08')).id;
     cancelledClassId = (await mkClass('cancelled', false, '2099-07-15')).id;
 
+    // Two drafts near now, an hour apart so their windows never overlap.
+    const HOUR = 60 * 60 * 1000;
+    async function mkNearDraft(hoursFromNow: number) {
+      const slot = wallSlotAt(new Date(Date.now() + hoursFromNow * HOUR), teacher.defaultTimezone);
+      return createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Late Hatha',
+        ...slot,
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 12,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'draft',
+        cancelDeadline: 'HOURS_12',
+        autoCancelCheck: 'HOURS_2',
+      });
+    }
+    pastDeadlineDraftId = (await mkNearDraft(3)).id;
+    pastCheckDraftId = (await mkNearDraft(1)).id;
+
     const student = await prisma.student.create({
       data: {
         firstName: 'Locked',
@@ -104,7 +129,13 @@ test.describe('Class edit screen', () => {
       where: { id: { in: [hashToken(teacherToken), hashToken(otherTeacherToken)] } },
     });
     if (otherTeacherId) await prisma.teacher.delete({ where: { id: otherTeacherId } });
-    const classIds = [draftClassId, lockedClassId, cancelledClassId].filter(Boolean);
+    const classIds = [
+      draftClassId,
+      lockedClassId,
+      cancelledClassId,
+      pastDeadlineDraftId,
+      pastCheckDraftId,
+    ].filter(Boolean);
     if (classIds.length) {
       await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
       await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
@@ -124,6 +155,24 @@ test.describe('Class edit screen', () => {
 
   test.beforeEach(async ({ context }) => {
     await context.addCookies([sessionCookie(teacherToken)]);
+  });
+
+  test('a draft far from its start warns of nothing', async ({ page }) => {
+    await page.goto(`/class/${draftClassId}`);
+    await expect(page.getByRole('button', { name: 'Publish' })).toBeVisible();
+    await expect(page.getByText('cancellation deadline')).toHaveCount(0);
+  });
+
+  test('a draft inside its deadline warns that bookers cannot cancel free', async ({ page }) => {
+    await page.goto(`/class/${pastDeadlineDraftId}`);
+    await expect(page.getByText(/can't cancel for free/)).toBeVisible();
+    await expect(page.getByText(/goes ahead/)).toHaveCount(0);
+  });
+
+  test('a draft past its auto-cancel check also warns that it goes ahead', async ({ page }) => {
+    await page.goto(`/class/${pastCheckDraftId}`);
+    await expect(page.getByText(/can't cancel for free/)).toBeVisible();
+    await expect(page.getByText(/goes ahead/)).toBeVisible();
   });
 
   test('a draft edits fully — details and economics', async ({ page }) => {
