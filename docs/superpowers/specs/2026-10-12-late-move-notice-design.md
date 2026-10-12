@@ -98,7 +98,7 @@ log the fallback.
 
 Decision (by the issue author, 2026-10-12): **(c)**, skip generating a candidate
 that is already inside its cancellation deadline. It changes the generator's
-rules, so it gets its own issue and spec. This branch does not touch the
+rules, so it gets its own issue and spec: #849. This branch does not touch the
 generator.
 
 ## Not done
