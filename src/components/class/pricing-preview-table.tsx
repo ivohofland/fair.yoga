@@ -3,7 +3,14 @@
 import { useState, useCallback } from 'react';
 import { normalSpread, emptyCounts, type TierCounts } from '@/lib/pricing-preview';
 import { isIncomeTier } from '@/lib/tiers';
+import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { PricingPreviewResult, type PricingPreviewInputs } from './pricing-preview-result';
+
+const ECONOMICS_COPY = {
+  students_order: 'Min students cannot exceed max students',
+  rate_order: 'Min rate cannot exceed target rate',
+  room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
+} as const satisfies Record<EconomicsRule, string>;
 
 // ---------------------------------------------------------------------------
 // Distribution logic
@@ -69,6 +76,20 @@ export function PricingPreviewTable({
       <p className="text-sm text-brown py-2">
         Enter valid amounts to see pricing preview.
       </p>
+    );
+  }
+
+  // Economics no write path would accept get their rule named, not priced.
+  const violations = economicsViolations({ roomCost, minRate, targetRate, minStudents, maxStudents });
+  if (violations.length > 0) {
+    return (
+      <div className="py-2">
+        {violations.map((v) => (
+          <p key={v.rule} className="text-sm text-brown">
+            {ECONOMICS_COPY[v.rule]}
+          </p>
+        ))}
+      </div>
     );
   }
 

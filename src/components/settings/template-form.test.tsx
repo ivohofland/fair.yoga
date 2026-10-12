@@ -791,7 +791,7 @@ describe('TemplateForm', () => {
     const callsBeforeSubmit = fetchMock.mock.calls.length;
     fireEvent.click(button);
     expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
-    expect(await screen.findByText('Min rate cannot exceed target rate')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Min rate cannot exceed target rate');
   });
 
   /**

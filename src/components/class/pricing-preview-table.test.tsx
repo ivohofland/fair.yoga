@@ -138,6 +138,60 @@ describe('PricingPreviewTable', () => {
     expect(screen.getByText('€105.00')).toBeTruthy();
   });
 
+  describe('economics no write path would accept', () => {
+    const SUBSIDY = {
+      currency: 'EUR',
+      roomCost: 30,
+      minRate: -40,
+      targetRate: 40,
+      minStudents: 6,
+      maxStudents: 9,
+    } as const;
+
+    it('names the subsidy rule instead of pricing the class', () => {
+      const { container } = render(<PricingPreviewTable {...SUBSIDY} />);
+
+      expect(
+        screen.getByText('Min rate cannot subsidize more than the room cost — prices would go negative'),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+      expect(screen.queryByText('1 · Getting by')).not.toBeInTheDocument();
+      // No amount at all: the opening size (8) prices positive, so a sign check alone would pass.
+      expect(container.textContent).not.toContain('€');
+    });
+
+    it('still prices a subsidy that equals the room cost', () => {
+      render(<PricingPreviewTable {...SUBSIDY} minRate={-30} />);
+
+      expect(screen.getByRole('slider')).toBeInTheDocument();
+      expect(screen.getByText('1 · Getting by')).toBeInTheDocument();
+    });
+
+    it('names the rate-order rule when the minimum rate exceeds the target', () => {
+      render(<PricingPreviewTable {...EXAMPLE} minRate={50} targetRate={40} />);
+
+      expect(screen.getByText('Min rate cannot exceed target rate')).toBeInTheDocument();
+      expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+    });
+
+    it('names the students-order rule when the minimum exceeds the maximum', () => {
+      render(<PricingPreviewTable {...EXAMPLE} minStudents={9} maxStudents={6} />);
+
+      expect(screen.getByText('Min students cannot exceed max students')).toBeInTheDocument();
+      expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+    });
+
+    it('names every rule the economics break', () => {
+      render(<PricingPreviewTable {...EXAMPLE} roomCost={10} minRate={-20} targetRate={-30} minStudents={9} maxStudents={6} />);
+
+      expect(screen.getByText('Min students cannot exceed max students')).toBeInTheDocument();
+      expect(screen.getByText('Min rate cannot exceed target rate')).toBeInTheDocument();
+      expect(
+        screen.getByText('Min rate cannot subsidize more than the room cost — prices would go negative'),
+      ).toBeInTheDocument();
+    });
+  });
+
   it('treats a minimum below one as one, as while the field is being cleared', () => {
     render(<PricingPreviewTable {...EXAMPLE} minStudents={0} />);
 

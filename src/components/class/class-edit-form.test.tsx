@@ -393,7 +393,7 @@ describe('ClassEditForm', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/min rate cannot exceed target rate/i);
   });
 
   /**
