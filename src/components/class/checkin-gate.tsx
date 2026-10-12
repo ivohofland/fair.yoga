@@ -1,9 +1,7 @@
 'use client';
 
 import { useCallback, useSyncExternalStore, type ReactNode } from 'react';
-
-/** The longest delay `setTimeout` holds; beyond it the timer fires at once. */
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+import { MAX_TIMEOUT_MS } from '@/lib/timer-bounds';
 
 /**
  * Shows `attendance` once the server showed check-in or the device clock has

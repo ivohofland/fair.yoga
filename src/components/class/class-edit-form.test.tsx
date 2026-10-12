@@ -702,6 +702,23 @@ describe('ClassEditForm, late-move notice', () => {
     expect(notice()?.textContent).toBe(DEADLINE_COPY);
   });
 
+  it('still shows the notice when the timer fires a millisecond early', () => {
+    vi.setSystemTime(new Date('2026-06-11T18:00:00Z'));
+    open(warning);
+    move('2026-06-12', '11:30');
+    const wake = new Date('2026-06-11T21:30:00.001Z').getTime();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(wake - 1);
+    act(() => {
+      vi.advanceTimersByTime(3 * 60 * 60 * 1000 + 31 * 60 * 1000);
+    });
+    clock.mockRestore();
+    vi.setSystemTime(wake + 5);
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+    expect(notice()?.textContent).toBe(DEADLINE_COPY);
+  });
+
   it('sits before the Save button in document order', () => {
     vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
     open(warning);

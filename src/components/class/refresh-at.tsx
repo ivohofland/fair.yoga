@@ -3,9 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { isOfflineNow } from '@/lib/offline-status';
-
-/** The longest delay `setTimeout` holds; beyond it the timer fires at once. */
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+import { MAX_TIMEOUT_MS } from '@/lib/timer-bounds';
 
 /** How many distinct `serverNow` values a client is remembered mounting with, bounding `seenServerNows` below. */
 const MAX_REMEMBERED_SERVER_NOWS = 20;
