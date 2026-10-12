@@ -28,6 +28,10 @@ import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
 import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
+import { LatePublishNotice } from '@/components/class/late-publish-notice';
+import { latePublishState, latePublishRefreshInstants } from '@/lib/late-publish';
+import { cancelDeadlineInstant } from '@/services/waitlist';
+import { cancelCheckInstant } from '@/lib/auto-cancel-check';
 
 export default async function ClassDetailPage({
   params,
@@ -153,13 +157,29 @@ export default async function ClassDetailPage({
   // Check-in, the finish button, its caption and the instants at which any of
   // them can change, all read from this render's `now`.
   const tz = cls.calendarEntry.teacher.defaultTimezone;
+  const start = classStartInstant(cls.calendarEntry, tz);
   const { live, showCheckin, canFinish, autoFinishing, autoAt, checkinAt, refreshInstants } = classPageClock({
     now: new Date(now),
-    start: classStartInstant(cls.calendarEntry, tz),
+    start,
     end: classEndInstant(cls.calendarEntry, tz),
     status: cls.status,
     cancelled,
   });
+
+  // A draft warns when publishing now would land inside its cancellation
+  // window, and refreshes at the instants that warning can change.
+  const draft = !cancelled && cls.status === 'draft';
+  const lateInstants = draft
+    ? {
+        start,
+        deadline: cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz),
+        checkAt: cancelCheckInstant(cls.calendarEntry, cls.autoCancelCheck, tz),
+      }
+    : null;
+  // An unreadable instant is left out: its `toISOString()` throws.
+  const pageRefreshInstants = lateInstants
+    ? latePublishRefreshInstants(lateInstants).filter((d) => !Number.isNaN(d.getTime()))
+    : refreshInstants;
 
   const stamp = offlineSnapshotStamp(session, new Date(now));
 
@@ -276,7 +296,15 @@ export default async function ClassDetailPage({
               : undefined
         }
       />
-      {live && <RefreshAt instants={refreshInstants.map((d) => d.toISOString())} serverNow={now} />}
+      {lateInstants && (
+        <LatePublishNotice
+          state={latePublishState({ now: new Date(now), ...lateInstants })}
+          minStudents={cls.minStudents}
+        />
+      )}
+      {(live || lateInstants) && (
+        <RefreshAt instants={pageRefreshInstants.map((d) => d.toISOString())} serverNow={now} />
+      )}
       <ClassInfo
         cls={cls}
         registrationCount={seatCount}
