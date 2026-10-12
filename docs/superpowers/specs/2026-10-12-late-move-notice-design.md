@@ -76,8 +76,10 @@ log the fallback.
   stored one, because this is a warning about the move. An open class already
   inside its window, edited for its description, is not being moved into anything.
 - `now` is component state, reset on every field change and re-armed by one
-  timer at the next refresh instant (`latePublishRefreshInstants`, clamped to
-  what `setTimeout` can hold, as `RefreshAt` does). The notice therefore follows
+  timer. It arms for the next refresh instant (`latePublishRefreshInstants`) at
+  or after `now` and wakes 1 ms past it. A delay beyond `MAX_TIMEOUT_MS`
+  (`src/lib/timer-bounds.ts`) is skipped, not clamped, and the effect re-arms on
+  `now`. The notice therefore follows
   the fields and the clock. The first render never shows it (nothing has moved
   yet), so no hydration mismatch is possible.
 - The notice sits directly above the "Save changes" row.

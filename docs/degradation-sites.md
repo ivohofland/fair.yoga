@@ -167,11 +167,11 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/payment-breakdown.server.ts:21` | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
 | `src/lib/rule-slot-holder.ts:137` | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
 | `src/lib/tiers.server.ts:43` | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
-| `src/lib/timezone.ts:114` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/timezone.ts:226` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/timezone.ts:306` | warn | degradation | `CLASS_START_UNREADABLE` |
-| `src/lib/timezone.ts:314` | warn | degradation | `CLASS_START_UNREADABLE` |
-| `src/lib/timezone.ts:328` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/timezone.ts:85` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/timezone.ts:197` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/timezone.ts:253` | warn | degradation | `CLASS_START_UNREADABLE` |
+| `src/lib/timezone.ts:260` | warn | degradation | `CLASS_START_UNREADABLE` |
+| `src/lib/timezone.ts:267` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
 | `src/services/email-fallback.ts:241` | error | degradation | `TEACHER_NOTIFICATION_TYPE_UNKNOWN` |
 
 ### The `log.warn(` / `log.error(` surface
@@ -258,9 +258,9 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/scheduler.ts:146` | warn | routine | configuration (`EMAIL_DRY_RUN=1` in production), logged at boot |
 | `src/lib/scheduler.ts:248` | error | routine | operational state, reported through job health |
 | `src/lib/scheduler.ts:262` | error | routine | operational state, reported through job health |
-| `src/lib/timezone.ts:95` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/lib/timezone.ts:201` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/lib/timezone.ts:410` | warn | routine | refusal (4xx); nothing substituted (`startsInPast` fails closed, 409) |
+| `src/lib/timezone.ts:66` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/timezone.ts:172` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/timezone.ts:349` | warn | routine | refusal (4xx); nothing substituted (`startsInPast` fails closed, 409) |
 | `src/services/class-generator.ts:259` | warn | routine | lock contention (`isLockTimeout`) |
 | `src/services/class-generator.ts:265` | error | routine | operational state, reported through job health |
 | `src/services/class-lifecycle.ts:583` | warn | routine | documented race; the loser is refused or retried (room archived mid-request) |
@@ -269,13 +269,13 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/class-reminders.ts:113` | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/class-reminders.ts:131` | error | routine | operational state, reported through job health |
 | `src/services/class-reminders.ts:158` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/services/class-transitions.ts:222` | warn | routine | documented race; the loser is refused or retried (rescheduled after the snapshot) |
-| `src/services/class-transitions.ts:245` | error | routine | lock invariant broken, not data; see close calls |
-| `src/services/class-transitions.ts:258` | error | routine | operational state, reported through job health |
-| `src/services/class-transitions.ts:650` | error | routine | operational state, reported through job health |
-| `src/services/class-transitions.ts:744` | warn | routine | documented race; the loser is refused or retried (rescheduled or cancelled after the snapshot) |
-| `src/services/class-transitions.ts:746` | error | routine | operational state, reported through job health (completion refused) |
-| `src/services/class-transitions.ts:750` | error | routine | operational state, reported through job health |
+| `src/services/class-transitions.ts:209` | warn | routine | documented race; the loser is refused or retried (rescheduled after the snapshot) |
+| `src/services/class-transitions.ts:232` | error | routine | lock invariant broken, not data; see close calls |
+| `src/services/class-transitions.ts:245` | error | routine | operational state, reported through job health |
+| `src/services/class-transitions.ts:583` | error | routine | operational state, reported through job health |
+| `src/services/class-transitions.ts:677` | warn | routine | documented race; the loser is refused or retried (rescheduled or cancelled after the snapshot) |
+| `src/services/class-transitions.ts:679` | error | routine | operational state, reported through job health (completion refused) |
+| `src/services/class-transitions.ts:683` | error | routine | operational state, reported through job health |
 | `src/services/degradation-digest.ts:62` | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
 | `src/services/degradation-digest.ts:112` | error | routine | failure (an exception or outage), not impossible data; the job throws |
 | `src/services/email-fallback.ts:100` | error | routine | failure (an exception or outage), not impossible data |
