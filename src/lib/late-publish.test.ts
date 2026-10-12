@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { DEADLINE_HOURS, cancelDeadlineInstant } from '@/services/waitlist';
 import { isPastCancelDeadline } from '@/lib/cancel-deadline';
-import { cancelCheckInstant, isPastCancelCheck } from '@/lib/auto-cancel-check';
+import { cancelCheckInstant, isPastCancelCheck, MAX_CANCEL_CHECK_HOURS } from '@/lib/auto-cancel-check';
 import { classStartInstant, startsInPast } from '@/lib/timezone';
-import { MAX_CANCEL_CHECK_HOURS } from '@/lib/auto-cancel-check';
 import { latePublishState, latePublishRefreshInstants } from './late-publish';
 
 const HOUR = 60 * 60 * 1000;

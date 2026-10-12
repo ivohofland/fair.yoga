@@ -4,8 +4,8 @@ export type LatePublishState = 'none' | 'past_deadline' | 'past_check';
 
 /**
  * What publishing a draft at `now` would do to its first bookers. `past_check`
- * implies `past_deadline`: the check runs after the deadline. A start that
- * has passed reads `none`.
+ * names both consequences; that the check always follows the deadline is
+ * pinned in `late-publish.test.ts`. A start that has passed reads `none`.
  */
 export function latePublishState(args: {
   now: Date;
@@ -21,8 +21,8 @@ export function latePublishState(args: {
 }
 
 /**
- * The instants at which `latePublishState` can change: deadline, checkAt,
- * start. An unreadable instant is left out; its `toISOString()` throws.
+ * The instants at which `latePublishState` can change. An unreadable instant
+ * is left out, so every result serialises.
  */
 export function latePublishRefreshInstants(args: {
   start: Date;
