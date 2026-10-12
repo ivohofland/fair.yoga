@@ -46,3 +46,15 @@ Files: `src/components/class/pricing-preview-table.tsx`, its `.test.tsx`.
 4. Prove the guard bites: comment out the gate, record the failing assertions, restore,
    and re-run green.
 5. `pnpm exec tsc --noEmit`, `pnpm lint`, and the component vitest project.
+
+## What shipped, where it differed from this plan
+
+- **The "no `−€`" assertion could not fail with this fixture.** Room 30 / min −40 /
+  target 40 / 6–9 opens the slider at `round(7.5) = 8` students, where the total is
+  +€43.33. Negatives appear only at 6 students (total −€10.00, the issue's figure). The
+  test asserts that no `€` amount renders at all.
+- **Two form tests changed that this plan's file list did not name.** The rate-order
+  tests in `class-edit-form.test.tsx` and `template-form.test.tsx` found the sentence
+  twice, once in the form's own `role="alert"` and once in the preview. They are now
+  scoped to the alert.
+- Test 5 asserts that every rule shows its sentence when all three fire.
