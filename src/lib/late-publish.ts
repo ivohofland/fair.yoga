@@ -1,4 +1,4 @@
-import type { AutoCancelCheck, CancelDeadline } from '@prisma/client';
+import type { AutoCancelCheck, CancelDeadline, ClassStatus } from '@prisma/client';
 import { cancelDeadlineFrom, isPastCancelDeadline } from '@/lib/cancel-deadline';
 import { cancelCheckFrom } from '@/lib/cancel-check';
 
@@ -6,9 +6,9 @@ export type LatePublishState = 'none' | 'past_deadline' | 'past_check';
 
 /**
  * What a class's first bookers face if it becomes bookable at `now` (a draft
- * published, or an open class moved). `past_check`
- * names both consequences; that the check always follows the deadline is
- * pinned in `late-publish.test.ts`. A start that has passed reads `none`.
+ * published, or an open class moved). `past_check` names both consequences;
+ * that the check always follows the deadline is pinned in
+ * `late-publish.test.ts`. A start that has passed reads `none`.
  */
 export function latePublishState(args: {
   now: Date;
@@ -46,5 +46,32 @@ export function latePublishInstants(args: {
     start,
     deadline: cancelDeadlineFrom(start, cancelDeadline),
     checkAt: cancelCheckFrom(start, autoCancelCheck),
+  };
+}
+
+/** What the class edit form needs to tell a teacher that a move lands inside the class's cancellation window. */
+export interface MoveWarning {
+  timeZone: string;
+  cancelDeadline: CancelDeadline;
+  autoCancelCheck: AutoCancelCheck;
+}
+
+/**
+ * The edit form's `moveWarning`: a value for a class that can still move and
+ * whose move `redecideAfterMove` re-decides (an `open`, unlocked class), `null`
+ * for every other class, which no move can put inside its window.
+ */
+export function moveWarningFor(cls: {
+  status: ClassStatus;
+  settingsLocked: boolean;
+  cancelDeadline: CancelDeadline;
+  autoCancelCheck: AutoCancelCheck;
+  timeZone: string;
+}): MoveWarning | null {
+  if (cls.status !== 'open' || cls.settingsLocked) return null;
+  return {
+    timeZone: cls.timeZone,
+    cancelDeadline: cls.cancelDeadline,
+    autoCancelCheck: cls.autoCancelCheck,
   };
 }

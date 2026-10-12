@@ -5,7 +5,7 @@ import { DEADLINE_HOURS, isPastCancelDeadline } from '@/lib/cancel-deadline';
 import { CANCEL_CHECK_HOURS, MAX_CANCEL_CHECK_HOURS } from '@/lib/cancel-check';
 import { cancelCheckInstant, isPastCancelCheck } from '@/lib/auto-cancel-check';
 import { classStartInstant, startsInPast } from '@/lib/timezone';
-import { latePublishState, latePublishRefreshInstants, latePublishInstants } from './late-publish';
+import { latePublishState, latePublishRefreshInstants, latePublishInstants, moveWarningFor } from './late-publish';
 
 const HOUR = 60 * 60 * 1000;
 const start = new Date('2030-01-10T18:00:00Z');
@@ -100,5 +100,29 @@ describe('latePublishInstants', () => {
       deadline: cancelDeadlineInstant(entry, cancelDeadline, timeZone),
       checkAt: cancelCheckInstant(entry, autoCancelCheck, timeZone),
     });
+  });
+});
+
+describe('moveWarningFor', () => {
+  const base = {
+    cancelDeadline: 'HOURS_12',
+    autoCancelCheck: 'HOURS_2',
+    timeZone: 'Europe/Amsterdam',
+  } as const;
+
+  it('gives the warning for an open, unlocked class', () => {
+    expect(moveWarningFor({ ...base, status: 'open', settingsLocked: false })).toEqual({
+      timeZone: 'Europe/Amsterdam',
+      cancelDeadline: 'HOURS_12',
+      autoCancelCheck: 'HOURS_2',
+    });
+  });
+
+  it('gives none for a draft', () => {
+    expect(moveWarningFor({ ...base, status: 'draft', settingsLocked: false })).toBeNull();
+  });
+
+  it('gives none for an open class that is locked', () => {
+    expect(moveWarningFor({ ...base, status: 'open', settingsLocked: true })).toBeNull();
   });
 });

@@ -12,18 +12,18 @@ students who book can't cancel free, and once the new check instant has passed
 ## Premise check (measured against `origin/main` at `ca9285a8`)
 
 - **Held:** `redecideAfterMove` stamps the marker when the moved class's check
-  has passed (`auto-cancel-decision.ts:53–55`), and only for an `open`,
+  has passed (`auto-cancel-decision.ts:54–55`), and only for an `open`,
   unlocked, uncancelled class (`:52`).
 - **Held:** a booked class cannot move — the edit form disables date and start
   time under `settingsLocked`, and `updateClass` answers `SETTINGS_LOCKED`.
-- **Held:** both instants are server-only today. `cancelDeadlineInstant` lives
-  in `src/services/waitlist.ts`; `cancelCheckInstant`
-  (`src/lib/auto-cancel-check.ts`) and both of them call `classStartInstant`
-  (`src/lib/timezone.ts`), which imports `@/lib/log` (`server-only`) and
-  `@/lib/degradation`.
+- **Held:** both instants were server-only before this change.
+  `cancelDeadlineInstant` lives in `src/services/waitlist.ts` and
+  `cancelCheckInstant` in `src/lib/auto-cancel-check.ts`; both call
+  `classStartInstant` (`src/lib/timezone.ts`), which imports `@/lib/log`
+  (`server-only`) and `@/lib/degradation`.
 - **Wider than stated:** the issue names `cancelDeadlineInstant` and
-  `classStartInstant`; `cancelCheckInstant` is the third server-only instant
-  the form needs.
+  `classStartInstant`; `cancelCheckInstant` is a third, also
+  server-only before this change, that the form needs.
 - **The template path is wider than "created on the day":** the generator
   inserts a class already inside its window whenever a template is saved
   within the cancel deadline (up to 48 h, `DEADLINE_HOURS.HOURS_48`) of its first
@@ -61,10 +61,12 @@ names and signatures and become wrappers that add the degradation logging.
 Constants move rather than being re-exported: importers are updated, so there is
 one import path per name.
 
-On the client a fault is silent. A half-typed date or time reads an Invalid Date,
-which `latePublishState` answers `none` — no notice for an incomplete field is
-the right behaviour. The timezone comes from the server, whose own reads of it
-log the fallback.
+On the client a fault is silent: any fault `readClassStart` names (a half-typed
+date or time, or a timezone that cannot be read) reads as no notice. The form
+branches on `fault` explicitly rather than relying on an Invalid Date comparing
+as `none`, so a timezone fault, whose instant is the wall clock read as UTC,
+never reaches the clock. The timezone comes from the server, whose own reads of
+it log the fallback.
 
 ### The form
 

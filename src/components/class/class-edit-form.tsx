@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { AutoCancelCheck, CancelDeadline, Currency } from '@prisma/client';
+import type { Currency } from '@prisma/client';
 import { MAX_CLASS_SIZE, type updateClassSchema } from '@/lib/schemas';
 import {
   CLASS_TYPE_MAX,
@@ -22,6 +22,7 @@ import { useTodayLocal } from '@/lib/use-today-local';
 import { MAX_TIMEOUT_MS } from '@/lib/timer-bounds';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { readClassStart } from '@/lib/class-start';
+import type { MoveWarning } from '@/lib/late-publish';
 import {
   latePublishInstants,
   latePublishRefreshInstants,
@@ -109,13 +110,6 @@ const _formHasNoExtras: NoneOf<Exclude<keyof ClassEditInitial, keyof UpdateClass
 void _formCoversSchema;
 void _formHasNoExtras;
 
-/** What the form needs to tell a teacher that a move lands inside the class's cancellation window. */
-export interface MoveWarning {
-  timeZone: string;
-  cancelDeadline: CancelDeadline;
-  autoCancelCheck: AutoCancelCheck;
-}
-
 interface ClassEditFormProps {
   classId: string;
   settingsLocked: boolean;
@@ -143,18 +137,25 @@ export function ClassEditForm({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
   // Epoch ms. Reset on every field change and re-armed by the timer below, so
-  // the notice follows the fields and the clock. Nothing has moved on the
-  // first render, so the server and hydration passes never read it.
+  // the notice follows the fields and the clock. The first render's value is
+  // never read: nothing has moved yet, so `instants` is null on the server and
+  // hydration passes and `now` does not reach the markup.
   const [now, setNow] = useState(() => Date.now());
 
   const moved = form.date !== initial.date || form.startTime !== initial.startTime;
-  const instants =
+  const reading =
     moveWarning !== null && moved
+      ? readClassStart(
+          { date: new Date(`${form.date}T00:00:00Z`), startTime: hhmmToTime(form.startTime) },
+          moveWarning.timeZone,
+        )
+      : null;
+  // Any fault (a half-typed field, a zone that cannot be read) is no notice:
+  // an instant that is not the real start must not be judged against the clock.
+  const instants =
+    moveWarning !== null && reading !== null && reading.fault === null
       ? latePublishInstants({
-          start: readClassStart(
-            { date: new Date(`${form.date}T00:00:00Z`), startTime: hhmmToTime(form.startTime) },
-            moveWarning.timeZone,
-          ).instant,
+          start: reading.instant,
           cancelDeadline: moveWarning.cancelDeadline,
           autoCancelCheck: moveWarning.autoCancelCheck,
         })
@@ -404,6 +405,8 @@ export function ClassEditForm({
         <LatePublishNotice
           action="move"
           state={moveState}
+          // A cleared or invalid field has no number to name, so the notice
+          // names the stored minimum the server will still hold.
           minStudents={
             Number.isInteger(form.minStudents) && form.minStudents >= 1
               ? form.minStudents

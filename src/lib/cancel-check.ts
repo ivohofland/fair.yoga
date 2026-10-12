@@ -1,3 +1,7 @@
+/**
+ * Pure and free of runtime imports, so a client component can import it
+ * directly.
+ */
 import type { AutoCancelCheck } from '@prisma/client';
 
 /** Hours before the start at which each `autoCancelCheck` value judges a class. */
