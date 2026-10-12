@@ -293,6 +293,7 @@ export default async function ClassDetailPage({
       />
       {lateInstants && (
         <LatePublishNotice
+          action="publish"
           state={latePublishState({ now: new Date(now), ...lateInstants })}
           minStudents={cls.minStudents}
         />

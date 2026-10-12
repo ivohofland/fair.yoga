@@ -18,7 +18,7 @@ export default async function ClassEditPage({
 
   const cls = await prisma.class.findUnique({
     where: { id },
-    include: { calendarEntry: true },
+    include: { calendarEntry: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
   if (!cls || cls.calendarEntry.teacherId !== session.teacherId) redirect('/schedule');
   // Only mutable stages get an editor; everything else reads. Since #327 that
@@ -43,6 +43,15 @@ export default async function ClassEditPage({
         classId={cls.id}
         settingsLocked={cls.settingsLocked}
         currency={cls.currency}
+        moveWarning={
+          cls.status === 'open' && !cls.settingsLocked
+            ? {
+                timeZone: entry.teacher.defaultTimezone,
+                cancelDeadline: cls.cancelDeadline,
+                autoCancelCheck: cls.autoCancelCheck,
+              }
+            : null
+        }
         initial={{
           classType: entry.classType,
           description: cls.description ?? '',

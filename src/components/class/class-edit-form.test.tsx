@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderToStaticMarkup, renderToString } from 'react-dom/server';
 import { hydrateRoot } from 'react-dom/client';
@@ -7,7 +7,7 @@ import { todayLocal } from '@/lib/format';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { DURATION_MAX_MINUTES, MONEY_MAX } from '@/lib/input-bounds';
 import { routerRefresh } from '../../../tests/setup/components';
-import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
+import { ClassEditForm, type ClassEditInitial, type MoveWarning } from './class-edit-form';
 
 /**
  * A real `Response` whose `json()` genuinely throws — the shape a proxy's
@@ -58,7 +58,7 @@ describe('ClassEditForm', () => {
   async function saveWith(settingsLocked: boolean): Promise<Record<string, unknown>> {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [, options] = fetchMock.mock.calls[0] ?? [];
@@ -107,7 +107,7 @@ describe('ClassEditForm', () => {
   });
 
   it('disables the date and start time once booked, and says how to change the time (#836)', () => {
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
     expect(screen.getByLabelText('Date')).toBeDisabled();
     expect(screen.getByLabelText('Start time')).toBeDisabled();
     expect(screen.getByLabelText('Duration (minutes)')).not.toBeDisabled();
@@ -115,7 +115,7 @@ describe('ClassEditForm', () => {
   });
 
   it('leaves the date and start time editable while unbooked', () => {
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     expect(screen.getByLabelText('Date')).not.toBeDisabled();
     expect(screen.getByLabelText('Start time')).not.toBeDisabled();
     expect(screen.queryByText(/cancel it and create a new one/)).not.toBeInTheDocument();
@@ -135,7 +135,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm currency="EUR"
+      <ClassEditForm moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={true}
         initial={{ ...initial, minRate: 30, targetRate: 25 }}
@@ -150,7 +150,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm currency="EUR"
+      <ClassEditForm moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, description: '' }}
@@ -186,7 +186,7 @@ describe('ClassEditForm', () => {
     async (_label, fieldName, clearedValue, settingsLocked, copy) => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+      render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
 
       fireEvent.change(screen.getByLabelText(fieldName), { target: { value: clearedValue } });
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -256,7 +256,7 @@ describe('ClassEditForm', () => {
     async (_label, fieldName, value, settingsLocked, copy) => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+      render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
 
       fireEvent.change(screen.getByLabelText(fieldName), { target: { value } });
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -276,7 +276,7 @@ describe('ClassEditForm', () => {
   ])('refuses a %s of %s, rather than reading it as some other amount', async (fieldName, text, name) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     fireEvent.change(screen.getByLabelText(fieldName), { target: { value: text } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -285,7 +285,7 @@ describe('ClassEditForm', () => {
   });
 
   it('keeps the minus key on the signed rate fields and the decimal keypad on room cost', () => {
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     expect(screen.getByLabelText('Min rate (€)')).not.toHaveAttribute('inputmode');
     expect(screen.getByLabelText('Target rate (€)')).not.toHaveAttribute('inputmode');
     expect(screen.getByLabelText('Room cost (€)')).toHaveAttribute('inputmode', 'decimal');
@@ -298,7 +298,7 @@ describe('ClassEditForm', () => {
   ])('sends 4.5 for a %s typed as 4,5', async (fieldName, key) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     if (key === 'targetRate') fireEvent.change(screen.getByLabelText('Min rate (€)'), { target: { value: '1' } });
     fireEvent.change(screen.getByLabelText(fieldName), { target: { value: '4,5' } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -311,7 +311,7 @@ describe('ClassEditForm', () => {
   it('lets a cleared min rate be retyped, sending the new rate', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     const field = screen.getByLabelText('Min rate (€)') as HTMLInputElement;
     fireEvent.change(field, { target: { value: '' } });
     expect(field.value).toBe('');
@@ -335,7 +335,7 @@ describe('ClassEditForm', () => {
   ] as const)('saves every number field at %s, with no alert', async (_label, edges) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, ...edges }} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, ...edges }} />);
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -360,7 +360,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm currency="EUR"
+      <ClassEditForm moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={true}
         initial={{ ...initial, ...overrides }}
@@ -385,7 +385,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm currency="EUR"
+      <ClassEditForm moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, minRate: 30, targetRate: 25 }}
@@ -408,7 +408,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm currency="EUR"
+      <ClassEditForm moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, roomCost: 20, minRate: -25, targetRate: 25 }}
@@ -442,7 +442,7 @@ describe('ClassEditForm', () => {
     // as it would under UTC — while still reddening the instant anyone calls
     // a clock-reading formatter during render.
     const html = renderToStaticMarkup(
-      <ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
+      <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
     );
     // Scoped to the date field's own tag rather than run over the whole
     // document, because this form legitimately server-renders another `min`:
@@ -474,7 +474,7 @@ describe('ClassEditForm', () => {
     // pins is the TRANSITION: absent in the server HTML, present after
     // hydration, on the same DOM node.
     const html = renderToString(
-      <ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
+      <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
     );
     const container = document.createElement('div');
     container.innerHTML = html;
@@ -494,7 +494,7 @@ describe('ClassEditForm', () => {
       await act(async () => {
         root = hydrateRoot(
           container,
-          <ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
+          <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
         );
       });
 
@@ -524,7 +524,7 @@ describe('ClassEditForm', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
     try {
-      render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+      render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
       expect(screen.getByLabelText('Date')).toHaveAttribute('min', '2026-08-18');
     } finally {
       vi.useRealTimers();
@@ -542,7 +542,7 @@ describe('ClassEditForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue(htmlResponse(502));
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -558,7 +558,7 @@ describe('ClassEditForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -570,11 +570,143 @@ describe('ClassEditForm', () => {
   });
 
   it('feeds the pricing preview from the rate fields as the teacher types', () => {
-    render(<ClassEditForm currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     fireEvent.change(screen.getByLabelText('Target rate (€)'), { target: { value: '45' } });
 
     // 8 students on 4–12: 15 + (45 − 15) × 4 / 8 = 30, plus the €20 room
     expect(screen.getByText('€30.00')).toBeTruthy();
     expect(screen.getByText('€50.00')).toBeTruthy();
+  });
+});
+
+/**
+ * #847. The notice follows the entered date and start time against the clock,
+ * in the teacher's zone. 2026-06-12 09:30 in Amsterdam is 07:30Z (CEST).
+ */
+describe('ClassEditForm, late-move notice', () => {
+  const initial: ClassEditInitial = {
+    classType: 'Vinyasa',
+    description: '',
+    date: '2026-06-12',
+    startTime: '09:30',
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 4,
+    maxStudents: 12,
+  };
+  const warning: MoveWarning = {
+    timeZone: 'Europe/Amsterdam',
+    cancelDeadline: 'HOURS_12',
+    autoCancelCheck: 'HOURS_2',
+  };
+  const DEADLINE_COPY =
+    "The new start is inside this class's cancellation deadline. Students who book after you save can't cancel for free.";
+
+  function open(moveWarning: MoveWarning | null, minStudents = 4) {
+    return render(
+      <ClassEditForm
+        currency="EUR"
+        classId="cls-1"
+        settingsLocked={false}
+        moveWarning={moveWarning}
+        initial={{ ...initial, minStudents }}
+      />,
+    );
+  }
+  function move(date: string, startTime: string) {
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: date } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: startTime } });
+  }
+  const notice = () => screen.queryByText(/The new start is inside/);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows nothing for an unchanged schedule already inside its deadline', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    expect(notice()).toBeNull();
+  });
+
+  it('shows nothing for an edit that leaves the schedule alone', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Yin' } });
+    expect(notice()).toBeNull();
+  });
+
+  it('moving inside the deadline but before the check shows the deadline copy', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    move('2026-06-12', '02:30');
+    expect(notice()?.textContent).toBe(DEADLINE_COPY);
+  });
+
+  it('moving inside the check window shows the check copy, plural', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    move('2026-06-11', '23:30');
+    expect(notice()?.textContent).toBe(
+      "The new start is inside this class's cancellation deadline and past its auto-cancel check. Students who book after you save can't cancel for free, and the class goes ahead however few book. If fewer than 4 students book, you cover what the missing students would have paid.",
+    );
+  });
+
+  it('moving inside the check window shows the check copy, singular', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning, 1);
+    move('2026-06-11', '23:30');
+    expect(notice()?.textContent).toContain(
+      'If nobody books, you cover what that student would have paid.',
+    );
+  });
+
+  it('moving further away than the deadline shows nothing, and moving back out removes it', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    move('2026-06-12', '02:30');
+    expect(notice()).not.toBeNull();
+    move('2026-06-13', '09:30');
+    expect(notice()).toBeNull();
+  });
+
+  it('shows nothing while the start time field is cleared', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    move('2026-06-12', '02:30');
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '' } });
+    expect(notice()).toBeNull();
+  });
+
+  it('shows nothing without a move warning, however the start moves', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(null);
+    move('2026-06-12', '02:30');
+    expect(notice()).toBeNull();
+  });
+
+  it('appears when the clock crosses the deadline with the form open and no further edit', () => {
+    vi.setSystemTime(new Date('2026-06-11T18:00:00Z'));
+    open(warning);
+    // 11:30 Amsterdam is 09:30Z: deadline 21:30Z the evening before.
+    move('2026-06-12', '11:30');
+    expect(notice()).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(3 * 60 * 60 * 1000 + 31 * 60 * 1000);
+    });
+    expect(notice()?.textContent).toBe(DEADLINE_COPY);
+  });
+
+  it('sits before the Save button in document order', () => {
+    vi.setSystemTime(new Date('2026-06-11T20:00:00Z'));
+    open(warning);
+    move('2026-06-12', '02:30');
+    const save = screen.getByRole('button', { name: 'Save changes' });
+    expect(notice()!.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
