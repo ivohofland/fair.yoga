@@ -48,14 +48,17 @@
 **Interfaces:**
 - Produces:
   ```ts
+  // src/lib/late-publish.ts
   export type LatePublishState = 'none' | 'past_deadline' | 'past_check';
   export function latePublishState(args: {
     now: Date; start: Date; deadline: Date; checkAt: Date;
   }): LatePublishState;
-  /** The instants at which `latePublishState` can change: deadline, checkAt, start. */
+  /** The instants at which `latePublishState` can change. An unreadable (Invalid Date) instant is dropped. */
   export function latePublishRefreshInstants(args: {
     start: Date; deadline: Date; checkAt: Date;
   }): Date[];
+
+  // src/components/class/late-publish-notice.tsx
   export function LatePublishNotice(props: { state: LatePublishState; minStudents: number }): JSX.Element | null;
   ```
 
@@ -65,18 +68,18 @@
   - `latePublishRefreshInstants` returns `[deadline, checkAt, start]`. Assert the exact ISO strings.
   - Ordering pin: `Math.min(...Object.values(DEADLINE_HOURS)) > MAX_CANCEL_CHECK_HOURS`, importing `DEADLINE_HOURS` from `@/services/waitlist` and `MAX_CANCEL_CHECK_HOURS` from `@/lib/auto-cancel-check`. The test name says why: past the check implies past the deadline, so `past_check` may name both consequences.
 - [ ] **Step 2: Run** `pnpm exec vitest run --project unit src/lib/late-publish.test.ts`. Expect FAIL: module not found.
-- [ ] **Step 3: Implement** `src/lib/late-publish.ts`. Use `isPastCancelDeadline(deadline, now)` and `now >= checkAt`. That is `isPastCancelCheck`'s comparison, but `isPastCancelCheck` takes the entry and recomputes the instant. Use `isPastCancelCheck` itself if the function takes the entry instead. Either is acceptable as long as no new spelling of an instant (start − hours) is written here. Start-passed check: `now > start` → `none`. No runtime imports except `@/lib/cancel-deadline`.
+- [ ] **Step 3: Implement** `src/lib/late-publish.ts`. It uses `isPastCancelDeadline(deadline, now)` and `now >= checkAt`. The latter is `isPastCancelCheck`'s comparison, written out because `isPastCancelCheck` takes the entry rather than the instant. Both are tied to the predicates by the agreement tests in `late-publish.test.ts`, and no new spelling of an instant (start − hours) is written here. `latePublishRefreshInstants` drops an unreadable (Invalid Date) instant. Start-passed check: `now > start` → `none`. No runtime imports except `@/lib/cancel-deadline`.
 - [ ] **Step 4: Run** the unit tests. Expect PASS.
 - [ ] **Step 5: Prove the ordering pin bites.** Temporarily change `HOURS_6: 6` to `HOURS_6: 3` in `DEADLINE_HOURS` and run the test. Record the exact failure line. Restore and re-run green.
 - [ ] **Step 6: Write the failing component tests** in `late-publish-notice.test.tsx`:
   - `state="none"` renders nothing (`container.firstChild` is null).
   - `state="past_deadline"` renders text containing "can't cancel for free" and not "goes ahead".
   - `state="past_check"`, `minStudents=4` renders both "can't cancel for free" and "fewer than 4 students book", plus "you cover what the missing students would have paid".
-  - `state="past_check"`, `minStudents=1` renders "nobody books" and not "fewer than 1".
+  - `state="past_check"`, `minStudents=1` renders "nobody books" and not "fewer than 1", plus "you cover what that student would have paid".
   - The notice carries `bg-gold-tint` and `text-gold-deep` and no `text-danger`.
 - [ ] **Step 7: Implement** `LatePublishNotice`, a server-compatible component with no `'use client'`. It is a `<p>` with `type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3 mb-4`, built from an exhaustive `switch` on `state` with a `never` default. Copy (provisional):
   - `past_deadline`: "This class starts inside its cancellation deadline. Students who book after you publish can't cancel for free."
-  - `past_check`: "This class starts inside its cancellation deadline and its auto-cancel check has passed. Students who book after you publish can't cancel for free, and the class goes ahead however few book. If {shortfall}, you cover what the missing students would have paid." Here `shortfall` is `nobody books` when `minStudents === 1`, otherwise `fewer than {minStudents} students book`.
+  - `past_check`: "This class starts inside its cancellation deadline and its auto-cancel check has passed. Students who book after you publish can't cancel for free, and the class goes ahead however few book. If {shortfall}, you cover what {missing} would have paid." Here `shortfall` is `nobody books` and `missing` is `that student` when `minStudents === 1`; otherwise `shortfall` is `fewer than {minStudents} students book` and `missing` is `the missing students`.
 - [ ] **Step 8: Run** `pnpm exec vitest run --project components src/components/class/late-publish-notice.test.tsx`. Expect PASS. Then `pnpm exec tsc --noEmit` and `pnpm exec eslint` on the four files.
 - [ ] **Step 9: Commit** the four files with message `feat: latePublishState and the notice it renders (#840)`.
 
@@ -89,7 +92,7 @@
 **Interfaces:**
 - Consumes: `latePublishState`, `latePublishRefreshInstants`, `LatePublishState` from `@/lib/late-publish`; `LatePublishNotice` from `@/components/class/late-publish-notice`; `cancelDeadlineInstant` from `@/services/waitlist`; `cancelCheckInstant` from `@/lib/auto-cancel-check`.
 
-- [ ] **Step 1: Write the failing e2e test.** Seed a teacher-owned draft whose start is 3h from now in the teacher's timezone. Use `wallSlotAt(instant, tz)` from `tests/class-fixtures.ts` to get its `date`/`startTime`. Give it `cancelDeadline: 'HOURS_12'` and `autoCancelCheck: 'HOURS_2'`, so it is past the deadline but not the check. Seed a second draft whose start is 1h from now, which is past both. Visit each `/class/<id>` and assert the notice text: the first has "can't cancel for free" and not "goes ahead"; the second has both. Pick slot times that don't collide with the spec's other seeded classes (the teacher-slot `EXCLUDE` constraint refuses overlapping live entries). Clean them up in the spec's existing teardown. The existing far-future draft (`2099-07-01`) shows no notice. Assert that too, so the "more than the deadline away" criterion is covered end to end.
+- [ ] **Step 1: Write the failing e2e test.** Seed a teacher-owned draft whose start is 3h from now in the teacher's timezone. Use `wallSlotAt(instant, tz)` from `tests/class-fixtures.ts` to get its `date`/`startTime`. Give it `cancelDeadline: 'HOURS_12'` and `autoCancelCheck: 'HOURS_2'`, so it is past the deadline but not the check. Seed a second draft whose start is 1h from now, which is past both. Visit each `/class/<id>` and assert the notice text: the first has "can't cancel for free" and not "goes ahead"; the second has both. Pick slot times that don't collide with the spec's other seeded classes (the teacher-slot `EXCLUDE` constraint refuses overlapping live entries). Clean them up in the spec's existing teardown. The existing far-future draft (`2099-07-01`) shows no notice. Assert that too, so the "more than the deadline away" criterion is covered end to end. Two further cases: an **open** class 5h out with the same settings shows no notice (the page gates on draft status), and a draft seeded in-test with its deadline 15–75 s ahead shows no notice on load, then shows "can't cancel for free" without a reload once the deadline passes (the page's `RefreshAt` armed with `latePublishRefreshInstants`).
 - [ ] **Step 2: Run it** against the worktree app (`pnpm run worktree:up`, then `pnpm exec playwright test <spec>`). Expect FAIL: notice text not found.
 - [ ] **Step 3: Implement in the page.**
   - For `!cancelled && cls.status === 'draft'`, compute `start` (already `classStartInstant(cls.calendarEntry, tz)`; hoist it to a const so it is computed once), `deadline = cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz)` and `checkAt = cancelCheckInstant(cls.calendarEntry, cls.autoCancelCheck, tz)`.
