@@ -46,6 +46,16 @@ describe('PricingPreviewTable', () => {
     },
   );
 
+  it.each(['minStudents', 'maxStudents'] as const)(
+    'shows no prices while %s is not a number',
+    (field) => {
+      const { container } = render(<PricingPreviewTable {...EXAMPLE} {...{ [field]: Number.NaN }} />);
+      expect(screen.getByText('Enter valid student counts to see pricing preview.')).toBeInTheDocument();
+      expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+      expect(container.textContent).not.toContain('NaN');
+    },
+  );
+
   it('opens at the midpoint class size with the normal spread', () => {
     render(<PricingPreviewTable {...EXAMPLE} />);
 

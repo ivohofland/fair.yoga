@@ -79,7 +79,16 @@ export function PricingPreviewTable({
     );
   }
 
-  // Economics no write path would accept get their rule named, not priced.
+  // Ahead of the rules: every comparison against NaN is false, so they would pass it.
+  if (![minStudents, maxStudents].every(Number.isFinite)) {
+    return (
+      <p className="text-sm text-brown py-2">
+        Enter valid student counts to see pricing preview.
+      </p>
+    );
+  }
+
+  // A rule the economics break is named in place of the prices it would produce.
   const violations = economicsViolations({ roomCost, minRate, targetRate, minStudents, maxStudents });
   if (violations.length > 0) {
     return (
@@ -90,14 +99,6 @@ export function PricingPreviewTable({
           </p>
         ))}
       </div>
-    );
-  }
-
-  if (effectiveMin <= 0 || effectiveMax <= 0 || effectiveMax < effectiveMin) {
-    return (
-      <p className="text-sm text-brown py-2">
-        Enter valid student counts to see pricing preview.
-      </p>
     );
   }
 
