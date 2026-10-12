@@ -393,7 +393,9 @@ describe('ClassEditForm', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(await screen.findByRole('alert')).toHaveTextContent(/min rate cannot exceed target rate/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Min rate cannot exceed target rate$/);
+    // The pricing preview names the rule instead of pricing it.
+    expect(screen.queryByRole('slider')).not.toBeInTheDocument();
   });
 
   /**
