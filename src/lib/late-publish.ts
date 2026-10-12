@@ -1,4 +1,6 @@
-import { isPastCancelDeadline } from '@/lib/cancel-deadline';
+import type { AutoCancelCheck, CancelDeadline } from '@prisma/client';
+import { cancelDeadlineFrom, isPastCancelDeadline } from '@/lib/cancel-deadline';
+import { cancelCheckFrom } from '@/lib/cancel-check';
 
 export type LatePublishState = 'none' | 'past_deadline' | 'past_check';
 
@@ -30,4 +32,18 @@ export function latePublishRefreshInstants(args: {
   checkAt: Date;
 }): Date[] {
   return [args.deadline, args.checkAt, args.start].filter((d) => !Number.isNaN(d.getTime()));
+}
+
+/** The three instants `latePublishState` reads, for a class that starts at `start`. */
+export function latePublishInstants(args: {
+  start: Date;
+  cancelDeadline: CancelDeadline;
+  autoCancelCheck: AutoCancelCheck;
+}): { start: Date; deadline: Date; checkAt: Date } {
+  const { start, cancelDeadline, autoCancelCheck } = args;
+  return {
+    start,
+    deadline: cancelDeadlineFrom(start, cancelDeadline),
+    checkAt: cancelCheckFrom(start, autoCancelCheck),
+  };
 }

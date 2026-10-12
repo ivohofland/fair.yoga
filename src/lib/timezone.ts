@@ -34,35 +34,7 @@
 
 import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';
-
-/** Milliseconds the zone's wall clock is ahead of UTC at the given instant. */
-function timeZoneOffsetMs(instant: Date, timeZone: string): number {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-
-  const parts: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {};
-  for (const { type, value } of dtf.formatToParts(instant)) {
-    if (type !== 'literal') parts[type] = Number(value);
-  }
-
-  const wallAsUtc = Date.UTC(
-    parts.year!,
-    parts.month! - 1,
-    parts.day!,
-    parts.hour!,
-    parts.minute!,
-    parts.second!,
-  );
-  return wallAsUtc - instant.getTime();
-}
+import { readClassStart } from '@/lib/class-start';
 
 /**
  * The teacher's current calendar date, expressed the way `CalendarEntry.date`
@@ -271,67 +243,35 @@ export function classStartInstant(
   cls: { date: Date; startTime: Date },
   timeZone: string,
 ): Date {
-  const { date: classDate, startTime } = cls;
-  const d = new Date(classDate);
-  const hours = startTime.getUTCHours();
-  const minutes = startTime.getUTCMinutes();
-  const wallUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours, minutes, 0, 0);
+  const reading = readClassStart(cls, timeZone);
 
-  // THREE WAYS TO FAIL, THREE MESSAGES, and the checks are separate for that
-  // reason alone — a single `Number.isNaN(wallUtc)` test would be shorter and
-  // would name the wrong culprit half the time.
-  //
-  // All three are checked BEFORE the `try`, because otherwise they arrive as a
-  // timezone fault: `Date.UTC` with a NaN component returns NaN, `new Date(NaN)`
-  // handed to `Intl.DateTimeFormat.formatToParts` throws a RangeError, and the
-  // catch below logs "invalid timezone" naming a zone that was never the
-  // problem. That was the original defect.
-  //
-  // The date and the time are then checked apart from each other, because
-  // `wallUtc` is NaN if EITHER is bad — `getUTCFullYear()` on an Invalid Date
-  // is NaN just as an Invalid `startTime` gives a NaN hour. Testing only
-  // the combination and blaming `startTime` relocated the misattribution
-  // instead of removing it: measured, `classStartInstant(new Date('nonsense'),
-  // …)` logged the date's own `startTime` value under "unparseable startTime".
-  //
-  // Returning early answers an Invalid Date, the value callers compare
-  // against, while naming the cause, and lets `startsInPast` fail closed on
-  // these and not on a bad timezone.
-  //
-  // Both are recorded as `CLASS_START_UNREADABLE`
-  // (`docs/degradation-sites.md`): the Invalid Date is a substitute every
-  // caller acts on silently. `site` is the point of splitting the
-  // branches — it says which half broke.
-  if (Number.isNaN(d.getTime())) {
-    logDegraded(
-      'CLASS_START_UNREADABLE',
-      { site: 'date' },
-      'unreadable class date, cannot compute class start instant',
-    );
-    return new Date(NaN);
-  }
-  if (Number.isNaN(wallUtc)) {
-    logDegraded(
-      'CLASS_START_UNREADABLE',
-      { site: 'start-time' },
-      'unparseable startTime, cannot compute class start instant',
-    );
-    return new Date(NaN);
-  }
-
-  try {
-    // Guess, then correct once — two passes converge across DST boundaries.
-    let ts = wallUtc - timeZoneOffsetMs(new Date(wallUtc), timeZone);
-    ts = wallUtc - timeZoneOffsetMs(new Date(ts), timeZone);
-    return new Date(ts);
-  } catch (err) {
-    logDegraded(
-      'TIMEZONE_INVALID_FALLBACK_UTC',
-      { timeZone, site: 'interpret' },
-      'invalid timezone, falling back to UTC interpretation',
-      err,
-    );
-    return new Date(wallUtc);
+  // Recorded here, not in `readClassStart`, so the reading stays importable
+  // from a client component. `site` says which half broke.
+  switch (reading.fault) {
+    case null:
+      return reading.instant;
+    case 'date':
+      logDegraded(
+        'CLASS_START_UNREADABLE',
+        { site: 'date' },
+        'unreadable class date, cannot compute class start instant',
+      );
+      return reading.instant;
+    case 'start-time':
+      logDegraded(
+        'CLASS_START_UNREADABLE',
+        { site: 'start-time' },
+        'unparseable startTime, cannot compute class start instant',
+      );
+      return reading.instant;
+    case 'timezone':
+      logDegraded(
+        'TIMEZONE_INVALID_FALLBACK_UTC',
+        { timeZone, site: 'interpret' },
+        'invalid timezone, falling back to UTC interpretation',
+        reading.error,
+      );
+      return reading.instant;
   }
 }
 
