@@ -55,8 +55,7 @@ import { readClassStart } from '@/lib/class-start';
  * An unreadable instant is a different fault and says so.
  */
 export function startOfLocalDay(instant: Date, timeZone: string): Date {
-  // CHECKED BEFORE THE `try`, for the reason `classStartInstant` sets out at
-  // length: `formatToParts` throws a RangeError on an Invalid Date, so an
+  // CHECKED BEFORE THE `try`: `formatToParts` throws a RangeError on an Invalid Date, so an
   // unreadable instant would otherwise arrive at the catch below and be logged
   // as an invalid timezone, naming a zone that was never the problem.
   //

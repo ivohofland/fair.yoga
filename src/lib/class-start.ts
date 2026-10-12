@@ -1,7 +1,6 @@
 /**
  * A class's start instant, read without any side effect, so a client
- * component can import it. `classStartInstant` (`timezone.ts`) is this plus
- * the logging.
+ * component can import it: a fault is named, not logged.
  */
 
 /** Milliseconds the zone's wall clock is ahead of UTC at the given instant. */
