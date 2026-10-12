@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { Currency } from '@prisma/client';
+import type { AutoCancelCheck, CancelDeadline, Currency } from '@prisma/client';
 import { MAX_CLASS_SIZE, type updateClassSchema } from '@/lib/schemas';
 import {
   CLASS_TYPE_MAX,
@@ -19,11 +19,19 @@ import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy'
 import { currencyLabel } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
+import { hhmmToTime } from '@/lib/time-of-day';
+import { readClassStart } from '@/lib/class-start';
+import {
+  latePublishInstants,
+  latePublishRefreshInstants,
+  latePublishState,
+} from '@/lib/late-publish';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
+import { LatePublishNotice } from '@/components/class/late-publish-notice';
 
 export interface ClassEditInitial {
   classType: string;
@@ -100,17 +108,35 @@ const _formHasNoExtras: NoneOf<Exclude<keyof ClassEditInitial, keyof UpdateClass
 void _formCoversSchema;
 void _formHasNoExtras;
 
+/** What the form needs to tell a teacher that a move lands inside the class's cancellation window. */
+export interface MoveWarning {
+  timeZone: string;
+  cancelDeadline: CancelDeadline;
+  autoCancelCheck: AutoCancelCheck;
+}
+
+/** `setTimeout` holds a delay in a signed 32-bit integer. */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
 interface ClassEditFormProps {
   classId: string;
   settingsLocked: boolean;
   currency: Currency;
+  /** `null` where no move can late-publish: a draft, or a class that is booked. */
+  moveWarning: MoveWarning | null;
   initial: ClassEditInitial;
 }
 
 // Details always editable; the economics, date and start time only while
 // unlocked (`LOCKED_FIELDS`).
 // Policies aren't part of the update schema, so they aren't part of this form.
-export function ClassEditForm({ classId, settingsLocked, currency, initial }: ClassEditFormProps) {
+export function ClassEditForm({
+  classId,
+  settingsLocked,
+  currency,
+  moveWarning,
+  initial,
+}: ClassEditFormProps) {
   const router = useRouter();
   // Client-only, so `undefined` for the server render and the hydration pass.
   const minDate = useTodayLocal();
@@ -118,9 +144,43 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  // Epoch ms. Reset on every field change and re-armed by the timer below, so
+  // the notice follows the fields and the clock. Nothing has moved on the
+  // first render, so the server and hydration passes never read it.
+  const [now, setNow] = useState(() => Date.now());
+
+  const moved = form.date !== initial.date || form.startTime !== initial.startTime;
+  const instants =
+    moveWarning !== null && moved
+      ? latePublishInstants({
+          start: readClassStart(
+            { date: new Date(`${form.date}T00:00:00Z`), startTime: hhmmToTime(form.startTime) },
+            moveWarning.timeZone,
+          ).instant,
+          cancelDeadline: moveWarning.cancelDeadline,
+          autoCancelCheck: moveWarning.autoCancelCheck,
+        })
+      : null;
+  const moveState = instants ? latePublishState({ now: new Date(now), ...instants }) : 'none';
+
+  const nextRefreshMs = instants
+    ? latePublishRefreshInstants(instants)
+        .map((d) => d.getTime())
+        .filter((t) => t > now)
+        .sort((a, b) => a - b)[0]
+    : undefined;
+  useEffect(() => {
+    if (nextRefreshMs === undefined) return;
+    // The deadline is passed only strictly after it, so wake one ms later.
+    const delay = nextRefreshMs + 1 - Date.now();
+    if (delay <= 0 || delay > MAX_TIMEOUT_MS) return;
+    const timer = setTimeout(() => setNow(Date.now()), delay);
+    return () => clearTimeout(timer);
+  }, [nextRefreshMs]);
 
   function set<K extends keyof ClassEditInitial>(key: K, value: ClassEditInitial[K]) {
     setForm((f) => ({ ...f, [key]: value }));
+    setNow(Date.now());
     setSaved(false);
     setError('');
   }
@@ -338,11 +398,14 @@ export function ClassEditForm({ classId, settingsLocked, currency, initial }: Cl
         </div>
       </section>
 
-      <div className="flex items-center gap-3">
-        <Button variant="primary" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save changes'}
-        </Button>
-        {saved && <span className="type-caption text-teal">Saved</span>}
+      <div>
+        <LatePublishNotice action="move" state={moveState} minStudents={form.minStudents} />
+        <div className="flex items-center gap-3">
+          <Button variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save changes'}
+          </Button>
+          {saved && <span className="type-caption text-teal">Saved</span>}
+        </div>
       </div>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>

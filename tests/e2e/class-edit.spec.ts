@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import { createGuardedPrismaClient } from './prisma';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
-import { hhmmToTime } from '@/lib/time-of-day';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
 
 const prisma = createGuardedPrismaClient();
@@ -41,6 +41,7 @@ let pastDeadlineDraftId: string;
 let pastCheckDraftId: string;
 let openInsideDeadlineId: string;
 let crossingDraftId: string;
+let movableOpenId: string;
 let studentId: string;
 let teacherRoomId: string;
 let teacherTimezone: string;
@@ -146,6 +147,7 @@ test.describe('Class edit screen', () => {
       pastCheckDraftId,
       openInsideDeadlineId,
       crossingDraftId,
+      movableOpenId,
     ].filter(Boolean);
     if (classIds.length) {
       await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
@@ -202,6 +204,25 @@ test.describe('Class edit screen', () => {
     await expect(page.getByRole('button', { name: 'Publish' })).toBeVisible();
     await expect(page.getByText(/can't cancel for free/)).toHaveCount(0);
     await expect(page.getByText(/can't cancel for free/)).toBeVisible({ timeout: 100_000 });
+  });
+
+  test('moving an open class inside its deadline warns, and restoring its time clears it', async ({ page }) => {
+    const farStart = new Date(Math.ceil((Date.now() + 72 * HOUR) / MINUTE) * MINUTE);
+    const far = wallSlotAt(farStart, teacherTimezone);
+    movableOpenId = (await mkNearClass(farStart, 'open')).id;
+    const near = wallSlotAt(new Date(Date.now() + 8 * HOUR), teacherTimezone);
+
+    await page.goto(`/class/${movableOpenId}/edit`);
+    await expect(page.getByRole('button', { name: 'Save changes' })).toBeVisible();
+    await expect(page.getByText(/The new start is inside/)).toHaveCount(0);
+
+    await page.getByLabel('Date').fill(near.date.toISOString().slice(0, 10));
+    await page.getByLabel('Start time').fill(timeToHHmm(near.startTime));
+    await expect(page.getByText(/can't cancel for free/)).toBeVisible();
+
+    await page.getByLabel('Date').fill(far.date.toISOString().slice(0, 10));
+    await page.getByLabel('Start time').fill(timeToHHmm(far.startTime));
+    await expect(page.getByText(/The new start is inside/)).toHaveCount(0);
   });
 
   test('a draft edits fully — details and economics', async ({ page }) => {
