@@ -11,7 +11,7 @@
 export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   // Routes the app has today.
   'login', 'verify', 'signup', 'bookings', 'settings', 'schedule', 'students',
-  'inbox', 'class', 'studio-class', 'api', 'health', 'admin', 'account', 'updates', 'start',
+  'inbox', 'class', 'studio-class', 'api', 'admin', 'account', 'updates', 'start',
   'payout-pause', 'unsubscribe', 'passkey-revoke',
   // Common website pages.
   'home', 'about', 'about-us', 'contact', 'contact-us', 'help', 'support', 'faq',
@@ -29,5 +29,5 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   'calendar', 'notifications', 'payments', 'search', 'explore',
   // Infrastructure and technical names.
   'www', 'app', 'mail', 'email', 'static', 'assets', 'cdn', 'icons', 'images', 'public',
-  'robots', 'sitemap', 'favicon', 'null', 'undefined', 'test',
+  'robots', 'sitemap', 'favicon', 'health', 'null', 'undefined', 'test',
 ]);
