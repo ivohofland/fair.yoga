@@ -38,6 +38,23 @@ type WalkInSubject =
   | { invitationId: string }
   | { newContact: { firstName: string; lastName: string; email: string } };
 
+/**
+ * One fetched list. Each list settles on its own, so a failure in one never
+ * takes the other off the picker, and a failed list holds no rows to offer.
+ * `loading` and a loaded-but-empty list both render no options; only the
+ * latter may read "No student matches."
+ */
+type ListState<T> =
+  | { status: 'loading' }
+  | { status: 'loaded'; rows: T[] }
+  | { status: 'failed' };
+
+const LOADING = { status: 'loading' } as const;
+
+function rowsOf<T>(list: ListState<T>): T[] {
+  return list.status === 'loaded' ? list.rows : [];
+}
+
 const INVITED_SUFFIX = ' · invited';
 
 function inviteeLabel(invitee: PendingInvitee): string {
@@ -67,53 +84,29 @@ function nameOf(option: PickerOption): string {
 export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [students, setStudents] = useState<RosterStudent[]>([]);
-  const [invitees, setInvitees] = useState<PendingInvitee[]>([]);
+  const [students, setStudents] = useState<ListState<RosterStudent>>(LOADING);
+  const [invitees, setInvitees] = useState<ListState<PendingInvitee>>(LOADING);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Submit failures only. A list's load failure is its own `failed` state,
+  // so a failed submit leaves the picker in place for the retry, and a
+  // refetch that succeeds clears its list's message without touching this.
   const [error, setError] = useState('');
 
   const [newFirstName, setNewFirstName] = useState('');
   const [newLastName, setNewLastName] = useState('');
   const [newEmail, setNewEmail] = useState('');
 
-  // `loaded` (below) distinguishes "still fetching" from "fetched, and the
-  // merged options (or the filtered view of them) are genuinely empty" —
-  // both look like `visible.length === 0` otherwise, and only the latter
-  // should ever read "No student matches." Each list has its own
-  // loaded/failed pair, independent of the other: a failed invitations
-  // fetch must not take the roster off the picker, and a failed roster
-  // fetch must not take the invitees off it either — `options` below builds
-  // from whichever of `students`/`invitees` its own fetch actually filled,
-  // and each failure gets its own message underneath.
-  const [studentsLoaded, setStudentsLoaded] = useState(false);
-  // Carries its own message, independently of `error`: `error` carries only
-  // submit failures. A failed submit must not hide the picker the teacher
-  // is still using to retry — only a failed roster *load* should drop the
-  // roster's contribution to it — and a roster load that succeeds after an
-  // earlier failure must not leave a stale "Could not load" message next to
-  // the now-current picker; keeping the message on `studentsFailed` (reset
-  // every effect run, same as the gate) rather than on `error` (never reset
-  // except by Close) keeps the two in lockstep.
-  const [studentsFailed, setStudentsFailed] = useState(false);
-  // Same shape as the `students` pair above, for the invitations fetch.
-  const [invitationsLoaded, setInvitationsLoaded] = useState(false);
-  const [invitationsFailed, setInvitationsFailed] = useState(false);
-
+  // Fetches only — each list's state is set when its own request settles.
+  // Opening the picker is what puts both lists back to `loading`
+  // (`openPicker`), so a refetch while open keeps the current rows on screen
+  // until its result replaces them. `registeredStudentIds` is a dependency
+  // because the fresh array a `router.refresh()` hands down is how a
+  // newly linked student reaches a picker that is already open.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setStudentsLoaded(false);
-    setStudentsFailed(false);
-    setInvitationsLoaded(false);
-    setInvitationsFailed(false);
-    // A reopen's fetch can fail after an earlier open's succeeded — reset
-    // both lists here, not only inside each `.then`, or a failed refetch
-    // would leave the previous open's rows sitting in state, offered as
-    // current beside the failure message below.
-    setStudents([]);
-    setInvitees([]);
 
     fetch('/api/students')
       .then((res) => {
@@ -122,17 +115,12 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       })
       .then((json: { data: { students: RosterStudent[] } }) => {
         if (cancelled) return;
-        const registered = new Set(registeredStudentIds);
-        setStudents(json.data.students.filter((s) => !registered.has(s.id)));
-        setStudentsLoaded(true);
+        setStudents({ status: 'loaded', rows: json.data.students });
       })
       .catch((err: unknown) => {
         logRequestFailure('add-walk-in-students', { classId }, err);
         if (cancelled) return;
-        setStudentsFailed(true);
-        // A failed load is still a load that finished — it must not keep
-        // showing the loading (no-message) state forever.
-        setStudentsLoaded(true);
+        setStudents({ status: 'failed' });
       });
 
     fetch('/api/invitations?status=pending')
@@ -142,20 +130,24 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       })
       .then((json: { data: { invitations: PendingInvitee[] } }) => {
         if (cancelled) return;
-        setInvitees(json.data.invitations);
-        setInvitationsLoaded(true);
+        setInvitees({ status: 'loaded', rows: json.data.invitations });
       })
       .catch((err: unknown) => {
         logRequestFailure('add-walk-in-invitations', { classId }, err);
         if (cancelled) return;
-        setInvitationsFailed(true);
-        setInvitationsLoaded(true);
+        setInvitees({ status: 'failed' });
       });
 
     return () => {
       cancelled = true;
     };
   }, [open, registeredStudentIds, classId]);
+
+  function openPicker() {
+    setStudents(LOADING);
+    setInvitees(LOADING);
+    setOpen(true);
+  }
 
   async function submit(subject: WalkInSubject): Promise<void> {
     setSubmitting(true);
@@ -201,16 +193,21 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
 
   if (!open) {
     return (
-      <Button variant="secondary" onClick={() => setOpen(true)} className="w-full sm:w-auto">
+      <Button variant="secondary" onClick={openPicker} className="w-full sm:w-auto">
         <Icon name="plus" size={18} />
         Add walk-in
       </Button>
     );
   }
 
+  // Registered students are filtered here, against the current prop, so the
+  // refresh that registered one drops it before its refetch returns.
+  const registered = new Set(registeredStudentIds);
   const options: PickerOption[] = [
-    ...students.map((s) => ({ value: `student:${s.id}`, label: s.displayName })),
-    ...invitees.map((i) => ({ value: `invitation:${i.id}`, label: inviteeLabel(i) })),
+    ...rowsOf(students)
+      .filter((s) => !registered.has(s.id))
+      .map((s) => ({ value: `student:${s.id}`, label: s.displayName })),
+    ...rowsOf(invitees).map((i) => ({ value: `invitation:${i.id}`, label: inviteeLabel(i) })),
   ].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
 
   const query = filter.trim().toLowerCase();
@@ -218,7 +215,7 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
     ? options.filter((o) => nameOf(o).toLowerCase().includes(query))
     : options;
 
-  const loaded = studentsLoaded && invitationsLoaded;
+  const loaded = students.status !== 'loading' && invitees.status !== 'loading';
   const newPersonDisabled = newFirstName.trim() === '' || newEmail.trim() === '' || submitting;
 
   return (
@@ -262,12 +259,12 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
           Close
         </Button>
       </div>
-      {studentsFailed && (
+      {students.status === 'failed' && (
         <p role="alert" className="text-sm text-danger">
           Could not load your students.
         </p>
       )}
-      {invitationsFailed && (
+      {invitees.status === 'failed' && (
         <p role="alert" className="text-sm text-danger">
           Could not load your invited contacts.
         </p>

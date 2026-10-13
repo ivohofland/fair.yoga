@@ -216,10 +216,10 @@ describe('AddWalkIn', () => {
   /**
    * A load that succeeds once and then fails on a reopen must not leave the
    * earlier open's rows sitting in state, rendered as current beside the new
-   * failure message — `students`/`invitees` are reset at the top of the
-   * effect for exactly this reason. Covered for both lists: each is fetched
-   * and reset independently, so either one's stale-on-reopen bug is
-   * invisible to a test that only ever exercises the other.
+   * failure message — a list in its `failed` state holds no rows. Covered
+   * for both lists: each is fetched and settles independently, so either
+   * one's stale-on-reopen bug is invisible to a test that only ever
+   * exercises the other.
    */
   it('does not show a stale roster after a reopen whose roster fetch fails', async () => {
     let studentsCall = 0;
@@ -356,7 +356,7 @@ describe('AddWalkIn', () => {
 
   /**
    * `visible.length === 0` is true the instant the picker opens too, before
-   * either fetch resolves — `students`/`invitees` both start `[]`. The "No
+   * either fetch resolves — both lists open in `loading`, with no rows. The "No
    * student matches" condition also requires `query` to be truthy, so a
    * *bare* open (no filter typed) never reaches it regardless of the
    * `loaded` gate. Typing a filter before either fetch resolves is what
@@ -465,9 +465,9 @@ describe('AddWalkIn', () => {
    * (`/app/(teacher)/class/[id]/(overview)/page.tsx`) hands down a freshly-`.map()`d
    * array on every render, and `LiveUpdates`' `router.refresh()` on any
    * inbound notification is what causes that render while the picker is
-   * still open. Tying the message to `studentsFailed` (reset every effect
-   * run) rather than `error` (never reset except by Close) is what keeps
-   * the two from drifting apart here.
+   * still open. The message reads the roster's own `failed` state, which
+   * the refetch's success replaces, rather than `error` (never reset except
+   * by Close) — that is what keeps the two from drifting apart here.
    */
   it('clears the load-failure message once a later refetch succeeds, without closing the picker', async () => {
     let call = 0;
@@ -491,5 +491,101 @@ describe('AddWalkIn', () => {
 
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
     expect(screen.queryByText('Could not load your students.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Routes the roster GET to `first` on its first call and to a held promise
+   * on every later one, so a test can look at the picker while a refetch is
+   * in flight. Invitations always answer at once with an empty list.
+   */
+  function stubRosterWithHeldRefetch(first: unknown[]): {
+    studentsCalls: () => number;
+    release: (students: unknown[]) => void;
+  } {
+    let calls = 0;
+    let releaseHeld: ((value: unknown) => void) | undefined;
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === '/api/invitations?status=pending') {
+        return { ok: true, status: 200, json: async () => ({ data: { invitations: [] } }) };
+      }
+      if (url === '/api/students') {
+        calls += 1;
+        if (calls === 1) {
+          return { ok: true, status: 200, json: async () => ({ data: { students: first } }) };
+        }
+        return new Promise((r) => { releaseHeld = r; });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return {
+      studentsCalls: () => calls,
+      release: (students) => {
+        releaseHeld?.({ ok: true, status: 200, json: async () => ({ data: { students } }) });
+      },
+    };
+  }
+
+  /**
+   * A refetch while the picker is open — the `registeredStudentIds` identity
+   * change `LiveUpdates`' `router.refresh()` produces — leaves the current
+   * options on screen until its own result replaces them, rather than
+   * blanking the picker for the length of the request.
+   */
+  it('keeps the current options on screen while a refetch is pending', async () => {
+    const roster = stubRosterWithHeldRefetch([{ id: 's1', displayName: 'Anna Bakker' }]);
+    const { rerender } = render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await screen.findByText('Anna Bakker');
+
+    rerender(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    await waitFor(() => expect(roster.studentsCalls()).toBe(2));
+
+    expect(screen.getByLabelText('Walk-in student')).toBeInTheDocument();
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+
+    roster.release([{ id: 's2', displayName: 'Bram K.' }]);
+    await screen.findByText('Bram K.');
+    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The already-registered filter reads the current `registeredStudentIds`
+   * at render, so the refresh that registered a student takes them off the
+   * picker at once, not when the refetch it triggered comes back.
+   */
+  it('drops a newly registered student from the options before the refetch resolves', async () => {
+    const roster = stubRosterWithHeldRefetch([
+      { id: 's1', displayName: 'Anna Bakker' },
+      { id: 's2', displayName: 'Bram K.' },
+    ]);
+    const { rerender } = render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await screen.findByText('Anna Bakker');
+
+    rerender(<AddWalkIn classId="c1" registeredStudentIds={['s1']} />);
+    await waitFor(() => expect(roster.studentsCalls()).toBe(2));
+
+    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
+    expect(screen.getByText('Bram K.')).toBeInTheDocument();
+  });
+
+  /**
+   * Opening the picker starts both lists from loading, so a reopen whose
+   * fetch is still in flight offers nothing from the earlier open.
+   */
+  it('shows no options from an earlier open while a reopen\'s fetch is pending', async () => {
+    const roster = stubRosterWithHeldRefetch([{ id: 's1', displayName: 'Anna Bakker' }]);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await screen.findByText('Anna Bakker');
+
+    fireEvent.click(screen.getByText('Close'));
+    openPicker();
+    await waitFor(() => expect(roster.studentsCalls()).toBe(2));
+
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
   });
 });
