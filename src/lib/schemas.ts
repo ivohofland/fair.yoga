@@ -283,10 +283,7 @@ export const pageSlugField = z
   .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and hyphens only.')
   .refine((s) => !RESERVED_SLUGS.has(s), 'That address is reserved.');
 
-/**
- * The refusal for a page address another teacher holds. Worded with the label
- * the settings form shows for this field.
- */
+/** The refusal for a page address another teacher holds. */
 export const PAGE_SLUG_TAKEN_MESSAGE = 'That page address is already taken.';
 
 export const teacherSignupSchema = z.object({
