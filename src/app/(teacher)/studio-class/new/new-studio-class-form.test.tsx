@@ -47,6 +47,11 @@ describe('NewStudioClassPage', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
+  it('steps the start time by five minutes', () => {
+    render(<NewStudioClassForm currency="EUR" />);
+    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+  });
+
   it('sends exactly these six fields', async () => {
     stubFetch();
     render(<NewStudioClassForm currency="EUR" />);

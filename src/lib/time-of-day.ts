@@ -7,3 +7,18 @@ export function timeToHHmm(t: Date): string {
 export function hhmmToTime(s: string): Date {
   return new Date(`1970-01-01T${s}:00Z`);
 }
+
+/** A start-time input's `step`, in seconds: five minutes, the grid classes start on. */
+export const START_TIME_STEP_SECONDS = 300;
+
+/**
+ * The `step` for a start-time input opened on `saved` — the row's stored
+ * `"HH:MM"`, never the value being typed. Off the five-minute grid it falls
+ * back to one minute, so the browser does not refuse a row saved before the
+ * step existed.
+ */
+export function startTimeStep(saved?: string): number {
+  if (!saved) return START_TIME_STEP_SECONDS;
+  const minutes = Number(saved.slice(3, 5));
+  return minutes % (START_TIME_STEP_SECONDS / 60) === 0 ? START_TIME_STEP_SECONDS : 60;
+}

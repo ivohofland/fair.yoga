@@ -71,6 +71,18 @@ describe('StudioClassEditForm', () => {
     expect(screen.getByLabelText(/Hourly rate/)).toHaveValue('45');
   });
 
+  it('steps the start time by five minutes', () => {
+    renderForm();
+    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+  });
+
+  it('keeps a saved start time off the five-minute grid valid', () => {
+    render(<StudioClassEditForm currency="EUR" studioClassId="sc-1" dateEditable initial={{ ...initial, startTime: '09:37' }} />);
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('step', '60');
+    expect(input.checkValidity()).toBe(true);
+  });
+
   it('sends every field it owns when the date may move', async () => {
     const body = await saveWith(true);
     expect(body).toEqual({

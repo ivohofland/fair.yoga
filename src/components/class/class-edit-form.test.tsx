@@ -149,6 +149,18 @@ describe('ClassEditForm', () => {
     expect(screen.queryByText(/cancel it and create a new one/)).not.toBeInTheDocument();
   });
 
+  it('steps the start time by five minutes', () => {
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+  });
+
+  it('keeps a saved start time off the five-minute grid valid', () => {
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, startTime: '09:37' }} />);
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('step', '60');
+    expect(input.checkValidity()).toBe(true);
+  });
+
   /**
    * F3 (#221 review fold). `handleSave`'s `economicsViolations` check is
    * wrapped in `if (!settingsLocked)`: locked economics are stripped from
