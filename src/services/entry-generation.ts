@@ -57,9 +57,8 @@ export type ChildWithRule<TChild> = TChild & {
  * The rolling window, in occurrences — four weeks (`CLAUDE.md`).
  *
  * `generateEntriesForRule` below reads it directly, for both families.
- * Exported because each family's `update…Template` reads it too, to build the
- * horizon it hands `probeFirstEffectiveWeek`, which deliberately looks TWICE
- * this far.
+ * `probeHorizon` reads it too, to build the horizon an edit hands
+ * `probeFirstEffectiveWeek`, which deliberately looks TWICE this far.
  * The asymmetry is the point rather than a disagreement: when all four of the
  * generator's weeks are held by the superseded schedule, the honest answer to
  * "when does this edit take effect" is week five, and no window this
@@ -1068,6 +1067,11 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  *
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
+ * Before refusing any date, the generator's own window keeps only candidates
+ * starting strictly after its run instant. That filter is not a `SkipReason`;
+ * it is reproduced by `horizon` itself, which the caller builds with
+ * `probeHorizon` to start after the caller's `at`, the sweep's instant.
+ *
  * The generator declines a candidate date on grounds named by `SkipReason`
  * (`@/lib/generation`, whose own header documents the ordered first-match
  * classification). Stated one at a time rather than as a parity claim, because
@@ -1162,8 +1166,8 @@ export async function probeFirstEffectiveWeek(
   editNoun: EditLogNoun,
 ): Promise<{ week: Date; candidate: Date } | null> {
   // Guarded rather than `!`-asserted: under `noUncheckedIndexedAccess` a `!`
-  // here would be a claim about `getNextOccurrences` and its filter several
-  // lines away, and both ends are dereferenced below.
+  // here would be a claim about the caller's `probeHorizon` and its filter,
+  // and both ends are dereferenced below.
   const first = horizon[0];
   const last = horizon[horizon.length - 1];
   if (first === undefined || last === undefined) return null;
