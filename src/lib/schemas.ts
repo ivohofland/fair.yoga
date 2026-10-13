@@ -280,8 +280,8 @@ export const pageSlugField = z
   .min(1)
   // `abort` stops the regex and the reserved-name lookup reading an over-long value.
   .max(PAGE_SLUG_MAX, { message: `Keep the page address to ${PAGE_SLUG_MAX} characters or fewer.`, abort: true })
-  .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
-  .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved');
+  .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and hyphens only.')
+  .refine((s) => !RESERVED_SLUGS.has(s), 'That address is reserved.');
 
 /**
  * The refusal for a page address another teacher holds. Worded with the label

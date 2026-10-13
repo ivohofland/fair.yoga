@@ -627,7 +627,7 @@ describe('ProfileForm', () => {
       fetchMock.mockResolvedValue({
         ok: false,
         status: 400,
-        json: async () => ({ error: { message: 'This slug is reserved' } }),
+        json: async () => ({ error: { message: 'That address is reserved.' } }),
       });
       stubFetch();
       renderForm();
@@ -635,7 +635,7 @@ describe('ProfileForm', () => {
       save();
 
       const alert = await screen.findByRole('alert');
-      expect(alert).toHaveTextContent('This slug is reserved');
+      expect(alert).toHaveTextContent('That address is reserved.');
       expect(slugField()).not.toHaveAttribute('aria-invalid');
       expect(slugField().getAttribute('aria-describedby')?.split(' ') ?? []).not.toContain(alert.id);
     });
