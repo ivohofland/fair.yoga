@@ -49,6 +49,8 @@
   describe('page slug change', () => {
     const warning = (slug: string): string =>
       `Links you’ve already shared to fair.yoga/${slug} will stop working.`;
+    // Any slug's warning, so an absence check cannot pass by the caption naming the wrong one.
+    const anyWarning = /^Links you’ve already shared to fair\.yoga\/.* will stop working\.$/;
 
     function slugField(): HTMLInputElement {
       return screen.getByLabelText('Page slug') as HTMLInputElement;
@@ -56,7 +58,7 @@
 
     it('shows no warning while the slug is unchanged', () => {
       renderForm();
-      expect(screen.queryByText(warning('anna'))).toBeNull();
+      expect(screen.queryByText(anyWarning)).toBeNull();
     });
 
     it('warns that links to the saved slug will stop working, and ties the warning to the field', () => {
@@ -70,7 +72,7 @@
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       fireEvent.change(slugField(), { target: { value: 'anna' } });
-      expect(screen.queryByText(warning('anna'))).toBeNull();
+      expect(screen.queryByText(anyWarning)).toBeNull();
       expect(slugField()).not.toHaveAttribute('aria-describedby');
     });
 
@@ -81,7 +83,7 @@
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       save();
       expect(await screen.findByText('Saved')).toBeInTheDocument();
-      expect(screen.queryByText(warning('anna'))).toBeNull();
+      expect(screen.queryByText(anyWarning)).toBeNull();
     });
 
     it('names the slug saved last when the teacher changes it again', async () => {
@@ -114,7 +116,7 @@
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `pnpm exec vitest run --project components src/components/settings/profile-form.test.tsx`
-Expected: the four tests that look for the warning text FAIL (`Unable to find an element with the text: Links you’ve already shared…`); the two that assert its absence pass vacuously until Step 3 — they become meaningful only once the caption can render, which Step 5 proves.
+Expected: the three tests that look for the warning text FAIL (`Unable to find an element with the text: Links you’ve already shared…`); the three that assert its absence pass vacuously until Step 3 — they become meaningful only once the caption can render, which Step 5 proves.
 
 - [ ] **Step 3: Implement** in `profile-form.tsx`.
 
@@ -159,7 +161,8 @@ The *Public page* section becomes:
 with, in the component body before `return`:
 
 ```tsx
-  // Nothing redirects from an old slug (#826): a link shared before the change 404s.
+  // True while the field holds a slug the server has not confirmed; the
+  // caption under the field then names the address still live.
   const slugChanged = form.pageSlug.trim() !== savedSlug;
   const slugWarningId = useId();
 ```
@@ -173,7 +176,7 @@ Expected: all PASS.
 
 - [ ] **Step 5: Prove the guards bite** — record each exact failure text in the task report, restore, re-run green:
   1. Delete `setSavedSlug(payload.pageSlug);` → "clears the warning once the new slug is saved" and "names the slug saved last…" must FAIL.
-  2. Change `slugChanged` to `form.pageSlug.trim() !== initial.pageSlug` → "names the slug saved last…" must FAIL (realistic regression: reading the stale prop).
+  2. Change `slugChanged` to `form.pageSlug.trim() !== initial.pageSlug` → "clears the warning once the new slug is saved" must FAIL (realistic regression: reading the stale prop leaves a warning up naming the just-saved slug — which is why the absence checks match any slug, not only the original one).
   3. Drop the `aria-describedby` prop → "…ties the warning to the field" must FAIL.
   4. Change `slugChanged` to `true` → "shows no warning while the slug is unchanged" and "drops the warning…" must FAIL (proves the absence tests are not vacuous).
 

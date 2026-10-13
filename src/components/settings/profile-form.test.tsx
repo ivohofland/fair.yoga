@@ -360,6 +360,8 @@ describe('ProfileForm', () => {
   describe('page slug change', () => {
     const warning = (slug: string): string =>
       `Links you’ve already shared to fair.yoga/${slug} will stop working.`;
+    // Any slug's warning, so an absence check cannot pass by the caption naming the wrong one.
+    const anyWarning = /^Links you’ve already shared to fair\.yoga\/.* will stop working\.$/;
 
     function slugField(): HTMLInputElement {
       return screen.getByLabelText('Page slug') as HTMLInputElement;
@@ -367,7 +369,7 @@ describe('ProfileForm', () => {
 
     it('shows no warning while the slug is unchanged', () => {
       renderForm();
-      expect(screen.queryByText(warning('anna'))).toBeNull();
+      expect(screen.queryByText(anyWarning)).toBeNull();
     });
 
     it('warns that links to the saved slug will stop working, and ties the warning to the field', () => {
@@ -381,7 +383,7 @@ describe('ProfileForm', () => {
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       fireEvent.change(slugField(), { target: { value: 'anna' } });
-      expect(screen.queryByText(warning('anna'))).toBeNull();
+      expect(screen.queryByText(anyWarning)).toBeNull();
       expect(slugField()).not.toHaveAttribute('aria-describedby');
     });
 
@@ -392,7 +394,7 @@ describe('ProfileForm', () => {
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       save();
       expect(await screen.findByText('Saved')).toBeInTheDocument();
-      expect(screen.queryByText(warning('anna'))).toBeNull();
+      expect(screen.queryByText(anyWarning)).toBeNull();
     });
 
     it('names the slug saved last when the teacher changes it again', async () => {
