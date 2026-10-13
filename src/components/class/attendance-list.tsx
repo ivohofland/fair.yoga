@@ -216,6 +216,7 @@ export function AttendanceList({ items, classId, renderedAt, locked = false }: A
         <p className="type-caption text-danger">{line}</p>
         <button
           ref={(el) => {
+            // eslint-disable-next-line react-hooks/refs -- a ref callback runs at commit, not render
             if (el === null) dismissRefs.current.delete(entry.registrationId);
             else dismissRefs.current.set(entry.registrationId, el);
           }}
