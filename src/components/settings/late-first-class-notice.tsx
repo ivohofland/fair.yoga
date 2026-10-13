@@ -6,8 +6,8 @@ import { shortfallSentence } from '@/components/class/late-publish-notice';
  * The warning shown when a recurring class's first class starts inside its
  * cancellation deadline. `added` is a create or resume, where the class now
  * exists; `expected` is an edit, where the sweep has yet to add it, and takes
- * only `past_deadline` because the edit's answer is never `past_check`
- * (`UpdateRuleResult.lateFirstClass`, `services/rule-lifecycle.ts`).
+ * only `past_deadline` (`UpdateRuleResult.lateFirstClass`,
+ * `services/rule-lifecycle.ts`).
  */
 export function LateFirstClassNotice(
   props:

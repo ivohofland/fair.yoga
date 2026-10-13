@@ -1079,16 +1079,11 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  *     on `startTime` reproduced neither reason fully, and erred in the
  *     dishonest direction while this bullet claimed it reproduced both.
  *   - `past_cancel_check` (#859) — a candidate whose auto-cancel check has
- *     passed by the instant the sweep judges it. Not a read: reproduced by
- *     `declines`, which the caller builds from the family's `pastCancelCheck`
- *     judged at the LATEST instant the next nominal sweep runs. That instant
- *     errs in the tolerated direction: a sweep running earlier may still fill
- *     a candidate declined here, and the class then arrives a week before the
- *     answer named it. A sweep running LATER than nominal errs the other way:
- *     a candidate whose check falls between `now + interval` and that late
- *     sweep was named here and is declined there, so the named week stays
- *     empty — bounded by how late the sweep runs. The nominal interval itself
- *     is #860's imprecision, not this bullet's.
+ *     passed. Not a read: reproduced by `declines`, a predicate the caller
+ *     builds from the family's `pastCancelCheck` at an instant of its choosing
+ *     (`updateRule`, `rule-lifecycle.ts`, owns that instant and why). A sweep
+ *     running at a different instant can disagree in either direction, so this
+ *     is a prediction like the others.
  *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
  *     insert landing between the generator's pre-check and its write, so at
  *     probe time it has not happened yet and there is nothing to read. Its

@@ -84,12 +84,13 @@
  *   refused by constraints at insert time are probed to distinguish standing
  *   midnight spills (`blocked_by_overlap`) from transient contention (`raced`).
  *   See `services/entry-generation.ts` for implementation.
- * - `past_cancel_check` after every other pre-check: anywhere earlier it would
- *   mask `already_generated` on every steady-state re-run, and every other
- *   reason says the date was not free, which is the more useful thing to
- *   report.
+ * - `past_cancel_check` after `already_generated`: placed earlier, it would
+ *   mask `already_generated` on every steady-state re-run, and
+ *   `logSkippedEntries` would then warn about it every hour.
  *
  * Reporting preferences:
+ * - `past_cancel_check` after every other pre-check too: every other reason
+ *   says the date was not free, which is the more useful thing to report.
  * - `already_this_week` before `slot_taken`: when a candidate date is both held
  *   by this template's previous weekday and occupied at that slot by an
  *   unrelated class, reporting the systematic schedule shift (`already_this_week`)
@@ -332,21 +333,12 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * into a single compile error instead: reducing once is what lets one mapping
  * cover every call site rather than needing one each.
  *
- * EVERY NUMBER IN THE PARAGRAPH ABOVE IS THE PRE-#194 STATE, deliberately, and
- * must not be refreshed to today's. It is the roster the measurement was taken
- * against: five sites, because `template-sync.ts` still existed; four members
- * and two `SkipCounts` fields, because `already_this_week`/`alreadyThisWeek`
- * did not. A pass over this branch rewrote the member counts to today's and
- * left the call-site roster at yesterday's, and the result described a state
- * this repo was never in at any point.
+ * The numbers in the paragraph above are the pre-#194 measurement, not today's.
  *
- * Today's members and fields are not counted here, for the avoidance of exactly
- * that: read them off `SkipReason` and `SkipCounts`. Both are tethered rather
- * than asserted — the members and fields by
- * `SKIP_REASON_COUNT_MAP: Record<SkipReason, keyof SkipCounts | null>` above,
- * and the fields by `SkipCounts` itself — so neither can go the way the roster
- * above did. The CALL SITES are not counted here either, because nothing
- * tethers a count of them; derive them:
+ * Members and fields are not counted here; read them off `SkipReason` and
+ * `SkipCounts`, which `SKIP_REASON_COUNT_MAP` tethers, so a new member fails
+ * the build there rather than vanishing at a call site. The CALL SITES are not
+ * counted here either, because nothing tethers a count of them; derive them:
  *
  *   grep -rn "import .*countSkipReasons.*'@/lib/generation'" src/ \
  *     --include='*.ts' --include='*.tsx' \
@@ -356,10 +348,6 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * itself. What is left is callers of THIS FUNCTION, which is narrower than
  * importers of this module: `anyBlocked` and `spansOverlap` are exported from
  * here too, and importing either is not calling this.
- *
- * So a new member fails the build at `SKIP_REASON_COUNT_MAP` rather than
- * vanishing at a call site, and `api/class-templates/route.ts` cites this
- * docblock for that rather than restating it.
  *
  * `SKIP_REASON_COUNT_MAP` enforces completeness at compile time (omitting a
  * member fails the `Record<SkipReason, ...>` type check). The COUNT reached
