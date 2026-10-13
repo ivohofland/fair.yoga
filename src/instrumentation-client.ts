@@ -6,7 +6,10 @@
  * built; the probe catches its own error, but the browser still reports a
  * `securitypolicyviolation` for it — on every page that builds a schema.
  * `jitless` makes zod skip the probe and its eval-compiled fast path.
+ * `installZodLocale` restores the English messages the bundle may drop.
  */
 import { z } from 'zod'
+import { installZodLocale } from '@/lib/zod-locale'
 
 z.config({ jitless: true })
+installZodLocale()

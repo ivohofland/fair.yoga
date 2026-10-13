@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { z } from 'zod';
 
 vi.mock('@/lib/shutdown', () => ({ installShutdownSignal: vi.fn() }));
 vi.mock('@/lib/scheduler', () => ({ startScheduler: vi.fn() }));
@@ -35,5 +36,18 @@ describe('register', () => {
     await register();
     expect(installShutdownSignal).not.toHaveBeenCalled();
     expect(startScheduler).not.toHaveBeenCalled();
+  });
+
+  // Next 16.4's server bundle drops zod's own `config(en())` side effect
+  // (zod declares `sideEffects: false`), leaving every message the bare
+  // "Invalid input". Clearing the locale reproduces that bundle here.
+  it.each(['nodejs', 'edge'])('gives zod its English messages on the %s runtime', async (runtime) => {
+    process.env.NEXT_RUNTIME = runtime;
+    z.config({ localeError: undefined });
+    expect(z.string().safeParse(1).error?.issues[0]?.message).toBe('Invalid input');
+    await register();
+    expect(z.string().safeParse(1).error?.issues[0]?.message).toBe(
+      'Invalid input: expected string, received number',
+    );
   });
 });
