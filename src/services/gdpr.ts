@@ -133,7 +133,7 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
               },
             },
           },
-          payment: { select: { amount: true, status: true, method: true, paidAt: true } },
+          payment: { select: { amount: true, vatAmount: true, status: true, method: true, paidAt: true } },
         },
       },
       waitlistEntries: {
@@ -345,6 +345,8 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         registrations: c._count.registrations,
         totalRevenue: c.totalRevenue,
         effectiveTeacherRate: c.effectiveTeacherRate,
+        vatPercent: c.vatPercent,
+        vatTotal: c.vatTotal,
       })),
     ),
     studioClasses: teacher.calendarEntries.flatMap((e) =>
