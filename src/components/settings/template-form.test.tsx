@@ -122,13 +122,6 @@ describe('TemplateForm', () => {
     };
   }
 
-  /**
-   * #685. An edit leaves `teacherRoomId` out while the room field matches the
-   * stored room, so a tab loaded before a room switch cannot send the
-   * pre-switch room back. Every other field is sent; this `toEqual` pins that
-   * for #85.
-   */
-
   it('refuses a create without its VAT default and an edit without its template or values at compile time (#874)', () => {
     // @ts-expect-error a create seeds its VAT % from the teacher's default
     const createWithoutVat = <TemplateForm mode="create" currency="EUR" />;
@@ -138,6 +131,13 @@ describe('TemplateForm', () => {
     const editWithoutInitial = <TemplateForm mode="edit" currency="EUR" templateId="tpl-1" />;
     expect([createWithoutVat, editWithoutId, editWithoutInitial]).toHaveLength(3);
   });
+
+  /**
+   * #685. An edit leaves `teacherRoomId` out while the room field matches the
+   * stored room, so a tab loaded before a room switch cannot send the
+   * pre-switch room back. Every other field is sent; this `toEqual` pins that
+   * for #85.
+   */
   it('leaves the room out of an edit whose room field was not changed', async () => {
     stubFetch();
     render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
