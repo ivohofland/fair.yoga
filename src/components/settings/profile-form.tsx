@@ -62,6 +62,13 @@ interface SlugRejection {
   message: string;
 }
 
+/**
+ * The form-level line for a save the page address stopped. The field says
+ * why; this sits by the Save button, and still shows when the field has since
+ * moved off the address the save was refused for.
+ */
+const SLUG_NOT_SAVED = 'Not saved — check the page address.';
+
 interface ProfileFormProps {
   teacherId: string;
   email: string;
@@ -200,6 +207,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         const { code, message } = await readError(res, 'Failed to save');
         if (code === 'SLUG_TAKEN' && sentSlug !== undefined) {
           setSlugRejection({ slug: sentSlug, message });
+          setError(SLUG_NOT_SAVED);
         } else {
           setError(message);
         }

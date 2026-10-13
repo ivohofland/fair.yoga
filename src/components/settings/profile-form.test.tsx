@@ -81,6 +81,21 @@ describe('ProfileForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   }
 
+  function slugField(): HTMLInputElement {
+    return screen.getByLabelText('Page address') as HTMLInputElement;
+  }
+
+  /** The page-address field's own error: the alert its input names in `aria-describedby`. */
+  async function findSlugFieldAlert(): Promise<HTMLElement> {
+    const alerts = await screen.findAllByRole('alert');
+    const describedBy = slugField().getAttribute('aria-describedby')?.split(' ') ?? [];
+    const own = alerts.filter((alert) => describedBy.includes(alert.id));
+    expect(own).toHaveLength(1);
+    return own[0] as HTMLElement;
+  }
+
+  const NOT_SAVED = 'Not saved — check the page address.';
+
   it('PUTs the profile and refreshes on success', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     stubFetch();
@@ -105,10 +120,11 @@ describe('ProfileForm', () => {
     });
     stubFetch();
     renderForm();
-    fireEvent.change(screen.getByLabelText('Page address'), { target: { value: 'taken-slug' } });
+    fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
     save();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('That page address is already taken.');
+    expect(await findSlugFieldAlert()).toHaveTextContent('That page address is already taken.');
+    expect(screen.getByText(NOT_SAVED)).toHaveAttribute('role', 'alert');
     expect(screen.queryByText('Saved')).toBeNull();
     expect(routerRefresh).not.toHaveBeenCalled();
   });
@@ -388,10 +404,6 @@ describe('ProfileForm', () => {
     // Any slug's warning, so an absence check cannot pass by the caption naming the wrong one.
     const anyWarning = /^Links you’ve already shared to fair\.yoga\/.* will stop working\.$/;
 
-    function slugField(): HTMLInputElement {
-      return screen.getByLabelText('Page address') as HTMLInputElement;
-    }
-
     function liveRegion(): Element | null {
       return document.querySelector('[aria-live="polite"]');
     }
@@ -624,7 +636,7 @@ describe('ProfileForm', () => {
       });
     });
 
-    it('shows a SLUG_TAKEN refusal on the field rather than the form, until the slug is edited', async () => {
+    it('shows a SLUG_TAKEN refusal on the field, with a not-saved line by the button, until the slug is edited', async () => {
       fetchMock.mockResolvedValue({
         ok: false,
         status: 409,
@@ -635,14 +647,64 @@ describe('ProfileForm', () => {
       fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
       save();
 
-      const alert = await screen.findByRole('alert');
+      const alert = await findSlugFieldAlert();
       expect(alert).toHaveTextContent('That page address is already taken.');
       expect(slugField()).toHaveAttribute('aria-invalid', 'true');
-      expect(slugField().getAttribute('aria-describedby')?.split(' ')).toContain(alert.id);
+      expect(screen.getByText(NOT_SAVED)).toHaveAttribute('role', 'alert');
+      // The #826 warning stays on the field beside the refusal.
+      const caption = screen.getByText(warning('anna'));
+      expect(slugField().getAttribute('aria-describedby')?.split(' ')).toEqual(
+        expect.arrayContaining([caption.id, alert.id]),
+      );
 
       fireEvent.change(slugField(), { target: { value: 'taken-slug-2' } });
       expect(screen.queryByText('That page address is already taken.')).toBeNull();
       expect(slugField()).not.toHaveAttribute('aria-invalid');
+      expect(screen.queryByText(NOT_SAVED)).toBeNull();
+
+      // Keyed, not cleared: the refused slug typed back is refused again.
+      fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
+      expect(await findSlugFieldAlert()).toHaveTextContent('That page address is already taken.');
+      expect(slugField()).toHaveAttribute('aria-invalid', 'true');
+    });
+
+    it('says the save failed even when the slug was edited while the refusal was on its way', async () => {
+      let respond: (value: unknown) => void = () => {};
+      fetchMock.mockReturnValue(new Promise((resolve) => { respond = resolve; }));
+      stubFetch();
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
+      save();
+      fireEvent.change(slugField(), { target: { value: 'taken-slug-2' } });
+
+      await act(async () => {
+        respond({
+          ok: false,
+          status: 409,
+          json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page address is already taken.' } }),
+        });
+      });
+
+      expect(await screen.findByText(NOT_SAVED)).toHaveAttribute('role', 'alert');
+      expect(slugField()).not.toHaveAttribute('aria-invalid');
+      expect(screen.queryByText('Saved')).toBeNull();
+    });
+
+    it('shows a SLUG_TAKEN for a save that sent no slug as the server said it', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page address is already taken.' } }),
+      });
+      stubFetch();
+      renderForm();
+      fireEvent.change(screen.getByLabelText('Bio (max 250 characters)'), { target: { value: 'New bio.' } });
+      save();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('That page address is already taken.');
+      expect(sentBody()).not.toHaveProperty('pageSlug');
+      expect(slugField()).not.toHaveAttribute('aria-invalid');
+      expect(screen.queryByText(NOT_SAVED)).toBeNull();
     });
 
     it('drops a SLUG_TAKEN refusal when a resubmit of the same slug saves', async () => {
