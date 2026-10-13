@@ -16,6 +16,7 @@ export const ECONOMIC_FIELDS = Object.freeze([
   'targetRate',
   'minStudents',
   'maxStudents',
+  'vatPercent',
 ] as const);
 
 export type EconomicField = (typeof ECONOMIC_FIELDS)[number];

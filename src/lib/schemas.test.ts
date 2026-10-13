@@ -271,6 +271,7 @@ describe('createClassSchema', () => {
       'startTime',
       'targetRate',
       'teacherRoomId',
+      'vatPercent',
     ]);
   });
 
@@ -349,6 +350,7 @@ describe('updateClassSchema', () => {
       'roomCost',
       'startTime',
       'targetRate',
+      'vatPercent',
     ]);
   });
 });
@@ -460,6 +462,7 @@ describe('updateClassTemplateSchema', () => {
       'startTime',
       'targetRate',
       'teacherRoomId',
+      'vatPercent',
     ]);
   });
 });
@@ -1613,6 +1616,10 @@ function isFixedShape(pattern: RegExp): boolean {
 const UNBOUNDED_NUMBER_ALLOWED: Record<string, string> = {
   'updateStudentSchema.incomeTier': 'refine-bounded: isIncomeTier accepts only 1 to 5',
   'updateTeacherSchema.defaultVatPercent': 'refine-bounded: vatPercentViolation accepts only a bounded percentage',
+  'createClassSchema.vatPercent': 'refine-bounded: vatPercentViolation accepts only a bounded percentage',
+  'updateClassSchema.vatPercent': 'refine-bounded: vatPercentViolation accepts only a bounded percentage',
+  'createClassTemplateSchema.vatPercent': 'refine-bounded: vatPercentViolation accepts only a bounded percentage',
+  'updateClassTemplateSchema.vatPercent': 'refine-bounded: vatPercentViolation accepts only a bounded percentage',
 };
 
 /** Zod 4's `.int()` seeds the bag with the safe-integer range, which is not a bound the product chose. */
@@ -1953,5 +1960,66 @@ describe('sign-in request timeZone (#825)', () => {
 
   it.each(names)('%s accepts a body without a zone', (name) => {
     expect(SIGN_IN_SCHEMAS[name].safeParse({ email: 'a@b.test' }).success).toBe(true);
+  });
+});
+
+describe('vatPercent on the four class and template schemas (#819)', () => {
+  const room = '4f7c2a10-1111-4222-8333-444455556666';
+  const createClass = {
+    teacherRoomId: room,
+    classType: 'Hatha',
+    date: '2099-06-01',
+    startTime: '09:00',
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 10,
+    targetRate: 20,
+    minStudents: 4,
+    maxStudents: 8,
+  };
+  const createTemplate = {
+    teacherRoomId: room,
+    classType: 'Hatha',
+    dayOfWeek: 1,
+    startTime: '09:00',
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 10,
+    targetRate: 20,
+    minStudents: 4,
+    maxStudents: 8,
+  };
+  const cases = [
+    ['createClassSchema', createClassSchema, createClass],
+    ['updateClassSchema', updateClassSchema, {}],
+    ['createClassTemplateSchema', createClassTemplateSchema, createTemplate],
+    ['updateClassTemplateSchema', updateClassTemplateSchema, {}],
+  ] as const;
+
+  describe.each(cases)('%s', (_name, schema, base) => {
+    it.each([9, 14.975])('accepts %s', (v) => {
+      expect(schema.safeParse({ ...base, vatPercent: v }).success).toBe(true);
+    });
+    it.each([
+      [-1, "VAT can't be negative."],
+      [100.001, 'Keep VAT to 100% or less.'],
+      [8.1234, 'Use at most 3 decimals for VAT.'],
+    ])('refuses %s with its copy', (v, message) => {
+      const r = schema.safeParse({ ...base, vatPercent: v });
+      expect(r.success).toBe(false);
+      expect(r.error?.issues.map((i) => i.message)).toContain(message);
+    });
+    it('refuses a string', () => {
+      expect(schema.safeParse({ ...base, vatPercent: '9' }).success).toBe(false);
+    });
+  });
+
+  it.each([
+    ['createClassSchema', createClassSchema, createClass],
+    ['createClassTemplateSchema', createClassTemplateSchema, createTemplate],
+  ] as const)('%s parses without vatPercent, leaving it undefined', (_name, schema, base) => {
+    const r = schema.safeParse(base);
+    expect(r.success).toBe(true);
+    expect(r.data?.vatPercent).toBeUndefined();
   });
 });

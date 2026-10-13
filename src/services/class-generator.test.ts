@@ -98,6 +98,7 @@ describe('generateClassInstances (DB)', () => {
         targetRate: 30,
         minStudents: 4,
         maxStudents: 12,
+        vatPercent: 9,
         cancelDeadline: 'HOURS_24',
         autoCancelCheck: 'HOURS_2',
       },
@@ -145,6 +146,7 @@ describe('generateClassInstances (DB)', () => {
       expect(Number(cls.targetRate)).toBe(30);
       expect(cls.minStudents).toBe(4);
       expect(cls.maxStudents).toBe(12);
+      expect(cls.vatPercent.toNumber()).toBe(9);
       expect(cls.calendarEntry.teacherId).toBe(teacherId);
       expect(cls.teacherRoomId).toBe(teacherRoomId);
       expect(cls.calendarEntry.scheduleRuleId).toBe(templateScheduleRuleId);

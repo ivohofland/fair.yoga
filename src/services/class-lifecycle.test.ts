@@ -324,13 +324,14 @@ describe('isEconomicFieldLocked', () => {
 });
 
 describe('ECONOMIC_FIELDS', () => {
-  it('contains exactly the 5 economic fields', () => {
+  it('contains exactly the economic fields', () => {
     expect(ECONOMIC_FIELDS).toEqual([
       'roomCost',
       'minRate',
       'targetRate',
       'minStudents',
       'maxStudents',
+      'vatPercent',
     ]);
   });
 

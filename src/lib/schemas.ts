@@ -317,16 +317,20 @@ export const studentProfileSchema = z.object({
   lastName: linkFreeText(NAME_MAX).min(1),
 }).strict();
 
+/** A VAT percentage on the wire: a number, then `vatPercentViolation`'s verdict on it. */
+const vatPercentField = () =>
+  z.number().superRefine((v, ctx) => {
+    const message = vatPercentViolation(v);
+    if (message) ctx.addIssue({ code: 'custom', message });
+  });
+
 export const updateTeacherSchema = z.object({
   firstName: linkFreeText(NAME_MAX).min(1).optional(),
   lastName: linkFreeText(NAME_MAX).min(1).optional(),
   bio: multiLineText(250).optional(),
   pageSlug: pageSlugField.optional(),
   currency: z.enum(Currency).optional(),
-  defaultVatPercent: z.number().superRefine((v, ctx) => {
-    const message = vatPercentViolation(v);
-    if (message) ctx.addIssue({ code: 'custom', message });
-  }).optional(),
+  defaultVatPercent: vatPercentField().optional(),
   defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').transform(modernTimeZone).optional(),
   classReminder: z.enum(ReminderTiming).optional(),
   classReminderChannel: z.enum(ReminderChannel).optional(),
@@ -585,6 +589,7 @@ export const createClassSchema = z.object({
   targetRate: signedMoneyField(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
+  vatPercent: vatPercentField().optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
 })
@@ -607,6 +612,7 @@ export const updateClassSchema = z.object({
   targetRate: signedMoneyField().optional(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
+  vatPercent: vatPercentField().optional(),
 }).strict();
 // Cross-field economics are checked on the merged row by the update service (economicsViolations).
 
@@ -640,6 +646,7 @@ export const createClassTemplateSchema = z.object({
   targetRate: signedMoneyField(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
+  vatPercent: vatPercentField().optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
 })
@@ -661,6 +668,7 @@ export const updateClassTemplateSchema = z.object({
   targetRate: signedMoneyField().optional(),
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
+  vatPercent: vatPercentField().optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
 }).strict();

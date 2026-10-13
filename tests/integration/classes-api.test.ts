@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient, type ClassStatus } from '@prisma/client';
+import { Prisma, PrismaClient, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -1160,6 +1160,21 @@ describe('PUT /api/classes/[id]', () => {
     expect(Number(after.minRate)).toBe(Number(before.minRate));
   });
 
+  it('unlocked class: a vatPercent edit -> 200 and the row reads it (#819)', async () => {
+    const res = await put(ownerToken, economicsClassId, { vatPercent: 21 });
+    expect(res.status).toBe(200);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(after.vatPercent.toNumber()).toBe(21);
+  });
+
+  it('locked class: a vatPercent edit is refused with SETTINGS_LOCKED and writes nothing (#819)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(before.settingsLocked).toBe(true);
+    await expectRefusal(await put(ownerToken, lockedClassId, { vatPercent: 21 }), 'SETTINGS_LOCKED');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(after.vatPercent.toNumber()).toBe(before.vatPercent.toNumber());
+  });
+
   it('locked class: a mixed economic + non-economic body is rejected atomically', async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
 
@@ -1642,6 +1657,49 @@ describe('POST /api/classes', () => {
     const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true } });
     expect(created.calendarEntry.teacherId).toBe(ownerId);
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
+  });
+
+  describe('the VAT % a class is created with (#819)', () => {
+    async function setDefaultVat(percent: number): Promise<void> {
+      const before = await prisma.teacher.findUniqueOrThrow({ where: { id: ownerId }, select: { defaultVatPercent: true } });
+      await prisma.teacher.update({ where: { id: ownerId }, data: { defaultVatPercent: percent } });
+      onTestFinished(async () => {
+        await prisma.teacher.update({ where: { id: ownerId }, data: { defaultVatPercent: before.defaultVatPercent } });
+      });
+    }
+
+    it("reads the teacher's default when the body names none", async () => {
+      await setDefaultVat(9);
+      const res = await post(ownerToken, { ...baseBody(), date: '2099-09-01' });
+      expect(res.status).toBe(201);
+      const { data } = (await res.json()) as { data: { id: string } };
+      const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+      expect(created.vatPercent.toNumber()).toBe(9);
+    });
+
+    it('takes the body when it names one', async () => {
+      await setDefaultVat(9);
+      const res = await post(ownerToken, { ...baseBody(), date: '2099-09-02', vatPercent: 21 });
+      expect(res.status).toBe(201);
+      const { data } = (await res.json()) as { data: { id: string } };
+      const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+      expect(created.vatPercent.toNumber()).toBe(21);
+    });
+
+    it('refuses a string with a 400', async () => {
+      const res = await post(ownerToken, { ...baseBody(), date: '2099-09-03', vatPercent: '9' });
+      expect(res.status).toBe(400);
+    });
+
+    it('lock-time raw read hands back a Prisma.Decimal, not a string', async () => {
+      await setDefaultVat(14.975);
+      const row = await prisma.$transaction(async (tx) => {
+        const { lockTeacherForShare } = await import('@/lib/db-locks');
+        return lockTeacherForShare(tx, ownerId);
+      });
+      expect(Prisma.Decimal.isDecimal(row?.defaultVatPercent)).toBe(true);
+      expect(row?.defaultVatPercent.toString()).toBe('14.975');
+    });
   });
 
   // #146. The rule link is server-set — class-generator.ts writes the entry's

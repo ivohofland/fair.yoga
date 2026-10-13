@@ -131,6 +131,7 @@ export function RoomSettingsStep({ selectedRoom, currency, onSaved, onBack }: Ro
         />
         <Input
           label={`Rental rate (${currencyLabel(currency)})`}
+          hint="If you charge VAT, enter it excl. VAT."
           type="text"
           inputMode="decimal"
           value={rentalRate}

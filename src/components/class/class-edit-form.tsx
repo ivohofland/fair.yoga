@@ -14,6 +14,7 @@ import {
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
+import { vatPercentViolation } from '@/lib/vat';
 import { LOCKED_FIELDS } from '@/lib/class-fields';
 import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy';
 import { currencyLabel } from '@/lib/format';
@@ -46,6 +47,7 @@ export interface ClassEditInitial {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  vatPercent: number;
 }
 
 type UpdateClassWire = z.infer<typeof updateClassSchema>;
@@ -85,6 +87,8 @@ function numberFieldError(form: ClassEditInitial, settingsLocked: boolean): stri
   if (form.maxStudents <= 0) return 'Max students must be at least 1';
   if (!Number.isInteger(form.maxStudents)) return 'Max students must be a whole number';
   if (form.maxStudents > MAX_CLASS_SIZE) return `Max students cannot exceed ${MAX_CLASS_SIZE}`;
+  const vatMessage = vatPercentViolation(form.vatPercent);
+  if (vatMessage) return vatMessage;
   return undefined;
 }
 
@@ -142,6 +146,7 @@ export function ClassEditForm({
   // hydration passes and `now` does not reach the markup.
   const [now, setNow] = useState(() => Date.now());
 
+  const chargesVat = form.vatPercent > 0;
   const moved = form.date !== initial.date || form.startTime !== initial.startTime;
   const reading =
     moveWarning !== null && moved
@@ -350,16 +355,30 @@ export function ClassEditForm({
             change under students.
           </p>
         )}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <NumberInput
-            label={`Room cost (${currencyLabel(currency)})`}
+            label={
+              chargesVat
+                ? `Room cost excl. VAT (${currencyLabel(currency)})`
+                : `Room cost (${currencyLabel(currency)})`
+            }
             decimals={MONEY_DECIMALS}
             value={form.roomCost}
             disabled={settingsLocked}
             onValueChange={(n) => set('roomCost', n)}
+            hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
           />
           <NumberInput
-            label={`Min rate (${currencyLabel(currency)})`}
+            id="vatPercent"
+            label="VAT %"
+            decimals={Infinity}
+            value={form.vatPercent}
+            disabled={settingsLocked}
+            onValueChange={(n) => set('vatPercent', n)}
+            hint="Included in student prices. Use 0 if you don't charge VAT."
+          />
+          <NumberInput
+            label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
             decimals={MONEY_DECIMALS}
             signed
             value={form.minRate}
@@ -367,7 +386,7 @@ export function ClassEditForm({
             onValueChange={(n) => set('minRate', n)}
           />
           <NumberInput
-            label={`Target rate (${currencyLabel(currency)})`}
+            label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
             decimals={MONEY_DECIMALS}
             signed
             value={form.targetRate}

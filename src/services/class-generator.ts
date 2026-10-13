@@ -83,6 +83,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         targetRate: template.targetRate,
         minStudents: template.minStudents,
         maxStudents: template.maxStudents,
+        vatPercent: template.vatPercent,
         cancelDeadline: template.cancelDeadline,
         autoCancelCheck: template.autoCancelCheck,
         // Inserted inside its own check window, or after its start has passed:

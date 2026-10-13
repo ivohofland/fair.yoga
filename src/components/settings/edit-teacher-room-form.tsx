@@ -128,6 +128,7 @@ export function EditTeacherRoomForm({
       />
       <Input
         label={`Rental rate (${currencyLabel(currency)})`}
+        hint="If you charge VAT, enter it excl. VAT."
         type="text"
         inputMode="decimal"
         value={rentalRate}

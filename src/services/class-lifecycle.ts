@@ -1044,7 +1044,8 @@ type TeacherEditableClassField =
   | 'minRate'
   | 'targetRate'
   | 'minStudents'
-  | 'maxStudents';
+  | 'maxStudents'
+  | 'vatPercent';
 
 /**
  * Compile-time pin (forward): every field `updateClassSchema` accepts must be
