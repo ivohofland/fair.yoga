@@ -27,7 +27,7 @@
 import { Prisma } from '@prisma/client';
 import type { ClassFamily, Currency, PrismaClient, ScheduleRule } from '@prisma/client';
 import { spansOverlap } from '@/lib/generation';
-import type { GenerationResult, SkippedSlot } from '@/lib/generation';
+import type { GenerationCaller, GenerationResult, SkippedSlot } from '@/lib/generation';
 import { probeOverlappingCandidates } from '@/lib/entry-conflict';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant, mondayOf, type WeekKey } from '@/lib/timezone';
@@ -297,6 +297,16 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = R
     entries: readonly { id: string; date: Date; startTime: Date }[],
     at: Date,
   ) => Promise<void>;
+  /**
+   * Whether a candidate's auto-cancel check has passed at `at`, or `null` for
+   * a family with no check. The sweep declines a candidate this answers true
+   * for (`SkipReason`'s `past_cancel_check`, `@/lib/generation`); a teacher
+   * call inserts it anyway. Required and nullable rather than optional, for
+   * the reason this type's docblock gives.
+   */
+  pastCancelCheck:
+    | ((child: TChild, entry: { date: Date; startTime: Date }, timeZone: string, at: Date) => boolean)
+    | null;
 }>;
 
 // ---------------------------------------------------------------------------
@@ -521,11 +531,17 @@ export async function claimRuleForGeneration<TChild>(
  *
  * Accepts a transaction client so a route can create the template and its
  * window atomically.
+ *
+ * `caller` says who reads the answer (#859). The sweep passes `'sweep'` and
+ * declines a candidate `family.pastCancelCheck` says has passed, because no
+ * one would be told it was created already decided. Create and resume pass
+ * `'teacher'`, insert it, and warn the teacher from the answer instead (#856).
  */
 export async function generateEntriesForRule<TChild extends { id: string }>(
   db: PrismaClient | Prisma.TransactionClient,
   family: GeneratorFamily<TChild>,
   template: ChildWithRule<TChild>,
+  caller: GenerationCaller,
   from?: Date,
 ): Promise<GenerationResult> {
   const startDate = from ?? new Date();
@@ -683,6 +699,10 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
     durationMinutes: template.scheduleRule.durationMinutes,
   };
 
+  // Read once: the skip judgement below, the stamp `createChildren` writes and
+  // the `firstCreated.at` returned at the end are this one instant.
+  const at = new Date();
+
   for (const date of dates) {
     const onDate = occupants.filter((e) => e.date.getTime() === date.getTime());
 
@@ -769,6 +789,19 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
       continue;
     }
 
+    // LAST, deliberately: every reason above says the date was not free, which
+    // is the more useful thing to report, and checking this earlier would mask
+    // `already_generated` on every steady-state re-run. Only the sweep declines:
+    // on create and resume the teacher reads the answer and is warned instead
+    // (#856). A family with no check passes `null`.
+    if (
+      caller === 'sweep' &&
+      family.pastCancelCheck?.(template, { date, startTime }, template.scheduleRule.teacher.defaultTimezone, at)
+    ) {
+      skipped.push({ date, reason: 'past_cancel_check' });
+      continue;
+    }
+
     free.push(date);
   }
 
@@ -842,9 +875,6 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
           select: { id: true, date: true, startTime: true },
         });
 
-  // Read once: the stamp `createChildren` writes and the `firstCreated.at`
-  // returned below are this one instant.
-  const at = new Date();
   if (inserted.length > 0) {
     await family.createChildren(db, template, inserted, at);
   }
@@ -862,7 +892,7 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
   // one whose cause is not in `occupants`.
   //
   // SO IT IS ASKED FOR, and that second look is not an optimisation. `raced` is
-  // one of the two `SkipReason`s `countSkipReasons` drops, and it is dropped on
+  // one of the `SkipReason`s `countSkipReasons` drops, and it is dropped on
   // the argument that a race is TRANSIENT — "its date will simply be picked up
   // on the next run". A neighbour spilling past midnight makes that false: the
   // pre-check is minutes-since-midnight on one date and cannot see it, the

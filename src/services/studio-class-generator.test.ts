@@ -1666,3 +1666,60 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
   });
 });
 
+// A studio class has no auto-cancel check, so the sweep's decline (#859) never
+// reaches this family: a candidate half an hour out is still filled.
+describe('generateStudioClassInstances — a near candidate (#859)', () => {
+  const slug = `studiogen859-${uniqueSuffix}`;
+  let teacherId: string;
+  let scheduleRuleId: string;
+  const start = new Date(Date.now() + 30 * 60_000);
+  const nearDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'StudioNear',
+        lastName: 'Teacher',
+        email: `${slug}@test.local`,
+        account: { create: { email: `${slug}@test.local` } },
+        bio: 'Studio generator near-candidate test',
+        pageSlug: slug,
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+    const template = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'studio', classType: 'Hatha',
+            dayOfWeek: (nearDate.getUTCDay() + 6) % 7,
+            startTime: hhmmToTime(
+              `${String(start.getUTCHours()).padStart(2, '0')}:${String(start.getUTCMinutes()).padStart(2, '0')}`,
+            ),
+            durationMinutes: 60, isActive: true,
+          },
+        },
+        location: 'Studio Near Test',
+        hourlyRate: 45,
+      },
+    });
+    scheduleRuleId = template.scheduleRuleId;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { scheduleRuleId } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+  });
+
+  it('the sweep still fills a studio candidate starting within the hour', async () => {
+    await generateStudioClassInstances(prisma, { streaks: createContentionStreaks() });
+
+    const near = await prisma.studioClass.count({
+      where: { calendarEntry: { scheduleRuleId, date: nearDate } },
+    });
+    expect(near).toBe(1);
+  });
+});
+

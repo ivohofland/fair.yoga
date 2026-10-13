@@ -121,12 +121,14 @@ describe('SKIP_REASON_COUNT_MAP', () => {
       blocked_by_overlap: 'blockedByOverlap',
       already_generated: null,
       raced: null,
+      past_cancel_check: null,
     });
   });
 
-  it('deliberately drops already_generated and raced without counting them', () => {
+  it('deliberately drops already_generated, raced and past_cancel_check without counting them', () => {
     expect(SKIP_REASON_COUNT_MAP.already_generated).toBeNull();
     expect(SKIP_REASON_COUNT_MAP.raced).toBeNull();
+    expect(SKIP_REASON_COUNT_MAP.past_cancel_check).toBeNull();
   });
 
   it('surfaces the other four reasons to their exact SkipCounts keys', () => {

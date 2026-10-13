@@ -3917,6 +3917,20 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
     expect(result.lateFirstClass?.state).toBe('past_deadline');
   });
 
+  it('resume: a first class past its check is still added, stamped, and answers past_check', async () => {
+    const seeded = await freshTeacher('resume-check');
+    const template = await seedTemplate(seeded, new Date(Date.now() + 90 * 60 * 1000), false, 'HOURS_4');
+
+    const result = await pauseOrResumeTemplate(prisma, template.id, seeded.teacherId, 'active');
+
+    if (!result.ok || result.action !== 'active') throw new Error('expected active');
+    expect(result.added).toBeGreaterThan(0);
+    expect(result.lateFirstClass?.state).toBe('past_check');
+    const first = await earliestClass(template.scheduleRuleId);
+    expect(result.lateFirstClass?.date).toBe(first.calendarEntry.date.toISOString().slice(0, 10));
+    expect(first.autoCancelDecidedAt).not.toBeNull();
+  });
+
   it('resume: a resume that adds nothing answers null, though the first class is inside its deadline', async () => {
     const seeded = await freshTeacher('resume-nothing');
     const created = await createClassTemplate(

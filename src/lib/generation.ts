@@ -162,7 +162,23 @@ export type SkipReason =
    */
   | 'blocked_by_overlap'
   /** The pre-check said free, `ON CONFLICT DO NOTHING` skipped it anyway, AND the post-insert probe found nothing live overlapping it — a concurrent insert landed in between and left no standing holder (#164). Both conjuncts, since #327: without the second this member also absorbed the permanent midnight-spill case, and `countSkipReasons` drops it. */
-  | 'raced';
+  | 'raced'
+  /**
+   * Free by every other reason, but the sweep caller declined it because its
+   * family says its auto-cancel check has passed at the generator's `at`
+   * (#859). Only the sweep emits it (`GenerationCaller`). Dropped from counts:
+   * no teacher-facing answer follows a sweep. A declined date stays unfilled,
+   * because it stays past its check until it starts.
+   */
+  | 'past_cancel_check';
+
+/**
+ * Who is asking `generateEntriesForRule` to fill a window. `'sweep'` may
+ * decline a candidate the family's `pastCancelCheck` says has passed;
+ * `'teacher'` (create, resume) inserts it and lets the caller warn instead
+ * (#856).
+ */
+export type GenerationCaller = 'sweep' | 'teacher';
 
 export interface SkippedSlot {
   date: Date;
@@ -200,7 +216,8 @@ export interface GenerationResult {
  * (`logSkippedEntries` in `entry-generation.ts` already treats it the same
  * way); `raced` is "a free date that did not come back AND that nothing live
  * overlaps any more" — a lost contention race whose date will simply be picked
- * up on the next run.
+ * up on the next run. `past_cancel_check` is dropped too, because only the
+ * sweep emits it and no teacher-facing answer follows a sweep.
  *
  * THE SECOND HALF OF THAT SENTENCE IS LOAD-BEARING, and #327 is why it is
  * spelled out. The exclusion of `raced` rests entirely on a race being
@@ -254,6 +271,7 @@ export const SKIP_REASON_COUNT_MAP: Readonly<Record<SkipReason, keyof SkipCounts
     blocked_by_overlap: 'blockedByOverlap',
     already_generated: null,
     raced: null,
+    past_cancel_check: null,
   });
 
 /**
@@ -315,11 +333,12 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * left the call-site roster at yesterday's, and the result described a state
  * this repo was never in at any point.
  *
- * Today, for the avoidance of exactly that: SIX `SkipReason` members and FOUR
- * `SkipCounts` fields. Both are tethered rather than asserted — the members and
- * fields by `SKIP_REASON_COUNT_MAP: Record<SkipReason, keyof SkipCounts | null>`
- * above, and the fields by `SkipCounts` itself — so neither can go the way the
- * roster above did. The CALL SITES are not counted here at all, because nothing
+ * Today's members and fields are not counted here, for the avoidance of exactly
+ * that: read them off `SkipReason` and `SkipCounts`. Both are tethered rather
+ * than asserted — the members and fields by
+ * `SKIP_REASON_COUNT_MAP: Record<SkipReason, keyof SkipCounts | null>` above,
+ * and the fields by `SkipCounts` itself — so neither can go the way the roster
+ * above did. The CALL SITES are not counted here either, because nothing
  * tethers a count of them; derive them:
  *
  *   grep -rn "import .*countSkipReasons.*'@/lib/generation'" src/ \
@@ -331,10 +350,9 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * importers of this module: `anyBlocked` and `spansOverlap` are exported from
  * here too, and importing either is not calling this.
  *
- * So the member that would vanish without `SKIP_REASON_COUNT_MAP` is now the
- * SEVENTH, and `api/class-templates/route.ts` cites this docblock for that
- * number rather than recounting it — the one site that spells the ordinal
- * out.
+ * So a new member fails the build at `SKIP_REASON_COUNT_MAP` rather than
+ * vanishing at a call site, and `api/class-templates/route.ts` cites this
+ * docblock for that rather than restating it.
  *
  * `SKIP_REASON_COUNT_MAP` enforces completeness at compile time (omitting a
  * member fails the `Record<SkipReason, ...>` type check). The COUNT reached
