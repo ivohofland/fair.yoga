@@ -396,6 +396,7 @@ interface ClassPricingInput {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  vatPercent: number;         // added on top of room + teacher rate; 0 for none
   studentTiers: IncomeTier[]; // one tier per charged student
 }
 
@@ -403,6 +404,7 @@ interface PricedStudent {
   tier: IncomeTier;       // the tier this student was charged at
   ratio: number;          // the tier ratio applied
   price: number;          // this student's price, after largest-remainder allocation
+  vat: number;            // the VAT contained in price
 }
 
 interface PricingResult {
@@ -418,7 +420,7 @@ function calculateClassPricing(input: ClassPricingInput): PricingResult {
   //   based on student count between minStudents and maxStudents
 
   // Step 2: Calculate total class cost
-  //   roomCost + effectiveTeacherRate (teacher rate is per-class, not per-student)
+  //   (roomCost + effectiveTeacherRate) × (1 + vatPercent / 100) (teacher rate is per-class, not per-student)
 
   // Step 3: Distribute across tiers using compressed spread
   //   Tier ratios: [0.65, 0.80, 1.00, 1.20, 1.35]
