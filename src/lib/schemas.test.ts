@@ -698,6 +698,19 @@ describe('pageSlugField', () => {
     expect(() => pageSlugField.parse(slug)).toThrow('This slug is reserved');
   });
 
+  // Names no route holds yet: pages the site may grow, and names that would
+  // make a teacher's page read as the platform's own.
+  it.each(['home', 'about-us', 'contact-us', 'privacy', 'impressum', 'yoga', 'fair-yoga', 'official', 'dashboard', 'www', 'icons'])(
+    'rejects the reserved slug %s, which no route holds yet',
+    (slug) => {
+      expect(() => pageSlugField.parse(slug)).toThrow('This slug is reserved');
+    },
+  );
+
+  it('reserves only the exact name, so a slug containing one stays available', () => {
+    expect(pageSlugField.parse('anna-yoga')).toBe('anna-yoga');
+  });
+
   // Every static first segment of the app, inside a route group or not, beats
   // `(public)/[slug]`; a slug equal to one would never reach its teacher's page.
   it('reserves every static top-level route segment', () => {
