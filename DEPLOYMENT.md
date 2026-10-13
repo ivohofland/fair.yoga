@@ -230,12 +230,20 @@ A commit on `main` deploys itself once every CI test job has passed: the
 `deploy/deploy.sh` with that commit's hash. The script checks the commit out,
 builds while the old containers keep serving, applies the migrations as a step
 of its own (`docker compose run --rm migrate`), then replaces the containers
-and waits up to two minutes for `/api/health` to report `"status":"ok"`. A
-failed build or migration puts the checkout back and replaces nothing. A
-failed container replacement or health check leaves the new commit checked
-out and turns the CI run red: `<new> is checked out, <old> was before it`,
-the two commits *Rolling back* needs. The app is unreachable for the few
-seconds the container swap takes.
+and waits up to two minutes for `/api/health` to report `"status":"ok"`.
+Migrations get their own step because `up` replaces the app container before
+the `migrate` it depends on has finished, so a migration failing inside `up`
+would leave the site down. A failed build or migration puts the checkout back
+and replaces nothing. A failed container replacement or health check leaves
+the new commit checked out and turns the CI run red: `<new> is checked out,
+<old> was before it`, the two commits *Rolling back* needs. It may also leave
+the site down, since `up` runs `migrate` again and that can fail too. The app
+is unreachable for the few seconds the container swap takes.
+
+The previous commit keeps serving, and running its scheduler, while the
+migrations run and until the swap. A migration has to work with that commit
+running against it: add a column or table before the code that uses it, and
+remove one only once no deployed code reads it.
 
 It only moves forward along `origin/main`. A commit already deployed, or an
 older one, answers success and changes nothing, so two runs finishing out of
@@ -316,7 +324,19 @@ that schema.
 
 Prisma records the failed migration as failed, and refuses every later
 `migrate deploy` (error P3009) until it is resolved, so every later deploy
-fails at its migrate step too. Resolve it on the VPS:
+fails at its migrate step too. Every `docker compose up` runs `migrate` as
+well (the *Rolling back* recipe, §8's redeploy, §2), so until it is resolved
+each one fails with P3009 and leaves `app` replaced by a container that never
+starts. Run no `up` until it is resolved.
+
+The checkout is back on the old commit, but the built images are still the
+failed commit's. That is why the resolve command below can see the failed
+migration's folder, so resolve before any rebuild (`--build`). Do not run a
+plain `up -d` either: it would ship the failed commit's code onto the
+unmigrated schema. Until the next successful deploy, §8's admin commands run
+that commit's CLI against the old schema.
+
+Resolve it on the VPS:
 
 ```bash
 cd /opt/fairyoga
@@ -329,12 +349,17 @@ docker compose -f docker-compose.prod.yml run --rm migrate pnpm exec prisma migr
 The migration name is the folder name in `prisma/migrations/`, and the
 deploy's output names it. A migration marked rolled back runs again as
 written, so if the migration itself was wrong, merge the fix to `main` after
-resolving and let that commit deploy. If the cause was outside it, such as
+resolving and let that commit deploy. This is the one case where a migration
+already written is edited, since it never applied in production; a dev or CI
+database that applied the old version needs `pnpm exec prisma migrate reset`.
+If the cause was outside it, such as
 data it could not handle, fix that and deploy the same commit again by hand.
 
 ### Rolling back
 
-Deliberately not something the CI key can do. On the VPS:
+Deliberately not something the CI key can do. If a migration is recorded as
+failed, resolve it first (*A failed migration*): the `up` below runs `migrate`
+too. On the VPS:
 
 ```bash
 cd /opt/fairyoga
