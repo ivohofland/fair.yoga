@@ -1789,13 +1789,13 @@ describe('updateStudioClassTemplate (DB)', () => {
    * Getting this wrong lands the prediction EARLIER than the sweep delivers,
    * which is the dishonest direction.
    *
-   * `23:59` so the first candidate is never dropped by the probe's own
-   * already-started filter, which would move the answer a week for a reason
-   * that has nothing to do with what this pins. The block's own `makeTemplate`
-   * walks its slots up from `'09:30'` an hour at a time, and that filter fires
-   * on any of them for most of the day. `23:59` is the last start a calendar
-   * day has, so only a run inside its final minute could find today's
-   * candidate already begun.
+   * `23:59` so the first candidate survives the probe's past-start filter on
+   * most runs; when it does not, the answer moves a week for a reason that has
+   * nothing to do with what this pins. The block's own `makeTemplate` walks
+   * its slots up from `'09:30'` an hour at a time, and that filter fires on
+   * any of them for most of the day. `23:59` is the last start a calendar day
+   * has, so only a run within `CLASS_GENERATION_INTERVAL_MS` of it, where the
+   * filter judges, drops today's candidate.
    *
    * Both halves asserted: the week it IS and the week it is NOT, because the
    * failure is off by exactly one week and `not.toBe` alone would pass for any
@@ -1955,28 +1955,23 @@ describe('updateStudioClassTemplate (DB)', () => {
   });
 
   /**
-   * The probe's past-start filter, and it is here because nothing else catches
-   * it: with the five cases this task shipped in place, deleting the
-   * `.filter(...)` from `updateStudioClassTemplate`'s horizon left all of them
-   * green. The class family's twin was added for exactly that measurement one
-   * file over, so this side starts with the guard covered rather than
-   * discovering it later.
-   *
-   * The horizon drops an occurrence whose start instant has already passed,
-   * the same predicate the generator applies to its own candidates. Without
-   * it this names the CURRENT week on the template's own weekday once the
-   * class hour has gone — the sweep never fills it, and the prediction lands
-   * earlier than delivery, which is the dishonest direction.
+   * The probe's past-start filter. `probeHorizon` drops an occurrence that
+   * does not start strictly after the next sweep's latest instant, the
+   * predicate the generator applies to its own candidates at its run instant.
+   * Without it this names the CURRENT week on the template's own weekday once
+   * the class hour has gone — the sweep never fills it, and the prediction
+   * lands earlier than delivery, which is the dishonest direction.
    *
    * All three inputs are deliberate and none can drift with the calendar:
    *
-   *   - `dayOfWeek` is TODAY's, computed from `new Date()`, so
-   *     `getNextOccurrences` yields today as its first occurrence — its own
-   *     comment says it includes today.
+   *   - `dayOfWeek` is TODAY's UTC weekday, so today is the first occurrence
+   *     `probeHorizon` enumerates — unless the next sweep's instant has
+   *     already crossed UTC midnight, and then the enumeration starts after
+   *     today. Either way today is not named.
    *   - `startTime` is `'00:00'` and this block's teacher is pinned to UTC, so
    *     the start instant for today is today's midnight UTC, never strictly
-   *     after `now`. Today is dropped on every run, at every hour, rather than
-   *     only after some cutoff. It is also the opposite arrangement from the
+   *     after the next sweep's instant. Today is dropped on every run, at every
+   *     hour, rather than only after some cutoff. It is also the opposite arrangement from the
    *     two cross-family cases above, which pick `23:59` to keep today's
    *     occurrence alive.
    *   - No entry exists for this rule, so no week is held and the answer is

@@ -542,14 +542,13 @@ describe('updateClassTemplate (DB)', () => {
   });
 
   /**
-   * The probe's past-start filter, which nothing could break until now (#194).
+   * The probe's past-start filter (#194).
    *
-   * `updateClassTemplate` filters its horizon with the same predicate
-   * `generateInstancesForTemplate` applies to its own candidates: an
-   * occurrence whose start instant has already passed is dropped. The comment
-   * on that filter says removing it means the sentence "would name a week the
-   * sweep never fills … and it is the dishonest one" — and deleting the
-   * `.filter(...)` failed no test. `class-templates-api.test.ts` drives both of
+   * `probeHorizon` drops an occurrence that does not start strictly after the
+   * next sweep's latest instant, the predicate the generator applies to its
+   * own candidates at its run instant. Without it the probe would name a week
+   * the sweep never fills, which is the dishonest direction.
+   * `class-templates-api.test.ts` drives both of
    * its probe cases through `sameWeekDayPair()`, whose docblock states outright
    * that neither day is ever today, and this file's own fixtures pin
    * `dayOfWeek: 3`, so the template's weekday is today on one day in seven and
@@ -558,13 +557,14 @@ describe('updateClassTemplate (DB)', () => {
    * The arrangement is deliberate on all three inputs and none of them can
    * drift with the calendar:
    *
-   *   - `dayOfWeek` is TODAY's, computed from `new Date()`, so
-   *     `getNextOccurrences` yields today as its first occurrence
-   *     (`daysUntilTarget === 0` — its own comment says it includes today).
+   *   - `dayOfWeek` is TODAY's UTC weekday, so today is the first occurrence
+   *     `probeHorizon` enumerates — unless the next sweep's instant has
+   *     already crossed UTC midnight, and then the enumeration starts after
+   *     today. Either way today is not named.
    *   - `startTime` is `'00:00'` and the teacher's zone is UTC, so
    *     `classStartInstant` for today is today's midnight UTC, which is never
-   *     strictly after `now`. Today is dropped on every run, at every hour,
-   *     rather than only after some cutoff.
+   *     strictly after the next sweep's instant. Today is dropped on every
+   *     run, at every hour, rather than only after some cutoff.
    *   - No `Class` row exists for this template, so `heldWeeks` is empty and
    *     the answer is simply the first surviving candidate's week. Nothing
    *     else can be responsible for the difference.
@@ -590,9 +590,9 @@ describe('updateClassTemplate (DB)', () => {
    * and adding the generator's reason without adding the probe's third read
    * would have reproduced it exactly.
    *
-   * `23:59` so today's occurrence is never dropped by the probe's own
-   * already-started filter, which would move the answer a week for a reason
-   * that has nothing to do with what this pins. Both halves asserted: the week
+   * `23:59` so today's occurrence survives the probe's past-start filter on
+   * most runs; when it does not, the answer moves a week for a reason that has
+   * nothing to do with what this pins. Both halves asserted: the week
    * it IS and the week it is NOT.
    */
   it('declines a date a live studio class holds, and names the week after', async () => {
@@ -716,9 +716,10 @@ describe('updateClassTemplate (DB)', () => {
    * direction, and #194's original failure. The two now decide with the same
    * function.
    *
-   * `23:59` for the template, as the two cases above: it keeps today's
-   * occurrence out of reach of the probe's already-started filter, which would
-   * otherwise move the answer a week for a reason that is not what this pins.
+   * `23:59` for the template, as the two cases above: on most runs it keeps
+   * today's occurrence out of reach of the probe's past-start filter, which
+   * would otherwise move the answer a week for a reason that is not what this
+   * pins.
    * The holder at `23:30` runs into it from behind — 23:30–00:30 against
    * 23:59–00:59 — so the spans overlap and the start times differ, which is
    * the whole of the case.
@@ -806,8 +807,8 @@ describe('updateClassTemplate (DB)', () => {
       },
     });
 
-    // The probe's own horizon function, so the arithmetic below cannot drift
-    // from the arithmetic under test: [0] is today, [1] is next week.
+    // The occurrence enumeration `probeHorizon` builds on, run from now rather
+    // than from the next sweep's instant: [0] is today, [1] is next week.
     const occurrences = getNextOccurrences(todaySchemaDay, new Date(), 2);
     const todayOccurrence = occurrences[0]!;
     const nextWeekOccurrence = occurrences[1]!;
